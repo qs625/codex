@@ -301,13 +301,19 @@ impl MessageProcessor {
         // affect per-thread behavior, but they must not move newly started,
         // resumed, or forked threads to a different persistence backend/root.
         let thread_store = codex_core::thread_store_from_config(config.as_ref(), state_db.clone());
+        let fs_watch_manager = FsWatchManager::new(outgoing.clone());
+        let shared_file_watcher = fs_watch_manager.file_watcher();
         let thread_manager = Arc::new_cyclic(|thread_manager| {
             ThreadManager::new(
                 config.as_ref(),
                 auth_manager.clone(),
                 session_source,
                 environment_manager,
-                thread_extensions(guardian_agent_spawner(thread_manager.clone())),
+                thread_extensions(
+                    guardian_agent_spawner(thread_manager.clone()),
+                    shared_file_watcher,
+                    thread_manager.clone(),
+                ),
                 Some(analytics_events_client.clone()),
                 Arc::clone(&thread_store),
                 state_db.clone(),
@@ -442,7 +448,6 @@ impl MessageProcessor {
                     Some(on_effective_plugins_changed),
                 );
         }
-        let fs_watch_manager = FsWatchManager::new(outgoing.clone());
         let config_processor = ConfigRequestProcessor::new(
             outgoing.clone(),
             config_manager.clone(),

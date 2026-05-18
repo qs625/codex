@@ -104,7 +104,7 @@ impl FsWatchManager {
         Self::new_with_file_watcher(outgoing, file_watcher)
     }
 
-    fn new_with_file_watcher(
+    pub(crate) fn new_with_file_watcher(
         outgoing: Arc<OutgoingMessageSender>,
         file_watcher: Arc<FileWatcher>,
     ) -> Self {
@@ -113,6 +113,10 @@ impl FsWatchManager {
             file_watcher,
             state: Arc::new(AsyncMutex::new(FsWatchState::default())),
         }
+    }
+
+    pub(crate) fn file_watcher(&self) -> Arc<FileWatcher> {
+        Arc::clone(&self.file_watcher)
     }
 
     pub(crate) async fn watch(

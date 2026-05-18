@@ -47,6 +47,7 @@ members = [
     "ext/extension-api",
     "ext/guardian",
     "ext/memories",
+    "file-subscription",
     "external-agent-migration",
     "external-agent-sessions",
     "keyring-store",
@@ -170,6 +171,7 @@ codex-features = { path = "features" }
 codex-feedback = { path = "feedback" }
 codex-install-context = { path = "install-context" }
 codex-file-search = { path = "file-search" }
+codex-file-subscription = { path = "file-subscription" }
 codex-file-watcher = { path = "file-watcher" }
 codex-git-utils = { path = "git-utils" }
 codex-hooks = { path = "hooks" }

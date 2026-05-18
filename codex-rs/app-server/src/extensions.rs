@@ -9,15 +9,21 @@ use codex_extension_api::AgentSpawnFuture;
 use codex_extension_api::AgentSpawner;
 use codex_extension_api::ExtensionRegistry;
 use codex_extension_api::ExtensionRegistryBuilder;
+use codex_file_watcher::FileWatcher;
 use codex_protocol::ThreadId;
 use codex_protocol::error::CodexErr;
 
-pub(crate) fn thread_extensions<S>(guardian_agent_spawner: S) -> Arc<ExtensionRegistry<Config>>
+pub(crate) fn thread_extensions<S>(
+    guardian_agent_spawner: S,
+    file_watcher: Arc<FileWatcher>,
+    thread_manager: Weak<ThreadManager>,
+) -> Arc<ExtensionRegistry<Config>>
 where
     S: AgentSpawner<StartThreadOptions, Spawned = NewThread, Error = CodexErr> + 'static,
 {
     let mut builder = ExtensionRegistryBuilder::<Config>::new();
     codex_guardian::install(&mut builder, guardian_agent_spawner);
+    codex_file_subscription::install(&mut builder, file_watcher, thread_manager);
     Arc::new(builder.build())
 }
 

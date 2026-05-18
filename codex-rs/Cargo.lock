@@ -1901,6 +1901,7 @@ dependencies = [
  "codex-features",
  "codex-feedback",
  "codex-file-search",
+ "codex-file-subscription",
  "codex-file-watcher",
  "codex-git-utils",
  "codex-guardian",
@@ -2896,6 +2897,23 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "codex-file-subscription"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "codex-core",
+ "codex-extension-api",
+ "codex-file-watcher",
+ "codex-protocol",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

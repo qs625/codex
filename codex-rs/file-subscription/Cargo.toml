@@ -1,0 +1,26 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-file-subscription"
+version.workspace = true
+
+[lib]
+name = "codex_file_subscription"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+codex-core = { workspace = true }
+codex-extension-api = { workspace = true }
+codex-file-watcher = { workspace = true }
+codex-protocol = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync"] }
+tracing = { workspace = true }
+uuid = { workspace = true, features = ["v7"] }
