@@ -6,6 +6,7 @@ use std::sync::Weak;
 use std::time::Duration;
 
 use codex_core::ThreadManager;
+use codex_core::UnifiedExecProcessManager;
 use codex_file_watcher::FileWatcher;
 use codex_file_watcher::FileWatcherEvent;
 use codex_file_watcher::FileWatcherSubscriber;
@@ -60,8 +61,8 @@ impl DebouncedReceiver {
 
 struct SubscriptionEntry {
     _cancel_tx: oneshot::Sender<()>,
-    _subscriber: FileWatcherSubscriber,
-    _registration: WatchRegistration,
+    _subscriber: Option<FileWatcherSubscriber>,
+    _registration: Option<WatchRegistration>,
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -91,8 +92,46 @@ impl FsSubscriptionRegistry {
         }
     }
 
+    async fn send_text_to_thread(
+        thread_manager: &Weak<ThreadManager>,
+        thread_id: ThreadId,
+        text: String,
+    ) -> Result<(), String> {
+        let Some(thread_manager) = thread_manager.upgrade() else {
+            return Err("thread manager unavailable".to_string());
+        };
+        let thread = thread_manager
+            .get_thread(thread_id)
+            .await
+            .map_err(|err| err.to_string())?;
+        let _ = thread
+            .submit(Op::UserInput {
+                items: vec![UserInput::Text {
+                    text,
+                    text_elements: vec![],
+                }],
+                environments: None,
+                final_output_json_schema: None,
+                responsesapi_client_metadata: None,
+            })
+            .await;
+        Ok(())
+    }
+
+    fn subscription_entry(
+        cancel_tx: oneshot::Sender<()>,
+        subscriber: Option<FileWatcherSubscriber>,
+        registration: Option<WatchRegistration>,
+    ) -> SubscriptionEntry {
+        SubscriptionEntry {
+            _cancel_tx: cancel_tx,
+            _subscriber: subscriber,
+            _registration: registration,
+        }
+    }
+
     /// Creates a new file subscription and spawns a background watcher task.
-    pub(crate) async fn subscribe(
+    pub(crate) async fn subscribe_file(
         &self,
         thread_id: ThreadId,
         path: PathBuf,
@@ -136,29 +175,14 @@ impl FsSubscriptionRegistry {
                     .map(|l| format!(" ({l})"))
                     .unwrap_or_default();
                 let text = format!("[File subscription{label_part}] File changed: {paths_str}");
-                let Some(thread_manager) = thread_manager.upgrade() else {
-                    break;
-                };
-                match thread_manager.get_thread(thread_id).await {
-                    Ok(thread) => {
-                        let _ = thread
-                            .submit(Op::UserInput {
-                                items: vec![UserInput::Text {
-                                    text,
-                                    text_elements: vec![],
-                                }],
-                                environments: None,
-                                final_output_json_schema: None,
-                                responsesapi_client_metadata: None,
-                            })
-                            .await;
-                    }
-                    Err(err) => {
+                if let Err(err) = Self::send_text_to_thread(&thread_manager, thread_id, text).await
+                {
+                    if err != "thread manager unavailable" {
                         warn!(
                             "file subscription {sub_id_for_log}: thread {thread_id} unavailable: {err}"
                         );
-                        break;
                     }
+                    break;
                 }
             }
         });
@@ -168,12 +192,116 @@ impl FsSubscriptionRegistry {
                 thread_id,
                 subscription_id,
             },
-            SubscriptionEntry {
-                _cancel_tx: cancel_tx,
-                _subscriber: subscriber,
-                _registration: registration,
-            },
+            Self::subscription_entry(cancel_tx, Some(subscriber), Some(registration)),
         );
+    }
+
+    pub(crate) async fn subscribe_timer(
+        &self,
+        thread_id: ThreadId,
+        interval: Duration,
+        label: Option<String>,
+        subscription_id: String,
+    ) {
+        let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+        let thread_manager = self.thread_manager.clone();
+        let sub_id_for_log = subscription_id.clone();
+
+        tokio::spawn(async move {
+            tokio::pin!(cancel_rx);
+            let mut ticker = tokio::time::interval(interval);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            ticker.tick().await;
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = &mut cancel_rx => break,
+                    _ = ticker.tick() => {}
+                }
+                let label_part = label
+                    .as_deref()
+                    .map(|value| format!(" ({value})"))
+                    .unwrap_or_default();
+                let text = format!(
+                    "[Timer subscription{label_part}] Interval elapsed: {} ms",
+                    interval.as_millis()
+                );
+                if let Err(err) = Self::send_text_to_thread(&thread_manager, thread_id, text).await
+                {
+                    if err != "thread manager unavailable" {
+                        warn!(
+                            "timer subscription {sub_id_for_log}: thread {thread_id} unavailable: {err}"
+                        );
+                    }
+                    break;
+                }
+            }
+        });
+
+        self.state.lock().await.insert(
+            SubscriptionKey {
+                thread_id,
+                subscription_id,
+            },
+            Self::subscription_entry(cancel_tx, None, None),
+        );
+    }
+
+    pub(crate) async fn subscribe_process_exit(
+        &self,
+        thread_id: ThreadId,
+        process_id: i32,
+        label: Option<String>,
+        subscription_id: String,
+        unified_exec_manager: Arc<UnifiedExecProcessManager>,
+    ) -> bool {
+        let Some(process_exit) = unified_exec_manager
+            .subscribe_process_exit(process_id)
+            .await
+        else {
+            return false;
+        };
+
+        let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+        let thread_manager = self.thread_manager.clone();
+        let sub_id_for_log = subscription_id.clone();
+
+        tokio::spawn(async move {
+            tokio::pin!(cancel_rx);
+            let exit_code = tokio::select! {
+                biased;
+                _ = &mut cancel_rx => return,
+                exit_code = process_exit.wait() => exit_code,
+            };
+            let label_part = label
+                .as_deref()
+                .map(|value| format!(" ({value})"))
+                .unwrap_or_default();
+            let text = match exit_code {
+                Some(exit_code) => format!(
+                    "[Process exit subscription{label_part}] Session {process_id} exited with code {exit_code}"
+                ),
+                None => {
+                    format!("[Process exit subscription{label_part}] Session {process_id} exited")
+                }
+            };
+            if let Err(err) = Self::send_text_to_thread(&thread_manager, thread_id, text).await
+                && err != "thread manager unavailable"
+            {
+                warn!(
+                    "process exit subscription {sub_id_for_log}: thread {thread_id} unavailable: {err}"
+                );
+            }
+        });
+
+        self.state.lock().await.insert(
+            SubscriptionKey {
+                thread_id,
+                subscription_id,
+            },
+            Self::subscription_entry(cancel_tx, None, None),
+        );
+        true
     }
 
     /// Cancels a specific subscription. Returns `true` if the subscription existed.

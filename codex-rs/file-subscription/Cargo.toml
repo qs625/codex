@@ -24,3 +24,6 @@ serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync"] }
 tracing = { workspace = true }
 uuid = { workspace = true, features = ["v7"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

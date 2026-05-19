@@ -2908,6 +2908,7 @@ dependencies = [
  "codex-extension-api",
  "codex-file-watcher",
  "codex-protocol",
+ "pretty_assertions",
  "schemars 0.8.22",
  "serde",
  "serde_json",

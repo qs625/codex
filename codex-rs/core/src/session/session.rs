@@ -859,8 +859,14 @@ impl Session {
                 SessionId::from(thread_id)
             };
             let agent_control = agent_control.with_session_id(session_id);
+            let unified_exec_manager = Arc::new(UnifiedExecProcessManager::new(
+                config.background_terminal_max_timeout,
+            ));
             let session_extension_data =
                 codex_extension_api::ExtensionData::new(session_id.to_string());
+            session_extension_data.insert(crate::unified_exec::UnifiedExecManagerHandle::new(
+                Arc::downgrade(&unified_exec_manager),
+            ));
             let thread_extension_data =
                 codex_extension_api::ExtensionData::new(thread_id.to_string());
             for contributor in extensions.thread_lifecycle_contributors() {
@@ -886,9 +892,7 @@ impl Session {
                     ),
                 )),
                 mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
-                unified_exec_manager: UnifiedExecProcessManager::new(
-                    config.background_terminal_max_timeout,
-                ),
+                unified_exec_manager,
                 shell_zsh_path: config.zsh_path.clone(),
                 main_execve_wrapper_exe: config.main_execve_wrapper_exe.clone(),
                 analytics_events_client,

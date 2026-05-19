@@ -4306,9 +4306,9 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             ),
         )),
         mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
-        unified_exec_manager: UnifiedExecProcessManager::new(
+        unified_exec_manager: Arc::new(UnifiedExecProcessManager::new(
             config.background_terminal_max_timeout,
-        ),
+        )),
         shell_zsh_path: None,
         main_execve_wrapper_exe: config.main_execve_wrapper_exe.clone(),
         analytics_events_client: AnalyticsEventsClient::new(
@@ -6162,9 +6162,9 @@ where
             ),
         )),
         mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
-        unified_exec_manager: UnifiedExecProcessManager::new(
+        unified_exec_manager: Arc::new(UnifiedExecProcessManager::new(
             config.background_terminal_max_timeout,
-        ),
+        )),
         shell_zsh_path: None,
         main_execve_wrapper_exe: config.main_execve_wrapper_exe.clone(),
         analytics_events_client: AnalyticsEventsClient::new(

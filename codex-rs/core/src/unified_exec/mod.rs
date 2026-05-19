@@ -126,9 +126,36 @@ impl ProcessStore {
     }
 }
 
-pub(crate) struct UnifiedExecProcessManager {
+pub struct UnifiedExecProcessManager {
     process_store: Mutex<ProcessStore>,
     max_write_stdin_yield_time_ms: u64,
+}
+
+#[derive(Clone)]
+pub struct UnifiedExecManagerHandle {
+    manager: Weak<UnifiedExecProcessManager>,
+}
+
+impl UnifiedExecManagerHandle {
+    pub fn new(manager: Weak<UnifiedExecProcessManager>) -> Self {
+        Self { manager }
+    }
+
+    pub fn upgrade(&self) -> Option<Arc<UnifiedExecProcessManager>> {
+        self.manager.upgrade()
+    }
+}
+
+pub struct ProcessExitSubscription {
+    process: Arc<UnifiedExecProcess>,
+    cancellation_token: tokio_util::sync::CancellationToken,
+}
+
+impl ProcessExitSubscription {
+    pub async fn wait(&self) -> Option<i32> {
+        self.cancellation_token.cancelled().await;
+        self.process.exit_code()
+    }
 }
 
 impl UnifiedExecProcessManager {

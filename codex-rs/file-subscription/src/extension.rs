@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::Weak;
 
 use codex_core::ThreadManager;
+use codex_core::UnifiedExecManagerHandle;
 use codex_core::config::Config;
 use codex_extension_api::ExtensionData;
 use codex_extension_api::ThreadLifecycleContributor;
@@ -20,8 +21,8 @@ pub(crate) struct ThreadSubscriptionState {
     pub(crate) registry: Arc<FsSubscriptionRegistry>,
 }
 
-/// Extension that provides `fs_subscribe` and `fs_unsubscribe` tools to the
-/// model and manages their lifecycle alongside the owning thread.
+/// Extension that provides event subscription tools to the model and manages
+/// their lifecycle alongside the owning thread.
 pub struct FsSubscriptionExtension {
     registry: Arc<FsSubscriptionRegistry>,
 }
@@ -57,12 +58,19 @@ impl ThreadLifecycleContributor<Config> for FsSubscriptionExtension {
 impl ToolContributor for FsSubscriptionExtension {
     fn tools(
         &self,
-        _session_store: &ExtensionData,
+        session_store: &ExtensionData,
         thread_store: &ExtensionData,
     ) -> Vec<Arc<dyn codex_extension_api::ExtensionToolExecutor>> {
         let Some(state) = thread_store.get::<ThreadSubscriptionState>() else {
             return Vec::new();
         };
-        tools::subscription_tools(state.thread_id, Arc::clone(&state.registry))
+        let unified_exec_manager = session_store
+            .get::<UnifiedExecManagerHandle>()
+            .and_then(|handle| handle.upgrade());
+        tools::subscription_tools(
+            state.thread_id,
+            Arc::clone(&state.registry),
+            unified_exec_manager,
+        )
     }
 }

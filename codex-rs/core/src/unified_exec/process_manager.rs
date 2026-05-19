@@ -33,6 +33,7 @@ use crate::unified_exec::MAX_YIELD_TIME_MS;
 use crate::unified_exec::MIN_EMPTY_YIELD_TIME_MS;
 use crate::unified_exec::MIN_YIELD_TIME_MS;
 use crate::unified_exec::ProcessEntry;
+use crate::unified_exec::ProcessExitSubscription;
 use crate::unified_exec::ProcessStore;
 use crate::unified_exec::UnifiedExecContext;
 use crate::unified_exec::UnifiedExecError;
@@ -329,6 +330,20 @@ fn terminate_process_on_network_denial(
 }
 
 impl UnifiedExecProcessManager {
+    pub async fn subscribe_process_exit(&self, process_id: i32) -> Option<ProcessExitSubscription> {
+        let process = {
+            let mut store = self.process_store.lock().await;
+            let entry = store.processes.get_mut(&process_id)?;
+            entry.last_used = Instant::now();
+            Arc::clone(&entry.process)
+        };
+
+        Some(ProcessExitSubscription {
+            cancellation_token: process.cancellation_token(),
+            process,
+        })
+    }
+
     pub(crate) async fn allocate_process_id(&self) -> i32 {
         loop {
             let mut store = self.process_store.lock().await;

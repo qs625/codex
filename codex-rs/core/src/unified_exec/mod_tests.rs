@@ -268,6 +268,38 @@ async fn unified_exec_persists_across_requests() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn process_exit_subscription_reports_exit_code() -> anyhow::Result<()> {
+    skip_if_sandbox!(Ok(()));
+
+    let (session, turn) = test_session_and_turn().await;
+    let running = exec_command(
+        &session,
+        &turn,
+        "sleep 1; exit 7",
+        /*yield_time_ms*/ 250,
+        /*workdir*/ None,
+    )
+    .await?;
+    let process_id = running.process_id.expect("expected background process");
+
+    let subscription = session
+        .services
+        .unified_exec_manager
+        .subscribe_process_exit(process_id)
+        .await
+        .expect("process exit subscription");
+    assert_eq!(subscription.wait().await, Some(7));
+
+    session
+        .services
+        .unified_exec_manager
+        .release_process_id(process_id)
+        .await;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multi_unified_exec_sessions() -> anyhow::Result<()> {
     skip_if_sandbox!(Ok(()));
 

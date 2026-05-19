@@ -1,7 +1,7 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use codex_core::UnifiedExecProcessManager;
 use codex_extension_api::ExtensionToolOutput;
 use codex_extension_api::FunctionCallError;
 use codex_extension_api::JsonToolOutput;
@@ -21,33 +21,31 @@ use crate::registry::FsSubscriptionRegistry;
 use super::parse_args;
 use super::subscription_function_tool;
 
-const TOOL_NAME: &str = "fs_subscribe";
+const TOOL_NAME: &str = "process_exit_subscribe";
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct FsSubscribeArgs {
-    /// Absolute path to the file or directory to watch.
-    path: String,
-    /// Whether to watch subdirectories recursively. Defaults to false.
-    #[serde(default)]
-    recursive: bool,
-    /// Optional label used to identify this subscription in change notifications.
+struct ProcessExitSubscribeArgs {
+    /// Session identifier returned by `exec_command` for a running process.
+    session_id: i32,
+    /// Optional label used to identify this subscription in exit notifications.
     label: Option<String>,
 }
 
 #[derive(Serialize)]
-struct FsSubscribeResult {
+struct ProcessExitSubscribeResult {
+    session_id: i32,
     subscription_id: String,
-    path: String,
 }
 
-pub(crate) struct FsSubscribeTool {
+pub(crate) struct ProcessExitSubscribeTool {
     pub(crate) thread_id: ThreadId,
     pub(crate) registry: Arc<FsSubscriptionRegistry>,
+    pub(crate) unified_exec_manager: Arc<UnifiedExecProcessManager>,
 }
 
 #[async_trait]
-impl ToolExecutor<ToolCall> for FsSubscribeTool {
+impl ToolExecutor<ToolCall> for ProcessExitSubscribeTool {
     type Output = ExtensionToolOutput;
 
     fn tool_name(&self) -> ToolName {
@@ -55,30 +53,34 @@ impl ToolExecutor<ToolCall> for FsSubscribeTool {
     }
 
     fn spec(&self) -> Option<ToolSpec> {
-        Some(subscription_function_tool::<FsSubscribeArgs>(
+        Some(subscription_function_tool::<ProcessExitSubscribeArgs>(
             TOOL_NAME,
-            "Subscribe to file system changes at a path. \
-             When the file or directory changes, a notification is automatically \
-             injected into the conversation so you can observe and respond to the change.",
+            "Subscribe to a running exec_command session and inject a notification when that process exits.",
         ))
     }
 
     async fn handle(&self, call: ToolCall) -> Result<Self::Output, FunctionCallError> {
-        let args: FsSubscribeArgs = parse_args(&call)?;
-        let path = PathBuf::from(&args.path);
+        let args: ProcessExitSubscribeArgs = parse_args(&call)?;
         let subscription_id = Uuid::now_v7().to_string();
-        self.registry
-            .subscribe_file(
+        let subscribed = self
+            .registry
+            .subscribe_process_exit(
                 self.thread_id,
-                path.clone(),
-                args.recursive,
+                args.session_id,
                 args.label,
                 subscription_id.clone(),
+                Arc::clone(&self.unified_exec_manager),
             )
             .await;
-        Ok(JsonToolOutput::new(json!(FsSubscribeResult {
+        if !subscribed {
+            return Err(FunctionCallError::RespondToModel(format!(
+                "unknown process session_id: {}",
+                args.session_id
+            )));
+        }
+        Ok(JsonToolOutput::new(json!(ProcessExitSubscribeResult {
+            session_id: args.session_id,
             subscription_id,
-            path: path.display().to_string(),
         })))
     }
 }

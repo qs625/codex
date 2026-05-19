@@ -1,6 +1,8 @@
 mod extension;
 mod registry;
 mod schema;
+#[cfg(test)]
+mod tests;
 mod tools;
 
 use std::sync::Arc;
@@ -13,12 +15,12 @@ use codex_file_watcher::FileWatcher;
 
 pub use extension::FsSubscriptionExtension;
 
-/// Installs the file subscription extension into the extension registry.
+/// Installs the event subscription extension into the extension registry.
 ///
-/// The extension exposes `fs_subscribe` and `fs_unsubscribe` tools to the
-/// model. When a subscribed file or directory changes, the runtime
-/// automatically injects a new user turn into the owning thread so the model
-/// can observe and respond to the change.
+/// The extension exposes file, timer, and process-exit subscription tools to
+/// the model. When a subscribed event fires, the runtime automatically injects
+/// a new user turn into the owning thread so the model can observe and respond
+/// to the change.
 pub fn install(
     registry: &mut ExtensionRegistryBuilder<Config>,
     file_watcher: Arc<FileWatcher>,
