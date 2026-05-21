@@ -56,7 +56,16 @@ const ADAPTERS = [
   {
     id: "rust",
     serverLabel: "rust-analyzer",
-    commands: [{ command: "rust-analyzer", args: [] }],
+    commands: [
+      {
+        command: "rust-analyzer",
+        args: [],
+        resolveCommand: {
+          command: "rustup",
+          args: ["which", "rust-analyzer"],
+        },
+      },
+    ],
     extensions: new Set([".rs"]),
     languageIdForFile() {
       return "rust";

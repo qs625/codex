@@ -3,13 +3,15 @@ const { spawn } = require("node:child_process");
 const { fileURLToPath, pathToFileURL } = require("node:url");
 
 class LspClient {
-  constructor({ adapter, commandSpec, workspaceRoot }) {
+  constructor({ adapter, commandSpec, onExit, workspaceRoot }) {
     this.adapter = adapter;
     this.workspaceRoot = workspaceRoot;
     this.commandSpec = commandSpec;
+    this.onExit = onExit;
     this.nextRequestId = 1;
     this.pendingRequests = new Map();
     this.readBuffer = Buffer.alloc(0);
+    this.stderrChunks = [];
     this.openDocuments = new Set();
     this.isInitialized = false;
     this.initializingPromise = null;
@@ -21,15 +23,27 @@ class LspClient {
     this.process.stdout.on("data", (chunk) => {
       this.handleStdout(chunk);
     });
-    this.process.stderr.on("data", () => {});
-    this.process.on("exit", () => {
-      const error = new Error(`${adapter.serverLabel} exited unexpectedly.`);
+    this.process.stderr.on("data", (chunk) => {
+      this.stderrChunks.push(chunk.toString("utf8"));
+      if (this.stderrChunks.length > 8) {
+        this.stderrChunks.shift();
+      }
+    });
+    this.process.on("exit", (code, signal) => {
+      const stderr = this.stderrChunks.join("").trim();
+      const exitDetails = code == null ? `signal ${signal}` : `code ${code}`;
+      const error = new Error(
+        stderr
+          ? `${adapter.serverLabel} exited unexpectedly (${exitDetails}): ${stderr}`
+          : `${adapter.serverLabel} exited unexpectedly (${exitDetails}).`,
+      );
       for (const pending of this.pendingRequests.values()) {
         pending.reject(error);
       }
       this.pendingRequests.clear();
       this.isInitialized = false;
       this.initializingPromise = null;
+      this.onExit?.();
     });
   }
 

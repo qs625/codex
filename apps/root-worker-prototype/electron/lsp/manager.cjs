@@ -103,6 +103,11 @@ class LspManager {
     const client = new LspClient({
       adapter,
       commandSpec,
+      onExit: () => {
+        if (this.clients.get(cacheKey) === client) {
+          this.clients.delete(cacheKey);
+        }
+      },
       workspaceRoot,
     });
     this.clients.set(cacheKey, client);
@@ -111,12 +116,37 @@ class LspManager {
 
   async findCommand(adapter) {
     for (const commandSpec of adapter.commands) {
-      const isAvailable = await this.commandAvailable(commandSpec);
-      if (isAvailable) {
-        return commandSpec;
+      const resolvedCommandSpec = await this.resolveCommandSpec(commandSpec);
+      if (resolvedCommandSpec) {
+        return resolvedCommandSpec;
       }
     }
     return null;
+  }
+
+  async resolveCommandSpec(commandSpec) {
+    if (commandSpec.resolveCommand) {
+      try {
+        const { stdout } = await execFileAsync(
+          commandSpec.resolveCommand.command,
+          commandSpec.resolveCommand.args,
+        );
+        const resolvedPath = stdout.trim();
+        if (!resolvedPath) {
+          return null;
+        }
+
+        return {
+          ...commandSpec,
+          command: resolvedPath,
+        };
+      } catch {
+        return null;
+      }
+    }
+
+    const isAvailable = await this.commandAvailable(commandSpec);
+    return isAvailable ? commandSpec : null;
   }
 
   async commandAvailable(commandSpec) {
