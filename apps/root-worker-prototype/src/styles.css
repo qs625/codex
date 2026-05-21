@@ -79,7 +79,9 @@ svg {
 
 .sidebar,
 .conversation-panel,
-.todo-panel {
+.right-panel,
+.todo-panel,
+.preview-panel {
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -829,7 +831,45 @@ svg {
   box-shadow: none;
 }
 
+.right-panel {
+  min-width: 0;
+  background:
+    linear-gradient(180deg, rgba(252, 251, 249, 0.92), rgba(247, 245, 241, 0.88));
+}
+
+.panel-switcher {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 16px 16px 8px;
+}
+
+.panel-switcher button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.7);
+  color: #57534e;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.panel-switcher button.active {
+  border-color: rgba(82, 82, 91, 0.28);
+  background: #ffffff;
+  color: #171717;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
 .todo-panel {
+  flex: 1;
   padding: 8px 0 12px;
 }
 
@@ -896,7 +936,7 @@ svg {
 
 .todo-card-top {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
 }
@@ -977,6 +1017,106 @@ svg {
   background: #ffffff;
   font-weight: 600;
   cursor: pointer;
+}
+
+.preview-panel {
+  flex: 1;
+  min-width: 0;
+}
+
+.preview-header {
+  align-items: flex-start;
+}
+
+.preview-header p {
+  margin: 4px 0 0;
+  color: #78716c;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.preview-empty {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-height: 180px;
+  padding: 24px;
+  color: #78716c;
+  text-align: center;
+}
+
+.preview-empty p {
+  max-width: 260px;
+  margin: 0;
+}
+
+.preview-editor-shell {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 14px 14px;
+}
+
+.preview-lsp-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px 10px;
+}
+
+.preview-lsp-badge {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.preview-lsp-badge.enabled {
+  background: #e7f6ec;
+  color: #166534;
+}
+
+.preview-lsp-badge.unavailable {
+  background: #fff4e5;
+  color: #b45309;
+}
+
+.preview-lsp-badge.plain {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.preview-lsp-copy {
+  color: #57534e;
+  font-size: 12px;
+}
+
+.preview-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px 10px;
+  color: #78716c;
+  font-size: 12px;
+}
+
+.preview-meta-secondary {
+  padding-top: 0;
+  word-break: break-all;
+}
+
+.preview-editor-shell > div:last-child {
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.85);
 }
 
 .empty-card,

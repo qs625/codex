@@ -1,6 +1,7 @@
 import { type ChangeEvent, type ClipboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { ConversationPanel, SidebarPanel, TodoPanel, TreeContextMenu } from "./components/Panels";
+import { ConversationPanel, SidebarPanel, TreeContextMenu } from "./components/Panels";
+import { RightPanel } from "./components/RightPanel";
 import { buildConversationCells, buildConversationEntries } from "./lib/conversation";
 import { readImageBlob, readImageFile } from "./lib/images";
 import { isThreadNotFoundError, toErrorMessage } from "./lib/shared";
@@ -19,7 +20,19 @@ import {
   updateThreadTurn,
   upsertThread,
 } from "./lib/thread";
-import type { BootstrapResponse, ComposerImage, NotificationEnvelope, TaskFilter, Thread, ThreadItem, TreeMenuState, Turn } from "./types";
+import type {
+  BootstrapResponse,
+  ComposerImage,
+  FilePreview,
+  FileLocation,
+  NotificationEnvelope,
+  RightPanelView,
+  TaskFilter,
+  Thread,
+  ThreadItem,
+  TreeMenuState,
+  Turn,
+} from "./types";
 
 function App() {
   const [workspace, setWorkspace] = useState("");
@@ -36,6 +49,10 @@ function App() {
   const [collapsedPaths, setCollapsedPaths] = useState<string[]>([]);
   const [treeMenu, setTreeMenu] = useState<TreeMenuState | null>(null);
   const [cachedThreadParents, setCachedThreadParents] = useState<Record<string, string>>({});
+  const [rightPanelView, setRightPanelView] = useState<RightPanelView>("todo");
+  const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const shouldStickConversationToBottomRef = useRef(true);
@@ -479,6 +496,43 @@ function App() {
     shouldStickConversationToBottomRef.current = distanceFromBottom <= 24;
   }
 
+  async function loadFilePreview(target: string) {
+    setRightPanelView("preview");
+    setIsLoadingPreview(true);
+    setPreviewError(null);
+
+    try {
+      const preview = (await window.codexDesktop.readLocalFile(target)) as FilePreview;
+      setFilePreview(preview);
+    } catch (previewLoadError) {
+      setFilePreview(null);
+      setPreviewError(toErrorMessage(previewLoadError));
+    } finally {
+      setIsLoadingPreview(false);
+    }
+  }
+
+  async function handleOpenLocalFile(target: string) {
+    await loadFilePreview(target);
+  }
+
+  async function handleNavigateToFile(location: FileLocation) {
+    const target = location.line ? `${location.path}:${location.line}` : location.path;
+    await loadFilePreview(target);
+  }
+
+  async function openPreviewExternally() {
+    if (!filePreview) {
+      return;
+    }
+
+    try {
+      await window.codexDesktop.openLink(filePreview.path);
+    } catch (openError) {
+      setError(toErrorMessage(openError));
+    }
+  }
+
   return (
     <div className="app-shell" onClick={() => setTreeMenu(null)}>
       {error ? <div className="error-banner">{error}</div> : null}
@@ -507,15 +561,23 @@ function App() {
           onDraftChange={setDraft}
           onHandleComposerPaste={(event) => void handleComposerPaste(event)}
           onHandleImageSelection={(event) => void handleImageSelection(event)}
+          onOpenLocalFile={(target) => void handleOpenLocalFile(target)}
           onRemoveDraftImage={removeDraftImage}
           onSendMessage={() => void sendMessage()}
           selectedThread={selectedThread}
           selectedThreadId={selectedThreadId}
         />
-        <TodoPanel
+        <RightPanel
+          activeView={rightPanelView}
           onCreateRootThread={() => void createRootThread()}
+          onNavigateToFile={(location) => void handleNavigateToFile(location)}
+          onOpenPreviewExternally={() => void openPreviewExternally()}
           onSelectTaskThread={setSelectedThreadId}
+          onSetActiveView={setRightPanelView}
           onSetTaskFilter={setTaskFilter}
+          preview={filePreview}
+          previewError={previewError}
+          previewLoading={isLoadingPreview}
           selectedThreadId={selectedThreadId}
           taskFilter={taskFilter}
           todoItems={todoItems}

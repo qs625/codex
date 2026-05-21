@@ -1,0 +1,137 @@
+const fs = require("node:fs/promises");
+const { execFile } = require("node:child_process");
+const { promisify } = require("node:util");
+
+const { adapterForFile } = require("./adapters.cjs");
+const { LspClient } = require("./client.cjs");
+const { resolveWorkspaceRoot } = require("./workspaceRoots.cjs");
+
+const execFileAsync = promisify(execFile);
+
+class LspManager {
+  constructor() {
+    this.clients = new Map();
+    this.commandChecks = new Map();
+  }
+
+  async describeFile(filePath) {
+    const adapter = adapterForFile(filePath);
+    if (!adapter) {
+      return {
+        enabled: false,
+        languageId: null,
+        serverLabel: null,
+        workspaceRoot: null,
+        reason: "No LSP adapter is configured for this file type.",
+      };
+    }
+
+    const rootResolution = await resolveWorkspaceRoot(adapter, filePath);
+    if (!rootResolution.workspaceRoot) {
+      return {
+        enabled: false,
+        languageId: adapter.languageIdForFile(filePath),
+        serverLabel: adapter.serverLabel,
+        workspaceRoot: null,
+        reason: rootResolution.reason,
+      };
+    }
+
+    const commandSpec = await this.findCommand(adapter);
+    if (!commandSpec) {
+      return {
+        enabled: false,
+        languageId: adapter.languageIdForFile(filePath),
+        serverLabel: adapter.serverLabel,
+        workspaceRoot: rootResolution.workspaceRoot,
+        reason: `${adapter.serverLabel} is not available on PATH.`,
+      };
+    }
+
+    return {
+      enabled: true,
+      languageId: adapter.languageIdForFile(filePath),
+      serverLabel: adapter.serverLabel,
+      workspaceRoot: rootResolution.workspaceRoot,
+      reason: null,
+    };
+  }
+
+  async definition({ column, filePath, line }) {
+    const fileDescription = await this.describeFile(filePath);
+    if (!fileDescription.enabled || !fileDescription.workspaceRoot) {
+      return {
+        enabled: false,
+        locations: [],
+        reason: fileDescription.reason,
+      };
+    }
+
+    const adapter = adapterForFile(filePath);
+    const commandSpec = await this.findCommand(adapter);
+    if (!commandSpec) {
+      return {
+        enabled: false,
+        locations: [],
+        reason: `${adapter.serverLabel} is not available on PATH.`,
+      };
+    }
+
+    const client = this.clientFor({
+      adapter,
+      commandSpec,
+      workspaceRoot: fileDescription.workspaceRoot,
+    });
+    const text = await fs.readFile(filePath, "utf8");
+    const locations = await client.definition({ column, filePath, line, text });
+
+    return {
+      enabled: true,
+      locations,
+      reason: null,
+    };
+  }
+
+  clientFor({ adapter, commandSpec, workspaceRoot }) {
+    const cacheKey = `${adapter.id}:${workspaceRoot}:${commandSpec.command}`;
+    const existingClient = this.clients.get(cacheKey);
+    if (existingClient) {
+      return existingClient;
+    }
+
+    const client = new LspClient({
+      adapter,
+      commandSpec,
+      workspaceRoot,
+    });
+    this.clients.set(cacheKey, client);
+    return client;
+  }
+
+  async findCommand(adapter) {
+    for (const commandSpec of adapter.commands) {
+      const isAvailable = await this.commandAvailable(commandSpec.command);
+      if (isAvailable) {
+        return commandSpec;
+      }
+    }
+    return null;
+  }
+
+  async commandAvailable(command) {
+    if (!this.commandChecks.has(command)) {
+      this.commandChecks.set(
+        command,
+        execFileAsync("which", [command])
+          .then(() => true)
+          .catch(() => false),
+      );
+    }
+
+    return this.commandChecks.get(command);
+  }
+}
+
+module.exports = {
+  LspManager,
+};

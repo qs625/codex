@@ -3,7 +3,13 @@ import { threadStatusClass } from "../lib/thread";
 import type { ConversationEntry } from "../types";
 import { CodeIcon, DocumentIcon, RobotIcon, ShareIcon, UserIcon } from "./icons";
 
-export function MessageRow({ entries }: { entries: ConversationEntry[] }) {
+export function MessageRow({
+  entries,
+  onOpenLocalFile,
+}: {
+  entries: ConversationEntry[];
+  onOpenLocalFile?: (target: string) => void;
+}) {
   const firstEntry = entries[0];
 
   return (
@@ -19,7 +25,7 @@ export function MessageRow({ entries }: { entries: ConversationEntry[] }) {
         <div className="message-stack">
           {entries.map((entry) => (
             <div key={entry.id} className="message-bubble">
-              <MarkdownContent text={entry.text} />
+              <MarkdownContent text={entry.text} onOpenLocalFile={onOpenLocalFile} />
               {entry.attachments.length > 0 ? (
                 <div className="message-attachments">
                   {entry.attachments.map((attachment) =>

@@ -224,3 +224,26 @@ export type ComposerImage = {
   name: string;
   dataUrl: string;
 };
+
+export type RightPanelView = "todo" | "preview";
+
+export type FilePreview = {
+  path: string;
+  displayPath: string;
+  content: string;
+  language: string;
+  line: number | null;
+  lsp: {
+    enabled: boolean;
+    languageId: string | null;
+    serverLabel: string | null;
+    workspaceRoot: string | null;
+    reason: string | null;
+  };
+};
+
+export type FileLocation = {
+  path: string;
+  line: number | null;
+  column: number | null;
+};

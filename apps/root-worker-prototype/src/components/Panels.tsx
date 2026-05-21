@@ -3,10 +3,7 @@ import type { ChangeEvent, ClipboardEvent, RefObject } from "react";
 import { AgentTreeNode } from "./AgentTree";
 import { EventRow, MessageRow, ToolRow } from "./Conversation";
 import {
-  BranchIcon,
-  ClockIcon,
   CodeIcon,
-  FilterIcon,
   GearIcon,
   ImageIcon,
   MoreIcon,
@@ -20,9 +17,7 @@ import { getAgentRoleLabel, getPresenceLabel, getThreadPath, isRootThread, threa
 import type {
   ComposerImage,
   ConversationCell,
-  TaskFilter,
   Thread,
-  TodoCardItem,
   TreeMenuState,
   TreeNode,
 } from "../types";
@@ -116,6 +111,7 @@ export function ConversationPanel({
   onDraftChange,
   onHandleComposerPaste,
   onHandleImageSelection,
+  onOpenLocalFile,
   onRemoveDraftImage,
   onSendMessage,
   selectedThread,
@@ -132,6 +128,7 @@ export function ConversationPanel({
   onDraftChange: (value: string) => void;
   onHandleComposerPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
   onHandleImageSelection: (event: ChangeEvent<HTMLInputElement>) => void;
+  onOpenLocalFile: (target: string) => void;
   onRemoveDraftImage: (imageId: string) => void;
   onSendMessage: () => void;
   selectedThread: Thread | null;
@@ -172,7 +169,11 @@ export function ConversationPanel({
               ) : cell.kind === "tool" ? (
                 <ToolRow key={cell.id} entries={cell.entries} />
               ) : (
-                <MessageRow key={cell.id} entries={cell.entries} />
+                <MessageRow
+                  key={cell.id}
+                  entries={cell.entries}
+                  onOpenLocalFile={onOpenLocalFile}
+                />
               ),
             )
           ) : (
@@ -262,94 +263,6 @@ export function ConversationPanel({
         </div>
       </footer>
     </section>
-  );
-}
-
-export function TodoPanel({
-  onCreateRootThread,
-  onSelectTaskThread,
-  onSetTaskFilter,
-  selectedThreadId,
-  taskFilter,
-  todoItems,
-}: {
-  onCreateRootThread: () => void;
-  onSelectTaskThread: (threadId: string) => void;
-  onSetTaskFilter: (value: TaskFilter) => void;
-  selectedThreadId: string | null;
-  taskFilter: TaskFilter;
-  todoItems: TodoCardItem[];
-}) {
-  return (
-    <aside className="todo-panel">
-      <header className="todo-header">
-        <div>
-          <h2>Todo List</h2>
-        </div>
-        <button type="button" className="icon-button subtle" aria-label="Todo settings">
-          <FilterIcon />
-        </button>
-      </header>
-
-      <div className="todo-filters">
-        {(
-          [
-            ["all", "All"],
-            ["todo", "Todo"],
-            ["doing", "Doing"],
-            ["blocked", "Blocked"],
-            ["done", "Done"],
-          ] satisfies Array<[TaskFilter, string]>
-        ).map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            className={taskFilter === value ? "active" : ""}
-            onClick={() => onSetTaskFilter(value)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      <div className="todo-scroll">
-        {todoItems.length > 0 ? (
-          todoItems.map((task) => (
-            <button
-              key={task.id}
-              type="button"
-              className={`todo-card ${task.threadId === selectedThreadId ? "selected" : ""}`}
-              onClick={() => onSelectTaskThread(task.threadId)}
-            >
-              <div className="todo-card-top">
-                <span className="todo-radio" />
-                <strong>{task.title}</strong>
-                <span className={`todo-status ${task.status}`}>{task.statusLabel}</span>
-                <MoreIcon />
-              </div>
-              <div className="todo-card-meta">
-                <BranchIcon />
-                <span>{task.ownerPath}</span>
-              </div>
-              <div className="todo-card-meta">
-                <ClockIcon />
-                <span>{task.updatedLabel}</span>
-              </div>
-              {task.summary ? <p>{task.summary}</p> : null}
-            </button>
-          ))
-        ) : (
-          <div className="empty-card todo-empty">
-            <p>No tasks for this filter.</p>
-          </div>
-        )}
-      </div>
-
-      <button type="button" className="new-task-button" onClick={onCreateRootThread}>
-        <PlusIcon />
-        <span>New Task</span>
-      </button>
-    </aside>
   );
 }
 

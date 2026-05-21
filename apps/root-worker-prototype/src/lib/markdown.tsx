@@ -1,7 +1,13 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-export function MarkdownContent({ text }: { text: string }) {
+export function MarkdownContent({
+  onOpenLocalFile,
+  text,
+}: {
+  onOpenLocalFile?: (target: string) => void;
+  text: string;
+}) {
   return (
     <div className="markdown-content">
       <ReactMarkdown
@@ -18,7 +24,7 @@ export function MarkdownContent({ text }: { text: string }) {
                 onClick={(event) => {
                   event.preventDefault();
                   if (target) {
-                    void openMarkdownLinkTarget(target);
+                    void openMarkdownLinkTarget(target, onOpenLocalFile);
                   }
                 }}
               >
@@ -35,7 +41,15 @@ export function MarkdownContent({ text }: { text: string }) {
   );
 }
 
-async function openMarkdownLinkTarget(target: string) {
+async function openMarkdownLinkTarget(
+  target: string,
+  onOpenLocalFile?: (target: string) => void,
+) {
+  if (isLocalMarkdownLinkTarget(target) && onOpenLocalFile) {
+    onOpenLocalFile(target);
+    return;
+  }
+
   if (window.codexDesktop) {
     try {
       await window.codexDesktop.openLink(target);

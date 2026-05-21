@@ -1,11 +1,14 @@
 const path = require("node:path");
 const os = require("node:os");
+const fs = require("node:fs/promises");
 const { fileURLToPath } = require("node:url");
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { AppServerClient } = require("./appServerClient.cjs");
+const { LspManager } = require("./lsp/manager.cjs");
 
 const isDev = !app.isPackaged;
 const appServerClient = new AppServerClient();
+const lspManager = new LspManager();
 const windows = new Set();
 const defaultWorkspace = process.env.ROOT_WORKER_WORKSPACE ?? path.resolve(process.cwd(), "../..");
 const devServerUrl = "http://127.0.0.1:5173";
@@ -111,6 +114,18 @@ ipcMain.handle("codex:readThread", async (_event, threadId, subscribe = true) =>
 ipcMain.handle("codex:openLink", async (_event, target) => {
   await openLinkTarget(target);
   return { ok: true };
+});
+
+ipcMain.handle("codex:readLocalFile", async (_event, target) => {
+  return readLocalFileTarget(target);
+});
+
+ipcMain.handle("codex:lspDefinition", async (_event, payload) => {
+  return lspManager.definition({
+    filePath: payload.path,
+    line: payload.line,
+    column: payload.column,
+  });
 });
 
 ipcMain.handle("codex:sendMessage", async (_event, payload) => {
@@ -383,5 +398,87 @@ function localFilePathFromTarget(target) {
     return path.join(os.homedir(), withoutLocationSuffix.slice(2));
   }
 
+  if (
+    withoutLocationSuffix.startsWith("./") ||
+    withoutLocationSuffix.startsWith("../")
+  ) {
+    return path.resolve(defaultWorkspace, withoutLocationSuffix);
+  }
+
   return withoutLocationSuffix;
+}
+
+async function readLocalFileTarget(target) {
+  if (typeof target !== "string" || !target.trim()) {
+    throw new Error("Cannot preview empty link target");
+  }
+
+  if (!isLocalLinkTarget(target.trim())) {
+    throw new Error("Only local file links can be previewed");
+  }
+
+  const { line, path: filePath } = parseLocalFileTarget(target.trim());
+  const content = await fs.readFile(filePath, "utf8");
+  const lsp = await lspManager.describeFile(filePath);
+
+  return {
+    path: filePath,
+    displayPath: path.relative(defaultWorkspace, filePath) || filePath,
+    content,
+    language: languageForFilePath(filePath),
+    line,
+    lsp,
+  };
+}
+
+function parseLocalFileTarget(target) {
+  const normalizedPath = localFilePathFromTarget(target);
+  const lineMatch = normalizedPath.match(/:(\d+)(?::\d+)?$/);
+
+  if (!lineMatch) {
+    return { path: normalizedPath, line: null };
+  }
+
+  const possiblePath = normalizedPath.slice(0, Math.max(0, normalizedPath.length - lineMatch[0].length));
+  if (!possiblePath || !path.extname(possiblePath)) {
+    return { path: normalizedPath, line: null };
+  }
+
+  return {
+    path: possiblePath,
+    line: Number.parseInt(lineMatch[1], 10),
+  };
+}
+
+function languageForFilePath(filePath) {
+  const extension = path.extname(filePath).toLowerCase();
+  switch (extension) {
+    case ".cjs":
+    case ".js":
+    case ".jsx":
+    case ".mjs":
+      return "javascript";
+    case ".ts":
+    case ".tsx":
+      return "typescript";
+    case ".rs":
+      return "rust";
+    case ".json":
+      return "json";
+    case ".md":
+      return "markdown";
+    case ".css":
+      return "css";
+    case ".html":
+      return "html";
+    case ".yml":
+    case ".yaml":
+      return "yaml";
+    case ".sh":
+    case ".zsh":
+    case ".fish":
+      return "shell";
+    default:
+      return "plaintext";
+  }
 }
