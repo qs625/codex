@@ -3,8 +3,6 @@ import Editor from "@monaco-editor/react";
 import { BranchIcon, ClockIcon, DocumentIcon, FilterIcon, OpenIcon, PlusIcon } from "./icons";
 import type { FileLocation, FilePreview, RightPanelView, TaskFilter, TodoCardItem } from "../types";
 
-const CONTENT_TEXT_TARGET = 6;
-
 export function RightPanel({
   activeView,
   onCreateRootThread,
@@ -238,8 +236,8 @@ function FilePreviewPanel({
               editor.onMouseDown((event) => {
                 if (
                   !preview.lsp.enabled ||
-                  event.target.type !== CONTENT_TEXT_TARGET ||
-                  !event.target.position
+                  !event.target.position ||
+                  event.event.browserEvent.button !== 0
                 ) {
                   return;
                 }
@@ -258,7 +256,7 @@ function FilePreviewPanel({
                   .lspDefinition({
                     path: preview.path,
                     line: event.target.position.lineNumber,
-                    column: word.startColumn,
+                    column: event.target.position.column,
                   })
                   .then((response) => {
                     const destination = response.locations[0];

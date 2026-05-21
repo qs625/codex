@@ -14,7 +14,7 @@ class LspClient {
     this.isInitialized = false;
     this.initializingPromise = null;
     this.process = spawn(commandSpec.command, commandSpec.args, {
-      cwd: workspaceRoot,
+      cwd: commandSpec.cwd ?? workspaceRoot,
       stdio: ["pipe", "pipe", "pipe"],
     });
 

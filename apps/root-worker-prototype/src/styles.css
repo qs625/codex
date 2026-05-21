@@ -56,7 +56,7 @@ svg {
 
 .workspace {
   display: grid;
-  grid-template-columns: 348px minmax(0, 1fr) 378px;
+  grid-template-columns: 348px 10px minmax(0, 1fr) 10px 378px;
   height: calc(100vh - 36px);
   overflow: hidden;
   border: 1px solid rgba(16, 24, 40, 0.08);
@@ -90,6 +90,30 @@ svg {
 .sidebar,
 .conversation-panel {
   border-right: 1px solid rgba(16, 24, 40, 0.08);
+}
+
+.panel-resizer {
+  position: relative;
+  cursor: col-resize;
+  background: linear-gradient(180deg, rgba(16, 24, 40, 0.02), rgba(16, 24, 40, 0.06));
+}
+
+.panel-resizer::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 44px;
+  border-radius: 999px;
+  background: rgba(87, 83, 78, 0.18);
+  transform: translate(-50%, -50%);
+}
+
+.is-resizing-panels,
+.is-resizing-panels * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 .sidebar-section-header,

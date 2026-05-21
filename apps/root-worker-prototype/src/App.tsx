@@ -35,6 +35,8 @@ import type {
 } from "./types";
 
 function App() {
+  const [sidebarWidth, setSidebarWidth] = useState(348);
+  const [rightPanelWidth, setRightPanelWidth] = useState(378);
   const [workspace, setWorkspace] = useState("");
   const [threads, setThreads] = useState<Thread[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
@@ -56,6 +58,11 @@ function App() {
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const shouldStickConversationToBottomRef = useRef(true);
+  const resizeStateRef = useRef<{
+    startX: number;
+    startWidth: number;
+    panel: "left" | "right";
+  } | null>(null);
 
   useEffect(() => {
     void loadBootstrap();
@@ -78,6 +85,35 @@ function App() {
   useEffect(() => {
     shouldStickConversationToBottomRef.current = true;
   }, [selectedThreadId]);
+
+  useEffect(() => {
+    function handlePointerMove(event: PointerEvent) {
+      const resizeState = resizeStateRef.current;
+      if (!resizeState) {
+        return;
+      }
+
+      if (resizeState.panel === "left") {
+        setSidebarWidth(clampWidth(resizeState.startWidth + (event.clientX - resizeState.startX), 280, 520));
+        return;
+      }
+
+      setRightPanelWidth(clampWidth(resizeState.startWidth - (event.clientX - resizeState.startX), 300, 620));
+    }
+
+    function handlePointerUp() {
+      resizeStateRef.current = null;
+      document.body.classList.remove("is-resizing-panels");
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, []);
 
   const conversationEntries = useMemo(
     () => buildConversationEntries(selectedThread),
@@ -533,11 +569,25 @@ function App() {
     }
   }
 
+  function beginResize(panel: "left" | "right", clientX: number) {
+    resizeStateRef.current = {
+      panel,
+      startX: clientX,
+      startWidth: panel === "left" ? sidebarWidth : rightPanelWidth,
+    };
+    document.body.classList.add("is-resizing-panels");
+  }
+
   return (
     <div className="app-shell" onClick={() => setTreeMenu(null)}>
       {error ? <div className="error-banner">{error}</div> : null}
 
-      <main className="workspace">
+      <main
+        className="workspace"
+        style={{
+          gridTemplateColumns: `${sidebarWidth}px 10px minmax(0, 1fr) 10px ${rightPanelWidth}px`,
+        }}
+      >
         <SidebarPanel
           agentTree={agentTree}
           collapsedSet={collapsedSet}
@@ -548,6 +598,12 @@ function App() {
           onSetNewRootName={setNewRootName}
           onToggleTreeNode={toggleTreeNode}
           selectedThreadId={selectedThreadId}
+        />
+        <div
+          className="panel-resizer"
+          role="separator"
+          aria-label="Resize sidebar"
+          onPointerDown={(event) => beginResize("left", event.clientX)}
         />
         <ConversationPanel
           conversationCells={conversationCells}
@@ -566,6 +622,12 @@ function App() {
           onSendMessage={() => void sendMessage()}
           selectedThread={selectedThread}
           selectedThreadId={selectedThreadId}
+        />
+        <div
+          className="panel-resizer"
+          role="separator"
+          aria-label="Resize right panel"
+          onPointerDown={(event) => beginResize("right", event.clientX)}
         />
         <RightPanel
           activeView={rightPanelView}
@@ -594,3 +656,7 @@ function App() {
 }
 
 export default App;
+
+function clampWidth(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}

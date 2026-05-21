@@ -1,4 +1,5 @@
 const fs = require("node:fs/promises");
+const fsSync = require("node:fs");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 
@@ -110,7 +111,7 @@ class LspManager {
 
   async findCommand(adapter) {
     for (const commandSpec of adapter.commands) {
-      const isAvailable = await this.commandAvailable(commandSpec.command);
+      const isAvailable = await this.commandAvailable(commandSpec);
       if (isAvailable) {
         return commandSpec;
       }
@@ -118,17 +119,21 @@ class LspManager {
     return null;
   }
 
-  async commandAvailable(command) {
-    if (!this.commandChecks.has(command)) {
+  async commandAvailable(commandSpec) {
+    if (commandSpec.availability?.type === "file") {
+      return fsSync.existsSync(commandSpec.availability.path);
+    }
+
+    if (!this.commandChecks.has(commandSpec.command)) {
       this.commandChecks.set(
-        command,
-        execFileAsync("which", [command])
+        commandSpec.command,
+        execFileAsync("which", [commandSpec.command])
           .then(() => true)
           .catch(() => false),
       );
     }
 
-    return this.commandChecks.get(command);
+    return this.commandChecks.get(commandSpec.command);
   }
 }
 

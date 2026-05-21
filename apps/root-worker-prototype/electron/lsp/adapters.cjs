@@ -1,11 +1,21 @@
 const path = require("node:path");
 
+const APP_ROOT = path.resolve(__dirname, "..", "..");
+
 const ADAPTERS = [
   {
     id: "typescript",
     serverLabel: "TypeScript Language Server",
     commands: [
-      { command: "typescript-language-server", args: ["--stdio"] },
+      {
+        command: "pnpm",
+        args: ["exec", "typescript-language-server", "--stdio"],
+        cwd: APP_ROOT,
+        availability: {
+          type: "file",
+          path: path.join(APP_ROOT, "node_modules", ".bin", "typescript-language-server"),
+        },
+      },
     ],
     extensions: new Set([".ts", ".tsx", ".mts", ".cts"]),
     languageIdForFile(filePath) {
@@ -22,7 +32,15 @@ const ADAPTERS = [
     id: "javascript",
     serverLabel: "TypeScript Language Server",
     commands: [
-      { command: "typescript-language-server", args: ["--stdio"] },
+      {
+        command: "pnpm",
+        args: ["exec", "typescript-language-server", "--stdio"],
+        cwd: APP_ROOT,
+        availability: {
+          type: "file",
+          path: path.join(APP_ROOT, "node_modules", ".bin", "typescript-language-server"),
+        },
+      },
     ],
     extensions: new Set([".js", ".jsx", ".mjs", ".cjs"]),
     languageIdForFile(filePath) {
