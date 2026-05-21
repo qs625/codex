@@ -191,7 +191,7 @@ function resolveWorkspaceCodexBinary() {
 }
 
 function resolvePrototypeCodexHome() {
-  return path.join(os.homedir(), ".codex_home");
+  return path.join(os.homedir(), ".codex-home");
 }
 
 function shellQuote(value) {

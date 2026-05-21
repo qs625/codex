@@ -13,7 +13,7 @@ This starts:
 
 - Vite on `http://localhost:5173` for the Electron renderer
 - Electron, which starts `../../codex-rs/target/debug/codex app-server --listen stdio://` by default when that local build exists, otherwise it falls back to `codex app-server --listen stdio://`
-- the prototype defaults `CODEX_HOME` to `~/.codex_home`
+- the prototype defaults `CODEX_HOME` to `~/.codex-home`
 
 You can override the app-server command or Codex home with:
 
