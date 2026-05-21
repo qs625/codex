@@ -1,4 +1,5 @@
 packages:
+  - apps/*
   - codex-cli
   - codex-rs/responses-api-proxy/npm
   - sdk/typescript
@@ -14,4 +15,5 @@ strictDepBuilds: true
 trustPolicy: no-downgrade
 trustPolicyIgnoreAfter: 10080
 trustPolicyExclude: []
-allowBuilds: {}
+allowBuilds:
+  electron: true
