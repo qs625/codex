@@ -15,6 +15,8 @@ This starts:
 - Electron, which starts `../../codex-rs/target/debug/codex app-server --listen stdio://` by default when that local build exists, otherwise it falls back to `codex app-server --listen stdio://`
 - the prototype defaults `CODEX_HOME` to `~/.codex-home`
 
+Use this only when you specifically want the Vite dev server flow.
+
 You can override the app-server command or Codex home with:
 
 ```bash
@@ -32,5 +34,14 @@ pnpm --filter @my-codex/root-worker-prototype build
 ## Electron
 
 ```bash
+pnpm --filter @my-codex/root-worker-prototype start
+```
+
+`start` now loads the built renderer from `dist/index.html` even when running from the source tree. If the build output is missing, Electron exits with an error telling you to run the build first.
+
+For manual prototype iteration without Vite hot reload, use:
+
+```bash
+pnpm --filter @my-codex/root-worker-prototype build
 pnpm --filter @my-codex/root-worker-prototype start
 ```

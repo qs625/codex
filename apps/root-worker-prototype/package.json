@@ -5,7 +5,7 @@
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
-    "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
+    "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && ROOT_WORKER_RENDERER_MODE=dev electron .\"",
     "build": "vite build",
     "start": "electron ."
   },

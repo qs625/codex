@@ -6,14 +6,16 @@ const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { AppServerClient } = require("./appServerClient.cjs");
 const { LspManager } = require("./lsp/manager.cjs");
 
-const isDev = !app.isPackaged;
+const rendererMode = process.env.ROOT_WORKER_RENDERER_MODE ?? "built";
+const isDev = rendererMode === "dev";
 const appServerClient = new AppServerClient();
 const lspManager = new LspManager();
 const windows = new Set();
 const defaultWorkspace = process.env.ROOT_WORKER_WORKSPACE ?? path.resolve(process.cwd(), "../..");
 const devServerUrl = "http://127.0.0.1:5173";
+const builtRendererPath = path.join(__dirname, "../dist/index.html");
 
-function createWindow() {
+async function createWindow() {
   const window = new BrowserWindow({
     width: 1520,
     height: 980,
@@ -37,7 +39,8 @@ function createWindow() {
     void window.loadURL(devServerUrl);
     window.webContents.openDevTools({ mode: "detach" });
   } else {
-    void window.loadFile(path.join(__dirname, "../dist/index.html"));
+    await ensureBuiltRenderer();
+    void window.loadFile(builtRendererPath);
   }
 
   return window;
@@ -183,10 +186,10 @@ ipcMain.handle("codex:sendMessage", async (_event, payload) => {
 });
 
 app.whenReady().then(() => {
-  createWindow();
+  void createWindow().catch(handleStartupError);
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      void createWindow().catch(handleStartupError);
     }
   });
 });
@@ -196,6 +199,22 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
+
+async function ensureBuiltRenderer() {
+  try {
+    await fs.access(builtRendererPath);
+  } catch (error) {
+    throw new Error(
+      `Built renderer not found at ${builtRendererPath}. Run 'pnpm --filter @my-codex/root-worker-prototype build' before 'pnpm --filter @my-codex/root-worker-prototype start'.`,
+      { cause: error },
+    );
+  }
+}
+
+function handleStartupError(error) {
+  console.error("[prototype] failed to start renderer", error);
+  app.exit(1);
+}
 
 async function listThreads(cwd) {
   const response = await appServerClient.request("thread/list", {
