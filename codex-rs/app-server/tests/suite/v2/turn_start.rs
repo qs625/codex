@@ -42,6 +42,7 @@ use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadSource;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
+use codex_app_server_protocol::ThreadStartedNotification;
 use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnEnvironmentParams;
 use codex_app_server_protocol::TurnItemsView;
@@ -2834,17 +2835,35 @@ async fn turn_start_emits_spawn_agent_item_with_model_metadata_v2() -> Result<()
         }
     );
 
-    let spawn_completed = timeout(DEFAULT_READ_TIMEOUT, async {
+    let (child_started_thread_id, spawn_completed) = timeout(DEFAULT_READ_TIMEOUT, async {
+        let mut child_started_thread_id = None;
         loop {
-            let completed_notif = mcp
-                .read_stream_until_notification_message("item/completed")
-                .await?;
-            let completed: ItemCompletedNotification =
-                serde_json::from_value(completed_notif.params.expect("item/completed params"))?;
-            if let ThreadItem::CollabAgentToolCall { id, .. } = &completed.item
-                && id == SPAWN_CALL_ID
-            {
-                return Ok::<ThreadItem, anyhow::Error>(completed.item);
+            let JSONRPCMessage::Notification(notification) = mcp.read_next_message().await? else {
+                continue;
+            };
+            match notification.method.as_str() {
+                "thread/started" => {
+                    let started: ThreadStartedNotification = serde_json::from_value(
+                        notification.params.expect("thread/started params"),
+                    )?;
+                    if started.thread.thread_source == Some(ThreadSource::Subagent) {
+                        child_started_thread_id = Some(started.thread.id);
+                    }
+                }
+                "item/completed" => {
+                    let completed: ItemCompletedNotification = serde_json::from_value(
+                        notification.params.expect("item/completed params"),
+                    )?;
+                    if let ThreadItem::CollabAgentToolCall { id, .. } = &completed.item
+                        && id == SPAWN_CALL_ID
+                    {
+                        return Ok::<(Option<String>, ThreadItem), anyhow::Error>((
+                            child_started_thread_id,
+                            completed.item,
+                        ));
+                    }
+                }
+                _ => {}
             }
         }
     })
@@ -2875,6 +2894,7 @@ async fn turn_start_emits_spawn_agent_item_with_model_metadata_v2() -> Result<()
     assert_eq!(prompt, Some(CHILD_PROMPT.to_string()));
     assert_eq!(model, Some(REQUESTED_MODEL.to_string()));
     assert_eq!(reasoning_effort, Some(REQUESTED_REASONING_EFFORT));
+    assert_eq!(child_started_thread_id, Some(receiver_thread_id.clone()));
     let agent_state = agents_states
         .get(&receiver_thread_id)
         .expect("spawn completion should include child agent state");

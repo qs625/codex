@@ -113,6 +113,20 @@ pub struct NewThread {
     pub session_configured: SessionConfiguredEvent,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ThreadCreatedEvent {
+    Started(ThreadId),
+    Resumed(ThreadId),
+}
+
+impl ThreadCreatedEvent {
+    pub fn thread_id(&self) -> ThreadId {
+        match self {
+            Self::Started(thread_id) | Self::Resumed(thread_id) => *thread_id,
+        }
+    }
+}
+
 // TODO(ccunningham): Add an explicit non-interrupting live-turn snapshot once
 // core can represent sampling boundaries directly instead of relying on
 // whichever items happened to be persisted mid-turn.
@@ -198,7 +212,7 @@ pub(crate) struct ResumeThreadWithHistoryOptions {
 /// function to require an `Arc<&Self>`.
 pub(crate) struct ThreadManagerState {
     threads: Arc<RwLock<HashMap<ThreadId, Arc<CodexThread>>>>,
-    thread_created_tx: broadcast::Sender<ThreadId>,
+    thread_created_tx: broadcast::Sender<ThreadCreatedEvent>,
     auth_manager: Arc<AuthManager>,
     models_manager: SharedModelsManager,
     environment_manager: Arc<EnvironmentManager>,
@@ -450,7 +464,7 @@ impl ThreadManager {
         self.state.list_thread_ids().await
     }
 
-    pub fn subscribe_thread_created(&self) -> broadcast::Receiver<ThreadId> {
+    pub fn subscribe_thread_created(&self) -> broadcast::Receiver<ThreadCreatedEvent> {
         self.state.thread_created_tx.subscribe()
     }
 
@@ -1279,8 +1293,16 @@ impl ThreadManagerState {
         )))
     }
 
-    pub(crate) fn notify_thread_created(&self, thread_id: ThreadId) {
-        let _ = self.thread_created_tx.send(thread_id);
+    pub(crate) fn notify_thread_started(&self, thread_id: ThreadId) {
+        let _ = self
+            .thread_created_tx
+            .send(ThreadCreatedEvent::Started(thread_id));
+    }
+
+    pub(crate) fn notify_thread_resumed(&self, thread_id: ThreadId) {
+        let _ = self
+            .thread_created_tx
+            .send(ThreadCreatedEvent::Resumed(thread_id));
     }
 
     async fn parent_rollout_thread_trace_for_source(

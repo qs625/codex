@@ -642,7 +642,9 @@ impl MessageProcessor {
         request_fut.instrument(request_context.span()).await;
     }
 
-    pub(crate) fn thread_created_receiver(&self) -> broadcast::Receiver<ThreadId> {
+    pub(crate) fn thread_created_receiver(
+        &self,
+    ) -> broadcast::Receiver<codex_core::ThreadCreatedEvent> {
         self.thread_processor.thread_created_receiver()
     }
 
@@ -683,6 +685,16 @@ impl MessageProcessor {
     ) {
         self.thread_processor
             .try_attach_thread_listener(thread_id, connection_ids)
+            .await;
+    }
+
+    pub(crate) async fn emit_thread_started_notification_to_connections(
+        &self,
+        thread_id: ThreadId,
+        connection_ids: &[ConnectionId],
+    ) {
+        self.thread_processor
+            .emit_thread_started_notification_to_connections(thread_id, connection_ids)
             .await;
     }
 

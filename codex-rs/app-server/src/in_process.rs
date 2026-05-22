@@ -485,15 +485,26 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
                     }
                     created = thread_created_rx.recv(), if listen_for_threads => {
                         match created {
-                            Ok(thread_id) => {
+                            Ok(thread_created) => {
                                 let connection_ids = if session.initialized() {
                                     vec![IN_PROCESS_CONNECTION_ID]
                                 } else {
                                     Vec::<ConnectionId>::new()
                                 };
                                 processor
-                                    .try_attach_thread_listener(thread_id, connection_ids)
+                                    .try_attach_thread_listener(
+                                        thread_created.thread_id(),
+                                        connection_ids.clone(),
+                                    )
                                     .await;
+                                if matches!(thread_created, codex_core::ThreadCreatedEvent::Started(_)) {
+                                    processor
+                                        .emit_thread_started_notification_to_connections(
+                                            thread_created.thread_id(),
+                                            &connection_ids,
+                                        )
+                                        .await;
+                                }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                                 warn!("thread_created receiver lagged; skipping resync");

@@ -1015,7 +1015,7 @@ pub async fn run_main_with_transport_options(
                     }
                     created = thread_created_rx.recv(), if listen_for_threads => {
                         match created {
-                            Ok(thread_id) => {
+                            Ok(thread_created) => {
                                 let mut initialized_connection_ids = Vec::new();
                                 for (connection_id, connection_state) in &connections {
                                     if connection_state.session.initialized() {
@@ -1024,10 +1024,18 @@ pub async fn run_main_with_transport_options(
                                 }
                                 processor
                                     .try_attach_thread_listener(
-                                        thread_id,
-                                        initialized_connection_ids,
+                                        thread_created.thread_id(),
+                                        initialized_connection_ids.clone(),
                                     )
                                     .await;
+                                if matches!(thread_created, codex_core::ThreadCreatedEvent::Started(_)) {
+                                    processor
+                                        .emit_thread_started_notification_to_connections(
+                                            thread_created.thread_id(),
+                                            &initialized_connection_ids,
+                                        )
+                                        .await;
+                                }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                                 // TODO(jif) handle lag.

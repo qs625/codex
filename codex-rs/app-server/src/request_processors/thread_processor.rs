@@ -955,6 +955,39 @@ impl ThreadRequestProcessor {
             .await;
     }
 
+    pub(crate) async fn emit_thread_started_notification_to_connections(
+        &self,
+        thread_id: ThreadId,
+        connection_ids: &[ConnectionId],
+    ) {
+        if connection_ids.is_empty() {
+            return;
+        }
+        let Ok(thread) = self.thread_manager.get_thread(thread_id).await else {
+            return;
+        };
+        let config_snapshot = thread.config_snapshot().await;
+        let mut loaded_thread = build_thread_from_snapshot(
+            thread_id,
+            thread.session_configured().session_id.to_string(),
+            &config_snapshot,
+            thread.rollout_path(),
+        );
+        loaded_thread.status = resolve_thread_status(
+            self.thread_watch_manager
+                .loaded_status_for_thread(&loaded_thread.id)
+                .await,
+            /*has_in_progress_turn*/ false,
+        );
+        let notif = thread_started_notification(loaded_thread);
+        self.outgoing
+            .send_server_notification_to_connections(
+                connection_ids,
+                ServerNotification::ThreadStarted(notif),
+            )
+            .await;
+    }
+
     async fn submit_core_op(
         &self,
         request_id: &ConnectionRequestId,
@@ -2237,7 +2270,9 @@ impl ThreadRequestProcessor {
             .map_err(|err| thread_turns_list_history_load_error(thread_id, err))
     }
 
-    pub(crate) fn thread_created_receiver(&self) -> broadcast::Receiver<ThreadId> {
+    pub(crate) fn thread_created_receiver(
+        &self,
+    ) -> broadcast::Receiver<codex_core::ThreadCreatedEvent> {
         self.thread_manager.subscribe_thread_created()
     }
 

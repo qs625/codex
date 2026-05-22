@@ -307,7 +307,7 @@ impl AgentControl {
         // Notify a new thread has been created. This notification will be processed by clients
         // to subscribe or drain this newly created thread.
         // TODO(jif) add helper for drain
-        state.notify_thread_created(new_thread.thread_id);
+        state.notify_thread_started(new_thread.thread_id);
 
         self.persist_thread_spawn_edge_for_source(
             new_thread.thread.as_ref(),
@@ -605,7 +605,7 @@ impl AgentControl {
         reservation.commit(agent_metadata.clone());
         // Resumed threads are re-registered in-memory and need the same listener
         // attachment path as freshly spawned threads.
-        state.notify_thread_created(resumed_thread.thread_id);
+        state.notify_thread_resumed(resumed_thread.thread_id);
         if !resumed_thread.thread.enabled(Feature::MultiAgentV2) {
             let child_reference = agent_metadata
                 .agent_path

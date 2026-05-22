@@ -123,28 +123,25 @@ export function getTreeNodeSubtitle(thread: Thread) {
 }
 
 export function getThreadPath(thread: Thread) {
-  const source = thread.source;
-  if (typeof source === "object" && "subAgent" in source) {
-    const subAgent = source.subAgent;
-    if (typeof subAgent === "object" && "thread_spawn" in subAgent) {
-      return subAgent.thread_spawn.agent_path ?? `/root/${thread.agentNickname ?? thread.id.slice(0, 6)}`;
-    }
+  const threadSpawn = getThreadSpawnSource(thread);
+  if (threadSpawn) {
+    return (
+      threadSpawn.agentPath ??
+      threadSpawn.agent_path ??
+      `/root/${thread.agentNickname ?? thread.id.slice(0, 6)}`
+    );
   }
   return "/root";
 }
 
 export function isSubagentThread(thread: Thread) {
-  const source = thread.source;
-  return typeof source === "object" && "subAgent" in source;
+  return getThreadSpawnSource(thread) !== null || thread.threadSource === "subagent";
 }
 
 export function getParentThreadId(thread: Thread) {
-  const source = thread.source;
-  if (typeof source === "object" && "subAgent" in source) {
-    const subAgent = source.subAgent;
-    if (typeof subAgent === "object" && "thread_spawn" in subAgent) {
-      return subAgent.thread_spawn.parent_thread_id;
-    }
+  const threadSpawn = getThreadSpawnSource(thread);
+  if (threadSpawn) {
+    return threadSpawn.parentThreadId ?? threadSpawn.parent_thread_id ?? null;
   }
   return null;
 }
@@ -403,4 +400,23 @@ function mapTaskStatus(status: string): Exclude<TaskFilter, "all"> {
     return mapped;
   }
   return "todo";
+}
+
+function getThreadSpawnSource(thread: Thread): Record<string, unknown> | null {
+  const source = thread.source;
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+
+  const subAgentSource =
+    ("subAgent" in source ? source.subAgent : undefined) ??
+    ("subagent" in source ? source.subagent : undefined);
+  if (!subAgentSource || typeof subAgentSource !== "object") {
+    return null;
+  }
+
+  const threadSpawn =
+    ("thread_spawn" in subAgentSource ? subAgentSource.thread_spawn : undefined) ??
+    ("threadSpawn" in subAgentSource ? subAgentSource.threadSpawn : undefined);
+  return threadSpawn && typeof threadSpawn === "object" ? (threadSpawn as Record<string, unknown>) : null;
 }

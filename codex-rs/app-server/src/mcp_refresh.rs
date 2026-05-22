@@ -2,11 +2,13 @@ use crate::config_manager::ConfigManager;
 use codex_core::CodexThread;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
+use codex_file_watcher::FileWatcher;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::Op;
 use std::io;
 use std::sync::Arc;
+use std::sync::Weak;
 use tracing::warn;
 
 pub(crate) async fn queue_strict_refresh(
@@ -186,7 +188,11 @@ mod tests {
                 auth_manager,
                 SessionSource::Exec,
                 Arc::new(EnvironmentManager::default_for_tests()),
-                thread_extensions(guardian_agent_spawner(thread_manager.clone())),
+                thread_extensions(
+                    guardian_agent_spawner(thread_manager.clone()),
+                    Arc::new(FileWatcher::noop()),
+                    Weak::<ThreadManager>::clone(thread_manager),
+                ),
                 /*analytics_events_client*/ None,
                 thread_store,
                 Some(state_db.clone()),

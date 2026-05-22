@@ -52,6 +52,17 @@ function broadcast(channel, payload) {
 }
 
 appServerClient.on("notification", (notification) => {
+  if (notification.method === "thread/started") {
+    const thread = notification.params?.thread ?? null;
+    console.error(
+      "[prototype] thread/started",
+      JSON.stringify({
+        threadId: thread?.id ?? null,
+        threadSource: thread?.threadSource ?? null,
+        source: thread?.source ?? null,
+      }),
+    );
+  }
   broadcast("codex:notification", normalizeNotification(notification));
 });
 
