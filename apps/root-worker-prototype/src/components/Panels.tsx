@@ -11,9 +11,17 @@ import {
   PaperclipIcon,
   PlusIcon,
   SendIcon,
-  SparkleIcon,
 } from "./icons";
-import { getAgentRoleLabel, getPresenceLabel, getThreadPath, isRootThread, threadStatusClass } from "../lib/thread";
+import {
+  getThreadSubtreeIds,
+  getAgentRoleLabel,
+  getPresenceLabel,
+  getThreadModelLabel,
+  getThreadPath,
+  getThreadReasoningLabel,
+  isRootThread,
+  threadStatusClass,
+} from "../lib/thread";
 import type {
   ComposerImage,
   ConversationCell,
@@ -46,7 +54,10 @@ export function SidebarPanel({
   return (
     <aside className="sidebar">
       <div className="sidebar-section-header">
-        <h2>Agent Tree</h2>
+        <div className="section-heading">
+          <h2>Agent Tree</h2>
+          <span>{agentTree.length} roots</span>
+        </div>
         <button
           type="button"
           className="icon-button subtle"
@@ -93,7 +104,7 @@ export function SidebarPanel({
           <GearIcon />
           <span>Settings</span>
         </div>
-        <SparkleIcon />
+        <span className="sidebar-footer-shortcut">⌘,</span>
       </button>
     </aside>
   );
@@ -137,20 +148,23 @@ export function ConversationPanel({
   return (
     <section className="conversation-panel">
       <header className="conversation-header">
-        <div>
-          <h1>{selectedThread ? getThreadPath(selectedThread) : "/root"}</h1>
-          <div className="conversation-subtitle">
+        <div className="conversation-heading">
+          <div className="conversation-title-row">
+            <h1>{selectedThread ? getThreadPath(selectedThread) : "/root"}</h1>
             <span className={`status-dot ${threadStatusClass(selectedThread?.status ?? "waiting")}`} />
             <span>{selectedThread ? getAgentRoleLabel(selectedThread) : "Root Agent"}</span>
             <span className="subtitle-separator">•</span>
             <span>{selectedThread ? getPresenceLabel(selectedThread.status) : "Idle"}</span>
+            <span className="subtitle-separator">•</span>
+            <span className="thread-chip">{getThreadModelLabel(selectedThread)}</span>
+            <span className="thread-chip">reasoning: {getThreadReasoningLabel(selectedThread)}</span>
           </div>
         </div>
         <div className="conversation-actions">
-          <button type="button" className="icon-button" aria-label="Open thread details">
+          <button type="button" className="icon-button subtle" aria-label="Open thread details">
             <OpenIcon />
           </button>
-          <button type="button" className="icon-button" aria-label="More thread actions">
+          <button type="button" className="icon-button subtle" aria-label="More thread actions">
             <MoreIcon />
           </button>
         </div>
@@ -284,6 +298,8 @@ export function TreeContextMenu({
     return null;
   }
 
+  const descendantCount = getThreadSubtreeIds(threads, thread.id).size - 1;
+
   return (
     <div
       className="tree-context-menu"
@@ -295,7 +311,7 @@ export function TreeContextMenu({
         className="tree-context-menu-item danger"
         onClick={() => onArchiveThread(treeMenu.threadId)}
       >
-        Delete Agent
+        {descendantCount > 0 ? "Delete Agent Tree" : "Delete Agent"}
       </button>
     </div>
   );

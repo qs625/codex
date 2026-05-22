@@ -1,8 +1,8 @@
-import type { CSSProperties } from "react";
+import type { CSSProperties, MouseEvent } from "react";
 
 import { countDescendants, isRootThread, threadStatusClass } from "../lib/thread";
 import type { TreeMenuState, TreeNode } from "../types";
-import { ChevronDownIcon } from "./icons";
+import { ChevronDownIcon, RobotIcon } from "./icons";
 
 export function AgentTreeNode({
   collapsedSet,
@@ -25,27 +25,30 @@ export function AgentTreeNode({
   const isCollapsed = collapsedSet.has(node.threadId);
   const hasChildren = node.children.length > 0;
   const isRoot = node.thread ? isRootThread(node.thread) : depth === 0;
+  const openContextMenu = (event: MouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (isRoot || node.isPlaceholder || !node.thread) {
+      onOpenMenu(null);
+      return;
+    }
+    onOpenMenu({
+      threadId: node.threadId,
+      x: event.clientX,
+      y: event.clientY,
+    });
+  };
 
   return (
     <div
       className={`tree-node ${isRoot ? "tree-node-root" : ""}`}
       style={{ "--depth": depth } as CSSProperties}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        if (isRoot || node.isPlaceholder || !node.thread) {
-          onOpenMenu(null);
-          return;
-        }
-        onOpenMenu({
-          threadId: node.threadId,
-          x: event.clientX,
-          y: event.clientY,
-        });
-      }}
+      onContextMenu={openContextMenu}
     >
       <button
         type="button"
         className={`tree-node-button ${node.threadId === selectedThreadId ? "selected" : ""}`}
+        onContextMenu={openContextMenu}
         onClick={() => {
           if (!node.isPlaceholder) {
             onSelect(node.threadId);
@@ -66,9 +69,14 @@ export function AgentTreeNode({
           ) : (
             <span className="tree-spacer" />
           )}
-          <span
-            className={`status-dot ${node.thread ? threadStatusClass(node.thread.status) : "todo"}`}
-          />
+          <span className="tree-agent-column">
+            <span className="tree-agent-icon">
+              <RobotIcon />
+            </span>
+            <span
+              className={`tree-inline-status ${node.thread ? threadStatusClass(node.thread.status) : "todo"}`}
+            />
+          </span>
         </span>
         <span className="tree-node-copy">
           <strong>{node.label}</strong>

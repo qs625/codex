@@ -767,8 +767,8 @@ async fn build_thread_item(
     {
         return None;
     }
-    // Apply filters: must have session meta and a discoverable preview.
-    if summary.saw_session_meta && summary.preview.is_some() {
+    // Apply filters: the rollout must at least contain session metadata.
+    if summary.saw_session_meta {
         let HeadTailSummary {
             thread_id,
             first_user_message,

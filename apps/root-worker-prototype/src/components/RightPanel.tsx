@@ -1,6 +1,15 @@
 import Editor from "@monaco-editor/react";
 
-import { BranchIcon, ClockIcon, DocumentIcon, FilterIcon, OpenIcon, PlusIcon } from "./icons";
+import {
+  BranchIcon,
+  ClockIcon,
+  DocumentIcon,
+  FilterIcon,
+  GridIcon,
+  OpenIcon,
+  PlusIcon,
+  SearchIcon,
+} from "./icons";
 import type { FileLocation, FilePreview, RightPanelView, TaskFilter, TodoCardItem } from "../types";
 
 export function RightPanel({
@@ -32,50 +41,90 @@ export function RightPanel({
   taskFilter: TaskFilter;
   todoItems: TodoCardItem[];
 }) {
+  const todoStats = buildTodoStats(todoItems);
+
   return (
     <aside className="right-panel">
-      <div className="panel-switcher">
-        <button
-          type="button"
-          className={activeView === "todo" ? "active" : ""}
-          onClick={() => onSetActiveView("todo")}
-        >
-          <FilterIcon />
-          <span>Todo List</span>
-        </button>
-        <button
-          type="button"
-          className={activeView === "preview" ? "active" : ""}
-          onClick={() => onSetActiveView("preview")}
-        >
-          <DocumentIcon />
-          <span>File Preview</span>
-        </button>
-      </div>
+      <div className="right-panel-body">
+        <div className="right-panel-content">
+          {activeView === "todo" ? (
+            <TodoPanel
+              stats={todoStats}
+              onCreateRootThread={onCreateRootThread}
+              onSelectTaskThread={onSelectTaskThread}
+              onSetTaskFilter={onSetTaskFilter}
+              selectedThreadId={selectedThreadId}
+              taskFilter={taskFilter}
+              todoItems={todoItems}
+            />
+          ) : (
+            <FilePreviewPanel
+              onNavigateToFile={onNavigateToFile}
+              onOpenPreviewExternally={onOpenPreviewExternally}
+              preview={preview}
+              previewError={previewError}
+              previewLoading={previewLoading}
+            />
+          )}
+        </div>
 
-      {activeView === "todo" ? (
-        <TodoPanel
-          onCreateRootThread={onCreateRootThread}
-          onSelectTaskThread={onSelectTaskThread}
-          onSetTaskFilter={onSetTaskFilter}
-          selectedThreadId={selectedThreadId}
-          taskFilter={taskFilter}
-          todoItems={todoItems}
-        />
-      ) : (
-        <FilePreviewPanel
-          onNavigateToFile={onNavigateToFile}
-          onOpenPreviewExternally={onOpenPreviewExternally}
-          preview={preview}
-          previewError={previewError}
-          previewLoading={previewLoading}
-        />
-      )}
+        <nav className="panel-rail" aria-label="Right panel views">
+          {[
+            {
+              view: "todo",
+              label: "Todo Board",
+              icon: <FilterIcon />,
+              badge: String(todoStats.openCount),
+            },
+            {
+              view: "preview",
+              label: "File Preview",
+              icon: <DocumentIcon />,
+              badge: preview ? "1" : "",
+            },
+            {
+              view: null,
+              label: "Search",
+              icon: <SearchIcon />,
+              badge: "",
+            },
+            {
+              view: null,
+              label: "Graph",
+              icon: <BranchIcon />,
+              badge: "",
+            },
+            {
+              view: null,
+              label: "Artifacts",
+              icon: <GridIcon />,
+              badge: "",
+            },
+          ].map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              className={`panel-rail-button ${item.view === activeView ? "active" : ""}`}
+              aria-label={item.label}
+              disabled={item.view == null}
+              onClick={() => {
+                if (item.view) {
+                  onSetActiveView(item.view);
+                }
+              }}
+            >
+              <span className="panel-rail-icon">{item.icon}</span>
+              {item.badge ? <span className="panel-rail-badge">{item.badge}</span> : null}
+            </button>
+          ))}
+        </nav>
+      </div>
     </aside>
   );
 }
 
 function TodoPanel({
+  stats,
   onCreateRootThread,
   onSelectTaskThread,
   onSetTaskFilter,
@@ -83,6 +132,7 @@ function TodoPanel({
   taskFilter,
   todoItems,
 }: {
+  stats: ReturnType<typeof buildTodoStats>;
   onCreateRootThread: () => void;
   onSelectTaskThread: (threadId: string) => void;
   onSetTaskFilter: (value: TaskFilter) => void;
@@ -92,21 +142,30 @@ function TodoPanel({
 }) {
   return (
     <div className="todo-panel">
-      <header className="todo-header">
-        <div>
-          <h2>Todo List</h2>
+      <header className="panel-content-header">
+        <div className="panel-content-copy">
+          <span className="panel-eyebrow">Todo List</span>
+          <h2>Execution Queue</h2>
+          <p>Track and manage active threads for this run.</p>
         </div>
-        <button type="button" className="icon-button subtle" aria-label="Todo settings">
-          <FilterIcon />
+        <button type="button" className="panel-inline-action" onClick={onCreateRootThread}>
+          <PlusIcon />
+          <span>New Task</span>
         </button>
       </header>
+
+      <div className="todo-overview-grid">
+        <OverviewMetric label="Open" value={stats.openCount} tone="open" />
+        <OverviewMetric label="Running" value={stats.doing} tone="doing" />
+        <OverviewMetric label="Blocked" value={stats.blocked} tone="blocked" />
+      </div>
 
       <div className="todo-filters">
         {(
           [
             ["all", "All"],
-            ["todo", "Todo"],
-            ["doing", "Doing"],
+            ["todo", "Open"],
+            ["doing", "Running"],
             ["blocked", "Blocked"],
             ["done", "Done"],
           ] satisfies Array<[TaskFilter, string]>
@@ -132,32 +191,29 @@ function TodoPanel({
               onClick={() => onSelectTaskThread(task.threadId)}
             >
               <div className="todo-card-top">
-                <span className="todo-radio" />
                 <strong>{task.title}</strong>
                 <span className={`todo-status ${task.status}`}>{task.statusLabel}</span>
               </div>
-              <div className="todo-card-meta">
-                <BranchIcon />
-                <span>{task.ownerPath}</span>
-              </div>
-              <div className="todo-card-meta">
-                <ClockIcon />
-                <span>{task.updatedLabel}</span>
-              </div>
               {task.summary ? <p>{task.summary}</p> : null}
+              <div className="todo-card-footer">
+                <div className="todo-card-meta">
+                  <BranchIcon />
+                  <span>{task.ownerPath}</span>
+                </div>
+                <div className="todo-card-meta">
+                  <ClockIcon />
+                  <span>{task.updatedLabel}</span>
+                </div>
+              </div>
             </button>
           ))
         ) : (
           <div className="empty-card todo-empty">
             <p>No tasks for this filter.</p>
+            <span>Switch filters or create a new root task to seed the queue.</span>
           </div>
         )}
       </div>
-
-      <button type="button" className="new-task-button" onClick={onCreateRootThread}>
-        <PlusIcon />
-        <span>New Task</span>
-      </button>
     </div>
   );
 }
@@ -177,16 +233,14 @@ function FilePreviewPanel({
 }) {
   return (
     <div className="preview-panel">
-      <header className="todo-header preview-header">
-        <div>
-          <h2>File Preview</h2>
-          <p>
-            {preview ? preview.displayPath : "Click a local file link in the conversation to preview it here."}
-          </p>
+      <header className="panel-content-header preview-header">
+        <div className="panel-content-copy">
+          <span className="panel-eyebrow">File Preview</span>
+          <h2>{preview ? preview.displayPath : "Linked Context"}</h2>
         </div>
         <button
           type="button"
-          className="icon-button subtle"
+          className="panel-inline-action preview-open-button"
           aria-label="Open preview in system editor"
           onClick={onOpenPreviewExternally}
           disabled={!preview}
@@ -199,122 +253,140 @@ function FilePreviewPanel({
       {!previewLoading && previewError ? <div className="preview-empty">{previewError}</div> : null}
       {!previewLoading && !previewError && !preview ? (
         <div className="preview-empty">
-          <p>Support is focused on local file hyperlinks such as absolute paths and `file://` links.</p>
+          <p>Open a local file link in the conversation to pin code context here.</p>
         </div>
       ) : null}
       {!previewLoading && !previewError && preview ? (
         <div className="preview-editor-shell">
-          <div className="preview-lsp-status-row">
-            <span className={`preview-lsp-badge ${previewLspBadgeClass(preview)}`}>
-              {previewLspBadgeLabel(preview)}
-            </span>
-            <span className="preview-lsp-copy">
-              {preview.lsp.enabled
-                ? `Left click a symbol to jump with ${preview.lsp.serverLabel}.`
-                : preview.lsp.reason ?? `Plain ${preview.language} preview`}
-            </span>
-          </div>
-          <div className="preview-meta">
-            <span>{preview.line ? `Line ${preview.line}` : "Full file"}</span>
-            <span>{preview.lsp.enabled ? preview.lsp.serverLabel : preview.language}</span>
-          </div>
-          {preview.lsp.workspaceRoot ? (
-            <div className="preview-meta preview-meta-secondary">
-              <span>LSP Root</span>
-              <span>{preview.lsp.workspaceRoot}</span>
+          <div className="preview-utility-strip">
+            <div className="preview-utility-primary">
+              <span className={`preview-signal ${previewLspState(preview)}`} />
+              <button
+                type="button"
+                className={`preview-lsp-button ${previewLspState(preview)}`}
+                disabled
+              >
+                LSP
+              </button>
             </div>
-          ) : null}
-          <Editor
-            key={`${preview.path}:${preview.line ?? 0}:${preview.lsp.enabled ? "lsp" : "plain"}`}
-            height="100%"
-            onMount={(editor) => {
-              if (preview.line) {
-                editor.revealLineInCenter(preview.line);
-                editor.setPosition({ lineNumber: preview.line, column: 1 });
-              }
-
-              editor.onMouseDown((event) => {
-                if (
-                  !preview.lsp.enabled ||
-                  !event.target.position ||
-                  event.event.browserEvent.button !== 0
-                ) {
-                  return;
+            <div className="preview-utility-secondary">
+              <span>{preview.language}</span>
+              <span className="preview-utility-separator">•</span>
+              <span className="preview-utility-cwd">
+                {preview.lsp.workspaceRoot ?? "No workspace root"}
+              </span>
+            </div>
+          </div>
+          <div className="preview-editor-pad">
+            <Editor
+              key={`${preview.path}:${preview.line ?? 0}:${preview.lsp.enabled ? "lsp" : "plain"}`}
+              height="100%"
+              onMount={(editor) => {
+                if (preview.line) {
+                  editor.revealLineInCenter(preview.line);
+                  editor.setPosition({ lineNumber: preview.line, column: 1 });
                 }
 
-                const model = editor.getModel();
-                if (!model) {
-                  return;
-                }
+                editor.onMouseDown((event) => {
+                  if (
+                    !preview.lsp.enabled ||
+                    !event.target.position ||
+                    event.event.browserEvent.button !== 0
+                  ) {
+                    return;
+                  }
 
-                const word = model.getWordAtPosition(event.target.position);
-                if (!word) {
-                  return;
-                }
+                  const model = editor.getModel();
+                  if (!model) {
+                    return;
+                  }
 
-                void window.codexDesktop
-                  .lspDefinition({
-                    path: preview.path,
-                    line: event.target.position.lineNumber,
-                    column: event.target.position.column,
-                  })
-                  .then((response) => {
-                    const destination = response.locations[0];
-                    if (response.enabled && destination) {
-                      onNavigateToFile(destination);
-                    }
-                  })
-                  .catch((error) => {
-                    console.error("Failed to resolve definition", error);
-                  });
-              });
-            }}
-            language={preview.language}
-            loading={<div className="preview-empty">Loading editor…</div>}
-            options={{
-              automaticLayout: true,
-              definitionLinkOpensInPeek: false,
-              contextmenu: false,
-              fontSize: 13,
-              lineNumbersMinChars: 3,
-              minimap: { enabled: false },
-              readOnly: true,
-              renderLineHighlight: "all",
-              roundedSelection: false,
-              scrollBeyondLastLine: false,
-              selectionHighlight: false,
-              wordWrap: "on",
-            }}
-            path={preview.path}
-            theme="vs"
-            value={preview.content}
-          />
+                  const word = model.getWordAtPosition(event.target.position);
+                  if (!word) {
+                    return;
+                  }
+
+                  void window.codexDesktop
+                    .lspDefinition({
+                      path: preview.path,
+                      line: event.target.position.lineNumber,
+                      column: event.target.position.column,
+                    })
+                    .then((response) => {
+                      const destination = response.locations[0];
+                      if (response.enabled && destination) {
+                        onNavigateToFile(destination);
+                      }
+                    })
+                    .catch((error) => {
+                      console.error("Failed to resolve definition", error);
+                    });
+                });
+              }}
+              language={preview.language}
+              loading={<div className="preview-empty">Loading editor…</div>}
+              options={{
+                automaticLayout: true,
+                definitionLinkOpensInPeek: false,
+                contextmenu: false,
+                fontSize: 12,
+                lineNumbersMinChars: 3,
+                minimap: { enabled: false },
+                readOnly: true,
+                renderLineHighlight: "all",
+                roundedSelection: false,
+                scrollBeyondLastLine: false,
+                selectionHighlight: false,
+                wordWrap: "on",
+              }}
+              path={preview.path}
+              theme="vs"
+              value={preview.content}
+            />
+          </div>
         </div>
       ) : null}
     </div>
   );
 }
 
-function previewLspBadgeClass(preview: FilePreview) {
+function OverviewMetric({
+  label,
+  tone,
+  value,
+}: {
+  label: string;
+  tone: "open" | "doing" | "blocked";
+  value: number;
+}) {
+  return (
+    <div className={`overview-metric ${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function buildTodoStats(todoItems: TodoCardItem[]) {
+  const todo = todoItems.filter((item) => item.status === "todo").length;
+  const doing = todoItems.filter((item) => item.status === "doing").length;
+  const blocked = todoItems.filter((item) => item.status === "blocked").length;
+  const done = todoItems.filter((item) => item.status === "done").length;
+  return {
+    todo,
+    doing,
+    blocked,
+    done,
+    openCount: todo + doing + blocked,
+  };
+}
+
+function previewLspState(preview: FilePreview) {
   if (preview.lsp.enabled) {
     return "enabled";
   }
-
   if (preview.lsp.workspaceRoot) {
     return "unavailable";
   }
-
   return "plain";
-}
-
-function previewLspBadgeLabel(preview: FilePreview) {
-  if (preview.lsp.enabled) {
-    return "LSP On";
-  }
-
-  if (preview.lsp.workspaceRoot) {
-    return "Server Missing";
-  }
-
-  return "No Root";
 }

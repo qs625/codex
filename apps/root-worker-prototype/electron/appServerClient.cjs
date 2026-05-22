@@ -183,7 +183,7 @@ module.exports = {
 };
 
 function resolveWorkspaceCodexBinary() {
-  const workspaceBinary = path.resolve(__dirname, "../../codex-rs/target/debug/codex");
+  const workspaceBinary = path.resolve(__dirname, "../../../codex-rs/target/debug/codex");
   if (fs.existsSync(workspaceBinary)) {
     return shellQuote(workspaceBinary);
   }

@@ -1067,7 +1067,6 @@ pub(super) fn push_thread_filters<'a>(
     } else {
         builder.push(" AND threads.archived = 0");
     }
-    builder.push(" AND threads.preview <> ''");
     if !allowed_sources.is_empty() {
         builder.push(" AND threads.source IN (");
         let mut separated = builder.separated(", ");
@@ -1363,6 +1362,45 @@ mod tests {
             .expect("list with empty cwd filters should succeed");
 
         assert_eq!(page.items, Vec::new());
+    }
+
+    #[tokio::test]
+    async fn list_threads_includes_threads_with_empty_preview() {
+        let codex_home = unique_temp_dir();
+        let runtime = StateRuntime::init(codex_home.clone(), "test-provider".to_string())
+            .await
+            .expect("state db should initialize");
+        let thread_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000104").expect("valid thread id");
+        let mut metadata = test_thread_metadata(&codex_home, thread_id, codex_home.clone());
+        metadata.preview = None;
+        metadata.first_user_message = None;
+        metadata.title = String::new();
+
+        runtime
+            .upsert_thread(&metadata)
+            .await
+            .expect("thread insert should succeed");
+
+        let page = runtime
+            .list_threads(
+                /*page_size*/ 10,
+                ThreadFilterOptions {
+                    archived_only: false,
+                    allowed_sources: &[],
+                    model_providers: None,
+                    cwd_filters: None,
+                    anchor: None,
+                    sort_key: SortKey::UpdatedAt,
+                    sort_direction: SortDirection::Desc,
+                    search_term: None,
+                },
+            )
+            .await
+            .expect("list should succeed");
+
+        let ids = page.items.iter().map(|item| item.id).collect::<Vec<_>>();
+        assert_eq!(ids, vec![thread_id]);
     }
 
     #[tokio::test]

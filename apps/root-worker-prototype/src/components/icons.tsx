@@ -156,3 +156,23 @@ export function DocumentIcon() {
     </svg>
   );
 }
+
+export function SearchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="11" cy="11" r="5.5" />
+      <path d="m15.5 15.5 4 4" />
+    </svg>
+  );
+}
+
+export function GridIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="4.5" y="4.5" width="6.5" height="6.5" rx="1.5" />
+      <rect x="13" y="4.5" width="6.5" height="6.5" rx="1.5" />
+      <rect x="4.5" y="13" width="6.5" height="6.5" rx="1.5" />
+      <rect x="13" y="13" width="6.5" height="6.5" rx="1.5" />
+    </svg>
+  );
+}

@@ -1,4 +1,13 @@
-import { type ChangeEvent, type ClipboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  type ClipboardEvent,
+  type PointerEvent,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { ConversationPanel, SidebarPanel, TreeContextMenu } from "./components/Panels";
 import { RightPanel } from "./components/RightPanel";
@@ -9,13 +18,13 @@ import {
   appendAgentDelta,
   buildAgentTree,
   buildTodoItems,
-  getCachedDescendantIds,
-  getThreadDepth,
+  getThreadSubtreeIds,
   getTreeRootThreadId,
+  getThreadDepth,
   isRootThread,
+  isSubagentThread,
   pickInitialRootThread,
   pickInitialThread,
-  pruneCachedThreadParents,
   updateThreadItem,
   updateThreadTurn,
   upsertThread,
@@ -34,9 +43,27 @@ import type {
   Turn,
 } from "./types";
 
+let initialRootThreadPromise: Promise<Thread> | null = null;
+
+const LEFT_PANEL_WIDTH_RATIO = 0.17;
+const RIGHT_PANEL_WIDTH_RATIO = 0.31;
+const LEFT_PANEL_MIN_RATIO = 0.13;
+const LEFT_PANEL_MAX_RATIO = 0.34;
+const RIGHT_PANEL_MIN_RATIO = 0.22;
+const RIGHT_PANEL_MAX_RATIO = 0.46;
+
+function getViewportWidth() {
+  return window.innerWidth;
+}
+
 function App() {
-  const [sidebarWidth, setSidebarWidth] = useState(348);
-  const [rightPanelWidth, setRightPanelWidth] = useState(378);
+  const [viewportWidth, setViewportWidth] = useState(getViewportWidth);
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    widthFromRatio(getViewportWidth(), LEFT_PANEL_WIDTH_RATIO),
+  );
+  const [rightPanelWidth, setRightPanelWidth] = useState(() =>
+    widthFromRatio(getViewportWidth(), RIGHT_PANEL_WIDTH_RATIO),
+  );
   const [workspace, setWorkspace] = useState("");
   const [threads, setThreads] = useState<Thread[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
@@ -50,7 +77,6 @@ function App() {
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
   const [collapsedPaths, setCollapsedPaths] = useState<string[]>([]);
   const [treeMenu, setTreeMenu] = useState<TreeMenuState | null>(null);
-  const [cachedThreadParents, setCachedThreadParents] = useState<Record<string, string>>({});
   const [rightPanelView, setRightPanelView] = useState<RightPanelView>("todo");
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
@@ -94,11 +120,23 @@ function App() {
       }
 
       if (resizeState.panel === "left") {
-        setSidebarWidth(clampWidth(resizeState.startWidth + (event.clientX - resizeState.startX), 280, 520));
+        setSidebarWidth(
+          clampPanelWidth(
+            resizeState.startWidth + (event.clientX - resizeState.startX),
+            viewportWidth,
+            "left",
+          ),
+        );
         return;
       }
 
-      setRightPanelWidth(clampWidth(resizeState.startWidth - (event.clientX - resizeState.startX), 300, 620));
+      setRightPanelWidth(
+        clampPanelWidth(
+          resizeState.startWidth - (event.clientX - resizeState.startX),
+          viewportWidth,
+          "right",
+        ),
+      );
     }
 
     function handlePointerUp() {
@@ -113,7 +151,21 @@ function App() {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
+  }, [viewportWidth]);
+
+  useEffect(() => {
+    function handleResize() {
+      setViewportWidth(window.innerWidth);
+    }
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
+
+  useEffect(() => {
+    setSidebarWidth((current) => clampPanelWidth(current, viewportWidth, "left"));
+    setRightPanelWidth((current) => clampPanelWidth(current, viewportWidth, "right"));
+  }, [viewportWidth]);
 
   const conversationEntries = useMemo(
     () => buildConversationEntries(selectedThread),
@@ -133,26 +185,21 @@ function App() {
   }, [conversationCells, isLoadingThread, selectedThreadId]);
 
   const selectedTreeRootId = useMemo(() => {
-    const seedThreadId = selectedThreadId ?? pickInitialThread(threads)?.id ?? null;
-    if (!seedThreadId) {
+    const seedThread = threads.find((thread) => thread.id === selectedThreadId) ?? pickInitialThread(threads);
+    if (!seedThread) {
       return null;
     }
-    return getTreeRootThreadId(threads, seedThreadId);
+    return getTreeRootThreadId(threads, seedThread.id);
   }, [selectedThreadId, threads]);
   const sessionThreads = useMemo(() => {
     if (!selectedTreeRootId) {
       return [];
     }
-    const cachedDescendants = getCachedDescendantIds(cachedThreadParents, selectedTreeRootId);
-    return threads.filter(
-      (thread) =>
-        getTreeRootThreadId(threads, thread.id, cachedThreadParents) === selectedTreeRootId ||
-        cachedDescendants.has(thread.id),
-    );
-  }, [cachedThreadParents, selectedTreeRootId, threads]);
+    return threads.filter((thread) => getTreeRootThreadId(threads, thread.id) === selectedTreeRootId);
+  }, [selectedTreeRootId, threads]);
   const agentTree = useMemo(
-    () => buildAgentTree(sessionThreads, cachedThreadParents, selectedTreeRootId),
-    [cachedThreadParents, selectedTreeRootId, sessionThreads],
+    () => buildAgentTree(sessionThreads, selectedTreeRootId),
+    [selectedTreeRootId, sessionThreads],
   );
   const todoItems = useMemo(
     () => buildTodoItems(sessionThreads, taskFilter),
@@ -170,88 +217,50 @@ function App() {
         setSelectedThreadId(preferredRoot.id);
         return;
       }
-      await createRootThread("root", payload.workspace);
+      const rootThread = await ensureInitialRootThread(payload.workspace);
+      setThreads((current) => upsertThread(current, rootThread));
+      setSelectedThreadId(rootThread.id);
+      setSelectedThread(rootThread);
     } catch (loadError) {
       setError(toErrorMessage(loadError));
     }
   }
 
-  async function refreshThreads() {
-    const payload = (await window.codexDesktop.listThreads()) as { data: Thread[] };
-    setThreads(payload.data);
-    setCachedThreadParents((current) => pruneCachedThreadParents(payload.data, current));
-    setSelectedThreadId((current) => {
-      if (!current) {
-        return pickInitialRootThread(payload.data)?.id ?? null;
-      }
-      return payload.data.some((thread) => thread.id === current)
-        ? current
-        : pickInitialRootThread(payload.data)?.id ?? null;
-    });
-  }
-
-  async function hydrateThread(threadId: string) {
-    const payload = (await window.codexDesktop.readThread(threadId, false)) as {
+  async function subscribeThread(threadId: string) {
+    const payload = (await window.codexDesktop.readThread(threadId, true)) as {
       thread: Thread;
     };
     setThreads((current) => upsertThread(current, payload.thread));
   }
 
-  async function hydrateReceiverThreads(threadIds: string[]) {
-    const uniqueIds = [...new Set(threadIds.filter(Boolean))];
-    if (uniqueIds.length === 0) {
-      return;
-    }
-
-    for (const delayMs of [0, 150, 500, 1200]) {
-      if (delayMs > 0) {
-        await new Promise((resolve) => window.setTimeout(resolve, delayMs));
-      }
-
-      await Promise.all(
-        uniqueIds.map(async (threadId) => {
-          try {
-            await hydrateThread(threadId);
-          } catch {
-            // The child thread can lag briefly behind the tool-call event.
-          }
-        }),
+  function removeThreadLocally(threadIds: Iterable<string>) {
+    const threadIdSet = new Set(threadIds);
+    setThreads((current) => {
+      const next = current.filter((thread) => !threadIdSet.has(thread.id));
+      setSelectedThreadId((selected) =>
+        selected && threadIdSet.has(selected) ? pickInitialRootThread(next)?.id ?? null : selected,
       );
-    }
-
-    await refreshThreads();
-  }
-
-  function cacheReceiverThreads(parentThreadId: string, receiverThreadIds: string[]) {
-    setCachedThreadParents((current) => {
-      const next = { ...current };
-      for (const receiverThreadId of receiverThreadIds) {
-        if (!receiverThreadId || next[receiverThreadId]) {
-          continue;
-        }
-        next[receiverThreadId] = parentThreadId;
-      }
       return next;
     });
+    setSelectedThread((current) => (current?.id && threadIdSet.has(current.id) ? null : current));
   }
 
-  function removeMissingReceiverThreads(
-    item: Extract<ThreadItem, { type: "collabAgentToolCall" }>,
-  ) {
-    const missingThreadIds = item.receiverThreadIds.filter((threadId) => {
-      const state = item.agentsStates[threadId]?.status;
-      return state === "not_found" || state === "notFound";
-    });
-    if (missingThreadIds.length === 0) {
-      return;
-    }
-    setCachedThreadParents((current) => {
-      const next = { ...current };
-      for (const threadId of missingThreadIds) {
-        delete next[threadId];
-      }
-      return next;
-    });
+  function updateThreadStatusLocally(threadId: string, status: Thread["status"]) {
+    setThreads((current) =>
+      current.map((thread) => (thread.id === threadId ? { ...thread, status } : thread)),
+    );
+    setSelectedThread((current) =>
+      current?.id === threadId ? { ...current, status } : current,
+    );
+  }
+
+  function updateThreadNameLocally(threadId: string, name: Thread["name"]) {
+    setThreads((current) =>
+      current.map((thread) => (thread.id === threadId ? { ...thread, name } : thread)),
+    );
+    setSelectedThread((current) =>
+      current?.id === threadId ? { ...current, name } : current,
+    );
   }
 
   async function loadThread(threadId: string) {
@@ -266,8 +275,7 @@ function App() {
     } catch (loadError) {
       const message = toErrorMessage(loadError);
       if (isThreadNotFoundError(message)) {
-        setSelectedThread(null);
-        await refreshThreads();
+        removeThreadLocally([threadId]);
       }
       setError(message);
     } finally {
@@ -278,16 +286,29 @@ function App() {
   async function createRootThread(name = newRootName.trim() || "root", cwd = workspace) {
     setError(null);
     try {
-      const payload = (await window.codexDesktop.createThread({
-        cwd,
-        name,
-      })) as { thread: Thread };
+      const payload = (await window.codexDesktop.createThread({ cwd, name })) as { thread: Thread };
       setThreads((current) => upsertThread(current, payload.thread));
       setSelectedThreadId(payload.thread.id);
       setSelectedThread(payload.thread);
     } catch (createError) {
       setError(toErrorMessage(createError));
     }
+  }
+
+  async function ensureInitialRootThread(cwd: string) {
+    if (!initialRootThreadPromise) {
+      initialRootThreadPromise = window.codexDesktop
+        .createThread({
+          cwd,
+          name: "root",
+        })
+        .then((payload) => (payload as { thread: Thread }).thread)
+        .finally(() => {
+          initialRootThreadPromise = null;
+        });
+    }
+
+    return initialRootThreadPromise;
   }
 
   async function clearCurrentRootSession() {
@@ -299,8 +320,8 @@ function App() {
     const replacementName = rootThread?.name ?? rootThread?.agentNickname ?? "root";
     const threadIdsToArchive = [...sessionThreads]
       .sort((left, right) => {
-        const leftDepth = getThreadDepth(threads, left.id, cachedThreadParents);
-        const rightDepth = getThreadDepth(threads, right.id, cachedThreadParents);
+        const leftDepth = getThreadDepth(threads, left.id);
+        const rightDepth = getThreadDepth(threads, right.id);
         return rightDepth - leftDepth;
       })
       .map((thread) => thread.id);
@@ -311,15 +332,9 @@ function App() {
       for (const threadId of threadIdsToArchive) {
         await window.codexDesktop.archiveThread(threadId);
       }
-      setCachedThreadParents((current) => {
-        const next = { ...current };
-        for (const threadId of threadIdsToArchive) {
-          delete next[threadId];
-        }
-        return next;
-      });
+      setThreads((current) => current.filter((thread) => !threadIdsToArchive.includes(thread.id)));
       setSelectedThread(null);
-      await refreshThreads();
+      setSelectedThreadId(null);
       await createRootThread(replacementName);
       setDraft("");
       setDraftImages([]);
@@ -412,10 +427,7 @@ function App() {
         throw new Error("This build does not expose archiveThread. Please reload Electron.");
       }
       await archive(threadId);
-      await refreshThreads();
-      if (selectedThreadId === threadId) {
-        setSelectedThread(null);
-      }
+      removeThreadLocally(getThreadSubtreeIds(threads, threadId));
     } catch (archiveError) {
       setError(toErrorMessage(archiveError));
     }
@@ -445,16 +457,32 @@ function App() {
         case "thread/started": {
           const thread = (params as { thread: Thread }).thread;
           setThreads((current) => upsertThread(current, thread));
+          if (isSubagentThread(thread)) {
+            void subscribeThread(thread.id);
+          }
           if (!selectedThreadId) {
             setSelectedThreadId(thread.id);
           }
           break;
         }
         case "thread/name/updated":
-        case "thread/status/changed":
         case "thread/archived":
         case "thread/closed": {
-          void refreshThreads();
+          if (method === "thread/name/updated") {
+            const notification = params as { threadId: string; threadName?: string | null };
+            updateThreadNameLocally(notification.threadId, notification.threadName ?? null);
+            break;
+          }
+          if (method === "thread/archived") {
+            const notification = params as { threadId: string };
+            removeThreadLocally([notification.threadId]);
+            break;
+          }
+          break;
+        }
+        case "thread/status/changed": {
+          const notification = params as { threadId: string; status: Thread["status"] };
+          updateThreadStatusLocally(notification.threadId, notification.status);
           break;
         }
         case "turn/started":
@@ -465,7 +493,6 @@ function App() {
               current ? updateThreadTurn(current, notification.turn) : current,
             );
           }
-          void refreshThreads();
           break;
         }
         case "item/started":
@@ -481,15 +508,6 @@ function App() {
                 ? updateThreadItem(current, notification.turnId, notification.item)
                 : current,
             );
-          }
-          if (notification.item.type === "collabAgentToolCall") {
-            cacheReceiverThreads(
-              notification.item.senderThreadId,
-              notification.item.receiverThreadIds,
-            );
-            removeMissingReceiverThreads(notification.item);
-            void hydrateReceiverThreads(notification.item.receiverThreadIds);
-            void refreshThreads();
           }
           break;
         }
@@ -578,14 +596,25 @@ function App() {
     document.body.classList.add("is-resizing-panels");
   }
 
+  function dismissTreeMenu(event: PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+    const target = event.target;
+    if (target instanceof Element && target.closest(".tree-context-menu")) {
+      return;
+    }
+    setTreeMenu(null);
+  }
+
   return (
-    <div className="app-shell" onClick={() => setTreeMenu(null)}>
+    <div className="app-shell" onPointerDown={dismissTreeMenu}>
       {error ? <div className="error-banner">{error}</div> : null}
 
       <main
         className="workspace"
         style={{
-          gridTemplateColumns: `${sidebarWidth}px 10px minmax(0, 1fr) 10px ${rightPanelWidth}px`,
+          gridTemplateColumns: `${sidebarWidth}px 1px minmax(0, 1fr) 1px ${rightPanelWidth}px`,
         }}
       >
         <SidebarPanel
@@ -656,6 +685,20 @@ function App() {
 }
 
 export default App;
+
+function widthFromRatio(viewportWidth: number, ratio: number) {
+  return Math.round(viewportWidth * ratio);
+}
+
+function clampPanelWidth(value: number, viewportWidth: number, panel: "left" | "right") {
+  const min = panel === "left"
+    ? widthFromRatio(viewportWidth, LEFT_PANEL_MIN_RATIO)
+    : widthFromRatio(viewportWidth, RIGHT_PANEL_MIN_RATIO);
+  const max = panel === "left"
+    ? widthFromRatio(viewportWidth, LEFT_PANEL_MAX_RATIO)
+    : widthFromRatio(viewportWidth, RIGHT_PANEL_MAX_RATIO);
+  return clampWidth(value, min, max);
+}
 
 function clampWidth(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));

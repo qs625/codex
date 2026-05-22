@@ -69,6 +69,32 @@ fn write_session_file(root: &Path, ts: &str, uuid: Uuid) -> std::io::Result<Path
     Ok(path)
 }
 
+fn write_session_file_without_preview(
+    root: &Path,
+    ts: &str,
+    uuid: Uuid,
+) -> std::io::Result<PathBuf> {
+    let day_dir = root.join("sessions/2025/01/03");
+    fs::create_dir_all(&day_dir)?;
+    let path = day_dir.join(format!("rollout-{ts}-{uuid}.jsonl"));
+    let mut file = File::create(&path)?;
+    let meta = serde_json::json!({
+        "timestamp": ts,
+        "type": "session_meta",
+        "payload": {
+            "id": uuid,
+            "timestamp": ts,
+            "cwd": ".",
+            "originator": "test_originator",
+            "cli_version": "test_version",
+            "source": "cli",
+            "model_provider": "test-provider",
+        },
+    });
+    writeln!(file, "{meta}")?;
+    Ok(path)
+}
+
 #[tokio::test]
 async fn state_db_init_backfills_before_returning() -> anyhow::Result<()> {
     let home = TempDir::new().expect("temp dir");
@@ -137,6 +163,40 @@ async fn state_db_init_backfills_before_returning() -> anyhow::Result<()> {
         runtime.get_backfill_state().await?.status,
         codex_state::BackfillStatus::Complete
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_threads_includes_rollouts_without_preview() -> anyhow::Result<()> {
+    let home = TempDir::new().expect("temp dir");
+    let config = test_config(home.path());
+    let uuid = Uuid::from_u128(4242);
+
+    write_session_file_without_preview(home.path(), "2025-01-03T12-00-00", uuid)?;
+
+    let page = RolloutRecorder::list_threads(
+        /*state_db*/ None,
+        &config,
+        /*page_size*/ 10,
+        /*cursor*/ None,
+        ThreadSortKey::CreatedAt,
+        SortDirection::Desc,
+        &[],
+        /*model_providers*/ None,
+        /*cwd_filters*/ None,
+        config.model_provider_id.as_str(),
+        /*search_term*/ None,
+    )
+    .await?;
+
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(
+        page.items[0].thread_id,
+        Some(ThreadId::from_string(&uuid.to_string())?)
+    );
+    assert_eq!(page.items[0].preview, None);
+    assert_eq!(page.items[0].first_user_message, None);
 
     Ok(())
 }

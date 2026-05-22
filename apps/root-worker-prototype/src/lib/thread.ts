@@ -5,12 +5,11 @@ export function pickInitialThread(threads: Thread[]) {
 }
 
 export function pickInitialRootThread(threads: Thread[]) {
-  return pickInitialThread(threads.filter(isRootThread));
+  return pickInitialThread(threads.filter((thread) => isRootThread(thread) && getThreadPath(thread) === "/root"));
 }
 
 export function buildAgentTree(
   threads: Thread[],
-  cachedThreadParents: Record<string, string>,
   selectedTreeRootId: string | null,
 ): TreeNode[] {
   if (threads.length === 0 && !selectedTreeRootId) {
@@ -21,21 +20,13 @@ export function buildAgentTree(
   const roots = threads.filter((thread) => !getParentThreadId(thread));
   const byParent = new Map<string, string[]>();
   for (const thread of threads) {
-    const parentId = getParentThreadId(thread) ?? cachedThreadParents[thread.id] ?? null;
+    const parentId = getParentThreadId(thread);
     if (!parentId) {
       continue;
     }
     const list = byParent.get(parentId) ?? [];
     list.push(thread.id);
     byParent.set(parentId, list);
-  }
-
-  for (const [childId, parentId] of Object.entries(cachedThreadParents)) {
-    const list = byParent.get(parentId) ?? [];
-    if (!list.includes(childId)) {
-      list.push(childId);
-      byParent.set(parentId, list);
-    }
   }
 
   const buildNode = (threadId: string): TreeNode => {
@@ -57,8 +48,8 @@ export function buildAgentTree(
 
     return {
       key: threadId,
-      label: thread ? getThreadLabel(thread) : trimThreadId(threadId),
-      path: thread ? getThreadPath(thread) : "Starting worker…",
+      label: thread ? getTreeNodeLabel(thread) : trimThreadId(threadId),
+      path: thread ? getTreeNodeSubtitle(thread) : "Starting worker…",
       thread,
       threadId,
       isPlaceholder: thread === null,
@@ -120,6 +111,17 @@ export function getThreadLabel(thread: Thread) {
   return thread.name ?? thread.agentNickname ?? last ?? "root";
 }
 
+export function getTreeNodeLabel(thread: Thread) {
+  if (isRootThread(thread)) {
+    return getThreadPath(thread);
+  }
+  return getThreadPath(thread).split("/").filter(Boolean).at(-1) ?? getThreadLabel(thread);
+}
+
+export function getTreeNodeSubtitle(thread: Thread) {
+  return thread.agentRole ?? getAgentRoleLabel(thread);
+}
+
 export function getThreadPath(thread: Thread) {
   const source = thread.source;
   if (typeof source === "object" && "subAgent" in source) {
@@ -129,6 +131,11 @@ export function getThreadPath(thread: Thread) {
     }
   }
   return "/root";
+}
+
+export function isSubagentThread(thread: Thread) {
+  const source = thread.source;
+  return typeof source === "object" && "subAgent" in source;
 }
 
 export function getParentThreadId(thread: Thread) {
@@ -149,19 +156,16 @@ export function isRootThread(thread: Thread) {
 export function getTreeRootThreadId(
   threads: Thread[],
   threadId: string,
-  cachedThreadParents: Record<string, string> = {},
 ) {
   const byId = new Map(threads.map((thread) => [thread.id, thread]));
   let current = byId.get(threadId) ?? null;
   let currentId = current?.id ?? threadId;
-  let parentId = current ? getParentThreadId(current) : cachedThreadParents[currentId] ?? null;
+  let parentId = current ? getParentThreadId(current) : null;
 
   while (parentId) {
     const parent = byId.get(parentId);
     if (!parent) {
-      currentId = parentId;
-      parentId = cachedThreadParents[currentId] ?? null;
-      continue;
+      return currentId;
     }
     current = parent;
     currentId = parent.id;
@@ -174,58 +178,48 @@ export function getTreeRootThreadId(
 export function getThreadDepth(
   threads: Thread[],
   threadId: string,
-  cachedThreadParents: Record<string, string> = {},
 ) {
   const byId = new Map(threads.map((thread) => [thread.id, thread]));
   let depth = 0;
   let current = byId.get(threadId) ?? null;
-  let parentId = current ? getParentThreadId(current) : cachedThreadParents[threadId] ?? null;
+  let parentId = current ? getParentThreadId(current) : null;
 
   while (parentId) {
     depth += 1;
     current = byId.get(parentId) ?? null;
-    parentId = current ? getParentThreadId(current) : cachedThreadParents[parentId] ?? null;
+    parentId = current ? getParentThreadId(current) : null;
   }
 
   return depth;
 }
 
-export function getCachedDescendantIds(
-  cachedThreadParents: Record<string, string>,
+export function getThreadSubtreeIds(
+  threads: Thread[],
   rootThreadId: string,
 ) {
-  const descendants = new Set<string>();
-  let changed = true;
-
-  while (changed) {
-    changed = false;
-    for (const [childId, parentId] of Object.entries(cachedThreadParents)) {
-      if (parentId === rootThreadId || descendants.has(parentId)) {
-        if (!descendants.has(childId)) {
-          descendants.add(childId);
-          changed = true;
-        }
-      }
+  const byParent = new Map<string, string[]>();
+  for (const thread of threads) {
+    const parentId = getParentThreadId(thread);
+    if (!parentId) {
+      continue;
     }
+    const children = byParent.get(parentId) ?? [];
+    children.push(thread.id);
+    byParent.set(parentId, children);
   }
 
-  return descendants;
-}
-
-export function pruneCachedThreadParents(
-  threads: Thread[],
-  cachedThreadParents: Record<string, string>,
-) {
-  const liveThreadIds = new Set(threads.map((thread) => thread.id));
-  const next: Record<string, string> = {};
-
-  for (const [childId, parentId] of Object.entries(cachedThreadParents)) {
-    if (liveThreadIds.has(childId) || liveThreadIds.has(parentId)) {
-      next[childId] = parentId;
+  const subtreeIds = new Set<string>();
+  const pending = [rootThreadId];
+  while (pending.length > 0) {
+    const threadId = pending.pop();
+    if (!threadId || subtreeIds.has(threadId)) {
+      continue;
     }
+    subtreeIds.add(threadId);
+    pending.push(...(byParent.get(threadId) ?? []));
   }
 
-  return next;
+  return subtreeIds;
 }
 
 export function getAgentRoleLabel(thread: Thread) {
@@ -238,6 +232,20 @@ export function getAgentRoleLabel(thread: Thread) {
 
 export function getPresenceLabel(status: string) {
   return threadStatusClass(status) === "doing" ? "Online" : "Idle";
+}
+
+export function getThreadModelLabel(thread: Thread | null) {
+  if (!thread) {
+    return "unknown";
+  }
+  return thread.model ?? thread.modelProvider ?? "unknown";
+}
+
+export function getThreadReasoningLabel(thread: Thread | null) {
+  if (!thread) {
+    return "default";
+  }
+  return thread.reasoningEffort ?? "default";
 }
 
 export function updateThreadTurn(thread: Thread, turn: Turn) {

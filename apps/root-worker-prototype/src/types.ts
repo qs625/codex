@@ -130,6 +130,8 @@ export type Thread = {
   preview: string;
   ephemeral: boolean;
   modelProvider: string;
+  model: string | null;
+  reasoningEffort: string | null;
   createdAt: number;
   updatedAt: number;
   status: string;

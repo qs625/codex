@@ -96,7 +96,10 @@ ipcMain.handle("codex:createThread", async (_event, payload) => {
     });
   }
 
-  return readThread(start.thread.id, true);
+  return readThread(start.thread.id, true, {
+    model: start.model ?? null,
+    reasoningEffort: start.reasoningEffort ?? null,
+  });
 });
 
 ipcMain.handle("codex:archiveThread", async (_event, threadId) => {
@@ -105,10 +108,15 @@ ipcMain.handle("codex:archiveThread", async (_event, threadId) => {
 });
 
 ipcMain.handle("codex:readThread", async (_event, threadId, subscribe = true) => {
+  let runtime = null;
   if (subscribe) {
-    await appServerClient.request("thread/resume", { threadId });
+    const resume = await appServerClient.request("thread/resume", { threadId });
+    runtime = {
+      model: resume.model ?? null,
+      reasoningEffort: resume.reasoningEffort ?? null,
+    };
   }
-  return readThread(threadId, true);
+  return readThread(threadId, true, runtime);
 });
 
 ipcMain.handle("codex:openLink", async (_event, target) => {
@@ -180,7 +188,6 @@ app.on("window-all-closed", () => {
 
 async function listThreads(cwd) {
   const response = await appServerClient.request("thread/list", {
-    cwd,
     limit: 200,
     sourceKinds: [
       "appServer",
@@ -198,12 +205,12 @@ async function listThreads(cwd) {
   return response.data.map(normalizeThread);
 }
 
-async function readThread(threadId, includeTurns) {
+async function readThread(threadId, includeTurns, runtime = null) {
   const response = await appServerClient.request("thread/read", {
     threadId,
     includeTurns,
   });
-  return { thread: normalizeThread(response.thread) };
+  return { thread: normalizeThread(response.thread, runtime) };
 }
 
 function normalizeNotification(notification) {
@@ -239,9 +246,11 @@ function normalizeNotification(notification) {
   return notification;
 }
 
-function normalizeThread(thread) {
+function normalizeThread(thread, runtime = null) {
   return {
     ...thread,
+    model: runtime?.model ?? thread.model ?? null,
+    reasoningEffort: runtime?.reasoningEffort ?? thread.reasoningEffort ?? null,
     status: normalizeStatusValue(thread.status),
     turns: (thread.turns ?? []).map(normalizeTurn),
   };
