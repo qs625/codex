@@ -1584,21 +1584,115 @@ svg {
   backdrop-filter: blur(6px);
   animation: image-lightbox-fade 160ms ease-out;
   cursor: zoom-out;
+  user-select: none;
+  overflow: hidden;
+}
+
+.image-lightbox-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
 .image-lightbox-image {
   max-width: 92vw;
-  max-height: 88vh;
+  max-height: 86vh;
   border-radius: 12px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
-  cursor: default;
   animation: image-lightbox-pop 200ms ease-out;
+  transform-origin: center center;
+  will-change: transform;
+  touch-action: none;
+  -webkit-user-drag: none;
+}
+
+.image-lightbox-toolbar {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border-radius: 999px;
+  background: rgba(20, 22, 28, 0.78);
+  color: #f5f5f4;
+  font-size: 12px;
+  font-weight: 500;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+  cursor: default;
+}
+
+.image-lightbox-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.image-lightbox-tool:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.image-lightbox-tool:active:not(:disabled) {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.image-lightbox-tool:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.image-lightbox-scale {
+  min-width: 48px;
+  padding: 0 4px;
+  color: #d6d3d1;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.image-lightbox-separator {
+  width: 1px;
+  height: 14px;
+  margin: 0 4px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.image-lightbox-copy.is-copied {
+  background: rgba(34, 197, 94, 0.22);
+  color: #bbf7d0;
+}
+
+.image-lightbox-copy.is-error {
+  background: rgba(248, 113, 113, 0.22);
+  color: #fecaca;
+}
+
+.image-lightbox-copy.is-copying {
+  opacity: 0.75;
+  cursor: progress;
 }
 
 .image-lightbox-close {
   position: absolute;
   top: 18px;
   right: 22px;
+  z-index: 1;
   display: grid;
   place-items: center;
   width: 36px;

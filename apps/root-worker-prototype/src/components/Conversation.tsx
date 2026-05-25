@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { MarkdownContent } from "../lib/markdown";
@@ -7,6 +7,290 @@ import type { ConversationEntry } from "../types";
 import { CodeIcon, DocumentIcon, RobotIcon, ShareIcon, UserIcon } from "./icons";
 
 const localImageCache = new Map<string, string>();
+
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 8;
+
+function clampScale(value: number) {
+  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value));
+}
+
+async function convertBlobToPng(blob: Blob): Promise<Blob> {
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const next = new Image();
+      next.onload = () => resolve(next);
+      next.onerror = () => reject(new Error("Failed to decode image for clipboard"));
+      next.src = objectUrl;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth || image.width;
+    canvas.height = image.naturalHeight || image.height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Canvas 2D context unavailable");
+    }
+    context.drawImage(image, 0, 0);
+    return await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (result) => (result ? resolve(result) : reject(new Error("Failed to encode PNG"))),
+        "image/png",
+      );
+    });
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function ImageLightbox({
+  src,
+  alt,
+  onClose,
+}: {
+  src: string;
+  alt: string;
+  onClose: () => void;
+}) {
+  const [scale, setScale] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copying" | "copied" | "error">("idle");
+  const copyResetRef = useRef<number | null>(null);
+  const dragStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startPan: { x: number; y: number };
+  } | null>(null);
+
+  function resetView() {
+    setScale(1);
+    setPan({ x: 0, y: 0 });
+  }
+
+  function adjustScale(delta: number) {
+    setScale((current) => {
+      const next = clampScale(current + delta);
+      if (next === 1) {
+        setPan({ x: 0, y: 0 });
+      }
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      } else if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        adjustScale(0.25);
+      } else if (event.key === "-" || event.key === "_") {
+        event.preventDefault();
+        adjustScale(-0.25);
+      } else if (event.key === "0") {
+        event.preventDefault();
+        resetView();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    document.body.classList.add("is-image-lightbox-open");
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      document.body.classList.remove("is-image-lightbox-open");
+    };
+  }, [onClose]);
+
+  useEffect(() => {
+    return () => {
+      if (copyResetRef.current != null) {
+        window.clearTimeout(copyResetRef.current);
+      }
+    };
+  }, []);
+
+  function handleWheel(event: React.WheelEvent<HTMLDivElement>) {
+    if (event.deltaY === 0) {
+      return;
+    }
+    const factor = event.ctrlKey || event.metaKey ? -0.02 : -0.0035;
+    setScale((current) => {
+      const next = clampScale(current + event.deltaY * factor);
+      if (next === 1) {
+        setPan({ x: 0, y: 0 });
+      }
+      return next;
+    });
+  }
+
+  function handlePointerDown(event: React.PointerEvent<HTMLImageElement>) {
+    if (event.button !== 0 || scale <= 1) {
+      return;
+    }
+    event.preventDefault();
+    const target = event.currentTarget;
+    target.setPointerCapture?.(event.pointerId);
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startPan: { ...pan },
+    };
+    setDragging(true);
+  }
+
+  function handlePointerMove(event: React.PointerEvent<HTMLImageElement>) {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    setPan({
+      x: drag.startPan.x + (event.clientX - drag.startX),
+      y: drag.startPan.y + (event.clientY - drag.startY),
+    });
+  }
+
+  function endDrag(event: React.PointerEvent<HTMLImageElement>) {
+    if (dragStateRef.current?.pointerId === event.pointerId) {
+      dragStateRef.current = null;
+      setDragging(false);
+    }
+  }
+
+  function handleDoubleClick() {
+    if (scale === 1) {
+      setScale(2);
+    } else {
+      resetView();
+    }
+  }
+
+  async function handleCopy() {
+    if (copyStatus === "copying") {
+      return;
+    }
+    setCopyStatus("copying");
+    try {
+      const response = await fetch(src);
+      const blob = await response.blob();
+      const pngBlob = blob.type === "image/png" ? blob : await convertBlobToPng(blob);
+      if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) {
+        throw new Error("Clipboard image API unavailable");
+      }
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("error");
+    } finally {
+      if (copyResetRef.current != null) {
+        window.clearTimeout(copyResetRef.current);
+      }
+      copyResetRef.current = window.setTimeout(() => {
+        setCopyStatus("idle");
+        copyResetRef.current = null;
+      }, 1600);
+    }
+  }
+
+  const imageCursor = scale > 1 ? (dragging ? "grabbing" : "grab") : "zoom-in";
+  const copyLabel =
+    copyStatus === "copied"
+      ? "Copied"
+      : copyStatus === "error"
+        ? "Copy failed"
+        : copyStatus === "copying"
+          ? "Copying…"
+          : "Copy";
+
+  return createPortal(
+    <div
+      className="image-lightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-label={alt}
+      onClick={onClose}
+      onWheel={handleWheel}
+    >
+      <div
+        className="image-lightbox-toolbar"
+        onClick={(event) => event.stopPropagation()}
+        onWheel={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          className="image-lightbox-tool"
+          aria-label="Zoom out"
+          disabled={scale <= ZOOM_MIN}
+          onClick={() => adjustScale(-0.25)}
+        >
+          −
+        </button>
+        <span className="image-lightbox-scale">{Math.round(scale * 100)}%</span>
+        <button
+          type="button"
+          className="image-lightbox-tool"
+          aria-label="Zoom in"
+          disabled={scale >= ZOOM_MAX}
+          onClick={() => adjustScale(0.25)}
+        >
+          +
+        </button>
+        <span className="image-lightbox-separator" />
+        <button
+          type="button"
+          className="image-lightbox-tool"
+          aria-label="Reset zoom"
+          onClick={resetView}
+        >
+          Reset
+        </button>
+        <button
+          type="button"
+          className={`image-lightbox-tool image-lightbox-copy is-${copyStatus}`}
+          aria-label="Copy image to clipboard"
+          onClick={() => void handleCopy()}
+        >
+          {copyLabel}
+        </button>
+      </div>
+      <button
+        type="button"
+        className="image-lightbox-close"
+        aria-label="Close image preview"
+        onClick={(event) => {
+          event.stopPropagation();
+          onClose();
+        }}
+      >
+        ×
+      </button>
+      <div
+        className="image-lightbox-stage"
+        onClick={(event) => event.stopPropagation()}
+        onDoubleClick={handleDoubleClick}
+      >
+        <img
+          src={src}
+          alt={alt}
+          className="image-lightbox-image"
+          draggable={false}
+          style={{
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
+            cursor: imageCursor,
+            transition: dragging ? "none" : "transform 90ms ease-out",
+          }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+        />
+      </div>
+    </div>,
+    document.body,
+  );
+}
 
 function ZoomableImage({
   src,
@@ -18,23 +302,6 @@ function ZoomableImage({
   className?: string;
 }) {
   const [zoomed, setZoomed] = useState(false);
-
-  useEffect(() => {
-    if (!zoomed) {
-      return;
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setZoomed(false);
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    document.body.classList.add("is-image-lightbox-open");
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      document.body.classList.remove("is-image-lightbox-open");
-    };
-  }, [zoomed]);
 
   return (
     <>
@@ -52,36 +319,7 @@ function ZoomableImage({
           }
         }}
       />
-      {zoomed
-        ? createPortal(
-            <div
-              className="image-lightbox"
-              role="dialog"
-              aria-modal="true"
-              aria-label={alt}
-              onClick={() => setZoomed(false)}
-            >
-              <button
-                type="button"
-                className="image-lightbox-close"
-                aria-label="Close image preview"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setZoomed(false);
-                }}
-              >
-                ×
-              </button>
-              <img
-                src={src}
-                alt={alt}
-                className="image-lightbox-image"
-                onClick={(event) => event.stopPropagation()}
-              />
-            </div>,
-            document.body,
-          )
-        : null}
+      {zoomed ? <ImageLightbox src={src} alt={alt} onClose={() => setZoomed(false)} /> : null}
     </>
   );
 }
