@@ -84,6 +84,9 @@ function App() {
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const shouldStickConversationToBottomRef = useRef(true);
+  const filePreviewRef = useRef<FilePreview | null>(null);
+  const symbolBackStackRef = useRef<FileLocation[]>([]);
+  const symbolForwardStackRef = useRef<FileLocation[]>([]);
   const resizeStateRef = useRef<{
     startX: number;
     startWidth: number;
@@ -111,6 +114,10 @@ function App() {
   useEffect(() => {
     shouldStickConversationToBottomRef.current = true;
   }, [selectedThreadId]);
+
+  useEffect(() => {
+    filePreviewRef.current = filePreview;
+  }, [filePreview]);
 
   useEffect(() => {
     function handlePointerMove(event: PointerEvent) {
@@ -166,6 +173,90 @@ function App() {
     setSidebarWidth((current) => clampPanelWidth(current, viewportWidth, "left"));
     setRightPanelWidth((current) => clampPanelWidth(current, viewportWidth, "right"));
   }, [viewportWidth]);
+
+  useEffect(() => {
+    if (!filePreview?.lsp.workspaceRoot) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshLspStatus() {
+      try {
+        const status = await window.codexDesktop.lspStatus(filePreview.path);
+        if (cancelled) {
+          return;
+        }
+
+        setFilePreview((current) =>
+          current?.path === filePreview.path
+            ? {
+                ...current,
+                lsp: {
+                  ...current.lsp,
+                  enabled: status.enabled,
+                  lspStatus: status.lspStatus,
+                  reason: status.reason,
+                  workspaceRoot: status.workspaceRoot,
+                },
+              }
+            : current,
+        );
+      } catch {
+        // Keep the last known status if the poll fails.
+      }
+    }
+
+    void refreshLspStatus();
+    const intervalId = window.setInterval(() => {
+      void refreshLspStatus();
+    }, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [filePreview?.path, filePreview?.lsp.workspaceRoot]);
+
+  useEffect(() => {
+    function handleWindowKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented) {
+        return;
+      }
+
+      if (event.metaKey && event.key === "[") {
+        event.preventDefault();
+        void navigateSymbolHistory("back");
+        return;
+      }
+
+      if (event.metaKey && event.key === "]") {
+        event.preventDefault();
+        void navigateSymbolHistory("forward");
+      }
+    }
+
+    function handleWindowMouseDown(event: MouseEvent) {
+      if (event.button === 3) {
+        event.preventDefault();
+        void navigateSymbolHistory("back");
+        return;
+      }
+
+      if (event.button === 4) {
+        event.preventDefault();
+        void navigateSymbolHistory("forward");
+      }
+    }
+
+    window.addEventListener("keydown", handleWindowKeyDown);
+    window.addEventListener("mousedown", handleWindowMouseDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleWindowKeyDown);
+      window.removeEventListener("mousedown", handleWindowMouseDown);
+    };
+  });
 
   const conversationEntries = useMemo(
     () => buildConversationEntries(selectedThread),
@@ -570,9 +661,44 @@ function App() {
     await loadFilePreview(target);
   }
 
-  async function handleNavigateToFile(location: FileLocation) {
-    const target = location.line ? `${location.path}:${location.line}` : location.path;
-    await loadFilePreview(target);
+  async function handleNavigateToSymbol(
+    destination: FileLocation,
+    sourceLocation: FileLocation,
+  ) {
+    const currentLocation = normalizeFileLocation(sourceLocation);
+    const nextLocation = normalizeFileLocation(destination);
+    if (!nextLocation) {
+      return;
+    }
+
+    if (currentLocation) {
+      symbolBackStackRef.current.push(currentLocation);
+    }
+    symbolForwardStackRef.current = [];
+    await navigateToPreviewLocation(nextLocation);
+  }
+
+  async function navigateSymbolHistory(direction: "back" | "forward") {
+    const currentLocation = normalizeFileLocation(filePreviewRef.current);
+    const sourceStack =
+      direction === "back" ? symbolBackStackRef.current : symbolForwardStackRef.current;
+    const targetStack =
+      direction === "back" ? symbolForwardStackRef.current : symbolBackStackRef.current;
+    const destination = sourceStack.pop();
+
+    if (!destination) {
+      return;
+    }
+
+    if (currentLocation) {
+      targetStack.push(currentLocation);
+    }
+
+    await navigateToPreviewLocation(destination);
+  }
+
+  async function navigateToPreviewLocation(location: FileLocation) {
+    await loadFilePreview(formatFileTarget(location));
   }
 
   async function openPreviewExternally() {
@@ -661,7 +787,8 @@ function App() {
         <RightPanel
           activeView={rightPanelView}
           onCreateRootThread={() => void createRootThread()}
-          onNavigateToFile={(location) => void handleNavigateToFile(location)}
+          onNavigateToSymbol={(destination, sourceLocation) =>
+            void handleNavigateToSymbol(destination, sourceLocation)}
           onOpenPreviewExternally={() => void openPreviewExternally()}
           onSelectTaskThread={setSelectedThreadId}
           onSetActiveView={setRightPanelView}
@@ -702,4 +829,28 @@ function clampPanelWidth(value: number, viewportWidth: number, panel: "left" | "
 
 function clampWidth(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function formatFileTarget(location: FileLocation) {
+  if (location.line == null) {
+    return location.path;
+  }
+
+  if (location.column == null) {
+    return `${location.path}:${location.line}`;
+  }
+
+  return `${location.path}:${location.line}:${location.column}`;
+}
+
+function normalizeFileLocation(location: FileLocation | FilePreview | null) {
+  if (!location || location.line == null) {
+    return null;
+  }
+
+  return {
+    path: location.path,
+    line: location.line,
+    column: location.column ?? 1,
+  };
 }

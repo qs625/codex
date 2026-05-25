@@ -1,9 +1,8 @@
 const path = require("node:path");
-const os = require("node:os");
 const fs = require("node:fs/promises");
-const { fileURLToPath } = require("node:url");
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { AppServerClient } = require("./appServerClient.cjs");
+const { isLocalLinkTarget, localFilePathFromTarget, parseLocalFileTarget } = require("./fileTargets.cjs");
 const { LspManager } = require("./lsp/manager.cjs");
 
 const rendererMode = process.env.ROOT_WORKER_RENDERER_MODE ?? "built";
@@ -148,6 +147,10 @@ ipcMain.handle("codex:lspDefinition", async (_event, payload) => {
     line: payload.line,
     column: payload.column,
   });
+});
+
+ipcMain.handle("codex:lspStatus", async (_event, filePath) => {
+  return lspManager.status(filePath);
 });
 
 ipcMain.handle("codex:sendMessage", async (_event, payload) => {
@@ -394,7 +397,7 @@ function openLinkTarget(target) {
 
   const normalizedTarget = target.trim();
   if (isLocalLinkTarget(normalizedTarget)) {
-    const filePath = localFilePathFromTarget(normalizedTarget);
+    const filePath = localFilePathFromTarget(normalizedTarget, defaultWorkspace);
     return openLocalPath(filePath);
   }
 
@@ -409,44 +412,6 @@ function openLocalPath(filePath) {
   });
 }
 
-function isLocalLinkTarget(target) {
-  return (
-    target.startsWith("file://") ||
-    target.startsWith("/") ||
-    target.startsWith("~/") ||
-    target.startsWith("./") ||
-    target.startsWith("../") ||
-    target.startsWith("\\\\") ||
-    /^[A-Za-z]:[\\/]/.test(target)
-  );
-}
-
-function localFilePathFromTarget(target) {
-  if (target.startsWith("file://")) {
-    const url = new URL(target);
-    return fileURLToPath(url);
-  }
-
-  const withoutHash = target.split("#", 1)[0];
-  const withoutLocationSuffix = withoutHash.replace(
-    /:\d+(?::\d+)?(?:-\d+(?::\d+)?)?$/,
-    "",
-  );
-
-  if (withoutLocationSuffix.startsWith("~/")) {
-    return path.join(os.homedir(), withoutLocationSuffix.slice(2));
-  }
-
-  if (
-    withoutLocationSuffix.startsWith("./") ||
-    withoutLocationSuffix.startsWith("../")
-  ) {
-    return path.resolve(defaultWorkspace, withoutLocationSuffix);
-  }
-
-  return withoutLocationSuffix;
-}
-
 async function readLocalFileTarget(target) {
   if (typeof target !== "string" || !target.trim()) {
     throw new Error("Cannot preview empty link target");
@@ -456,7 +421,7 @@ async function readLocalFileTarget(target) {
     throw new Error("Only local file links can be previewed");
   }
 
-  const { line, path: filePath } = parseLocalFileTarget(target.trim());
+  const { line, column, path: filePath } = parseLocalFileTarget(target.trim(), defaultWorkspace);
   const content = await fs.readFile(filePath, "utf8");
   const lsp = await lspManager.describeFile(filePath);
 
@@ -466,26 +431,8 @@ async function readLocalFileTarget(target) {
     content,
     language: languageForFilePath(filePath),
     line,
+    column,
     lsp,
-  };
-}
-
-function parseLocalFileTarget(target) {
-  const normalizedPath = localFilePathFromTarget(target);
-  const lineMatch = normalizedPath.match(/:(\d+)(?::\d+)?$/);
-
-  if (!lineMatch) {
-    return { path: normalizedPath, line: null };
-  }
-
-  const possiblePath = normalizedPath.slice(0, Math.max(0, normalizedPath.length - lineMatch[0].length));
-  if (!possiblePath || !path.extname(possiblePath)) {
-    return { path: normalizedPath, line: null };
-  }
-
-  return {
-    path: possiblePath,
-    line: Number.parseInt(lineMatch[1], 10),
   };
 }
 

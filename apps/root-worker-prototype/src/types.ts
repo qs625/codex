@@ -235,9 +235,14 @@ export type FilePreview = {
   content: string;
   language: string;
   line: number | null;
+  column: number | null;
   lsp: {
     enabled: boolean;
     languageId: string | null;
+    lspStatus: {
+      phase: "plain" | "unavailable" | "starting" | "indexing" | "ready" | "error";
+      detail: string | null;
+    };
     serverLabel: string | null;
     workspaceRoot: string | null;
     reason: string | null;

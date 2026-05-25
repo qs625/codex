@@ -1,4 +1,6 @@
+import { useEffect, useRef } from "react";
 import Editor from "@monaco-editor/react";
+import type * as Monaco from "monaco-editor";
 
 import {
   BranchIcon,
@@ -15,7 +17,7 @@ import type { FileLocation, FilePreview, RightPanelView, TaskFilter, TodoCardIte
 export function RightPanel({
   activeView,
   onCreateRootThread,
-  onNavigateToFile,
+  onNavigateToSymbol,
   onOpenPreviewExternally,
   onSelectTaskThread,
   onSetActiveView,
@@ -29,7 +31,7 @@ export function RightPanel({
 }: {
   activeView: RightPanelView;
   onCreateRootThread: () => void;
-  onNavigateToFile: (location: FileLocation) => void;
+  onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
   onOpenPreviewExternally: () => void;
   onSelectTaskThread: (threadId: string) => void;
   onSetActiveView: (value: RightPanelView) => void;
@@ -59,7 +61,7 @@ export function RightPanel({
             />
           ) : (
             <FilePreviewPanel
-              onNavigateToFile={onNavigateToFile}
+              onNavigateToSymbol={onNavigateToSymbol}
               onOpenPreviewExternally={onOpenPreviewExternally}
               preview={preview}
               previewError={previewError}
@@ -219,18 +221,75 @@ function TodoPanel({
 }
 
 function FilePreviewPanel({
-  onNavigateToFile,
+  onNavigateToSymbol,
   onOpenPreviewExternally,
   preview,
   previewError,
   previewLoading,
 }: {
-  onNavigateToFile: (location: FileLocation) => void;
+  onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
   onOpenPreviewExternally: () => void;
   preview: FilePreview | null;
   previewError: string | null;
   previewLoading: boolean;
 }) {
+  const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+  const hoverPositionRef = useRef<Monaco.Position | null>(null);
+  const decorationCollectionRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
+  const pendingDefinitionRef = useRef(false);
+  const modifierPressedRef = useRef(false);
+  const previewEnabledRef = useRef(preview?.lsp.enabled ?? false);
+
+  useEffect(() => {
+    previewEnabledRef.current = preview?.lsp.enabled ?? false;
+  }, [preview?.lsp.enabled]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) {
+      return;
+    }
+
+    editor.revealPositionInCenter({
+      lineNumber: preview?.line ?? 1,
+      column: preview?.column ?? 1,
+    });
+    editor.setPosition({
+      lineNumber: preview?.line ?? 1,
+      column: preview?.column ?? 1,
+    });
+  }, [preview?.column, preview?.line, preview?.path]);
+
+  useEffect(() => {
+    function handleModifierKey(event: KeyboardEvent) {
+      modifierPressedRef.current = event.metaKey || event.ctrlKey;
+      updateLinkDecoration(editorRef.current, decorationCollectionRef.current, {
+        enabled: previewEnabledRef.current,
+        modifierPressed: modifierPressedRef.current,
+        position: hoverPositionRef.current,
+      });
+    }
+
+    function clearModifierState() {
+      modifierPressedRef.current = false;
+      updateLinkDecoration(editorRef.current, decorationCollectionRef.current, {
+        enabled: previewEnabledRef.current,
+        modifierPressed: false,
+        position: hoverPositionRef.current,
+      });
+    }
+
+    window.addEventListener("keydown", handleModifierKey);
+    window.addEventListener("keyup", handleModifierKey);
+    window.addEventListener("blur", clearModifierState);
+
+    return () => {
+      window.removeEventListener("keydown", handleModifierKey);
+      window.removeEventListener("keyup", handleModifierKey);
+      window.removeEventListener("blur", clearModifierState);
+    };
+  }, []);
+
   return (
     <div className="preview-panel">
       <header className="panel-content-header preview-header">
@@ -266,11 +325,13 @@ function FilePreviewPanel({
                 className={`preview-lsp-button ${previewLspState(preview)}`}
                 disabled
               >
-                LSP
+                {preview.lsp.lspStatus.phase.toUpperCase()}
               </button>
             </div>
             <div className="preview-utility-secondary">
               <span>{preview.language}</span>
+              <span className="preview-utility-separator">•</span>
+              <span>{preview.lsp.lspStatus.detail ?? preview.lsp.serverLabel ?? "LSP idle"}</span>
               <span className="preview-utility-separator">•</span>
               <span className="preview-utility-cwd">
                 {preview.lsp.workspaceRoot ?? "No workspace root"}
@@ -279,32 +340,53 @@ function FilePreviewPanel({
           </div>
           <div className="preview-editor-pad">
             <Editor
-              key={`${preview.path}:${preview.line ?? 0}:${preview.lsp.enabled ? "lsp" : "plain"}`}
+              key={`${preview.path}:${preview.line ?? 0}:${preview.column ?? 0}:${preview.lsp.enabled ? "lsp" : "plain"}`}
               height="100%"
-              onMount={(editor) => {
-                if (preview.line) {
-                  editor.revealLineInCenter(preview.line);
-                  editor.setPosition({ lineNumber: preview.line, column: 1 });
-                }
+              onMount={(editor, monaco) => {
+                editorRef.current = editor;
+                decorationCollectionRef.current = editor.createDecorationsCollection();
+                editor.revealPositionInCenter({
+                  lineNumber: preview.line ?? 1,
+                  column: preview.column ?? 1,
+                });
+                editor.setPosition({
+                  lineNumber: preview.line ?? 1,
+                  column: preview.column ?? 1,
+                });
+
+                editor.onMouseMove((event) => {
+                  hoverPositionRef.current = event.target.position ?? null;
+                  modifierPressedRef.current =
+                    event.event.browserEvent.metaKey || event.event.browserEvent.ctrlKey;
+                  updateLinkDecoration(editor, decorationCollectionRef.current, {
+                  modifierPressed: modifierPressedRef.current,
+                  enabled: preview.lsp.enabled,
+                  position: hoverPositionRef.current,
+                });
+              });
+
+                editor.onMouseLeave(() => {
+                  hoverPositionRef.current = null;
+                  updateLinkDecoration(editor, decorationCollectionRef.current, {
+                    enabled: preview.lsp.enabled,
+                    modifierPressed: false,
+                    position: null,
+                  });
+                });
 
                 editor.onMouseDown((event) => {
                   if (
                     !preview.lsp.enabled ||
                     !event.target.position ||
-                    event.event.browserEvent.button !== 0
+                    event.event.browserEvent.button !== 0 ||
+                    !(event.event.browserEvent.metaKey || event.event.browserEvent.ctrlKey) ||
+                    pendingDefinitionRef.current
                   ) {
                     return;
                   }
 
-                  const model = editor.getModel();
-                  if (!model) {
-                    return;
-                  }
-
-                  const word = model.getWordAtPosition(event.target.position);
-                  if (!word) {
-                    return;
-                  }
+                  pendingDefinitionRef.current = true;
+                  event.event.browserEvent.preventDefault();
 
                   void window.codexDesktop
                     .lspDefinition({
@@ -315,11 +397,23 @@ function FilePreviewPanel({
                     .then((response) => {
                       const destination = response.locations[0];
                       if (response.enabled && destination) {
-                        onNavigateToFile(destination);
+                        onNavigateToSymbol(destination, {
+                          path: preview.path,
+                          line: event.target.position.lineNumber,
+                          column: event.target.position.column,
+                        });
                       }
                     })
                     .catch((error) => {
                       console.error("Failed to resolve definition", error);
+                    })
+                    .finally(() => {
+                      pendingDefinitionRef.current = false;
+                      updateLinkDecoration(editor, decorationCollectionRef.current, {
+                        enabled: preview.lsp.enabled,
+                        modifierPressed: modifierPressedRef.current,
+                        position: hoverPositionRef.current,
+                      });
                     });
                 });
               }}
@@ -382,11 +476,53 @@ function buildTodoStats(todoItems: TodoCardItem[]) {
 }
 
 function previewLspState(preview: FilePreview) {
-  if (preview.lsp.enabled) {
-    return "enabled";
+  return preview.lsp.lspStatus.phase;
+}
+
+function updateLinkDecoration(
+  editor: Monaco.editor.IStandaloneCodeEditor | null,
+  decorations: Monaco.editor.IEditorDecorationsCollection | null,
+  options: {
+    enabled: boolean;
+    modifierPressed: boolean;
+    position: Monaco.Position | null;
+  },
+) {
+  const domNode = editor?.getDomNode();
+  const model = editor?.getModel();
+  if (
+    !editor ||
+    !decorations ||
+    !domNode ||
+    !model ||
+    !options.enabled ||
+    !options.modifierPressed ||
+    !options.position
+  ) {
+    domNode?.classList.remove("preview-editor-link-mode");
+    decorations?.set([]);
+    return;
   }
-  if (preview.lsp.workspaceRoot) {
-    return "unavailable";
+
+  const word = model.getWordAtPosition(options.position);
+  if (!word) {
+    domNode.classList.remove("preview-editor-link-mode");
+    decorations.set([]);
+    return;
   }
-  return "plain";
+
+  domNode.classList.add("preview-editor-link-mode");
+  decorations.set([
+    {
+      range: {
+        startLineNumber: options.position.lineNumber,
+        startColumn: word.startColumn,
+        endLineNumber: options.position.lineNumber,
+        endColumn: word.endColumn,
+      },
+      options: {
+        inlineClassName: "preview-symbol-link",
+      },
+    },
+  ]);
 }

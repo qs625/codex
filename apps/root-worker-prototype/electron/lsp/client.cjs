@@ -1,6 +1,13 @@
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { fileURLToPath, pathToFileURL } = require("node:url");
+const {
+  applyProgressNotification,
+  createClientStatus,
+  markClientError,
+  markClientReady,
+  snapshotClientStatus,
+} = require("./status.cjs");
 
 class LspClient {
   constructor({ adapter, commandSpec, onExit, workspaceRoot }) {
@@ -15,6 +22,7 @@ class LspClient {
     this.openDocuments = new Set();
     this.isInitialized = false;
     this.initializingPromise = null;
+    this.status = createClientStatus();
     this.process = spawn(commandSpec.command, commandSpec.args, {
       cwd: commandSpec.cwd ?? workspaceRoot,
       stdio: ["pipe", "pipe", "pipe"],
@@ -43,6 +51,7 @@ class LspClient {
       this.pendingRequests.clear();
       this.isInitialized = false;
       this.initializingPromise = null;
+      markClientError(this.status, error.message);
       this.onExit?.();
     });
   }
@@ -74,38 +83,54 @@ class LspClient {
 
     if (!this.initializingPromise) {
       this.initializingPromise = (async () => {
-        await this.request("initialize", {
-          processId: process.pid,
-          clientInfo: {
-            name: "root-worker-prototype",
-            version: "0.0.0",
-          },
-          rootUri: pathToFileURL(this.workspaceRoot).href,
-          workspaceFolders: [
-            {
-              uri: pathToFileURL(this.workspaceRoot).href,
-              name: path.basename(this.workspaceRoot),
+        try {
+          await this.request("initialize", {
+            processId: process.pid,
+            clientInfo: {
+              name: "root-worker-prototype",
+              version: "0.0.0",
             },
-          ],
-          capabilities: {
-            textDocument: {
-              definition: {
-                dynamicRegistration: false,
-                linkSupport: true,
+            rootUri: pathToFileURL(this.workspaceRoot).href,
+            workspaceFolders: [
+              {
+                uri: pathToFileURL(this.workspaceRoot).href,
+                name: path.basename(this.workspaceRoot),
+              },
+            ],
+            capabilities: {
+              textDocument: {
+                definition: {
+                  dynamicRegistration: false,
+                  linkSupport: true,
+                },
+              },
+              window: {
+                workDoneProgress: true,
+              },
+              workspace: {
+                workspaceFolders: true,
               },
             },
-            workspace: {
-              workspaceFolders: true,
-            },
-          },
-          initializationOptions: {},
-        });
-        this.notify("initialized", {});
-        this.isInitialized = true;
+            initializationOptions: {},
+          });
+          this.notify("initialized", {});
+          this.isInitialized = true;
+          markClientReady(this.status);
+        } catch (error) {
+          markClientError(
+            this.status,
+            error instanceof Error ? error.message : "Failed to initialize language server",
+          );
+          throw error;
+        }
       })();
     }
 
     return this.initializingPromise;
+  }
+
+  getStatus() {
+    return snapshotClientStatus(this.status);
   }
 
   async openDocument(filePath, text) {
@@ -183,6 +208,19 @@ class LspClient {
   }
 
   handleMessage(message) {
+    if (message.method === "window/workDoneProgress/create") {
+      this.writeMessage({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: null,
+      });
+      return;
+    }
+
+    if (message.method != null) {
+      applyProgressNotification(this.status, message);
+    }
+
     if (message.id == null) {
       return;
     }

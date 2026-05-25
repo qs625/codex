@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("codexDesktop", {
     ipcRenderer.invoke("codex:readThread", threadId, subscribe),
   readLocalFile: (target) => ipcRenderer.invoke("codex:readLocalFile", target),
   lspDefinition: (payload) => ipcRenderer.invoke("codex:lspDefinition", payload),
+  lspStatus: (filePath) => ipcRenderer.invoke("codex:lspStatus", filePath),
   openLink: (target) => ipcRenderer.invoke("codex:openLink", target),
   sendMessage: (payload) => ipcRenderer.invoke("codex:sendMessage", payload),
   subscribe(listener) {

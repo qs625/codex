@@ -21,6 +21,10 @@ class LspManager {
       return {
         enabled: false,
         languageId: null,
+        lspStatus: {
+          phase: "plain",
+          detail: "No language server is configured for this file type.",
+        },
         serverLabel: null,
         workspaceRoot: null,
         reason: "No LSP adapter is configured for this file type.",
@@ -32,6 +36,10 @@ class LspManager {
       return {
         enabled: false,
         languageId: adapter.languageIdForFile(filePath),
+        lspStatus: {
+          phase: "plain",
+          detail: rootResolution.reason,
+        },
         serverLabel: adapter.serverLabel,
         workspaceRoot: null,
         reason: rootResolution.reason,
@@ -43,15 +51,27 @@ class LspManager {
       return {
         enabled: false,
         languageId: adapter.languageIdForFile(filePath),
+        lspStatus: {
+          phase: "unavailable",
+          detail: `${adapter.serverLabel} is not available on PATH.`,
+        },
         serverLabel: adapter.serverLabel,
         workspaceRoot: rootResolution.workspaceRoot,
         reason: `${adapter.serverLabel} is not available on PATH.`,
       };
     }
 
+    const client = this.clientFor({
+      adapter,
+      commandSpec,
+      workspaceRoot: rootResolution.workspaceRoot,
+    });
+    void client.initialize().catch(() => {});
+
     return {
       enabled: true,
       languageId: adapter.languageIdForFile(filePath),
+      lspStatus: client.getStatus(),
       serverLabel: adapter.serverLabel,
       workspaceRoot: rootResolution.workspaceRoot,
       reason: null,
@@ -90,6 +110,16 @@ class LspManager {
       enabled: true,
       locations,
       reason: null,
+    };
+  }
+
+  async status(filePath) {
+    const fileDescription = await this.describeFile(filePath);
+    return {
+      enabled: fileDescription.enabled,
+      lspStatus: fileDescription.lspStatus,
+      reason: fileDescription.reason,
+      workspaceRoot: fileDescription.workspaceRoot,
     };
   }
 
