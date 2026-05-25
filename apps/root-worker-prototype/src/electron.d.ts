@@ -47,6 +47,12 @@ declare global {
           workspaceRoot: string | null;
           reason: string | null;
         };
+        image?: {
+          dataUrl: string;
+          mimeType: string;
+          name: string;
+          byteSize: number;
+        } | null;
       }>;
       lspDefinition: (payload: {
         path: string;

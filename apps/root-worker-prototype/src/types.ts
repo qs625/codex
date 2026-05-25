@@ -243,6 +243,13 @@ export type ComposerImage = {
 
 export type RightPanelView = "todo" | "preview";
 
+export type FilePreviewImage = {
+  dataUrl: string;
+  mimeType: string;
+  name: string;
+  byteSize: number;
+};
+
 export type FilePreview = {
   path: string;
   displayPath: string;
@@ -261,6 +268,7 @@ export type FilePreview = {
     workspaceRoot: string | null;
     reason: string | null;
   };
+  image?: FilePreviewImage | null;
 };
 
 export type FileLocation = {

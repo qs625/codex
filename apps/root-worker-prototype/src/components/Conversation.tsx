@@ -292,7 +292,7 @@ function ImageLightbox({
   );
 }
 
-function ZoomableImage({
+export function ZoomableImage({
   src,
   alt,
   className,

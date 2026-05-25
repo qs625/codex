@@ -1392,6 +1392,36 @@ svg {
   cursor: pointer;
 }
 
+.preview-image-shell {
+  padding: 0 0 8px;
+}
+
+.preview-image-pad {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-height: 0;
+  padding: 10px;
+  background:
+    repeating-conic-gradient(
+      rgba(16, 24, 40, 0.05) 0% 25%,
+      transparent 0% 50%
+    )
+    0 0 / 18px 18px;
+}
+
+.preview-image-pad .image-zoom-trigger {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  object-fit: contain;
+}
+
 .preview-symbol-link {
   color: #0f766e;
   text-decoration: underline;

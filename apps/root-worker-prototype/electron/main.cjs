@@ -426,17 +426,48 @@ async function readLocalFileTarget(target) {
   }
 
   const { line, column, path: filePath } = parseLocalFileTarget(target.trim(), defaultWorkspace);
+  const displayPath = path.relative(defaultWorkspace, filePath) || filePath;
+  const extension = path.extname(filePath).toLowerCase();
+  const imageMime = imageMimeForExtension(extension);
+
+  if (imageMime) {
+    const data = await fs.readFile(filePath);
+    return {
+      path: filePath,
+      displayPath,
+      content: "",
+      language: "image",
+      line: null,
+      column: null,
+      lsp: {
+        enabled: false,
+        languageId: null,
+        lspStatus: { phase: "plain", detail: "Image preview" },
+        serverLabel: null,
+        workspaceRoot: null,
+        reason: "Image file",
+      },
+      image: {
+        dataUrl: `data:${imageMime};base64,${data.toString("base64")}`,
+        mimeType: imageMime,
+        name: path.basename(filePath),
+        byteSize: data.length,
+      },
+    };
+  }
+
   const content = await fs.readFile(filePath, "utf8");
   const lsp = await lspManager.describeFile(filePath);
 
   return {
     path: filePath,
-    displayPath: path.relative(defaultWorkspace, filePath) || filePath,
+    displayPath,
     content,
     language: languageForFilePath(filePath),
     line,
     column,
     lsp,
+    image: null,
   };
 }
 

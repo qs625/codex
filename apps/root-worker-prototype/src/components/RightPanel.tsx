@@ -12,7 +12,22 @@ import {
   PlusIcon,
   SearchIcon,
 } from "./icons";
+import { ZoomableImage } from "./Conversation";
 import type { FileLocation, FilePreview, RightPanelView, TaskFilter, TodoCardItem } from "../types";
+
+function formatByteSize(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 B";
+  }
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value < 10 && unitIndex > 0 ? value.toFixed(1) : Math.round(value)} ${units[unitIndex]}`;
+}
 
 export function RightPanel({
   activeView,
@@ -315,7 +330,33 @@ function FilePreviewPanel({
           <p>Open a local file link in the conversation to pin code context here.</p>
         </div>
       ) : null}
-      {!previewLoading && !previewError && preview ? (
+      {!previewLoading && !previewError && preview?.image ? (
+        <div className="preview-editor-shell preview-image-shell">
+          <div className="preview-utility-strip">
+            <div className="preview-utility-primary">
+              <span className="preview-signal plain" />
+              <button type="button" className="preview-lsp-button plain" disabled>
+                IMAGE
+              </button>
+            </div>
+            <div className="preview-utility-secondary">
+              <span>{preview.image.mimeType}</span>
+              <span className="preview-utility-separator">•</span>
+              <span>{formatByteSize(preview.image.byteSize)}</span>
+              <span className="preview-utility-separator">•</span>
+              <span className="preview-utility-cwd">{preview.image.name}</span>
+            </div>
+          </div>
+          <div className="preview-image-pad">
+            <ZoomableImage
+              src={preview.image.dataUrl}
+              alt={preview.image.name}
+              className="preview-image"
+            />
+          </div>
+        </div>
+      ) : null}
+      {!previewLoading && !previewError && preview && !preview.image ? (
         <div className="preview-editor-shell">
           <div className="preview-utility-strip">
             <div className="preview-utility-primary">
