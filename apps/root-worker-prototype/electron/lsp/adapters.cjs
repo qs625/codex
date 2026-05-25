@@ -70,8 +70,13 @@ const ADAPTERS = [
     languageIdForFile() {
       return "rust";
     },
-    resolveWorkspaceRoot(filePath, findClosestMarker) {
-      return findClosestMarker(filePath, ["Cargo.toml"]);
+    async resolveWorkspaceRoot(filePath, findClosestMarker, { findCargoWorkspaceRoot }) {
+      const crateRoot = await findClosestMarker(filePath, ["Cargo.toml"]);
+      if (!crateRoot) {
+        return null;
+      }
+
+      return (await findCargoWorkspaceRoot(crateRoot)) ?? crateRoot;
     },
   },
   {
