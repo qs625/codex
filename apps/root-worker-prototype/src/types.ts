@@ -108,6 +108,19 @@ export type ThreadItem =
       review: string;
     }
   | {
+      type: "imageView";
+      id: string;
+      path: string | null;
+    }
+  | {
+      type: "imageGeneration";
+      id: string;
+      status: string | null;
+      revisedPrompt: string | null;
+      result: string | null;
+      savedPath: string | null;
+    }
+  | {
       type: "contextCompaction";
       id: string;
     };
@@ -203,6 +216,7 @@ export type ConversationEntry = {
     kind: "image" | "file";
     label: string;
     url?: string;
+    path?: string;
   }>;
   toolName?: string;
   toolStatus?: string;

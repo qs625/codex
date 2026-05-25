@@ -23,6 +23,12 @@ declare global {
       createThread: (payload: { cwd?: string; name?: string }) => Promise<{ thread: unknown }>;
       archiveThread: (threadId: string) => Promise<{ ok: boolean }>;
       readThread: (threadId: string, subscribe?: boolean) => Promise<{ thread: unknown }>;
+      readLocalImage: (target: string) => Promise<{
+        path: string;
+        name: string;
+        mimeType: string;
+        dataUrl: string;
+      }>;
       readLocalFile: (target: string) => Promise<{
         path: string;
         displayPath: string;

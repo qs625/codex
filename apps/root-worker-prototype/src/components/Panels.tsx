@@ -1,7 +1,7 @@
 import type { ChangeEvent, ClipboardEvent, RefObject } from "react";
 
 import { AgentTreeNode } from "./AgentTree";
-import { EventRow, MessageRow, ToolRow } from "./Conversation";
+import { EventRow, MessageRow, ThinkingIndicator, ToolRow } from "./Conversation";
 import {
   CodeIcon,
   GearIcon,
@@ -145,6 +145,18 @@ export function ConversationPanel({
   selectedThread: Thread | null;
   selectedThreadId: string | null;
 }) {
+  const lastTurn = selectedThread?.turns.at(-1) ?? null;
+  const lastTurnInProgress =
+    lastTurn != null && (lastTurn.status === "inProgress" || lastTurn.completedAt == null);
+  const lastItem = lastTurn?.items.at(-1) ?? null;
+  const isStreamingAgentMessage =
+    lastTurnInProgress && lastItem?.type === "agentMessage" && (lastItem.text ?? "").length > 0;
+  const threadActive = threadStatusClass(selectedThread?.status ?? "waiting") === "doing";
+  const isThinking =
+    !isLoadingThread &&
+    !isStreamingAgentMessage &&
+    (isSending || lastTurnInProgress || threadActive);
+
   return (
     <section className="conversation-panel">
       <header className="conversation-header">
@@ -200,7 +212,10 @@ export function ConversationPanel({
             <p>Create or select a root session to begin.</p>
           </div>
         )}
-        {isLoadingThread ? <div className="inline-note">Loading thread…</div> : null}
+        {isLoadingThread ? (
+          <div className="inline-note is-loading">Loading thread…</div>
+        ) : null}
+        {isThinking ? <ThinkingIndicator /> : null}
       </div>
 
       <footer className="composer-shell">

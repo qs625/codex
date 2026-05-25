@@ -1,7 +1,168 @@
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+
 import { MarkdownContent } from "../lib/markdown";
 import { threadStatusClass } from "../lib/thread";
 import type { ConversationEntry } from "../types";
 import { CodeIcon, DocumentIcon, RobotIcon, ShareIcon, UserIcon } from "./icons";
+
+const localImageCache = new Map<string, string>();
+
+function ZoomableImage({
+  src,
+  alt,
+  className,
+}: {
+  src: string;
+  alt: string;
+  className?: string;
+}) {
+  const [zoomed, setZoomed] = useState(false);
+
+  useEffect(() => {
+    if (!zoomed) {
+      return;
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setZoomed(false);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    document.body.classList.add("is-image-lightbox-open");
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      document.body.classList.remove("is-image-lightbox-open");
+    };
+  }, [zoomed]);
+
+  return (
+    <>
+      <img
+        src={src}
+        alt={alt}
+        className={`${className ?? ""} image-zoom-trigger`.trim()}
+        onClick={() => setZoomed(true)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            setZoomed(true);
+          }
+        }}
+      />
+      {zoomed
+        ? createPortal(
+            <div
+              className="image-lightbox"
+              role="dialog"
+              aria-modal="true"
+              aria-label={alt}
+              onClick={() => setZoomed(false)}
+            >
+              <button
+                type="button"
+                className="image-lightbox-close"
+                aria-label="Close image preview"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setZoomed(false);
+                }}
+              >
+                ×
+              </button>
+              <img
+                src={src}
+                alt={alt}
+                className="image-lightbox-image"
+                onClick={(event) => event.stopPropagation()}
+              />
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  );
+}
+
+function LocalImage({ path, label }: { path: string; label: string }) {
+  const cached = localImageCache.get(path) ?? null;
+  const [dataUrl, setDataUrl] = useState<string | null>(cached);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (localImageCache.has(path)) {
+      setDataUrl(localImageCache.get(path) ?? null);
+      setError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setDataUrl(null);
+    setError(null);
+
+    void window.codexDesktop
+      .readLocalImage(path)
+      .then((result) => {
+        if (cancelled) {
+          return;
+        }
+        localImageCache.set(path, result.dataUrl);
+        setDataUrl(result.dataUrl);
+      })
+      .catch((loadError: unknown) => {
+        if (cancelled) {
+          return;
+        }
+        setError(loadError instanceof Error ? loadError.message : String(loadError));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+
+  if (error) {
+    return (
+      <span className="attachment-chip" title={`${path}\n${error}`}>
+        <DocumentIcon />
+        <span>{label}</span>
+      </span>
+    );
+  }
+
+  return (
+    <figure className="attachment-image-card">
+      {dataUrl ? (
+        <ZoomableImage src={dataUrl} alt={label} className="attachment-image" />
+      ) : (
+        <div
+          className="attachment-image attachment-image-loading"
+          role="img"
+          aria-label={`Loading ${label}`}
+        />
+      )}
+      <figcaption>{label}</figcaption>
+    </figure>
+  );
+}
+
+export function ThinkingIndicator() {
+  return (
+    <div className="thinking-row" role="status" aria-live="polite">
+      <div className="message-avatar agent thinking-avatar">
+        <RobotIcon />
+      </div>
+      <div className="thinking-bubble">
+        <span className="thinking-dot" />
+        <span className="thinking-dot" />
+        <span className="thinking-dot" />
+        <span className="thinking-label">Thinking</span>
+      </div>
+    </div>
+  );
+}
 
 export function MessageRow({
   entries,
@@ -28,29 +189,36 @@ export function MessageRow({
               <MarkdownContent text={entry.text} onOpenLocalFile={onOpenLocalFile} />
               {entry.attachments.length > 0 ? (
                 <div className="message-attachments">
-                  {entry.attachments.map((attachment) =>
-                    attachment.kind === "image" && attachment.url ? (
-                      <figure
-                        key={`${entry.id}:${attachment.kind}:${attachment.label}`}
-                        className="attachment-image-card"
-                      >
-                        <img
-                          src={attachment.url}
-                          alt={attachment.label}
-                          className="attachment-image"
+                  {entry.attachments.map((attachment) => {
+                    const key = `${entry.id}:${attachment.kind}:${attachment.label}`;
+                    if (attachment.kind === "image" && attachment.url) {
+                      return (
+                        <figure key={key} className="attachment-image-card">
+                          <ZoomableImage
+                            src={attachment.url}
+                            alt={attachment.label}
+                            className="attachment-image"
+                          />
+                          <figcaption>{attachment.label}</figcaption>
+                        </figure>
+                      );
+                    }
+                    if (attachment.kind === "image" && attachment.path) {
+                      return (
+                        <LocalImage
+                          key={key}
+                          path={attachment.path}
+                          label={attachment.label}
                         />
-                        <figcaption>{attachment.label}</figcaption>
-                      </figure>
-                    ) : (
-                      <span
-                        key={`${entry.id}:${attachment.kind}:${attachment.label}`}
-                        className="attachment-chip"
-                      >
+                      );
+                    }
+                    return (
+                      <span key={key} className="attachment-chip">
                         <DocumentIcon />
                         <span>{attachment.label}</span>
                       </span>
-                    ),
-                  )}
+                    );
+                  })}
                 </div>
               ) : null}
             </div>

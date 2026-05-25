@@ -172,6 +172,59 @@ export function buildConversationEntries(thread: Thread | null): ConversationEnt
         ];
       }
 
+      if (item.type === "imageGeneration") {
+        const label = item.savedPath ? basename(item.savedPath) : "Generated image";
+        const promptText = item.revisedPrompt?.trim();
+        const captionText =
+          promptText && promptText.length > 0
+            ? promptText
+            : item.savedPath
+              ? `Generated ${label}.`
+              : "Generating image…";
+        return [
+          {
+            id: item.id,
+            kind: "message" as const,
+            author,
+            role: "agent" as const,
+            text: captionText,
+            timestamp,
+            attachments: item.savedPath
+              ? [
+                  {
+                    kind: "image" as const,
+                    label,
+                    path: item.savedPath,
+                  },
+                ]
+              : [],
+          },
+        ];
+      }
+
+      if (item.type === "imageView") {
+        const label = item.path ? basename(item.path) : "Viewed image";
+        return [
+          {
+            id: item.id,
+            kind: "message" as const,
+            author,
+            role: "agent" as const,
+            text: `Viewed ${label}.`,
+            timestamp,
+            attachments: item.path
+              ? [
+                  {
+                    kind: "image" as const,
+                    label,
+                    path: item.path,
+                  },
+                ]
+              : [],
+          },
+        ];
+      }
+
       if (item.type === "enteredReviewMode" || item.type === "exitedReviewMode") {
         return [
           {
@@ -300,6 +353,12 @@ function formatStructuredToolDetails(input: unknown, output: unknown) {
   }
 
   return sections.join("\n\n");
+}
+
+function basename(filePath: string) {
+  const normalized = filePath.replace(/\\/g, "/").replace(/\/+$/u, "");
+  const lastSlash = normalized.lastIndexOf("/");
+  return lastSlash === -1 ? normalized : normalized.slice(lastSlash + 1) || normalized;
 }
 
 function safeJson(value: unknown) {

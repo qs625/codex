@@ -1447,6 +1447,213 @@ svg {
   margin-top: 14px;
 }
 
+.thinking-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.thinking-avatar {
+  animation: thinking-avatar-glow 2.4s ease-in-out infinite;
+}
+
+.thinking-bubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+}
+
+.thinking-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #a8a29e;
+  animation: thinking-bounce 1.2s ease-in-out infinite;
+}
+
+.thinking-dot:nth-child(2) {
+  animation-delay: 0.18s;
+}
+
+.thinking-dot:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+.thinking-label {
+  margin-left: 6px;
+  color: #78716c;
+  font-size: 12px;
+  background: linear-gradient(90deg, #a8a29e 0%, #292524 50%, #a8a29e 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: thinking-shimmer 2.4s linear infinite;
+}
+
+@keyframes thinking-bounce {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    background: #d6d3d1;
+  }
+  40% {
+    transform: translateY(-4px);
+    background: #57534e;
+  }
+}
+
+@keyframes thinking-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes thinking-avatar-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(217, 119, 6, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(217, 119, 6, 0.12);
+  }
+}
+
+.status-dot.doing,
+.tree-inline-status.doing {
+  animation: status-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(87, 83, 78, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(87, 83, 78, 0);
+  }
+}
+
+.inline-note.is-loading {
+  background: linear-gradient(90deg, #a8a29e 0%, #292524 50%, #a8a29e 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: thinking-shimmer 1.6s linear infinite;
+}
+
+.image-zoom-trigger {
+  cursor: zoom-in;
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.image-zoom-trigger:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+}
+
+.image-zoom-trigger:focus-visible {
+  outline: 2px solid #d97706;
+  outline-offset: 2px;
+}
+
+.is-image-lightbox-open {
+  overflow: hidden;
+}
+
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: rgba(12, 14, 18, 0.72);
+  backdrop-filter: blur(6px);
+  animation: image-lightbox-fade 160ms ease-out;
+  cursor: zoom-out;
+}
+
+.image-lightbox-image {
+  max-width: 92vw;
+  max-height: 88vh;
+  border-radius: 12px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  cursor: default;
+  animation: image-lightbox-pop 200ms ease-out;
+}
+
+.image-lightbox-close {
+  position: absolute;
+  top: 18px;
+  right: 22px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.image-lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+@keyframes image-lightbox-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes image-lightbox-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.attachment-image-loading {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(110deg, #f5f5f4 30%, #ebebe9 50%, #f5f5f4 70%);
+  background-size: 200% 100%;
+  animation: image-skeleton 1.4s linear infinite;
+}
+
+@keyframes image-skeleton {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
 .tree-context-menu {
   position: fixed;
   z-index: 50;

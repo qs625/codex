@@ -141,6 +141,10 @@ ipcMain.handle("codex:readLocalFile", async (_event, target) => {
   return readLocalFileTarget(target);
 });
 
+ipcMain.handle("codex:readLocalImage", async (_event, target) => {
+  return readLocalImageTarget(target);
+});
+
 ipcMain.handle("codex:lspDefinition", async (_event, payload) => {
   return lspManager.definition({
     filePath: payload.path,
@@ -434,6 +438,52 @@ async function readLocalFileTarget(target) {
     column,
     lsp,
   };
+}
+
+async function readLocalImageTarget(target) {
+  if (typeof target !== "string" || !target.trim()) {
+    throw new Error("Cannot load empty image path");
+  }
+  const trimmed = target.trim();
+  const filePath = path.isAbsolute(trimmed)
+    ? trimmed
+    : path.resolve(defaultWorkspace, trimmed);
+  const mimeType = imageMimeForExtension(path.extname(filePath).toLowerCase());
+  if (!mimeType) {
+    throw new Error(`Unsupported image type for ${path.basename(filePath)}`);
+  }
+  const data = await fs.readFile(filePath);
+  return {
+    path: filePath,
+    name: path.basename(filePath),
+    mimeType,
+    dataUrl: `data:${mimeType};base64,${data.toString("base64")}`,
+  };
+}
+
+function imageMimeForExtension(extension) {
+  switch (extension) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".webp":
+      return "image/webp";
+    case ".bmp":
+      return "image/bmp";
+    case ".svg":
+      return "image/svg+xml";
+    case ".avif":
+      return "image/avif";
+    case ".heic":
+    case ".heif":
+      return "image/heic";
+    default:
+      return null;
+  }
 }
 
 function languageForFilePath(filePath) {
