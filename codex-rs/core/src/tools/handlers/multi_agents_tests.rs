@@ -51,6 +51,7 @@ use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnCompleteEvent;
+use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::user_input::UserInput;
 use core_test_support::PathBufExt;
 use core_test_support::TempDirExt;
@@ -4005,6 +4006,33 @@ async fn build_agent_spawn_config_preserves_base_user_instructions() {
         build_agent_spawn_config(&base_instructions, &turn, /*cwd*/ None).expect("spawn config");
 
     assert_eq!(config.user_instructions, base_config.user_instructions);
+}
+
+#[tokio::test]
+async fn spawn_agent_environment_selections_use_explicit_cwd_override() {
+    let (_session, turn) = make_session_and_context().await;
+    let override_cwd = tempfile::tempdir()
+        .expect("override cwd")
+        .path()
+        .to_path_buf()
+        .abs();
+
+    let environments = spawn_agent_environment_selections(&turn, Some(&override_cwd));
+
+    assert!(
+        !environments.is_empty(),
+        "test turn should expose at least one selected environment"
+    );
+    assert_eq!(
+        environments,
+        environments
+            .iter()
+            .map(|environment| TurnEnvironmentSelection {
+                environment_id: environment.environment_id.clone(),
+                cwd: override_cwd.clone(),
+            })
+            .collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]

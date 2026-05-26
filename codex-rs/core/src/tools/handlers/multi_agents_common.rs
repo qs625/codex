@@ -195,6 +195,7 @@ pub(crate) fn parse_collab_input(
     }
 }
 
+use codex_protocol::protocol::TurnEnvironmentSelection;
 /// Builds the base config snapshot for a newly spawned sub-agent.
 ///
 /// The returned config starts from the parent's effective config and then refreshes the
@@ -287,6 +288,19 @@ pub(crate) fn apply_spawn_agent_runtime_overrides(
             FunctionCallError::RespondToModel(format!("permission_profile is invalid: {err}"))
         })?;
     Ok(())
+}
+
+pub(crate) fn spawn_agent_environment_selections(
+    turn: &TurnContext,
+    cwd: Option<&AbsolutePathBuf>,
+) -> Vec<TurnEnvironmentSelection> {
+    let mut environments = turn.environments.to_selections();
+    if let Some(cwd) = cwd {
+        for environment in &mut environments {
+            environment.cwd = cwd.clone();
+        }
+    }
+    environments
 }
 
 pub(crate) fn apply_spawn_agent_overrides(config: &mut Config, child_depth: i32) {
