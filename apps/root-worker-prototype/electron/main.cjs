@@ -260,6 +260,16 @@ function normalizeNotification(notification) {
     };
   }
 
+  if (notification.method === "thread/skills/updated") {
+    return {
+      ...notification,
+      params: {
+        ...notification.params,
+        skills: (notification.params.skills ?? []).map(normalizeThreadSkill),
+      },
+    };
+  }
+
   if (notification.method === "turn/started" || notification.method === "turn/completed") {
     return {
       ...notification,
@@ -289,7 +299,15 @@ function normalizeThread(thread, runtime = null) {
     model: runtime?.model ?? thread.model ?? null,
     reasoningEffort: runtime?.reasoningEffort ?? thread.reasoningEffort ?? null,
     status: normalizeStatusValue(thread.status),
+    skills: (thread.skills ?? []).map(normalizeThreadSkill),
     turns: (thread.turns ?? []).map(normalizeTurn),
+  };
+}
+
+function normalizeThreadSkill(skill) {
+  return {
+    ...skill,
+    kind: normalizeThreadSkillKind(skill?.kind),
   };
 }
 
@@ -382,6 +400,16 @@ function normalizePatchChangeKind(kind) {
     return kind.type;
   }
   return "update";
+}
+
+function normalizeThreadSkillKind(kind) {
+  if (typeof kind === "string") {
+    return kind;
+  }
+  if (kind && typeof kind === "object" && typeof kind.type === "string") {
+    return kind.type;
+  }
+  return "all";
 }
 
 function normalizePathValue(value) {

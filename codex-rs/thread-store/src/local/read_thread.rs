@@ -4,6 +4,7 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionMetaLine;
 use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::ThreadSkill;
 use codex_rollout::RolloutRecorder;
 use codex_rollout::find_archived_thread_path_by_id_str;
 use codex_rollout::find_thread_name_by_id;
@@ -57,6 +58,9 @@ pub(super) async fn read_thread(
                 rollout_thread.name = thread.name;
             }
             rollout_thread.git_info = thread.git_info;
+            if rollout_thread.skills.is_empty() {
+                rollout_thread.skills = thread.skills;
+            }
             thread = rollout_thread;
         }
         attach_history_if_requested(&mut thread, params.include_history).await?;
@@ -286,6 +290,13 @@ async fn stored_thread_from_sqlite_metadata(
         .clone()
         .or_else(|| metadata.first_user_message.clone())
         .unwrap_or_default();
+    let skills = codex_rollout::state_db::get_thread_skills(
+        store.state_db().await.as_deref(),
+        metadata.id,
+        "thread_store.read_thread",
+    )
+    .await
+    .unwrap_or_default();
     StoredThread {
         thread_id: metadata.id,
         rollout_path: Some(metadata.rollout_path),
@@ -321,6 +332,7 @@ async fn stored_thread_from_sqlite_metadata(
         ),
         token_usage: None,
         first_user_message: metadata.first_user_message,
+        skills,
         history: None,
     }
 }
@@ -335,12 +347,10 @@ async fn stored_thread_from_session_meta(
             message: format!("failed to read thread {}: {err}", path.display()),
         })?;
     let archived = rollout_path_is_archived(store.config.codex_home.as_path(), path.as_path());
-    Ok(stored_thread_from_meta_line(
-        store, meta_line, path, archived,
-    ))
+    Ok(stored_thread_from_meta_line(store, meta_line, path, archived).await)
 }
 
-fn stored_thread_from_meta_line(
+async fn stored_thread_from_meta_line(
     store: &LocalThreadStore,
     meta_line: SessionMetaLine,
     path: std::path::PathBuf,
@@ -354,7 +364,7 @@ fn stored_thread_from_meta_line(
         .unwrap_or(created_at);
     StoredThread {
         thread_id: meta_line.meta.id,
-        rollout_path: Some(path),
+        rollout_path: Some(path.clone()),
         forked_from_id: meta_line.meta.forked_from_id,
         preview: String::new(),
         name: None,
@@ -380,8 +390,35 @@ fn stored_thread_from_meta_line(
         sandbox_policy: SandboxPolicy::new_read_only_policy(),
         token_usage: None,
         first_user_message: None,
+        skills: load_thread_skills_from_rollout(path.as_path())
+            .await
+            .unwrap_or_default(),
         history: None,
     }
+}
+
+async fn load_thread_skills_from_rollout(
+    path: &std::path::Path,
+) -> ThreadStoreResult<Vec<ThreadSkill>> {
+    let (items, _, _) = RolloutRecorder::load_rollout_items(path)
+        .await
+        .map_err(|err| ThreadStoreError::Internal {
+            message: format!("failed to load thread history {}: {err}", path.display()),
+        })?;
+    Ok(items
+        .iter()
+        .rev()
+        .find_map(|item| match item {
+            codex_protocol::protocol::RolloutItem::EventMsg(
+                codex_protocol::protocol::EventMsg::ThreadSkillsUpdated(event),
+            ) => Some(event.skills.clone()),
+            codex_protocol::protocol::RolloutItem::SessionMeta(_)
+            | codex_protocol::protocol::RolloutItem::TurnContext(_)
+            | codex_protocol::protocol::RolloutItem::ResponseItem(_)
+            | codex_protocol::protocol::RolloutItem::Compacted(_)
+            | codex_protocol::protocol::RolloutItem::EventMsg(_) => None,
+        })
+        .unwrap_or_default())
 }
 
 fn parse_session_source(source: &str) -> SessionSource {

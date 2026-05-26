@@ -26,6 +26,7 @@ import {
   pickInitialRootThread,
   pickInitialThread,
   updateThreadItem,
+  updateThreadSkills,
   updateThreadTurn,
   upsertThread,
 } from "./lib/thread";
@@ -39,6 +40,7 @@ import type {
   TaskFilter,
   Thread,
   ThreadItem,
+  ThreadSkill,
   TreeMenuState,
   Turn,
 } from "./types";
@@ -354,6 +356,15 @@ function App() {
     );
   }
 
+  function updateThreadSkillsLocally(threadId: string, skills: ThreadSkill[]) {
+    setThreads((current) =>
+      current.map((thread) => (thread.id === threadId ? updateThreadSkills(thread, skills) : thread)),
+    );
+    setSelectedThread((current) =>
+      current?.id === threadId ? updateThreadSkills(current, skills) : current,
+    );
+  }
+
   async function loadThread(threadId: string) {
     setIsLoadingThread(true);
     setError(null);
@@ -554,6 +565,11 @@ function App() {
           if (!selectedThreadId) {
             setSelectedThreadId(thread.id);
           }
+          break;
+        }
+        case "thread/skills/updated": {
+          const notification = params as { threadId: string; skills: ThreadSkill[] };
+          updateThreadSkillsLocally(notification.threadId, notification.skills);
           break;
         }
         case "thread/name/updated":
@@ -796,6 +812,7 @@ function App() {
           preview={filePreview}
           previewError={previewError}
           previewLoading={isLoadingPreview}
+          skills={selectedThread?.skills ?? []}
           selectedThreadId={selectedThreadId}
           taskFilter={taskFilter}
           todoItems={todoItems}

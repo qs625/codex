@@ -1447,6 +1447,7 @@ server_notification_definitions! {
     ThreadArchived => "thread/archived" (v2::ThreadArchivedNotification),
     ThreadUnarchived => "thread/unarchived" (v2::ThreadUnarchivedNotification),
     ThreadClosed => "thread/closed" (v2::ThreadClosedNotification),
+    ThreadSkillsUpdated => "thread/skills/updated" (v2::ThreadSkillsUpdatedNotification),
     SkillsChanged => "skills/changed" (v2::SkillsChangedNotification),
     ThreadNameUpdated => "thread/name/updated" (v2::ThreadNameUpdatedNotification),
     #[experimental("thread/goal/updated")]
@@ -2290,6 +2291,7 @@ mod tests {
                     agent_role: None,
                     git_info: None,
                     name: None,
+                    skills: Vec::new(),
                     turns: Vec::new(),
                 },
                 model: "gpt-5".to_string(),
@@ -2335,6 +2337,7 @@ mod tests {
                         "agentRole": null,
                         "gitInfo": null,
                         "name": null,
+                        "skills": [],
                         "turns": []
                     },
                     "model": "gpt-5",

@@ -11,6 +11,7 @@ use crate::session::PreviousTurnSettings;
 use crate::session::session::SessionConfiguration;
 use crate::session_startup_prewarm::SessionStartupPrewarmHandle;
 use codex_protocol::protocol::RateLimitSnapshot;
+use codex_protocol::protocol::ThreadSkill;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::TokenUsageInfo;
 use codex_protocol::protocol::TurnContextItem;
@@ -31,6 +32,7 @@ pub(crate) struct SessionState {
     /// Startup prewarmed session prepared during session initialization.
     pub(crate) startup_prewarm: Option<SessionStartupPrewarmHandle>,
     pub(crate) active_connector_selection: HashSet<String>,
+    pub(crate) thread_skills: Vec<ThreadSkill>,
     pub(crate) pending_session_start_source: Option<codex_hooks::SessionStartSource>,
     granted_permissions: Option<AdditionalPermissionProfile>,
     next_turn_is_first: bool,
@@ -50,6 +52,7 @@ impl SessionState {
             previous_turn_settings: None,
             startup_prewarm: None,
             active_connector_selection: HashSet::new(),
+            thread_skills: Vec::new(),
             pending_session_start_source: None,
             granted_permissions: None,
             next_turn_is_first: true,
@@ -203,6 +206,14 @@ impl SessionState {
     // Removes all currently tracked connector selections.
     pub(crate) fn clear_connector_selection(&mut self) {
         self.active_connector_selection.clear();
+    }
+
+    pub(crate) fn thread_skills(&self) -> Vec<ThreadSkill> {
+        self.thread_skills.clone()
+    }
+
+    pub(crate) fn set_thread_skills(&mut self, skills: Vec<ThreadSkill>) {
+        self.thread_skills = skills;
     }
 
     pub(crate) fn set_pending_session_start_source(

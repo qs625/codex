@@ -4,6 +4,7 @@ use codex_protocol::SessionId;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSpecialPath;
+use codex_protocol::protocol::ThreadSkill;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use tokio::sync::Semaphore;
@@ -395,6 +396,37 @@ pub(crate) struct AppServerClientMetadata {
 }
 
 impl Session {
+    pub(crate) async fn merge_thread_skills(
+        &self,
+        additions: Vec<ThreadSkill>,
+    ) -> Option<Vec<ThreadSkill>> {
+        let mut state = self.state.lock().await;
+        let mut skills = state.thread_skills();
+        let mut changed = false;
+        for addition in additions {
+            if let Some(existing) = skills.iter_mut().find(|skill| skill.path == addition.path) {
+                let merged_kind = existing.kind.merge(addition.kind);
+                if existing.kind != merged_kind {
+                    existing.kind = merged_kind;
+                    changed = true;
+                }
+                if existing.name != addition.name {
+                    existing.name = addition.name;
+                    changed = true;
+                }
+            } else {
+                skills.push(addition);
+                changed = true;
+            }
+        }
+        if !changed {
+            None
+        } else {
+            state.set_thread_skills(skills.clone());
+            Some(skills)
+        }
+    }
+
     /// Returns the concrete identity for this thread.
     pub(crate) fn thread_id(&self) -> ThreadId {
         self.conversation_id
@@ -775,7 +807,8 @@ impl Session {
             session_configuration.thread_name = thread_name.clone();
             validate_config_lock_if_configured(&session_configuration).await?;
             export_config_lock_if_configured(&session_configuration, thread_id).await?;
-            let state = SessionState::new(session_configuration.clone());
+            let mut state = SessionState::new(session_configuration.clone());
+            state.set_thread_skills(initial_thread_skills(&initial_history));
             let managed_network_requirements_configured = config
                 .config_layer_stack
                 .requirements_toml()
@@ -1144,5 +1177,73 @@ impl Session {
                 Err(err)
             }
         }
+    }
+}
+
+fn initial_thread_skills(initial_history: &InitialHistory) -> Vec<ThreadSkill> {
+    initial_history
+        .get_rollout_items()
+        .into_iter()
+        .rev()
+        .find_map(|item| match item {
+            RolloutItem::EventMsg(codex_protocol::protocol::EventMsg::ThreadSkillsUpdated(
+                event,
+            )) => Some(event.skills),
+            RolloutItem::SessionMeta(_)
+            | RolloutItem::TurnContext(_)
+            | RolloutItem::ResponseItem(_)
+            | RolloutItem::Compacted(_)
+            | RolloutItem::EventMsg(_) => None,
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod thread_skills_tests {
+    use super::initial_thread_skills;
+    use codex_protocol::protocol::EventMsg;
+    use codex_protocol::protocol::InitialHistory;
+    use codex_protocol::protocol::ResumedHistory;
+    use codex_protocol::protocol::RolloutItem;
+    use codex_protocol::protocol::ThreadSkill;
+    use codex_protocol::protocol::ThreadSkillKind;
+    use codex_protocol::protocol::ThreadSkillsUpdatedEvent;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn initial_thread_skills_uses_latest_update() {
+        let conversation_id = codex_protocol::ThreadId::new();
+        let older = ThreadSkill {
+            name: "older".to_string(),
+            path: "/tmp/older/SKILL.md".to_string(),
+            kind: ThreadSkillKind::Explicit,
+        };
+        let newer = ThreadSkill {
+            name: "newer".to_string(),
+            path: "/tmp/newer/SKILL.md".to_string(),
+            kind: ThreadSkillKind::All,
+        };
+        let history = InitialHistory::Resumed(ResumedHistory {
+            conversation_id,
+            history: vec![
+                RolloutItem::EventMsg(EventMsg::ThreadSkillsUpdated(ThreadSkillsUpdatedEvent {
+                    skills: vec![older],
+                })),
+                RolloutItem::EventMsg(EventMsg::ThreadSkillsUpdated(ThreadSkillsUpdatedEvent {
+                    skills: vec![newer.clone()],
+                })),
+            ],
+            rollout_path: None,
+        });
+
+        assert_eq!(initial_thread_skills(&history), vec![newer]);
+    }
+
+    #[test]
+    fn initial_thread_skills_defaults_to_empty_without_updates() {
+        assert_eq!(
+            initial_thread_skills(&InitialHistory::New),
+            Vec::<ThreadSkill>::new()
+        );
     }
 }

@@ -4,6 +4,8 @@ use super::ThreadStatus;
 use super::TurnStatus;
 use codex_protocol::protocol::SessionSource as CoreSessionSource;
 use codex_protocol::protocol::SubAgentSource as CoreSubAgentSource;
+use codex_protocol::protocol::ThreadSkill as CoreThreadSkill;
+use codex_protocol::protocol::ThreadSkillKind as CoreThreadSkillKind;
 use codex_protocol::protocol::ThreadSource as CoreThreadSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use schemars::JsonSchema;
@@ -99,6 +101,44 @@ pub struct GitInfo {
     pub origin_url: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export_to = "v2/")]
+pub enum ThreadSkillKind {
+    Explicit,
+    Implicit,
+    All,
+}
+
+impl From<CoreThreadSkillKind> for ThreadSkillKind {
+    fn from(value: CoreThreadSkillKind) -> Self {
+        match value {
+            CoreThreadSkillKind::Explicit => Self::Explicit,
+            CoreThreadSkillKind::Implicit => Self::Implicit,
+            CoreThreadSkillKind::All => Self::All,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadSkill {
+    pub name: String,
+    pub path: String,
+    pub kind: ThreadSkillKind,
+}
+
+impl From<CoreThreadSkill> for ThreadSkill {
+    fn from(value: CoreThreadSkill) -> Self {
+        Self {
+            name: value.name,
+            path: value.path,
+            kind: value.kind.into(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
@@ -140,6 +180,9 @@ pub struct Thread {
     pub git_info: Option<GitInfo>,
     /// Optional user-facing thread title.
     pub name: Option<String>,
+    /// Aggregate thread-level skill usage observed so far.
+    #[serde(default)]
+    pub skills: Vec<ThreadSkill>,
     /// Only populated on `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read`
     /// (when `includeTurns` is true) responses.
     /// For all other responses and notifications returning a Thread,

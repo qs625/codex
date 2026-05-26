@@ -977,6 +977,13 @@ svg {
   padding: 0;
 }
 
+.skills-panel {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+}
+
 .panel-rail-button {
   position: relative;
   display: grid;
@@ -1155,6 +1162,71 @@ svg {
 .todo-scroll {
   flex: 1;
   padding: 10px 12px 12px;
+}
+
+.skills-scroll {
+  flex: 1;
+  padding: 10px 12px 12px;
+}
+
+.skill-card {
+  padding: 12px;
+  border: 1px solid rgba(16, 24, 40, 0.07);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.skill-card + .skill-card {
+  margin-top: 10px;
+}
+
+.skill-card strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #171717;
+}
+
+.skill-meta-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 8px;
+}
+
+.skill-kind-badge {
+  flex: none;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.skill-kind-badge.explicit {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.skill-kind-badge.implicit {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.skill-kind-badge.all {
+  background: #e7e5e4;
+  color: #44403c;
+}
+
+.skill-path {
+  min-width: 0;
+  color: #78716c;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .todo-card {

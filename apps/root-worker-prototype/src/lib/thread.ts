@@ -1,4 +1,12 @@
-import type { TaskFilter, Thread, ThreadItem, TodoCardItem, TreeNode, Turn } from "../types";
+import type {
+  TaskFilter,
+  Thread,
+  ThreadItem,
+  ThreadSkill,
+  TodoCardItem,
+  TreeNode,
+  Turn,
+} from "../types";
 
 export function pickInitialThread(threads: Thread[]) {
   return [...threads].sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null;
@@ -265,6 +273,10 @@ export function updateThreadItem(thread: Thread, turnId: string, item: ThreadIte
       return { ...turn, items };
     }),
   };
+}
+
+export function updateThreadSkills(thread: Thread, skills: ThreadSkill[]) {
+  return { ...thread, skills };
 }
 
 export function appendAgentDelta(thread: Thread, turnId: string, itemId: string, delta: string) {

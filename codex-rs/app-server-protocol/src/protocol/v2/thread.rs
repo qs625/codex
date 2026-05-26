@@ -7,6 +7,7 @@ use super::SandboxMode;
 use super::SandboxPolicy;
 use super::Thread;
 use super::ThreadItem;
+use super::ThreadSkill;
 use super::ThreadSource;
 use super::Turn;
 use super::TurnEnvironmentParams;
@@ -1183,6 +1184,15 @@ pub struct ThreadUnarchivedNotification {
 pub struct ThreadClosedNotification {
     pub thread_id: String,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadSkillsUpdatedNotification {
+    pub thread_id: String,
+    pub skills: Vec<ThreadSkill>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]

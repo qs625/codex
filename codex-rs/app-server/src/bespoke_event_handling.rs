@@ -60,6 +60,7 @@ use codex_app_server_protocol::ThreadRealtimeStartedNotification;
 use codex_app_server_protocol::ThreadRealtimeTranscriptDeltaNotification;
 use codex_app_server_protocol::ThreadRealtimeTranscriptDoneNotification;
 use codex_app_server_protocol::ThreadRollbackResponse;
+use codex_app_server_protocol::ThreadSkillsUpdatedNotification;
 use codex_app_server_protocol::ThreadStatus;
 use codex_app_server_protocol::ThreadTokenUsage;
 use codex_app_server_protocol::ThreadTokenUsageUpdatedNotification;
@@ -1200,6 +1201,19 @@ pub(crate) async fn apply_bespoke_event_handling(
                 ))
                 .await;
         }
+        EventMsg::ThreadSkillsUpdated(thread_skills_event) => {
+            let notification = ThreadSkillsUpdatedNotification {
+                thread_id: conversation_id.to_string(),
+                skills: thread_skills_event
+                    .skills
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
+            };
+            outgoing
+                .send_server_notification(ServerNotification::ThreadSkillsUpdated(notification))
+                .await;
+        }
         EventMsg::TurnDiff(turn_diff_event) => {
             handle_turn_diff(conversation_id, &event_turn_id, turn_diff_event, &outgoing).await;
         }
@@ -2092,6 +2106,9 @@ mod tests {
     use codex_protocol::protocol::RolloutItem;
     use codex_protocol::protocol::SandboxPolicy;
     use codex_protocol::protocol::SessionSource;
+    use codex_protocol::protocol::ThreadSkill;
+    use codex_protocol::protocol::ThreadSkillKind;
+    use codex_protocol::protocol::ThreadSkillsUpdatedEvent;
     use codex_protocol::protocol::TokenUsage;
     use codex_protocol::protocol::TokenUsageInfo;
     use codex_protocol::protocol::UserMessageEvent;
@@ -2168,6 +2185,7 @@ mod tests {
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             token_usage: None,
             first_user_message: Some("before rollback".to_string()),
+            skills: Vec::new(),
             history: Some(StoredThreadHistory {
                 thread_id,
                 items: history_items,
@@ -3255,6 +3273,72 @@ mod tests {
             }
             other => bail!("unexpected message: {other:?}"),
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_skills_updated_emits_thread_scoped_notification() -> Result<()> {
+        let codex_home = TempDir::new()?;
+        let config = load_default_config_for_test(&codex_home).await;
+        let thread_manager = Arc::new(
+            codex_core::test_support::thread_manager_with_models_provider_and_home(
+                CodexAuth::create_dummy_chatgpt_auth_for_testing(),
+                config.model_provider.clone(),
+                config.codex_home.to_path_buf(),
+                Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+            ),
+        );
+        let codex_core::NewThread {
+            thread_id: conversation_id,
+            thread: conversation,
+            ..
+        } = thread_manager.start_thread(config.clone()).await?;
+        let thread_state = new_thread_state();
+        let thread_watch_manager = ThreadWatchManager::new();
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let outgoing = Arc::new(OutgoingMessageSender::new(
+            tx,
+            codex_analytics::AnalyticsEventsClient::disabled(),
+        ));
+        let outgoing = ThreadScopedOutgoingMessageSender::new(
+            outgoing,
+            vec![ConnectionId(1)],
+            conversation_id,
+        );
+
+        apply_bespoke_event_handling(
+            Event {
+                id: "turn-1".to_string(),
+                msg: EventMsg::ThreadSkillsUpdated(ThreadSkillsUpdatedEvent {
+                    skills: vec![ThreadSkill {
+                        name: "demo".to_string(),
+                        path: "/tmp/demo/SKILL.md".to_string(),
+                        kind: ThreadSkillKind::All,
+                    }],
+                }),
+            },
+            conversation_id,
+            conversation,
+            thread_manager,
+            outgoing,
+            thread_state,
+            thread_watch_manager,
+            Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
+            "test-provider".to_string(),
+        )
+        .await;
+
+        let msg = recv_broadcast_message(&mut rx).await?;
+        match msg {
+            OutgoingMessage::AppServerNotification(ServerNotification::ThreadSkillsUpdated(n)) => {
+                assert_eq!(n.thread_id, conversation_id.to_string());
+                assert_eq!(n.skills.len(), 1);
+                assert_eq!(n.skills[0].name, "demo");
+                assert_eq!(n.skills[0].path, "/tmp/demo/SKILL.md");
+            }
+            other => bail!("expected thread/skills/updated, got {other:?}"),
+        }
+
         Ok(())
     }
 

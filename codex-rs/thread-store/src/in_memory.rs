@@ -368,6 +368,9 @@ fn stored_thread_from_state(
             .unwrap_or_else(SandboxPolicy::new_read_only_policy),
         token_usage: metadata.and_then(|metadata| metadata.token_usage.clone()),
         first_user_message: metadata.and_then(|metadata| metadata.first_user_message.clone()),
+        skills: metadata
+            .and_then(|metadata| metadata.skills.clone())
+            .unwrap_or_default(),
         history,
     })
 }

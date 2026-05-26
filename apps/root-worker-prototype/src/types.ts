@@ -136,6 +136,14 @@ export type Turn = {
   durationMs: number | null;
 };
 
+export type ThreadSkillKind = "explicit" | "implicit" | "all";
+
+export type ThreadSkill = {
+  name: string;
+  path: string;
+  kind: ThreadSkillKind;
+};
+
 export type Thread = {
   id: string;
   sessionId: string;
@@ -157,6 +165,7 @@ export type Thread = {
   agentRole: string | null;
   gitInfo: unknown | null;
   name: string | null;
+  skills: ThreadSkill[];
   turns: Turn[];
 };
 
@@ -241,7 +250,7 @@ export type ComposerImage = {
   dataUrl: string;
 };
 
-export type RightPanelView = "todo" | "preview";
+export type RightPanelView = "todo" | "preview" | "skills";
 
 export type FilePreviewImage = {
   dataUrl: string;

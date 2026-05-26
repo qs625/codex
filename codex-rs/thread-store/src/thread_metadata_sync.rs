@@ -275,6 +275,9 @@ impl ThreadMetadataSync {
                         }
                     }
                 }
+                RolloutItem::EventMsg(EventMsg::ThreadSkillsUpdated(event)) => {
+                    update.skills = Some(event.skills.clone());
+                }
                 RolloutItem::SessionMeta(_)
                 | RolloutItem::EventMsg(_)
                 | RolloutItem::ResponseItem(_)
@@ -363,6 +366,7 @@ fn update_has_metadata_facts(update: &ThreadMetadataPatch) -> bool {
         || update.sandbox_policy.is_some()
         || update.token_usage.is_some()
         || update.first_user_message.is_some()
+        || update.skills.is_some()
         || update.git_info.is_some()
         || update.memory_mode.is_some()
         || update.dynamic_tools.is_some()
@@ -385,6 +389,9 @@ mod tests {
     use codex_protocol::protocol::ThreadGoal;
     use codex_protocol::protocol::ThreadGoalStatus;
     use codex_protocol::protocol::ThreadGoalUpdatedEvent;
+    use codex_protocol::protocol::ThreadSkill;
+    use codex_protocol::protocol::ThreadSkillKind;
+    use codex_protocol::protocol::ThreadSkillsUpdatedEvent;
     use codex_protocol::protocol::UserMessageEvent;
     use pretty_assertions::assert_eq;
 
@@ -522,6 +529,33 @@ mod tests {
             ))])
             .is_some(),
             "the first append should flush resume metadata together with append metadata"
+        );
+    }
+
+    #[test]
+    fn thread_skills_updates_are_persisted_from_history() {
+        let thread_id = ThreadId::new();
+        let sync = ThreadMetadataSync::for_resume(&resume_params(
+            thread_id,
+            vec![RolloutItem::EventMsg(EventMsg::ThreadSkillsUpdated(
+                ThreadSkillsUpdatedEvent {
+                    skills: vec![ThreadSkill {
+                        name: "demo".to_string(),
+                        path: "/tmp/demo/SKILL.md".to_string(),
+                        kind: ThreadSkillKind::All,
+                    }],
+                },
+            ))],
+        ));
+
+        let update = sync.take_pending_update().expect("pending metadata update");
+        assert_eq!(
+            update.patch.skills,
+            Some(vec![ThreadSkill {
+                name: "demo".to_string(),
+                path: "/tmp/demo/SKILL.md".to_string(),
+                kind: ThreadSkillKind::All,
+            }])
         );
     }
 

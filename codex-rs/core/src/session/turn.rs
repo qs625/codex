@@ -19,6 +19,7 @@ use crate::compact_remote::run_inline_remote_auto_compact_task;
 use crate::compact_remote_v2::run_inline_remote_auto_compact_task as run_inline_remote_auto_compact_task_v2;
 use crate::connectors;
 use crate::context::ContextualUserFragment;
+use crate::emit_thread_skills_update;
 use crate::feedback_tags;
 use crate::hook_runtime::PendingInputHookDisposition;
 use crate::hook_runtime::emit_hook_completed_events;
@@ -66,6 +67,7 @@ use codex_analytics::AppInvocation;
 use codex_analytics::CompactionPhase;
 use codex_analytics::CompactionReason;
 use codex_analytics::InvocationType;
+use codex_analytics::SkillInvocation;
 use codex_analytics::TurnResolvedConfigFact;
 use codex_analytics::build_track_events_context;
 use codex_async_utils::OrCancelExt;
@@ -264,6 +266,21 @@ pub(crate) async fn run_turn(
         Some(&session_telemetry),
         &sess.services.analytics_events_client,
         tracking.clone(),
+    )
+    .await;
+    emit_thread_skills_update(
+        sess.as_ref(),
+        turn_context.as_ref(),
+        &skill_injections
+            .iter()
+            .map(|skill| SkillInvocation {
+                skill_name: skill.name.clone(),
+                skill_scope: codex_protocol::protocol::SkillScope::User,
+                skill_path: std::path::PathBuf::from(skill.path.clone()),
+                plugin_id: None,
+                invocation_type: InvocationType::Explicit,
+            })
+            .collect::<Vec<_>>(),
     )
     .await;
 
@@ -1471,6 +1488,7 @@ pub(super) fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
         | EventMsg::AgentReasoningSectionBreak(_)
         | EventMsg::SessionConfigured(_)
         | EventMsg::ThreadGoalUpdated(_)
+        | EventMsg::ThreadSkillsUpdated(_)
         | EventMsg::McpStartupUpdate(_)
         | EventMsg::McpStartupComplete(_)
         | EventMsg::McpToolCallBegin(_)

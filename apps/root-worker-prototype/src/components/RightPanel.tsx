@@ -8,12 +8,20 @@ import {
   DocumentIcon,
   FilterIcon,
   GridIcon,
+  GearIcon,
   OpenIcon,
   PlusIcon,
   SearchIcon,
 } from "./icons";
 import { ZoomableImage } from "./Conversation";
-import type { FileLocation, FilePreview, RightPanelView, TaskFilter, TodoCardItem } from "../types";
+import type {
+  FileLocation,
+  FilePreview,
+  RightPanelView,
+  TaskFilter,
+  ThreadSkill,
+  TodoCardItem,
+} from "../types";
 
 function formatByteSize(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) {
@@ -40,6 +48,7 @@ export function RightPanel({
   preview,
   previewError,
   previewLoading,
+  skills,
   selectedThreadId,
   taskFilter,
   todoItems,
@@ -54,6 +63,7 @@ export function RightPanel({
   preview: FilePreview | null;
   previewError: string | null;
   previewLoading: boolean;
+  skills: ThreadSkill[];
   selectedThreadId: string | null;
   taskFilter: TaskFilter;
   todoItems: TodoCardItem[];
@@ -74,6 +84,8 @@ export function RightPanel({
               taskFilter={taskFilter}
               todoItems={todoItems}
             />
+          ) : activeView === "skills" ? (
+            <SkillsPanel skills={skills} />
           ) : (
             <FilePreviewPanel
               onNavigateToSymbol={onNavigateToSymbol}
@@ -92,6 +104,12 @@ export function RightPanel({
               label: "Todo Board",
               icon: <FilterIcon />,
               badge: String(todoStats.openCount),
+            },
+            {
+              view: "skills",
+              label: "Skills",
+              icon: <GearIcon />,
+              badge: skills.length > 0 ? String(skills.length) : "",
             },
             {
               view: "preview",
@@ -137,6 +155,40 @@ export function RightPanel({
         </nav>
       </div>
     </aside>
+  );
+}
+
+function SkillsPanel({ skills }: { skills: ThreadSkill[] }) {
+  return (
+    <div className="skills-panel">
+      <header className="panel-content-header">
+        <div className="panel-content-copy">
+          <span className="panel-eyebrow">Thread Skills</span>
+          <h2>Applied Skills</h2>
+          <p>Skills observed on the selected thread so far.</p>
+        </div>
+      </header>
+
+      <div className="skills-scroll">
+        {skills.length > 0 ? (
+          skills.map((skill) => (
+            <article key={`${skill.kind}:${skill.path}:${skill.name}`} className="skill-card">
+              <strong>{skill.name}</strong>
+              <div className="skill-meta-line">
+                <span className={`skill-kind-badge ${skill.kind}`}>{formatSkillKind(skill.kind)}</span>
+                <span className="skill-path" title={skill.path}>
+                  {skill.path}
+                </span>
+              </div>
+            </article>
+          ))
+        ) : (
+          <div className="empty-card">
+            <p>No thread skills yet.</p>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -483,6 +535,19 @@ function FilePreviewPanel({
       ) : null}
     </div>
   );
+}
+
+function formatSkillKind(kind: ThreadSkill["kind"]) {
+  switch (kind) {
+    case "explicit":
+      return "Explicit";
+    case "implicit":
+      return "Implicit";
+    case "all":
+      return "All";
+    default:
+      return kind;
+  }
 }
 
 function OverviewMetric({

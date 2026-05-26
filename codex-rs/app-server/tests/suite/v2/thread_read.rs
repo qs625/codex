@@ -28,6 +28,8 @@ use codex_app_server_protocol::ThreadResumeParams;
 use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadSetNameParams;
 use codex_app_server_protocol::ThreadSetNameResponse;
+use codex_app_server_protocol::ThreadSkill;
+use codex_app_server_protocol::ThreadSkillKind;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::ThreadStatus;
@@ -578,6 +580,109 @@ async fn thread_list_includes_store_thread_without_rollout_path() -> Result<()> 
     assert_eq!(thread.path, None);
     assert_eq!(thread.preview, "");
     assert_eq!(thread.name.as_deref(), Some("named pathless thread"));
+
+    client.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_read_and_resume_include_persisted_thread_skills() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let thread_id = codex_protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000125")?;
+    let store_id = Uuid::new_v4().to_string();
+    create_config_toml_with_thread_store(codex_home.path(), &store_id)?;
+    let store = InMemoryThreadStore::for_id(store_id.clone());
+    let _in_memory_store = InMemoryThreadStoreId { store_id };
+    seed_pathless_store_thread(&store, thread_id).await?;
+    store
+        .update_thread_metadata(UpdateThreadMetadataParams {
+            thread_id,
+            patch: ThreadMetadataPatch {
+                skills: Some(vec![codex_protocol::protocol::ThreadSkill {
+                    name: "demo".to_string(),
+                    path: "/tmp/demo/SKILL.md".to_string(),
+                    kind: codex_protocol::protocol::ThreadSkillKind::All,
+                }]),
+                ..Default::default()
+            },
+            include_archived: true,
+        })
+        .await?;
+
+    let loader_overrides = LoaderOverrides::without_managed_config_for_tests();
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(codex_home.path().to_path_buf()))
+        .loader_overrides(loader_overrides.clone())
+        .build()
+        .await?;
+    let client = in_process::start(InProcessStartArgs {
+        arg0_paths: Arg0DispatchPaths::default(),
+        config: Arc::new(config),
+        cli_overrides: Vec::new(),
+        loader_overrides,
+        strict_config: false,
+        cloud_requirements: CloudRequirementsLoader::default(),
+        thread_config_loader: Arc::new(codex_config::NoopThreadConfigLoader),
+        feedback: CodexFeedback::new(),
+        log_db: None,
+        state_db: None,
+        environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
+        config_warnings: Vec::new(),
+        session_source: SessionSource::Cli.into(),
+        enable_codex_api_key_env: false,
+        initialize: InitializeParams {
+            client_info: ClientInfo {
+                name: "codex-app-server-tests".to_string(),
+                title: None,
+                version: "0.1.0".to_string(),
+            },
+            capabilities: Some(InitializeCapabilities {
+                experimental_api: true,
+                ..Default::default()
+            }),
+        },
+        channel_capacity: in_process::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+    })
+    .await?;
+
+    let read = client
+        .request(ClientRequest::ThreadRead {
+            request_id: RequestId::Integer(1),
+            params: ThreadReadParams {
+                thread_id: thread_id.to_string(),
+                include_turns: false,
+            },
+        })
+        .await?
+        .expect("thread/read should succeed");
+    let ThreadReadResponse {
+        thread: read_thread,
+    } = serde_json::from_value(read)?;
+    assert_eq!(
+        read_thread.skills,
+        vec![ThreadSkill {
+            name: "demo".to_string(),
+            path: "/tmp/demo/SKILL.md".to_string(),
+            kind: ThreadSkillKind::All,
+        }]
+    );
+
+    let resume = client
+        .request(ClientRequest::ThreadResume {
+            request_id: RequestId::Integer(2),
+            params: ThreadResumeParams {
+                thread_id: thread_id.to_string(),
+                ..Default::default()
+            },
+        })
+        .await?
+        .expect("thread/resume should succeed");
+    let ThreadResumeResponse {
+        thread: resumed_thread,
+        ..
+    } = serde_json::from_value(resume)?;
+    assert_eq!(resumed_thread.skills, read_thread.skills);
 
     client.shutdown().await?;
     Ok(())

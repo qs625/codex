@@ -1,6 +1,8 @@
 use super::*;
 use crate::SortDirection;
+use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::ThreadSkill;
 use std::sync::atomic::Ordering;
 
 impl StateRuntime {
@@ -83,6 +85,37 @@ ORDER BY position ASC
             });
         }
         Ok(Some(tools))
+    }
+
+    /// Get persisted thread-level skills for a thread, if present.
+    pub async fn get_thread_skills(
+        &self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<Option<Vec<ThreadSkill>>> {
+        let rows = sqlx::query(
+            r#"
+SELECT name, path, kind
+FROM thread_skills
+WHERE thread_id = ?
+ORDER BY position ASC
+            "#,
+        )
+        .bind(thread_id.to_string())
+        .fetch_all(self.pool.as_ref())
+        .await?;
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        let mut skills = Vec::with_capacity(rows.len());
+        for row in rows {
+            let kind: String = row.try_get("kind")?;
+            skills.push(ThreadSkill {
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                kind: serde_json::from_value(Value::String(kind))?,
+            });
+        }
+        Ok(Some(skills))
     }
 
     /// Persist or replace the directional parent-child edge for a spawned thread.
@@ -838,6 +871,51 @@ ON CONFLICT(thread_id, position) DO NOTHING
         Ok(())
     }
 
+    /// Persist or replace aggregate thread-level skills for a thread.
+    pub async fn persist_thread_skills(
+        &self,
+        thread_id: ThreadId,
+        skills: Option<&[ThreadSkill]>,
+    ) -> anyhow::Result<()> {
+        let thread_id = thread_id.to_string();
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM thread_skills WHERE thread_id = ?")
+            .bind(thread_id.as_str())
+            .execute(&mut *tx)
+            .await?;
+        let Some(skills) = skills else {
+            tx.commit().await?;
+            return Ok(());
+        };
+        for (idx, skill) in skills.iter().enumerate() {
+            let position = i64::try_from(idx).unwrap_or(i64::MAX);
+            sqlx::query(
+                r#"
+INSERT INTO thread_skills (
+    thread_id,
+    position,
+    name,
+    path,
+    kind
+) VALUES (?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(thread_id.as_str())
+            .bind(position)
+            .bind(skill.name.as_str())
+            .bind(skill.path.as_str())
+            .bind(
+                serde_json::to_value(skill.kind)?
+                    .as_str()
+                    .unwrap_or_default(),
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Apply rollout items incrementally using the underlying database.
     pub async fn apply_rollout_items(
         &self,
@@ -887,6 +965,14 @@ ON CONFLICT(thread_id, position) DO NOTHING
         if let Some(dynamic_tools) = dynamic_tools
             && let Err(err) = self
                 .persist_dynamic_tools(builder.id, dynamic_tools.as_deref())
+                .await
+        {
+            return Err(err);
+        }
+        let thread_skills = extract_thread_skills(items);
+        if let Some(thread_skills) = thread_skills
+            && let Err(err) = self
+                .persist_thread_skills(builder.id, thread_skills.as_deref())
                 .await
         {
             return Err(err);
@@ -1009,6 +1095,19 @@ pub(super) fn extract_dynamic_tools(items: &[RolloutItem]) -> Option<Option<Vec<
         RolloutItem::ResponseItem(_)
         | RolloutItem::Compacted(_)
         | RolloutItem::TurnContext(_)
+        | RolloutItem::EventMsg(_) => None,
+    })
+}
+
+pub(super) fn extract_thread_skills(items: &[RolloutItem]) -> Option<Option<Vec<ThreadSkill>>> {
+    items.iter().rev().find_map(|item| match item {
+        RolloutItem::EventMsg(EventMsg::ThreadSkillsUpdated(event)) => {
+            Some(Some(event.skills.clone()))
+        }
+        RolloutItem::ResponseItem(_)
+        | RolloutItem::Compacted(_)
+        | RolloutItem::TurnContext(_)
+        | RolloutItem::SessionMeta(_)
         | RolloutItem::EventMsg(_) => None,
     })
 }

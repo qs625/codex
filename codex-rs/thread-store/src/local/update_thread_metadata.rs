@@ -308,6 +308,14 @@ async fn apply_metadata_update(
                         message: format!("failed to update dynamic tools for {thread_id}: {err}"),
                     })?;
             }
+            if let Some(skills) = patch.skills {
+                state_db
+                    .persist_thread_skills(thread_id, Some(skills.as_slice()))
+                    .await
+                    .map_err(|err| ThreadStoreError::Internal {
+                        message: format!("failed to update thread skills for {thread_id}: {err}"),
+                    })?;
+            }
             Ok(())
         }
         .await
@@ -362,6 +370,7 @@ fn has_observed_metadata_facts(patch: &ThreadMetadataPatch) -> bool {
         || patch.token_usage.is_some()
         || patch.first_user_message.is_some()
         || patch.dynamic_tools.is_some()
+        || patch.skills.is_some()
 }
 
 fn enum_to_string<T: serde::Serialize>(value: &T) -> String {

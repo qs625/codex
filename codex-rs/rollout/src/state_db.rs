@@ -1,3 +1,4 @@
+use crate::RolloutRecorder;
 use crate::config::RolloutConfig;
 use crate::config::RolloutConfigView;
 use crate::list::Cursor;
@@ -11,6 +12,7 @@ use codex_protocol::ThreadId;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::ThreadSkill;
 pub use codex_state::LogEntry;
 use codex_state::ThreadMetadataBuilder;
 use codex_utils_path::normalize_for_path_comparison;
@@ -485,6 +487,37 @@ pub async fn persist_dynamic_tools(
     }
 }
 
+/// Get aggregate thread-level skills for a thread id using SQLite.
+pub async fn get_thread_skills(
+    context: Option<&codex_state::StateRuntime>,
+    thread_id: ThreadId,
+    stage: &str,
+) -> Option<Vec<ThreadSkill>> {
+    let ctx = context?;
+    match ctx.get_thread_skills(thread_id).await {
+        Ok(skills) => skills,
+        Err(err) => {
+            warn!("state db get_thread_skills failed during {stage}: {err}");
+            None
+        }
+    }
+}
+
+/// Persist aggregate thread-level skills for a thread id using SQLite.
+pub async fn persist_thread_skills(
+    context: Option<&codex_state::StateRuntime>,
+    thread_id: ThreadId,
+    skills: Option<&[ThreadSkill]>,
+    stage: &str,
+) {
+    let Some(ctx) = context else {
+        return;
+    };
+    if let Err(err) = ctx.persist_thread_skills(thread_id, skills).await {
+        warn!("state db persist_thread_skills failed during {stage}: {err}");
+    }
+}
+
 pub async fn mark_thread_memory_mode_polluted(
     context: Option<&codex_state::StateRuntime>,
     thread_id: ThreadId,
@@ -576,6 +609,25 @@ pub async fn reconcile_rollout(
             "reconcile_rollout",
         )
         .await;
+        if let Ok((items, _, _)) = RolloutRecorder::load_rollout_items(rollout_path).await {
+            let thread_skills = items.iter().rev().find_map(|item| match item {
+                RolloutItem::EventMsg(codex_protocol::protocol::EventMsg::ThreadSkillsUpdated(
+                    event,
+                )) => Some(event.skills.as_slice()),
+                RolloutItem::SessionMeta(_)
+                | RolloutItem::TurnContext(_)
+                | RolloutItem::ResponseItem(_)
+                | RolloutItem::Compacted(_)
+                | RolloutItem::EventMsg(_) => None,
+            });
+            persist_thread_skills(
+                Some(ctx),
+                meta_line.meta.id,
+                thread_skills,
+                "reconcile_rollout",
+            )
+            .await;
+        }
     } else {
         warn!(
             "state db reconcile_rollout missing session meta {}",

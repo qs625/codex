@@ -1339,6 +1339,9 @@ pub enum EventMsg {
     /// Updated long-running goal metadata for the thread.
     ThreadGoalUpdated(ThreadGoalUpdatedEvent),
 
+    /// Updated aggregate thread-level skill usage metadata.
+    ThreadSkillsUpdated(ThreadSkillsUpdatedEvent),
+
     /// Incremental MCP startup progress updates.
     McpStartupUpdate(McpStartupUpdateEvent),
 
@@ -3595,6 +3598,71 @@ pub struct ThreadGoalUpdatedEvent {
     #[ts(optional)]
     pub turn_id: Option<String>,
     pub goal: ThreadGoal,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case", export_to = "protocol/")]
+pub enum ThreadSkillKind {
+    Explicit,
+    Implicit,
+    All,
+}
+
+impl ThreadSkillKind {
+    pub fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::All, _) | (_, Self::All) => Self::All,
+            (Self::Explicit, Self::Implicit) | (Self::Implicit, Self::Explicit) => Self::All,
+            (kind, _) => kind,
+        }
+    }
+}
+
+#[cfg(test)]
+mod thread_skill_kind_tests {
+    use super::ThreadSkillKind;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn merge_combines_explicit_and_implicit_into_all() {
+        assert_eq!(
+            ThreadSkillKind::Explicit.merge(ThreadSkillKind::Implicit),
+            ThreadSkillKind::All
+        );
+        assert_eq!(
+            ThreadSkillKind::Implicit.merge(ThreadSkillKind::Explicit),
+            ThreadSkillKind::All
+        );
+    }
+
+    #[test]
+    fn merge_preserves_all() {
+        assert_eq!(
+            ThreadSkillKind::All.merge(ThreadSkillKind::Explicit),
+            ThreadSkillKind::All
+        );
+        assert_eq!(
+            ThreadSkillKind::Implicit.merge(ThreadSkillKind::All),
+            ThreadSkillKind::All
+        );
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "protocol/")]
+pub struct ThreadSkill {
+    pub name: String,
+    pub path: String,
+    pub kind: ThreadSkillKind,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "protocol/")]
+pub struct ThreadSkillsUpdatedEvent {
+    pub skills: Vec<ThreadSkill>,
 }
 
 /// User's decision in response to an ExecApprovalRequest.

@@ -139,6 +139,7 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::PatchApplyEnd(_)
         | EventMsg::TokenCount(_)
         | EventMsg::ThreadGoalUpdated(_)
+        | EventMsg::ThreadSkillsUpdated(_)
         | EventMsg::ContextCompacted(_)
         | EventMsg::EnteredReviewMode(_)
         | EventMsg::ExitedReviewMode(_)

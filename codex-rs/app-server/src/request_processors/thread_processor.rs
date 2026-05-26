@@ -3818,6 +3818,7 @@ pub(crate) fn thread_from_stored_thread(
         thread_source: thread.thread_source.map(Into::into),
         git_info,
         name: thread.name,
+        skills: thread.skills.into_iter().map(Into::into).collect(),
         turns: Vec::new(),
     };
     (thread, history)
@@ -4022,6 +4023,7 @@ fn build_thread_from_snapshot(
         thread_source: config_snapshot.thread_source.map(Into::into),
         git_info: None,
         name: None,
+        skills: Vec::new(),
         turns: Vec::new(),
     }
 }

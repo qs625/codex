@@ -906,6 +906,7 @@ mod tests {
             thread_source: None,
             git_info: None,
             name: None,
+            skills: Vec::new(),
             turns: Vec::new(),
         }
     }

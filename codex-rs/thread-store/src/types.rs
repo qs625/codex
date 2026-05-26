@@ -12,6 +12,7 @@ use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::ThreadMemoryMode as MemoryMode;
+use codex_protocol::protocol::ThreadSkill;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TokenUsage;
 use serde::Deserialize;
@@ -368,6 +369,8 @@ pub struct StoredThread {
     pub token_usage: Option<TokenUsage>,
     /// First user message observed for this thread, if any.
     pub first_user_message: Option<String>,
+    /// Aggregate thread-level skills observed for this thread.
+    pub skills: Vec<ThreadSkill>,
     /// Persisted history, populated only when requested.
     pub history: Option<StoredThreadHistory>,
 }
@@ -491,6 +494,8 @@ pub struct ThreadMetadataPatch {
     pub token_usage: Option<TokenUsage>,
     /// First user message observed for this thread.
     pub first_user_message: Option<String>,
+    /// Aggregate thread-level skills observed for this thread.
+    pub skills: Option<Vec<ThreadSkill>>,
     /// Git metadata patch.
     pub git_info: Option<GitInfoPatch>,
     /// Thread memory behavior.
@@ -566,6 +571,9 @@ impl ThreadMetadataPatch {
         if next.first_user_message.is_some() {
             self.first_user_message = next.first_user_message;
         }
+        if next.skills.is_some() {
+            self.skills = next.skills;
+        }
         if let Some(git_info) = next.git_info {
             self.git_info
                 .get_or_insert_with(GitInfoPatch::default)
@@ -600,6 +608,7 @@ impl ThreadMetadataPatch {
             && self.sandbox_policy.is_none()
             && self.token_usage.is_none()
             && self.first_user_message.is_none()
+            && self.skills.is_none()
             && self.git_info.is_none()
             && self.memory_mode.is_none()
             && self.dynamic_tools.is_none()

@@ -9,7 +9,11 @@ use crate::session::turn_context::TurnContext;
 use codex_analytics::InvocationType;
 use codex_analytics::SkillInvocation;
 use codex_analytics::build_track_events_context;
+use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::SkillScope;
+use codex_protocol::protocol::ThreadSkill;
+use codex_protocol::protocol::ThreadSkillKind;
+use codex_protocol::protocol::ThreadSkillsUpdatedEvent;
 use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_protocol::request_user_input::RequestUserInputQuestion;
 use codex_protocol::request_user_input::RequestUserInputResponse;
@@ -229,6 +233,43 @@ pub(crate) async fn maybe_emit_implicit_skill_invocation(
                 sess.conversation_id.to_string(),
                 turn_context.sub_id.clone(),
             ),
-            vec![invocation],
+            vec![invocation.clone()],
         );
+    emit_thread_skills_update(sess, turn_context, &[invocation]).await;
+}
+
+pub(crate) async fn emit_thread_skills_update(
+    sess: &Session,
+    turn_context: &TurnContext,
+    invocations: &[SkillInvocation],
+) {
+    if invocations.is_empty() {
+        return;
+    }
+
+    let next_skills = sess
+        .merge_thread_skills(
+            invocations
+                .iter()
+                .map(|invocation| ThreadSkill {
+                    name: invocation.skill_name.clone(),
+                    path: invocation.skill_path.to_string_lossy().into_owned(),
+                    kind: match invocation.invocation_type {
+                        InvocationType::Explicit => ThreadSkillKind::Explicit,
+                        InvocationType::Implicit => ThreadSkillKind::Implicit,
+                    },
+                })
+                .collect(),
+        )
+        .await;
+
+    let Some(skills) = next_skills else {
+        return;
+    };
+
+    sess.send_event(
+        turn_context,
+        EventMsg::ThreadSkillsUpdated(ThreadSkillsUpdatedEvent { skills }),
+    )
+    .await;
 }
