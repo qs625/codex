@@ -33,6 +33,7 @@ import {
 import type {
   BootstrapResponse,
   ComposerImage,
+  DraftSkill,
   FilePreview,
   FileLocation,
   NotificationEnvelope,
@@ -71,6 +72,7 @@ function App() {
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [selectedThread, setSelectedThread] = useState<Thread | null>(null);
   const [draft, setDraft] = useState("");
+  const [draftSkills, setDraftSkills] = useState<DraftSkill[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
   const [newRootName, setNewRootName] = useState("root");
@@ -104,6 +106,10 @@ function App() {
       return;
     }
     void loadThread(selectedThreadId);
+  }, [selectedThreadId]);
+
+  useEffect(() => {
+    setDraftSkills([]);
   }, [selectedThreadId]);
 
   useEffect(() => {
@@ -448,10 +454,10 @@ function App() {
   }
 
   async function sendMessage() {
-    if (!selectedThreadId || (!draft.trim() && draftImages.length === 0)) {
+    if (!selectedThreadId || (!draft.trim() && draftImages.length === 0 && draftSkills.length === 0)) {
       return;
     }
-    if (draft.trim() === "/clear" && draftImages.length === 0) {
+    if (draft.trim() === "/clear" && draftImages.length === 0 && draftSkills.length === 0) {
       await clearCurrentRootSession();
       return;
     }
@@ -461,9 +467,11 @@ function App() {
       await window.codexDesktop.sendMessage({
         threadId: selectedThreadId,
         text: draft.trim(),
+        skills: draftSkills,
         images: draftImages.map(({ name, dataUrl }) => ({ name, dataUrl })),
       });
       setDraft("");
+      setDraftSkills([]);
       setDraftImages([]);
     } catch (sendError) {
       setError(toErrorMessage(sendError));
@@ -490,6 +498,16 @@ function App() {
 
   function removeDraftImage(imageId: string) {
     setDraftImages((current) => current.filter((image) => image.id !== imageId));
+  }
+
+  function addDraftSkill(skill: DraftSkill) {
+    setDraftSkills((current) =>
+      current.some((candidate) => candidate.path === skill.path) ? current : [...current, skill],
+    );
+  }
+
+  function removeDraftSkill(path: string) {
+    setDraftSkills((current) => current.filter((skill) => skill.path !== path));
   }
 
   async function handleComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
@@ -777,19 +795,23 @@ function App() {
           onPointerDown={(event) => beginResize("left", event.clientX)}
         />
         <ConversationPanel
+          availableSkills={selectedThread?.skills ?? []}
           conversationCells={conversationCells}
           conversationScrollRef={conversationScrollRef}
           draft={draft}
           draftImages={draftImages}
+          draftSkills={draftSkills}
           imageInputRef={imageInputRef}
           isLoadingThread={isLoadingThread}
           isSending={isSending}
+          onAddDraftSkill={addDraftSkill}
           onConversationScroll={handleConversationScroll}
           onDraftChange={setDraft}
           onHandleComposerPaste={(event) => void handleComposerPaste(event)}
           onHandleImageSelection={(event) => void handleImageSelection(event)}
           onOpenLocalFile={(target) => void handleOpenLocalFile(target)}
           onRemoveDraftImage={removeDraftImage}
+          onRemoveDraftSkill={removeDraftSkill}
           onSendMessage={() => void sendMessage()}
           selectedThread={selectedThread}
           selectedThreadId={selectedThreadId}

@@ -18,6 +18,13 @@ export function buildConversationEntries(thread: Thread | null): ConversationEnt
           .map((content) => content.text ?? "")
           .join("\n")
           .trim();
+        const skillAttachments = item.content
+          .filter((content) => content.type === "skill")
+          .map((content) => ({
+            kind: "file" as const,
+            label: `/${content.name ?? "skill"}`,
+            path: content.path,
+          }));
         const imageAttachments = item.content
           .filter((content) => content.type === "image")
           .map((content, index) => ({
@@ -33,11 +40,14 @@ export function buildConversationEntries(thread: Thread | null): ConversationEnt
             role: "user" as const,
             text:
               text ||
+              (skillAttachments.length > 0
+                ? `Activated ${skillAttachments.length} skill${skillAttachments.length === 1 ? "" : "s"}.`
+                : "") ||
               (imageAttachments.length > 0
                 ? `Attached ${imageAttachments.length} image${imageAttachments.length === 1 ? "" : "s"}.`
                 : ""),
             timestamp,
-            attachments: imageAttachments,
+            attachments: [...skillAttachments, ...imageAttachments],
           },
         ];
       }

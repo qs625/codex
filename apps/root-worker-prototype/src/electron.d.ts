@@ -80,6 +80,10 @@ declare global {
       sendMessage: (payload: {
         threadId: string;
         text: string;
+        skills?: Array<{
+          name: string;
+          path: string;
+        }>;
         images?: Array<{
           name: string;
           dataUrl: string;
