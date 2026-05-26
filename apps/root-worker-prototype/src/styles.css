@@ -444,6 +444,13 @@ svg {
   font-size: 10px;
 }
 
+.thread-chip-cwd {
+  max-width: min(28ch, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .conversation-actions {
   display: flex;
   gap: 6px;

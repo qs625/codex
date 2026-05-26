@@ -52,6 +52,7 @@ use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnCompleteEvent;
 use codex_protocol::user_input::UserInput;
+use core_test_support::PathBufExt;
 use core_test_support::TempDirExt;
 use pretty_assertions::assert_eq;
 use serde::Deserialize;
@@ -3958,7 +3959,14 @@ async fn build_agent_spawn_config_uses_turn_context_values() {
         .set(AskForApproval::OnRequest)
         .expect("approval policy set");
 
-    let config = build_agent_spawn_config(&base_instructions, &turn).expect("spawn config");
+    let override_cwd = tempfile::tempdir()
+        .expect("override cwd")
+        .path()
+        .to_path_buf()
+        .abs();
+
+    let config = build_agent_spawn_config(&base_instructions, &turn, Some(override_cwd.clone()))
+        .expect("spawn config");
     let mut expected = (*turn.config).clone();
     expected.base_instructions = Some(base_instructions.text);
     expected.model = Some(turn.model_info.slug.clone());
@@ -3969,10 +3977,7 @@ async fn build_agent_spawn_config_uses_turn_context_values() {
     expected.compact_prompt = turn.compact_prompt.clone();
     expected.permissions.shell_environment_policy = turn.shell_environment_policy.clone();
     expected.codex_linux_sandbox_exe = turn.codex_linux_sandbox_exe.clone();
-    #[allow(deprecated)]
-    {
-        expected.cwd = turn.cwd.clone();
-    }
+    expected.cwd = override_cwd;
     expected
         .permissions
         .approval_policy
@@ -3996,7 +4001,8 @@ async fn build_agent_spawn_config_preserves_base_user_instructions() {
         text: "base".to_string(),
     };
 
-    let config = build_agent_spawn_config(&base_instructions, &turn).expect("spawn config");
+    let config =
+        build_agent_spawn_config(&base_instructions, &turn, /*cwd*/ None).expect("spawn config");
 
     assert_eq!(config.user_instructions, base_config.user_instructions);
 }

@@ -527,6 +527,13 @@ fn spawn_agent_common_properties_v1(agent_type_description: &str) -> BTreeMap<St
             JsonSchema::string(Some(agent_type_description.to_string())),
         ),
         (
+            "cwd".to_string(),
+            JsonSchema::string(Some(
+                "Optional working directory for the spawned agent. Defaults to the parent turn cwd."
+                    .to_string(),
+            )),
+        ),
+        (
             "fork_context".to_string(),
             JsonSchema::boolean(Some(
                 "When true, fork the current thread history into the new agent before sending the initial prompt. This must be used when you want the new agent to have exactly the same context as you."
@@ -564,6 +571,13 @@ fn spawn_agent_common_properties_v2(agent_type_description: &str) -> BTreeMap<St
         (
             "agent_type".to_string(),
             JsonSchema::string(Some(agent_type_description.to_string())),
+        ),
+        (
+            "cwd".to_string(),
+            JsonSchema::string(Some(
+                "Optional working directory for the spawned agent. Defaults to the parent turn cwd."
+                    .to_string(),
+            )),
         ),
         (
             "fork_turns".to_string(),

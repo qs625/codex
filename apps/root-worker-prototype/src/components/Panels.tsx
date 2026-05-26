@@ -21,6 +21,7 @@ import {
   getThreadReasoningLabel,
   isRootThread,
   threadStatusClass,
+  trimPath,
 } from "../lib/thread";
 import type {
   ComposerImage,
@@ -170,6 +171,11 @@ export function ConversationPanel({
             <span className="subtitle-separator">•</span>
             <span className="thread-chip">{getThreadModelLabel(selectedThread)}</span>
             <span className="thread-chip">reasoning: {getThreadReasoningLabel(selectedThread)}</span>
+            {selectedThread ? (
+              <span className="thread-chip thread-chip-cwd" title={selectedThread.cwd}>
+                cwd: {trimPath(selectedThread.cwd)}
+              </span>
+            ) : null}
           </div>
         </div>
         <div className="conversation-actions">

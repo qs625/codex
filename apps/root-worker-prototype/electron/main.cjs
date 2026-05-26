@@ -1,10 +1,10 @@
 const path = require("node:path");
 const fs = require("node:fs/promises");
-const os = require("node:os");
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { AppServerClient } = require("./appServerClient.cjs");
 const { isLocalLinkTarget, localFilePathFromTarget, parseLocalFileTarget } = require("./fileTargets.cjs");
 const { LspManager } = require("./lsp/manager.cjs");
+const { ensureDefaultWorkspace, resolveDefaultWorkspace } = require("./workspace.cjs");
 
 const rendererMode = process.env.ROOT_WORKER_RENDERER_MODE ?? "built";
 const isDev = rendererMode === "dev";
@@ -74,6 +74,7 @@ appServerClient.on("status", (status) => {
 });
 
 ipcMain.handle("codex:health", async () => {
+  await ensureDefaultWorkspace();
   await appServerClient.ready();
   return {
     ok: true,
@@ -83,6 +84,7 @@ ipcMain.handle("codex:health", async () => {
 });
 
 ipcMain.handle("codex:bootstrap", async () => {
+  await ensureDefaultWorkspace();
   const threads = await listThreads(defaultWorkspace);
   return {
     workspace: defaultWorkspace,
@@ -92,10 +94,12 @@ ipcMain.handle("codex:bootstrap", async () => {
 });
 
 ipcMain.handle("codex:listThreads", async (_event, cwd = defaultWorkspace) => {
+  await ensureDefaultWorkspace();
   return { data: await listThreads(cwd) };
 });
 
 ipcMain.handle("codex:createThread", async (_event, payload) => {
+  await ensureDefaultWorkspace();
   const params = {
     cwd: payload?.cwd ?? defaultWorkspace,
     approvalPolicy: "never",
@@ -195,10 +199,14 @@ ipcMain.handle("codex:sendMessage", async (_event, payload) => {
 });
 
 app.whenReady().then(() => {
-  void createWindow().catch(handleStartupError);
+  void ensureDefaultWorkspace()
+    .then(() => createWindow())
+    .catch(handleStartupError);
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      void createWindow().catch(handleStartupError);
+      void ensureDefaultWorkspace()
+        .then(() => createWindow())
+        .catch(handleStartupError);
     }
   });
 });
@@ -223,14 +231,6 @@ async function ensureBuiltRenderer() {
 function handleStartupError(error) {
   console.error("[prototype] failed to start renderer", error);
   app.exit(1);
-}
-
-function resolveDefaultWorkspace() {
-  return process.env.ROOT_WORKER_WORKSPACE ?? path.join(resolvePrototypeCodexHome(), "root_workspace");
-}
-
-function resolvePrototypeCodexHome() {
-  return process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex-home");
 }
 
 async function listThreads(cwd) {

@@ -7,11 +7,13 @@ use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::apply_role_to_config;
 use crate::tools::handlers::multi_agents_spec::SpawnAgentToolOptions;
 use crate::tools::handlers::multi_agents_spec::create_spawn_agent_tool_v2;
+use crate::tools::handlers::parse_arguments_with_base_path;
 use crate::turn_timing::now_unix_timestamp_ms;
 use codex_protocol::AgentPath;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::Op;
 use codex_tools::ToolSpec;
+use codex_utils_absolute_path::AbsolutePathBuf;
 
 #[derive(Default)]
 pub(crate) struct Handler {
@@ -52,7 +54,9 @@ async fn handle_spawn_agent(
         ..
     } = invocation;
     let arguments = function_arguments(payload)?;
-    let args: SpawnAgentArgs = parse_arguments(&arguments)?;
+    #[allow(deprecated)]
+    let turn_cwd = turn.cwd.clone();
+    let args: SpawnAgentArgs = parse_arguments_with_base_path(&arguments, &turn_cwd)?;
     let fork_mode = args.fork_mode()?;
     let role_name = args
         .agent_type
@@ -79,8 +83,11 @@ async fn handle_spawn_agent(
             .into(),
         )
         .await;
-    let mut config =
-        build_agent_spawn_config(&session.get_base_instructions().await, turn.as_ref())?;
+    let mut config = build_agent_spawn_config(
+        &session.get_base_instructions().await,
+        turn.as_ref(),
+        args.cwd.clone(),
+    )?;
     if matches!(fork_mode, Some(SpawnAgentForkMode::FullHistory)) {
         reject_full_fork_spawn_overrides(role_name, args.model.as_deref(), args.reasoning_effort)?;
     } else {
@@ -241,6 +248,7 @@ struct SpawnAgentArgs {
     message: String,
     task_name: String,
     agent_type: Option<String>,
+    cwd: Option<AbsolutePathBuf>,
     model: Option<String>,
     reasoning_effort: Option<ReasoningEffort>,
     service_tier: Option<String>,

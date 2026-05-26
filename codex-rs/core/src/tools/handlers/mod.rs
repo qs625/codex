@@ -121,7 +121,7 @@ fn rewrite_function_string_argument(
     })
 }
 
-fn parse_arguments_with_base_path<T>(
+pub(crate) fn parse_arguments_with_base_path<T>(
     arguments: &str,
     base_path: &AbsolutePathBuf,
 ) -> Result<T, FunctionCallError>

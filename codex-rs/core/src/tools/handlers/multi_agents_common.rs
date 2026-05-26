@@ -202,11 +202,14 @@ pub(crate) fn parse_collab_input(
 /// approval policy, sandbox, and cwd. Role-specific overrides are layered after this step;
 /// skipping this helper and cloning stale config state directly can send the child agent out with
 /// the wrong provider or runtime policy.
+use codex_utils_absolute_path::AbsolutePathBuf;
+
 pub(crate) fn build_agent_spawn_config(
     base_instructions: &BaseInstructions,
     turn: &TurnContext,
+    cwd: Option<AbsolutePathBuf>,
 ) -> Result<Config, FunctionCallError> {
-    let mut config = build_agent_shared_config(turn)?;
+    let mut config = build_agent_shared_config(turn, cwd)?;
     config.base_instructions = Some(base_instructions.text.clone());
     Ok(config)
 }
@@ -215,14 +218,17 @@ pub(crate) fn build_agent_resume_config(
     turn: &TurnContext,
     child_depth: i32,
 ) -> Result<Config, FunctionCallError> {
-    let mut config = build_agent_shared_config(turn)?;
+    let mut config = build_agent_shared_config(turn, /*cwd*/ None)?;
     apply_spawn_agent_overrides(&mut config, child_depth);
     // For resume, keep base instructions sourced from rollout/session metadata.
     config.base_instructions = None;
     Ok(config)
 }
 
-fn build_agent_shared_config(turn: &TurnContext) -> Result<Config, FunctionCallError> {
+fn build_agent_shared_config(
+    turn: &TurnContext,
+    cwd: Option<AbsolutePathBuf>,
+) -> Result<Config, FunctionCallError> {
     let base_config = turn.config.clone();
     let mut config = (*base_config).clone();
     config.model = Some(turn.model_info.slug.clone());
@@ -234,6 +240,9 @@ fn build_agent_shared_config(turn: &TurnContext) -> Result<Config, FunctionCallE
     config.developer_instructions = turn.developer_instructions.clone();
     config.compact_prompt = turn.compact_prompt.clone();
     apply_spawn_agent_runtime_overrides(&mut config, turn)?;
+    if let Some(cwd) = cwd {
+        config.cwd = cwd;
+    }
 
     Ok(config)
 }
