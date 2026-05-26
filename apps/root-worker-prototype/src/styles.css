@@ -855,6 +855,38 @@ svg {
   padding: 2px 2px 10px;
 }
 
+.composer-skill-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 2px 10px;
+}
+
+.composer-skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid rgba(217, 119, 6, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 247, 237, 0.95);
+  color: #9a3412;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.composer-skill-remove {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(154, 52, 18, 0.12);
+  color: inherit;
+  cursor: pointer;
+}
+
 .composer-image-card {
   position: relative;
   flex: 0 0 auto;
@@ -908,6 +940,49 @@ svg {
 
 .composer-input::placeholder {
   color: #a8a29e;
+}
+
+.composer-skill-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 8px;
+  padding: 6px;
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  border-radius: 14px;
+  background: rgba(250, 250, 249, 0.96);
+}
+
+.composer-skill-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #292524;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-skill-option.selected {
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.composer-skill-option-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.composer-skill-option-meta {
+  color: #78716c;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .composer-toolbar {

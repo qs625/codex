@@ -1,4 +1,4 @@
-import type { ChangeEvent, ClipboardEvent, RefObject } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type ClipboardEvent, type RefObject } from "react";
 
 import { AgentTreeNode } from "./AgentTree";
 import { EventRow, MessageRow, ThinkingIndicator, ToolRow } from "./Conversation";
@@ -26,7 +26,9 @@ import {
 import type {
   ComposerImage,
   ConversationCell,
+  DraftSkill,
   Thread,
+  ThreadSkill,
   TreeMenuState,
   TreeNode,
 } from "../types";
@@ -112,36 +114,44 @@ export function SidebarPanel({
 }
 
 export function ConversationPanel({
+  availableSkills,
   conversationCells,
   conversationScrollRef,
   draft,
   draftImages,
+  draftSkills,
   imageInputRef,
   isLoadingThread,
   isSending,
+  onAddDraftSkill,
   onConversationScroll,
   onDraftChange,
   onHandleComposerPaste,
   onHandleImageSelection,
   onOpenLocalFile,
   onRemoveDraftImage,
+  onRemoveDraftSkill,
   onSendMessage,
   selectedThread,
   selectedThreadId,
 }: {
+  availableSkills: ThreadSkill[];
   conversationCells: ConversationCell[];
   conversationScrollRef: RefObject<HTMLDivElement | null>;
   draft: string;
   draftImages: ComposerImage[];
+  draftSkills: DraftSkill[];
   imageInputRef: RefObject<HTMLInputElement | null>;
   isLoadingThread: boolean;
   isSending: boolean;
+  onAddDraftSkill: (skill: DraftSkill) => void;
   onConversationScroll: () => void;
   onDraftChange: (value: string) => void;
   onHandleComposerPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
   onHandleImageSelection: (event: ChangeEvent<HTMLInputElement>) => void;
   onOpenLocalFile: (target: string) => void;
   onRemoveDraftImage: (imageId: string) => void;
+  onRemoveDraftSkill: (path: string) => void;
   onSendMessage: () => void;
   selectedThread: Thread | null;
   selectedThreadId: string | null;
@@ -157,6 +167,43 @@ export function ConversationPanel({
     !isLoadingThread &&
     !isStreamingAgentMessage &&
     (isSending || lastTurnInProgress || threadActive);
+  const [selectedSkillIndex, setSelectedSkillIndex] = useState(0);
+  const [dismissedSkillQuery, setDismissedSkillQuery] = useState<string | null>(null);
+  const skillQuery = getActiveSkillSlashQuery(draft);
+  const skillSuggestions = useMemo(
+    () => filterSkillSlashSuggestions(availableSkills, draftSkills, skillQuery),
+    [availableSkills, draftSkills, skillQuery],
+  );
+  const skillMenuVisible =
+    skillQuery !== null && skillSuggestions.length > 0 && dismissedSkillQuery !== skillQuery;
+
+  useEffect(() => {
+    setSelectedSkillIndex(0);
+  }, [skillQuery]);
+
+  useEffect(() => {
+    if (skillQuery !== dismissedSkillQuery) {
+      setDismissedSkillQuery(null);
+    }
+  }, [dismissedSkillQuery, skillQuery]);
+
+  useEffect(() => {
+    if (skillSuggestions.length === 0) {
+      setSelectedSkillIndex(0);
+      return;
+    }
+    setSelectedSkillIndex((current) => Math.min(current, skillSuggestions.length - 1));
+  }, [skillSuggestions]);
+
+  function selectSkill(skill: ThreadSkill) {
+    onAddDraftSkill({
+      name: skill.name,
+      path: skill.path,
+    });
+    onDraftChange("");
+    setDismissedSkillQuery(null);
+    setSelectedSkillIndex(0);
+  }
 
   return (
     <section className="conversation-panel">
@@ -252,6 +299,23 @@ export function ConversationPanel({
               ))}
             </div>
           ) : null}
+          {draftSkills.length > 0 ? (
+            <div className="composer-skill-strip">
+              {draftSkills.map((skill) => (
+                <span key={skill.path} className="composer-skill-chip">
+                  <span>/{skill.name}</span>
+                  <button
+                    type="button"
+                    className="composer-skill-remove"
+                    aria-label={`Remove /${skill.name}`}
+                    onClick={() => onRemoveDraftSkill(skill.path)}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : null}
           <textarea
             className="composer-input"
             placeholder={
@@ -263,12 +327,62 @@ export function ConversationPanel({
             onChange={(event) => onDraftChange(event.target.value)}
             onPaste={onHandleComposerPaste}
             onKeyDown={(event) => {
+              if (skillMenuVisible) {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setSelectedSkillIndex((current) =>
+                    current + 1 >= skillSuggestions.length ? 0 : current + 1,
+                  );
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setSelectedSkillIndex((current) =>
+                    current === 0 ? skillSuggestions.length - 1 : current - 1,
+                  );
+                  return;
+                }
+                if (event.key === "Enter" || event.key === "Tab") {
+                  event.preventDefault();
+                  const skill = skillSuggestions[selectedSkillIndex];
+                  if (skill) {
+                    selectSkill(skill);
+                  }
+                  return;
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setDismissedSkillQuery(skillQuery);
+                  return;
+                }
+              }
               if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
                 event.preventDefault();
                 onSendMessage();
               }
             }}
           />
+          {skillMenuVisible ? (
+            <div className="composer-skill-menu" role="listbox" aria-label="Skill slash commands">
+              {skillSuggestions.map((skill, index) => (
+                <button
+                  key={skill.path}
+                  type="button"
+                  className={`composer-skill-option ${index === selectedSkillIndex ? "selected" : ""}`}
+                  role="option"
+                  aria-selected={index === selectedSkillIndex}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    selectSkill(skill);
+                  }}
+                  onMouseEnter={() => setSelectedSkillIndex(index)}
+                >
+                  <span className="composer-skill-option-name">/{skill.name}</span>
+                  <span className="composer-skill-option-meta">{formatSkillOptionMeta(skill)}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
           <div className="composer-toolbar">
             <div className="composer-tools">
               <button type="button" className="tool-button" aria-label="Attach file">
@@ -289,7 +403,11 @@ export function ConversationPanel({
             <button
               type="button"
               className="send-button"
-              disabled={!selectedThreadId || isSending || (!draft.trim() && draftImages.length === 0)}
+              disabled={
+                !selectedThreadId ||
+                isSending ||
+                (!draft.trim() && draftImages.length === 0 && draftSkills.length === 0)
+              }
               onClick={onSendMessage}
             >
               <SendIcon />
@@ -299,6 +417,57 @@ export function ConversationPanel({
       </footer>
     </section>
   );
+}
+
+function getActiveSkillSlashQuery(draft: string) {
+  const firstLine = draft.trimStart().split("\n", 1)[0] ?? "";
+  if (!firstLine.startsWith("/") || firstLine.includes(" ")) {
+    return null;
+  }
+  return firstLine.slice(1);
+}
+
+function filterSkillSlashSuggestions(
+  availableSkills: ThreadSkill[],
+  draftSkills: DraftSkill[],
+  query: string | null,
+) {
+  if (query === null) {
+    return [];
+  }
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const selectedPaths = new Set(draftSkills.map((skill) => skill.path));
+
+  return availableSkills.filter((skill) => {
+    if (selectedPaths.has(skill.path)) {
+      return false;
+    }
+
+    if (!normalizedQuery) {
+      return true;
+    }
+
+    const searchable = [skill.name, skill.kind, skill.path].join(" ").toLowerCase();
+    return searchable.includes(normalizedQuery);
+  });
+}
+
+function formatSkillOptionMeta(skill: ThreadSkill) {
+  return `${formatSkillKindLabel(skill.kind)} · ${trimPath(skill.path)}`;
+}
+
+function formatSkillKindLabel(kind: ThreadSkill["kind"]) {
+  switch (kind) {
+    case "explicit":
+      return "explicit";
+    case "implicit":
+      return "implicit";
+    case "all":
+      return "all";
+    default:
+      return "skill";
+  }
 }
 
 export function TreeContextMenu({

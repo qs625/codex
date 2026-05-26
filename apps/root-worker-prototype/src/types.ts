@@ -26,7 +26,14 @@ export type ThreadItem =
   | {
       type: "userMessage";
       id: string;
-      content: Array<{ type: string; text?: string; image_url?: string; name?: string }>;
+      content: Array<{
+        type: string;
+        text?: string;
+        image_url?: string;
+        name?: string;
+        path?: string;
+        text_elements?: unknown[];
+      }>;
     }
   | {
       type: "agentMessage";
@@ -248,6 +255,11 @@ export type ComposerImage = {
   id: string;
   name: string;
   dataUrl: string;
+};
+
+export type DraftSkill = {
+  name: string;
+  path: string;
 };
 
 export type RightPanelView = "todo" | "preview" | "skills";
