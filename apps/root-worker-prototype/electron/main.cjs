@@ -98,6 +98,11 @@ ipcMain.handle("codex:listThreads", async (_event, cwd = defaultWorkspace) => {
   return { data: await listThreads(cwd) };
 });
 
+ipcMain.handle("codex:listSkills", async (_event, cwd = defaultWorkspace) => {
+  await ensureDefaultWorkspace();
+  return listSkills(cwd);
+});
+
 ipcMain.handle("codex:createThread", async (_event, payload) => {
   await ensureDefaultWorkspace();
   const params = {
@@ -263,6 +268,17 @@ async function listThreads(cwd) {
   return response.data.map(normalizeThread);
 }
 
+async function listSkills(cwd) {
+  const response = await appServerClient.request("skills/list", {
+    cwds: [cwd],
+  });
+  const entry = response.data?.[0];
+  return {
+    skills: (entry?.skills ?? []).map(normalizeAvailableSkill),
+    errors: (entry?.errors ?? []).map((error) => error.message ?? String(error)),
+  };
+}
+
 async function readThread(threadId, includeTurns, runtime = null) {
   const response = await appServerClient.request("thread/read", {
     threadId,
@@ -329,6 +345,14 @@ function normalizeThreadSkill(skill) {
   return {
     ...skill,
     kind: normalizeThreadSkillKind(skill?.kind),
+  };
+}
+
+function normalizeAvailableSkill(skill) {
+  return {
+    name: skill?.name ?? "skill",
+    path: skill?.path ?? "",
+    kind: "all",
   };
 }
 
