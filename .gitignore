@@ -95,3 +95,4 @@ __pycache__/
 
 .omc
 tmp
+.worktrees/

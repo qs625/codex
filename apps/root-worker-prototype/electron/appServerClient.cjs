@@ -48,7 +48,7 @@ class AppServerClient extends EventEmitter {
 
   start() {
     const command = process.env.CODEX_APP_SERVER_CMD ?? DEFAULT_APP_SERVER_COMMAND;
-    const codexHome = process.env.ROOT_WORKER_CODEX_HOME ?? DEFAULT_CODEX_HOME;
+    const codexHome = process.env.CODEX_HOME ?? DEFAULT_CODEX_HOME;
     fs.mkdirSync(codexHome, { recursive: true });
     this.child = spawn(command, {
       cwd: process.cwd(),

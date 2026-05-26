@@ -1,5 +1,6 @@
 const path = require("node:path");
 const fs = require("node:fs/promises");
+const os = require("node:os");
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { AppServerClient } = require("./appServerClient.cjs");
 const { isLocalLinkTarget, localFilePathFromTarget, parseLocalFileTarget } = require("./fileTargets.cjs");
@@ -10,7 +11,7 @@ const isDev = rendererMode === "dev";
 const appServerClient = new AppServerClient();
 const lspManager = new LspManager();
 const windows = new Set();
-const defaultWorkspace = process.env.ROOT_WORKER_WORKSPACE ?? path.resolve(process.cwd(), "../..");
+const defaultWorkspace = resolveDefaultWorkspace();
 const devServerUrl = "http://127.0.0.1:5173";
 const builtRendererPath = path.join(__dirname, "../dist/index.html");
 
@@ -95,12 +96,13 @@ ipcMain.handle("codex:listThreads", async (_event, cwd = defaultWorkspace) => {
 });
 
 ipcMain.handle("codex:createThread", async (_event, payload) => {
-  const start = await appServerClient.request("thread/start", {
+  const params = {
     cwd: payload?.cwd ?? defaultWorkspace,
     approvalPolicy: "never",
-    sandbox: "workspace-write",
+    sandbox: "danger-full-access",
     threadSource: "user",
-  });
+  };
+  const start = await appServerClient.request("thread/start", params);
 
   if (payload?.name && payload.name.trim()) {
     await appServerClient.request("thread/name/set", {
@@ -221,6 +223,14 @@ async function ensureBuiltRenderer() {
 function handleStartupError(error) {
   console.error("[prototype] failed to start renderer", error);
   app.exit(1);
+}
+
+function resolveDefaultWorkspace() {
+  return process.env.ROOT_WORKER_WORKSPACE ?? path.join(resolvePrototypeCodexHome(), "root_workspace");
+}
+
+function resolvePrototypeCodexHome() {
+  return process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex-home");
 }
 
 async function listThreads(cwd) {
