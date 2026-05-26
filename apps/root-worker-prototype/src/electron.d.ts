@@ -20,6 +20,10 @@ declare global {
         };
       }>;
       listThreads: (cwd?: string) => Promise<{ data: unknown[] }>;
+      listSkills: (cwd?: string) => Promise<{
+        skills: unknown[];
+        errors: string[];
+      }>;
       createThread: (payload: { cwd?: string; name?: string }) => Promise<{ thread: unknown }>;
       archiveThread: (threadId: string) => Promise<{ ok: boolean }>;
       readThread: (threadId: string, subscribe?: boolean) => Promise<{ thread: unknown }>;

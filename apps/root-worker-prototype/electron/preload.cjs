@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   health: () => ipcRenderer.invoke("codex:health"),
   bootstrap: () => ipcRenderer.invoke("codex:bootstrap"),
   listThreads: (cwd) => ipcRenderer.invoke("codex:listThreads", cwd),
+  listSkills: (cwd) => ipcRenderer.invoke("codex:listSkills", cwd),
   createThread: (payload) => ipcRenderer.invoke("codex:createThread", payload),
   archiveThread: (threadId) => ipcRenderer.invoke("codex:archiveThread", threadId),
   readThread: (threadId, subscribe = true) =>

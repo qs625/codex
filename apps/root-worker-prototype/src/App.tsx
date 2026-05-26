@@ -71,6 +71,7 @@ function App() {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [selectedThread, setSelectedThread] = useState<Thread | null>(null);
+  const [availableSkills, setAvailableSkills] = useState<ThreadSkill[]>([]);
   const [draft, setDraft] = useState("");
   const [draftSkills, setDraftSkills] = useState<DraftSkill[]>([]);
   const [isSending, setIsSending] = useState(false);
@@ -109,15 +110,56 @@ function App() {
   }, [selectedThreadId]);
 
   useEffect(() => {
+    setAvailableSkills([]);
     setDraftSkills([]);
   }, [selectedThreadId]);
+
+  async function loadAvailableSkills(cwd: string) {
+    const payload = (await window.codexDesktop.listSkills(cwd)) as {
+      skills: ThreadSkill[];
+      errors: string[];
+    };
+    return payload.skills;
+  }
+
+  useEffect(() => {
+    const cwd = selectedThread?.cwd;
+    if (!cwd) {
+      setAvailableSkills([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshAvailableSkills() {
+      try {
+        const skills = await loadAvailableSkills(cwd);
+        if (cancelled) {
+          return;
+        }
+        setAvailableSkills(skills);
+      } catch (loadError) {
+        if (cancelled) {
+          return;
+        }
+        setAvailableSkills([]);
+        setError(toErrorMessage(loadError));
+      }
+    }
+
+    void refreshAvailableSkills();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedThread?.cwd]);
 
   useEffect(() => {
     const unsubscribe = window.codexDesktop.subscribe((payload) => {
       handleStreamEvent(payload as NotificationEnvelope);
     });
     return unsubscribe;
-  }, [selectedThreadId]);
+  }, [selectedThread?.cwd, selectedThreadId]);
 
   useEffect(() => {
     shouldStickConversationToBottomRef.current = true;
@@ -590,6 +632,19 @@ function App() {
           updateThreadSkillsLocally(notification.threadId, notification.skills);
           break;
         }
+        case "skills/changed": {
+          if (!selectedThread?.cwd) {
+            break;
+          }
+          void loadAvailableSkills(selectedThread.cwd)
+            .then((skills) => {
+              setAvailableSkills(skills);
+            })
+            .catch(() => {
+              // Keep the current list if the background refresh fails.
+            });
+          break;
+        }
         case "thread/name/updated":
         case "thread/archived":
         case "thread/closed": {
@@ -795,7 +850,7 @@ function App() {
           onPointerDown={(event) => beginResize("left", event.clientX)}
         />
         <ConversationPanel
-          availableSkills={selectedThread?.skills ?? []}
+          availableSkills={availableSkills}
           conversationCells={conversationCells}
           conversationScrollRef={conversationScrollRef}
           draft={draft}
