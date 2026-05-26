@@ -168,6 +168,49 @@ fn merge_persisted_resume_metadata(
             serde_json::Value::String(reasoning_effort.to_string()),
         );
     }
+
+    if typesafe_overrides.approval_policy.is_none()
+        && let Some(approval_policy) = parse_persisted_enum::<
+            codex_protocol::protocol::AskForApproval,
+        >(&persisted_metadata.approval_mode)
+    {
+        typesafe_overrides.approval_policy = Some(approval_policy);
+    }
+
+    if typesafe_overrides.sandbox_mode.is_none()
+        && typesafe_overrides.permission_profile.is_none()
+        && typesafe_overrides.default_permissions.is_none()
+    {
+        typesafe_overrides.sandbox_mode = parse_persisted_enum::<
+            codex_protocol::config_types::SandboxMode,
+        >(&persisted_metadata.sandbox_policy)
+        .or_else(|| {
+            parse_persisted_enum::<codex_protocol::protocol::SandboxPolicy>(
+                &persisted_metadata.sandbox_policy,
+            )
+            .map(|sandbox_policy| match sandbox_policy {
+                codex_protocol::protocol::SandboxPolicy::ReadOnly { .. } => {
+                    codex_protocol::config_types::SandboxMode::ReadOnly
+                }
+                codex_protocol::protocol::SandboxPolicy::WorkspaceWrite { .. } => {
+                    codex_protocol::config_types::SandboxMode::WorkspaceWrite
+                }
+                codex_protocol::protocol::SandboxPolicy::DangerFullAccess
+                | codex_protocol::protocol::SandboxPolicy::ExternalSandbox { .. } => {
+                    codex_protocol::config_types::SandboxMode::DangerFullAccess
+                }
+            })
+        });
+    }
+}
+
+fn parse_persisted_enum<T>(value: &str) -> Option<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    serde_json::from_str(value)
+        .or_else(|_| serde_json::from_value(serde_json::Value::String(value.to_string())))
+        .ok()
 }
 
 fn normalize_thread_list_cwd_filters(

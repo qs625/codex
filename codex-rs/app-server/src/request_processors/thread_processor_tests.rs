@@ -207,6 +207,67 @@ mod thread_processor_behavior_tests {
     }
 
     #[test]
+    fn merge_persisted_resume_metadata_restores_approval_and_sandbox() {
+        let thread_id =
+            ThreadId::from_string("019e62fa-2c20-77c3-b942-858ef2a52137").expect("thread id");
+        let mut metadata = ThreadMetadataBuilder::new(
+            thread_id,
+            test_path_buf("/tmp/rollout.jsonl"),
+            Utc::now(),
+            SessionSource::Cli,
+        )
+        .build("openai");
+        metadata.model = Some("gpt-5.4".to_string());
+        metadata.sandbox_policy = "danger-full-access".to_string();
+        metadata.approval_mode = "never".to_string();
+
+        let mut request_overrides = None;
+        let mut typesafe_overrides = ConfigOverrides::default();
+
+        merge_persisted_resume_metadata(&mut request_overrides, &mut typesafe_overrides, &metadata);
+
+        assert_eq!(typesafe_overrides.model, Some("gpt-5.4".to_string()));
+        assert_eq!(
+            typesafe_overrides.approval_policy,
+            Some(AskForApproval::Never)
+        );
+        assert_eq!(
+            typesafe_overrides.sandbox_mode,
+            Some(codex_protocol::config_types::SandboxMode::DangerFullAccess)
+        );
+    }
+
+    #[test]
+    fn merge_persisted_resume_metadata_preserves_explicit_permission_overrides() {
+        let thread_id =
+            ThreadId::from_string("019e62fa-2c20-77c3-b942-858ef2a52137").expect("thread id");
+        let mut metadata = ThreadMetadataBuilder::new(
+            thread_id,
+            test_path_buf("/tmp/rollout.jsonl"),
+            Utc::now(),
+            SessionSource::Cli,
+        )
+        .build("openai");
+        metadata.sandbox_policy = "danger-full-access".to_string();
+        metadata.approval_mode = "never".to_string();
+
+        let mut request_overrides = None;
+        let mut typesafe_overrides = ConfigOverrides {
+            approval_policy: Some(AskForApproval::OnRequest),
+            permission_profile: Some(codex_protocol::models::PermissionProfile::read_only()),
+            ..Default::default()
+        };
+
+        merge_persisted_resume_metadata(&mut request_overrides, &mut typesafe_overrides, &metadata);
+
+        assert_eq!(
+            typesafe_overrides.approval_policy,
+            Some(AskForApproval::OnRequest)
+        );
+        assert_eq!(typesafe_overrides.sandbox_mode, None);
+    }
+
+    #[test]
     fn thread_turns_list_merges_in_progress_active_turn_before_agent_status_running() {
         let persisted_items = vec![RolloutItem::EventMsg(EventMsg::UserMessage(
             codex_protocol::protocol::UserMessageEvent {
