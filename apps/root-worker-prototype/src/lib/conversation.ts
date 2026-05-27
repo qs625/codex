@@ -104,14 +104,15 @@ export function buildConversationEntries(thread: Thread | null): ConversationEnt
         return [
           {
             id: item.id,
-            kind: "event" as const,
+            kind: "tool" as const,
             author,
             role: "system" as const,
-            text:
-              item.prompt?.trim() ||
-              `${author} delegated work to ${item.receiverThreadIds.length} worker${item.receiverThreadIds.length === 1 ? "" : "s"}`,
+            text: summarizeCollabAgentToolCall(item),
             timestamp,
             attachments: [],
+            toolName: formatCollabAgentToolName(item.tool),
+            toolStatus: item.status,
+            toolDetails: formatCollabAgentToolDetails(item),
           },
         ];
       }
@@ -147,11 +148,17 @@ export function buildConversationEntries(thread: Thread | null): ConversationEnt
           : [];
       }
 
-      if (item.type === "dynamicToolCall" || item.type === "mcpToolCall") {
+      if (
+        item.type === "dynamicToolCall" ||
+        item.type === "mcpToolCall" ||
+        item.type === "builtinToolCall"
+      ) {
         const details =
           item.type === "dynamicToolCall"
             ? formatStructuredToolDetails(item.arguments, item.contentItems)
-            : formatStructuredToolDetails(item.arguments, item.result ?? item.error);
+            : item.type === "builtinToolCall"
+              ? formatStructuredToolDetails(item.arguments, item.output)
+              : formatStructuredToolDetails(item.arguments, item.result ?? item.error);
         return [
           {
             id: item.id,
@@ -315,15 +322,100 @@ function formatDeltaKind(kind: string) {
 }
 
 function summarizeToolCall(
-  item: Extract<ThreadItem, { type: "dynamicToolCall" | "mcpToolCall" }>,
+  item: Extract<ThreadItem, { type: "dynamicToolCall" | "mcpToolCall" | "builtinToolCall" }>,
 ) {
   if (item.type === "mcpToolCall") {
     return `${item.server}/${item.tool}`;
+  }
+  if (item.type === "builtinToolCall") {
+    return item.tool;
   }
   if (item.namespace) {
     return `${item.namespace}/${item.tool}`;
   }
   return item.tool;
+}
+
+function summarizeCollabAgentToolCall(
+  item: Extract<ThreadItem, { type: "collabAgentToolCall" }>,
+) {
+  const workerCount = item.receiverThreadIds.length;
+  const workersLabel = `${workerCount} worker${workerCount === 1 ? "" : "s"}`;
+  const prompt = item.prompt?.trim();
+
+  switch (item.tool) {
+    case "spawnAgent":
+      return prompt || `Spawned ${workersLabel}.`;
+    case "sendInput":
+      return prompt || `Sent work to ${workersLabel}.`;
+    case "resumeAgent":
+      return prompt || `Resumed ${workersLabel}.`;
+    case "wait":
+      return `Waiting on ${workersLabel}.`;
+    case "closeAgent":
+      return `Closed ${workersLabel}.`;
+    default:
+      return prompt || `${item.tool} for ${workersLabel}.`;
+  }
+}
+
+function formatCollabAgentToolName(tool: Extract<ThreadItem, { type: "collabAgentToolCall" }>["tool"]) {
+  switch (tool) {
+    case "spawnAgent":
+      return "spawn_agent";
+    case "sendInput":
+      return "send_message";
+    case "resumeAgent":
+      return "followup_task";
+    case "wait":
+      return "wait_agent";
+    case "closeAgent":
+      return "close_agent";
+    default:
+      return tool;
+  }
+}
+
+function formatCollabAgentToolDetails(
+  item: Extract<ThreadItem, { type: "collabAgentToolCall" }>,
+) {
+  const sections = [
+    `Tool\n${formatCollabAgentToolName(item.tool)}`,
+    `Sender\n${trimThreadId(item.senderThreadId)}`,
+  ];
+
+  if (item.receiverThreadIds.length > 0) {
+    sections.push(
+      `Receivers\n${item.receiverThreadIds.map(trimThreadId).join("\n")}`,
+    );
+  }
+
+  if (item.prompt?.trim()) {
+    sections.push(`Prompt\n${item.prompt.trim()}`);
+  }
+
+  if (item.model) {
+    sections.push(`Model\n${item.model}`);
+  }
+
+  if (item.reasoningEffort) {
+    sections.push(`Reasoning\n${item.reasoningEffort}`);
+  }
+
+  const agentStates = Object.entries(item.agentsStates ?? {});
+  if (agentStates.length > 0) {
+    sections.push(
+      `Agent States\n${agentStates
+        .map(([threadId, state]) =>
+          [trimThreadId(threadId), state.status, state.message?.trim()]
+            .filter((value) => value && value.length > 0)
+            .join(" • "),
+        )
+        .join("\n")}`,
+    );
+  }
+
+  return sections.join("\n\n");
 }
 
 function summarizeCommandExecution(item: Extract<ThreadItem, { type: "commandExecution" }>) {

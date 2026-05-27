@@ -93,6 +93,14 @@ export type ThreadItem =
       durationMs: number | null;
     }
   | {
+      type: "builtinToolCall";
+      id: string;
+      tool: string;
+      arguments: unknown;
+      status: string;
+      output: unknown | null;
+    }
+  | {
       type: "mcpToolCall";
       id: string;
       server: string;

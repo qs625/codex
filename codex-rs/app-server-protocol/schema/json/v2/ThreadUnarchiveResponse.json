@@ -857,6 +857,14 @@
           "description": "Session id shared by threads that belong to the same session tree.",
           "type": "string"
         },
+        "skills": {
+          "default": [],
+          "description": "Aggregate thread-level skill usage observed so far.",
+          "items": {
+            "$ref": "#/definitions/ThreadSkill"
+          },
+          "type": "array"
+        },
         "source": {
           "allOf": [
             {
@@ -1328,6 +1336,37 @@
         },
         {
           "properties": {
+            "arguments": true,
+            "id": {
+              "type": "string"
+            },
+            "output": true,
+            "status": {
+              "$ref": "#/definitions/DynamicToolCallStatus"
+            },
+            "tool": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "builtinToolCall"
+              ],
+              "title": "BuiltinToolCallThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "arguments",
+            "id",
+            "status",
+            "tool",
+            "type"
+          ],
+          "title": "BuiltinToolCallThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
             "agentsStates": {
               "additionalProperties": {
                 "$ref": "#/definitions/CollabAgentState"
@@ -1582,6 +1621,33 @@
           "type": "object"
         }
       ]
+    },
+    "ThreadSkill": {
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/ThreadSkillKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "path"
+      ],
+      "type": "object"
+    },
+    "ThreadSkillKind": {
+      "enum": [
+        "explicit",
+        "implicit",
+        "all"
+      ],
+      "type": "string"
     },
     "ThreadSource": {
       "enum": [

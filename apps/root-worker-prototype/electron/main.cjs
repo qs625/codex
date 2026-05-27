@@ -399,6 +399,7 @@ function normalizeItem(item) {
       };
     case "mcpToolCall":
     case "dynamicToolCall":
+    case "builtinToolCall":
     case "collabAgentToolCall":
       return {
         ...item,

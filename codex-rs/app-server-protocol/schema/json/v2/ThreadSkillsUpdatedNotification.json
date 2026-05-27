@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ThreadSkill": {
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/ThreadSkillKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "path"
+      ],
+      "type": "object"
+    },
+    "ThreadSkillKind": {
+      "enum": [
+        "explicit",
+        "implicit",
+        "all"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "skills": {
+      "items": {
+        "$ref": "#/definitions/ThreadSkill"
+      },
+      "type": "array"
+    },
+    "threadId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "skills",
+    "threadId"
+  ],
+  "title": "ThreadSkillsUpdatedNotification",
+  "type": "object"
+}
