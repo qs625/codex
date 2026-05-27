@@ -26,12 +26,12 @@ const TOOL_NAME: &str = "fs_subscribe";
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct FsSubscribeArgs {
-    /// Absolute path to the file or directory to watch.
+    /// Absolute path to the file or directory to watch for changes.
     path: String,
-    /// Whether to watch subdirectories recursively. Defaults to false.
+    /// Whether to watch subdirectories recursively when `path` is a directory. Defaults to false.
     #[serde(default)]
     recursive: bool,
-    /// Optional label used to identify this subscription in change notifications.
+    /// Optional short label included in future change notifications so you can tell subscriptions apart.
     label: Option<String>,
 }
 
@@ -58,8 +58,29 @@ impl ToolExecutor<ToolCall> for FsSubscribeTool {
         Some(subscription_function_tool::<FsSubscribeArgs>(
             TOOL_NAME,
             "Subscribe to file system changes at a path. \
-             When the file or directory changes, a notification is automatically \
-             injected into the conversation so you can observe and respond to the change.",
+             Use this when you need ongoing file or log change notifications instead of a \
+             one-time read. The runtime debounces rapid file-system events and automatically \
+             injects a notification into the conversation when the watched path changes.\n\n\
+             Parameters:\n\
+             - `path`: absolute file or directory path to watch.\n\
+             - `recursive`: set to true when you need to watch a whole directory tree, not just \
+             one path.\n\
+             - `label`: optional name included in notifications so you can distinguish multiple \
+             active watches.\n\n\
+             Use this when:\n\
+             - The user asks you to watch a generated file, report, artifact, or config and react \
+             when it changes.\n\
+             - You launch a long-running command and redirect stdout or stderr to a log file, \
+             then want event-driven log monitoring instead of polling.\n\
+             - You need to monitor a directory for newly written outputs such as test reports, \
+             screenshots, or build artifacts.\n\n\
+             Example requests:\n\
+             - \"Watch `/tmp/build.log` and tell me if new errors appear.\"\n\
+             - \"Keep an eye on `/workspace/out/report.json` and react when it is regenerated.\"\n\
+             - \"Start the service with output redirected to `/tmp/server.log`, then monitor that \
+             log file for readiness or crash messages.\"\n\n\
+             Do not use this for a one-time file read; use ordinary file-reading tools for that. \
+             When you only need to know that a process finished, prefer `process_exit_subscribe`.",
         ))
     }
 

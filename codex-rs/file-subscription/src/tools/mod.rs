@@ -17,9 +17,10 @@ use crate::schema::input_schema_for;
 
 mod process_exit_subscribe;
 mod process_exit_unsubscribe;
+pub(crate) mod schedule;
+mod schedule_subscribe;
+mod schedule_unsubscribe;
 mod subscribe;
-mod timer_subscribe;
-mod timer_unsubscribe;
 mod unsubscribe;
 
 pub(crate) fn subscription_tools(
@@ -37,11 +38,11 @@ pub(crate) fn subscription_tools(
             thread_id,
             registry: Arc::clone(&shared_registry),
         }),
-        Arc::new(timer_subscribe::TimerSubscribeTool {
+        Arc::new(schedule_subscribe::ScheduleSubscribeTool {
             thread_id,
             registry: Arc::clone(&shared_registry),
         }),
-        Arc::new(timer_unsubscribe::TimerUnsubscribeTool {
+        Arc::new(schedule_unsubscribe::ScheduleUnsubscribeTool {
             thread_id,
             registry: Arc::clone(&shared_registry),
         }),

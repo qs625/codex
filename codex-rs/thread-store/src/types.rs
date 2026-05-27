@@ -15,6 +15,7 @@ use codex_protocol::protocol::ThreadMemoryMode as MemoryMode;
 use codex_protocol::protocol::ThreadSkill;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TokenUsage;
+use codex_protocol::subscriptions::PersistedSubscription;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
@@ -502,6 +503,8 @@ pub struct ThreadMetadataPatch {
     pub memory_mode: Option<MemoryMode>,
     /// Dynamic tools available to this thread.
     pub dynamic_tools: Option<Vec<DynamicToolSpec>>,
+    /// Persisted event subscriptions to restore when the thread runtime resumes.
+    pub subscriptions: Option<Vec<PersistedSubscription>>,
 }
 
 impl ThreadMetadataPatch {
@@ -585,6 +588,9 @@ impl ThreadMetadataPatch {
         if next.dynamic_tools.is_some() {
             self.dynamic_tools = next.dynamic_tools;
         }
+        if next.subscriptions.is_some() {
+            self.subscriptions = next.subscriptions;
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -612,6 +618,7 @@ impl ThreadMetadataPatch {
             && self.git_info.is_none()
             && self.memory_mode.is_none()
             && self.dynamic_tools.is_none()
+            && self.subscriptions.is_none()
     }
 }
 
@@ -635,6 +642,7 @@ pub struct ArchiveThreadParams {
 
 #[cfg(test)]
 mod tests {
+    use codex_protocol::subscriptions::PersistedSubscription;
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
@@ -742,6 +750,38 @@ mod tests {
                 branch: Some(Some("feature".to_string())),
                 origin_url: Some(None),
             })
+        );
+    }
+
+    #[test]
+    fn thread_metadata_patch_merge_replaces_subscriptions_by_presence() {
+        let mut current = ThreadMetadataPatch {
+            subscriptions: Some(vec![PersistedSubscription::ProcessExit {
+                subscription_id: "sub_old".to_string(),
+                session_id: 42,
+                label: Some("old".to_string()),
+            }]),
+            ..Default::default()
+        };
+
+        current.merge(ThreadMetadataPatch {
+            subscriptions: Some(vec![PersistedSubscription::Fs {
+                subscription_id: "sub_new".to_string(),
+                path: "/tmp/log.txt".to_string(),
+                recursive: false,
+                label: Some("new".to_string()),
+            }]),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            current.subscriptions,
+            Some(vec![PersistedSubscription::Fs {
+                subscription_id: "sub_new".to_string(),
+                path: "/tmp/log.txt".to_string(),
+                recursive: false,
+                label: Some("new".to_string()),
+            }])
         );
     }
 }

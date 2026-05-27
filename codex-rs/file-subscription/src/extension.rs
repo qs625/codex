@@ -53,6 +53,22 @@ impl ThreadLifecycleContributor<Config> for FsSubscriptionExtension {
             });
         }
     }
+
+    fn on_thread_resume(&self, input: codex_extension_api::ThreadResumeInput<'_>) {
+        let Ok(thread_id) = ThreadId::from_string(input.thread_store.level_id()) else {
+            return;
+        };
+        let registry = Arc::clone(&self.registry);
+        let unified_exec_manager = input
+            .session_store
+            .get::<UnifiedExecManagerHandle>()
+            .and_then(|handle| handle.upgrade());
+        tokio::spawn(async move {
+            registry
+                .restore_thread_subscriptions(thread_id, unified_exec_manager)
+                .await;
+        });
+    }
 }
 
 impl ToolContributor for FsSubscriptionExtension {

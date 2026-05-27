@@ -17,7 +17,7 @@ pub use extension::FsSubscriptionExtension;
 
 /// Installs the event subscription extension into the extension registry.
 ///
-/// The extension exposes file, timer, and process-exit subscription tools to
+/// The extension exposes file, schedule, and process-exit subscription tools to
 /// the model. When a subscribed event fires, the runtime automatically injects
 /// a new user turn into the owning thread so the model can observe and respond
 /// to the change.

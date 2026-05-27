@@ -1539,6 +1539,7 @@ mod tests {
                 model_provider: None,
                 base_instructions: None,
                 dynamic_tools: None,
+                subscriptions: None,
                 memory_mode: Some("polluted".to_string()),
             },
             git: None,
@@ -1598,6 +1599,7 @@ mod tests {
                 model_provider: None,
                 base_instructions: None,
                 dynamic_tools: None,
+                subscriptions: None,
                 memory_mode: None,
             },
             git: Some(GitInfo {

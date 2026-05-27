@@ -64,9 +64,18 @@ pub(super) async fn update_thread_metadata(
         resolve_rollout_path(store, thread_id, params.include_archived).await?;
     let name = patch.name;
     let git_info = patch.git_info;
+    let subscriptions = patch.subscriptions;
     if let Some(memory_mode) = patch.memory_mode {
         apply_thread_memory_mode(resolved_rollout_path.path.as_path(), thread_id, memory_mode)
             .await?;
+    }
+    if let Some(subscriptions) = subscriptions {
+        apply_thread_subscriptions_to_rollout(
+            resolved_rollout_path.path.as_path(),
+            thread_id,
+            subscriptions.as_slice(),
+        )
+        .await?;
     }
 
     let state_db_ctx = store.state_db().await;
@@ -344,7 +353,7 @@ fn needs_rollout_compatibility_update(patch: &ThreadMetadataPatch) -> bool {
     if patch.name.is_some() {
         return true;
     }
-    if patch.memory_mode.is_none() && patch.git_info.is_none() {
+    if patch.memory_mode.is_none() && patch.git_info.is_none() && patch.subscriptions.is_none() {
         return false;
     }
     !has_observed_metadata_facts(patch)
@@ -528,6 +537,34 @@ async fn apply_thread_memory_mode(
         })
 }
 
+async fn apply_thread_subscriptions_to_rollout(
+    rollout_path: &Path,
+    thread_id: ThreadId,
+    subscriptions: &[codex_protocol::subscriptions::PersistedSubscription],
+) -> ThreadStoreResult<()> {
+    let mut session_meta =
+        read_session_meta_line(rollout_path)
+            .await
+            .map_err(|err| ThreadStoreError::Internal {
+                message: format!("failed to set thread subscriptions: {err}"),
+            })?;
+    if session_meta.meta.id != thread_id {
+        return Err(ThreadStoreError::Internal {
+            message: format!(
+                "failed to set thread subscriptions: rollout session metadata id mismatch: expected {thread_id}, found {}",
+                session_meta.meta.id
+            ),
+        });
+    }
+
+    session_meta.meta.subscriptions = (!subscriptions.is_empty()).then(|| subscriptions.to_vec());
+    append_rollout_item_to_path(rollout_path, &RolloutItem::SessionMeta(session_meta))
+        .await
+        .map_err(|err| ThreadStoreError::Internal {
+            message: format!("failed to set thread subscriptions: {err}"),
+        })
+}
+
 fn memory_mode_as_str(mode: ThreadMemoryMode) -> &'static str {
     match mode {
         ThreadMemoryMode::Enabled => "enabled",
@@ -590,6 +627,8 @@ fn rollout_path_is_archived(store: &LocalThreadStore, path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use codex_protocol::subscriptions::PersistedSubscription;
+    use codex_protocol::subscriptions::ScheduleSpec;
     use pretty_assertions::assert_eq;
     use serde_json::Value;
     use serde_json::json;
@@ -676,6 +715,59 @@ mod tests {
             .await
             .expect("thread memory mode should be readable");
         assert_eq!(memory_mode.as_deref(), Some("disabled"));
+    }
+
+    #[tokio::test]
+    async fn update_thread_metadata_sets_subscriptions_on_active_rollout() {
+        let home = TempDir::new().expect("temp dir");
+        let config = test_config(home.path());
+        let uuid = Uuid::from_u128(313);
+        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+        let path =
+            write_session_file(home.path(), "2025-01-03T18-45-00", uuid).expect("session file");
+        let runtime = codex_state::StateRuntime::init(
+            home.path().to_path_buf(),
+            config.default_model_provider_id.clone(),
+        )
+        .await
+        .expect("state db should initialize");
+        let store = LocalThreadStore::new(config, Some(runtime));
+        let subscriptions = vec![
+            PersistedSubscription::Fs {
+                subscription_id: "sub_file".to_string(),
+                path: "/tmp/build.log".to_string(),
+                recursive: false,
+                label: Some("build".to_string()),
+            },
+            PersistedSubscription::Schedule {
+                subscription_id: "sub_schedule".to_string(),
+                schedule: ScheduleSpec::EveryInterval {
+                    interval_ms: 60_000,
+                },
+                label: Some("poll".to_string()),
+            },
+        ];
+
+        let thread = store
+            .update_thread_metadata(UpdateThreadMetadataParams {
+                thread_id,
+                patch: ThreadMetadataPatch {
+                    subscriptions: Some(subscriptions.clone()),
+                    ..Default::default()
+                },
+                include_archived: false,
+            })
+            .await
+            .expect("set thread subscriptions");
+
+        assert_eq!(thread.thread_id, thread_id);
+        let appended = last_session_meta_item_with_subscriptions(path.as_path());
+        assert_eq!(appended["type"], "session_meta");
+        assert_eq!(appended["payload"]["id"], thread_id.to_string());
+        assert_eq!(
+            appended["payload"]["subscriptions"],
+            serde_json::to_value(subscriptions).expect("serialize subscriptions")
+        );
     }
 
     #[tokio::test]
@@ -1532,5 +1624,17 @@ mod tests {
             .expect("last line")
             .to_string();
         serde_json::from_str(&last_line).expect("json line")
+    }
+
+    fn last_session_meta_item_with_subscriptions(path: &std::path::Path) -> Value {
+        std::fs::read_to_string(path)
+            .expect("read rollout")
+            .lines()
+            .rev()
+            .map(|line| serde_json::from_str::<Value>(line).expect("json line"))
+            .find(|item| {
+                item["type"] == "session_meta" && !item["payload"]["subscriptions"].is_null()
+            })
+            .expect("session meta item with subscriptions")
     }
 }

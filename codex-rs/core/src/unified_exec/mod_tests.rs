@@ -110,6 +110,7 @@ async fn exec_command_with_tty(
     let started_at = Instant::now();
     let process_started_alive = !process.has_exited() && process.exit_code().is_none();
     if process_started_alive {
+        let transcript = Arc::new(tokio::sync::Mutex::new(HeadTailBuffer::default()));
         let entry = ProcessEntry {
             process: Arc::clone(&process),
             call_id: context.call_id.clone(),
@@ -119,6 +120,7 @@ async fn exec_command_with_tty(
             network_approval: None,
             session: Arc::downgrade(session),
             last_used: started_at,
+            transcript,
         };
         manager
             .process_store
@@ -268,14 +270,14 @@ async fn unified_exec_persists_across_requests() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn process_exit_subscription_reports_exit_code() -> anyhow::Result<()> {
+async fn process_exit_subscription_reports_exit_code_and_retained_output() -> anyhow::Result<()> {
     skip_if_sandbox!(Ok(()));
 
     let (session, turn) = test_session_and_turn().await;
     let running = exec_command(
         &session,
         &turn,
-        "sleep 1; exit 7",
+        "printf retained-output-marker; sleep 1; exit 7",
         /*yield_time_ms*/ 250,
         /*workdir*/ None,
     )
@@ -288,7 +290,12 @@ async fn process_exit_subscription_reports_exit_code() -> anyhow::Result<()> {
         .subscribe_process_exit(process_id)
         .await
         .expect("process exit subscription");
-    assert_eq!(subscription.wait().await, Some(7));
+    let (exit_code, retained_output) = subscription.wait_with_retained_output().await;
+    assert_eq!(exit_code, Some(7));
+    assert!(
+        retained_output.contains("retained-output-marker"),
+        "expected retained output in process exit subscription, got: {retained_output:?}"
+    );
 
     session
         .services

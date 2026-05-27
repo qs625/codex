@@ -331,16 +331,17 @@ fn terminate_process_on_network_denial(
 
 impl UnifiedExecProcessManager {
     pub async fn subscribe_process_exit(&self, process_id: i32) -> Option<ProcessExitSubscription> {
-        let process = {
+        let (process, transcript) = {
             let mut store = self.process_store.lock().await;
             let entry = store.processes.get_mut(&process_id)?;
             entry.last_used = Instant::now();
-            Arc::clone(&entry.process)
+            (Arc::clone(&entry.process), Arc::clone(&entry.transcript))
         };
 
         Some(ProcessExitSubscription {
             cancellation_token: process.cancellation_token(),
             process,
+            transcript,
         })
     }
 
@@ -840,6 +841,7 @@ impl UnifiedExecProcessManager {
             network_approval,
             session: Arc::downgrade(&context.session),
             last_used: started_at,
+            transcript: Arc::clone(&transcript),
         };
         let pruned_entry = {
             let mut store = self.process_store.lock().await;

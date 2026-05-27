@@ -231,6 +231,9 @@ impl ThreadMetadataSync {
                     if let Some(dynamic_tools) = meta_line.meta.dynamic_tools.clone() {
                         update.dynamic_tools = Some(dynamic_tools);
                     }
+                    if let Some(subscriptions) = meta_line.meta.subscriptions.clone() {
+                        update.subscriptions = Some(subscriptions);
+                    }
                 }
                 RolloutItem::TurnContext(turn_ctx) => {
                     if !self.cwd_seen && !turn_ctx.cwd.as_os_str().is_empty() {
@@ -370,6 +373,7 @@ fn update_has_metadata_facts(update: &ThreadMetadataPatch) -> bool {
         || update.git_info.is_some()
         || update.memory_mode.is_some()
         || update.dynamic_tools.is_some()
+        || update.subscriptions.is_some()
 }
 
 fn git_info_patch_from_observation(git_info: GitInfo) -> GitInfoPatch {

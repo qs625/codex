@@ -97,25 +97,25 @@ fn write_stdin_tool_matches_expected_spec() {
         (
             "session_id".to_string(),
             JsonSchema::number(Some(
-                "Identifier of the running unified exec session.".to_string(),
+                "Identifier of the running unified exec session to send input to.".to_string(),
             )),
         ),
         (
             "chars".to_string(),
             JsonSchema::string(Some(
-                "Bytes to write to stdin (may be empty to poll).".to_string(),
+                "Bytes to write to stdin. Use this to answer prompts or control an interactive PTY session.".to_string(),
             )),
         ),
         (
             "yield_time_ms".to_string(),
             JsonSchema::number(Some(
-                "How long to wait (in milliseconds) for output before yielding.".to_string(),
+                "How long to wait (in milliseconds) for any immediate response after writing input.".to_string(),
             )),
         ),
         (
             "max_output_tokens".to_string(),
             JsonSchema::number(Some(
-                "Maximum number of tokens to return. Excess output will be truncated.".to_string(),
+                "Maximum number of tokens to return for the immediate response after writing input. Excess output will be truncated.".to_string(),
             )),
         ),
     ]);
@@ -124,9 +124,7 @@ fn write_stdin_tool_matches_expected_spec() {
         tool,
         ToolSpec::Function(ResponsesApiTool {
             name: "write_stdin".to_string(),
-            description:
-                "Writes characters to an existing unified exec session and returns recent output."
-                    .to_string(),
+            description: "Writes characters to an existing unified exec session so you can interact with a running PTY-backed command. Use this to answer prompts, send confirmations, or provide interactive input.".to_string(),
             strict: false,
             defer_loading: None,
             parameters: JsonSchema::object(
