@@ -11,6 +11,7 @@ import {
   PaperclipIcon,
   PlusIcon,
   SendIcon,
+  StopIcon,
 } from "./icons";
 import {
   getThreadSubtreeIds,
@@ -123,6 +124,7 @@ export function ConversationPanel({
   imageInputRef,
   isLoadingThread,
   isSending,
+  isStoppingTurn,
   onAddDraftSkill,
   onConversationScroll,
   onDraftChange,
@@ -132,6 +134,7 @@ export function ConversationPanel({
   onRemoveDraftImage,
   onRemoveDraftSkill,
   onSendMessage,
+  onStopTurn,
   selectedThread,
   selectedThreadId,
 }: {
@@ -144,6 +147,7 @@ export function ConversationPanel({
   imageInputRef: RefObject<HTMLInputElement | null>;
   isLoadingThread: boolean;
   isSending: boolean;
+  isStoppingTurn: boolean;
   onAddDraftSkill: (skill: DraftSkill) => void;
   onConversationScroll: () => void;
   onDraftChange: (value: string) => void;
@@ -153,12 +157,14 @@ export function ConversationPanel({
   onRemoveDraftImage: (imageId: string) => void;
   onRemoveDraftSkill: (path: string) => void;
   onSendMessage: () => void;
+  onStopTurn: () => void;
   selectedThread: Thread | null;
   selectedThreadId: string | null;
 }) {
   const lastTurn = selectedThread?.turns.at(-1) ?? null;
   const lastTurnInProgress =
     lastTurn != null && (lastTurn.status === "inProgress" || lastTurn.completedAt == null);
+  const activeTurnId = lastTurnInProgress ? lastTurn.id : null;
   const lastItem = lastTurn?.items.at(-1) ?? null;
   const isStreamingAgentMessage =
     lastTurnInProgress && lastItem?.type === "agentMessage" && (lastItem.text ?? "").length > 0;
@@ -402,15 +408,18 @@ export function ConversationPanel({
             </div>
             <button
               type="button"
-              className="send-button"
+              className={`send-button ${activeTurnId ? "is-stop-button" : ""}`}
               disabled={
-                !selectedThreadId ||
-                isSending ||
-                (!draft.trim() && draftImages.length === 0 && draftSkills.length === 0)
+                activeTurnId
+                  ? isStoppingTurn
+                  : !selectedThreadId ||
+                    isSending ||
+                    (!draft.trim() && draftImages.length === 0 && draftSkills.length === 0)
               }
-              onClick={onSendMessage}
+              aria-label={activeTurnId ? "Stop current turn" : "Send message"}
+              onClick={activeTurnId ? onStopTurn : onSendMessage}
             >
-              <SendIcon />
+              {activeTurnId ? <StopIcon /> : <SendIcon />}
             </button>
           </div>
         </div>

@@ -94,6 +94,7 @@ declare global {
         }>;
         expectedTurnId?: string | null;
       }) => Promise<unknown>;
+      interruptTurn: (payload: { threadId: string; turnId: string }) => Promise<unknown>;
       subscribe: (
         listener: (event: {
           type: "notification" | "status";
