@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   lspStatus: (filePath) => ipcRenderer.invoke("codex:lspStatus", filePath),
   openLink: (target) => ipcRenderer.invoke("codex:openLink", target),
   sendMessage: (payload) => ipcRenderer.invoke("codex:sendMessage", payload),
+  interruptTurn: (payload) => ipcRenderer.invoke("codex:interruptTurn", payload),
   subscribe(listener) {
     const onNotification = (_event, notification) => {
       listener({ type: "notification", notification });

@@ -214,6 +214,13 @@ ipcMain.handle("codex:sendMessage", async (_event, payload) => {
   });
 });
 
+ipcMain.handle("codex:interruptTurn", async (_event, payload) => {
+  return appServerClient.request("turn/interrupt", {
+    threadId: payload.threadId,
+    turnId: payload.turnId,
+  });
+});
+
 app.whenReady().then(() => {
   void ensureDefaultWorkspace()
     .then(() => createWindow())

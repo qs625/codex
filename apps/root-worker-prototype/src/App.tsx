@@ -75,6 +75,7 @@ function App() {
   const [draft, setDraft] = useState("");
   const [draftSkills, setDraftSkills] = useState<DraftSkill[]>([]);
   const [isSending, setIsSending] = useState(false);
+  const [isStoppingTurn, setIsStoppingTurn] = useState(false);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
   const [newRootName, setNewRootName] = useState("root");
   const [error, setError] = useState<string | null>(null);
@@ -522,6 +523,32 @@ function App() {
     }
   }
 
+  async function interruptCurrentTurn() {
+    if (!selectedThreadId || isStoppingTurn) {
+      return;
+    }
+
+    const currentTurn = selectedThread?.turns.at(-1) ?? null;
+    const turnInProgress =
+      currentTurn != null &&
+      (currentTurn.status === "inProgress" || currentTurn.completedAt == null);
+    if (!turnInProgress) {
+      return;
+    }
+
+    setIsStoppingTurn(true);
+    setError(null);
+    try {
+      await window.codexDesktop.interruptTurn({
+        threadId: selectedThreadId,
+        turnId: currentTurn.id,
+      });
+    } catch (interruptError) {
+      setError(toErrorMessage(interruptError));
+      setIsStoppingTurn(false);
+    }
+  }
+
   async function handleImageSelection(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     if (files.length === 0) {
@@ -668,6 +695,9 @@ function App() {
         case "turn/started":
         case "turn/completed": {
           const notification = params as { threadId: string; turn: Turn };
+          if (method === "turn/completed" && notification.threadId === selectedThreadId) {
+            setIsStoppingTurn(false);
+          }
           if (notification.threadId === selectedThreadId) {
             setSelectedThread((current) =>
               current ? updateThreadTurn(current, notification.turn) : current,
@@ -859,6 +889,7 @@ function App() {
           imageInputRef={imageInputRef}
           isLoadingThread={isLoadingThread}
           isSending={isSending}
+          isStoppingTurn={isStoppingTurn}
           onAddDraftSkill={addDraftSkill}
           onConversationScroll={handleConversationScroll}
           onDraftChange={setDraft}
@@ -868,6 +899,7 @@ function App() {
           onRemoveDraftImage={removeDraftImage}
           onRemoveDraftSkill={removeDraftSkill}
           onSendMessage={() => void sendMessage()}
+          onStopTurn={() => void interruptCurrentTurn()}
           selectedThread={selectedThread}
           selectedThreadId={selectedThreadId}
         />
