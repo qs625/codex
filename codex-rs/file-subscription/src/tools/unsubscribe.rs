@@ -43,7 +43,12 @@ impl ToolExecutor<ToolCall> for FsUnsubscribeTool {
     fn spec(&self) -> Option<ToolSpec> {
         Some(subscription_function_tool::<FsUnsubscribeArgs>(
             TOOL_NAME,
-            "Cancel a file subscription previously created with fs_subscribe.",
+            "Cancel a file subscription previously created with fs_subscribe. \
+             Use this when you no longer need to watch the file or directory, such as after the \
+             user-requested monitoring task is finished, after the relevant process has exited, or \
+             after you have already seen the file change you were waiting for. \
+             Unsubscribe when the watch is no longer useful so future file changes do not keep \
+             injecting notifications into the conversation.",
         ))
     }
 

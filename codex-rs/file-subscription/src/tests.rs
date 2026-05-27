@@ -43,8 +43,8 @@ fn tools_include_file_and_timer_subscriptions_without_exec_manager() {
         vec![
             "fs_subscribe",
             "fs_unsubscribe",
-            "timer_subscribe",
-            "timer_unsubscribe",
+            "schedule_subscribe",
+            "schedule_unsubscribe",
         ]
     );
 }
@@ -75,8 +75,8 @@ fn process_exit_tools_are_contributed_with_exec_manager_handle() {
         vec![
             "fs_subscribe",
             "fs_unsubscribe",
-            "timer_subscribe",
-            "timer_unsubscribe",
+            "schedule_subscribe",
+            "schedule_unsubscribe",
             "process_exit_subscribe",
             "process_exit_unsubscribe",
         ]

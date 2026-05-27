@@ -18,22 +18,22 @@ use crate::registry::FsSubscriptionRegistry;
 use super::parse_args;
 use super::subscription_function_tool;
 
-const TOOL_NAME: &str = "timer_unsubscribe";
+const TOOL_NAME: &str = "schedule_unsubscribe";
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct TimerUnsubscribeArgs {
-    /// The subscription ID returned by `timer_subscribe`.
+struct ScheduleUnsubscribeArgs {
+    /// The subscription ID returned by `schedule_subscribe`.
     subscription_id: String,
 }
 
-pub(crate) struct TimerUnsubscribeTool {
+pub(crate) struct ScheduleUnsubscribeTool {
     pub(crate) thread_id: ThreadId,
     pub(crate) registry: Arc<FsSubscriptionRegistry>,
 }
 
 #[async_trait]
-impl ToolExecutor<ToolCall> for TimerUnsubscribeTool {
+impl ToolExecutor<ToolCall> for ScheduleUnsubscribeTool {
     type Output = ExtensionToolOutput;
 
     fn tool_name(&self) -> ToolName {
@@ -41,14 +41,17 @@ impl ToolExecutor<ToolCall> for TimerUnsubscribeTool {
     }
 
     fn spec(&self) -> Option<ToolSpec> {
-        Some(subscription_function_tool::<TimerUnsubscribeArgs>(
+        Some(subscription_function_tool::<ScheduleUnsubscribeArgs>(
             TOOL_NAME,
-            "Cancel a repeating timer subscription previously created with timer_subscribe.",
+            "Cancel a schedule subscription previously created with `schedule_subscribe`. \
+             Use this when a recurring reminder is no longer needed, when the user cancels the \
+             reminder, or when the watched workflow is complete and future schedule firings would \
+             only create noise.",
         ))
     }
 
     async fn handle(&self, call: ToolCall) -> Result<Self::Output, FunctionCallError> {
-        let args: TimerUnsubscribeArgs = parse_args(&call)?;
+        let args: ScheduleUnsubscribeArgs = parse_args(&call)?;
         let unsubscribed = self
             .registry
             .unsubscribe(self.thread_id, &args.subscription_id)

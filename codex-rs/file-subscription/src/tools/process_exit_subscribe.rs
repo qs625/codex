@@ -26,9 +26,9 @@ const TOOL_NAME: &str = "process_exit_subscribe";
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ProcessExitSubscribeArgs {
-    /// Session identifier returned by `exec_command` for a running process.
+    /// Session identifier returned by `exec_command` for the running process you want to watch.
     session_id: i32,
-    /// Optional label used to identify this subscription in exit notifications.
+    /// Optional short label included in the exit notification so you can distinguish subscriptions.
     label: Option<String>,
 }
 
@@ -55,7 +55,26 @@ impl ToolExecutor<ToolCall> for ProcessExitSubscribeTool {
     fn spec(&self) -> Option<ToolSpec> {
         Some(subscription_function_tool::<ProcessExitSubscribeArgs>(
             TOOL_NAME,
-            "Subscribe to a running exec_command session and inject a notification when that process exits.",
+            "Subscribe to a running `exec_command` session and inject a notification when that \
+             process exits. The injected notification includes the exit status and the retained \
+             aggregated process output captured for that session.\n\n\
+             Parameters:\n\
+             - `session_id`: the running `exec_command` session to watch.\n\
+             - `label`: optional name included in the eventual exit notification.\n\n\
+             Use this when:\n\
+             - You only need a single completion event instead of continuous log updates.\n\
+             - You are running build, test, lint, or batch commands where the most important \
+             moment is process completion and you want the final retained error history when it \
+             exits.\n\
+             - You want a completion notification without having to keep checking the running \
+             process manually.\n\n\
+             Example requests:\n\
+             - \"Run the test suite in the background and tell me when it finishes.\"\n\
+             - \"Start the build and send me the final retained output once it exits.\"\n\
+             - \"Watch this formatter run; I only care about the final failure summary if it \
+             crashes.\"\n\n\
+             When you need ongoing progress or log updates while the process is still running, \
+             redirect output to a file and use `fs_subscribe` on that file instead.",
         ))
     }
 

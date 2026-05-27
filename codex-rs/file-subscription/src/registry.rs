@@ -15,11 +15,15 @@ use codex_file_watcher::WatchPath;
 use codex_file_watcher::WatchRegistration;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::Op;
+use codex_protocol::subscriptions::PersistedSubscription;
 use codex_protocol::user_input::UserInput;
+use codex_thread_store::ThreadMetadataPatch;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 use tracing::warn;
+
+use crate::tools::schedule::CompiledSchedule;
 
 const DEBOUNCE_INTERVAL: Duration = Duration::from_millis(200);
 
@@ -63,6 +67,7 @@ struct SubscriptionEntry {
     _cancel_tx: oneshot::Sender<()>,
     _subscriber: Option<FileWatcherSubscriber>,
     _registration: Option<WatchRegistration>,
+    persisted: PersistedSubscription,
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -80,7 +85,7 @@ struct SubscriptionKey {
 pub(crate) struct FsSubscriptionRegistry {
     file_watcher: Arc<FileWatcher>,
     thread_manager: Weak<ThreadManager>,
-    state: AsyncMutex<HashMap<SubscriptionKey, SubscriptionEntry>>,
+    state: Arc<AsyncMutex<HashMap<SubscriptionKey, SubscriptionEntry>>>,
 }
 
 impl FsSubscriptionRegistry {
@@ -88,7 +93,7 @@ impl FsSubscriptionRegistry {
         Self {
             file_watcher,
             thread_manager,
-            state: AsyncMutex::new(HashMap::new()),
+            state: Arc::new(AsyncMutex::new(HashMap::new())),
         }
     }
 
@@ -122,12 +127,100 @@ impl FsSubscriptionRegistry {
         cancel_tx: oneshot::Sender<()>,
         subscriber: Option<FileWatcherSubscriber>,
         registration: Option<WatchRegistration>,
+        persisted: PersistedSubscription,
     ) -> SubscriptionEntry {
         SubscriptionEntry {
             _cancel_tx: cancel_tx,
             _subscriber: subscriber,
             _registration: registration,
+            persisted,
         }
+    }
+
+    async fn persist_thread_subscriptions(
+        thread_manager: &Weak<ThreadManager>,
+        state: &AsyncMutex<HashMap<SubscriptionKey, SubscriptionEntry>>,
+        thread_id: ThreadId,
+    ) -> Result<(), String> {
+        let subscriptions = {
+            let state = state.lock().await;
+            let mut subscriptions = state
+                .iter()
+                .filter(|(key, _)| key.thread_id == thread_id)
+                .map(|(_, entry)| entry.persisted.clone())
+                .collect::<Vec<_>>();
+            subscriptions.sort_by(|left, right| subscription_id(left).cmp(subscription_id(right)));
+            subscriptions
+        };
+        let Some(thread_manager) = thread_manager.upgrade() else {
+            return Err("thread manager unavailable".to_string());
+        };
+        let thread = thread_manager
+            .get_thread(thread_id)
+            .await
+            .map_err(|err| err.to_string())?;
+        thread
+            .update_thread_metadata(
+                ThreadMetadataPatch {
+                    subscriptions: Some(subscriptions),
+                    ..Default::default()
+                },
+                /*include_archived*/ true,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    async fn remove_subscription_and_persist(
+        thread_manager: &Weak<ThreadManager>,
+        state: &AsyncMutex<HashMap<SubscriptionKey, SubscriptionEntry>>,
+        thread_id: ThreadId,
+        subscription_id: &str,
+    ) -> Result<bool, String> {
+        let removed = state
+            .lock()
+            .await
+            .remove(&SubscriptionKey {
+                thread_id,
+                subscription_id: subscription_id.to_string(),
+            })
+            .is_some();
+        if removed {
+            Self::persist_thread_subscriptions(thread_manager, state, thread_id).await?;
+        }
+        Ok(removed)
+    }
+
+    async fn subscription_snapshot_from_history(
+        &self,
+        thread_id: ThreadId,
+    ) -> Result<Vec<PersistedSubscription>, String> {
+        let Some(thread_manager) = self.thread_manager.upgrade() else {
+            return Err("thread manager unavailable".to_string());
+        };
+        let thread = thread_manager
+            .get_thread(thread_id)
+            .await
+            .map_err(|err| err.to_string())?;
+        let stored = thread
+            .read_thread(
+                /*include_archived*/ true, /*include_history*/ true,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        let subscriptions = stored
+            .history
+            .and_then(|history| {
+                history.items.iter().rev().find_map(|item| match item {
+                    codex_protocol::protocol::RolloutItem::SessionMeta(meta_line) => {
+                        meta_line.meta.subscriptions.clone()
+                    }
+                    _ => None,
+                })
+            })
+            .unwrap_or_default();
+        Ok(subscriptions)
     }
 
     /// Creates a new file subscription and spawns a background watcher task.
@@ -139,6 +232,26 @@ impl FsSubscriptionRegistry {
         label: Option<String>,
         subscription_id: String,
     ) {
+        self.subscribe_file_with_persistence(
+            thread_id,
+            path,
+            recursive,
+            label,
+            subscription_id,
+            /*persist_after*/ true,
+        )
+        .await;
+    }
+
+    async fn subscribe_file_with_persistence(
+        &self,
+        thread_id: ThreadId,
+        path: PathBuf,
+        recursive: bool,
+        label: Option<String>,
+        subscription_id: String,
+        persist_after: bool,
+    ) {
         let (subscriber, rx) = self.file_watcher.add_subscriber();
         let registration = subscriber.register_paths(vec![WatchPath {
             path: path.clone(),
@@ -147,6 +260,12 @@ impl FsSubscriptionRegistry {
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         let thread_manager = self.thread_manager.clone();
         let sub_id_for_log = subscription_id.clone();
+        let persisted = PersistedSubscription::Fs {
+            subscription_id: subscription_id.clone(),
+            path: path.display().to_string(),
+            recursive,
+            label: label.clone(),
+        };
 
         tokio::spawn(async move {
             let mut debounced = DebouncedReceiver::new(rx, DEBOUNCE_INTERVAL);
@@ -190,47 +309,105 @@ impl FsSubscriptionRegistry {
         self.state.lock().await.insert(
             SubscriptionKey {
                 thread_id,
-                subscription_id,
+                subscription_id: subscription_id.clone(),
             },
-            Self::subscription_entry(cancel_tx, Some(subscriber), Some(registration)),
+            Self::subscription_entry(cancel_tx, Some(subscriber), Some(registration), persisted),
         );
+        if persist_after
+            && let Err(err) =
+                Self::persist_thread_subscriptions(&self.thread_manager, &self.state, thread_id)
+                    .await
+        {
+            warn!("failed to persist file subscription {subscription_id}: {err}");
+        }
     }
 
-    pub(crate) async fn subscribe_timer(
+    pub(crate) async fn subscribe_schedule(
         &self,
         thread_id: ThreadId,
-        interval: Duration,
+        schedule_spec: codex_protocol::subscriptions::ScheduleSpec,
+        schedule: CompiledSchedule,
         label: Option<String>,
         subscription_id: String,
     ) {
+        self.subscribe_schedule_with_persistence(
+            thread_id,
+            schedule_spec,
+            schedule,
+            label,
+            subscription_id,
+            /*persist_after*/ true,
+        )
+        .await;
+    }
+
+    async fn subscribe_schedule_with_persistence(
+        &self,
+        thread_id: ThreadId,
+        schedule_spec: codex_protocol::subscriptions::ScheduleSpec,
+        schedule: CompiledSchedule,
+        label: Option<String>,
+        subscription_id: String,
+        persist_after: bool,
+    ) {
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         let thread_manager = self.thread_manager.clone();
+        let state = Arc::clone(&self.state);
         let sub_id_for_log = subscription_id.clone();
+        let persisted = PersistedSubscription::Schedule {
+            subscription_id: subscription_id.clone(),
+            schedule: schedule_spec,
+            label: label.clone(),
+        };
 
         tokio::spawn(async move {
             tokio::pin!(cancel_rx);
-            let mut ticker = tokio::time::interval(interval);
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            ticker.tick().await;
             loop {
+                let now = chrono::Utc::now();
+                let next_fire_at = match schedule.next_fire_at(now) {
+                    Ok(next_fire_at) => next_fire_at,
+                    Err(err) => {
+                        warn!("schedule subscription {sub_id_for_log}: {err}");
+                        break;
+                    }
+                };
+                let delay = match (next_fire_at - now).to_std() {
+                    Ok(delay) => delay,
+                    Err(_) => Duration::from_secs(0),
+                };
                 tokio::select! {
                     biased;
                     _ = &mut cancel_rx => break,
-                    _ = ticker.tick() => {}
+                    _ = tokio::time::sleep(delay) => {}
                 }
                 let label_part = label
                     .as_deref()
                     .map(|value| format!(" ({value})"))
                     .unwrap_or_default();
                 let text = format!(
-                    "[Timer subscription{label_part}] Interval elapsed: {} ms",
-                    interval.as_millis()
+                    "[Schedule subscription{label_part}] Trigger fired: {}",
+                    schedule.summary()
                 );
                 if let Err(err) = Self::send_text_to_thread(&thread_manager, thread_id, text).await
                 {
                     if err != "thread manager unavailable" {
                         warn!(
-                            "timer subscription {sub_id_for_log}: thread {thread_id} unavailable: {err}"
+                            "schedule subscription {sub_id_for_log}: thread {thread_id} unavailable: {err}"
+                        );
+                    }
+                    break;
+                }
+                if schedule.is_one_shot() {
+                    if let Err(err) = Self::remove_subscription_and_persist(
+                        &thread_manager,
+                        &state,
+                        thread_id,
+                        &sub_id_for_log,
+                    )
+                    .await
+                    {
+                        warn!(
+                            "failed to persist completed schedule subscription {sub_id_for_log}: {err}"
                         );
                     }
                     break;
@@ -241,10 +418,17 @@ impl FsSubscriptionRegistry {
         self.state.lock().await.insert(
             SubscriptionKey {
                 thread_id,
-                subscription_id,
+                subscription_id: subscription_id.clone(),
             },
-            Self::subscription_entry(cancel_tx, None, None),
+            Self::subscription_entry(cancel_tx, None, None, persisted),
         );
+        if persist_after
+            && let Err(err) =
+                Self::persist_thread_subscriptions(&self.thread_manager, &self.state, thread_id)
+                    .await
+        {
+            warn!("failed to persist schedule subscription {subscription_id}: {err}");
+        }
     }
 
     pub(crate) async fn subscribe_process_exit(
@@ -254,6 +438,26 @@ impl FsSubscriptionRegistry {
         label: Option<String>,
         subscription_id: String,
         unified_exec_manager: Arc<UnifiedExecProcessManager>,
+    ) -> bool {
+        self.subscribe_process_exit_with_persistence(
+            thread_id,
+            process_id,
+            label,
+            subscription_id,
+            unified_exec_manager,
+            /*persist_after*/ true,
+        )
+        .await
+    }
+
+    async fn subscribe_process_exit_with_persistence(
+        &self,
+        thread_id: ThreadId,
+        process_id: i32,
+        label: Option<String>,
+        subscription_id: String,
+        unified_exec_manager: Arc<UnifiedExecProcessManager>,
+        persist_after: bool,
     ) -> bool {
         let Some(process_exit) = unified_exec_manager
             .subscribe_process_exit(process_id)
@@ -265,19 +469,25 @@ impl FsSubscriptionRegistry {
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         let thread_manager = self.thread_manager.clone();
         let sub_id_for_log = subscription_id.clone();
+        let state = Arc::clone(&self.state);
+        let persisted = PersistedSubscription::ProcessExit {
+            subscription_id: subscription_id.clone(),
+            session_id: process_id,
+            label: label.clone(),
+        };
 
         tokio::spawn(async move {
             tokio::pin!(cancel_rx);
-            let exit_code = tokio::select! {
+            let (exit_code, retained_output) = tokio::select! {
                 biased;
                 _ = &mut cancel_rx => return,
-                exit_code = process_exit.wait() => exit_code,
+                result = process_exit.wait_with_retained_output() => result,
             };
             let label_part = label
                 .as_deref()
                 .map(|value| format!(" ({value})"))
                 .unwrap_or_default();
-            let text = match exit_code {
+            let mut text = match exit_code {
                 Some(exit_code) => format!(
                     "[Process exit subscription{label_part}] Session {process_id} exited with code {exit_code}"
                 ),
@@ -285,6 +495,11 @@ impl FsSubscriptionRegistry {
                     format!("[Process exit subscription{label_part}] Session {process_id} exited")
                 }
             };
+            let retained_output = retained_output.trim();
+            if !retained_output.is_empty() {
+                text.push_str("\nCaptured output:\n");
+                text.push_str(retained_output);
+            }
             if let Err(err) = Self::send_text_to_thread(&thread_manager, thread_id, text).await
                 && err != "thread manager unavailable"
             {
@@ -292,29 +507,53 @@ impl FsSubscriptionRegistry {
                     "process exit subscription {sub_id_for_log}: thread {thread_id} unavailable: {err}"
                 );
             }
+            if let Err(err) = Self::remove_subscription_and_persist(
+                &thread_manager,
+                &state,
+                thread_id,
+                &sub_id_for_log,
+            )
+            .await
+            {
+                warn!(
+                    "failed to persist completed process exit subscription {sub_id_for_log}: {err}"
+                );
+            }
         });
 
         self.state.lock().await.insert(
             SubscriptionKey {
                 thread_id,
-                subscription_id,
+                subscription_id: subscription_id.clone(),
             },
-            Self::subscription_entry(cancel_tx, None, None),
+            Self::subscription_entry(cancel_tx, None, None, persisted),
         );
+        if persist_after
+            && let Err(err) =
+                Self::persist_thread_subscriptions(&self.thread_manager, &self.state, thread_id)
+                    .await
+        {
+            warn!("failed to persist process exit subscription {subscription_id}: {err}");
+        }
         true
     }
 
     /// Cancels a specific subscription. Returns `true` if the subscription existed.
     pub(crate) async fn unsubscribe(&self, thread_id: ThreadId, subscription_id: &str) -> bool {
-        // Dropping the entry cancels the background task via cancel_tx.
-        self.state
-            .lock()
-            .await
-            .remove(&SubscriptionKey {
-                thread_id,
-                subscription_id: subscription_id.to_string(),
-            })
-            .is_some()
+        match Self::remove_subscription_and_persist(
+            &self.thread_manager,
+            &self.state,
+            thread_id,
+            subscription_id,
+        )
+        .await
+        {
+            Ok(unsubscribed) => unsubscribed,
+            Err(err) => {
+                warn!("failed to persist subscription removal {subscription_id}: {err}");
+                false
+            }
+        }
     }
 
     /// Cancels all subscriptions belonging to the given thread.
@@ -325,5 +564,118 @@ impl FsSubscriptionRegistry {
             .await
             .extract_if(|key, _| key.thread_id == thread_id)
             .count();
+    }
+
+    pub(crate) async fn restore_thread_subscriptions(
+        &self,
+        thread_id: ThreadId,
+        unified_exec_manager: Option<Arc<UnifiedExecProcessManager>>,
+    ) {
+        let subscriptions = match self.subscription_snapshot_from_history(thread_id).await {
+            Ok(subscriptions) => subscriptions,
+            Err(err) => {
+                warn!("failed to load persisted subscriptions for {thread_id}: {err}");
+                return;
+            }
+        };
+        let mut changed = false;
+        for subscription in subscriptions {
+            match subscription {
+                PersistedSubscription::Fs {
+                    subscription_id,
+                    path,
+                    recursive,
+                    label,
+                } => {
+                    self.subscribe_file_with_persistence(
+                        thread_id,
+                        PathBuf::from(path),
+                        recursive,
+                        label,
+                        subscription_id,
+                        /*persist_after*/ false,
+                    )
+                    .await;
+                }
+                PersistedSubscription::Schedule {
+                    subscription_id,
+                    schedule,
+                    label,
+                } => match crate::tools::schedule::CompiledSchedule::compile(schedule.clone()) {
+                    Ok(compiled) => {
+                        self.subscribe_schedule_with_persistence(
+                            thread_id,
+                            schedule,
+                            compiled,
+                            label,
+                            subscription_id,
+                            /*persist_after*/ false,
+                        )
+                        .await;
+                    }
+                    Err(err) => {
+                        changed = true;
+                        let text = format!(
+                            "[Schedule subscription restore] Failed to restore subscription {subscription_id}: {err}"
+                        );
+                        let _ =
+                            Self::send_text_to_thread(&self.thread_manager, thread_id, text).await;
+                    }
+                },
+                PersistedSubscription::ProcessExit {
+                    subscription_id,
+                    session_id,
+                    label,
+                } => {
+                    let restored = if let Some(unified_exec_manager) = unified_exec_manager.clone()
+                    {
+                        self.subscribe_process_exit_with_persistence(
+                            thread_id,
+                            session_id,
+                            label.clone(),
+                            subscription_id.clone(),
+                            unified_exec_manager,
+                            /*persist_after*/ false,
+                        )
+                        .await
+                    } else {
+                        false
+                    };
+                    if !restored {
+                        changed = true;
+                        let label_part = label
+                            .as_deref()
+                            .map(|value| format!(" ({value})"))
+                            .unwrap_or_default();
+                        let text = format!(
+                            "[Process exit subscription restore{label_part}] Could not restore session {session_id} after restart because the original exec session is no longer available."
+                        );
+                        let _ =
+                            Self::send_text_to_thread(&self.thread_manager, thread_id, text).await;
+                    }
+                }
+            }
+        }
+        if changed
+            && let Err(err) =
+                Self::persist_thread_subscriptions(&self.thread_manager, &self.state, thread_id)
+                    .await
+        {
+            warn!("failed to persist restored subscription snapshot for {thread_id}: {err}");
+        }
+    }
+}
+
+fn subscription_id(subscription: &PersistedSubscription) -> &str {
+    match subscription {
+        PersistedSubscription::Fs {
+            subscription_id, ..
+        }
+        | PersistedSubscription::Schedule {
+            subscription_id, ..
+        }
+        | PersistedSubscription::ProcessExit {
+            subscription_id, ..
+        } => subscription_id.as_str(),
     }
 }

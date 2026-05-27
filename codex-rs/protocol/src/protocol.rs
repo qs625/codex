@@ -47,6 +47,7 @@ use crate::plan_tool::UpdatePlanArgs;
 use crate::request_permissions::RequestPermissionsEvent;
 use crate::request_permissions::RequestPermissionsResponse;
 use crate::request_user_input::RequestUserInputResponse;
+use crate::subscriptions::PersistedSubscription;
 use crate::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use schemars::JsonSchema;
@@ -2487,6 +2488,22 @@ impl InitialHistory {
         }
     }
 
+    pub fn get_subscriptions(&self) -> Option<Vec<PersistedSubscription>> {
+        match self {
+            InitialHistory::New | InitialHistory::Cleared => None,
+            InitialHistory::Resumed(resumed) => {
+                resumed.history.iter().rev().find_map(|item| match item {
+                    RolloutItem::SessionMeta(meta_line) => meta_line.meta.subscriptions.clone(),
+                    _ => None,
+                })
+            }
+            InitialHistory::Forked(items) => items.iter().rev().find_map(|item| match item {
+                RolloutItem::SessionMeta(meta_line) => meta_line.meta.subscriptions.clone(),
+                _ => None,
+            }),
+        }
+    }
+
     pub fn get_resumed_thread_source(&self) -> Option<ThreadSource> {
         match self {
             InitialHistory::New | InitialHistory::Cleared | InitialHistory::Forked(_) => None,
@@ -2742,6 +2759,8 @@ pub struct SessionMeta {
     pub dynamic_tools: Option<Vec<DynamicToolSpec>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subscriptions: Option<Vec<PersistedSubscription>>,
 }
 
 impl Default for SessionMeta {
@@ -2762,6 +2781,7 @@ impl Default for SessionMeta {
             base_instructions: None,
             dynamic_tools: None,
             memory_mode: None,
+            subscriptions: None,
         }
     }
 }

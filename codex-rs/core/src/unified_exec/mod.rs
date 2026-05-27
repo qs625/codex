@@ -149,12 +149,22 @@ impl UnifiedExecManagerHandle {
 pub struct ProcessExitSubscription {
     process: Arc<UnifiedExecProcess>,
     cancellation_token: tokio_util::sync::CancellationToken,
+    transcript: Arc<Mutex<head_tail_buffer::HeadTailBuffer>>,
 }
 
 impl ProcessExitSubscription {
     pub async fn wait(&self) -> Option<i32> {
         self.cancellation_token.cancelled().await;
         self.process.exit_code()
+    }
+
+    pub async fn wait_with_retained_output(&self) -> (Option<i32>, String) {
+        self.cancellation_token.cancelled().await;
+        let output = {
+            let guard = self.transcript.lock().await;
+            String::from_utf8_lossy(&guard.to_bytes()).to_string()
+        };
+        (self.process.exit_code(), output)
     }
 }
 
@@ -183,6 +193,7 @@ struct ProcessEntry {
     network_approval: Option<DeferredNetworkApproval>,
     session: Weak<Session>,
     last_used: tokio::time::Instant,
+    transcript: Arc<Mutex<head_tail_buffer::HeadTailBuffer>>,
 }
 
 pub(crate) fn clamp_yield_time(yield_time_ms: u64) -> u64 {
