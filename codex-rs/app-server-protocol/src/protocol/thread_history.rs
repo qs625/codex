@@ -23,6 +23,7 @@ use crate::protocol::v2::UserInput;
 use crate::protocol::v2::WebSearchAction;
 use codex_protocol::items::parse_hook_prompt_message;
 use codex_protocol::models::MessagePhase;
+use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AgentReasoningEvent;
 use codex_protocol::protocol::AgentReasoningRawContentEvent;
 use codex_protocol::protocol::AgentStatus;
@@ -237,29 +238,72 @@ impl ThreadHistoryBuilder {
     }
 
     fn handle_response_item(&mut self, item: &codex_protocol::models::ResponseItem) {
-        let codex_protocol::models::ResponseItem::Message {
-            role, content, id, ..
-        } = item
-        else {
-            return;
-        };
+        match item {
+            ResponseItem::Message {
+                role, content, id, ..
+            } => {
+                if role != "user" {
+                    return;
+                }
 
-        if role != "user" {
-            return;
+                let Some(hook_prompt) = parse_hook_prompt_message(id.as_ref(), content) else {
+                    return;
+                };
+
+                self.ensure_turn().items.push(ThreadItem::HookPrompt {
+                    id: hook_prompt.id,
+                    fragments: hook_prompt
+                        .fragments
+                        .into_iter()
+                        .map(crate::protocol::v2::HookPromptFragment::from)
+                        .collect(),
+                });
+            }
+            ResponseItem::FunctionCall {
+                name,
+                namespace,
+                arguments,
+                call_id,
+                ..
+            } => {
+                let Some(tool_name) = builtin_tool_name(namespace.as_deref(), name) else {
+                    return;
+                };
+                let item = ThreadItem::BuiltinToolCall {
+                    id: call_id.clone(),
+                    tool: tool_name,
+                    arguments: parse_raw_function_call_arguments(arguments),
+                    status: DynamicToolCallStatus::InProgress,
+                    output: None,
+                };
+                self.upsert_builtin_tool_item_in_current_turn(item);
+            }
+            ResponseItem::FunctionCallOutput { call_id, output } => {
+                let existing = self.find_builtin_tool_call_in_current_turn(call_id);
+                if existing.is_none() {
+                    return;
+                }
+                let item = ThreadItem::BuiltinToolCall {
+                    id: call_id.clone(),
+                    tool: existing
+                        .map(|item| match item {
+                            ThreadItem::BuiltinToolCall { tool, .. } => tool.clone(),
+                            _ => "tool".to_string(),
+                        })
+                        .unwrap_or_else(|| "tool".to_string()),
+                    arguments: existing
+                        .map(|item| match item {
+                            ThreadItem::BuiltinToolCall { arguments, .. } => arguments.clone(),
+                            _ => serde_json::Value::Null,
+                        })
+                        .unwrap_or(serde_json::Value::Null),
+                    status: DynamicToolCallStatus::Completed,
+                    output: Some(function_call_output_payload_to_json(output)),
+                };
+                self.upsert_builtin_tool_item_in_current_turn(item);
+            }
+            _ => {}
         }
-
-        let Some(hook_prompt) = parse_hook_prompt_message(id.as_ref(), content) else {
-            return;
-        };
-
-        self.ensure_turn().items.push(ThreadItem::HookPrompt {
-            id: hook_prompt.id,
-            fragments: hook_prompt
-                .fragments
-                .into_iter()
-                .map(crate::protocol::v2::HookPromptFragment::from)
-                .collect(),
-        });
     }
 
     fn handle_user_message(&mut self, payload: &UserMessageEvent) {
@@ -1057,6 +1101,17 @@ impl ThreadHistoryBuilder {
         upsert_turn_item(&mut turn.items, item);
     }
 
+    fn upsert_builtin_tool_item_in_current_turn(&mut self, item: ThreadItem) {
+        let turn = self.ensure_turn();
+        upsert_builtin_tool_item(&mut turn.items, item);
+    }
+
+    fn find_builtin_tool_call_in_current_turn(&self, item_id: &str) -> Option<&ThreadItem> {
+        self.current_turn
+            .as_ref()
+            .and_then(|turn| turn.items.iter().find(|item| item.id() == item_id))
+    }
+
     fn next_item_id(&mut self) -> String {
         let id = format!("item-{}", self.next_item_index);
         self.next_item_index += 1;
@@ -1116,12 +1171,51 @@ fn convert_dynamic_tool_content_items(
         .collect()
 }
 
+fn parse_raw_function_call_arguments(arguments: &str) -> serde_json::Value {
+    serde_json::from_str(arguments).unwrap_or_else(|_| serde_json::Value::String(arguments.into()))
+}
+
+fn function_call_output_payload_to_json(
+    output: &codex_protocol::models::FunctionCallOutputPayload,
+) -> serde_json::Value {
+    serde_json::to_value(output).unwrap_or_else(|_| serde_json::Value::String(output.to_string()))
+}
+
+fn builtin_tool_name(namespace: Option<&str>, name: &str) -> Option<String> {
+    if namespace.is_some() {
+        return None;
+    }
+
+    match name {
+        "fs_subscribe"
+        | "fs_unsubscribe"
+        | "process_exit_subscribe"
+        | "process_exit_unsubscribe"
+        | "schedule_subscribe"
+        | "schedule_unsubscribe" => Some(name.to_string()),
+        _ => None,
+    }
+}
+
 fn upsert_turn_item(items: &mut Vec<ThreadItem>, item: ThreadItem) {
     if let Some(existing_item) = items
         .iter_mut()
         .find(|existing_item| existing_item.id() == item.id())
     {
         *existing_item = item;
+        return;
+    }
+    items.push(item);
+}
+
+fn upsert_builtin_tool_item(items: &mut Vec<ThreadItem>, item: ThreadItem) {
+    if let Some(existing_item) = items
+        .iter_mut()
+        .find(|existing_item| existing_item.id() == item.id())
+    {
+        if matches!(existing_item, ThreadItem::BuiltinToolCall { .. }) {
+            *existing_item = item;
+        }
         return;
     }
     items.push(item);
@@ -1203,7 +1297,9 @@ mod tests {
     use codex_protocol::items::UserMessageItem as CoreUserMessageItem;
     use codex_protocol::items::build_hook_prompt_message;
     use codex_protocol::mcp::CallToolResult;
+    use codex_protocol::models::FunctionCallOutputPayload;
     use codex_protocol::models::MessagePhase as CoreMessagePhase;
+    use codex_protocol::models::ResponseItem;
     use codex_protocol::models::WebSearchAction as CoreWebSearchAction;
     use codex_protocol::parse_command::ParsedCommand;
     use codex_protocol::protocol::AgentMessageEvent;
@@ -2031,6 +2127,113 @@ mod tests {
                 }]),
                 success: Some(true),
                 duration_ms: Some(42),
+            }
+        );
+    }
+
+    #[test]
+    fn reconstructs_builtin_tool_items_from_raw_response_history() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+                message: "watch this file".into(),
+                images: None,
+                text_elements: Vec::new(),
+                local_images: Vec::new(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::FunctionCall {
+                id: None,
+                name: "fs_subscribe".into(),
+                namespace: None,
+                arguments: r#"{"path":"/tmp/build.log","label":"build"}"#.into(),
+                call_id: "builtin-1".into(),
+            }),
+            RolloutItem::ResponseItem(ResponseItem::FunctionCallOutput {
+                call_id: "builtin-1".into(),
+                output: FunctionCallOutputPayload::from_text("subscribed".into()),
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 2);
+        assert_eq!(
+            turns[0].items[1],
+            ThreadItem::BuiltinToolCall {
+                id: "builtin-1".into(),
+                tool: "fs_subscribe".into(),
+                arguments: serde_json::json!({
+                    "path": "/tmp/build.log",
+                    "label": "build",
+                }),
+                status: DynamicToolCallStatus::Completed,
+                output: Some(serde_json::Value::String("subscribed".into())),
+            }
+        );
+    }
+
+    #[test]
+    fn builtin_tool_replay_does_not_override_specialized_items() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::FunctionCall {
+                id: None,
+                name: "exec_command".into(),
+                namespace: None,
+                arguments: r#"{"cmd":"ls"}"#.into(),
+                call_id: "call-1".into(),
+            }),
+            RolloutItem::EventMsg(EventMsg::ExecCommandEnd(ExecCommandEndEvent {
+                call_id: "call-1".into(),
+                process_id: Some("pid-1".into()),
+                turn_id: "turn-1".into(),
+                completed_at_ms: 0,
+                command: vec!["ls".into()],
+                cwd: test_path_buf("/tmp").abs(),
+                parsed_cmd: vec![ParsedCommand::Unknown { cmd: "ls".into() }],
+                source: ExecCommandSource::Agent,
+                interaction_input: None,
+                stdout: String::new(),
+                stderr: String::new(),
+                aggregated_output: String::new(),
+                exit_code: 0,
+                duration: Duration::ZERO,
+                formatted_output: String::new(),
+                status: CoreExecCommandStatus::Completed,
+            })),
+            RolloutItem::ResponseItem(ResponseItem::FunctionCallOutput {
+                call_id: "call-1".into(),
+                output: FunctionCallOutputPayload::from_text("ok".into()),
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items[0],
+            ThreadItem::CommandExecution {
+                id: "call-1".into(),
+                command: "ls".into(),
+                cwd: test_path_buf("/tmp").abs(),
+                process_id: Some("pid-1".into()),
+                source: CommandExecutionSource::Agent,
+                status: CommandExecutionStatus::Completed,
+                command_actions: vec![CommandAction::Unknown {
+                    command: "ls".into(),
+                }],
+                aggregated_output: None,
+                exit_code: Some(0),
+                duration_ms: Some(0),
             }
         );
     }

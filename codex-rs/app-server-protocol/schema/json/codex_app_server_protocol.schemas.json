@@ -3931,6 +3931,26 @@
           "properties": {
             "method": {
               "enum": [
+                "thread/skills/updated"
+              ],
+              "title": "Thread/skills/updatedNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/ThreadSkillsUpdatedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "Thread/skills/updatedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
                 "skills/changed"
               ],
               "title": "Skills/changedNotificationMethod",
@@ -15214,6 +15234,14 @@
             "description": "Session id shared by threads that belong to the same session tree.",
             "type": "string"
           },
+          "skills": {
+            "default": [],
+            "description": "Aggregate thread-level skill usage observed so far.",
+            "items": {
+              "$ref": "#/definitions/v2/ThreadSkill"
+            },
+            "type": "array"
+          },
           "source": {
             "allOf": [
               {
@@ -16054,6 +16082,37 @@
               "type"
             ],
             "title": "DynamicToolCallThreadItem",
+            "type": "object"
+          },
+          {
+            "properties": {
+              "arguments": true,
+              "id": {
+                "type": "string"
+              },
+              "output": true,
+              "status": {
+                "$ref": "#/definitions/v2/DynamicToolCallStatus"
+              },
+              "tool": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "builtinToolCall"
+                ],
+                "title": "BuiltinToolCallThreadItemType",
+                "type": "string"
+              }
+            },
+            "required": [
+              "arguments",
+              "id",
+              "status",
+              "tool",
+              "type"
+            ],
+            "title": "BuiltinToolCallThreadItem",
             "type": "object"
           },
           {
@@ -17108,6 +17167,53 @@
       "ThreadShellCommandResponse": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "title": "ThreadShellCommandResponse",
+        "type": "object"
+      },
+      "ThreadSkill": {
+        "properties": {
+          "kind": {
+            "$ref": "#/definitions/v2/ThreadSkillKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "path"
+        ],
+        "type": "object"
+      },
+      "ThreadSkillKind": {
+        "enum": [
+          "explicit",
+          "implicit",
+          "all"
+        ],
+        "type": "string"
+      },
+      "ThreadSkillsUpdatedNotification": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "skills": {
+            "items": {
+              "$ref": "#/definitions/v2/ThreadSkill"
+            },
+            "type": "array"
+          },
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "skills",
+          "threadId"
+        ],
+        "title": "ThreadSkillsUpdatedNotification",
         "type": "object"
       },
       "ThreadSortKey": {

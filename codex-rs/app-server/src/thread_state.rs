@@ -64,7 +64,14 @@ pub(crate) enum ThreadListenerCommand {
 pub(crate) struct TurnSummary {
     pub(crate) started_at: Option<i64>,
     pub(crate) command_execution_started: HashSet<String>,
+    pub(crate) builtin_tool_calls: HashMap<String, BuiltinToolCallSummary>,
     pub(crate) last_error: Option<TurnError>,
+}
+
+#[derive(Clone)]
+pub(crate) struct BuiltinToolCallSummary {
+    pub(crate) tool: String,
+    pub(crate) arguments: serde_json::Value,
 }
 
 #[derive(Default)]

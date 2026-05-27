@@ -61,7 +61,7 @@ durationMs: number | null, } | { "type": "dynamicToolCall", id: string, namespac
 /**
  * The duration of the dynamic tool call in milliseconds.
  */
-durationMs: number | null, } | { "type": "collabAgentToolCall",
+durationMs: number | null, } | { "type": "builtinToolCall", id: string, tool: string, arguments: JsonValue, status: DynamicToolCallStatus, output: JsonValue | null, } | { "type": "collabAgentToolCall",
 /**
  * Unique identifier for this collab tool call.
  */

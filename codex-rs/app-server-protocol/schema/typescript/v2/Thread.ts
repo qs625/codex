@@ -4,6 +4,7 @@
 import type { AbsolutePathBuf } from "../AbsolutePathBuf";
 import type { GitInfo } from "./GitInfo";
 import type { SessionSource } from "./SessionSource";
+import type { ThreadSkill } from "./ThreadSkill";
 import type { ThreadSource } from "./ThreadSource";
 import type { ThreadStatus } from "./ThreadStatus";
 import type { Turn } from "./Turn";
@@ -77,6 +78,10 @@ gitInfo: GitInfo | null,
  * Optional user-facing thread title.
  */
 name: string | null,
+/**
+ * Aggregate thread-level skill usage observed so far.
+ */
+skills: Array<ThreadSkill>,
 /**
  * Only populated on `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read`
  * (when `includeTurns` is true) responses.

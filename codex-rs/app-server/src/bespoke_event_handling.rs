@@ -5,6 +5,7 @@ use crate::outgoing_message::ThreadScopedOutgoingMessageSender;
 use crate::request_processors::populate_thread_turns_from_history;
 use crate::request_processors::thread_from_stored_thread;
 use crate::server_request_error::is_turn_transition_server_request_error;
+use crate::thread_state::BuiltinToolCallSummary;
 use crate::thread_state::ThreadState;
 use crate::thread_state::TurnSummary;
 use crate::thread_state::resolve_server_request_on_thread_listener;
@@ -1036,6 +1037,14 @@ pub(crate) async fn apply_bespoke_event_handling(
                 &outgoing,
             )
             .await;
+            maybe_emit_builtin_tool_call_notifications(
+                conversation_id,
+                &event_turn_id,
+                &raw_response_item_event.item,
+                &outgoing,
+                &thread_state,
+            )
+            .await;
             maybe_emit_raw_response_item_completed(
                 conversation_id,
                 &event_turn_id,
@@ -1413,6 +1422,81 @@ async fn maybe_emit_raw_response_item_completed(
         .await;
 }
 
+async fn maybe_emit_builtin_tool_call_notifications(
+    conversation_id: ThreadId,
+    turn_id: &str,
+    item: &codex_protocol::models::ResponseItem,
+    outgoing: &ThreadScopedOutgoingMessageSender,
+    thread_state: &Arc<Mutex<ThreadState>>,
+) {
+    match item {
+        codex_protocol::models::ResponseItem::FunctionCall {
+            name,
+            namespace,
+            arguments,
+            call_id,
+            ..
+        } => {
+            let Some(tool) = builtin_tool_name(namespace.as_deref(), name) else {
+                return;
+            };
+            let arguments = parse_raw_function_call_arguments(arguments);
+            {
+                let mut state = thread_state.lock().await;
+                state.turn_summary.builtin_tool_calls.insert(
+                    call_id.clone(),
+                    BuiltinToolCallSummary {
+                        tool: tool.clone(),
+                        arguments: arguments.clone(),
+                    },
+                );
+            }
+            let started = ItemStartedNotification {
+                thread_id: conversation_id.to_string(),
+                turn_id: turn_id.to_string(),
+                started_at_ms: now_unix_timestamp_ms(),
+                item: ThreadItem::BuiltinToolCall {
+                    id: call_id.clone(),
+                    tool,
+                    arguments,
+                    status: DynamicToolCallStatus::InProgress,
+                    output: None,
+                },
+            };
+            outgoing
+                .send_server_notification(ServerNotification::ItemStarted(started))
+                .await;
+        }
+        codex_protocol::models::ResponseItem::FunctionCallOutput { call_id, output } => {
+            let Some(summary) = thread_state
+                .lock()
+                .await
+                .turn_summary
+                .builtin_tool_calls
+                .remove(call_id)
+            else {
+                return;
+            };
+            let completed = ItemCompletedNotification {
+                thread_id: conversation_id.to_string(),
+                turn_id: turn_id.to_string(),
+                completed_at_ms: now_unix_timestamp_ms(),
+                item: ThreadItem::BuiltinToolCall {
+                    id: call_id.clone(),
+                    tool: summary.tool,
+                    arguments: summary.arguments,
+                    status: DynamicToolCallStatus::Completed,
+                    output: Some(function_call_output_payload_to_json(output)),
+                },
+            };
+            outgoing
+                .send_server_notification(ServerNotification::ItemCompleted(completed))
+                .await;
+        }
+        _ => {}
+    }
+}
+
 pub(crate) async fn maybe_emit_hook_prompt_item_completed(
     conversation_id: ThreadId,
     turn_id: &str,
@@ -1450,6 +1534,32 @@ pub(crate) async fn maybe_emit_hook_prompt_item_completed(
     outgoing
         .send_server_notification(ServerNotification::ItemCompleted(notification))
         .await;
+}
+
+fn parse_raw_function_call_arguments(arguments: &str) -> serde_json::Value {
+    serde_json::from_str(arguments).unwrap_or_else(|_| serde_json::Value::String(arguments.into()))
+}
+
+fn function_call_output_payload_to_json(
+    output: &codex_protocol::models::FunctionCallOutputPayload,
+) -> serde_json::Value {
+    serde_json::to_value(output).unwrap_or_else(|_| serde_json::Value::String(output.to_string()))
+}
+
+fn builtin_tool_name(namespace: Option<&str>, name: &str) -> Option<String> {
+    if namespace.is_some() {
+        return None;
+    }
+
+    match name {
+        "fs_subscribe"
+        | "fs_unsubscribe"
+        | "process_exit_subscribe"
+        | "process_exit_unsubscribe"
+        | "schedule_subscribe"
+        | "schedule_unsubscribe" => Some(name.to_string()),
+        _ => None,
+    }
 }
 
 async fn find_and_remove_turn_summary(
@@ -2088,6 +2198,7 @@ mod tests {
     use codex_protocol::items::HookPromptFragment;
     use codex_protocol::items::build_hook_prompt_message;
     use codex_protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
+    use codex_protocol::models::FunctionCallOutputPayload;
     use codex_protocol::models::NetworkPermissions as CoreNetworkPermissions;
     use codex_protocol::permissions::FileSystemAccessMode;
     use codex_protocol::permissions::FileSystemPath;
@@ -2610,6 +2721,129 @@ mod tests {
         assert!(
             rx.try_recv().is_err(),
             "completion should not emit after the pending item is cleared"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn builtin_tool_call_notifications_emit_started_then_completed() -> Result<()> {
+        let conversation_id = ThreadId::new();
+        let thread_state = new_thread_state();
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let outgoing = Arc::new(OutgoingMessageSender::new(
+            tx,
+            codex_analytics::AnalyticsEventsClient::disabled(),
+        ));
+        let outgoing = ThreadScopedOutgoingMessageSender::new(
+            outgoing,
+            vec![ConnectionId(1)],
+            ThreadId::new(),
+        );
+
+        maybe_emit_builtin_tool_call_notifications(
+            conversation_id,
+            "turn-1",
+            &codex_protocol::models::ResponseItem::FunctionCall {
+                id: None,
+                name: "fs_subscribe".to_string(),
+                namespace: None,
+                arguments: r#"{"path":"/tmp/log","recursive":true}"#.to_string(),
+                call_id: "call-1".to_string(),
+            },
+            &outgoing,
+            &thread_state,
+        )
+        .await;
+
+        let started = recv_broadcast_message(&mut rx).await?;
+        match started {
+            OutgoingMessage::AppServerNotification(ServerNotification::ItemStarted(payload)) => {
+                assert_eq!(
+                    payload.item,
+                    ThreadItem::BuiltinToolCall {
+                        id: "call-1".to_string(),
+                        tool: "fs_subscribe".to_string(),
+                        arguments: json!({
+                            "path": "/tmp/log",
+                            "recursive": true,
+                        }),
+                        status: DynamicToolCallStatus::InProgress,
+                        output: None,
+                    }
+                );
+            }
+            other => bail!("unexpected message: {other:?}"),
+        }
+
+        maybe_emit_builtin_tool_call_notifications(
+            conversation_id,
+            "turn-1",
+            &codex_protocol::models::ResponseItem::FunctionCallOutput {
+                call_id: "call-1".to_string(),
+                output: FunctionCallOutputPayload::from_text("subscribed".into()),
+            },
+            &outgoing,
+            &thread_state,
+        )
+        .await;
+
+        let completed = recv_broadcast_message(&mut rx).await?;
+        match completed {
+            OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(payload)) => {
+                assert_eq!(
+                    payload.item,
+                    ThreadItem::BuiltinToolCall {
+                        id: "call-1".to_string(),
+                        tool: "fs_subscribe".to_string(),
+                        arguments: json!({
+                            "path": "/tmp/log",
+                            "recursive": true,
+                        }),
+                        status: DynamicToolCallStatus::Completed,
+                        output: Some(json!("subscribed")),
+                    }
+                );
+            }
+            other => bail!("unexpected message: {other:?}"),
+        }
+
+        assert!(
+            rx.try_recv().is_err(),
+            "builtin tool call should emit exactly twice"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn builtin_tool_call_output_without_start_does_not_emit() -> Result<()> {
+        let conversation_id = ThreadId::new();
+        let thread_state = new_thread_state();
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let outgoing = Arc::new(OutgoingMessageSender::new(
+            tx,
+            codex_analytics::AnalyticsEventsClient::disabled(),
+        ));
+        let outgoing = ThreadScopedOutgoingMessageSender::new(
+            outgoing,
+            vec![ConnectionId(1)],
+            ThreadId::new(),
+        );
+
+        maybe_emit_builtin_tool_call_notifications(
+            conversation_id,
+            "turn-1",
+            &codex_protocol::models::ResponseItem::FunctionCallOutput {
+                call_id: "missing-call".to_string(),
+                output: FunctionCallOutputPayload::from_text("ignored".into()),
+            },
+            &outgoing,
+            &thread_state,
+        )
+        .await;
+
+        assert!(
+            rx.try_recv().is_err(),
+            "orphan builtin output should not emit"
         );
         Ok(())
     }

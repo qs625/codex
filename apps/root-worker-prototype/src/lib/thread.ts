@@ -268,7 +268,13 @@ export function updateThreadItem(thread: Thread, turnId: string, item: ThreadIte
         return turn;
       }
       const items = turn.items.some((existing) => existing.id === item.id)
-        ? turn.items.map((existing) => (existing.id === item.id ? item : existing))
+        ? turn.items.map((existing) =>
+            existing.id === item.id
+              ? existing.type !== "builtinToolCall" && item.type === "builtinToolCall"
+                ? existing
+                : item
+              : existing,
+          )
         : [...turn.items, item];
       return { ...turn, items };
     }),
@@ -356,9 +362,12 @@ export function upsertThread(threads: Thread[], next: Thread) {
 export function threadStatusClass(status: string) {
   switch (status) {
     case "running":
+    case "inProgress":
       return "doing";
     case "interrupted":
     case "errored":
+    case "failed":
+    case "declined":
       return "blocked";
     case "completed":
       return "done";

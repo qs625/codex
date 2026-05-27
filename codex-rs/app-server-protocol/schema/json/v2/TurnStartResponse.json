@@ -1036,6 +1036,37 @@
         },
         {
           "properties": {
+            "arguments": true,
+            "id": {
+              "type": "string"
+            },
+            "output": true,
+            "status": {
+              "$ref": "#/definitions/DynamicToolCallStatus"
+            },
+            "tool": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "builtinToolCall"
+              ],
+              "title": "BuiltinToolCallThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "arguments",
+            "id",
+            "status",
+            "tool",
+            "type"
+          ],
+          "title": "BuiltinToolCallThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
             "agentsStates": {
               "additionalProperties": {
                 "$ref": "#/definitions/CollabAgentState"
