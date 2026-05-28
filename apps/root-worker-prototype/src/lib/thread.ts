@@ -270,9 +270,9 @@ export function updateThreadItem(thread: Thread, turnId: string, item: ThreadIte
       const items = turn.items.some((existing) => existing.id === item.id)
         ? turn.items.map((existing) =>
             existing.id === item.id
-              ? existing.type !== "builtinToolCall" && item.type === "builtinToolCall"
-                ? existing
-                : item
+              // The server can refine an in-flight item into builtinToolCall
+              // once it recognizes a generic function call as a builtin tool.
+              ? item
               : existing,
           )
         : [...turn.items, item];
