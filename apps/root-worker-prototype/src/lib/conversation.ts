@@ -1,5 +1,5 @@
 import type { ConversationCell, ConversationEntry, Thread, ThreadItem } from "../types";
-import { formatClockTime, getThreadLabel, trimPath } from "./thread";
+import { formatClockTime, getThreadLabel, trimPath, trimThreadId } from "./thread";
 
 export function buildConversationEntries(thread: Thread | null): ConversationEntry[] {
   if (!thread) {

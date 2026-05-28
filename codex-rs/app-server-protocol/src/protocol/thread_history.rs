@@ -3055,6 +3055,73 @@ mod tests {
     }
 
     #[test]
+    fn reconstructs_collab_spawn_begin_and_end_as_one_completed_item() {
+        let sender_thread_id = ThreadId::try_from("00000000-0000-0000-0000-000000000001")
+            .expect("valid sender thread id");
+        let spawned_thread_id = ThreadId::try_from("00000000-0000-0000-0000-000000000002")
+            .expect("valid receiver thread id");
+        let events = vec![
+            EventMsg::UserMessage(UserMessageEvent {
+                message: "spawn agent".into(),
+                images: None,
+                text_elements: Vec::new(),
+                local_images: Vec::new(),
+            }),
+            EventMsg::CollabAgentSpawnBegin(codex_protocol::protocol::CollabAgentSpawnBeginEvent {
+                call_id: "spawn-1".into(),
+                started_at_ms: 0,
+                sender_thread_id,
+                prompt: "inspect the repo".into(),
+                model: "gpt-5.4-mini".into(),
+                reasoning_effort: codex_protocol::openai_models::ReasoningEffort::Medium,
+            }),
+            EventMsg::CollabAgentSpawnEnd(codex_protocol::protocol::CollabAgentSpawnEndEvent {
+                call_id: "spawn-1".into(),
+                completed_at_ms: 1,
+                sender_thread_id,
+                new_thread_id: Some(spawned_thread_id),
+                new_agent_nickname: Some("Scout".into()),
+                new_agent_role: Some("explorer".into()),
+                prompt: "inspect the repo".into(),
+                model: "gpt-5.4-mini".into(),
+                reasoning_effort: codex_protocol::openai_models::ReasoningEffort::Medium,
+                status: AgentStatus::Running,
+            }),
+        ];
+
+        let items = events
+            .into_iter()
+            .map(RolloutItem::EventMsg)
+            .collect::<Vec<_>>();
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 2);
+        assert_eq!(
+            turns[0].items[1],
+            ThreadItem::CollabAgentToolCall {
+                id: "spawn-1".into(),
+                tool: CollabAgentTool::SpawnAgent,
+                status: CollabAgentToolCallStatus::Completed,
+                sender_thread_id: "00000000-0000-0000-0000-000000000001".into(),
+                receiver_thread_ids: vec!["00000000-0000-0000-0000-000000000002".into()],
+                prompt: Some("inspect the repo".into()),
+                model: Some("gpt-5.4-mini".into()),
+                reasoning_effort: Some(codex_protocol::openai_models::ReasoningEffort::Medium),
+                agents_states: [(
+                    "00000000-0000-0000-0000-000000000002".into(),
+                    CollabAgentState {
+                        status: crate::protocol::v2::CollabAgentStatus::Running,
+                        message: None,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            }
+        );
+    }
+
+    #[test]
     fn reconstructs_interrupted_send_input_as_completed_collab_call() {
         // `send_input(interrupt=true)` first stops the child's active turn, then redirects it with
         // new input. The transient interrupted status should remain visible in agent state, but the

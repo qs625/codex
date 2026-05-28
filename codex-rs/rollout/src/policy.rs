@@ -144,6 +144,16 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::EnteredReviewMode(_)
         | EventMsg::ExitedReviewMode(_)
         | EventMsg::McpToolCallEnd(_)
+        | EventMsg::CollabAgentSpawnBegin(_)
+        | EventMsg::CollabAgentSpawnEnd(_)
+        | EventMsg::CollabAgentInteractionBegin(_)
+        | EventMsg::CollabAgentInteractionEnd(_)
+        | EventMsg::CollabWaitingBegin(_)
+        | EventMsg::CollabWaitingEnd(_)
+        | EventMsg::CollabCloseBegin(_)
+        | EventMsg::CollabCloseEnd(_)
+        | EventMsg::CollabResumeBegin(_)
+        | EventMsg::CollabResumeEnd(_)
         | EventMsg::ThreadRolledBack(_)
         | EventMsg::TurnAborted(_)
         | EventMsg::TurnStarted(_)
@@ -164,11 +174,6 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::GuardianAssessment(_)
         | EventMsg::ExecCommandEnd(_)
         | EventMsg::ViewImageToolCall(_)
-        | EventMsg::CollabAgentSpawnEnd(_)
-        | EventMsg::CollabAgentInteractionEnd(_)
-        | EventMsg::CollabWaitingEnd(_)
-        | EventMsg::CollabCloseEnd(_)
-        | EventMsg::CollabResumeEnd(_)
         | EventMsg::DynamicToolCallRequest(_)
         | EventMsg::DynamicToolCallResponse(_) => Some(EventPersistenceMode::Extended),
         EventMsg::Warning(_)
@@ -209,11 +214,132 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::PlanDelta(_)
         | EventMsg::ReasoningContentDelta(_)
         | EventMsg::ReasoningRawContentDelta(_)
-        | EventMsg::ImageGenerationBegin(_)
-        | EventMsg::CollabAgentSpawnBegin(_)
-        | EventMsg::CollabAgentInteractionBegin(_)
-        | EventMsg::CollabWaitingBegin(_)
-        | EventMsg::CollabCloseBegin(_)
-        | EventMsg::CollabResumeBegin(_) => None,
+        | EventMsg::ImageGenerationBegin(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::EventPersistenceMode;
+    use super::should_persist_event_msg;
+    use codex_protocol::ThreadId;
+    use codex_protocol::openai_models::ReasoningEffort;
+    use codex_protocol::protocol::AgentStatus;
+    use codex_protocol::protocol::CollabAgentInteractionBeginEvent;
+    use codex_protocol::protocol::CollabAgentInteractionEndEvent;
+    use codex_protocol::protocol::CollabAgentSpawnBeginEvent;
+    use codex_protocol::protocol::CollabAgentSpawnEndEvent;
+    use codex_protocol::protocol::CollabCloseBeginEvent;
+    use codex_protocol::protocol::CollabCloseEndEvent;
+    use codex_protocol::protocol::CollabResumeBeginEvent;
+    use codex_protocol::protocol::CollabResumeEndEvent;
+    use codex_protocol::protocol::CollabWaitingBeginEvent;
+    use codex_protocol::protocol::CollabWaitingEndEvent;
+    use codex_protocol::protocol::EventMsg;
+
+    #[test]
+    fn limited_mode_persists_collab_agent_events() {
+        let sender_thread_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000001").expect("valid sender");
+        let receiver_thread_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000002").expect("valid receiver");
+
+        let events = [
+            EventMsg::CollabAgentSpawnBegin(CollabAgentSpawnBeginEvent {
+                call_id: "spawn-begin".into(),
+                started_at_ms: 1,
+                sender_thread_id,
+                prompt: "inspect".into(),
+                model: "gpt-5.4".into(),
+                reasoning_effort: ReasoningEffort::Medium,
+            }),
+            EventMsg::CollabAgentSpawnEnd(CollabAgentSpawnEndEvent {
+                call_id: "spawn-end".into(),
+                completed_at_ms: 2,
+                sender_thread_id,
+                new_thread_id: Some(receiver_thread_id),
+                new_agent_nickname: Some("Scout".into()),
+                new_agent_role: Some("worker".into()),
+                prompt: "inspect".into(),
+                model: "gpt-5.4".into(),
+                reasoning_effort: ReasoningEffort::Medium,
+                status: AgentStatus::Running,
+            }),
+            EventMsg::CollabAgentInteractionBegin(CollabAgentInteractionBeginEvent {
+                call_id: "send-begin".into(),
+                started_at_ms: 3,
+                sender_thread_id,
+                receiver_thread_id,
+                prompt: "continue".into(),
+            }),
+            EventMsg::CollabAgentInteractionEnd(CollabAgentInteractionEndEvent {
+                call_id: "send-end".into(),
+                completed_at_ms: 4,
+                sender_thread_id,
+                receiver_thread_id,
+                receiver_agent_nickname: None,
+                receiver_agent_role: None,
+                prompt: "continue".into(),
+                status: AgentStatus::Completed(None),
+            }),
+            EventMsg::CollabWaitingBegin(CollabWaitingBeginEvent {
+                call_id: "wait-begin".into(),
+                started_at_ms: 5,
+                sender_thread_id,
+                receiver_thread_ids: vec![receiver_thread_id],
+                receiver_agents: Vec::new(),
+            }),
+            EventMsg::CollabWaitingEnd(CollabWaitingEndEvent {
+                call_id: "wait-end".into(),
+                completed_at_ms: 6,
+                sender_thread_id,
+                agent_statuses: Vec::new(),
+                statuses: [(receiver_thread_id, AgentStatus::Completed(None))]
+                    .into_iter()
+                    .collect(),
+            }),
+            EventMsg::CollabCloseBegin(CollabCloseBeginEvent {
+                call_id: "close-begin".into(),
+                started_at_ms: 7,
+                sender_thread_id,
+                receiver_thread_id,
+            }),
+            EventMsg::CollabCloseEnd(CollabCloseEndEvent {
+                call_id: "close-end".into(),
+                completed_at_ms: 8,
+                sender_thread_id,
+                receiver_thread_id,
+                receiver_agent_nickname: None,
+                receiver_agent_role: None,
+                status: AgentStatus::Completed(None),
+            }),
+            EventMsg::CollabResumeBegin(CollabResumeBeginEvent {
+                call_id: "resume-begin".into(),
+                started_at_ms: 9,
+                sender_thread_id,
+                receiver_thread_id,
+                receiver_agent_nickname: None,
+                receiver_agent_role: None,
+            }),
+            EventMsg::CollabResumeEnd(CollabResumeEndEvent {
+                call_id: "resume-end".into(),
+                completed_at_ms: 10,
+                sender_thread_id,
+                receiver_thread_id,
+                receiver_agent_nickname: None,
+                receiver_agent_role: None,
+                status: AgentStatus::Completed(None),
+            }),
+        ];
+
+        for event in events {
+            assert_eq!(
+                should_persist_event_msg(&event, EventPersistenceMode::Limited),
+                true,
+                "expected {event:?} to persist in limited mode",
+            );
+        }
     }
 }
