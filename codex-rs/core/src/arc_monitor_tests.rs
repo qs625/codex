@@ -77,7 +77,6 @@ async fn build_arc_monitor_request_includes_relevant_history_and_null_policies()
                     /*current_date*/ None,
                     /*timezone*/ None,
                     /*network*/ None,
-                    /*subagents*/ None,
                 ),
             )],
             &turn_context,

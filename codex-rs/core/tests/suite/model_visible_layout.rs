@@ -54,16 +54,16 @@ fn user_instructions_wrapper_count(request: &ResponsesRequest) -> usize {
         .count()
 }
 
-fn format_environment_context_subagents_snapshot(subagents: &[&str]) -> String {
+fn format_multiagent_context_snapshot(subagents: &[&str]) -> String {
     let subagents_block = if subagents.is_empty() {
         String::new()
     } else {
         let lines = subagents
             .iter()
-            .map(|line| format!("    {line}"))
+            .map(|line| format!("    <canonical_path>{line}</canonical_path>"))
             .collect::<Vec<_>>()
             .join("\n");
-        format!("\n  <subagents>\n{lines}\n  </subagents>")
+        format!("\n  <direct_subagents>\n{lines}\n  </direct_subagents>")
     };
     let items = vec![json!({
         "type": "message",
@@ -71,7 +71,7 @@ fn format_environment_context_subagents_snapshot(subagents: &[&str]) -> String {
         "content": [{
             "type": "input_text",
             "text": format!(
-                "<environment_context>\n  <cwd>/tmp/example</cwd>\n  <shell>bash</shell>{subagents_block}\n</environment_context>"
+                "<multiagent_context>\n  <current_thread_canonical_path>/root</current_thread_canonical_path>{subagents_block}\n</multiagent_context>"
             ),
         }],
     })];
@@ -522,20 +522,20 @@ async fn snapshot_model_visible_layout_resume_override_matches_rollout_model() -
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn snapshot_model_visible_layout_environment_context_includes_one_subagent() -> Result<()> {
+async fn snapshot_model_visible_layout_multiagent_context_includes_one_subagent() -> Result<()> {
     insta::assert_snapshot!(
-        "model_visible_layout_environment_context_includes_one_subagent",
-        format_environment_context_subagents_snapshot(&["- agent-1: Atlas"])
+        "model_visible_layout_multiagent_context_includes_one_subagent",
+        format_multiagent_context_snapshot(&["/root/Atlas"])
     );
 
     Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn snapshot_model_visible_layout_environment_context_includes_two_subagents() -> Result<()> {
+async fn snapshot_model_visible_layout_multiagent_context_includes_two_subagents() -> Result<()> {
     insta::assert_snapshot!(
-        "model_visible_layout_environment_context_includes_two_subagents",
-        format_environment_context_subagents_snapshot(&["- agent-1: Atlas", "- agent-2: Juniper"])
+        "model_visible_layout_multiagent_context_includes_two_subagents",
+        format_multiagent_context_snapshot(&["/root/Atlas", "/root/Juniper"])
     );
 
     Ok(())

@@ -6,7 +6,6 @@ use crate::agent::role::resolve_role_config;
 use crate::agent::status::is_final;
 use crate::codex_thread::ThreadConfigSnapshot;
 use crate::session::emit_subagent_session_started;
-use crate::session_prefix::format_subagent_context_line;
 use crate::session_prefix::format_subagent_notification_message;
 use crate::shell_snapshot::ShellSnapshot;
 use crate::thread_manager::ResumeThreadWithHistoryOptions;
@@ -838,26 +837,15 @@ impl AgentControl {
         Ok(thread.subscribe_status())
     }
 
-    pub(crate) async fn format_environment_context_subagents(
-        &self,
-        parent_thread_id: ThreadId,
-    ) -> String {
+    pub(crate) async fn direct_subagent_paths(&self, parent_thread_id: ThreadId) -> Vec<AgentPath> {
         let Ok(agents) = self.open_thread_spawn_children(parent_thread_id).await else {
-            return String::new();
+            return Vec::new();
         };
 
         agents
             .into_iter()
-            .map(|(thread_id, metadata)| {
-                let reference = metadata
-                    .agent_path
-                    .as_ref()
-                    .map(|agent_path| agent_path.name().to_string())
-                    .unwrap_or_else(|| thread_id.to_string());
-                format_subagent_context_line(reference.as_str(), metadata.agent_nickname.as_deref())
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+            .filter_map(|(_, metadata)| metadata.agent_path)
+            .collect()
     }
 
     pub(crate) async fn list_agents(

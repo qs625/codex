@@ -1856,6 +1856,86 @@ async fn list_agent_subtree_thread_ids_includes_anonymous_and_closed_descendants
 }
 
 #[tokio::test]
+async fn direct_subagent_paths_returns_only_immediate_canonical_paths() {
+    let harness = AgentControlHarness::new().await;
+    let (parent_thread_id, _parent_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let reviewer_path = AgentPath::root().join("reviewer").expect("reviewer path");
+
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let _worker_child_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello worker child"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: worker_thread_id,
+                depth: 2,
+                agent_path: Some(
+                    worker_path
+                        .join("child")
+                        .expect("worker child path should be valid"),
+                ),
+                agent_nickname: None,
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("worker child spawn should succeed");
+    let _reviewer_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello reviewer"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id,
+                depth: 1,
+                agent_path: Some(reviewer_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("reviewer".to_string()),
+            })),
+        )
+        .await
+        .expect("reviewer spawn should succeed");
+    let _anonymous_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello anonymous"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id,
+                depth: 1,
+                agent_path: None,
+                agent_nickname: None,
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("anonymous spawn should succeed");
+
+    let direct_paths = harness
+        .control
+        .direct_subagent_paths(parent_thread_id)
+        .await;
+
+    assert_eq!(direct_paths, vec![reviewer_path, worker_path]);
+}
+
+#[tokio::test]
 async fn shutdown_agent_tree_closes_live_descendants() {
     let harness = AgentControlHarness::new().await;
     let (parent_thread_id, _parent_thread) = harness.start_thread().await;

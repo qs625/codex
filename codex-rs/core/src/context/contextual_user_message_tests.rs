@@ -12,6 +12,13 @@ fn detects_environment_context_fragment() {
 }
 
 #[test]
+fn detects_multiagent_context_fragment() {
+    assert!(is_contextual_user_fragment(&ContentItem::InputText {
+        text: "<multiagent_context>\n<current_thread_canonical_path>/root</current_thread_canonical_path>\n</multiagent_context>".to_string(),
+    }));
+}
+
+#[test]
 fn detects_agents_instructions_fragment() {
     assert!(is_contextual_user_fragment(&ContentItem::InputText {
         text: "# AGENTS.md instructions for /tmp\n\n<INSTRUCTIONS>\nbody\n</INSTRUCTIONS>"

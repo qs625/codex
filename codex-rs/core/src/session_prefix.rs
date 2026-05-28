@@ -13,13 +13,3 @@ pub(crate) fn format_subagent_notification_message(
 ) -> String {
     SubagentNotification::new(agent_reference, status.clone()).render()
 }
-
-pub(crate) fn format_subagent_context_line(
-    agent_reference: &str,
-    agent_nickname: Option<&str>,
-) -> String {
-    match agent_nickname.filter(|nickname| !nickname.is_empty()) {
-        Some(agent_nickname) => format!("- {agent_reference}: {agent_nickname}"),
-        None => format!("- {agent_reference}"),
-    }
-}

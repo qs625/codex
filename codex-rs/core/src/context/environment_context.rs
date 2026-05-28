@@ -13,7 +13,6 @@ pub(crate) struct EnvironmentContext {
     pub(crate) current_date: Option<String>,
     pub(crate) timezone: Option<String>,
     pub(crate) network: Option<NetworkContext>,
-    pub(crate) subagents: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,14 +121,12 @@ impl EnvironmentContext {
         current_date: Option<String>,
         timezone: Option<String>,
         network: Option<NetworkContext>,
-        subagents: Option<String>,
     ) -> Self {
         Self {
             environments: EnvironmentContextEnvironments::from_vec(environments),
             current_date,
             timezone,
             network,
-            subagents,
         }
     }
 
@@ -138,14 +135,12 @@ impl EnvironmentContext {
         current_date: Option<String>,
         timezone: Option<String>,
         network: Option<NetworkContext>,
-        subagents: Option<String>,
     ) -> Self {
         Self {
             environments,
             current_date,
             timezone,
             network,
-            subagents,
         }
     }
 
@@ -157,7 +152,6 @@ impl EnvironmentContext {
             && self.current_date == other.current_date
             && self.timezone == other.timezone
             && self.network == other.network
-            && self.subagents == other.subagents
     }
 
     pub(crate) fn diff_from_turn_context_item(
@@ -191,7 +185,6 @@ impl EnvironmentContext {
             after.current_date.clone(),
             after.timezone.clone(),
             network,
-            /*subagents*/ None,
         )
     }
 
@@ -204,7 +197,6 @@ impl EnvironmentContext {
             turn_context.current_date.clone(),
             turn_context.timezone.clone(),
             Self::network_from_turn_context(turn_context),
-            /*subagents*/ None,
         )
     }
 
@@ -221,15 +213,7 @@ impl EnvironmentContext {
             turn_context_item.current_date.clone(),
             turn_context_item.timezone.clone(),
             Self::network_from_turn_context_item(turn_context_item),
-            /*subagents*/ None,
         )
-    }
-
-    pub(crate) fn with_subagents(mut self, subagents: String) -> Self {
-        if !subagents.is_empty() {
-            self.subagents = Some(subagents);
-        }
-        self
     }
 
     fn network_from_turn_context(turn_context: &TurnContext) -> Option<NetworkContext> {
@@ -312,11 +296,6 @@ impl ContextualUserFragment for EnvironmentContext {
                 // TODO(mbolin): Include this line if it helps the model.
                 // lines.push("  <network enabled=\"false\" />".to_string());
             }
-        }
-        if let Some(subagents) = &self.subagents {
-            lines.push("  <subagents>".to_string());
-            lines.extend(subagents.lines().map(|line| format!("    {line}")));
-            lines.push("  </subagents>".to_string());
         }
         format!("\n{}\n", lines.join("\n"))
     }

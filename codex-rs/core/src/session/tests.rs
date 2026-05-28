@@ -6697,6 +6697,32 @@ async fn build_initial_context_uses_previous_realtime_state() {
     );
 }
 
+#[tokio::test]
+async fn build_initial_context_emits_standalone_multiagent_context() {
+    let (session, turn_context) = make_session_and_context().await;
+
+    let initial_context = session.build_initial_context(&turn_context).await;
+    let user_texts = user_input_texts(&initial_context);
+    let environment_context = user_texts
+        .iter()
+        .find(|text| text.contains("<environment_context>"))
+        .expect("expected environment context");
+    let multiagent_context = user_texts
+        .iter()
+        .find(|text| text.contains("<multiagent_context>"))
+        .expect("expected multiagent context");
+
+    assert!(
+        !environment_context.contains("<subagents>"),
+        "did not expect subagents in environment context, got {environment_context}"
+    );
+    assert!(
+        multiagent_context
+            .contains("<current_thread_canonical_path>/root</current_thread_canonical_path>"),
+        "expected root canonical path in multiagent context, got {multiagent_context}"
+    );
+}
+
 async fn make_multi_agent_v2_usage_hint_test_session(
     enable_multi_agent_v2: bool,
 ) -> (Arc<Session>, Arc<TurnContext>) {

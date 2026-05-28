@@ -383,34 +383,28 @@ fn canonicalize_snapshot_text(text: &str) -> String {
         return "<AGENTS_MD>".to_string();
     }
     if text.starts_with("<environment_context>") {
-        let subagent_count = text
-            .split_once("<subagents>")
-            .and_then(|(_, rest)| rest.split_once("</subagents>"))
-            .map(|(subagents, _)| {
-                subagents
-                    .lines()
-                    .filter(|line| line.trim_start().starts_with("- "))
-                    .count()
-            })
-            .unwrap_or(0);
-        let subagents_suffix = if subagent_count > 0 {
-            format!(":subagents={subagent_count}")
-        } else {
-            String::new()
-        };
         if let (Some(cwd_start), Some(cwd_end)) = (text.find("<cwd>"), text.find("</cwd>")) {
             let cwd = &text[cwd_start + "<cwd>".len()..cwd_end];
             return if cwd.ends_with("PRETURN_CONTEXT_DIFF_CWD") {
-                format!("<ENVIRONMENT_CONTEXT:cwd=PRETURN_CONTEXT_DIFF_CWD{subagents_suffix}>")
+                "<ENVIRONMENT_CONTEXT:cwd=PRETURN_CONTEXT_DIFF_CWD>".to_string()
             } else {
-                format!("<ENVIRONMENT_CONTEXT:cwd=<CWD>{subagents_suffix}>")
+                "<ENVIRONMENT_CONTEXT:cwd=<CWD>>".to_string()
             };
         }
-        return if subagent_count > 0 {
-            format!("<ENVIRONMENT_CONTEXT{subagents_suffix}>")
-        } else {
-            "<ENVIRONMENT_CONTEXT>".to_string()
-        };
+        return "<ENVIRONMENT_CONTEXT>".to_string();
+    }
+    if text.starts_with("<multiagent_context>") {
+        let direct_subagent_count = text
+            .split_once("<direct_subagents>")
+            .and_then(|(_, rest)| rest.split_once("</direct_subagents>"))
+            .map(|(subagents, _)| {
+                subagents
+                    .lines()
+                    .filter(|line| line.contains("<canonical_path>"))
+                    .count()
+            })
+            .unwrap_or(0);
+        return format!("<MULTIAGENT_CONTEXT:direct_subagents={direct_subagent_count}>");
     }
     if text.starts_with("You are performing a CONTEXT CHECKPOINT COMPACTION.") {
         return "<SUMMARIZATION_PROMPT>".to_string();
@@ -616,9 +610,28 @@ mod tests {
             &ContextSnapshotOptions::default().render_mode(ContextSnapshotRenderMode::RedactedText),
         );
 
+        assert_eq!(rendered, "00:message/user:<ENVIRONMENT_CONTEXT:cwd=<CWD>>");
+    }
+
+    #[test]
+    fn redacted_text_mode_normalizes_multiagent_context() {
+        let items = vec![json!({
+            "type": "message",
+            "role": "user",
+            "content": [{
+                "type": "input_text",
+                "text": "<multiagent_context>\n  <current_thread_canonical_path>/root</current_thread_canonical_path>\n  <direct_subagents>\n    <canonical_path>/root/atlas</canonical_path>\n    <canonical_path>/root/juniper</canonical_path>\n  </direct_subagents>\n</multiagent_context>"
+            }]
+        })];
+
+        let rendered = format_response_items_snapshot(
+            &items,
+            &ContextSnapshotOptions::default().render_mode(ContextSnapshotRenderMode::RedactedText),
+        );
+
         assert_eq!(
             rendered,
-            "00:message/user:<ENVIRONMENT_CONTEXT:cwd=<CWD>:subagents=2>"
+            "00:message/user:<MULTIAGENT_CONTEXT:direct_subagents=2>"
         );
     }
 

@@ -1,0 +1,5 @@
+---
+source: core/tests/suite/model_visible_layout.rs
+expression: "format_multiagent_context_snapshot(&[\"/root/Atlas\"])"
+---
+00:message/user:<MULTIAGENT_CONTEXT:direct_subagents=1>

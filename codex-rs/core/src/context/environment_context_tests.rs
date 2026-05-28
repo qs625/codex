@@ -31,7 +31,6 @@ fn serialize_workspace_write_environment_context() {
         Some("2026-02-26".to_string()),
         Some("America/Los_Angeles".to_string()),
         /*network*/ None,
-        /*subagents*/ None,
     );
 
     let expected = format!(
@@ -62,7 +61,6 @@ fn serialize_environment_context_with_network() {
         Some("2026-02-26".to_string()),
         Some("America/Los_Angeles".to_string()),
         Some(network),
-        /*subagents*/ None,
     );
 
     let expected = format!(
@@ -86,7 +84,6 @@ fn serialize_read_only_environment_context() {
         Some("2026-02-26".to_string()),
         Some("America/Los_Angeles".to_string()),
         /*network*/ None,
-        /*subagents*/ None,
     );
 
     let expected = r#"<environment_context>
@@ -108,7 +105,6 @@ fn equals_except_shell_compares_cwd() {
         /*current_date*/ None,
         /*timezone*/ None,
         /*network*/ None,
-        /*subagents*/ None,
     );
     let context2 = EnvironmentContext::new(
         vec![EnvironmentContextEnvironment {
@@ -119,7 +115,6 @@ fn equals_except_shell_compares_cwd() {
         /*current_date*/ None,
         /*timezone*/ None,
         /*network*/ None,
-        /*subagents*/ None,
     );
     assert!(context1.equals_except_shell(&context2));
 }
@@ -135,7 +130,6 @@ fn equals_except_shell_compares_cwd_differences() {
         /*current_date*/ None,
         /*timezone*/ None,
         /*network*/ None,
-        /*subagents*/ None,
     );
     let context2 = EnvironmentContext::new(
         vec![EnvironmentContextEnvironment {
@@ -146,7 +140,6 @@ fn equals_except_shell_compares_cwd_differences() {
         /*current_date*/ None,
         /*timezone*/ None,
         /*network*/ None,
-        /*subagents*/ None,
     );
 
     assert!(!context1.equals_except_shell(&context2));
@@ -163,7 +156,6 @@ fn equals_except_shell_ignores_shell() {
         /*current_date*/ None,
         /*timezone*/ None,
         /*network*/ None,
-        /*subagents*/ None,
     );
     let context2 = EnvironmentContext::new(
         vec![EnvironmentContextEnvironment {
@@ -174,41 +166,9 @@ fn equals_except_shell_ignores_shell() {
         /*current_date*/ None,
         /*timezone*/ None,
         /*network*/ None,
-        /*subagents*/ None,
     );
 
     assert!(context1.equals_except_shell(&context2));
-}
-
-#[test]
-fn serialize_environment_context_with_subagents() {
-    let context = EnvironmentContext::new(
-        vec![EnvironmentContextEnvironment {
-            id: "local".to_string(),
-            cwd: test_path_buf("/repo").abs(),
-            shell: fake_shell_name(),
-        }],
-        Some("2026-02-26".to_string()),
-        Some("America/Los_Angeles".to_string()),
-        /*network*/ None,
-        Some("- agent-1: atlas\n- agent-2".to_string()),
-    );
-
-    let expected = format!(
-        r#"<environment_context>
-  <cwd>{}</cwd>
-  <shell>bash</shell>
-  <current_date>2026-02-26</current_date>
-  <timezone>America/Los_Angeles</timezone>
-  <subagents>
-    - agent-1: atlas
-    - agent-2
-  </subagents>
-</environment_context>"#,
-        test_path_buf("/repo").display()
-    );
-
-    assert_eq!(context.render(), expected);
 }
 
 #[test]
@@ -231,7 +191,6 @@ fn serialize_environment_context_with_multiple_selected_environments() {
         Some("2026-02-26".to_string()),
         Some("America/Los_Angeles".to_string()),
         /*network*/ None,
-        /*subagents*/ None,
     );
 
     let expected = format!(
@@ -276,7 +235,6 @@ fn serialize_environment_context_prefers_environment_shell_when_present() {
         /*current_date*/ None,
         /*timezone*/ None,
         /*network*/ None,
-        /*subagents*/ None,
     );
 
     let expected = format!(
