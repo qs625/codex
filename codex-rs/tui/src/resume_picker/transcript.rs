@@ -183,6 +183,9 @@ fn fallback_transcript_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
                 .unwrap_or_else(|| tool.clone());
             vec![format!("tool: {name} · {status:?}").dim().into()]
         }
+        ThreadItem::BuiltinToolCall { tool, status, .. } => {
+            vec![format!("builtin tool: {tool} · {status:?}").dim().into()]
+        }
         ThreadItem::CollabAgentToolCall { tool, status, .. } => {
             vec![format!("agent tool: {tool:?} · {status:?}").dim().into()]
         }

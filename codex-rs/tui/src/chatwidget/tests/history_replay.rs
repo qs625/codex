@@ -828,6 +828,28 @@ async fn replayed_reasoning_item_shows_raw_reasoning_when_enabled() {
 }
 
 #[tokio::test]
+async fn replayed_builtin_tool_call_does_not_emit_history_cells() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.replay_thread_item(
+        AppServerThreadItem::BuiltinToolCall {
+            id: "builtin-1".to_string(),
+            tool: "fs_subscribe".to_string(),
+            arguments: serde_json::json!({
+                "path": "/tmp/build.log",
+                "label": "build",
+            }),
+            status: codex_app_server_protocol::DynamicToolCallStatus::Completed,
+            output: Some(serde_json::Value::String("subscribed".to_string())),
+        },
+        "turn-1".to_string(),
+        ReplayKind::ThreadSnapshot,
+    );
+
+    assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
+}
+
+#[tokio::test]
 async fn live_reasoning_summary_is_not_rendered_twice_when_item_completes() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.show_welcome_banner = false;

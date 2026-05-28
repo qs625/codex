@@ -186,6 +186,7 @@ impl ChatWidget {
                 reasoning_effort,
                 agents_states,
             }),
+            ThreadItem::BuiltinToolCall { .. } => {}
             ThreadItem::DynamicToolCall { .. } => {}
         }
 
