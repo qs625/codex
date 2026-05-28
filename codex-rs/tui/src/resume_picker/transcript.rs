@@ -186,9 +186,32 @@ fn fallback_transcript_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
         ThreadItem::BuiltinToolCall { tool, status, .. } => {
             vec![format!("builtin tool: {tool} · {status:?}").dim().into()]
         }
+        ThreadItem::InjectedContext { title, preview, .. } => vec![format!(
+            "injected context: {title} · {}",
+            preview.trim()
+        )
+        .dim()
+        .into()],
+        ThreadItem::CollabAgentMessage {
+            operation,
+            recipient_path,
+            ..
+        } => vec![format!("agent message: {operation:?} · {recipient_path}")
+            .dim()
+            .into()],
         ThreadItem::CollabAgentToolCall { tool, status, .. } => {
             vec![format!("agent tool: {tool:?} · {status:?}").dim().into()]
         }
+        ThreadItem::CollabAgentStatusUpdate {
+            recipient_path,
+            status,
+            ..
+        } => vec![format!(
+            "agent status: {} · {:?}",
+            recipient_path, status.status
+        )
+        .dim()
+        .into()],
         ThreadItem::WebSearch { query, .. } => {
             vec![vec!["web search: ".dim(), query.clone().into()].into()]
         }

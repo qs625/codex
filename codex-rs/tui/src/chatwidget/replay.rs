@@ -164,13 +164,17 @@ impl ChatWidget {
             ThreadItem::ContextCompaction { .. } => {
                 self.add_info_message("Context compacted".to_string(), /*hint*/ None);
             }
+            ThreadItem::InjectedContext { .. } => {}
             ThreadItem::HookPrompt { .. } => {}
+            ThreadItem::CollabAgentMessage { .. } => {}
             ThreadItem::CollabAgentToolCall {
                 id,
                 tool,
                 status,
                 sender_thread_id,
+                sender_path,
                 receiver_thread_ids,
+                receiver_paths,
                 prompt,
                 model,
                 reasoning_effort,
@@ -180,12 +184,15 @@ impl ChatWidget {
                 tool,
                 status,
                 sender_thread_id,
+                sender_path,
                 receiver_thread_ids,
+                receiver_paths,
                 prompt,
                 model,
                 reasoning_effort,
                 agents_states,
             }),
+            ThreadItem::CollabAgentStatusUpdate { .. } => {}
             ThreadItem::BuiltinToolCall { .. } => {}
             ThreadItem::DynamicToolCall { .. } => {}
         }
