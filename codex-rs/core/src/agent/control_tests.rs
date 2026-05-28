@@ -461,8 +461,9 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
         AgentPath::try_from("/root/worker").expect("agent path"),
         Vec::new(),
         "hello from tests".to_string(),
-        /*trigger_turn*/ false,
-    );
+        codex_protocol::protocol::InterAgentOperation::Unknown,
+    )
+    .with_trigger_turn(false);
 
     let submission_id = harness
         .control
@@ -631,7 +632,7 @@ async fn spawn_agent_can_fork_parent_thread_history_with_sanitized_items() {
         AgentPath::try_from("/root/worker").expect("agent path"),
         Vec::new(),
         "parent trigger message".to_string(),
-        /*trigger_turn*/ true,
+        codex_protocol::protocol::InterAgentOperation::Unknown,
     );
     parent_thread
         .codex
@@ -832,8 +833,9 @@ async fn spawn_agent_fork_last_n_turns_keeps_only_recent_turns() {
         AgentPath::try_from("/root/worker").expect("agent path"),
         Vec::new(),
         "queued message".to_string(),
-        /*trigger_turn*/ false,
-    );
+        codex_protocol::protocol::InterAgentOperation::Unknown,
+    )
+    .with_trigger_turn(false);
     let queued_turn_context = parent_thread.codex.session.new_default_turn().await;
     parent_thread
         .codex
@@ -849,7 +851,7 @@ async fn spawn_agent_fork_last_n_turns_keeps_only_recent_turns() {
         AgentPath::try_from("/root/worker").expect("agent path"),
         Vec::new(),
         "triggered context".to_string(),
-        /*trigger_turn*/ true,
+        codex_protocol::protocol::InterAgentOperation::Unknown,
     );
     let triggered_turn_context = parent_thread.codex.session.new_default_turn().await;
     parent_thread
@@ -1301,7 +1303,7 @@ async fn multi_agent_v2_completion_ignores_dead_direct_parent() {
             AgentPath::root(),
             Vec::new(),
             "done".to_string(),
-            /*trigger_turn*/ true,
+            codex_protocol::protocol::InterAgentOperation::Unknown,
         )
     ));
     assert!(!has_subagent_notification(&root_history_items));
@@ -1367,8 +1369,9 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
                 worker_path.clone(),
                 Vec::new(),
                 expected_message.clone(),
-                /*trigger_turn*/ false,
-            ),
+                codex_protocol::protocol::InterAgentOperation::ChildCompletion,
+            )
+            .with_trigger_turn(false),
         },
     );
 
@@ -1402,8 +1405,9 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
             AgentPath::root(),
             Vec::new(),
             expected_message,
-            /*trigger_turn*/ false,
+            codex_protocol::protocol::InterAgentOperation::ChildCompletion,
         )
+        .with_trigger_turn(false)
     ));
 }
 

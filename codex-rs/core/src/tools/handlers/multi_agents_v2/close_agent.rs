@@ -56,7 +56,21 @@ async fn handle_close_agent(
                 call_id: call_id.clone(),
                 started_at_ms: now_unix_timestamp_ms(),
                 sender_thread_id: session.conversation_id,
+                sender_agent_path: turn
+                    .session_source
+                    .get_agent_path()
+                    .unwrap_or_else(AgentPath::root)
+                    .to_string(),
                 receiver_thread_id: agent_id,
+                receiver_agent_path: receiver_agent
+                    .agent_path
+                    .as_ref()
+                    .ok_or_else(|| {
+                        FunctionCallError::RespondToModel(
+                            "target agent is missing an agent_path".to_string(),
+                        )
+                    })?
+                    .to_string(),
             }
             .into(),
         )
@@ -77,7 +91,21 @@ async fn handle_close_agent(
                         call_id: call_id.clone(),
                         completed_at_ms: now_unix_timestamp_ms(),
                         sender_thread_id: session.conversation_id,
+                        sender_agent_path: turn
+                            .session_source
+                            .get_agent_path()
+                            .unwrap_or_else(AgentPath::root)
+                            .to_string(),
                         receiver_thread_id: agent_id,
+                        receiver_agent_path: receiver_agent
+                            .agent_path
+                            .as_ref()
+                            .ok_or_else(|| {
+                                FunctionCallError::RespondToModel(
+                                    "target agent is missing an agent_path".to_string(),
+                                )
+                            })?
+                            .to_string(),
                         receiver_agent_nickname: receiver_agent.agent_nickname.clone(),
                         receiver_agent_role: receiver_agent.agent_role.clone(),
                         status,
@@ -102,7 +130,21 @@ async fn handle_close_agent(
                 call_id,
                 completed_at_ms: now_unix_timestamp_ms(),
                 sender_thread_id: session.conversation_id,
+                sender_agent_path: turn
+                    .session_source
+                    .get_agent_path()
+                    .unwrap_or_else(AgentPath::root)
+                    .to_string(),
                 receiver_thread_id: agent_id,
+                receiver_agent_path: receiver_agent
+                    .agent_path
+                    .as_ref()
+                    .ok_or_else(|| {
+                        FunctionCallError::RespondToModel(
+                            "target agent is missing an agent_path".to_string(),
+                        )
+                    })?
+                    .to_string(),
                 receiver_agent_nickname: receiver_agent.agent_nickname,
                 receiver_agent_role: receiver_agent.agent_role,
                 status: status.clone(),

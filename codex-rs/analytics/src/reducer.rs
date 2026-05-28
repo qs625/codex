@@ -358,10 +358,13 @@ impl TurnToolCounts {
             ThreadItem::ImageGeneration { .. } => self.image_generation += 1,
             ThreadItem::UserMessage { .. }
             | ThreadItem::HookPrompt { .. }
+            | ThreadItem::InjectedContext { .. }
             | ThreadItem::AgentMessage { .. }
             | ThreadItem::Plan { .. }
             | ThreadItem::Reasoning { .. }
             | ThreadItem::BuiltinToolCall { .. }
+            | ThreadItem::CollabAgentMessage { .. }
+            | ThreadItem::CollabAgentStatusUpdate { .. }
             | ThreadItem::ImageView { .. }
             | ThreadItem::EnteredReviewMode { .. }
             | ThreadItem::ExitedReviewMode { .. }
@@ -1588,10 +1591,13 @@ fn tracked_tool_item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::ImageGeneration { id, .. } => Some(id),
         ThreadItem::UserMessage { .. }
         | ThreadItem::HookPrompt { .. }
+        | ThreadItem::InjectedContext { .. }
         | ThreadItem::AgentMessage { .. }
         | ThreadItem::Plan { .. }
         | ThreadItem::Reasoning { .. }
         | ThreadItem::BuiltinToolCall { .. }
+        | ThreadItem::CollabAgentMessage { .. }
+        | ThreadItem::CollabAgentStatusUpdate { .. }
         | ThreadItem::ImageView { .. }
         | ThreadItem::EnteredReviewMode { .. }
         | ThreadItem::ExitedReviewMode { .. }

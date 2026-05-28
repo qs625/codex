@@ -158,8 +158,9 @@ async fn submit_queue_only_agent_mail(codex: &CodexThread, text: &str) {
                 AgentPath::root(),
                 Vec::new(),
                 text.to_string(),
-                /*trigger_turn*/ false,
-            ),
+                codex_protocol::protocol::InterAgentOperation::Unknown,
+            )
+            .with_trigger_turn(false),
         })
         .await
         .unwrap_or_else(|err| panic!("submit queue-only agent mail: {err}"));

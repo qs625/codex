@@ -10,6 +10,7 @@ use crate::protocol::v2::CollabAgentToolCallStatus;
 use crate::protocol::v2::CommandExecutionStatus;
 use crate::protocol::v2::DynamicToolCallOutputContentItem;
 use crate::protocol::v2::DynamicToolCallStatus;
+use crate::protocol::v2::InjectedContextSection;
 use crate::protocol::v2::McpToolCallError;
 use crate::protocol::v2::McpToolCallResult;
 use crate::protocol::v2::McpToolCallStatus;
@@ -22,15 +23,22 @@ use crate::protocol::v2::TurnStatus;
 use crate::protocol::v2::UserInput;
 use crate::protocol::v2::WebSearchAction;
 use codex_protocol::items::parse_hook_prompt_message;
+use codex_protocol::models::ContentItem;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::protocol::APPS_INSTRUCTIONS_CLOSE_TAG;
+use codex_protocol::protocol::APPS_INSTRUCTIONS_OPEN_TAG;
 use codex_protocol::protocol::AgentReasoningEvent;
 use codex_protocol::protocol::AgentReasoningRawContentEvent;
 use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
+use codex_protocol::protocol::COLLABORATION_MODE_CLOSE_TAG;
+use codex_protocol::protocol::COLLABORATION_MODE_OPEN_TAG;
 use codex_protocol::protocol::CompactedItem;
 use codex_protocol::protocol::ContextCompactedEvent;
 use codex_protocol::protocol::DynamicToolCallResponseEvent;
+use codex_protocol::protocol::ENVIRONMENT_CONTEXT_CLOSE_TAG;
+use codex_protocol::protocol::ENVIRONMENT_CONTEXT_OPEN_TAG;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandBeginEvent;
@@ -39,14 +47,21 @@ use codex_protocol::protocol::GuardianAssessmentEvent;
 use codex_protocol::protocol::GuardianAssessmentStatus;
 use codex_protocol::protocol::ImageGenerationBeginEvent;
 use codex_protocol::protocol::ImageGenerationEndEvent;
+use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::McpToolCallBeginEvent;
 use codex_protocol::protocol::McpToolCallEndEvent;
+use codex_protocol::protocol::PLUGINS_INSTRUCTIONS_CLOSE_TAG;
+use codex_protocol::protocol::PLUGINS_INSTRUCTIONS_OPEN_TAG;
 use codex_protocol::protocol::PatchApplyBeginEvent;
 use codex_protocol::protocol::PatchApplyEndEvent;
+use codex_protocol::protocol::REALTIME_CONVERSATION_CLOSE_TAG;
+use codex_protocol::protocol::REALTIME_CONVERSATION_OPEN_TAG;
 use codex_protocol::protocol::ReviewOutputEvent;
 use codex_protocol::protocol::RolloutItem;
+use codex_protocol::protocol::SKILLS_INSTRUCTIONS_CLOSE_TAG;
+use codex_protocol::protocol::SKILLS_INSTRUCTIONS_OPEN_TAG;
 use codex_protocol::protocol::ThreadRolledBackEvent;
 use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnCompleteEvent;
@@ -71,6 +86,9 @@ use crate::protocol::v2::PatchChangeKind;
 use codex_protocol::protocol::ExecCommandStatus as CoreExecCommandStatus;
 #[cfg(test)]
 use codex_protocol::protocol::PatchApplyStatus as CorePatchApplyStatus;
+
+const INJECTED_CONTEXT_TITLE: &str = "Initial context injected";
+const MAX_INJECTED_CONTEXT_PREVIEW_SECTIONS: usize = 3;
 
 /// Convert persisted [`RolloutItem`] entries into a sequence of [`Turn`] values.
 ///
@@ -242,6 +260,15 @@ impl ThreadHistoryBuilder {
             ResponseItem::Message {
                 role, content, id, ..
             } => {
+                if self.try_handle_injected_context_message(role, content) {
+                    return;
+                }
+
+                if let Some(communication) = self.parse_inter_agent_message(role, content) {
+                    self.handle_inter_agent_communication(id.as_ref(), communication);
+                    return;
+                }
+
                 if role != "user" {
                     return;
                 }
@@ -306,12 +333,126 @@ impl ThreadHistoryBuilder {
         }
     }
 
+    fn parse_inter_agent_message(
+        &self,
+        role: &str,
+        content: &[ContentItem],
+    ) -> Option<InterAgentCommunication> {
+        (role == "assistant")
+            .then_some(content)
+            .and_then(InterAgentCommunication::from_message_content)
+    }
+
+    fn handle_inter_agent_communication(
+        &mut self,
+        response_item_id: Option<&String>,
+        communication: InterAgentCommunication,
+    ) {
+        let id = response_item_id
+            .cloned()
+            .unwrap_or_else(|| self.next_item_id());
+        if matches!(
+            communication.operation,
+            codex_protocol::protocol::InterAgentOperation::ChildCompletion
+        ) {
+            if let Some(mut status) = communication.status.map(CollabAgentState::from) {
+                status.path = Some(communication.author.to_string());
+                self.ensure_turn()
+                    .items
+                    .push(ThreadItem::CollabAgentStatusUpdate {
+                        id,
+                        sender_thread_id: communication
+                            .sender_thread_id
+                            .map(|value| value.to_string()),
+                        sender_path: communication.author.to_string(),
+                        recipient_thread_id: communication
+                            .recipient_thread_id
+                            .map(|value| value.to_string()),
+                        recipient_path: communication.recipient.to_string(),
+                        status,
+                    });
+                return;
+            }
+        }
+
+        self.ensure_turn()
+            .items
+            .push(ThreadItem::CollabAgentMessage {
+                id,
+                operation: communication.operation.into(),
+                sender_thread_id: communication
+                    .sender_thread_id
+                    .map(|value| value.to_string()),
+                sender_path: communication.author.to_string(),
+                recipient_thread_id: communication
+                    .recipient_thread_id
+                    .map(|value| value.to_string()),
+                recipient_path: communication.recipient.to_string(),
+                other_recipient_paths: communication
+                    .other_recipients
+                    .into_iter()
+                    .map(|path| path.to_string())
+                    .collect(),
+                content: communication.content,
+                trigger_turn: communication.trigger_turn,
+            });
+    }
+
+    fn try_handle_injected_context_message(&mut self, role: &str, content: &[ContentItem]) -> bool {
+        if !self.is_initial_injected_context_window() {
+            return false;
+        }
+
+        let sections = parse_injected_context_sections(role, content);
+        if sections.is_empty() {
+            return false;
+        }
+
+        self.append_injected_context_sections(sections);
+        true
+    }
+
+    fn is_initial_injected_context_window(&self) -> bool {
+        self.turns.is_empty()
+            && self.current_turn.as_ref().is_none_or(|turn| {
+                !turn.opened_explicitly
+                    && (turn.items.is_empty() || turn.has_only_injected_context())
+                    && !turn.saw_compaction
+            })
+    }
+
+    fn append_injected_context_sections(&mut self, mut sections: Vec<InjectedContextSection>) {
+        {
+            let turn = self.ensure_turn();
+            if let Some(ThreadItem::InjectedContext {
+                preview,
+                sections: existing_sections,
+                ..
+            }) = turn.items.last_mut()
+            {
+                existing_sections.append(&mut sections);
+                *preview = build_injected_context_preview(existing_sections);
+                return;
+            }
+        }
+
+        let id = self.next_item_id();
+        let preview = build_injected_context_preview(&sections);
+        self.ensure_turn().items.push(ThreadItem::InjectedContext {
+            id,
+            title: INJECTED_CONTEXT_TITLE.to_string(),
+            preview,
+            sections,
+        });
+    }
+
     fn handle_user_message(&mut self, payload: &UserMessageEvent) {
         // User messages should stay in explicitly opened turns. For backward
         // compatibility with older streams that did not open turns explicitly,
         // close any implicit/inactive turn and start a fresh one for this input.
         if let Some(turn) = self.current_turn.as_ref()
             && !turn.opened_explicitly
+            && !turn.has_only_injected_context()
             && !(turn.saw_compaction && turn.items.is_empty())
         {
             self.finish_current_turn();
@@ -656,7 +797,9 @@ impl ThreadHistoryBuilder {
             tool: CollabAgentTool::SpawnAgent,
             status: CollabAgentToolCallStatus::InProgress,
             sender_thread_id: payload.sender_thread_id.to_string(),
+            sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids: Vec::new(),
+            receiver_paths: Vec::new(),
             prompt: Some(payload.prompt.clone()),
             model: Some(payload.model.clone()),
             reasoning_effort: Some(payload.reasoning_effort),
@@ -678,7 +821,8 @@ impl ThreadHistoryBuilder {
         let (receiver_thread_ids, agents_states) = match &payload.new_thread_id {
             Some(id) => {
                 let receiver_id = id.to_string();
-                let received_status = CollabAgentState::from(payload.status.clone());
+                let mut received_status = CollabAgentState::from(payload.status.clone());
+                received_status.path = payload.new_agent_path.clone();
                 (
                     vec![receiver_id.clone()],
                     [(receiver_id, received_status)].into_iter().collect(),
@@ -691,7 +835,9 @@ impl ThreadHistoryBuilder {
             tool: CollabAgentTool::SpawnAgent,
             status,
             sender_thread_id: payload.sender_thread_id.to_string(),
+            sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids,
+            receiver_paths: payload.new_agent_path.clone().into_iter().collect(),
             prompt: Some(payload.prompt.clone()),
             model: Some(payload.model.clone()),
             reasoning_effort: Some(payload.reasoning_effort),
@@ -708,7 +854,9 @@ impl ThreadHistoryBuilder {
             tool: CollabAgentTool::SendInput,
             status: CollabAgentToolCallStatus::InProgress,
             sender_thread_id: payload.sender_thread_id.to_string(),
+            sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids: vec![payload.receiver_thread_id.to_string()],
+            receiver_paths: vec![payload.receiver_agent_path.clone()],
             prompt: Some(payload.prompt.clone()),
             model: None,
             reasoning_effort: None,
@@ -726,13 +874,16 @@ impl ThreadHistoryBuilder {
             _ => CollabAgentToolCallStatus::Completed,
         };
         let receiver_id = payload.receiver_thread_id.to_string();
-        let received_status = CollabAgentState::from(payload.status.clone());
+        let mut received_status = CollabAgentState::from(payload.status.clone());
+        received_status.path = Some(payload.receiver_agent_path.clone());
         self.upsert_item_in_current_turn(ThreadItem::CollabAgentToolCall {
             id: payload.call_id.clone(),
             tool: CollabAgentTool::SendInput,
             status,
             sender_thread_id: payload.sender_thread_id.to_string(),
+            sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids: vec![receiver_id.clone()],
+            receiver_paths: vec![payload.receiver_agent_path.clone()],
             prompt: Some(payload.prompt.clone()),
             model: None,
             reasoning_effort: None,
@@ -749,10 +900,16 @@ impl ThreadHistoryBuilder {
             tool: CollabAgentTool::Wait,
             status: CollabAgentToolCallStatus::InProgress,
             sender_thread_id: payload.sender_thread_id.to_string(),
+            sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids: payload
                 .receiver_thread_ids
                 .iter()
                 .map(ToString::to_string)
+                .collect(),
+            receiver_paths: payload
+                .receiver_agents
+                .iter()
+                .filter_map(|agent| agent.agent_path.clone())
                 .collect(),
             prompt: None,
             model: None,
@@ -781,14 +938,28 @@ impl ThreadHistoryBuilder {
         let agents_states = payload
             .statuses
             .iter()
-            .map(|(id, status)| (id.to_string(), CollabAgentState::from(status.clone())))
+            .map(|(id, status)| {
+                let mut state = CollabAgentState::from(status.clone());
+                state.path = payload
+                    .agent_statuses
+                    .iter()
+                    .find(|entry| entry.thread_id == *id)
+                    .and_then(|entry| entry.agent_path.clone());
+                (id.to_string(), state)
+            })
             .collect();
         self.upsert_item_in_current_turn(ThreadItem::CollabAgentToolCall {
             id: payload.call_id.clone(),
             tool: CollabAgentTool::Wait,
             status,
             sender_thread_id: payload.sender_thread_id.to_string(),
+            sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids,
+            receiver_paths: payload
+                .agent_statuses
+                .iter()
+                .filter_map(|entry| entry.agent_path.clone())
+                .collect(),
             prompt: None,
             model: None,
             reasoning_effort: None,
@@ -805,7 +976,9 @@ impl ThreadHistoryBuilder {
             tool: CollabAgentTool::CloseAgent,
             status: CollabAgentToolCallStatus::InProgress,
             sender_thread_id: payload.sender_thread_id.to_string(),
+            sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids: vec![payload.receiver_thread_id.to_string()],
+            receiver_paths: vec![payload.receiver_agent_path.clone()],
             prompt: None,
             model: None,
             reasoning_effort: None,
@@ -820,18 +993,17 @@ impl ThreadHistoryBuilder {
             _ => CollabAgentToolCallStatus::Completed,
         };
         let receiver_id = payload.receiver_thread_id.to_string();
-        let agents_states = [(
-            receiver_id.clone(),
-            CollabAgentState::from(payload.status.clone()),
-        )]
-        .into_iter()
-        .collect();
+        let mut state = CollabAgentState::from(payload.status.clone());
+        state.path = Some(payload.receiver_agent_path.clone());
+        let agents_states = [(receiver_id.clone(), state)].into_iter().collect();
         self.upsert_item_in_current_turn(ThreadItem::CollabAgentToolCall {
             id: payload.call_id.clone(),
             tool: CollabAgentTool::CloseAgent,
             status,
             sender_thread_id: payload.sender_thread_id.to_string(),
+            sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids: vec![receiver_id],
+            receiver_paths: vec![payload.receiver_agent_path.clone()],
             prompt: None,
             model: None,
             reasoning_effort: None,
@@ -848,7 +1020,9 @@ impl ThreadHistoryBuilder {
             tool: CollabAgentTool::ResumeAgent,
             status: CollabAgentToolCallStatus::InProgress,
             sender_thread_id: payload.sender_thread_id.to_string(),
+            sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids: vec![payload.receiver_thread_id.to_string()],
+            receiver_paths: vec![payload.receiver_agent_path.clone()],
             prompt: None,
             model: None,
             reasoning_effort: None,
@@ -866,18 +1040,17 @@ impl ThreadHistoryBuilder {
             _ => CollabAgentToolCallStatus::Completed,
         };
         let receiver_id = payload.receiver_thread_id.to_string();
-        let agents_states = [(
-            receiver_id.clone(),
-            CollabAgentState::from(payload.status.clone()),
-        )]
-        .into_iter()
-        .collect();
+        let mut state = CollabAgentState::from(payload.status.clone());
+        state.path = Some(payload.receiver_agent_path.clone());
+        let agents_states = [(receiver_id.clone(), state)].into_iter().collect();
         self.upsert_item_in_current_turn(ThreadItem::CollabAgentToolCall {
             id: payload.call_id.clone(),
             tool: CollabAgentTool::ResumeAgent,
             status,
             sender_thread_id: payload.sender_thread_id.to_string(),
+            sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids: vec![receiver_id],
+            receiver_paths: vec![payload.receiver_agent_path.clone()],
             prompt: None,
             model: None,
             reasoning_effort: None,
@@ -1197,6 +1370,126 @@ fn builtin_tool_name(namespace: Option<&str>, name: &str) -> Option<String> {
     }
 }
 
+fn parse_injected_context_sections(
+    role: &str,
+    content: &[ContentItem],
+) -> Vec<InjectedContextSection> {
+    content
+        .iter()
+        .filter_map(|item| match item {
+            ContentItem::InputText { text } => parse_injected_context_section(role, text),
+            ContentItem::InputImage { .. } | ContentItem::OutputText { .. } => None,
+        })
+        .collect()
+}
+
+fn parse_injected_context_section(role: &str, text: &str) -> Option<InjectedContextSection> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let tagged_sections = [
+        (
+            "Permissions",
+            "<permissions instructions>",
+            "</permissions instructions>",
+        ),
+        ("Model", "<model_switch>", "</model_switch>"),
+        (
+            "Collaboration mode",
+            COLLABORATION_MODE_OPEN_TAG,
+            COLLABORATION_MODE_CLOSE_TAG,
+        ),
+        ("Personality", "<personality_spec>", "</personality_spec>"),
+        (
+            "Apps",
+            APPS_INSTRUCTIONS_OPEN_TAG,
+            APPS_INSTRUCTIONS_CLOSE_TAG,
+        ),
+        (
+            "Skills",
+            SKILLS_INSTRUCTIONS_OPEN_TAG,
+            SKILLS_INSTRUCTIONS_CLOSE_TAG,
+        ),
+        (
+            "Plugins",
+            PLUGINS_INSTRUCTIONS_OPEN_TAG,
+            PLUGINS_INSTRUCTIONS_CLOSE_TAG,
+        ),
+        (
+            "Environment",
+            ENVIRONMENT_CONTEXT_OPEN_TAG,
+            ENVIRONMENT_CONTEXT_CLOSE_TAG,
+        ),
+        (
+            "Multiagent",
+            "<multiagent_context>",
+            "</multiagent_context>",
+        ),
+        (
+            "Realtime",
+            REALTIME_CONVERSATION_OPEN_TAG,
+            REALTIME_CONVERSATION_CLOSE_TAG,
+        ),
+    ];
+
+    for (label, start, end) in tagged_sections {
+        if let Some(section) = build_injected_context_section(label, trimmed, start, end) {
+            return Some(section);
+        }
+    }
+
+    if trimmed.starts_with("# AGENTS.md instructions for ") && trimmed.ends_with("</INSTRUCTIONS>")
+    {
+        return Some(InjectedContextSection {
+            label: "AGENTS.md instructions".to_string(),
+            text: trimmed.to_string(),
+        });
+    }
+
+    if role == "developer" {
+        return Some(InjectedContextSection {
+            label: "Developer instructions".to_string(),
+            text: trimmed.to_string(),
+        });
+    }
+
+    None
+}
+
+fn build_injected_context_section(
+    label: &str,
+    text: &str,
+    start_marker: &str,
+    end_marker: &str,
+) -> Option<InjectedContextSection> {
+    let body = text
+        .strip_prefix(start_marker)?
+        .strip_suffix(end_marker)?
+        .trim();
+    Some(InjectedContextSection {
+        label: label.to_string(),
+        text: body.to_string(),
+    })
+}
+
+fn build_injected_context_preview(sections: &[InjectedContextSection]) -> String {
+    let labels: Vec<&str> = sections
+        .iter()
+        .map(|section| section.label.as_str())
+        .take(MAX_INJECTED_CONTEXT_PREVIEW_SECTIONS)
+        .collect();
+    let remaining = sections
+        .len()
+        .saturating_sub(MAX_INJECTED_CONTEXT_PREVIEW_SECTIONS);
+    if remaining == 0 {
+        labels.join(" • ")
+    } else {
+        format!("{} • +{remaining} more", labels.join(" • "))
+    }
+}
+
 fn upsert_turn_item(items: &mut Vec<ThreadItem>, item: ThreadItem) {
     if let Some(existing_item) = items
         .iter_mut()
@@ -1240,6 +1533,14 @@ struct PendingTurn {
 }
 
 impl PendingTurn {
+    fn has_only_injected_context(&self) -> bool {
+        !self.items.is_empty()
+            && self
+                .items
+                .iter()
+                .all(|item| matches!(item, ThreadItem::InjectedContext { .. }))
+    }
+
     fn opened_explicitly(mut self) -> Self {
         self.opened_explicitly = true;
         self
@@ -2957,8 +3258,10 @@ mod tests {
                 completed_at_ms: 0,
                 sender_thread_id: ThreadId::try_from("00000000-0000-0000-0000-000000000001")
                     .expect("valid sender thread id"),
+                sender_agent_path: "/root".into(),
                 receiver_thread_id: ThreadId::try_from("00000000-0000-0000-0000-000000000002")
                     .expect("valid receiver thread id"),
+                receiver_agent_path: "/root/scout".into(),
                 receiver_agent_nickname: None,
                 receiver_agent_role: None,
                 status: AgentStatus::Completed(None),
@@ -2979,13 +3282,16 @@ mod tests {
                 tool: CollabAgentTool::ResumeAgent,
                 status: CollabAgentToolCallStatus::Completed,
                 sender_thread_id: "00000000-0000-0000-0000-000000000001".into(),
+                sender_path: "/root".into(),
                 receiver_thread_ids: vec!["00000000-0000-0000-0000-000000000002".into()],
+                receiver_paths: vec!["/root/scout".into()],
                 prompt: None,
                 model: None,
                 reasoning_effort: None,
                 agents_states: [(
                     "00000000-0000-0000-0000-000000000002".into(),
                     CollabAgentState {
+                        path: Some("/root/scout".into()),
                         status: crate::protocol::v2::CollabAgentStatus::Completed,
                         message: None,
                     },
@@ -3013,7 +3319,9 @@ mod tests {
                 call_id: "spawn-1".into(),
                 completed_at_ms: 0,
                 sender_thread_id,
+                sender_agent_path: "/root".into(),
                 new_thread_id: Some(spawned_thread_id),
+                new_agent_path: Some("/root/scout".into()),
                 new_agent_nickname: Some("Scout".into()),
                 new_agent_role: Some("explorer".into()),
                 prompt: "inspect the repo".into(),
@@ -3037,13 +3345,16 @@ mod tests {
                 tool: CollabAgentTool::SpawnAgent,
                 status: CollabAgentToolCallStatus::Completed,
                 sender_thread_id: "00000000-0000-0000-0000-000000000001".into(),
+                sender_path: "/root".into(),
                 receiver_thread_ids: vec!["00000000-0000-0000-0000-000000000002".into()],
+                receiver_paths: vec!["/root/scout".into()],
                 prompt: Some("inspect the repo".into()),
                 model: Some("gpt-5.4-mini".into()),
                 reasoning_effort: Some(codex_protocol::openai_models::ReasoningEffort::Medium),
                 agents_states: [(
                     "00000000-0000-0000-0000-000000000002".into(),
                     CollabAgentState {
+                        path: Some("/root/scout".into()),
                         status: crate::protocol::v2::CollabAgentStatus::Running,
                         message: None,
                     },
@@ -3071,6 +3382,7 @@ mod tests {
                 call_id: "spawn-1".into(),
                 started_at_ms: 0,
                 sender_thread_id,
+                sender_agent_path: "/root".into(),
                 prompt: "inspect the repo".into(),
                 model: "gpt-5.4-mini".into(),
                 reasoning_effort: codex_protocol::openai_models::ReasoningEffort::Medium,
@@ -3079,7 +3391,9 @@ mod tests {
                 call_id: "spawn-1".into(),
                 completed_at_ms: 1,
                 sender_thread_id,
+                sender_agent_path: "/root".into(),
                 new_thread_id: Some(spawned_thread_id),
+                new_agent_path: Some("/root/scout".into()),
                 new_agent_nickname: Some("Scout".into()),
                 new_agent_role: Some("explorer".into()),
                 prompt: "inspect the repo".into(),
@@ -3104,13 +3418,16 @@ mod tests {
                 tool: CollabAgentTool::SpawnAgent,
                 status: CollabAgentToolCallStatus::Completed,
                 sender_thread_id: "00000000-0000-0000-0000-000000000001".into(),
+                sender_path: "/root".into(),
                 receiver_thread_ids: vec!["00000000-0000-0000-0000-000000000002".into()],
+                receiver_paths: vec!["/root/scout".into()],
                 prompt: Some("inspect the repo".into()),
                 model: Some("gpt-5.4-mini".into()),
                 reasoning_effort: Some(codex_protocol::openai_models::ReasoningEffort::Medium),
                 agents_states: [(
                     "00000000-0000-0000-0000-000000000002".into(),
                     CollabAgentState {
+                        path: Some("/root/scout".into()),
                         status: crate::protocol::v2::CollabAgentStatus::Running,
                         message: None,
                     },
@@ -3142,7 +3459,9 @@ mod tests {
                     call_id: "send-1".into(),
                     started_at_ms: 0,
                     sender_thread_id: sender,
+                    sender_agent_path: "/root".into(),
                     receiver_thread_id: receiver,
+                    receiver_agent_path: "/root/scout".into(),
                     prompt: "new task".into(),
                 },
             ),
@@ -3151,7 +3470,9 @@ mod tests {
                     call_id: "send-1".into(),
                     completed_at_ms: 0,
                     sender_thread_id: sender,
+                    sender_agent_path: "/root".into(),
                     receiver_thread_id: receiver,
+                    receiver_agent_path: "/root/scout".into(),
                     receiver_agent_nickname: None,
                     receiver_agent_role: None,
                     prompt: "new task".into(),
@@ -3174,13 +3495,16 @@ mod tests {
                 tool: CollabAgentTool::SendInput,
                 status: CollabAgentToolCallStatus::Completed,
                 sender_thread_id: sender.to_string(),
+                sender_path: "/root".into(),
                 receiver_thread_ids: vec![receiver.to_string()],
+                receiver_paths: vec!["/root/scout".into()],
                 prompt: Some("new task".into()),
                 model: None,
                 reasoning_effort: None,
                 agents_states: [(
                     receiver.to_string(),
                     CollabAgentState {
+                        path: Some("/root/scout".into()),
                         status: crate::protocol::v2::CollabAgentStatus::Interrupted,
                         message: None,
                     },
@@ -3409,5 +3733,71 @@ mod tests {
         let turns = build_turns_from_rollout_items(&items);
         assert_eq!(turns.len(), 1);
         assert!(turns[0].items.is_empty());
+    }
+
+    #[test]
+    fn rebuilds_initial_injected_context_from_rollout_response_items() {
+        let items = vec![
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: Some("developer-context".into()),
+                role: "developer".into(),
+                content: vec![
+                    ContentItem::InputText {
+                        text: "<permissions instructions>\nSandbox: workspace-write\n</permissions instructions>"
+                            .into(),
+                    },
+                    ContentItem::InputText {
+                        text: format!(
+                            "{SKILLS_INSTRUCTIONS_OPEN_TAG}\n## Skills\n- skill-a\n{SKILLS_INSTRUCTIONS_CLOSE_TAG}"
+                        ),
+                    },
+                ],
+                phase: None,
+            }),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: Some("user-context".into()),
+                role: "user".into(),
+                content: vec![ContentItem::InputText {
+                    text: format!(
+                        "{ENVIRONMENT_CONTEXT_OPEN_TAG}\n  <cwd>/workspace</cwd>\n{ENVIRONMENT_CONTEXT_CLOSE_TAG}"
+                    ),
+                }],
+                phase: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+                message: "hello".into(),
+                images: None,
+                text_elements: Vec::new(),
+                local_images: Vec::new(),
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 2);
+        assert_eq!(
+            turns[0].items[0],
+            ThreadItem::InjectedContext {
+                id: turns[0].items[0].id().to_string(),
+                title: INJECTED_CONTEXT_TITLE.to_string(),
+                preview: "Permissions • Skills • Environment".to_string(),
+                sections: vec![
+                    InjectedContextSection {
+                        label: "Permissions".to_string(),
+                        text: "Sandbox: workspace-write".to_string(),
+                    },
+                    InjectedContextSection {
+                        label: "Skills".to_string(),
+                        text: "## Skills\n- skill-a".to_string(),
+                    },
+                    InjectedContextSection {
+                        label: "Environment".to_string(),
+                        text: "<cwd>/workspace</cwd>".to_string(),
+                    },
+                ],
+            }
+        );
+        assert!(matches!(turns[0].items[1], ThreadItem::UserMessage { .. }));
     }
 }

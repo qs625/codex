@@ -10,6 +10,7 @@ use crate::tools::handlers::multi_agents_spec::SpawnAgentToolOptions;
 use crate::tools::handlers::multi_agents_spec::create_spawn_agent_tool_v1;
 use crate::tools::handlers::parse_arguments_with_base_path;
 use crate::turn_timing::now_unix_timestamp_ms;
+use codex_protocol::AgentPath;
 use codex_tools::ToolSpec;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
@@ -77,6 +78,11 @@ async fn handle_spawn_agent(
                 call_id: call_id.clone(),
                 started_at_ms: now_unix_timestamp_ms(),
                 sender_thread_id: session.conversation_id,
+                sender_agent_path: turn
+                    .session_source
+                    .get_agent_path()
+                    .unwrap_or_else(AgentPath::root)
+                    .to_string(),
                 prompt: prompt.clone(),
                 model: args.model.clone().unwrap_or_default(),
                 reasoning_effort: args.reasoning_effort.unwrap_or_default(),
@@ -182,7 +188,13 @@ async fn handle_spawn_agent(
                 call_id,
                 completed_at_ms: now_unix_timestamp_ms(),
                 sender_thread_id: session.conversation_id,
+                sender_agent_path: turn
+                    .session_source
+                    .get_agent_path()
+                    .unwrap_or_else(AgentPath::root)
+                    .to_string(),
                 new_thread_id,
+                new_agent_path: _new_agent_path,
                 new_agent_nickname,
                 new_agent_role,
                 prompt,

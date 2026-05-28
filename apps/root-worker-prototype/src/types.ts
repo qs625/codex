@@ -43,6 +43,16 @@ export type ThreadItem =
       memoryCitation: unknown | null;
     }
   | {
+      type: "injectedContext";
+      id: string;
+      title: string;
+      preview: string;
+      sections: Array<{
+        label: string;
+        text: string;
+      }>;
+    }
+  | {
       type: "plan";
       id: string;
       text: string;
@@ -75,11 +85,38 @@ export type ThreadItem =
       tool: string;
       status: string;
       senderThreadId: string;
+      senderPath: string;
       receiverThreadIds: string[];
+      receiverPaths: string[];
       prompt: string | null;
       model: string | null;
       reasoningEffort: string | null;
-      agentsStates: Record<string, { status: string; message?: string | null }>;
+      agentsStates: Record<string, { path?: string | null; status: string; message?: string | null }>;
+    }
+  | {
+      type: "collabAgentMessage";
+      id: string;
+      operation: string;
+      senderThreadId: string | null;
+      senderPath: string;
+      recipientThreadId: string | null;
+      recipientPath: string;
+      otherRecipientPaths: string[];
+      content: string;
+      triggerTurn: boolean;
+    }
+  | {
+      type: "collabAgentStatusUpdate";
+      id: string;
+      senderThreadId: string | null;
+      senderPath: string;
+      recipientThreadId: string | null;
+      recipientPath: string;
+      status: {
+        path?: string | null;
+        status: string;
+        message?: string | null;
+      };
     }
   | {
       type: "dynamicToolCall";

@@ -66,6 +66,23 @@ export function buildConversationEntries(thread: Thread | null): ConversationEnt
         ];
       }
 
+      if (item.type === "injectedContext") {
+        return [
+          {
+            id: item.id,
+            kind: "tool" as const,
+            author,
+            role: "system" as const,
+            text: item.preview,
+            timestamp,
+            attachments: [],
+            toolName: item.title,
+            toolStatus: "completed",
+            toolDetails: formatInjectedContextDetails(item),
+          },
+        ];
+      }
+
       if (item.type === "fileChange") {
         return [
           {
@@ -113,6 +130,40 @@ export function buildConversationEntries(thread: Thread | null): ConversationEnt
             toolName: formatCollabAgentToolName(item.tool),
             toolStatus: item.status,
             toolDetails: formatCollabAgentToolDetails(item),
+          },
+        ];
+      }
+
+      if (item.type === "collabAgentMessage") {
+        return [
+          {
+            id: item.id,
+            kind: "tool" as const,
+            author,
+            role: "system" as const,
+            text: summarizeCollabAgentMessage(item),
+            timestamp,
+            attachments: [],
+            toolName: formatCollabAgentMessageName(item.operation),
+            toolStatus: "completed",
+            toolDetails: formatCollabAgentMessageDetails(item),
+          },
+        ];
+      }
+
+      if (item.type === "collabAgentStatusUpdate") {
+        return [
+          {
+            id: item.id,
+            kind: "tool" as const,
+            author,
+            role: "system" as const,
+            text: summarizeCollabAgentStatusUpdate(item),
+            timestamp,
+            attachments: [],
+            toolName: "child_completion",
+            toolStatus: "completed",
+            toolDetails: formatCollabAgentStatusUpdateDetails(item),
           },
         ];
       }
@@ -339,23 +390,25 @@ function summarizeToolCall(
 function summarizeCollabAgentToolCall(
   item: Extract<ThreadItem, { type: "collabAgentToolCall" }>,
 ) {
-  const workerCount = item.receiverThreadIds.length;
-  const workersLabel = `${workerCount} worker${workerCount === 1 ? "" : "s"}`;
+  const receiverLabel =
+    item.receiverPaths.length === 1
+      ? item.receiverPaths[0]
+      : `${item.receiverPaths.length} workers`;
   const prompt = item.prompt?.trim();
 
   switch (item.tool) {
     case "spawnAgent":
-      return prompt || `Spawned ${workersLabel}.`;
+      return prompt || `Spawned ${receiverLabel}.`;
     case "sendInput":
-      return prompt || `Sent work to ${workersLabel}.`;
+      return prompt || `Sent message to ${receiverLabel}.`;
     case "resumeAgent":
-      return prompt || `Resumed ${workersLabel}.`;
+      return prompt || `Queued follow-up for ${receiverLabel}.`;
     case "wait":
-      return `Waiting on ${workersLabel}.`;
+      return `Waiting on ${receiverLabel}.`;
     case "closeAgent":
-      return `Closed ${workersLabel}.`;
+      return `Closed ${receiverLabel}.`;
     default:
-      return prompt || `${item.tool} for ${workersLabel}.`;
+      return prompt || `${item.tool} for ${receiverLabel}.`;
   }
 }
 
@@ -381,12 +434,12 @@ function formatCollabAgentToolDetails(
 ) {
   const sections = [
     `Tool\n${formatCollabAgentToolName(item.tool)}`,
-    `Sender\n${trimThreadId(item.senderThreadId)}`,
+    `Sender\n${item.senderPath}`,
   ];
 
-  if (item.receiverThreadIds.length > 0) {
+  if (item.receiverPaths.length > 0) {
     sections.push(
-      `Receivers\n${item.receiverThreadIds.map(trimThreadId).join("\n")}`,
+      `Receivers\n${item.receiverPaths.join("\n")}`,
     );
   }
 
@@ -407,12 +460,90 @@ function formatCollabAgentToolDetails(
     sections.push(
       `Agent States\n${agentStates
         .map(([threadId, state]) =>
-          [trimThreadId(threadId), state.status, state.message?.trim()]
+          [state.path?.trim() || trimThreadId(threadId), state.status, state.message?.trim()]
             .filter((value) => value && value.length > 0)
             .join(" • "),
         )
         .join("\n")}`,
     );
+  }
+
+  return sections.join("\n\n");
+}
+
+function formatCollabAgentMessageName(
+  operation: Extract<ThreadItem, { type: "collabAgentMessage" }>["operation"],
+) {
+  switch (operation) {
+    case "spawnAgent":
+      return "spawn_agent";
+    case "sendMessage":
+      return "send_message";
+    case "followupTask":
+      return "followup_task";
+    case "childCompletion":
+      return "child_completion";
+    default:
+      return operation;
+  }
+}
+
+function summarizeCollabAgentMessage(item: Extract<ThreadItem, { type: "collabAgentMessage" }>) {
+  switch (item.operation) {
+    case "spawnAgent":
+      return `Received initial task from ${item.senderPath}.`;
+    case "sendMessage":
+      return `Received message from ${item.senderPath}.`;
+    case "followupTask":
+      return `Received follow-up from ${item.senderPath}.`;
+    case "childCompletion":
+      return `Received child completion from ${item.senderPath}.`;
+    default:
+      return `Received agent message from ${item.senderPath}.`;
+  }
+}
+
+function formatCollabAgentMessageDetails(
+  item: Extract<ThreadItem, { type: "collabAgentMessage" }>,
+) {
+  const sections = [
+    `Operation\n${formatCollabAgentMessageName(item.operation)}`,
+    `From\n${item.senderPath}`,
+    `To\n${item.recipientPath}`,
+    `Message\n${item.content.trim() || "…"}`,
+    `Trigger Turn\n${item.triggerTurn ? "true" : "false"}`,
+  ];
+
+  if (item.otherRecipientPaths.length > 0) {
+    sections.push(`Other Recipients\n${item.otherRecipientPaths.join("\n")}`);
+  }
+
+  return sections.join("\n\n");
+}
+
+function summarizeCollabAgentStatusUpdate(
+  item: Extract<ThreadItem, { type: "collabAgentStatusUpdate" }>,
+) {
+  const agentPath = item.status.path?.trim() || item.senderPath;
+  const message = item.status.message?.trim();
+  return [agentPath, item.status.status, message].filter((value) => value && value.length > 0).join(" • ");
+}
+
+function formatCollabAgentStatusUpdateDetails(
+  item: Extract<ThreadItem, { type: "collabAgentStatusUpdate" }>,
+) {
+  const sections = [
+    `From\n${item.senderPath}`,
+    `To\n${item.recipientPath}`,
+    `Status\n${item.status.status}`,
+  ];
+
+  if (item.status.path?.trim()) {
+    sections.push(`Agent\n${item.status.path.trim()}`);
+  }
+
+  if (item.status.message?.trim()) {
+    sections.push(`Message\n${item.status.message.trim()}`);
   }
 
   return sections.join("\n\n");
@@ -455,6 +586,12 @@ function formatStructuredToolDetails(input: unknown, output: unknown) {
   }
 
   return sections.join("\n\n");
+}
+
+function formatInjectedContextDetails(item: Extract<ThreadItem, { type: "injectedContext" }>) {
+  return item.sections
+    .map((section) => `${section.label}\n${section.text.trim()}`)
+    .join("\n\n");
 }
 
 function basename(filePath: string) {

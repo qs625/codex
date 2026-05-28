@@ -2,6 +2,7 @@ use super::*;
 use crate::agent::next_thread_spawn_depth;
 use crate::tools::handlers::multi_agents_spec::create_resume_agent_tool;
 use crate::turn_timing::now_unix_timestamp_ms;
+use codex_protocol::AgentPath;
 use codex_tools::ToolSpec;
 use std::sync::Arc;
 
@@ -44,6 +45,16 @@ async fn handle_resume_agent(
         .agent_control
         .get_agent_metadata(receiver_thread_id)
         .unwrap_or_default();
+    let sender_agent_path = turn
+        .session_source
+        .get_agent_path()
+        .unwrap_or_else(AgentPath::root)
+        .to_string();
+    let receiver_agent_path = receiver_agent
+        .agent_path
+        .as_ref()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| receiver_thread_id.to_string());
     let child_depth = next_thread_spawn_depth(&turn.session_source);
     let max_depth = turn.config.agent_max_depth;
     if exceeds_thread_spawn_depth_limit(child_depth, max_depth) {
@@ -59,7 +70,9 @@ async fn handle_resume_agent(
                 call_id: call_id.clone(),
                 started_at_ms: now_unix_timestamp_ms(),
                 sender_thread_id: session.conversation_id,
+                sender_agent_path: sender_agent_path.clone(),
                 receiver_thread_id,
+                receiver_agent_path: receiver_agent_path.clone(),
                 receiver_agent_nickname: receiver_agent.agent_nickname.clone(),
                 receiver_agent_role: receiver_agent.agent_role.clone(),
             }
@@ -115,7 +128,9 @@ async fn handle_resume_agent(
                 call_id,
                 completed_at_ms: now_unix_timestamp_ms(),
                 sender_thread_id: session.conversation_id,
+                sender_agent_path,
                 receiver_thread_id,
+                receiver_agent_path,
                 receiver_agent_nickname: receiver_agent.agent_nickname,
                 receiver_agent_role: receiver_agent.agent_role,
                 status: status.clone(),

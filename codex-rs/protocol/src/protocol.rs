@@ -794,6 +794,26 @@ impl From<Vec<UserInput>> for Op {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum InterAgentOperation {
+    Unknown,
+    SpawnAgent,
+    SendMessage,
+    FollowupTask,
+    ChildCompletion,
+}
+
+impl Default for InterAgentOperation {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
 pub struct InterAgentCommunication {
     pub author: AgentPath,
@@ -801,7 +821,16 @@ pub struct InterAgentCommunication {
     #[serde(default)]
     pub other_recipients: Vec<AgentPath>,
     pub content: String,
+    #[serde(default)]
+    pub operation: InterAgentOperation,
+    #[serde(default = "default_true")]
     pub trigger_turn: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_thread_id: Option<ThreadId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipient_thread_id: Option<ThreadId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<AgentStatus>,
 }
 
 impl InterAgentCommunication {
@@ -810,15 +839,39 @@ impl InterAgentCommunication {
         recipient: AgentPath,
         other_recipients: Vec<AgentPath>,
         content: String,
-        trigger_turn: bool,
+        operation: InterAgentOperation,
     ) -> Self {
         Self {
             author,
             recipient,
             other_recipients,
             content,
-            trigger_turn,
+            operation,
+            trigger_turn: true,
+            sender_thread_id: None,
+            recipient_thread_id: None,
+            status: None,
         }
+    }
+
+    pub fn with_trigger_turn(mut self, trigger_turn: bool) -> Self {
+        self.trigger_turn = trigger_turn;
+        self
+    }
+
+    pub fn with_thread_ids(
+        mut self,
+        sender_thread_id: ThreadId,
+        recipient_thread_id: ThreadId,
+    ) -> Self {
+        self.sender_thread_id = Some(sender_thread_id);
+        self.recipient_thread_id = Some(recipient_thread_id);
+        self
+    }
+
+    pub fn with_status(mut self, status: AgentStatus) -> Self {
+        self.status = Some(status);
+        self
     }
 
     pub fn to_response_input_item(&self) -> ResponseInputItem {
@@ -3798,6 +3851,8 @@ pub struct CollabAgentSpawnBeginEvent {
     pub started_at_ms: i64,
     /// Thread ID of the sender.
     pub sender_thread_id: ThreadId,
+    /// Canonical path of the sender.
+    pub sender_agent_path: String,
     /// Initial prompt sent to the agent. Can be empty to prevent CoT leaking at the
     /// beginning.
     pub prompt: String,
@@ -3809,6 +3864,9 @@ pub struct CollabAgentSpawnBeginEvent {
 pub struct CollabAgentRef {
     /// Thread ID of the receiver/new agent.
     pub thread_id: ThreadId,
+    /// Canonical path of the receiver/new agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_path: Option<String>,
     /// Optional nickname assigned to an AgentControl-spawned sub-agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_nickname: Option<String>,
@@ -3821,6 +3879,9 @@ pub struct CollabAgentRef {
 pub struct CollabAgentStatusEntry {
     /// Thread ID of the receiver/new agent.
     pub thread_id: ThreadId,
+    /// Canonical path of the receiver/new agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_path: Option<String>,
     /// Optional nickname assigned to an AgentControl-spawned sub-agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_nickname: Option<String>,
@@ -3839,8 +3900,13 @@ pub struct CollabAgentSpawnEndEvent {
     pub completed_at_ms: i64,
     /// Thread ID of the sender.
     pub sender_thread_id: ThreadId,
+    /// Canonical path of the sender.
+    pub sender_agent_path: String,
     /// Thread ID of the newly spawned agent, if it was created.
     pub new_thread_id: Option<ThreadId>,
+    /// Canonical path of the newly spawned agent, if it was created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_agent_path: Option<String>,
     /// Optional nickname assigned to the new agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_agent_nickname: Option<String>,
@@ -3866,8 +3932,12 @@ pub struct CollabAgentInteractionBeginEvent {
     pub started_at_ms: i64,
     /// Thread ID of the sender.
     pub sender_thread_id: ThreadId,
+    /// Canonical path of the sender.
+    pub sender_agent_path: String,
     /// Thread ID of the receiver.
     pub receiver_thread_id: ThreadId,
+    /// Canonical path of the receiver.
+    pub receiver_agent_path: String,
     /// Prompt sent from the sender to the receiver. Can be empty to prevent CoT
     /// leaking at the beginning.
     pub prompt: String,
@@ -3881,8 +3951,12 @@ pub struct CollabAgentInteractionEndEvent {
     pub completed_at_ms: i64,
     /// Thread ID of the sender.
     pub sender_thread_id: ThreadId,
+    /// Canonical path of the sender.
+    pub sender_agent_path: String,
     /// Thread ID of the receiver.
     pub receiver_thread_id: ThreadId,
+    /// Canonical path of the receiver.
+    pub receiver_agent_path: String,
     /// Optional nickname assigned to the receiver agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receiver_agent_nickname: Option<String>,
@@ -3902,6 +3976,8 @@ pub struct CollabWaitingBeginEvent {
     pub started_at_ms: i64,
     /// Thread ID of the sender.
     pub sender_thread_id: ThreadId,
+    /// Canonical path of the sender.
+    pub sender_agent_path: String,
     /// Thread ID of the receivers.
     pub receiver_thread_ids: Vec<ThreadId>,
     /// Optional nicknames/roles for receivers.
@@ -3915,6 +3991,8 @@ pub struct CollabWaitingBeginEvent {
 pub struct CollabWaitingEndEvent {
     /// Thread ID of the sender.
     pub sender_thread_id: ThreadId,
+    /// Canonical path of the sender.
+    pub sender_agent_path: String,
     /// ID of the waiting call.
     pub call_id: String,
     #[serde(default)]
@@ -3934,8 +4012,12 @@ pub struct CollabCloseBeginEvent {
     pub started_at_ms: i64,
     /// Thread ID of the sender.
     pub sender_thread_id: ThreadId,
+    /// Canonical path of the sender.
+    pub sender_agent_path: String,
     /// Thread ID of the receiver.
     pub receiver_thread_id: ThreadId,
+    /// Canonical path of the receiver.
+    pub receiver_agent_path: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
@@ -3946,8 +4028,12 @@ pub struct CollabCloseEndEvent {
     pub completed_at_ms: i64,
     /// Thread ID of the sender.
     pub sender_thread_id: ThreadId,
+    /// Canonical path of the sender.
+    pub sender_agent_path: String,
     /// Thread ID of the receiver.
     pub receiver_thread_id: ThreadId,
+    /// Canonical path of the receiver.
+    pub receiver_agent_path: String,
     /// Optional nickname assigned to the receiver agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receiver_agent_nickname: Option<String>,
@@ -3967,8 +4053,12 @@ pub struct CollabResumeBeginEvent {
     pub started_at_ms: i64,
     /// Thread ID of the sender.
     pub sender_thread_id: ThreadId,
+    /// Canonical path of the sender.
+    pub sender_agent_path: String,
     /// Thread ID of the receiver.
     pub receiver_thread_id: ThreadId,
+    /// Canonical path of the receiver.
+    pub receiver_agent_path: String,
     /// Optional nickname assigned to the receiver agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receiver_agent_nickname: Option<String>,
@@ -3985,8 +4075,12 @@ pub struct CollabResumeEndEvent {
     pub completed_at_ms: i64,
     /// Thread ID of the sender.
     pub sender_thread_id: ThreadId,
+    /// Canonical path of the sender.
+    pub sender_agent_path: String,
     /// Thread ID of the receiver.
     pub receiver_thread_id: ThreadId,
+    /// Canonical path of the receiver.
+    pub receiver_agent_path: String,
     /// Optional nickname assigned to the receiver agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receiver_agent_nickname: Option<String>,

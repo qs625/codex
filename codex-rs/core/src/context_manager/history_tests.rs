@@ -51,7 +51,7 @@ fn inter_agent_assistant_msg(text: &str) -> ResponseItem {
         AgentPath::root().join("worker").unwrap(),
         Vec::new(),
         text.to_string(),
-        /*trigger_turn*/ true,
+        codex_protocol::protocol::InterAgentOperation::Unknown,
     );
     ResponseItem::Message {
         id: None,

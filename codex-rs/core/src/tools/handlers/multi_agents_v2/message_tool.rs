@@ -7,6 +7,7 @@ use super::*;
 use crate::tools::context::FunctionToolOutput;
 use crate::turn_timing::now_unix_timestamp_ms;
 use codex_protocol::protocol::InterAgentCommunication;
+use codex_protocol::protocol::InterAgentOperation;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MessageDeliveryMode {
@@ -18,14 +19,15 @@ impl MessageDeliveryMode {
     /// Returns whether the produced communication should start a turn immediately.
     fn apply(self, communication: InterAgentCommunication) -> InterAgentCommunication {
         match self {
-            Self::QueueOnly => InterAgentCommunication {
-                trigger_turn: false,
-                ..communication
-            },
-            Self::TriggerTurn => InterAgentCommunication {
-                trigger_turn: true,
-                ..communication
-            },
+            Self::QueueOnly => communication.with_trigger_turn(false),
+            Self::TriggerTurn => communication.with_trigger_turn(true),
+        }
+    }
+
+    fn operation(self) -> InterAgentOperation {
+        match self {
+            Self::QueueOnly => InterAgentOperation::SendMessage,
+            Self::TriggerTurn => InterAgentOperation::FollowupTask,
         }
     }
 }
@@ -85,6 +87,10 @@ pub(crate) async fn handle_message_string_tool(
             "Tasks can't be assigned to the root agent".to_string(),
         ));
     }
+    let receiver_agent_path = receiver_agent.agent_path.clone().ok_or_else(|| {
+        FunctionCallError::RespondToModel("target agent is missing an agent_path".to_string())
+    })?;
+    let receiver_agent_path_string = receiver_agent_path.to_string();
     session
         .send_event(
             &turn,
@@ -92,15 +98,18 @@ pub(crate) async fn handle_message_string_tool(
                 call_id: call_id.clone(),
                 started_at_ms: now_unix_timestamp_ms(),
                 sender_thread_id: session.conversation_id,
+                sender_agent_path: turn
+                    .session_source
+                    .get_agent_path()
+                    .unwrap_or_else(AgentPath::root)
+                    .to_string(),
                 receiver_thread_id,
+                receiver_agent_path: receiver_agent_path_string.clone(),
                 prompt: prompt.clone(),
             }
             .into(),
         )
         .await;
-    let receiver_agent_path = receiver_agent.agent_path.clone().ok_or_else(|| {
-        FunctionCallError::RespondToModel("target agent is missing an agent_path".to_string())
-    })?;
     let communication = InterAgentCommunication::new(
         turn.session_source
             .get_agent_path()
@@ -108,8 +117,9 @@ pub(crate) async fn handle_message_string_tool(
         receiver_agent_path,
         Vec::new(),
         prompt.clone(),
-        /*trigger_turn*/ true,
-    );
+        mode.operation(),
+    )
+    .with_thread_ids(session.conversation_id, receiver_thread_id);
     let result = session
         .services
         .agent_control
@@ -128,7 +138,13 @@ pub(crate) async fn handle_message_string_tool(
                 call_id,
                 completed_at_ms: now_unix_timestamp_ms(),
                 sender_thread_id: session.conversation_id,
+                sender_agent_path: turn
+                    .session_source
+                    .get_agent_path()
+                    .unwrap_or_else(AgentPath::root)
+                    .to_string(),
                 receiver_thread_id,
+                receiver_agent_path: receiver_agent_path_string,
                 receiver_agent_nickname: receiver_agent.agent_nickname,
                 receiver_agent_role: receiver_agent.agent_role,
                 prompt,

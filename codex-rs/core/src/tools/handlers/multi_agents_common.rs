@@ -88,6 +88,7 @@ pub(crate) fn build_wait_agent_statuses(
         if let Some(status) = statuses.get(&receiver_agent.thread_id) {
             entries.push(CollabAgentStatusEntry {
                 thread_id: receiver_agent.thread_id,
+                agent_path: receiver_agent.agent_path.clone(),
                 agent_nickname: receiver_agent.agent_nickname.clone(),
                 agent_role: receiver_agent.agent_role.clone(),
                 status: status.clone(),
@@ -100,6 +101,7 @@ pub(crate) fn build_wait_agent_statuses(
         .filter(|(thread_id, _)| !seen.contains_key(thread_id))
         .map(|(thread_id, status)| CollabAgentStatusEntry {
             thread_id: *thread_id,
+            agent_path: None,
             agent_nickname: None,
             agent_role: None,
             status: status.clone(),

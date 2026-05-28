@@ -8951,8 +8951,9 @@ async fn queue_only_mailbox_mail_waits_for_next_turn_after_answer_boundary() {
         AgentPath::root(),
         Vec::new(),
         "late queue-only update".to_string(),
-        /*trigger_turn*/ false,
-    );
+        codex_protocol::protocol::InterAgentOperation::Unknown,
+    )
+    .with_trigger_turn(false);
     sess.spawn_task(
         Arc::clone(&tc),
         Vec::new(),
@@ -8999,7 +9000,7 @@ async fn trigger_turn_mailbox_mail_waits_for_next_turn_after_answer_boundary() {
         AgentPath::root(),
         Vec::new(),
         "late trigger update".to_string(),
-        /*trigger_turn*/ true,
+        codex_protocol::protocol::InterAgentOperation::Unknown,
     ));
 
     assert!(
@@ -9020,8 +9021,9 @@ async fn steered_input_reopens_mailbox_delivery_for_current_turn() {
         AgentPath::root(),
         Vec::new(),
         "queued child update".to_string(),
-        /*trigger_turn*/ false,
-    );
+        codex_protocol::protocol::InterAgentOperation::Unknown,
+    )
+    .with_trigger_turn(false);
     sess.spawn_task(
         Arc::clone(&tc),
         Vec::new(),
@@ -9065,8 +9067,9 @@ async fn stale_defer_mailbox_delivery_does_not_override_steered_input() {
         AgentPath::root(),
         Vec::new(),
         "queued child update".to_string(),
-        /*trigger_turn*/ false,
-    );
+        codex_protocol::protocol::InterAgentOperation::Unknown,
+    )
+    .with_trigger_turn(false);
     sess.spawn_task(
         Arc::clone(&tc),
         Vec::new(),
@@ -9112,8 +9115,9 @@ async fn tool_calls_reopen_mailbox_delivery_for_current_turn() {
         AgentPath::root(),
         Vec::new(),
         "queued child update".to_string(),
-        /*trigger_turn*/ false,
-    );
+        codex_protocol::protocol::InterAgentOperation::Unknown,
+    )
+    .with_trigger_turn(false);
     sess.spawn_task(
         Arc::clone(&tc),
         Vec::new(),

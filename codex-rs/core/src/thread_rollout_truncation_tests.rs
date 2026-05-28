@@ -35,8 +35,9 @@ fn inter_agent_msg(text: &str, trigger_turn: bool) -> ResponseItem {
         AgentPath::try_from("/root/worker").expect("agent path"),
         Vec::new(),
         text.to_string(),
-        trigger_turn,
-    );
+        codex_protocol::protocol::InterAgentOperation::Unknown,
+    )
+    .with_trigger_turn(trigger_turn);
     communication.to_response_input_item().into()
 }
 

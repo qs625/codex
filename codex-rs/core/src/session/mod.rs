@@ -1676,8 +1676,11 @@ impl Session {
             parent_agent_path,
             Vec::new(),
             message,
-            /*trigger_turn*/ false,
-        );
+            codex_protocol::protocol::InterAgentOperation::ChildCompletion,
+        )
+        .with_trigger_turn(false)
+        .with_thread_ids(self.conversation_id, parent_thread_id)
+        .with_status(status.clone());
         if let Err(err) = self
             .services
             .agent_control

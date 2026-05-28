@@ -131,9 +131,26 @@ fn thread_turns_items_list_round_trips() {
         })
     );
     let response = ThreadTurnsItemsListResponse {
-        data: vec![ThreadItem::ContextCompaction {
-            id: "item_1".to_string(),
-        }],
+        data: vec![
+            ThreadItem::InjectedContext {
+                id: "item_1".to_string(),
+                title: "Initial context injected".to_string(),
+                preview: "Permissions • Environment".to_string(),
+                sections: vec![
+                    InjectedContextSection {
+                        label: "Permissions".to_string(),
+                        text: "Sandbox: workspace-write".to_string(),
+                    },
+                    InjectedContextSection {
+                        label: "Environment".to_string(),
+                        text: "<cwd>/workspace</cwd>".to_string(),
+                    },
+                ],
+            },
+            ThreadItem::ContextCompaction {
+                id: "item_2".to_string(),
+            },
+        ],
         next_cursor: None,
         backwards_cursor: Some("cursor_0".to_string()),
     };
@@ -141,7 +158,25 @@ fn thread_turns_items_list_round_trips() {
     assert_eq!(
         serde_json::to_value(&response).expect("serialize response"),
         json!({
-            "data": [{"type": "contextCompaction", "id": "item_1"}],
+            "data": [
+                {
+                    "type": "injectedContext",
+                    "id": "item_1",
+                    "title": "Initial context injected",
+                    "preview": "Permissions • Environment",
+                    "sections": [
+                        {
+                            "label": "Permissions",
+                            "text": "Sandbox: workspace-write",
+                        },
+                        {
+                            "label": "Environment",
+                            "text": "<cwd>/workspace</cwd>",
+                        }
+                    ]
+                },
+                {"type": "contextCompaction", "id": "item_2"}
+            ],
             "nextCursor": null,
             "backwardsCursor": "cursor_0",
         })
@@ -193,6 +228,7 @@ fn collab_agent_state_maps_interrupted_status() {
     assert_eq!(
         CollabAgentState::from(CoreAgentStatus::Interrupted),
         CollabAgentState {
+            path: None,
             status: CollabAgentStatus::Interrupted,
             message: None,
         }

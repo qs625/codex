@@ -27,6 +27,7 @@ use codex_protocol::protocol::ExecCommandSource as CoreExecCommandSource;
 use codex_protocol::protocol::ExecCommandStatus as CoreExecCommandStatus;
 use codex_protocol::protocol::GuardianRiskLevel as CoreGuardianRiskLevel;
 use codex_protocol::protocol::GuardianUserAuthorization as CoreGuardianUserAuthorization;
+use codex_protocol::protocol::InterAgentOperation as CoreInterAgentOperation;
 use codex_protocol::protocol::PatchApplyStatus as CorePatchApplyStatus;
 use codex_protocol::protocol::ReviewDecision as CoreReviewDecision;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -221,6 +222,14 @@ pub enum ThreadItem {
     },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
+    InjectedContext {
+        id: String,
+        title: String,
+        preview: String,
+        sections: Vec<InjectedContextSection>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
     AgentMessage {
         id: String,
         text: String,
@@ -317,6 +326,19 @@ pub enum ThreadItem {
     },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
+    CollabAgentMessage {
+        id: String,
+        operation: CollabAgentOperation,
+        sender_thread_id: Option<String>,
+        sender_path: String,
+        recipient_thread_id: Option<String>,
+        recipient_path: String,
+        other_recipient_paths: Vec<String>,
+        content: String,
+        trigger_turn: bool,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
     CollabAgentToolCall {
         /// Unique identifier for this collab tool call.
         id: String,
@@ -326,9 +348,13 @@ pub enum ThreadItem {
         status: CollabAgentToolCallStatus,
         /// Thread ID of the agent issuing the collab request.
         sender_thread_id: String,
+        /// Canonical path of the agent issuing the collab request.
+        sender_path: String,
         /// Thread ID of the receiving agent, when applicable. In case of spawn operation,
         /// this corresponds to the newly spawned agent.
         receiver_thread_ids: Vec<String>,
+        /// Canonical paths of the receiving agents, when applicable.
+        receiver_paths: Vec<String>,
         /// Prompt text sent as part of the collab tool call, when available.
         prompt: Option<String>,
         /// Model requested for the spawned agent, when applicable.
@@ -337,6 +363,16 @@ pub enum ThreadItem {
         reasoning_effort: Option<ReasoningEffort>,
         /// Last known status of the target agents, when available.
         agents_states: HashMap<String, CollabAgentState>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    CollabAgentStatusUpdate {
+        id: String,
+        sender_thread_id: Option<String>,
+        sender_path: String,
+        recipient_thread_id: Option<String>,
+        recipient_path: String,
+        status: CollabAgentState,
     },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
@@ -378,11 +414,43 @@ pub struct HookPromptFragment {
     pub hook_run_id: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export_to = "v2/")]
+pub struct InjectedContextSection {
+    pub label: String,
+    pub text: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum CollabAgentOperation {
+    Unknown,
+    SpawnAgent,
+    SendMessage,
+    FollowupTask,
+    ChildCompletion,
+}
+
+impl From<CoreInterAgentOperation> for CollabAgentOperation {
+    fn from(value: CoreInterAgentOperation) -> Self {
+        match value {
+            CoreInterAgentOperation::Unknown => Self::Unknown,
+            CoreInterAgentOperation::SpawnAgent => Self::SpawnAgent,
+            CoreInterAgentOperation::SendMessage => Self::SendMessage,
+            CoreInterAgentOperation::FollowupTask => Self::FollowupTask,
+            CoreInterAgentOperation::ChildCompletion => Self::ChildCompletion,
+        }
+    }
+}
+
 impl ThreadItem {
     pub fn id(&self) -> &str {
         match self {
             ThreadItem::UserMessage { id, .. }
             | ThreadItem::HookPrompt { id, .. }
+            | ThreadItem::InjectedContext { id, .. }
             | ThreadItem::AgentMessage { id, .. }
             | ThreadItem::Plan { id, .. }
             | ThreadItem::Reasoning { id, .. }
@@ -391,7 +459,9 @@ impl ThreadItem {
             | ThreadItem::McpToolCall { id, .. }
             | ThreadItem::DynamicToolCall { id, .. }
             | ThreadItem::BuiltinToolCall { id, .. }
+            | ThreadItem::CollabAgentMessage { id, .. }
             | ThreadItem::CollabAgentToolCall { id, .. }
+            | ThreadItem::CollabAgentStatusUpdate { id, .. }
             | ThreadItem::WebSearch { id, .. }
             | ThreadItem::ImageView { id, .. }
             | ThreadItem::ImageGeneration { id, .. }
@@ -1024,6 +1094,7 @@ pub enum CollabAgentStatus {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CollabAgentState {
+    pub path: Option<String>,
     pub status: CollabAgentStatus,
     pub message: Option<String>,
 }
@@ -1032,30 +1103,37 @@ impl From<CoreAgentStatus> for CollabAgentState {
     fn from(value: CoreAgentStatus) -> Self {
         match value {
             CoreAgentStatus::PendingInit => Self {
+                path: None,
                 status: CollabAgentStatus::PendingInit,
                 message: None,
             },
             CoreAgentStatus::Running => Self {
+                path: None,
                 status: CollabAgentStatus::Running,
                 message: None,
             },
             CoreAgentStatus::Interrupted => Self {
+                path: None,
                 status: CollabAgentStatus::Interrupted,
                 message: None,
             },
             CoreAgentStatus::Completed(message) => Self {
+                path: None,
                 status: CollabAgentStatus::Completed,
                 message,
             },
             CoreAgentStatus::Errored(message) => Self {
+                path: None,
                 status: CollabAgentStatus::Errored,
                 message: Some(message),
             },
             CoreAgentStatus::Shutdown => Self {
+                path: None,
                 status: CollabAgentStatus::Shutdown,
                 message: None,
             },
             CoreAgentStatus::NotFound => Self {
+                path: None,
                 status: CollabAgentStatus::NotFound,
                 message: None,
             },

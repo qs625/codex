@@ -986,8 +986,9 @@ impl AgentControl {
                     parent_agent_path,
                     Vec::new(),
                     message,
-                    /*trigger_turn*/ false,
-                );
+                    codex_protocol::protocol::InterAgentOperation::ChildCompletion,
+                )
+                .with_trigger_turn(false);
                 let _ = control
                     .send_inter_agent_communication(parent_thread_id, communication)
                     .await;

@@ -24,9 +24,25 @@
       ],
       "type": "object"
     },
+    "CollabAgentOperation": {
+      "enum": [
+        "unknown",
+        "spawnAgent",
+        "sendMessage",
+        "followupTask",
+        "childCompletion"
+      ],
+      "type": "string"
+    },
     "CollabAgentState": {
       "properties": {
         "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
           "type": [
             "string",
             "null"
@@ -281,6 +297,21 @@
       },
       "required": [
         "hookRunId",
+        "text"
+      ],
+      "type": "object"
+    },
+    "InjectedContextSection": {
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
         "text"
       ],
       "type": "object"
@@ -541,6 +572,41 @@
             "type"
           ],
           "title": "HookPromptThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "preview": {
+              "type": "string"
+            },
+            "sections": {
+              "items": {
+                "$ref": "#/definitions/InjectedContextSection"
+              },
+              "type": "array"
+            },
+            "title": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "injectedContext"
+              ],
+              "title": "InjectedContextThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "preview",
+            "sections",
+            "title",
+            "type"
+          ],
+          "title": "InjectedContextThreadItem",
           "type": "object"
         },
         {
@@ -923,6 +989,65 @@
         },
         {
           "properties": {
+            "content": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "operation": {
+              "$ref": "#/definitions/CollabAgentOperation"
+            },
+            "otherRecipientPaths": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "recipientPath": {
+              "type": "string"
+            },
+            "recipientThreadId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "senderPath": {
+              "type": "string"
+            },
+            "senderThreadId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "triggerTurn": {
+              "type": "boolean"
+            },
+            "type": {
+              "enum": [
+                "collabAgentMessage"
+              ],
+              "title": "CollabAgentMessageThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "content",
+            "id",
+            "operation",
+            "otherRecipientPaths",
+            "recipientPath",
+            "senderPath",
+            "triggerTurn",
+            "type"
+          ],
+          "title": "CollabAgentMessageThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
             "agentsStates": {
               "additionalProperties": {
                 "$ref": "#/definitions/CollabAgentState"
@@ -959,12 +1084,23 @@
               ],
               "description": "Reasoning effort requested for the spawned agent, when applicable."
             },
+            "receiverPaths": {
+              "description": "Canonical paths of the receiving agents, when applicable.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "receiverThreadIds": {
               "description": "Thread ID of the receiving agent, when applicable. In case of spawn operation, this corresponds to the newly spawned agent.",
               "items": {
                 "type": "string"
               },
               "type": "array"
+            },
+            "senderPath": {
+              "description": "Canonical path of the agent issuing the collab request.",
+              "type": "string"
             },
             "senderThreadId": {
               "description": "Thread ID of the agent issuing the collab request.",
@@ -997,13 +1133,59 @@
           "required": [
             "agentsStates",
             "id",
+            "receiverPaths",
             "receiverThreadIds",
+            "senderPath",
             "senderThreadId",
             "status",
             "tool",
             "type"
           ],
           "title": "CollabAgentToolCallThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "recipientPath": {
+              "type": "string"
+            },
+            "recipientThreadId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "senderPath": {
+              "type": "string"
+            },
+            "senderThreadId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "$ref": "#/definitions/CollabAgentState"
+            },
+            "type": {
+              "enum": [
+                "collabAgentStatusUpdate"
+              ],
+              "title": "CollabAgentStatusUpdateThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "recipientPath",
+            "senderPath",
+            "status",
+            "type"
+          ],
+          "title": "CollabAgentStatusUpdateThreadItem",
           "type": "object"
         },
         {

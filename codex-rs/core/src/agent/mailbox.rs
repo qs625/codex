@@ -87,8 +87,9 @@ mod tests {
             recipient,
             Vec::new(),
             content.to_string(),
-            trigger_turn,
+            codex_protocol::protocol::InterAgentOperation::Unknown,
         )
+        .with_trigger_turn(trigger_turn)
     }
 
     #[tokio::test]

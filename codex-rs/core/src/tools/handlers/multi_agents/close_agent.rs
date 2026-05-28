@@ -1,6 +1,7 @@
 use super::*;
 use crate::tools::handlers::multi_agents_spec::create_close_agent_tool_v1;
 use crate::turn_timing::now_unix_timestamp_ms;
+use codex_protocol::AgentPath;
 use codex_tools::ToolSpec;
 
 pub(crate) struct Handler;
@@ -40,6 +41,16 @@ async fn handle_close_agent(
         .agent_control
         .get_agent_metadata(agent_id)
         .unwrap_or_default();
+    let sender_agent_path = turn
+        .session_source
+        .get_agent_path()
+        .unwrap_or_else(AgentPath::root)
+        .to_string();
+    let receiver_agent_path = receiver_agent
+        .agent_path
+        .as_ref()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| agent_id.to_string());
     session
         .send_event(
             &turn,
@@ -47,7 +58,9 @@ async fn handle_close_agent(
                 call_id: call_id.clone(),
                 started_at_ms: now_unix_timestamp_ms(),
                 sender_thread_id: session.conversation_id,
+                sender_agent_path: sender_agent_path.clone(),
                 receiver_thread_id: agent_id,
+                receiver_agent_path: receiver_agent_path.clone(),
             }
             .into(),
         )
@@ -68,7 +81,9 @@ async fn handle_close_agent(
                         call_id: call_id.clone(),
                         completed_at_ms: now_unix_timestamp_ms(),
                         sender_thread_id: session.conversation_id,
+                        sender_agent_path: sender_agent_path.clone(),
                         receiver_thread_id: agent_id,
+                        receiver_agent_path: receiver_agent_path.clone(),
                         receiver_agent_nickname: receiver_agent.agent_nickname.clone(),
                         receiver_agent_role: receiver_agent.agent_role.clone(),
                         status,
@@ -90,7 +105,9 @@ async fn handle_close_agent(
                 call_id,
                 completed_at_ms: now_unix_timestamp_ms(),
                 sender_thread_id: session.conversation_id,
+                sender_agent_path,
                 receiver_thread_id: agent_id,
+                receiver_agent_path,
                 receiver_agent_nickname: receiver_agent.agent_nickname,
                 receiver_agent_role: receiver_agent.agent_role,
                 status: status.clone(),

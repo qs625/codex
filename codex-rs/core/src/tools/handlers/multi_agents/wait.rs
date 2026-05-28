@@ -3,6 +3,7 @@ use crate::agent::status::is_final;
 use crate::tools::handlers::multi_agents_spec::WaitAgentTimeoutOptions;
 use crate::tools::handlers::multi_agents_spec::create_wait_agent_tool_v1;
 use crate::turn_timing::now_unix_timestamp_ms;
+use codex_protocol::AgentPath;
 use codex_protocol::error::CodexErr;
 use codex_tools::ToolSpec;
 use futures::FutureExt;
@@ -68,6 +69,7 @@ impl ToolExecutor<ToolInvocation> for Handler {
             );
             receiver_agents.push(CollabAgentRef {
                 thread_id: *receiver_thread_id,
+                agent_path: agent_metadata.agent_path.map(String::from),
                 agent_nickname: agent_metadata.agent_nickname,
                 agent_role: agent_metadata.agent_role,
             });
@@ -89,6 +91,11 @@ impl ToolExecutor<ToolInvocation> for Handler {
                 CollabWaitingBeginEvent {
                     started_at_ms: now_unix_timestamp_ms(),
                     sender_thread_id: session.conversation_id,
+                    sender_agent_path: turn
+                        .session_source
+                        .get_agent_path()
+                        .unwrap_or_else(AgentPath::root)
+                        .to_string(),
                     receiver_thread_ids: receiver_thread_ids.clone(),
                     receiver_agents: receiver_agents.clone(),
                     call_id: call_id.clone(),
@@ -119,6 +126,11 @@ impl ToolExecutor<ToolInvocation> for Handler {
                             &turn,
                             CollabWaitingEndEvent {
                                 sender_thread_id: session.conversation_id,
+                                sender_agent_path: turn
+                                    .session_source
+                                    .get_agent_path()
+                                    .unwrap_or_else(AgentPath::root)
+                                    .to_string(),
                                 call_id: call_id.clone(),
                                 completed_at_ms: now_unix_timestamp_ms(),
                                 agent_statuses: build_wait_agent_statuses(
@@ -188,6 +200,11 @@ impl ToolExecutor<ToolInvocation> for Handler {
                 &turn,
                 CollabWaitingEndEvent {
                     sender_thread_id: session.conversation_id,
+                    sender_agent_path: turn
+                        .session_source
+                        .get_agent_path()
+                        .unwrap_or_else(AgentPath::root)
+                        .to_string(),
                     call_id,
                     completed_at_ms: now_unix_timestamp_ms(),
                     agent_statuses,
