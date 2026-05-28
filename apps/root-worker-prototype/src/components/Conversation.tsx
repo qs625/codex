@@ -4,7 +4,16 @@ import { createPortal } from "react-dom";
 import { MarkdownContent } from "../lib/markdown";
 import { threadStatusClass } from "../lib/thread";
 import type { ConversationEntry } from "../types";
-import { CodeIcon, DocumentIcon, RobotIcon, ShareIcon, UserIcon } from "./icons";
+import {
+  BranchIcon,
+  CodeIcon,
+  DocumentIcon,
+  GearIcon,
+  RobotIcon,
+  ShareIcon,
+  TerminalIcon,
+  UserIcon,
+} from "./icons";
 
 const localImageCache = new Map<string, string>();
 
@@ -486,13 +495,15 @@ export function ToolRow({ entries }: { entries: ConversationEntry[] }) {
   const doneCount = entries.filter(
     (entry) => threadStatusClass(entry.toolStatus ?? "todo") === "done",
   ).length;
+  const toolCategory = firstEntry.toolCategory ?? "external";
+  const icon = getToolIcon(toolCategory);
 
   return (
-    <article className="tool-row">
-      <div className="event-icon">
-        <CodeIcon />
+    <article className={`tool-row tool-row-${toolCategory}`}>
+      <div className={`event-icon tool-icon tool-icon-${toolCategory}`}>
+        {icon}
       </div>
-      <details className="tool-card">
+      <details className={`tool-card tool-card-${toolCategory}`}>
         <summary className="tool-card-summary">
           <div className="tool-card-copy">
             <strong>
@@ -545,4 +556,20 @@ export function ToolRow({ entries }: { entries: ConversationEntry[] }) {
       </details>
     </article>
   );
+}
+
+function getToolIcon(category: NonNullable<ConversationEntry["toolCategory"]>) {
+  switch (category) {
+    case "command":
+      return <TerminalIcon />;
+    case "builtin":
+      return <GearIcon />;
+    case "multiAgent":
+      return <BranchIcon />;
+    case "context":
+      return <ShareIcon />;
+    case "external":
+    default:
+      return <CodeIcon />;
+  }
 }

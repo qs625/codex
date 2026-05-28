@@ -99,6 +99,16 @@ export function CodeIcon() {
   );
 }
 
+export function TerminalIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="4" y="5" width="16" height="14" rx="2.5" />
+      <path d="m8 10 3 2.5L8 15" />
+      <path d="M13 15h3.5" />
+    </svg>
+  );
+}
+
 export function ImageIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">

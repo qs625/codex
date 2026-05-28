@@ -9,7 +9,7 @@ export function buildConversationEntries(thread: Thread | null): ConversationEnt
   const author = getThreadLabel(thread);
 
   return thread.turns.flatMap((turn) =>
-    turn.items.flatMap((item) => {
+    turn.items.flatMap<ConversationEntry>((item) => {
       const timestamp = formatClockTime(turn.completedAt ?? turn.startedAt ?? thread.updatedAt);
 
       if (item.type === "userMessage") {
@@ -79,6 +79,7 @@ export function buildConversationEntries(thread: Thread | null): ConversationEnt
             toolName: item.title,
             toolStatus: "completed",
             toolDetails: formatInjectedContextDetails(item),
+            toolCategory: "context",
           },
         ];
       }
@@ -113,6 +114,7 @@ export function buildConversationEntries(thread: Thread | null): ConversationEnt
             toolName: item.command,
             toolStatus: item.status,
             toolDetails: formatCommandExecutionDetails(item),
+            toolCategory: "command",
           },
         ];
       }
@@ -127,9 +129,10 @@ export function buildConversationEntries(thread: Thread | null): ConversationEnt
             text: summarizeCollabAgentToolCall(item),
             timestamp,
             attachments: [],
-            toolName: formatCollabAgentToolName(item.tool),
+            toolName: formatCollabAgentToolTitle(item),
             toolStatus: item.status,
             toolDetails: formatCollabAgentToolDetails(item),
+            toolCategory: "multiAgent",
           },
         ];
       }
@@ -144,9 +147,10 @@ export function buildConversationEntries(thread: Thread | null): ConversationEnt
             text: summarizeCollabAgentMessage(item),
             timestamp,
             attachments: [],
-            toolName: formatCollabAgentMessageName(item.operation),
+            toolName: formatCollabAgentMessageTitle(item),
             toolStatus: "completed",
             toolDetails: formatCollabAgentMessageDetails(item),
+            toolCategory: "multiAgent",
           },
         ];
       }
@@ -161,9 +165,10 @@ export function buildConversationEntries(thread: Thread | null): ConversationEnt
             text: summarizeCollabAgentStatusUpdate(item),
             timestamp,
             attachments: [],
-            toolName: "child_completion",
+            toolName: formatCollabAgentStatusUpdateTitle(item),
             toolStatus: "completed",
             toolDetails: formatCollabAgentStatusUpdateDetails(item),
+            toolCategory: "multiAgent",
           },
         ];
       }
@@ -222,6 +227,12 @@ export function buildConversationEntries(thread: Thread | null): ConversationEnt
             toolName: item.tool,
             toolStatus: item.status,
             toolDetails: details,
+            toolCategory:
+              item.type === "builtinToolCall"
+                ? "builtin"
+                : item.type === "mcpToolCall"
+                  ? "external"
+                  : "external",
           },
         ];
       }
@@ -336,7 +347,7 @@ function shouldMergeConversationEntry(cell: ConversationCell, nextEntry: Convers
   }
 
   if (cell.kind === "tool" && nextEntry.kind === "tool") {
-    return true;
+    return previousEntry.toolCategory === nextEntry.toolCategory;
   }
 
   if (
@@ -429,6 +440,23 @@ function formatCollabAgentToolName(tool: Extract<ThreadItem, { type: "collabAgen
   }
 }
 
+function formatCollabAgentToolTitle(item: Extract<ThreadItem, { type: "collabAgentToolCall" }>) {
+  switch (item.tool) {
+    case "spawnAgent":
+      return "spawn agent";
+    case "sendInput":
+      return "send message";
+    case "resumeAgent":
+      return "followup task";
+    case "wait":
+      return "wait for agent";
+    case "closeAgent":
+      return "close agent";
+    default:
+      return formatCollabAgentToolName(item.tool);
+  }
+}
+
 function formatCollabAgentToolDetails(
   item: Extract<ThreadItem, { type: "collabAgentToolCall" }>,
 ) {
@@ -471,23 +499,6 @@ function formatCollabAgentToolDetails(
   return sections.join("\n\n");
 }
 
-function formatCollabAgentMessageName(
-  operation: Extract<ThreadItem, { type: "collabAgentMessage" }>["operation"],
-) {
-  switch (operation) {
-    case "spawnAgent":
-      return "spawn_agent";
-    case "sendMessage":
-      return "send_message";
-    case "followupTask":
-      return "followup_task";
-    case "childCompletion":
-      return "child_completion";
-    default:
-      return operation;
-  }
-}
-
 function summarizeCollabAgentMessage(item: Extract<ThreadItem, { type: "collabAgentMessage" }>) {
   switch (item.operation) {
     case "spawnAgent":
@@ -503,11 +514,18 @@ function summarizeCollabAgentMessage(item: Extract<ThreadItem, { type: "collabAg
   }
 }
 
+function formatCollabAgentMessageTitle(item: Extract<ThreadItem, { type: "collabAgentMessage" }>) {
+  if (item.operation === "childCompletion") {
+    return `${resolveAgentPath(item.senderPath, item.recipientPath)} subagent completion`;
+  }
+  return `received from ${resolveAgentPath(item.senderPath, item.recipientPath)}`;
+}
+
 function formatCollabAgentMessageDetails(
   item: Extract<ThreadItem, { type: "collabAgentMessage" }>,
 ) {
   const sections = [
-    `Operation\n${formatCollabAgentMessageName(item.operation)}`,
+    `Operation\n${item.operation}`,
     `From\n${item.senderPath}`,
     `To\n${item.recipientPath}`,
     `Message\n${item.content.trim() || "…"}`,
@@ -527,6 +545,15 @@ function summarizeCollabAgentStatusUpdate(
   const agentPath = item.status.path?.trim() || item.senderPath;
   const message = item.status.message?.trim();
   return [agentPath, item.status.status, message].filter((value) => value && value.length > 0).join(" • ");
+}
+
+function formatCollabAgentStatusUpdateTitle(
+  item: Extract<ThreadItem, { type: "collabAgentStatusUpdate" }>,
+) {
+  const agentPath = resolveAgentPath(item.status.path, item.senderPath);
+  return item.status.status === "completed"
+    ? `${agentPath} subagent completion`
+    : `status from ${agentPath}`;
 }
 
 function formatCollabAgentStatusUpdateDetails(
@@ -610,4 +637,8 @@ function safeJson(value: unknown) {
   } catch {
     return String(value);
   }
+}
+
+function resolveAgentPath(...paths: Array<string | null | undefined>) {
+  return paths.map((path) => path?.trim()).find((path) => path && path.length > 0) ?? "unknown";
 }

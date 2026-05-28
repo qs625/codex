@@ -282,6 +282,7 @@ export type ConversationEntry = {
   toolName?: string;
   toolStatus?: string;
   toolDetails?: string;
+  toolCategory?: "command" | "builtin" | "multiAgent" | "external" | "context";
 };
 
 export type ConversationCell = {
