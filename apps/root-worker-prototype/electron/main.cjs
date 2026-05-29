@@ -4,6 +4,7 @@ const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { AppServerClient } = require("./appServerClient.cjs");
 const { isLocalLinkTarget, localFilePathFromTarget, parseLocalFileTarget } = require("./fileTargets.cjs");
 const { LspManager } = require("./lsp/manager.cjs");
+const { buildTurnInput } = require("./turnInput.cjs");
 const { ensureDefaultWorkspace, resolveDefaultWorkspace } = require("./workspace.cjs");
 
 const rendererMode = process.env.ROOT_WORKER_RENDERER_MODE ?? "built";
@@ -169,36 +170,7 @@ ipcMain.handle("codex:lspStatus", async (_event, filePath) => {
 });
 
 ipcMain.handle("codex:sendMessage", async (_event, payload) => {
-  const input = [];
-
-  for (const skill of payload.skills ?? []) {
-    if (!skill?.name || !skill?.path) {
-      continue;
-    }
-    input.push({
-      type: "skill",
-      name: skill.name,
-      path: skill.path,
-    });
-  }
-
-  if (payload.text.trim()) {
-    input.push({
-      type: "text",
-      text: payload.text.trim(),
-      text_elements: [],
-    });
-  }
-
-  for (const image of payload.images ?? []) {
-    if (!image?.dataUrl) {
-      continue;
-    }
-    input.push({
-      type: "image",
-      image_url: image.dataUrl,
-    });
-  }
+  const input = buildTurnInput(payload);
 
   if (payload.expectedTurnId) {
     return appServerClient.request("turn/steer", {
