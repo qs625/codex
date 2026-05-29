@@ -214,7 +214,8 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::PlanDelta(_)
         | EventMsg::ReasoningContentDelta(_)
         | EventMsg::ReasoningRawContentDelta(_)
-        | EventMsg::ImageGenerationBegin(_) => None,
+        | EventMsg::ImageGenerationBegin(_)
+        | EventMsg::ThreadContextUsageUpdated(_) => None,
     }
 }
 
@@ -245,12 +246,15 @@ mod tests {
             ThreadId::from_string("00000000-0000-0000-0000-000000000001").expect("valid sender");
         let receiver_thread_id =
             ThreadId::from_string("00000000-0000-0000-0000-000000000002").expect("valid receiver");
+        let sender_agent_path = "/root".to_string();
+        let receiver_agent_path = "/root/scout".to_string();
 
         let events = [
             EventMsg::CollabAgentSpawnBegin(CollabAgentSpawnBeginEvent {
                 call_id: "spawn-begin".into(),
                 started_at_ms: 1,
                 sender_thread_id,
+                sender_agent_path: sender_agent_path.clone(),
                 prompt: "inspect".into(),
                 model: "gpt-5.4".into(),
                 reasoning_effort: ReasoningEffort::Medium,
@@ -259,7 +263,9 @@ mod tests {
                 call_id: "spawn-end".into(),
                 completed_at_ms: 2,
                 sender_thread_id,
+                sender_agent_path: sender_agent_path.clone(),
                 new_thread_id: Some(receiver_thread_id),
+                new_agent_path: Some(receiver_agent_path.clone()),
                 new_agent_nickname: Some("Scout".into()),
                 new_agent_role: Some("worker".into()),
                 prompt: "inspect".into(),
@@ -271,14 +277,18 @@ mod tests {
                 call_id: "send-begin".into(),
                 started_at_ms: 3,
                 sender_thread_id,
+                sender_agent_path: sender_agent_path.clone(),
                 receiver_thread_id,
+                receiver_agent_path: receiver_agent_path.clone(),
                 prompt: "continue".into(),
             }),
             EventMsg::CollabAgentInteractionEnd(CollabAgentInteractionEndEvent {
                 call_id: "send-end".into(),
                 completed_at_ms: 4,
                 sender_thread_id,
+                sender_agent_path: sender_agent_path.clone(),
                 receiver_thread_id,
+                receiver_agent_path: receiver_agent_path.clone(),
                 receiver_agent_nickname: None,
                 receiver_agent_role: None,
                 prompt: "continue".into(),
@@ -288,6 +298,7 @@ mod tests {
                 call_id: "wait-begin".into(),
                 started_at_ms: 5,
                 sender_thread_id,
+                sender_agent_path: sender_agent_path.clone(),
                 receiver_thread_ids: vec![receiver_thread_id],
                 receiver_agents: Vec::new(),
             }),
@@ -295,6 +306,7 @@ mod tests {
                 call_id: "wait-end".into(),
                 completed_at_ms: 6,
                 sender_thread_id,
+                sender_agent_path: sender_agent_path.clone(),
                 agent_statuses: Vec::new(),
                 statuses: [(receiver_thread_id, AgentStatus::Completed(None))]
                     .into_iter()
@@ -304,13 +316,17 @@ mod tests {
                 call_id: "close-begin".into(),
                 started_at_ms: 7,
                 sender_thread_id,
+                sender_agent_path: sender_agent_path.clone(),
                 receiver_thread_id,
+                receiver_agent_path: receiver_agent_path.clone(),
             }),
             EventMsg::CollabCloseEnd(CollabCloseEndEvent {
                 call_id: "close-end".into(),
                 completed_at_ms: 8,
                 sender_thread_id,
+                sender_agent_path: sender_agent_path.clone(),
                 receiver_thread_id,
+                receiver_agent_path: receiver_agent_path.clone(),
                 receiver_agent_nickname: None,
                 receiver_agent_role: None,
                 status: AgentStatus::Completed(None),
@@ -319,7 +335,9 @@ mod tests {
                 call_id: "resume-begin".into(),
                 started_at_ms: 9,
                 sender_thread_id,
+                sender_agent_path: sender_agent_path.clone(),
                 receiver_thread_id,
+                receiver_agent_path: receiver_agent_path.clone(),
                 receiver_agent_nickname: None,
                 receiver_agent_role: None,
             }),
@@ -327,7 +345,9 @@ mod tests {
                 call_id: "resume-end".into(),
                 completed_at_ms: 10,
                 sender_thread_id,
+                sender_agent_path,
                 receiver_thread_id,
+                receiver_agent_path,
                 receiver_agent_nickname: None,
                 receiver_agent_role: None,
                 status: AgentStatus::Completed(None),

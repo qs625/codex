@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import Editor from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 
@@ -14,11 +14,17 @@ import {
   SearchIcon,
 } from "./icons";
 import { ZoomableImage } from "./Conversation";
+import {
+  buildContextUsageAnalysis,
+  getContextUsageCategoryColor,
+  type ContextUsageAnalysis,
+} from "../lib/contextUsage";
 import type {
   FileLocation,
   FilePreview,
   RightPanelView,
   TaskFilter,
+  Thread,
   ThreadSkill,
   TodoCardItem,
 } from "../types";
@@ -39,6 +45,7 @@ function formatByteSize(bytes: number) {
 
 export function RightPanel({
   activeView,
+  availableSkillCount,
   onCreateRootThread,
   onNavigateToSymbol,
   onOpenPreviewExternally,
@@ -50,10 +57,12 @@ export function RightPanel({
   previewLoading,
   skills,
   selectedThreadId,
+  thread,
   taskFilter,
   todoItems,
 }: {
   activeView: RightPanelView;
+  availableSkillCount: number;
   onCreateRootThread: () => void;
   onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
   onOpenPreviewExternally: () => void;
@@ -65,10 +74,12 @@ export function RightPanel({
   previewLoading: boolean;
   skills: ThreadSkill[];
   selectedThreadId: string | null;
+  thread: Thread | null;
   taskFilter: TaskFilter;
   todoItems: TodoCardItem[];
 }) {
   const todoStats = buildTodoStats(todoItems);
+  const contextUsage = buildContextUsageAnalysis(thread, availableSkillCount);
 
   return (
     <aside className="right-panel">
@@ -85,7 +96,7 @@ export function RightPanel({
               todoItems={todoItems}
             />
           ) : activeView === "skills" ? (
-            <SkillsPanel skills={skills} />
+            <ContextUsagePanel contextUsage={contextUsage} />
           ) : (
             <FilePreviewPanel
               onNavigateToSymbol={onNavigateToSymbol}
@@ -98,7 +109,7 @@ export function RightPanel({
         </div>
 
         <nav className="panel-rail" aria-label="Right panel views">
-          {[
+          {([
             {
               view: "todo",
               label: "Todo Board",
@@ -107,9 +118,9 @@ export function RightPanel({
             },
             {
               view: "skills",
-              label: "Skills",
+              label: "Context Usage",
               icon: <GearIcon />,
-              badge: skills.length > 0 ? String(skills.length) : "",
+              badge: contextUsage.loadedSkills > 0 ? String(contextUsage.loadedSkills) : "",
             },
             {
               view: "preview",
@@ -135,7 +146,12 @@ export function RightPanel({
               icon: <GridIcon />,
               badge: "",
             },
-          ].map((item) => (
+          ] satisfies Array<{
+            view: RightPanelView | null;
+            label: string;
+            icon: ReactNode;
+            badge: string;
+          }>).map((item) => (
             <button
               key={item.label}
               type="button"
@@ -158,33 +174,143 @@ export function RightPanel({
   );
 }
 
-function SkillsPanel({ skills }: { skills: ThreadSkill[] }) {
+function ContextUsagePanel({ contextUsage }: { contextUsage: ContextUsageAnalysis }) {
   return (
-    <div className="skills-panel">
+    <div className="skills-panel context-usage-panel">
       <header className="panel-content-header">
         <div className="panel-content-copy">
-          <span className="panel-eyebrow">Thread Skills</span>
-          <h2>Applied Skills</h2>
-          <p>Skills observed on the selected thread so far.</p>
+          <span className="panel-eyebrow">Thread Analysis</span>
+          <h2>Context Usage</h2>
+          <p>Estimated mix of the current thread context.</p>
         </div>
       </header>
 
       <div className="skills-scroll">
-        {skills.length > 0 ? (
-          skills.map((skill) => (
-            <article key={`${skill.kind}:${skill.path}:${skill.name}`} className="skill-card">
-              <strong>{skill.name}</strong>
-              <div className="skill-meta-line">
-                <span className={`skill-kind-badge ${skill.kind}`}>{formatSkillKind(skill.kind)}</span>
-                <span className="skill-path" title={skill.path}>
-                  {skill.path}
-                </span>
+        <section className="context-budget-card">
+          <div className="context-budget-header">
+            <div>
+              <span className="context-budget-label">Estimated Budget Used</span>
+              <strong>{contextUsage.budgetUsedPercent}%</strong>
+            </div>
+            <span className="context-budget-note">Relative share only</span>
+          </div>
+          <div className="context-budget-track" aria-hidden="true">
+            <span
+              className="context-budget-fill"
+              style={{ width: `${contextUsage.budgetUsedPercent}%` }}
+            />
+          </div>
+          <div className="context-category-row">
+            {contextUsage.categories.map((category) => (
+              <div key={category.id} className="context-category-pill">
+                <span
+                  className="context-category-dot"
+                  style={{ backgroundColor: getContextUsageCategoryColor(category.id) }}
+                />
+                <span className="context-category-pill-label">{category.shortLabel}</span>
+                <span className="context-category-pill-value">{category.sharePercent}%</span>
               </div>
-            </article>
-          ))
+            ))}
+          </div>
+        </section>
+
+        <section className="context-section-card">
+          <div className="context-section-header">
+            <div>
+              <span className="context-section-eyebrow">Skills Analysis</span>
+              <strong>Loaded Skills</strong>
+            </div>
+            <span className="context-inline-metric">
+              {contextUsage.loadedSkills} / {contextUsage.totalSkills}
+            </span>
+          </div>
+
+          {contextUsage.loadedConcreteSkills.length > 0 ? (
+            <div className="context-skill-list">
+              {contextUsage.loadedConcreteSkills.map((skill) => (
+                <article key={`${skill.kind}:${skill.path}:${skill.name}`} className="context-skill-row">
+                  <div className="context-skill-copy">
+                    <strong>{skill.name}</strong>
+                    <span>loaded {skill.loadCount} time{skill.loadCount === 1 ? "" : "s"}</span>
+                  </div>
+                  <span className={`skill-kind-badge ${skill.kind}`}>{formatSkillKind(skill.kind)}</span>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-card">
+              <p>No loaded skills yet.</p>
+            </div>
+          )}
+        </section>
+
+        <section className="context-section-card">
+          <div className="context-section-header">
+            <div>
+              <span className="context-section-eyebrow">Context Over Time</span>
+              <strong>Turn Trend</strong>
+            </div>
+            <span className="context-inline-metric">{contextUsage.reasoningSharePercent}% reasoning</span>
+          </div>
+
+          {contextUsage.turnTrend.length > 0 ? (
+            <div className="context-trend-chart" aria-label="Context usage trend by turn">
+              {contextUsage.turnTrend.map((turn) => (
+                <div key={turn.turnId} className="context-trend-column">
+                  <div
+                    className="context-trend-bar"
+                    style={{ height: `${Math.max(10, Math.round(turn.intensity * 100))}%` }}
+                  />
+                  <span>{turn.label}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-card">
+              <p>No turn activity yet.</p>
+            </div>
+          )}
+        </section>
+
+        {contextUsage.categories.length > 0 ? (
+          <section className="context-section-card">
+            <div className="context-section-header">
+              <div>
+                <span className="context-section-eyebrow">Category Breakdown</span>
+                <strong>Context Mix</strong>
+              </div>
+            </div>
+
+            <div className="context-breakdown-list">
+              {contextUsage.categories.map((category) => (
+                <article key={category.id} className="context-breakdown-row">
+                  <div className="context-breakdown-copy">
+                    <div className="context-breakdown-title-line">
+                      <span
+                        className="context-category-dot"
+                        style={{ backgroundColor: getContextUsageCategoryColor(category.id) }}
+                      />
+                      <strong>{category.label}</strong>
+                      <span>{category.sharePercent}%</span>
+                    </div>
+                    <p>{category.description}</p>
+                  </div>
+                  <div className="context-breakdown-track" aria-hidden="true">
+                    <span
+                      className="context-breakdown-fill"
+                      style={{
+                        width: `${category.sharePercent}%`,
+                        backgroundColor: getContextUsageCategoryColor(category.id),
+                      }}
+                    />
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
         ) : (
           <div className="empty-card">
-            <p>No thread skills yet.</p>
+            <p>No context usage yet.</p>
           </div>
         )}
       </div>
@@ -480,20 +606,21 @@ function FilePreviewPanel({
 
                   pendingDefinitionRef.current = true;
                   event.event.browserEvent.preventDefault();
+                  const sourcePosition = event.target.position;
 
                   void window.codexDesktop
                     .lspDefinition({
                       path: preview.path,
-                      line: event.target.position.lineNumber,
-                      column: event.target.position.column,
+                      line: sourcePosition.lineNumber,
+                      column: sourcePosition.column,
                     })
                     .then((response) => {
                       const destination = response.locations[0];
                       if (response.enabled && destination) {
                         onNavigateToSymbol(destination, {
                           path: preview.path,
-                          line: event.target.position.lineNumber,
-                          column: event.target.position.column,
+                          line: sourcePosition.lineNumber,
+                          column: sourcePosition.column,
                         });
                       }
                     })

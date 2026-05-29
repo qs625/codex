@@ -196,6 +196,35 @@ export type ThreadSkill = {
   kind: ThreadSkillKind;
 };
 
+export type ThreadContextUsageCategoryBreakdown = {
+  compact: number;
+  skillsMetadata: number;
+  concreteSkills: number;
+  toolsMetadata: number;
+  toolCalls: number;
+  userMessages: number;
+  llmMessages: number;
+  reasoning: number;
+};
+
+export type ThreadContextUsageSkill = {
+  name: string;
+  path: string;
+  kind: ThreadSkillKind;
+  loadCount: number;
+};
+
+export type ThreadContextUsage = {
+  totalBytes: number;
+  budgetUsedPercent: number | null;
+  categories: ThreadContextUsageCategoryBreakdown;
+  loadedSkills: {
+    loadedCount: number;
+    totalCount: number | null;
+    skills: ThreadContextUsageSkill[];
+  };
+};
+
 export type Thread = {
   id: string;
   sessionId: string;
@@ -218,6 +247,7 @@ export type Thread = {
   gitInfo: unknown | null;
   name: string | null;
   skills: ThreadSkill[];
+  contextUsage?: ThreadContextUsage | null;
   turns: Turn[];
 };
 

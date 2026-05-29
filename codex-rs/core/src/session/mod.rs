@@ -29,6 +29,7 @@ use crate::context::ContextualUserFragment;
 use crate::context::NetworkRuleSaved;
 use crate::context::PermissionsInstructions;
 use crate::context::PersonalitySpecInstructions;
+use crate::context_usage::build_thread_context_usage;
 use crate::default_skill_metadata_budget;
 use crate::environment_selection::ResolvedTurnEnvironments;
 use crate::exec_policy::ExecPolicyManager;
@@ -108,6 +109,7 @@ use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
+use codex_protocol::protocol::ThreadContextUsageUpdatedEvent;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnContextItem;
@@ -2510,6 +2512,7 @@ impl Session {
         self.record_into_history(items, turn_context).await;
         self.persist_rollout_response_items(items).await;
         self.send_raw_response_items(turn_context, items).await;
+        self.send_thread_context_usage_event(turn_context).await;
     }
 
     /// Append ResponseItems to the in-memory conversation history only.
@@ -3060,6 +3063,19 @@ impl Session {
         };
         let event = EventMsg::TokenCount(TokenCountEvent { info, rate_limits });
         self.send_event(turn_context, event).await;
+        self.send_thread_context_usage_event(turn_context).await;
+    }
+
+    pub(crate) async fn send_thread_context_usage_event(&self, turn_context: &TurnContext) {
+        let usage = {
+            let state = self.state.lock().await;
+            build_thread_context_usage(&state.history, turn_context, &state.thread_skills())
+        };
+        self.send_event(
+            turn_context,
+            EventMsg::ThreadContextUsageUpdated(ThreadContextUsageUpdatedEvent { usage }),
+        )
+        .await;
     }
 
     pub(crate) async fn set_total_tokens_full(&self, turn_context: &TurnContext) {

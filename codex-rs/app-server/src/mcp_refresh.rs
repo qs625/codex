@@ -2,13 +2,11 @@ use crate::config_manager::ConfigManager;
 use codex_core::CodexThread;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
-use codex_file_watcher::FileWatcher;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::Op;
 use std::io;
 use std::sync::Arc;
-use std::sync::Weak;
 use tracing::warn;
 
 pub(crate) async fn queue_strict_refresh(
@@ -116,6 +114,7 @@ mod tests {
     use codex_core::init_state_db;
     use codex_core::thread_store_from_config;
     use codex_exec_server::EnvironmentManager;
+    use codex_file_watcher::FileWatcher;
     use codex_login::AuthManager;
     use codex_login::CodexAuth;
     use codex_protocol::protocol::SessionSource;
@@ -123,6 +122,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
+    use std::sync::Weak;
     use tempfile::TempDir;
 
     #[tokio::test]

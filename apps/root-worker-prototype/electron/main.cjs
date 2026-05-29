@@ -314,6 +314,16 @@ function normalizeNotification(notification) {
     };
   }
 
+  if (notification.method === "thread/contextUsage/updated") {
+    return {
+      ...notification,
+      params: {
+        ...notification.params,
+        contextUsage: normalizeThreadContextUsage(notification.params.contextUsage),
+      },
+    };
+  }
+
   if (notification.method === "turn/started" || notification.method === "turn/completed") {
     return {
       ...notification,
@@ -344,11 +354,39 @@ function normalizeThread(thread, runtime = null) {
     reasoningEffort: runtime?.reasoningEffort ?? thread.reasoningEffort ?? null,
     status: normalizeStatusValue(thread.status),
     skills: (thread.skills ?? []).map(normalizeThreadSkill),
+    ...(Object.prototype.hasOwnProperty.call(thread, "contextUsage")
+      ? {
+          contextUsage: thread.contextUsage
+            ? normalizeThreadContextUsage(thread.contextUsage)
+            : null,
+        }
+      : {}),
     turns: (thread.turns ?? []).map(normalizeTurn),
   };
 }
 
 function normalizeThreadSkill(skill) {
+  return {
+    ...skill,
+    kind: normalizeThreadSkillKind(skill?.kind),
+  };
+}
+
+function normalizeThreadContextUsage(contextUsage) {
+  if (!contextUsage || typeof contextUsage !== "object") {
+    return null;
+  }
+
+  return {
+    ...contextUsage,
+    loadedSkills: {
+      ...contextUsage.loadedSkills,
+      skills: (contextUsage.loadedSkills?.skills ?? []).map(normalizeThreadSkillUsage),
+    },
+  };
+}
+
+function normalizeThreadSkillUsage(skill) {
   return {
     ...skill,
     kind: normalizeThreadSkillKind(skill?.kind),

@@ -40,6 +40,7 @@ import type {
   RightPanelView,
   TaskFilter,
   Thread,
+  ThreadContextUsage,
   ThreadItem,
   ThreadSkill,
   TreeMenuState,
@@ -414,6 +415,15 @@ function App() {
     );
   }
 
+  function updateThreadContextUsageLocally(threadId: string, contextUsage: ThreadContextUsage) {
+    setThreads((current) =>
+      current.map((thread) => (thread.id === threadId ? { ...thread, contextUsage } : thread)),
+    );
+    setSelectedThread((current) =>
+      current?.id === threadId ? { ...current, contextUsage } : current,
+    );
+  }
+
   async function loadThread(threadId: string) {
     setIsLoadingThread(true);
     setError(null);
@@ -657,6 +667,11 @@ function App() {
         case "thread/skills/updated": {
           const notification = params as { threadId: string; skills: ThreadSkill[] };
           updateThreadSkillsLocally(notification.threadId, notification.skills);
+          break;
+        }
+        case "thread/contextUsage/updated": {
+          const notification = params as { threadId: string; contextUsage: ThreadContextUsage };
+          updateThreadContextUsageLocally(notification.threadId, notification.contextUsage);
           break;
         }
         case "skills/changed": {
@@ -911,6 +926,7 @@ function App() {
         />
         <RightPanel
           activeView={rightPanelView}
+          availableSkillCount={availableSkills.length}
           onCreateRootThread={() => void createRootThread()}
           onNavigateToSymbol={(destination, sourceLocation) =>
             void handleNavigateToSymbol(destination, sourceLocation)}
@@ -923,6 +939,7 @@ function App() {
           previewLoading={isLoadingPreview}
           skills={selectedThread?.skills ?? []}
           selectedThreadId={selectedThreadId}
+          thread={selectedThread}
           taskFilter={taskFilter}
           todoItems={todoItems}
         />
