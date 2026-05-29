@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type ClipboardEvent, type RefObject } from "react";
 
 import { AgentTreeNode } from "./AgentTree";
-import { EventRow, MessageRow, ThinkingIndicator, ToolRow } from "./Conversation";
+import { ThinkingIndicator } from "./Conversation";
+import { ConversationVirtualList } from "./ConversationVirtualList";
 import {
   CodeIcon,
   GearIcon,
@@ -248,19 +249,11 @@ export function ConversationPanel({
       >
         {selectedThread ? (
           conversationCells.length > 0 ? (
-            conversationCells.map((cell) =>
-              cell.kind === "event" ? (
-                <EventRow key={cell.id} entry={cell.entries[0]} />
-              ) : cell.kind === "tool" ? (
-                <ToolRow key={cell.id} entries={cell.entries} />
-              ) : (
-                <MessageRow
-                  key={cell.id}
-                  entries={cell.entries}
-                  onOpenLocalFile={onOpenLocalFile}
-                />
-              ),
-            )
+            <ConversationVirtualList
+              cells={conversationCells}
+              containerRef={conversationScrollRef}
+              onOpenLocalFile={onOpenLocalFile}
+            />
           ) : (
             <div className="conversation-empty">
               <p>Select this agent and start the work from the composer below.</p>

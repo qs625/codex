@@ -464,6 +464,18 @@ svg {
     radial-gradient(circle at top center, rgba(245, 245, 244, 0.65), transparent 52%);
 }
 
+.conversation-virtual-list {
+  position: relative;
+  width: 100%;
+}
+
+.conversation-virtual-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+}
+
 .message-row,
 .event-row,
 .tool-row {
