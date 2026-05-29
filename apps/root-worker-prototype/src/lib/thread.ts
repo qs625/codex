@@ -351,12 +351,25 @@ export function mergeTurn(existing: Turn, next: Turn): Turn {
   };
 }
 
+export function mergeThreadSnapshot(existing: Thread | null, next: Thread) {
+  if (!existing || existing.id !== next.id) {
+    return next;
+  }
+
+  return {
+    ...existing,
+    ...next,
+  };
+}
+
 export function upsertThread(threads: Thread[], next: Thread) {
   const existing = threads.find((thread) => thread.id === next.id);
   if (!existing) {
     return [...threads, next];
   }
-  return threads.map((thread) => (thread.id === next.id ? { ...thread, ...next } : thread));
+  return threads.map((thread) =>
+    thread.id === next.id ? mergeThreadSnapshot(thread, next) : thread,
+  );
 }
 
 export function threadStatusClass(status: string) {

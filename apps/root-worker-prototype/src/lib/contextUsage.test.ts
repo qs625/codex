@@ -125,7 +125,7 @@ test("builds compact context usage analysis with loaded skill ratios and timelin
   );
 });
 
-test("uses token usage for budget percent and context usage ratios for token distribution", () => {
+test("uses last token usage for budget percent and context usage ratios for token distribution", () => {
   const thread = makeThread(
     [
       {
@@ -195,7 +195,7 @@ test("uses token usage for budget percent and context usage ratios for token dis
   const analysis = buildContextUsageAnalysis(thread, 12);
 
   assert.equal(analysis.hasBudgetData, true);
-  assert.equal(analysis.budgetUsedPercent, 50);
+  assert.equal(analysis.budgetUsedPercent, 9);
   assert.equal(analysis.loadedSkills, 1);
   assert.equal(analysis.loadedConcreteSkills.length, 1);
   assert.equal(analysis.loadedConcreteSkills[0]?.name, "openai-docs");
@@ -204,4 +204,70 @@ test("uses token usage for budget percent and context usage ratios for token dis
   assert.equal(analysis.turnTrend.rows.find((row) => row.id === "llmMessages")?.cells.length, 1);
   assert.equal(analysis.categories.find((row) => row.id === "llmMessages")?.sharePercent, 19.9);
   assert.equal(analysis.categories.find((row) => row.id === "llmMessages")?.units, 19900);
+});
+
+test("uses last token usage instead of cumulative token usage for budget percent", () => {
+  const thread = makeThread([]);
+
+  thread.contextUsage = {
+    totalBytes: 128430,
+    budgetUsedPercent: 91,
+    categories: {
+      compact: 0,
+      skillsMetadata: 0,
+      concreteSkills: 0,
+      toolsMetadata: 0,
+      toolCalls: 0,
+      userMessages: 0,
+      llmMessages: 0,
+      reasoning: 0,
+    },
+    loadedSkills: {
+      loadedCount: 0,
+      totalCount: 0,
+      skills: [],
+    },
+  };
+  thread.tokenUsage = {
+    total: {
+      totalTokens: 25000,
+      inputTokens: 16000,
+      cachedInputTokens: 5000,
+      outputTokens: 9000,
+      reasoningOutputTokens: 2000,
+    },
+    last: {
+      totalTokens: 4000,
+      inputTokens: 2500,
+      cachedInputTokens: 700,
+      outputTokens: 1500,
+      reasoningOutputTokens: 400,
+    },
+    modelContextWindow: 100000,
+  };
+
+  const analysis = buildContextUsageAnalysis(thread, 0);
+
+  assert.equal(analysis.hasBudgetData, true);
+  assert.equal(analysis.budgetUsedPercent, 4);
+});
+
+test("caps turn trend to the most recent turns", () => {
+  const thread = makeThread([]);
+  thread.turns = Array.from({ length: 20 }, (_, index) => ({
+    id: `turn-${index + 1}`,
+    items: [],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: index + 1,
+    completedAt: index + 1,
+    durationMs: 0,
+  }));
+
+  const analysis = buildContextUsageAnalysis(thread, 0);
+
+  assert.equal(analysis.turnTrend.turns.length, 16);
+  assert.equal(analysis.turnTrend.turns[0]?.label, "5");
+  assert.equal(analysis.turnTrend.turns.at(-1)?.label, "20");
 });
