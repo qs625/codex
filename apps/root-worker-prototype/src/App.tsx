@@ -51,6 +51,7 @@ import type {
   ThreadContextUsage,
   ThreadItem,
   ThreadSkill,
+  ThreadTokenUsage,
   TreeMenuState,
   Turn,
 } from "./types";
@@ -471,6 +472,15 @@ function App() {
     );
   }
 
+  function updateThreadTokenUsageLocally(threadId: string, tokenUsage: ThreadTokenUsage) {
+    setThreads((current) =>
+      current.map((thread) => (thread.id === threadId ? { ...thread, tokenUsage } : thread)),
+    );
+    setSelectedThread((current) =>
+      current?.id === threadId ? { ...current, tokenUsage } : current,
+    );
+  }
+
   async function loadThread(threadId: string) {
     setIsLoadingThread(true);
     setError(null);
@@ -765,6 +775,11 @@ function App() {
         case "thread/contextUsage/updated": {
           const notification = params as { threadId: string; contextUsage: ThreadContextUsage };
           updateThreadContextUsageLocally(notification.threadId, notification.contextUsage);
+          break;
+        }
+        case "thread/tokenUsage/updated": {
+          const notification = params as { threadId: string; tokenUsage: ThreadTokenUsage };
+          updateThreadTokenUsageLocally(notification.threadId, notification.tokenUsage);
           break;
         }
         case "skills/changed": {

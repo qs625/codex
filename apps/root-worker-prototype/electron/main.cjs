@@ -286,6 +286,16 @@ function normalizeNotification(notification) {
     };
   }
 
+  if (notification.method === "thread/tokenUsage/updated") {
+    return {
+      ...notification,
+      params: {
+        ...notification.params,
+        tokenUsage: normalizeThreadTokenUsage(notification.params.tokenUsage),
+      },
+    };
+  }
+
   if (notification.method === "thread/contextUsage/updated") {
     return {
       ...notification,
@@ -326,6 +336,13 @@ function normalizeThread(thread, runtime = null) {
     reasoningEffort: runtime?.reasoningEffort ?? thread.reasoningEffort ?? null,
     status: normalizeStatusValue(thread.status),
     skills: (thread.skills ?? []).map(normalizeThreadSkill),
+    ...(Object.prototype.hasOwnProperty.call(thread, "tokenUsage")
+      ? {
+          tokenUsage: thread.tokenUsage
+            ? normalizeThreadTokenUsage(thread.tokenUsage)
+            : null,
+        }
+      : {}),
     ...(Object.prototype.hasOwnProperty.call(thread, "contextUsage")
       ? {
           contextUsage: thread.contextUsage
@@ -355,6 +372,32 @@ function normalizeThreadContextUsage(contextUsage) {
       ...contextUsage.loadedSkills,
       skills: (contextUsage.loadedSkills?.skills ?? []).map(normalizeThreadSkillUsage),
     },
+  };
+}
+
+function normalizeThreadTokenUsage(tokenUsage) {
+  if (!tokenUsage || typeof tokenUsage !== "object") {
+    return null;
+  }
+
+  return {
+    ...tokenUsage,
+    total: normalizeTokenUsageBreakdown(tokenUsage.total),
+    last: normalizeTokenUsageBreakdown(tokenUsage.last),
+    modelContextWindow:
+      typeof tokenUsage.modelContextWindow === "number"
+        ? tokenUsage.modelContextWindow
+        : null,
+  };
+}
+
+function normalizeTokenUsageBreakdown(usage) {
+  return {
+    totalTokens: Number(usage?.totalTokens ?? 0),
+    inputTokens: Number(usage?.inputTokens ?? 0),
+    cachedInputTokens: Number(usage?.cachedInputTokens ?? 0),
+    outputTokens: Number(usage?.outputTokens ?? 0),
+    reasoningOutputTokens: Number(usage?.reasoningOutputTokens ?? 0),
   };
 }
 

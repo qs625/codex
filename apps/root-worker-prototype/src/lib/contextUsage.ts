@@ -1,4 +1,10 @@
-import type { Thread, ThreadContextUsage, ThreadItem, ThreadSkill } from "../types";
+import type {
+  Thread,
+  ThreadContextUsage,
+  ThreadItem,
+  ThreadSkill,
+  ThreadTokenUsage,
+} from "../types";
 
 export type ContextUsageCategoryId =
   | "compact"
@@ -26,7 +32,23 @@ export type LoadedSkillSummary = {
   loadCount: number;
 };
 
+export type ContextUsageTurnTrendCell = {
+  turnId: string;
+  label: string;
+  units: number;
+  intensity: number;
+};
+
+export type ContextUsageTurnTrendRow = {
+  id: ContextUsageCategoryId;
+  label: string;
+  shortLabel: string;
+  color: string;
+  cells: ContextUsageTurnTrendCell[];
+};
+
 export type ContextUsageAnalysis = {
+  hasBudgetData: boolean;
   budgetUsedPercent: number;
   loadedSkills: number;
   totalSkills: number;
@@ -34,11 +56,13 @@ export type ContextUsageAnalysis = {
   reasoningSharePercent: number;
   categories: ContextUsageCategorySummary[];
   loadedConcreteSkills: LoadedSkillSummary[];
-  turnTrend: Array<{
-    turnId: string;
-    label: string;
-    intensity: number;
-  }>;
+  turnTrend: {
+    turns: Array<{
+      turnId: string;
+      label: string;
+    }>;
+    rows: ContextUsageTurnTrendRow[];
+  };
 };
 
 const CATEGORY_ORDER: Array<{
@@ -55,9 +79,9 @@ const CATEGORY_ORDER: Array<{
   },
   {
     id: "skillsMetadata",
-    label: "Skills Metadata",
-    shortLabel: "Meta",
-    description: "Skill registry and invocation metadata",
+    label: "Skill Setup",
+    shortLabel: "Skill Setup",
+    description: "Skill names, routing hints, and load directives kept in context",
   },
   {
     id: "concreteSkills",
@@ -73,9 +97,9 @@ const CATEGORY_ORDER: Array<{
   },
   {
     id: "toolCalls",
-    label: "Tool Calls",
-    shortLabel: "Calls",
-    description: "Arguments, outputs, and execution traces",
+    label: "Tool Inputs & Results",
+    shortLabel: "Tool I/O",
+    description: "Tool arguments, returned results, and execution output kept in context",
   },
   {
     id: "userMessages",
@@ -108,8 +132,6 @@ const CATEGORY_COLORS: Record<ContextUsageCategoryId, string> = {
   reasoning: "#8b5cf6",
 };
 
-const ESTIMATED_BUDGET_UNITS = 18000;
-
 export function getContextUsageCategoryColor(categoryId: ContextUsageCategoryId) {
   return CATEGORY_COLORS[categoryId];
 }
@@ -118,16 +140,9 @@ export function buildContextUsageAnalysis(
   thread: Thread | null,
   totalSkillMetadataCount: number,
 ): ContextUsageAnalysis {
-  if (thread?.contextUsage) {
-    return buildContextUsageAnalysisFromBackend(
-      thread.contextUsage,
-      thread,
-      totalSkillMetadataCount,
-    );
-  }
-
   if (!thread) {
     return {
+      hasBudgetData: false,
       budgetUsedPercent: 0,
       loadedSkills: 0,
       totalSkills: totalSkillMetadataCount,
@@ -139,49 +154,34 @@ export function buildContextUsageAnalysis(
         sharePercent: 0,
       })),
       loadedConcreteSkills: [],
-      turnTrend: [],
+      turnTrend: {
+        turns: [],
+        rows: CATEGORY_ORDER.map((category) => ({
+          id: category.id,
+          label: category.label,
+          shortLabel: category.shortLabel,
+          color: getContextUsageCategoryColor(category.id),
+          cells: [],
+        })),
+      },
     };
   }
 
-  const categoryUnits = initializeCategoryUnits();
-  const turnUnits: Array<{ turnId: string; totalUnits: number }> = [];
-  const skillLoads = new Map<string, LoadedSkillSummary>();
+  const { skillLoads, turnTrend } = collectThreadUsage(thread);
 
-  for (const skill of thread.skills) {
-    skillLoads.set(skill.path, {
-      name: skill.name,
-      path: skill.path,
-      kind: skill.kind,
-      loadCount: 0,
-    });
+  if (thread.contextUsage) {
+    const loadedConcreteSkills = mergeLoadedSkills(skillLoads, thread.contextUsage);
+    const totalConcreteLoads = loadedConcreteSkills.reduce((sum, skill) => sum + skill.loadCount, 0);
+    return buildContextUsageAnalysisFromBackend(
+      thread.contextUsage,
+      thread,
+      totalSkillMetadataCount,
+      loadedConcreteSkills,
+      totalConcreteLoads,
+      turnTrend,
+    );
   }
 
-  for (const turn of thread.turns) {
-    const perTurnUnits = initializeCategoryUnits();
-
-    for (const item of turn.items) {
-      accumulateItemUnits(item, perTurnUnits, skillLoads);
-    }
-
-    for (const category of CATEGORY_ORDER) {
-      categoryUnits[category.id] += perTurnUnits[category.id];
-    }
-
-    turnUnits.push({
-      turnId: turn.id,
-      totalUnits: sumCategoryUnits(perTurnUnits),
-    });
-  }
-
-  const totalUnits = sumCategoryUnits(categoryUnits);
-  const categories = CATEGORY_ORDER.map((category) => {
-    const units = categoryUnits[category.id];
-    return {
-      ...category,
-      units,
-      sharePercent: totalUnits > 0 ? roundPercent((units / totalUnits) * 100) : 0,
-    };
-  });
   const loadedConcreteSkills = [...skillLoads.values()]
     .map((skill) => ({
       ...skill,
@@ -189,24 +189,22 @@ export function buildContextUsageAnalysis(
     }))
     .sort((left, right) => right.loadCount - left.loadCount || left.name.localeCompare(right.name));
   const totalConcreteLoads = loadedConcreteSkills.reduce((sum, skill) => sum + skill.loadCount, 0);
-  const reasoningSharePercent = categories.find((category) => category.id === "reasoning")?.sharePercent ?? 0;
   const normalizedTotalSkills = Math.max(totalSkillMetadataCount, loadedConcreteSkills.length);
-  const maxTurnUnits = Math.max(...turnUnits.map((turn) => turn.totalUnits), 0);
 
   return {
-    budgetUsedPercent:
-      totalUnits > 0 ? Math.min(100, Math.max(1, roundPercent((totalUnits / ESTIMATED_BUDGET_UNITS) * 100))) : 0,
+    hasBudgetData: hasTokenUsage(thread.tokenUsage),
+    budgetUsedPercent: budgetPercentFromTokenUsage(thread.tokenUsage),
     loadedSkills: loadedConcreteSkills.length,
     totalSkills: normalizedTotalSkills,
     totalConcreteLoads,
-    reasoningSharePercent,
-    categories,
-    loadedConcreteSkills,
-    turnTrend: turnUnits.map((turn, index) => ({
-      turnId: turn.turnId,
-      label: String(index + 1),
-      intensity: maxTurnUnits > 0 ? turn.totalUnits / maxTurnUnits : 0,
+    reasoningSharePercent: 0,
+    categories: CATEGORY_ORDER.map((category) => ({
+      ...category,
+      units: 0,
+      sharePercent: 0,
     })),
+    loadedConcreteSkills,
+    turnTrend,
   };
 }
 
@@ -214,48 +212,45 @@ function buildContextUsageAnalysisFromBackend(
   contextUsage: ThreadContextUsage,
   thread: Thread,
   totalSkillMetadataCount: number,
+  loadedConcreteSkills: LoadedSkillSummary[],
+  totalConcreteLoads: number,
+  turnTrend: ContextUsageAnalysis["turnTrend"],
 ): ContextUsageAnalysis {
-  const categoryUnits = initializeCategoryUnits();
-  categoryUnits.compact = contextUsage.categories.compact;
-  categoryUnits.skillsMetadata = contextUsage.categories.skillsMetadata;
-  categoryUnits.concreteSkills = contextUsage.categories.concreteSkills;
-  categoryUnits.toolsMetadata = contextUsage.categories.toolsMetadata;
-  categoryUnits.toolCalls = contextUsage.categories.toolCalls;
-  categoryUnits.userMessages = contextUsage.categories.userMessages;
-  categoryUnits.llmMessages = contextUsage.categories.llmMessages;
-  categoryUnits.reasoning = contextUsage.categories.reasoning;
+  const rawCategoryUnits = initializeCategoryUnits();
+  rawCategoryUnits.compact = contextUsage.categories.compact;
+  rawCategoryUnits.skillsMetadata = contextUsage.categories.skillsMetadata;
+  rawCategoryUnits.concreteSkills = contextUsage.categories.concreteSkills;
+  rawCategoryUnits.toolsMetadata = contextUsage.categories.toolsMetadata;
+  rawCategoryUnits.toolCalls = contextUsage.categories.toolCalls;
+  rawCategoryUnits.userMessages = contextUsage.categories.userMessages;
+  rawCategoryUnits.llmMessages = contextUsage.categories.llmMessages;
+  rawCategoryUnits.reasoning = contextUsage.categories.reasoning;
 
-  const totalUnits = sumCategoryUnits(categoryUnits);
+  const totalUnits = sumCategoryUnits(rawCategoryUnits);
+  const totalUsedTokens = thread.tokenUsage?.total.totalTokens ?? 0;
   const categories = CATEGORY_ORDER.map((category) => {
-    const units = categoryUnits[category.id];
+    const units = rawCategoryUnits[category.id];
+    const sharePercent = totalUnits > 0 ? roundPercent((units / totalUnits) * 100) : 0;
     return {
       ...category,
-      units,
-      sharePercent: totalUnits > 0 ? roundPercent((units / totalUnits) * 100) : 0,
+      units: totalUsedTokens > 0 ? Math.round((sharePercent / 100) * totalUsedTokens) : 0,
+      sharePercent,
     };
   });
-  const loadedConcreteSkills = [...(contextUsage.loadedSkills.skills ?? [])]
-    .map((skill) => ({
-      name: skill.name,
-      path: skill.path,
-      kind: skill.kind,
-      loadCount: skill.loadCount,
-    }))
-    .sort((left, right) => right.loadCount - left.loadCount || left.name.localeCompare(right.name));
-  const totalConcreteLoads = loadedConcreteSkills.reduce((sum, skill) => sum + skill.loadCount, 0);
   const reasoningSharePercent = categories.find((category) => category.id === "reasoning")?.sharePercent ?? 0;
   const normalizedTotalSkills =
     contextUsage.loadedSkills.totalCount ?? Math.max(totalSkillMetadataCount, loadedConcreteSkills.length);
 
   return {
-    budgetUsedPercent: contextUsage.budgetUsedPercent ?? 0,
-    loadedSkills: contextUsage.loadedSkills.loadedCount,
+    hasBudgetData: hasTokenUsage(thread.tokenUsage),
+    budgetUsedPercent: budgetPercentFromTokenUsage(thread.tokenUsage),
+    loadedSkills: Math.max(contextUsage.loadedSkills.loadedCount, loadedConcreteSkills.length),
     totalSkills: normalizedTotalSkills,
     totalConcreteLoads,
     reasoningSharePercent,
     categories,
     loadedConcreteSkills,
-    turnTrend: buildTurnTrend(thread),
+    turnTrend,
   };
 }
 
@@ -272,18 +267,113 @@ function initializeCategoryUnits(): Record<ContextUsageCategoryId, number> {
   };
 }
 
-function buildTurnTrend(thread: Thread) {
-  const turnUnits = thread.turns.map((turn) => ({
-    turnId: turn.id,
-    totalUnits: turn.items.length,
-  }));
-  const maxTurnUnits = Math.max(...turnUnits.map((turn) => turn.totalUnits), 0);
+function mergeLoadedSkills(
+  skillLoads: Map<string, LoadedSkillSummary>,
+  contextUsage: ThreadContextUsage,
+) {
+  const merged = new Map<string, LoadedSkillSummary>();
 
-  return turnUnits.map((turn, index) => ({
-    turnId: turn.turnId,
-    label: String(index + 1),
-    intensity: maxTurnUnits > 0 ? turn.totalUnits / maxTurnUnits : 0,
-  }));
+  for (const skill of skillLoads.values()) {
+    merged.set(skill.path, {
+      ...skill,
+      loadCount: Math.max(skill.loadCount, 1),
+    });
+  }
+
+  for (const skill of contextUsage.loadedSkills.skills ?? []) {
+    merged.set(skill.path, {
+      name: skill.name,
+      path: skill.path,
+      kind: skill.kind,
+      loadCount: Math.max(skill.loadCount, merged.get(skill.path)?.loadCount ?? 0, 1),
+    });
+  }
+
+  return [...merged.values()].sort(
+    (left, right) => right.loadCount - left.loadCount || left.name.localeCompare(right.name),
+  );
+}
+
+function buildTurnTrend(thread: Thread) {
+  return collectThreadUsage(thread).turnTrend;
+}
+
+function collectThreadUsage(thread: Thread) {
+  const categoryUnits = initializeCategoryUnits();
+  const turnCategoryUnits: Array<{
+    turnId: string;
+    label: string;
+    units: Record<ContextUsageCategoryId, number>;
+  }> = [];
+  const skillLoads = new Map<string, LoadedSkillSummary>();
+
+  for (const skill of thread.skills) {
+    skillLoads.set(skill.path, {
+      name: skill.name,
+      path: skill.path,
+      kind: skill.kind,
+      loadCount: 0,
+    });
+  }
+
+  thread.turns.forEach((turn, index) => {
+    const perTurnUnits = initializeCategoryUnits();
+
+    for (const item of turn.items) {
+      accumulateItemUnits(item, perTurnUnits, skillLoads);
+    }
+
+    for (const category of CATEGORY_ORDER) {
+      categoryUnits[category.id] += perTurnUnits[category.id];
+    }
+
+    turnCategoryUnits.push({
+      turnId: turn.id,
+      label: String(index + 1),
+      units: perTurnUnits,
+    });
+  });
+
+  return {
+    categoryUnits,
+    skillLoads,
+    turnTrend: buildTurnTrendRows(turnCategoryUnits),
+  };
+}
+
+function buildTurnTrendRows(
+  turns: Array<{
+    turnId: string;
+    label: string;
+    units: Record<ContextUsageCategoryId, number>;
+  }>,
+) {
+  const maxCategoryUnits = Math.max(
+    ...turns.flatMap((turn) => CATEGORY_ORDER.map((category) => turn.units[category.id])),
+    0,
+  );
+
+  return {
+    turns: turns.map((turn) => ({
+      turnId: turn.turnId,
+      label: turn.label,
+    })),
+    rows: CATEGORY_ORDER.map((category) => ({
+      id: category.id,
+      label: category.label,
+      shortLabel: category.shortLabel,
+      color: getContextUsageCategoryColor(category.id),
+      cells: turns.map((turn) => {
+        const units = turn.units[category.id];
+        return {
+          turnId: turn.turnId,
+          label: turn.label,
+          units,
+          intensity: maxCategoryUnits > 0 ? units / maxCategoryUnits : 0,
+        };
+      }),
+    })),
+  };
 }
 
 function sumCategoryUnits(units: Record<ContextUsageCategoryId, number>) {
@@ -438,4 +528,26 @@ function estimateObjectUnits(value: unknown) {
 
 function roundPercent(value: number) {
   return Math.round(value * 10) / 10;
+}
+
+function sanitizePercent(value: number | null | undefined) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, roundPercent(value ?? 0)));
+}
+
+function budgetPercentFromTokenUsage(tokenUsage: ThreadTokenUsage | null | undefined) {
+  const totalTokens = tokenUsage?.total.totalTokens ?? 0;
+  const modelContextWindow = tokenUsage?.modelContextWindow ?? 0;
+
+  if (modelContextWindow <= 0 || totalTokens <= 0) {
+    return 0;
+  }
+
+  return sanitizePercent((totalTokens / modelContextWindow) * 100);
+}
+
+function hasTokenUsage(tokenUsage: ThreadTokenUsage | null | undefined) {
+  return (tokenUsage?.modelContextWindow ?? 0) > 0 && (tokenUsage?.total.totalTokens ?? 0) > 0;
 }
