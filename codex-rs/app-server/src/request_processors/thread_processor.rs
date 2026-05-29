@@ -2226,15 +2226,25 @@ impl ThreadRequestProcessor {
                         .rev()
                         .find(|item| matches!(item, ThreadItem::AgentMessage { .. }))
                         .cloned();
-                    turn.items = match (first_user_message, final_agent_message) {
-                        (Some(user_message), Some(agent_message))
+                    let initial_injected_context = turn
+                        .items
+                        .iter()
+                        .find(|item| matches!(item, ThreadItem::InjectedContext { .. }))
+                        .cloned();
+                    turn.items = match (
+                        first_user_message,
+                        final_agent_message,
+                        initial_injected_context,
+                    ) {
+                        (Some(user_message), Some(agent_message), _)
                             if user_message.id() != agent_message.id() =>
                         {
                             vec![user_message, agent_message]
                         }
-                        (Some(user_message), _) => vec![user_message],
-                        (None, Some(agent_message)) => vec![agent_message],
-                        (None, None) => Vec::new(),
+                        (Some(user_message), _, _) => vec![user_message],
+                        (None, Some(agent_message), _) => vec![agent_message],
+                        (None, None, Some(injected_context)) => vec![injected_context],
+                        (None, None, None) => Vec::new(),
                     };
                     turn.items_view = TurnItemsView::Summary;
                 }

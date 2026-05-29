@@ -1682,15 +1682,45 @@ async fn record_initial_history_reconstructs_resumed_transcript() {
 }
 
 #[tokio::test]
-async fn record_initial_history_new_defers_initial_context_until_first_turn() {
-    let (session, _turn_context) = make_session_and_context().await;
+async fn record_initial_history_new_materializes_initial_context_immediately() {
+    let (mut session, _turn_context) = make_session_and_context().await;
+    let rollout_path = attach_thread_persistence(&mut session).await;
 
     session.record_initial_history(InitialHistory::New).await;
 
     let history = session.clone_history().await;
-    assert_eq!(history.raw_items().to_vec(), Vec::<ResponseItem>::new());
-    assert!(session.reference_context_item().await.is_none());
+    assert!(
+        !history.raw_items().is_empty(),
+        "new threads should record initial context into history immediately"
+    );
+    let current_context = session.reference_context_item().await;
+    assert!(
+        current_context.is_some(),
+        "new threads should seed a context baseline"
+    );
     assert_eq!(session.previous_turn_settings().await, None);
+
+    let InitialHistory::Resumed(resumed) = RolloutRecorder::get_rollout_history(&rollout_path)
+        .await
+        .expect("read rollout history")
+    else {
+        panic!("expected resumed rollout history");
+    };
+    assert!(
+        resumed.history.iter().any(|item| matches!(
+            item,
+            RolloutItem::ResponseItem(ResponseItem::Message { .. })
+        )),
+        "materialized rollout should include the initial context messages"
+    );
+    let persisted_turn_context = resumed.history.iter().find_map(|item| match item {
+        RolloutItem::TurnContext(ctx) => Some(ctx.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        serde_json::to_value(persisted_turn_context).expect("serialize persisted turn context"),
+        serde_json::to_value(current_context).expect("serialize current turn context")
+    );
 }
 
 #[tokio::test]

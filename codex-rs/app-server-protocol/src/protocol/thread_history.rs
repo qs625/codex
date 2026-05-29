@@ -83,6 +83,8 @@ use crate::protocol::v2::PatchApplyStatus;
 #[cfg(test)]
 use crate::protocol::v2::PatchChangeKind;
 #[cfg(test)]
+use codex_protocol::config_types::ModeKind;
+#[cfg(test)]
 use codex_protocol::protocol::ExecCommandStatus as CoreExecCommandStatus;
 #[cfg(test)]
 use codex_protocol::protocol::PatchApplyStatus as CorePatchApplyStatus;
@@ -415,9 +417,7 @@ impl ThreadHistoryBuilder {
     fn is_initial_injected_context_window(&self) -> bool {
         self.turns.is_empty()
             && self.current_turn.as_ref().is_none_or(|turn| {
-                !turn.opened_explicitly
-                    && (turn.items.is_empty() || turn.has_only_injected_context())
-                    && !turn.saw_compaction
+                (turn.items.is_empty() || turn.has_only_injected_context()) && !turn.saw_compaction
             })
     }
 
@@ -3798,6 +3798,42 @@ mod tests {
                 ],
             }
         );
+        assert!(matches!(turns[0].items[1], ThreadItem::UserMessage { .. }));
+    }
+
+    #[test]
+    fn rebuilds_initial_injected_context_after_explicit_turn_start() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-a".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: ModeKind::Default,
+            })),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: Some("developer-context".into()),
+                role: "developer".into(),
+                content: vec![ContentItem::InputText {
+                    text: "<permissions instructions>\nSandbox: workspace-write\n</permissions instructions>"
+                        .into(),
+                }],
+                phase: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+                message: "hello".into(),
+                images: None,
+                text_elements: Vec::new(),
+                local_images: Vec::new(),
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert!(matches!(
+            turns[0].items[0],
+            ThreadItem::InjectedContext { .. }
+        ));
         assert!(matches!(turns[0].items[1], ThreadItem::UserMessage { .. }));
     }
 }

@@ -1180,10 +1180,12 @@ impl Session {
         }
         match conversation_history {
             InitialHistory::New | InitialHistory::Cleared => {
-                // Defer initial context insertion until the first real turn starts so
-                // turn/start overrides can be merged before we write model-visible context.
                 self.set_previous_turn_settings(/*previous_turn_settings*/ None)
                     .await;
+                self.record_context_updates_and_set_reference_context_item(&turn_context)
+                    .await;
+                self.ensure_rollout_materialized().await;
+                let _ = self.flush_rollout().await;
             }
             InitialHistory::Resumed(resumed_history) => {
                 let rollout_items = resumed_history.history;

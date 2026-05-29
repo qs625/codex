@@ -61,14 +61,14 @@ async fn new_thread_is_recorded_in_state_db() -> Result<()> {
 
     let db = test.codex.state_db().expect("state db enabled");
     assert!(
-        !rollout_path.exists(),
-        "fresh thread rollout should not be materialized before first user message"
+        rollout_path.exists(),
+        "fresh thread rollout should be materialized at thread start"
     );
 
     let initial_metadata = db.get_thread(thread_id).await?;
     assert!(
-        initial_metadata.is_none(),
-        "fresh thread should not be recorded in state db before first user message"
+        initial_metadata.is_some(),
+        "fresh thread should be recorded in state db at thread start"
     );
 
     test.submit_turn("materialize rollout").await?;
