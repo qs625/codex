@@ -1451,6 +1451,10 @@ fn parse_injected_context_section(role: &str, text: &str) -> Option<InjectedCont
         }
     }
 
+    if let Some(section) = parse_skill_injected_context_section(trimmed) {
+        return Some(section);
+    }
+
     if trimmed.starts_with("# AGENTS.md instructions for ") && trimmed.ends_with("</INSTRUCTIONS>")
     {
         return Some(InjectedContextSection {
@@ -1467,6 +1471,42 @@ fn parse_injected_context_section(role: &str, text: &str) -> Option<InjectedCont
     }
 
     None
+}
+
+fn parse_skill_injected_context_section(text: &str) -> Option<InjectedContextSection> {
+    const SKILL_OPEN_TAG: &str = "<skill>";
+    const SKILL_CLOSE_TAG: &str = "</skill>";
+
+    let body = text
+        .strip_prefix(SKILL_OPEN_TAG)?
+        .strip_suffix(SKILL_CLOSE_TAG)?
+        .trim();
+    let (name, name_end) = extract_tag_value(body, "name")?;
+    let body_after_name = body.get(name_end..)?.trim_start();
+    let (path, path_end) = extract_tag_value(body_after_name, "path")?;
+    let concrete = body_after_name.get(path_end..)?.trim();
+
+    Some(InjectedContextSection {
+        label: format!("Skill: {name}"),
+        text: if concrete.is_empty() {
+            format!("Path: {path}")
+        } else {
+            format!("Path: {path}\n\n{concrete}")
+        },
+    })
+}
+
+fn extract_tag_value<'a>(body: &'a str, tag: &str) -> Option<(&'a str, usize)> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let after_open = body.strip_prefix(open.as_str())?;
+    let value_end = after_open.find(close.as_str())?;
+    let value = after_open.get(..value_end)?;
+    let consumed = open
+        .len()
+        .saturating_add(value_end)
+        .saturating_add(close.len());
+    Some((value.trim(), consumed))
 }
 
 fn build_injected_context_section(

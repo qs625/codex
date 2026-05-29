@@ -540,6 +540,17 @@ pub(super) async fn handle_pending_thread_resume_request(
     let request_id = pending.request_id;
     let connection_id = request_id.connection_id;
     let mut thread = pending.thread_summary;
+    thread.token_usage = super::token_usage_replay::latest_thread_token_usage_from_rollout_items(
+        pending.history_items.as_slice(),
+    );
+    thread.context_usage =
+        super::context_usage_replay::latest_thread_context_usage_from_rollout_items(
+            pending.history_items.as_slice(),
+        )
+        .map(Into::into);
+    if let Some(token_usage) = conversation.token_usage_info().await.map(Into::into) {
+        thread.token_usage = Some(token_usage);
+    }
     if pending.include_turns {
         populate_thread_turns_from_history(
             &mut thread,

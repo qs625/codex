@@ -296,6 +296,8 @@ pub(crate) fn summary_to_thread(
         git_info,
         name: None,
         skills: Vec::new(),
+        token_usage: None,
+        context_usage: None,
         turns: Vec::new(),
     }
 }

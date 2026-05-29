@@ -2080,7 +2080,9 @@ impl ThreadRequestProcessor {
             .read_thread(StoreReadThreadParams {
                 thread_id,
                 include_archived: true,
-                include_history: include_turns,
+                // `thread/read` restores usage snapshots from rollout events even when
+                // callers only request metadata.
+                include_history: true,
             })
             .await
         {
@@ -2148,12 +2150,18 @@ impl ThreadRequestProcessor {
         loaded_thread: &CodexThread,
     ) -> Result<(), ThreadReadViewError> {
         self.attach_thread_name(thread_id, thread).await;
+        let history = loaded_thread
+            .load_history(/*include_archived*/ true)
+            .await
+            .map_err(|err| thread_read_history_load_error(thread_id, err))?;
+        thread.token_usage = loaded_thread.token_usage_info().await.map(Into::into);
+        thread.context_usage =
+            super::context_usage_replay::latest_thread_context_usage_from_rollout_items(
+                history.items.as_slice(),
+            )
+            .map(Into::into);
 
         if include_turns {
-            let history = loaded_thread
-                .load_history(/*include_archived*/ true)
-                .await
-                .map_err(|err| thread_read_history_load_error(thread_id, err))?;
             thread.turns = build_api_turns_from_rollout_items(&history.items);
         }
 
@@ -2983,14 +2991,14 @@ impl ThreadRequestProcessor {
     async fn load_thread_from_resume_source_or_send_internal(
         &self,
         thread_id: ThreadId,
-        thread: &CodexThread,
+        codex_thread: &CodexThread,
         thread_history: &InitialHistory,
         rollout_path: &Path,
         resume_source_thread: Option<StoredThread>,
         include_turns: bool,
     ) -> std::result::Result<Thread, String> {
-        let config_snapshot = thread.config_snapshot().await;
-        let session_id = thread.session_configured().session_id.to_string();
+        let config_snapshot = codex_thread.config_snapshot().await;
+        let session_id = codex_thread.session_configured().session_id.to_string();
         let thread = match thread_history {
             InitialHistory::Resumed(resumed) => {
                 let fallback_provider = config_snapshot.model_provider_id.as_str();
@@ -3067,11 +3075,15 @@ impl ThreadRequestProcessor {
         thread.id = thread_id.to_string();
         thread.session_id = session_id;
         thread.path = Some(rollout_path.to_path_buf());
+        let history_items = thread_history.get_rollout_items();
+        apply_thread_usage_from_rollout_items(&mut thread, history_items.as_slice());
+        if let Some(token_usage) = codex_thread.token_usage_info().await.map(Into::into) {
+            thread.token_usage = Some(token_usage);
+        }
         if include_turns {
-            let history_items = thread_history.get_rollout_items();
             populate_thread_turns_from_history(
                 &mut thread,
-                &history_items,
+                history_items.as_slice(),
                 /*active_turn*/ None,
             );
         }
@@ -3839,6 +3851,14 @@ fn set_thread_name_from_title(thread: &mut Thread, title: String) {
     thread.name = Some(title);
 }
 
+fn apply_thread_usage_from_rollout_items(thread: &mut Thread, rollout_items: &[RolloutItem]) {
+    thread.token_usage =
+        super::token_usage_replay::latest_thread_token_usage_from_rollout_items(rollout_items);
+    thread.context_usage =
+        super::context_usage_replay::latest_thread_context_usage_from_rollout_items(rollout_items)
+            .map(Into::into);
+}
+
 pub(crate) fn thread_from_stored_thread(
     thread: StoredThread,
     fallback_provider: &str,
@@ -3864,7 +3884,7 @@ pub(crate) fn thread_from_stored_thread(
     );
     let history = thread.history;
     let thread_id = thread.thread_id.to_string();
-    let thread = Thread {
+    let mut thread = Thread {
         id: thread_id.clone(),
         session_id: thread_id,
         forked_from_id: thread.forked_from_id.map(|id| id.to_string()),
@@ -3888,8 +3908,13 @@ pub(crate) fn thread_from_stored_thread(
         git_info,
         name: thread.name,
         skills: thread.skills.into_iter().map(Into::into).collect(),
+        token_usage: None,
+        context_usage: None,
         turns: Vec::new(),
     };
+    if let Some(history) = history.as_ref() {
+        apply_thread_usage_from_rollout_items(&mut thread, history.items.as_slice());
+    }
     (thread, history)
 }
 
@@ -4093,6 +4118,8 @@ fn build_thread_from_snapshot(
         git_info: None,
         name: None,
         skills: Vec::new(),
+        token_usage: None,
+        context_usage: None,
         turns: Vec::new(),
     }
 }
