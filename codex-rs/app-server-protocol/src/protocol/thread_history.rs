@@ -368,8 +368,8 @@ impl ThreadHistoryBuilder {
         if matches!(
             communication.operation,
             codex_protocol::protocol::InterAgentOperation::ChildCompletion
-        ) {
-            if let Some(mut status) = communication.status.map(CollabAgentState::from) {
+        )
+            && let Some(mut status) = communication.status.map(CollabAgentState::from) {
                 status.path = Some(communication.author.to_string());
                 self.ensure_turn()
                     .items
@@ -387,7 +387,6 @@ impl ThreadHistoryBuilder {
                     });
                 return;
             }
-        }
 
         self.ensure_turn()
             .items

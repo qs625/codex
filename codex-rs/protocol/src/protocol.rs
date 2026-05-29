@@ -796,7 +796,9 @@ impl From<Vec<UserInput>> for Op {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub enum InterAgentOperation {
+    #[default]
     Unknown,
     SpawnAgent,
     SendMessage,
@@ -804,11 +806,6 @@ pub enum InterAgentOperation {
     ChildCompletion,
 }
 
-impl Default for InterAgentOperation {
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
 
 fn default_true() -> bool {
     true
@@ -1395,6 +1392,9 @@ pub enum EventMsg {
 
     /// Updated aggregate thread-level skill usage metadata.
     ThreadSkillsUpdated(ThreadSkillsUpdatedEvent),
+
+    /// Updated thread-level context usage snapshot for the current effective context.
+    ThreadContextUsageUpdated(ThreadContextUsageUpdatedEvent),
 
     /// Incremental MCP startup progress updates.
     McpStartupUpdate(McpStartupUpdateEvent),
@@ -3738,6 +3738,70 @@ pub struct ThreadSkillsUpdatedEvent {
     pub skills: Vec<ThreadSkill>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case", export_to = "protocol/")]
+pub enum ThreadContextUsageCategory {
+    Compact,
+    SkillsMetadata,
+    ConcreteSkills,
+    ToolsMetadata,
+    ToolCalls,
+    UserMessages,
+    LlmMessages,
+    Reasoning,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "protocol/")]
+pub struct ThreadContextUsageCategoryBreakdown {
+    pub compact: i64,
+    pub skills_metadata: i64,
+    pub concrete_skills: i64,
+    pub tools_metadata: i64,
+    pub tool_calls: i64,
+    pub user_messages: i64,
+    pub llm_messages: i64,
+    pub reasoning: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "protocol/")]
+pub struct ThreadContextUsageSkill {
+    pub name: String,
+    pub path: String,
+    pub kind: ThreadSkillKind,
+    pub load_count: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "protocol/")]
+pub struct ThreadContextUsageLoadedSkills {
+    pub loaded_count: u32,
+    pub total_count: Option<u32>,
+    pub skills: Vec<ThreadContextUsageSkill>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "protocol/")]
+pub struct ThreadContextUsage {
+    pub total_bytes: i64,
+    pub budget_used_percent: Option<i64>,
+    pub categories: ThreadContextUsageCategoryBreakdown,
+    pub loaded_skills: ThreadContextUsageLoadedSkills,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "protocol/")]
+pub struct ThreadContextUsageUpdatedEvent {
+    pub usage: ThreadContextUsage,
+}
+
 /// User's decision in response to an ExecApprovalRequest.
 #[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq, Display, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
@@ -4169,7 +4233,11 @@ mod tests {
             recipient: AgentPath::root().join("reviewer").expect("recipient path"),
             other_recipients: vec![AgentPath::root().join("worker").expect("recipient path")],
             content: "review the diff".to_string(),
+            operation: InterAgentOperation::Unknown,
             trigger_turn: true,
+            sender_thread_id: None,
+            recipient_thread_id: None,
+            status: None,
         };
 
         assert_eq!(

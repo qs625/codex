@@ -436,6 +436,7 @@ mod apps_processor;
 mod catalog_processor;
 mod command_exec_processor;
 mod config_processor;
+mod context_usage_replay;
 mod environment_processor;
 mod external_agent_config_processor;
 mod feedback_doctor_report;
@@ -484,6 +485,7 @@ use crate::thread_state::ConnectionCapabilities;
 use crate::thread_state::ThreadListenerCommand;
 use crate::thread_state::ThreadState;
 use crate::thread_state::ThreadStateManager;
+use context_usage_replay::send_thread_context_usage_update_to_connection;
 use token_usage_replay::latest_token_usage_turn_id_from_rollout_items;
 use token_usage_replay::send_thread_token_usage_update_to_connection;
 

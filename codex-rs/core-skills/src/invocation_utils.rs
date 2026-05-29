@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 use std::path::Path;
 
 use crate::SkillLoadOutcome;
@@ -19,7 +20,13 @@ pub(crate) fn build_implicit_skill_path_indexes(
 
         if let Some(skill_dir) = skill.path_to_skills_md.parent() {
             let scripts_dir = canonicalize_if_exists(&skill_dir.join("scripts"));
-            by_scripts_dir.insert(scripts_dir, skill);
+            by_scripts_dir.insert(scripts_dir, skill.clone());
+            let references_dir = skill_dir.join("references");
+            if references_dir.exists() {
+                for reference_path in collect_reference_files(references_dir.as_path()) {
+                    by_skill_doc_path.insert(reference_path, skill.clone());
+                }
+            }
         }
     }
 
@@ -138,6 +145,26 @@ fn command_basename(command: &str) -> String {
 
 fn canonicalize_if_exists(path: &AbsolutePathBuf) -> AbsolutePathBuf {
     path.canonicalize().unwrap_or_else(|_| path.clone())
+}
+
+fn collect_reference_files(path: &Path) -> Vec<AbsolutePathBuf> {
+    let mut files = Vec::new();
+    let Ok(entries) = fs::read_dir(path) else {
+        return files;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            files.extend(collect_reference_files(path.as_path()));
+        } else if path.is_file()
+            && let Ok(path) = AbsolutePathBuf::try_from(path)
+        {
+            files.push(canonicalize_if_exists(&path));
+        }
+    }
+
+    files
 }
 
 #[cfg(test)]

@@ -4,6 +4,10 @@ use super::ThreadStatus;
 use super::TurnStatus;
 use codex_protocol::protocol::SessionSource as CoreSessionSource;
 use codex_protocol::protocol::SubAgentSource as CoreSubAgentSource;
+use codex_protocol::protocol::ThreadContextUsage as CoreThreadContextUsage;
+use codex_protocol::protocol::ThreadContextUsageCategoryBreakdown as CoreThreadContextUsageCategoryBreakdown;
+use codex_protocol::protocol::ThreadContextUsageLoadedSkills as CoreThreadContextUsageLoadedSkills;
+use codex_protocol::protocol::ThreadContextUsageSkill as CoreThreadContextUsageSkill;
 use codex_protocol::protocol::ThreadSkill as CoreThreadSkill;
 use codex_protocol::protocol::ThreadSkillKind as CoreThreadSkillKind;
 use codex_protocol::protocol::ThreadSource as CoreThreadSource;
@@ -135,6 +139,109 @@ impl From<CoreThreadSkill> for ThreadSkill {
             name: value.name,
             path: value.path,
             kind: value.kind.into(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadContextUsageCategoryBreakdown {
+    #[ts(type = "number")]
+    pub compact: i64,
+    #[ts(type = "number")]
+    pub skills_metadata: i64,
+    #[ts(type = "number")]
+    pub concrete_skills: i64,
+    #[ts(type = "number")]
+    pub tools_metadata: i64,
+    #[ts(type = "number")]
+    pub tool_calls: i64,
+    #[ts(type = "number")]
+    pub user_messages: i64,
+    #[ts(type = "number")]
+    pub llm_messages: i64,
+    #[ts(type = "number")]
+    pub reasoning: i64,
+}
+
+impl From<CoreThreadContextUsageCategoryBreakdown> for ThreadContextUsageCategoryBreakdown {
+    fn from(value: CoreThreadContextUsageCategoryBreakdown) -> Self {
+        Self {
+            compact: value.compact,
+            skills_metadata: value.skills_metadata,
+            concrete_skills: value.concrete_skills,
+            tools_metadata: value.tools_metadata,
+            tool_calls: value.tool_calls,
+            user_messages: value.user_messages,
+            llm_messages: value.llm_messages,
+            reasoning: value.reasoning,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadContextUsageSkill {
+    pub name: String,
+    pub path: String,
+    pub kind: ThreadSkillKind,
+    #[ts(type = "number")]
+    pub load_count: u32,
+}
+
+impl From<CoreThreadContextUsageSkill> for ThreadContextUsageSkill {
+    fn from(value: CoreThreadContextUsageSkill) -> Self {
+        Self {
+            name: value.name,
+            path: value.path,
+            kind: value.kind.into(),
+            load_count: value.load_count,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadContextUsageLoadedSkills {
+    #[ts(type = "number")]
+    pub loaded_count: u32,
+    #[ts(type = "number | null")]
+    pub total_count: Option<u32>,
+    pub skills: Vec<ThreadContextUsageSkill>,
+}
+
+impl From<CoreThreadContextUsageLoadedSkills> for ThreadContextUsageLoadedSkills {
+    fn from(value: CoreThreadContextUsageLoadedSkills) -> Self {
+        Self {
+            loaded_count: value.loaded_count,
+            total_count: value.total_count,
+            skills: value.skills.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadContextUsage {
+    #[ts(type = "number")]
+    pub total_bytes: i64,
+    #[ts(type = "number | null")]
+    pub budget_used_percent: Option<i64>,
+    pub categories: ThreadContextUsageCategoryBreakdown,
+    pub loaded_skills: ThreadContextUsageLoadedSkills,
+}
+
+impl From<CoreThreadContextUsage> for ThreadContextUsage {
+    fn from(value: CoreThreadContextUsage) -> Self {
+        Self {
+            total_bytes: value.total_bytes,
+            budget_used_percent: value.budget_used_percent,
+            categories: value.categories.into(),
+            loaded_skills: value.loaded_skills.into(),
         }
     }
 }

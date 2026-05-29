@@ -4051,6 +4051,26 @@
           "properties": {
             "method": {
               "enum": [
+                "thread/contextUsage/updated"
+              ],
+              "title": "Thread/contextUsage/updatedNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/ThreadContextUsageUpdatedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "Thread/contextUsage/updatedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
                 "turn/started"
               ],
               "title": "Turn/startedNotificationMethod",
@@ -15418,6 +15438,154 @@
       "ThreadCompactStartResponse": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "title": "ThreadCompactStartResponse",
+        "type": "object"
+      },
+      "ThreadContextUsage": {
+        "properties": {
+          "budgetUsedPercent": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "categories": {
+            "$ref": "#/definitions/v2/ThreadContextUsageCategoryBreakdown"
+          },
+          "loadedSkills": {
+            "$ref": "#/definitions/v2/ThreadContextUsageLoadedSkills"
+          },
+          "totalBytes": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "categories",
+          "loadedSkills",
+          "totalBytes"
+        ],
+        "type": "object"
+      },
+      "ThreadContextUsageCategoryBreakdown": {
+        "properties": {
+          "compact": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "concreteSkills": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "llmMessages": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "reasoning": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "skillsMetadata": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "toolCalls": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "toolsMetadata": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "userMessages": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "compact",
+          "concreteSkills",
+          "llmMessages",
+          "reasoning",
+          "skillsMetadata",
+          "toolCalls",
+          "toolsMetadata",
+          "userMessages"
+        ],
+        "type": "object"
+      },
+      "ThreadContextUsageLoadedSkills": {
+        "properties": {
+          "loadedCount": {
+            "format": "uint32",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "skills": {
+            "items": {
+              "$ref": "#/definitions/v2/ThreadContextUsageSkill"
+            },
+            "type": "array"
+          },
+          "totalCount": {
+            "format": "uint32",
+            "minimum": 0.0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "loadedCount",
+          "skills"
+        ],
+        "type": "object"
+      },
+      "ThreadContextUsageSkill": {
+        "properties": {
+          "kind": {
+            "$ref": "#/definitions/v2/ThreadSkillKind"
+          },
+          "loadCount": {
+            "format": "uint32",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "loadCount",
+          "name",
+          "path"
+        ],
+        "type": "object"
+      },
+      "ThreadContextUsageUpdatedNotification": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "contextUsage": {
+            "$ref": "#/definitions/v2/ThreadContextUsage"
+          },
+          "threadId": {
+            "type": "string"
+          },
+          "turnId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contextUsage",
+          "threadId",
+          "turnId"
+        ],
+        "title": "ThreadContextUsageUpdatedNotification",
         "type": "object"
       },
       "ThreadForkParams": {

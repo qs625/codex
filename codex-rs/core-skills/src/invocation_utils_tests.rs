@@ -1,5 +1,6 @@
 use super::SkillLoadOutcome;
 use super::SkillMetadata;
+use super::build_implicit_skill_path_indexes;
 use super::canonicalize_if_exists;
 use super::detect_skill_doc_read;
 use super::detect_skill_script_run;
@@ -9,6 +10,7 @@ use codex_utils_absolute_path::test_support::PathBufExt;
 use codex_utils_absolute_path::test_support::test_path_buf;
 use pretty_assertions::assert_eq;
 use std::collections::HashMap;
+use std::fs;
 use std::sync::Arc;
 
 fn test_skill_metadata(skill_doc_path: AbsolutePathBuf) -> SkillMetadata {
@@ -119,5 +121,25 @@ fn skill_script_run_detection_matches_absolute_path_from_any_workdir() {
     assert_eq!(
         found.map(|value| value.name),
         Some("test-skill".to_string())
+    );
+}
+
+#[test]
+fn implicit_skill_indexes_include_reference_files() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let skill_root = AbsolutePathBuf::try_from(tempdir.path().to_path_buf()).expect("abs path");
+    let skill_doc_path = skill_root.join("SKILL.md");
+    let reference_path = skill_root.join("references").join("guide.md");
+    fs::create_dir_all(reference_path.parent().expect("reference parent")).expect("mkdirs");
+    fs::write(reference_path.as_path(), "guide").expect("write reference");
+
+    let skill = test_skill_metadata(skill_doc_path);
+    let (_, by_doc_path) = build_implicit_skill_path_indexes(vec![skill.clone()]);
+
+    assert_eq!(
+        by_doc_path
+            .get(&canonicalize_if_exists(&reference_path))
+            .map(|value| value.name.clone()),
+        Some(skill.name)
     );
 }

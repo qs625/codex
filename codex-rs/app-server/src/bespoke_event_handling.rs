@@ -50,6 +50,7 @@ use codex_app_server_protocol::RawResponseItemCompletedNotification;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequestPayload;
+use codex_app_server_protocol::ThreadContextUsageUpdatedNotification;
 use codex_app_server_protocol::ThreadGoalUpdatedNotification;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadRealtimeClosedNotification;
@@ -1221,6 +1222,18 @@ pub(crate) async fn apply_bespoke_event_handling(
             };
             outgoing
                 .send_server_notification(ServerNotification::ThreadSkillsUpdated(notification))
+                .await;
+        }
+        EventMsg::ThreadContextUsageUpdated(thread_context_usage_event) => {
+            let notification = ThreadContextUsageUpdatedNotification {
+                thread_id: conversation_id.to_string(),
+                turn_id: event_turn_id.clone(),
+                context_usage: thread_context_usage_event.usage.into(),
+            };
+            outgoing
+                .send_server_notification(ServerNotification::ThreadContextUsageUpdated(
+                    notification,
+                ))
                 .await;
         }
         EventMsg::TurnDiff(turn_diff_event) => {

@@ -6,6 +6,7 @@ use super::PermissionProfileSelectionParams;
 use super::SandboxMode;
 use super::SandboxPolicy;
 use super::Thread;
+use super::ThreadContextUsage;
 use super::ThreadItem;
 use super::ThreadSkill;
 use super::ThreadSource;
@@ -1097,6 +1098,15 @@ pub struct ThreadTokenUsageUpdatedNotification {
     pub thread_id: String,
     pub turn_id: String,
     pub token_usage: ThreadTokenUsage,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadContextUsageUpdatedNotification {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub context_usage: ThreadContextUsage,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

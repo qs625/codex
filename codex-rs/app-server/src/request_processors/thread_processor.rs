@@ -2668,6 +2668,14 @@ impl ThreadRequestProcessor {
                         token_usage_turn_id,
                     )
                     .await;
+                    send_thread_context_usage_update_to_connection(
+                        &self.outgoing,
+                        connection_id,
+                        thread_id,
+                        &token_usage_thread,
+                        response_history.get_rollout_items().as_slice(),
+                    )
+                    .await;
                 }
                 self.thread_goal_processor
                     .emit_resume_goal_snapshot_and_continue(thread_id, codex_thread.as_ref())
@@ -3328,6 +3336,14 @@ impl ThreadRequestProcessor {
                 &token_usage_thread,
                 forked_thread.as_ref(),
                 token_usage_turn_id,
+            )
+            .await;
+            send_thread_context_usage_update_to_connection(
+                &self.outgoing,
+                connection_id,
+                thread_id,
+                &token_usage_thread,
+                history_items.as_slice(),
             )
             .await;
         }

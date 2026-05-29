@@ -649,6 +649,14 @@ pub(super) async fn handle_pending_thread_resume_request(
             token_usage_turn_id,
         )
         .await;
+        send_thread_context_usage_update_to_connection(
+            outgoing,
+            connection_id,
+            conversation_id,
+            &token_usage_thread,
+            pending.history_items.as_slice(),
+        )
+        .await;
     }
     if pending.emit_thread_goal_update {
         if let Some(state_db) = pending.thread_goal_state_db {
