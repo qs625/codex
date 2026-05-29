@@ -43,6 +43,19 @@ function formatByteSize(bytes: number) {
   return `${value < 10 && unitIndex > 0 ? value.toFixed(1) : Math.round(value)} ${units[unitIndex]}`;
 }
 
+function formatTokenCount(value: number | null) {
+  if (!value || value <= 0) {
+    return "0";
+  }
+  if (value >= 1_000_000) {
+    return `${Math.round((value / 1_000_000) * 10) / 10}M`;
+  }
+  if (value >= 1_000) {
+    return `${Math.round(value / 100) / 10}K`;
+  }
+  return String(value);
+}
+
 export function RightPanel({
   activeView,
   availableSkillCount,
@@ -195,7 +208,9 @@ function ContextUsagePanel({ contextUsage }: { contextUsage: ContextUsageAnalysi
               </strong>
             </div>
             <span className="context-budget-note">
-              {contextUsage.hasBudgetData ? "From thread token usage" : "Waiting for token usage"}
+              {contextUsage.hasBudgetData
+                ? `${formatTokenCount(contextUsage.usedTokens)} / ${formatTokenCount(contextUsage.contextWindowTokens)}`
+                : "Waiting for token usage"}
             </span>
           </div>
           <div className="context-budget-track" aria-hidden="true">

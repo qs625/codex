@@ -196,13 +196,15 @@ test("uses last token usage for budget percent and context usage ratios for toke
 
   assert.equal(analysis.hasBudgetData, true);
   assert.equal(analysis.budgetUsedPercent, 9);
+  assert.equal(analysis.usedTokens, 18000);
+  assert.equal(analysis.contextWindowTokens, 200000);
   assert.equal(analysis.loadedSkills, 1);
   assert.equal(analysis.loadedConcreteSkills.length, 1);
   assert.equal(analysis.loadedConcreteSkills[0]?.name, "openai-docs");
   assert.equal(analysis.loadedConcreteSkills[0]?.loadCount, 1);
   assert.equal(analysis.turnTrend.turns[0]?.label, "1");
   assert.equal(analysis.turnTrend.rows.find((row) => row.id === "llmMessages")?.cells.length, 1);
-  assert.equal(analysis.categories.find((row) => row.id === "llmMessages")?.sharePercent, 19.9);
+  assert.equal(analysis.categories.find((row) => row.id === "llmMessages")?.sharePercent, 3.6);
   assert.equal(analysis.categories.find((row) => row.id === "llmMessages")?.units, 19900);
 });
 
@@ -250,6 +252,8 @@ test("uses last token usage instead of cumulative token usage for budget percent
 
   assert.equal(analysis.hasBudgetData, true);
   assert.equal(analysis.budgetUsedPercent, 4);
+  assert.equal(analysis.usedTokens, 4000);
+  assert.equal(analysis.contextWindowTokens, 100000);
 });
 
 test("turn trend only counts skill injected context as concrete skills", () => {

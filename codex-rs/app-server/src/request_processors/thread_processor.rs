@@ -2154,12 +2154,17 @@ impl ThreadRequestProcessor {
             .load_history(/*include_archived*/ true)
             .await
             .map_err(|err| thread_read_history_load_error(thread_id, err))?;
-        thread.token_usage = loaded_thread.token_usage_info().await.map(Into::into);
-        thread.context_usage =
+        if let Some(token_usage) = loaded_thread.token_usage_info().await.map(Into::into) {
+            thread.token_usage = Some(token_usage);
+        }
+        if let Some(context_usage) =
             super::context_usage_replay::latest_thread_context_usage_from_rollout_items(
                 history.items.as_slice(),
             )
-            .map(Into::into);
+            .map(Into::into)
+        {
+            thread.context_usage = Some(context_usage);
+        }
 
         if include_turns {
             thread.turns = build_api_turns_from_rollout_items(&history.items);
