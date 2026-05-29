@@ -300,7 +300,10 @@ export type TreeMenuState = {
 export type ComposerImage = {
   id: string;
   name: string;
-  dataUrl: string;
+  mimeType: string;
+  byteSize: number;
+  bytes: ArrayBuffer;
+  previewUrl: string;
 };
 
 export type DraftSkill = {
@@ -311,7 +314,7 @@ export type DraftSkill = {
 export type RightPanelView = "todo" | "preview" | "skills";
 
 export type FilePreviewImage = {
-  dataUrl: string;
+  path: string;
   mimeType: string;
   name: string;
   byteSize: number;

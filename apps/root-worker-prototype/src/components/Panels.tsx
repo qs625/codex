@@ -291,7 +291,7 @@ export function ConversationPanel({
             <div className="composer-image-strip">
               {draftImages.map((image) => (
                 <div key={image.id} className="composer-image-card">
-                  <img src={image.dataUrl} alt={image.name} />
+                  <img src={image.previewUrl} alt={image.name} />
                   <button
                     type="button"
                     className="composer-image-remove"

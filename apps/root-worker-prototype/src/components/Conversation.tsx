@@ -15,13 +15,81 @@ import {
   UserIcon,
 } from "./icons";
 
-const localImageCache = new Map<string, string>();
+type LocalImageCacheEntry = {
+  objectUrl: string;
+  byteSize: number;
+  lastAccessedAt: number;
+};
+
+const localImageCache = new Map<string, LocalImageCacheEntry>();
+const LOCAL_IMAGE_CACHE_MAX_ITEMS = 24;
+const LOCAL_IMAGE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
 
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 8;
 
 function clampScale(value: number) {
   return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value));
+}
+
+function currentLocalImageCacheBytes() {
+  let total = 0;
+  for (const entry of localImageCache.values()) {
+    total += entry.byteSize;
+  }
+  return total;
+}
+
+function touchLocalImageCache(path: string) {
+  const entry = localImageCache.get(path);
+  if (!entry) {
+    return null;
+  }
+  entry.lastAccessedAt = Date.now();
+  return entry.objectUrl;
+}
+
+function pruneLocalImageCache() {
+  while (
+    localImageCache.size > LOCAL_IMAGE_CACHE_MAX_ITEMS ||
+    currentLocalImageCacheBytes() > LOCAL_IMAGE_CACHE_MAX_BYTES
+  ) {
+    let oldestPath: string | null = null;
+    let oldestTimestamp = Number.POSITIVE_INFINITY;
+    for (const [path, entry] of localImageCache.entries()) {
+      if (entry.lastAccessedAt < oldestTimestamp) {
+        oldestPath = path;
+        oldestTimestamp = entry.lastAccessedAt;
+      }
+    }
+    if (!oldestPath) {
+      break;
+    }
+    const removed = localImageCache.get(oldestPath);
+    if (removed) {
+      URL.revokeObjectURL(removed.objectUrl);
+    }
+    localImageCache.delete(oldestPath);
+  }
+}
+
+function cacheLocalImage(
+  path: string,
+  payload: { bytes: ArrayBuffer; mimeType: string; byteSize: number },
+) {
+  const existing = localImageCache.get(path);
+  if (existing) {
+    existing.lastAccessedAt = Date.now();
+    return existing.objectUrl;
+  }
+  const objectUrl = URL.createObjectURL(new Blob([payload.bytes], { type: payload.mimeType }));
+  localImageCache.set(path, {
+    objectUrl,
+    byteSize: payload.byteSize,
+    lastAccessedAt: Date.now(),
+  });
+  pruneLocalImageCache();
+  return objectUrl;
 }
 
 async function convertBlobToPng(blob: Blob): Promise<Blob> {
@@ -333,20 +401,29 @@ export function ZoomableImage({
   );
 }
 
-function LocalImage({ path, label }: { path: string; label: string }) {
-  const cached = localImageCache.get(path) ?? null;
-  const [dataUrl, setDataUrl] = useState<string | null>(cached);
+export function LocalImagePreview({
+  path,
+  label,
+  className,
+}: {
+  path: string;
+  label: string;
+  className: string;
+}) {
+  const cached = touchLocalImageCache(path);
+  const [objectUrl, setObjectUrl] = useState<string | null>(cached);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (localImageCache.has(path)) {
-      setDataUrl(localImageCache.get(path) ?? null);
+    const nextCached = touchLocalImageCache(path);
+    if (nextCached) {
+      setObjectUrl(nextCached);
       setError(null);
       return;
     }
 
     let cancelled = false;
-    setDataUrl(null);
+    setObjectUrl(null);
     setError(null);
 
     void window.codexDesktop
@@ -355,8 +432,7 @@ function LocalImage({ path, label }: { path: string; label: string }) {
         if (cancelled) {
           return;
         }
-        localImageCache.set(path, result.dataUrl);
-        setDataUrl(result.dataUrl);
+        setObjectUrl(cacheLocalImage(path, result));
       })
       .catch((loadError: unknown) => {
         if (cancelled) {
@@ -372,24 +448,21 @@ function LocalImage({ path, label }: { path: string; label: string }) {
 
   if (error) {
     return (
-      <span className="attachment-chip" title={`${path}\n${error}`}>
-        <DocumentIcon />
-        <span>{label}</span>
-      </span>
+      <div className={`${className} attachment-image-loading`} role="img" aria-label={error} />
     );
   }
 
+  return objectUrl ? (
+    <ZoomableImage src={objectUrl} alt={label} className={className} />
+  ) : (
+    <div className={`${className} attachment-image-loading`} role="img" aria-label={`Loading ${label}`} />
+  );
+}
+
+function LocalImage({ path, label }: { path: string; label: string }) {
   return (
     <figure className="attachment-image-card">
-      {dataUrl ? (
-        <ZoomableImage src={dataUrl} alt={label} className="attachment-image" />
-      ) : (
-        <div
-          className="attachment-image attachment-image-loading"
-          role="img"
-          aria-label={`Loading ${label}`}
-        />
-      )}
+      <LocalImagePreview path={path} label={label} className="attachment-image" />
       <figcaption>{label}</figcaption>
     </figure>
   );

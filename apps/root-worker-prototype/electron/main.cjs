@@ -484,7 +484,7 @@ async function readLocalFileTarget(target) {
   const imageMime = imageMimeForExtension(extension);
 
   if (imageMime) {
-    const data = await fs.readFile(filePath);
+    const { size } = await fs.stat(filePath);
     return {
       path: filePath,
       displayPath,
@@ -501,10 +501,10 @@ async function readLocalFileTarget(target) {
         reason: "Image file",
       },
       image: {
-        dataUrl: `data:${imageMime};base64,${data.toString("base64")}`,
+        path: filePath,
         mimeType: imageMime,
         name: path.basename(filePath),
-        byteSize: data.length,
+        byteSize: size,
       },
     };
   }
@@ -541,7 +541,8 @@ async function readLocalImageTarget(target) {
     path: filePath,
     name: path.basename(filePath),
     mimeType,
-    dataUrl: `data:${mimeType};base64,${data.toString("base64")}`,
+    byteSize: data.length,
+    bytes: Uint8Array.from(data).buffer,
   };
 }
 

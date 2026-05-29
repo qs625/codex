@@ -13,7 +13,7 @@ import {
   PlusIcon,
   SearchIcon,
 } from "./icons";
-import { ZoomableImage } from "./Conversation";
+import { LocalImagePreview } from "./Conversation";
 import type {
   FileLocation,
   FilePreview,
@@ -400,9 +400,9 @@ function FilePreviewPanel({
             </div>
           </div>
           <div className="preview-image-pad">
-            <ZoomableImage
-              src={preview.image.dataUrl}
-              alt={preview.image.name}
+            <LocalImagePreview
+              path={preview.image.path}
+              label={preview.image.name}
               className="preview-image"
             />
           </div>

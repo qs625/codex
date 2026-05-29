@@ -11,8 +11,12 @@ test("buildTurnInput uses app-server image url field", () => {
       { name: "", path: "/tmp/ignored" },
     ],
     images: [
-      { name: "example.png", dataUrl: "data:image/png;base64,AAA" },
-      { name: "ignored.png", dataUrl: "" },
+      {
+        name: "example.png",
+        mimeType: "image/png",
+        bytes: Uint8Array.from([0, 0, 0]).buffer,
+      },
+      { name: "ignored.png", mimeType: "", bytes: null },
     ],
   });
 
@@ -29,7 +33,7 @@ test("buildTurnInput uses app-server image url field", () => {
     },
     {
       type: "image",
-      url: "data:image/png;base64,AAA",
+      url: "data:image/png;base64,AAAA",
     },
   ]);
 });

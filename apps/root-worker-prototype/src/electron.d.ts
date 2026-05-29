@@ -31,7 +31,8 @@ declare global {
         path: string;
         name: string;
         mimeType: string;
-        dataUrl: string;
+        byteSize: number;
+        bytes: ArrayBuffer;
       }>;
       readLocalFile: (target: string) => Promise<{
         path: string;
@@ -52,7 +53,7 @@ declare global {
           reason: string | null;
         };
         image?: {
-          dataUrl: string;
+          path: string;
           mimeType: string;
           name: string;
           byteSize: number;
@@ -90,7 +91,8 @@ declare global {
         }>;
         images?: Array<{
           name: string;
-          dataUrl: string;
+          mimeType: string;
+          bytes: ArrayBuffer;
         }>;
         expectedTurnId?: string | null;
       }) => Promise<unknown>;

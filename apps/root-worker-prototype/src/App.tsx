@@ -12,7 +12,7 @@ import {
 import { ConversationPanel, SidebarPanel, TreeContextMenu } from "./components/Panels";
 import { RightPanel } from "./components/RightPanel";
 import { buildConversationCells, buildConversationEntries } from "./lib/conversation";
-import { readImageBlob, readImageFile } from "./lib/images";
+import { readImageBlob, readImageFile, revokeComposerImage } from "./lib/images";
 import { isThreadNotFoundError, toErrorMessage } from "./lib/shared";
 import {
   appendAgentDelta,
@@ -89,6 +89,7 @@ function App() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
+  const draftImagesRef = useRef<ComposerImage[]>([]);
   const shouldStickConversationToBottomRef = useRef(true);
   const filePreviewRef = useRef<FilePreview | null>(null);
   const symbolBackStackRef = useRef<FileLocation[]>([]);
@@ -101,6 +102,18 @@ function App() {
 
   useEffect(() => {
     void loadBootstrap();
+  }, []);
+
+  useEffect(() => {
+    draftImagesRef.current = draftImages;
+  }, [draftImages]);
+
+  useEffect(() => {
+    return () => {
+      for (const image of draftImagesRef.current) {
+        revokeComposerImage(image);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -488,6 +501,9 @@ function App() {
       setSelectedThreadId(null);
       await createRootThread(replacementName);
       setDraft("");
+      for (const image of draftImages) {
+        revokeComposerImage(image);
+      }
       setDraftImages([]);
     } catch (clearError) {
       setError(toErrorMessage(clearError));
@@ -511,10 +527,13 @@ function App() {
         threadId: selectedThreadId,
         text: draft.trim(),
         skills: draftSkills,
-        images: draftImages.map(({ name, dataUrl }) => ({ name, dataUrl })),
+        images: draftImages.map(({ name, mimeType, bytes }) => ({ name, mimeType, bytes })),
       });
       setDraft("");
       setDraftSkills([]);
+      for (const image of draftImages) {
+        revokeComposerImage(image);
+      }
       setDraftImages([]);
     } catch (sendError) {
       setError(toErrorMessage(sendError));
@@ -566,7 +585,14 @@ function App() {
   }
 
   function removeDraftImage(imageId: string) {
-    setDraftImages((current) => current.filter((image) => image.id !== imageId));
+    setDraftImages((current) => {
+      const next = current.filter((image) => image.id !== imageId);
+      const removed = current.find((image) => image.id === imageId);
+      if (removed) {
+        revokeComposerImage(removed);
+      }
+      return next;
+    });
   }
 
   function addDraftSkill(skill: DraftSkill) {

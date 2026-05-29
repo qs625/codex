@@ -21,12 +21,12 @@ function buildTurnInput(payload) {
   }
 
   for (const image of payload.images ?? []) {
-    if (!image?.dataUrl) {
+    if (!image?.bytes || !image?.mimeType) {
       continue;
     }
     input.push({
       type: "image",
-      url: image.dataUrl,
+      url: `data:${image.mimeType};base64,${Buffer.from(image.bytes).toString("base64")}`,
     });
   }
 
