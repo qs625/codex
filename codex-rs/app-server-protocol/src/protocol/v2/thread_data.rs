@@ -1,6 +1,7 @@
 use super::CodexErrorInfo;
 use super::ThreadItem;
 use super::ThreadStatus;
+use super::ThreadTokenUsage;
 use super::TurnStatus;
 use codex_protocol::protocol::SessionSource as CoreSessionSource;
 use codex_protocol::protocol::SubAgentSource as CoreSubAgentSource;
@@ -290,6 +291,10 @@ pub struct Thread {
     /// Aggregate thread-level skill usage observed so far.
     #[serde(default)]
     pub skills: Vec<ThreadSkill>,
+    /// Restored aggregate thread token usage, when available.
+    pub token_usage: Option<ThreadTokenUsage>,
+    /// Restored aggregate thread context usage, when available.
+    pub context_usage: Option<ThreadContextUsage>,
     /// Only populated on `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read`
     /// (when `includeTurns` is true) responses.
     /// For all other responses and notifications returning a Thread,

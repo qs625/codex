@@ -79,8 +79,8 @@ const CATEGORY_ORDER: Array<{
   },
   {
     id: "skillsMetadata",
-    label: "Skill Setup",
-    shortLabel: "Skill Setup",
+    label: "Skill Metadata",
+    shortLabel: "Skill Meta",
     description: "Skill names, routing hints, and load directives kept in context",
   },
   {
@@ -439,8 +439,10 @@ function accumulateItemUnits(
   }
 
   if (item.type === "injectedContext") {
-    units.concreteSkills += estimateTextUnits(item.preview) + 80;
     for (const section of item.sections) {
+      if (!section.label.startsWith("Skill: ")) {
+        continue;
+      }
       units.concreteSkills += estimateTextUnits(section.label) + estimateTextUnits(section.text);
     }
     return;

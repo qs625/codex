@@ -252,6 +252,38 @@ test("uses last token usage instead of cumulative token usage for budget percent
   assert.equal(analysis.budgetUsedPercent, 4);
 });
 
+test("turn trend only counts skill injected context as concrete skills", () => {
+  const thread = makeThread(
+    [
+      {
+        type: "injectedContext",
+        id: "ctx-1",
+        title: "openai-docs",
+        preview: "Skill body preview",
+        sections: [
+          {
+            label: "Skill: openai-docs",
+            text: "Longer concrete skill instructions",
+          },
+          {
+            label: "Developer instructions",
+            text: "This should not inflate skill heatmap",
+          },
+        ],
+      },
+    ],
+    [],
+  );
+
+  const analysis = buildContextUsageAnalysis(thread, 0);
+
+  assert.ok((analysis.turnTrend.rows.find((row) => row.id === "concreteSkills")?.cells[0]?.units ?? 0) > 0);
+  assert.equal(
+    analysis.turnTrend.rows.find((row) => row.id === "skillsMetadata")?.cells[0]?.units ?? 0,
+    0,
+  );
+});
+
 test("caps turn trend to the most recent turns", () => {
   const thread = makeThread([]);
   thread.turns = Array.from({ length: 20 }, (_, index) => ({

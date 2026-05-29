@@ -1145,6 +1145,10 @@ async fn thread_resume_emits_restored_token_usage_before_next_turn() -> Result<(
     )
     .await??;
     let ThreadResumeResponse { thread, .. } = to_response::<ThreadResumeResponse>(resume_resp)?;
+    let response_token_usage = thread.token_usage.expect("thread/resume token usage");
+    assert_eq!(response_token_usage.total.total_tokens, 150);
+    assert_eq!(response_token_usage.last.total_tokens, 90);
+    assert_eq!(response_token_usage.model_context_window, Some(200_000));
 
     let note = timeout(
         DEFAULT_READ_TIMEOUT,
@@ -1234,6 +1238,11 @@ async fn thread_resume_emits_restored_context_usage_before_next_turn() -> Result
     )
     .await??;
     let ThreadResumeResponse { thread, .. } = to_response::<ThreadResumeResponse>(resume_resp)?;
+    let response_context_usage = thread.context_usage.expect("thread/resume context usage");
+    assert_eq!(response_context_usage.total_bytes, 123456);
+    assert_eq!(response_context_usage.budget_used_percent, Some(61));
+    assert_eq!(response_context_usage.categories.tool_calls, 14);
+    assert_eq!(response_context_usage.loaded_skills.loaded_count, 1);
 
     let note = timeout(
         DEFAULT_READ_TIMEOUT,

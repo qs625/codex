@@ -57,6 +57,21 @@ pub(super) async fn send_thread_token_usage_update_to_connection(
         .await;
 }
 
+pub(super) fn latest_thread_token_usage_from_rollout_items(
+    rollout_items: &[RolloutItem],
+) -> Option<ThreadTokenUsage> {
+    rollout_items.iter().rev().find_map(|item| match item {
+        RolloutItem::EventMsg(EventMsg::TokenCount(token_count_event)) => {
+            token_count_event.info.clone().map(Into::into)
+        }
+        RolloutItem::ResponseItem(_)
+        | RolloutItem::Compacted(_)
+        | RolloutItem::TurnContext(_)
+        | RolloutItem::SessionMeta(_)
+        | RolloutItem::EventMsg(_) => None,
+    })
+}
+
 /// Identifies the turn that was active when a `TokenCount` record appeared.
 ///
 /// The id is preferred when it still appears in the rebuilt thread. The position is a
@@ -134,6 +149,18 @@ mod tests {
     }
 
     #[test]
+    fn replay_extracts_latest_token_usage() {
+        let rollout_items = token_usage_history();
+
+        let usage = latest_thread_token_usage_from_rollout_items(rollout_items.as_slice())
+            .expect("token usage");
+
+        assert_eq!(usage.total.total_tokens, 150);
+        assert_eq!(usage.last.total_tokens, 90);
+        assert_eq!(usage.model_context_window, Some(200_000));
+    }
+
+    #[test]
     fn replay_attribution_falls_back_to_rebuilt_turn_position() {
         let rollout_items = token_usage_history();
         let mut turns = build_turns_from_rollout_items(&rollout_items);
@@ -159,7 +186,23 @@ mod tests {
                 memory_citation: None,
             })),
             RolloutItem::EventMsg(EventMsg::TokenCount(TokenCountEvent {
-                info: None,
+                info: Some(codex_protocol::protocol::TokenUsageInfo {
+                    total_token_usage: codex_protocol::protocol::TokenUsage {
+                        input_tokens: 120,
+                        cached_input_tokens: 20,
+                        output_tokens: 30,
+                        reasoning_output_tokens: 10,
+                        total_tokens: 150,
+                    },
+                    last_token_usage: codex_protocol::protocol::TokenUsage {
+                        input_tokens: 70,
+                        cached_input_tokens: 10,
+                        output_tokens: 20,
+                        reasoning_output_tokens: 5,
+                        total_tokens: 90,
+                    },
+                    model_context_window: Some(200_000),
+                }),
                 rate_limits: None,
             })),
             RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {

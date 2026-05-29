@@ -1,5 +1,6 @@
 use crate::SkillLoadOutcome;
 use crate::TurnContext;
+use crate::context::is_contextual_user_fragment;
 use crate::context_manager::ContextManager;
 use crate::context_manager::estimate_response_item_model_visible_bytes;
 use crate::event_mapping::is_contextual_dev_message_content;
@@ -9,6 +10,16 @@ use codex_protocol::models::ContentItem;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::LocalShellAction;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::protocol::APPS_INSTRUCTIONS_CLOSE_TAG;
+use codex_protocol::protocol::APPS_INSTRUCTIONS_OPEN_TAG;
+use codex_protocol::protocol::COLLABORATION_MODE_CLOSE_TAG;
+use codex_protocol::protocol::COLLABORATION_MODE_OPEN_TAG;
+use codex_protocol::protocol::PLUGINS_INSTRUCTIONS_CLOSE_TAG;
+use codex_protocol::protocol::PLUGINS_INSTRUCTIONS_OPEN_TAG;
+use codex_protocol::protocol::REALTIME_CONVERSATION_CLOSE_TAG;
+use codex_protocol::protocol::REALTIME_CONVERSATION_OPEN_TAG;
+use codex_protocol::protocol::SKILLS_INSTRUCTIONS_CLOSE_TAG;
+use codex_protocol::protocol::SKILLS_INSTRUCTIONS_OPEN_TAG;
 use codex_protocol::protocol::ThreadContextUsage;
 use codex_protocol::protocol::ThreadContextUsageCategoryBreakdown;
 use codex_protocol::protocol::ThreadContextUsageLoadedSkills;
@@ -105,18 +116,24 @@ pub(crate) fn build_thread_context_usage(
                 let item_bytes = estimate_response_item_model_visible_bytes(item);
                 match role.as_str() {
                     "user" => {
-                        if let Some(injected_skill) = parse_explicit_skill_injection(content) {
-                            categories.skills_metadata = categories
-                                .skills_metadata
-                                .saturating_add(injected_skill.metadata_bytes);
-                            categories.concrete_skills = categories
-                                .concrete_skills
-                                .saturating_add(injected_skill.concrete_bytes);
-                            skills.increment(
-                                injected_skill.name.as_str(),
-                                injected_skill.path.as_str(),
-                                ThreadSkillKind::Explicit,
-                            );
+                        let injected_skills = parse_explicit_skill_injections(content);
+                        if !injected_skills.is_empty() {
+                            for injected_skill in injected_skills {
+                                categories.skills_metadata = categories
+                                    .skills_metadata
+                                    .saturating_add(injected_skill.metadata_bytes);
+                                categories.concrete_skills = categories
+                                    .concrete_skills
+                                    .saturating_add(injected_skill.concrete_bytes);
+                                skills.increment(
+                                    injected_skill.name.as_str(),
+                                    injected_skill.path.as_str(),
+                                    ThreadSkillKind::Explicit,
+                                );
+                            }
+                            categories.tools_metadata = categories
+                                .tools_metadata
+                                .saturating_add(non_skill_contextual_user_bytes(content));
                         } else if is_contextual_user_message_content(content) {
                             categories.tools_metadata =
                                 categories.tools_metadata.saturating_add(item_bytes);
@@ -130,13 +147,16 @@ pub(crate) fn build_thread_context_usage(
                             categories.llm_messages.saturating_add(item_bytes);
                     }
                     "developer" => {
-                        if is_contextual_dev_message_content(content) {
-                            categories.tools_metadata =
-                                categories.tools_metadata.saturating_add(item_bytes);
-                        } else {
-                            categories.llm_messages =
-                                categories.llm_messages.saturating_add(item_bytes);
-                        }
+                        let developer_usage = classify_developer_message(content);
+                        categories.skills_metadata = categories
+                            .skills_metadata
+                            .saturating_add(developer_usage.skills_metadata);
+                        categories.tools_metadata = categories
+                            .tools_metadata
+                            .saturating_add(developer_usage.tools_metadata);
+                        categories.llm_messages = categories
+                            .llm_messages
+                            .saturating_add(developer_usage.llm_messages);
                     }
                     _ => {}
                 }
@@ -354,10 +374,89 @@ struct ParsedSkillInjection {
     concrete_bytes: i64,
 }
 
-fn parse_explicit_skill_injection(content: &[ContentItem]) -> Option<ParsedSkillInjection> {
-    let [ContentItem::InputText { text }] = content else {
-        return None;
-    };
+#[derive(Default)]
+struct DeveloperUsageBreakdown {
+    skills_metadata: i64,
+    tools_metadata: i64,
+    llm_messages: i64,
+}
+
+fn classify_developer_message(content: &[ContentItem]) -> DeveloperUsageBreakdown {
+    let mut usage = DeveloperUsageBreakdown::default();
+
+    for item in content {
+        let ContentItem::InputText { text } = item else {
+            continue;
+        };
+        let bytes = text_bytes_len(text);
+
+        if tagged_fragment_body_len(
+            text,
+            SKILLS_INSTRUCTIONS_OPEN_TAG,
+            SKILLS_INSTRUCTIONS_CLOSE_TAG,
+        )
+        .is_some()
+        {
+            usage.skills_metadata = usage.skills_metadata.saturating_add(bytes);
+        } else if is_tagged_developer_tools_metadata(text) {
+            usage.tools_metadata = usage.tools_metadata.saturating_add(bytes);
+        } else {
+            usage.llm_messages = usage.llm_messages.saturating_add(bytes);
+        }
+    }
+
+    usage
+}
+
+fn is_tagged_developer_tools_metadata(text: &str) -> bool {
+    is_tagged_fragment(
+        text,
+        APPS_INSTRUCTIONS_OPEN_TAG,
+        APPS_INSTRUCTIONS_CLOSE_TAG,
+    ) || is_tagged_fragment(
+        text,
+        PLUGINS_INSTRUCTIONS_OPEN_TAG,
+        PLUGINS_INSTRUCTIONS_CLOSE_TAG,
+    ) || is_tagged_fragment(
+        text,
+        COLLABORATION_MODE_OPEN_TAG,
+        COLLABORATION_MODE_CLOSE_TAG,
+    ) || is_tagged_fragment(
+        text,
+        REALTIME_CONVERSATION_OPEN_TAG,
+        REALTIME_CONVERSATION_CLOSE_TAG,
+    ) || is_tagged_fragment(
+        text,
+        "<permissions instructions>",
+        "</permissions instructions>",
+    ) || is_tagged_fragment(text, "<model_switch>", "</model_switch>")
+        || is_tagged_fragment(text, "<personality_spec>", "</personality_spec>")
+        || is_contextual_dev_message_content(&[ContentItem::InputText {
+            text: text.to_string(),
+        }])
+}
+
+fn is_tagged_fragment(text: &str, start: &str, end: &str) -> bool {
+    tagged_fragment_body_len(text, start, end).is_some()
+}
+
+fn tagged_fragment_body_len(text: &str, start: &str, end: &str) -> Option<i64> {
+    let trimmed = text.trim();
+    let body = trimmed.strip_prefix(start)?.strip_suffix(end)?.trim();
+    Some(text_bytes_len(body))
+}
+
+fn parse_explicit_skill_injections(content: &[ContentItem]) -> Vec<ParsedSkillInjection> {
+    content
+        .iter()
+        .filter_map(|item| match item {
+            ContentItem::InputText { text } => parse_explicit_skill_injection_text(text),
+            ContentItem::InputImage { .. } | ContentItem::OutputText { .. } => None,
+        })
+        .collect()
+}
+
+fn parse_explicit_skill_injection_text(text: &str) -> Option<ParsedSkillInjection> {
     let trimmed = text.trim();
     let body = trimmed
         .strip_prefix(SKILL_OPEN_TAG)?
@@ -382,6 +481,23 @@ fn parse_explicit_skill_injection(content: &[ContentItem]) -> Option<ParsedSkill
     })
 }
 
+fn non_skill_contextual_user_bytes(content: &[ContentItem]) -> i64 {
+    content
+        .iter()
+        .filter(|item| is_contextual_user_fragment(item))
+        .filter_map(|item| match item {
+            ContentItem::InputText { text }
+                if parse_explicit_skill_injection_text(text).is_none() =>
+            {
+                Some(text_bytes_len(text))
+            }
+            ContentItem::InputText { .. }
+            | ContentItem::InputImage { .. }
+            | ContentItem::OutputText { .. } => None,
+        })
+        .fold(0i64, i64::saturating_add)
+}
+
 fn extract_tag<'a>(body: &'a str, tag: &str) -> Option<(&'a str, usize)> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
@@ -401,23 +517,44 @@ fn text_bytes_len(text: &str) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_explicit_skill_injection;
+    use super::classify_developer_message;
+    use super::parse_explicit_skill_injections;
     use codex_protocol::models::ContentItem;
+    use codex_protocol::protocol::SKILLS_INSTRUCTIONS_CLOSE_TAG;
+    use codex_protocol::protocol::SKILLS_INSTRUCTIONS_OPEN_TAG;
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn parses_explicit_skill_injection() {
+    fn parses_explicit_skill_injections_from_mixed_contextual_message() {
         let content = vec![ContentItem::InputText {
+            text: "<environment_context>ctx</environment_context>".to_string(),
+        }, ContentItem::InputText {
             text:
                 "<skill>\n<name>demo</name>\n<path>/tmp/demo/SKILL.md</path>\nbody text\n</skill>"
                     .to_string(),
         }];
 
-        let parsed = parse_explicit_skill_injection(content.as_slice()).expect("skill");
+        let parsed = parse_explicit_skill_injections(content.as_slice());
 
-        assert_eq!(parsed.name, "demo");
-        assert_eq!(parsed.path, "/tmp/demo/SKILL.md");
-        assert_eq!(parsed.concrete_bytes, 9);
-        assert!(parsed.metadata_bytes > 0);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "demo");
+        assert_eq!(parsed[0].path, "/tmp/demo/SKILL.md");
+        assert_eq!(parsed[0].concrete_bytes, 9);
+        assert!(parsed[0].metadata_bytes > 0);
+    }
+
+    #[test]
+    fn classifies_skills_instructions_as_skill_metadata() {
+        let content = vec![ContentItem::InputText {
+            text: format!(
+                "{SKILLS_INSTRUCTIONS_OPEN_TAG}\n## Skills\n- demo: description\n{SKILLS_INSTRUCTIONS_CLOSE_TAG}"
+            ),
+        }];
+
+        let usage = classify_developer_message(content.as_slice());
+
+        assert!(usage.skills_metadata > 0);
+        assert_eq!(usage.tools_metadata, 0);
+        assert_eq!(usage.llm_messages, 0);
     }
 }

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use app_test_support::McpProcess;
 use app_test_support::create_fake_rollout_with_text_elements;
+use app_test_support::create_fake_rollout_with_token_usage;
 use app_test_support::create_mock_responses_server_repeating_assistant;
 use app_test_support::rollout_path;
 use app_test_support::test_absolute_path;
@@ -53,6 +54,10 @@ use codex_protocol::protocol::AgentMessageEvent;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionSource as ProtocolSessionSource;
+use codex_protocol::protocol::ThreadContextUsage;
+use codex_protocol::protocol::ThreadContextUsageCategoryBreakdown;
+use codex_protocol::protocol::ThreadContextUsageLoadedSkills;
+use codex_protocol::protocol::ThreadContextUsageUpdatedEvent;
 use codex_protocol::protocol::ThreadMemoryMode;
 use codex_protocol::protocol::UserMessageEvent;
 use codex_protocol::user_input::ByteRange;
@@ -196,6 +201,86 @@ async fn thread_read_can_include_turns() -> Result<()> {
         other => panic!("expected user message item, got {other:?}"),
     }
     assert_eq!(thread.status, ThreadStatus::NotLoaded);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_read_restores_usage_without_notifications() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let filename_ts = "2025-01-05T12-00-00";
+    let meta_rfc3339 = "2025-01-05T12:00:00Z";
+    let conversation_id = create_fake_rollout_with_token_usage(
+        codex_home.path(),
+        filename_ts,
+        meta_rfc3339,
+        "Saved user message",
+        Some("mock_provider"),
+    )?;
+    let rollout_file_path = rollout_path(codex_home.path(), filename_ts, &conversation_id);
+    let persisted_rollout = std::fs::read_to_string(&rollout_file_path)?;
+    let appended_rollout = json!({
+        "timestamp": meta_rfc3339,
+        "type": "event_msg",
+        "payload": serde_json::to_value(EventMsg::ThreadContextUsageUpdated(
+            ThreadContextUsageUpdatedEvent {
+                usage: ThreadContextUsage {
+                    total_bytes: 123456,
+                    budget_used_percent: Some(61),
+                    categories: ThreadContextUsageCategoryBreakdown {
+                        compact: 10,
+                        skills_metadata: 11,
+                        concrete_skills: 12,
+                        tools_metadata: 13,
+                        tool_calls: 14,
+                        user_messages: 15,
+                        llm_messages: 16,
+                        reasoning: 17,
+                    },
+                    loaded_skills: ThreadContextUsageLoadedSkills {
+                        loaded_count: 1,
+                        total_count: Some(4),
+                        skills: Vec::new(),
+                    },
+                },
+            },
+        ))?,
+    })
+    .to_string();
+    std::fs::write(
+        &rollout_file_path,
+        format!("{persisted_rollout}{appended_rollout}\n"),
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: conversation_id,
+            include_turns: true,
+        })
+        .await?;
+    let read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
+    )
+    .await??;
+    let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
+
+    let token_usage = thread.token_usage.expect("thread/read token usage");
+    assert_eq!(token_usage.total.total_tokens, 150);
+    assert_eq!(token_usage.last.total_tokens, 90);
+    assert_eq!(token_usage.model_context_window, Some(200_000));
+
+    let context_usage = thread.context_usage.expect("thread/read context usage");
+    assert_eq!(context_usage.total_bytes, 123456);
+    assert_eq!(context_usage.budget_used_percent, Some(61));
+    assert_eq!(context_usage.categories.tool_calls, 14);
+    assert_eq!(context_usage.loaded_skills.loaded_count, 1);
 
     Ok(())
 }

@@ -95,3 +95,15 @@ test("mergeThreadSnapshot preserves usage fields when thread/read omits them", (
   assert.equal(merged.tokenUsage?.total.totalTokens, 1200);
   assert.equal(merged.contextUsage?.budgetUsedPercent, 12);
 });
+
+test("mergeThreadSnapshot hydrates restored usage fields from thread/read", () => {
+  const existing = {
+    ...makeThread(),
+    tokenUsage: undefined,
+    contextUsage: undefined,
+  };
+  const merged = mergeThreadSnapshot(existing, makeThread());
+
+  assert.equal(merged.tokenUsage?.total.totalTokens, 1200);
+  assert.equal(merged.contextUsage?.budgetUsedPercent, 12);
+});
