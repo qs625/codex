@@ -13,6 +13,8 @@ use codex_protocol::AgentPath;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::Op;
+use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::SubAgentSource;
 use codex_tools::ToolSpec;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
@@ -117,10 +119,20 @@ async fn handle_spawn_agent(
     )
     .await?;
     apply_spawn_agent_overrides(&mut config, child_depth);
+    let current_agent_path = session
+        .services
+        .agent_control
+        .current_agent_path(session.conversation_id, &turn.session_source);
 
     let spawn_source = thread_spawn_source(
         session.conversation_id,
-        &turn.session_source,
+        &SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: session.conversation_id,
+            depth: child_depth.saturating_sub(1),
+            agent_path: Some(current_agent_path.clone()),
+            agent_nickname: None,
+            agent_role: None,
+        }),
         child_depth,
         role_name,
         Some(args.task_name.clone()),
@@ -136,9 +148,7 @@ async fn handle_spawn_agent(
                 {
                     Op::InterAgentCommunication {
                         communication: InterAgentCommunication::new(
-                            turn.session_source
-                                .get_agent_path()
-                                .unwrap_or_else(AgentPath::root),
+                            current_agent_path,
                             recipient,
                             Vec::new(),
                             prompt.clone(),

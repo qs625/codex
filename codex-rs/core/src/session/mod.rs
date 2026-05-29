@@ -73,7 +73,6 @@ use codex_network_proxy::normalize_host;
 use codex_otel::current_span_trace_id;
 use codex_otel::current_span_w3c_trace_context;
 use codex_otel::set_parent_from_w3c_trace_context;
-use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType as AccountPlanType;
 use codex_protocol::approvals::ElicitationRequestEvent;
@@ -2822,9 +2821,9 @@ impl Session {
             );
             contextual_user_sections.push(
                 crate::context::MultiagentContext::new(
-                    session_source
-                        .get_agent_path()
-                        .unwrap_or_else(AgentPath::root),
+                    self.services
+                        .agent_control
+                        .current_agent_path(self.conversation_id, &session_source),
                     self.services
                         .agent_control
                         .direct_subagent_paths(self.conversation_id)
