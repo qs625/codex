@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { MarkdownContent } from "../lib/markdown";
@@ -14,6 +14,19 @@ import {
   TerminalIcon,
   UserIcon,
 } from "./icons";
+
+type MessageRowProps = {
+  entries: ConversationEntry[];
+  onOpenLocalFile?: (target: string) => void;
+};
+
+type EventRowProps = {
+  entry: ConversationEntry;
+};
+
+type ToolRowProps = {
+  entries: ConversationEntry[];
+};
 
 type LocalImageCacheEntry = {
   objectUrl: string;
@@ -82,7 +95,9 @@ function cacheLocalImage(
     existing.lastAccessedAt = Date.now();
     return existing.objectUrl;
   }
-  const objectUrl = URL.createObjectURL(new Blob([payload.bytes], { type: payload.mimeType }));
+  const objectUrl = URL.createObjectURL(
+    new Blob([payload.bytes], { type: payload.mimeType }),
+  );
   localImageCache.set(path, {
     objectUrl,
     byteSize: payload.byteSize,
@@ -98,7 +113,8 @@ async function convertBlobToPng(blob: Blob): Promise<Blob> {
     const image = await new Promise<HTMLImageElement>((resolve, reject) => {
       const next = new Image();
       next.onload = () => resolve(next);
-      next.onerror = () => reject(new Error("Failed to decode image for clipboard"));
+      next.onerror = () =>
+        reject(new Error("Failed to decode image for clipboard"));
       next.src = objectUrl;
     });
     const canvas = document.createElement("canvas");
@@ -111,7 +127,8 @@ async function convertBlobToPng(blob: Blob): Promise<Blob> {
     context.drawImage(image, 0, 0);
     return await new Promise<Blob>((resolve, reject) => {
       canvas.toBlob(
-        (result) => (result ? resolve(result) : reject(new Error("Failed to encode PNG"))),
+        (result) =>
+          result ? resolve(result) : reject(new Error("Failed to encode PNG")),
         "image/png",
       );
     });
@@ -132,7 +149,9 @@ function ImageLightbox({
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
-  const [copyStatus, setCopyStatus] = useState<"idle" | "copying" | "copied" | "error">("idle");
+  const [copyStatus, setCopyStatus] = useState<
+    "idle" | "copying" | "copied" | "error"
+  >("idle");
   const copyResetRef = useRef<number | null>(null);
   const dragStateRef = useRef<{
     pointerId: number;
@@ -252,11 +271,14 @@ function ImageLightbox({
     try {
       const response = await fetch(src);
       const blob = await response.blob();
-      const pngBlob = blob.type === "image/png" ? blob : await convertBlobToPng(blob);
+      const pngBlob =
+        blob.type === "image/png" ? blob : await convertBlobToPng(blob);
       if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) {
         throw new Error("Clipboard image API unavailable");
       }
-      await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
+      await navigator.clipboard.write([
+        new ClipboardItem({ "image/png": pngBlob }),
+      ]);
       setCopyStatus("copied");
     } catch {
       setCopyStatus("error");
@@ -396,7 +418,9 @@ export function ZoomableImage({
           }
         }}
       />
-      {zoomed ? <ImageLightbox src={src} alt={alt} onClose={() => setZoomed(false)} /> : null}
+      {zoomed ? (
+        <ImageLightbox src={src} alt={alt} onClose={() => setZoomed(false)} />
+      ) : null}
     </>
   );
 }
@@ -438,7 +462,9 @@ export function LocalImagePreview({
         if (cancelled) {
           return;
         }
-        setError(loadError instanceof Error ? loadError.message : String(loadError));
+        setError(
+          loadError instanceof Error ? loadError.message : String(loadError),
+        );
       });
 
     return () => {
@@ -448,21 +474,33 @@ export function LocalImagePreview({
 
   if (error) {
     return (
-      <div className={`${className} attachment-image-loading`} role="img" aria-label={error} />
+      <div
+        className={`${className} attachment-image-loading`}
+        role="img"
+        aria-label={error}
+      />
     );
   }
 
   return objectUrl ? (
     <ZoomableImage src={objectUrl} alt={label} className={className} />
   ) : (
-    <div className={`${className} attachment-image-loading`} role="img" aria-label={`Loading ${label}`} />
+    <div
+      className={`${className} attachment-image-loading`}
+      role="img"
+      aria-label={`Loading ${label}`}
+    />
   );
 }
 
 function LocalImage({ path, label }: { path: string; label: string }) {
   return (
     <figure className="attachment-image-card">
-      <LocalImagePreview path={path} label={label} className="attachment-image" />
+      <LocalImagePreview
+        path={path}
+        label={label}
+        className="attachment-image"
+      />
       <figcaption>{label}</figcaption>
     </figure>
   );
@@ -484,13 +522,10 @@ export function ThinkingIndicator() {
   );
 }
 
-export function MessageRow({
+export const MessageRow = memo(function MessageRow({
   entries,
   onOpenLocalFile,
-}: {
-  entries: ConversationEntry[];
-  onOpenLocalFile?: (target: string) => void;
-}) {
+}: MessageRowProps) {
   const firstEntry = entries[0];
 
   return (
@@ -506,7 +541,10 @@ export function MessageRow({
         <div className="message-stack">
           {entries.map((entry) => (
             <div key={entry.id} className="message-bubble">
-              <MarkdownContent text={entry.text} onOpenLocalFile={onOpenLocalFile} />
+              <MarkdownContent
+                text={entry.text}
+                onOpenLocalFile={onOpenLocalFile}
+              />
               {entry.attachments.length > 0 ? (
                 <div className="message-attachments">
                   {entry.attachments.map((attachment) => {
@@ -547,9 +585,9 @@ export function MessageRow({
       </div>
     </article>
   );
-}
+}, areMessageRowPropsEqual);
 
-export function EventRow({ entry }: { entry: ConversationEntry }) {
+export const EventRow = memo(function EventRow({ entry }: EventRowProps) {
   return (
     <article className="event-row">
       <div className="event-icon">
@@ -561,9 +599,9 @@ export function EventRow({ entry }: { entry: ConversationEntry }) {
       </div>
     </article>
   );
-}
+}, areEventRowPropsEqual);
 
-export function ToolRow({ entries }: { entries: ConversationEntry[] }) {
+export const ToolRow = memo(function ToolRow({ entries }: ToolRowProps) {
   const firstEntry = entries[0];
   const doneCount = entries.filter(
     (entry) => threadStatusClass(entry.toolStatus ?? "todo") === "done",
@@ -629,6 +667,27 @@ export function ToolRow({ entries }: { entries: ConversationEntry[] }) {
       </details>
     </article>
   );
+}, areToolRowPropsEqual);
+
+function areMessageRowPropsEqual(
+  previous: Readonly<MessageRowProps>,
+  next: Readonly<MessageRowProps>,
+) {
+  return previous.entries === next.entries;
+}
+
+function areEventRowPropsEqual(
+  previous: Readonly<EventRowProps>,
+  next: Readonly<EventRowProps>,
+) {
+  return previous.entry === next.entry;
+}
+
+function areToolRowPropsEqual(
+  previous: Readonly<ToolRowProps>,
+  next: Readonly<ToolRowProps>,
+) {
+  return previous.entries === next.entries;
 }
 
 function getToolIcon(category: NonNullable<ConversationEntry["toolCategory"]>) {

@@ -9,10 +9,18 @@ import {
   useState,
 } from "react";
 
-import { ConversationPanel, SidebarPanel, TreeContextMenu } from "./components/Panels";
+import {
+  ConversationPanel,
+  SidebarPanel,
+  TreeContextMenu,
+} from "./components/Panels";
 import { RightPanel } from "./components/RightPanel";
-import { buildConversationCells, buildConversationEntries } from "./lib/conversation";
-import { readImageBlob, readImageFile, revokeComposerImage } from "./lib/images";
+import { buildConversationState } from "./lib/conversation";
+import {
+  readImageBlob,
+  readImageFile,
+  revokeComposerImage,
+} from "./lib/images";
 import { isThreadNotFoundError, toErrorMessage } from "./lib/shared";
 import {
   appendAgentDelta,
@@ -89,6 +97,9 @@ function App() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
+  const conversationStateRef = useRef<ReturnType<
+    typeof buildConversationState
+  > | null>(null);
   const draftImagesRef = useRef<ComposerImage[]>([]);
   const shouldStickConversationToBottomRef = useRef(true);
   const filePreviewRef = useRef<FilePreview | null>(null);
@@ -234,8 +245,12 @@ function App() {
   }, []);
 
   useEffect(() => {
-    setSidebarWidth((current) => clampPanelWidth(current, viewportWidth, "left"));
-    setRightPanelWidth((current) => clampPanelWidth(current, viewportWidth, "right"));
+    setSidebarWidth((current) =>
+      clampPanelWidth(current, viewportWidth, "left"),
+    );
+    setRightPanelWidth((current) =>
+      clampPanelWidth(current, viewportWidth, "right"),
+    );
   }, [viewportWidth]);
 
   useEffect(() => {
@@ -322,14 +337,14 @@ function App() {
     };
   });
 
-  const conversationEntries = useMemo(
-    () => buildConversationEntries(selectedThread),
-    [selectedThread],
-  );
-  const conversationCells = useMemo(
-    () => buildConversationCells(conversationEntries),
-    [conversationEntries],
-  );
+  const conversationCells = useMemo(() => {
+    const nextConversationState = buildConversationState(
+      selectedThread,
+      conversationStateRef.current,
+    );
+    conversationStateRef.current = nextConversationState;
+    return nextConversationState.cells;
+  }, [selectedThread]);
 
   useLayoutEffect(() => {
     const container = conversationScrollRef.current;
@@ -340,7 +355,9 @@ function App() {
   }, [conversationCells, isLoadingThread, selectedThreadId]);
 
   const selectedTreeRootId = useMemo(() => {
-    const seedThread = threads.find((thread) => thread.id === selectedThreadId) ?? pickInitialThread(threads);
+    const seedThread =
+      threads.find((thread) => thread.id === selectedThreadId) ??
+      pickInitialThread(threads);
     if (!seedThread) {
       return null;
     }
@@ -350,7 +367,10 @@ function App() {
     if (!selectedTreeRootId) {
       return [];
     }
-    return threads.filter((thread) => getTreeRootThreadId(threads, thread.id) === selectedTreeRootId);
+    return threads.filter(
+      (thread) =>
+        getTreeRootThreadId(threads, thread.id) === selectedTreeRootId,
+    );
   }, [selectedTreeRootId, threads]);
   const agentTree = useMemo(
     () => buildAgentTree(sessionThreads, selectedTreeRootId),
@@ -364,7 +384,8 @@ function App() {
 
   async function loadBootstrap() {
     try {
-      const payload = (await window.codexDesktop.bootstrap()) as BootstrapResponse;
+      const payload =
+        (await window.codexDesktop.bootstrap()) as BootstrapResponse;
       setWorkspace(payload.workspace);
       setThreads(payload.threads);
       const preferredRoot = pickInitialRootThread(payload.threads);
@@ -393,16 +414,25 @@ function App() {
     setThreads((current) => {
       const next = current.filter((thread) => !threadIdSet.has(thread.id));
       setSelectedThreadId((selected) =>
-        selected && threadIdSet.has(selected) ? pickInitialRootThread(next)?.id ?? null : selected,
+        selected && threadIdSet.has(selected)
+          ? (pickInitialRootThread(next)?.id ?? null)
+          : selected,
       );
       return next;
     });
-    setSelectedThread((current) => (current?.id && threadIdSet.has(current.id) ? null : current));
+    setSelectedThread((current) =>
+      current?.id && threadIdSet.has(current.id) ? null : current,
+    );
   }
 
-  function updateThreadStatusLocally(threadId: string, status: Thread["status"]) {
+  function updateThreadStatusLocally(
+    threadId: string,
+    status: Thread["status"],
+  ) {
     setThreads((current) =>
-      current.map((thread) => (thread.id === threadId ? { ...thread, status } : thread)),
+      current.map((thread) =>
+        thread.id === threadId ? { ...thread, status } : thread,
+      ),
     );
     setSelectedThread((current) =>
       current?.id === threadId ? { ...current, status } : current,
@@ -411,7 +441,9 @@ function App() {
 
   function updateThreadNameLocally(threadId: string, name: Thread["name"]) {
     setThreads((current) =>
-      current.map((thread) => (thread.id === threadId ? { ...thread, name } : thread)),
+      current.map((thread) =>
+        thread.id === threadId ? { ...thread, name } : thread,
+      ),
     );
     setSelectedThread((current) =>
       current?.id === threadId ? { ...current, name } : current,
@@ -420,7 +452,9 @@ function App() {
 
   function updateThreadSkillsLocally(threadId: string, skills: ThreadSkill[]) {
     setThreads((current) =>
-      current.map((thread) => (thread.id === threadId ? updateThreadSkills(thread, skills) : thread)),
+      current.map((thread) =>
+        thread.id === threadId ? updateThreadSkills(thread, skills) : thread,
+      ),
     );
     setSelectedThread((current) =>
       current?.id === threadId ? updateThreadSkills(current, skills) : current,
@@ -431,7 +465,10 @@ function App() {
     setIsLoadingThread(true);
     setError(null);
     try {
-      const payload = (await window.codexDesktop.readThread(threadId, true)) as {
+      const payload = (await window.codexDesktop.readThread(
+        threadId,
+        true,
+      )) as {
         thread: Thread;
       };
       setSelectedThread(payload.thread);
@@ -447,10 +484,16 @@ function App() {
     }
   }
 
-  async function createRootThread(name = newRootName.trim() || "root", cwd = workspace) {
+  async function createRootThread(
+    name = newRootName.trim() || "root",
+    cwd = workspace,
+  ) {
     setError(null);
     try {
-      const payload = (await window.codexDesktop.createThread({ cwd, name })) as { thread: Thread };
+      const payload = (await window.codexDesktop.createThread({
+        cwd,
+        name,
+      })) as { thread: Thread };
       setThreads((current) => upsertThread(current, payload.thread));
       setSelectedThreadId(payload.thread.id);
       setSelectedThread(payload.thread);
@@ -480,8 +523,10 @@ function App() {
       return;
     }
 
-    const rootThread = threads.find((thread) => thread.id === selectedTreeRootId) ?? null;
-    const replacementName = rootThread?.name ?? rootThread?.agentNickname ?? "root";
+    const rootThread =
+      threads.find((thread) => thread.id === selectedTreeRootId) ?? null;
+    const replacementName =
+      rootThread?.name ?? rootThread?.agentNickname ?? "root";
     const threadIdsToArchive = [...sessionThreads]
       .sort((left, right) => {
         const leftDepth = getThreadDepth(threads, left.id);
@@ -496,7 +541,9 @@ function App() {
       for (const threadId of threadIdsToArchive) {
         await window.codexDesktop.archiveThread(threadId);
       }
-      setThreads((current) => current.filter((thread) => !threadIdsToArchive.includes(thread.id)));
+      setThreads((current) =>
+        current.filter((thread) => !threadIdsToArchive.includes(thread.id)),
+      );
       setSelectedThread(null);
       setSelectedThreadId(null);
       await createRootThread(replacementName);
@@ -513,10 +560,17 @@ function App() {
   }
 
   async function sendMessage() {
-    if (!selectedThreadId || (!draft.trim() && draftImages.length === 0 && draftSkills.length === 0)) {
+    if (
+      !selectedThreadId ||
+      (!draft.trim() && draftImages.length === 0 && draftSkills.length === 0)
+    ) {
       return;
     }
-    if (draft.trim() === "/clear" && draftImages.length === 0 && draftSkills.length === 0) {
+    if (
+      draft.trim() === "/clear" &&
+      draftImages.length === 0 &&
+      draftSkills.length === 0
+    ) {
       await clearCurrentRootSession();
       return;
     }
@@ -527,7 +581,11 @@ function App() {
         threadId: selectedThreadId,
         text: draft.trim(),
         skills: draftSkills,
-        images: draftImages.map(({ name, mimeType, bytes }) => ({ name, mimeType, bytes })),
+        images: draftImages.map(({ name, mimeType, bytes }) => ({
+          name,
+          mimeType,
+          bytes,
+        })),
       });
       setDraft("");
       setDraftSkills([]);
@@ -597,7 +655,9 @@ function App() {
 
   function addDraftSkill(skill: DraftSkill) {
     setDraftSkills((current) =>
-      current.some((candidate) => candidate.path === skill.path) ? current : [...current, skill],
+      current.some((candidate) => candidate.path === skill.path)
+        ? current
+        : [...current, skill],
     );
   }
 
@@ -605,7 +665,9 @@ function App() {
     setDraftSkills((current) => current.filter((skill) => skill.path !== path));
   }
 
-  async function handleComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+  async function handleComposerPaste(
+    event: ClipboardEvent<HTMLTextAreaElement>,
+  ) {
     const imageFiles = Array.from(event.clipboardData.items)
       .filter((item) => item.type.startsWith("image/"))
       .map((item) => item.getAsFile())
@@ -639,7 +701,9 @@ function App() {
       }
       const archive = window.codexDesktop.archiveThread;
       if (typeof archive !== "function") {
-        throw new Error("This build does not expose archiveThread. Please reload Electron.");
+        throw new Error(
+          "This build does not expose archiveThread. Please reload Electron.",
+        );
       }
       await archive(threadId);
       removeThreadLocally(getThreadSubtreeIds(threads, threadId));
@@ -681,7 +745,10 @@ function App() {
           break;
         }
         case "thread/skills/updated": {
-          const notification = params as { threadId: string; skills: ThreadSkill[] };
+          const notification = params as {
+            threadId: string;
+            skills: ThreadSkill[];
+          };
           updateThreadSkillsLocally(notification.threadId, notification.skills);
           break;
         }
@@ -702,8 +769,14 @@ function App() {
         case "thread/archived":
         case "thread/closed": {
           if (method === "thread/name/updated") {
-            const notification = params as { threadId: string; threadName?: string | null };
-            updateThreadNameLocally(notification.threadId, notification.threadName ?? null);
+            const notification = params as {
+              threadId: string;
+              threadName?: string | null;
+            };
+            updateThreadNameLocally(
+              notification.threadId,
+              notification.threadName ?? null,
+            );
             break;
           }
           if (method === "thread/archived") {
@@ -714,14 +787,20 @@ function App() {
           break;
         }
         case "thread/status/changed": {
-          const notification = params as { threadId: string; status: Thread["status"] };
+          const notification = params as {
+            threadId: string;
+            status: Thread["status"];
+          };
           updateThreadStatusLocally(notification.threadId, notification.status);
           break;
         }
         case "turn/started":
         case "turn/completed": {
           const notification = params as { threadId: string; turn: Turn };
-          if (method === "turn/completed" && notification.threadId === selectedThreadId) {
+          if (
+            method === "turn/completed" &&
+            notification.threadId === selectedThreadId
+          ) {
             setIsStoppingTurn(false);
           }
           if (notification.threadId === selectedThreadId) {
@@ -741,7 +820,11 @@ function App() {
           if (notification.threadId === selectedThreadId) {
             setSelectedThread((current) =>
               current
-                ? updateThreadItem(current, notification.turnId, notification.item)
+                ? updateThreadItem(
+                    current,
+                    notification.turnId,
+                    notification.item,
+                  )
                 : current,
             );
           }
@@ -772,7 +855,9 @@ function App() {
           break;
       }
     } catch (streamError) {
-      setError(`Failed to render app-server event: ${toErrorMessage(streamError)}`);
+      setError(
+        `Failed to render app-server event: ${toErrorMessage(streamError)}`,
+      );
     }
   }
 
@@ -792,7 +877,9 @@ function App() {
     setPreviewError(null);
 
     try {
-      const preview = (await window.codexDesktop.readLocalFile(target)) as FilePreview;
+      const preview = (await window.codexDesktop.readLocalFile(
+        target,
+      )) as FilePreview;
       setFilePreview(preview);
     } catch (previewLoadError) {
       setFilePreview(null);
@@ -826,9 +913,13 @@ function App() {
   async function navigateSymbolHistory(direction: "back" | "forward") {
     const currentLocation = normalizeFileLocation(filePreviewRef.current);
     const sourceStack =
-      direction === "back" ? symbolBackStackRef.current : symbolForwardStackRef.current;
+      direction === "back"
+        ? symbolBackStackRef.current
+        : symbolForwardStackRef.current;
     const targetStack =
-      direction === "back" ? symbolForwardStackRef.current : symbolBackStackRef.current;
+      direction === "back"
+        ? symbolForwardStackRef.current
+        : symbolBackStackRef.current;
     const destination = sourceStack.pop();
 
     if (!destination) {
@@ -939,7 +1030,8 @@ function App() {
           activeView={rightPanelView}
           onCreateRootThread={() => void createRootThread()}
           onNavigateToSymbol={(destination, sourceLocation) =>
-            void handleNavigateToSymbol(destination, sourceLocation)}
+            void handleNavigateToSymbol(destination, sourceLocation)
+          }
           onOpenPreviewExternally={() => void openPreviewExternally()}
           onSelectTaskThread={setSelectedThreadId}
           onSetActiveView={setRightPanelView}
@@ -969,13 +1061,19 @@ function widthFromRatio(viewportWidth: number, ratio: number) {
   return Math.round(viewportWidth * ratio);
 }
 
-function clampPanelWidth(value: number, viewportWidth: number, panel: "left" | "right") {
-  const min = panel === "left"
-    ? widthFromRatio(viewportWidth, LEFT_PANEL_MIN_RATIO)
-    : widthFromRatio(viewportWidth, RIGHT_PANEL_MIN_RATIO);
-  const max = panel === "left"
-    ? widthFromRatio(viewportWidth, LEFT_PANEL_MAX_RATIO)
-    : widthFromRatio(viewportWidth, RIGHT_PANEL_MAX_RATIO);
+function clampPanelWidth(
+  value: number,
+  viewportWidth: number,
+  panel: "left" | "right",
+) {
+  const min =
+    panel === "left"
+      ? widthFromRatio(viewportWidth, LEFT_PANEL_MIN_RATIO)
+      : widthFromRatio(viewportWidth, RIGHT_PANEL_MIN_RATIO);
+  const max =
+    panel === "left"
+      ? widthFromRatio(viewportWidth, LEFT_PANEL_MAX_RATIO)
+      : widthFromRatio(viewportWidth, RIGHT_PANEL_MAX_RATIO);
   return clampWidth(value, min, max);
 }
 

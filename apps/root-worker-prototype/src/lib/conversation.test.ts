@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildConversationCells, buildConversationEntries } from "./conversation";
+import {
+  buildConversationCells,
+  buildConversationEntries,
+  buildConversationState,
+} from "./conversation";
 import type { Thread } from "../types";
 
 function makeThread(items: Thread["turns"][number]["items"]): Thread {
@@ -128,4 +132,35 @@ test("uses meaningful multi-agent titles for received work and child completion"
     entries.map((entry) => entry.toolName),
     ["received from /root", "/root/worker subagent completion"],
   );
+});
+
+test("reuses unchanged conversation cells when only the tail item updates", () => {
+  const leadingMessage = {
+    type: "userMessage" as const,
+    id: "msg-1",
+    content: [{ type: "text", text: "first" }],
+  };
+  const trailingMessage = {
+    type: "agentMessage" as const,
+    id: "msg-2",
+    text: "second",
+    phase: null,
+    memoryCitation: null,
+  };
+  const initialThread = makeThread([leadingMessage, trailingMessage]);
+  const initialState = buildConversationState(initialThread);
+
+  const updatedThread = makeThread([
+    leadingMessage,
+    {
+      ...trailingMessage,
+      text: "second updated",
+    },
+  ]);
+  const updatedState = buildConversationState(updatedThread, initialState);
+
+  assert.equal(updatedState.entries[0], initialState.entries[0]);
+  assert.notEqual(updatedState.entries[1], initialState.entries[1]);
+  assert.equal(updatedState.cells[0], initialState.cells[0]);
+  assert.notEqual(updatedState.cells.at(-1), initialState.cells.at(-1));
 });
