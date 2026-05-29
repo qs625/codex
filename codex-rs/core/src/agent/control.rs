@@ -545,21 +545,33 @@ impl AgentControl {
                 agent_role: _,
                 agent_nickname: _,
             }) => {
-                let (resumed_agent_nickname, resumed_agent_role) =
+                let (resumed_agent_path, resumed_agent_nickname, resumed_agent_role) =
                     if let Some(state_db_ctx) = state_db_ctx.as_ref() {
                         match state_db_ctx.get_thread(thread_id).await {
-                            Ok(Some(metadata)) => (metadata.agent_nickname, metadata.agent_role),
-                            Ok(None) | Err(_) => (None, None),
-                        }
+                        Ok(Some(metadata)) => (
+                            metadata
+                                .agent_path
+                                .map(AgentPath::from_string)
+                                .transpose()
+                                .map_err(|err| {
+                                    CodexErr::Fatal(format!(
+                                        "stored agent path for thread {thread_id} is invalid: {err}"
+                                    ))
+                                })?,
+                            metadata.agent_nickname,
+                            metadata.agent_role,
+                        ),
+                        Ok(None) | Err(_) => (None, None, None),
+                    }
                     } else {
-                        (None, None)
+                        (None, None, None)
                     };
                 self.prepare_thread_spawn(
                     &mut reservation,
                     &config,
                     parent_thread_id,
                     depth,
-                    agent_path,
+                    agent_path.or(resumed_agent_path),
                     resumed_agent_role,
                     resumed_agent_nickname,
                 )?
@@ -806,15 +818,28 @@ impl AgentControl {
         Some(thread.config_snapshot().await)
     }
 
+    pub(crate) fn current_agent_path(
+        &self,
+        current_thread_id: ThreadId,
+        current_session_source: &SessionSource,
+    ) -> AgentPath {
+        current_session_source
+            .get_agent_path()
+            .or_else(|| {
+                self.state
+                    .agent_metadata_for_thread(current_thread_id)
+                    .and_then(|metadata| metadata.agent_path)
+            })
+            .unwrap_or_else(AgentPath::root)
+    }
+
     pub(crate) async fn resolve_agent_reference(
         &self,
-        _current_thread_id: ThreadId,
+        current_thread_id: ThreadId,
         current_session_source: &SessionSource,
         agent_reference: &str,
     ) -> CodexResult<ThreadId> {
-        let current_agent_path = current_session_source
-            .get_agent_path()
-            .unwrap_or_else(AgentPath::root);
+        let current_agent_path = self.current_agent_path(current_thread_id, current_session_source);
         let agent_path = current_agent_path
             .resolve(agent_reference)
             .map_err(CodexErr::UnsupportedOperation)?;
@@ -850,15 +875,15 @@ impl AgentControl {
 
     pub(crate) async fn list_agents(
         &self,
+        current_thread_id: ThreadId,
         current_session_source: &SessionSource,
         path_prefix: Option<&str>,
     ) -> CodexResult<Vec<ListedAgent>> {
         let state = self.upgrade()?;
+        let current_agent_path = self.current_agent_path(current_thread_id, current_session_source);
         let resolved_prefix = path_prefix
             .map(|prefix| {
-                current_session_source
-                    .get_agent_path()
-                    .unwrap_or_else(AgentPath::root)
+                current_agent_path
                     .resolve(prefix)
                     .map_err(CodexErr::UnsupportedOperation)
             })

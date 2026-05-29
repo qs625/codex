@@ -1685,6 +1685,106 @@ async fn resume_thread_subagent_restores_stored_nickname_and_role() {
 }
 
 #[tokio::test]
+async fn resume_thread_subagent_restores_stored_agent_path_when_resume_source_omits_it() {
+    let (home, mut config) = test_config().await;
+    config
+        .features
+        .enable(Feature::Sqlite)
+        .expect("test config should allow sqlite");
+    let state_db = init_state_db(&config).await;
+    let manager = ThreadManager::with_models_provider_home_and_state_for_tests(
+        CodexAuth::from_api_key("dummy"),
+        config.model_provider.clone(),
+        config.codex_home.to_path_buf(),
+        std::sync::Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+        state_db.clone(),
+    );
+    let control = manager.agent_control();
+    let harness = AgentControlHarness {
+        _home: home,
+        config,
+        state_db,
+        manager,
+        control,
+    };
+    let (parent_thread_id, _parent_thread) = harness.start_thread().await;
+    let agent_path = AgentPath::from_string("/root/explorer".to_string())
+        .expect("test agent path should be valid");
+
+    let child_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello child"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id,
+                depth: 1,
+                agent_path: Some(agent_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("explorer".to_string()),
+            })),
+        )
+        .await
+        .expect("child spawn should succeed");
+
+    let child_thread = harness
+        .manager
+        .get_thread(child_thread_id)
+        .await
+        .expect("child thread should exist");
+    persist_thread_for_tree_resume(&child_thread, "persist before resume path test").await;
+
+    let _ = harness
+        .control
+        .shutdown_live_agent(child_thread_id)
+        .await
+        .expect("child shutdown should submit");
+
+    let resumed_thread_id = harness
+        .control
+        .resume_agent_from_rollout(
+            harness.config.clone(),
+            child_thread_id,
+            SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id,
+                depth: 1,
+                agent_path: None,
+                agent_nickname: None,
+                agent_role: None,
+            }),
+        )
+        .await
+        .expect("resume should succeed");
+    assert_eq!(resumed_thread_id, child_thread_id);
+
+    let resumed_snapshot = harness
+        .manager
+        .get_thread(resumed_thread_id)
+        .await
+        .expect("resumed child thread should exist")
+        .config_snapshot()
+        .await;
+    let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: resumed_parent_thread_id,
+        depth: resumed_depth,
+        agent_path: resumed_agent_path,
+        ..
+    }) = resumed_snapshot.session_source
+    else {
+        panic!("expected thread-spawn sub-agent source");
+    };
+    assert_eq!(resumed_parent_thread_id, parent_thread_id);
+    assert_eq!(resumed_depth, 1);
+    assert_eq!(resumed_agent_path, Some(agent_path));
+
+    let _ = harness
+        .control
+        .shutdown_live_agent(resumed_thread_id)
+        .await
+        .expect("resumed child shutdown should submit");
+}
+
+#[tokio::test]
 async fn resume_agent_from_rollout_reads_archived_rollout_path() {
     let harness = AgentControlHarness::new().await;
     let child_thread_id = harness
