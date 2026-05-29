@@ -31,6 +31,7 @@ import {
   getThreadDepth,
   isRootThread,
   isSubagentThread,
+  mergeThreadSnapshot,
   pickInitialRootThread,
   pickInitialThread,
   updateThreadItem,
@@ -491,7 +492,7 @@ function App() {
       )) as {
         thread: Thread;
       };
-      setSelectedThread(payload.thread);
+      setSelectedThread((current) => mergeThreadSnapshot(current, payload.thread));
       setThreads((current) => upsertThread(current, payload.thread));
     } catch (loadError) {
       const message = toErrorMessage(loadError);

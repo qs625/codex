@@ -254,7 +254,6 @@ function ContextUsagePanel({ contextUsage }: { contextUsage: ContextUsageAnalysi
               <span className="context-section-eyebrow">Context Over Time</span>
               <strong>Turn Trend</strong>
             </div>
-            <span className="context-inline-metric">{contextUsage.reasoningSharePercent}% reasoning</span>
           </div>
 
           {contextUsage.turnTrend.turns.length > 0 ? (
@@ -281,7 +280,7 @@ function ContextUsagePanel({ contextUsage }: { contextUsage: ContextUsageAnalysi
                   <div
                     className="context-trend-grid"
                     style={{
-                      gridTemplateColumns: `repeat(${contextUsage.turnTrend.turns.length}, minmax(24px, 1fr))`,
+                      gridTemplateColumns: `repeat(${contextUsage.turnTrend.turns.length}, 18px)`,
                     }}
                   >
                     {contextUsage.turnTrend.turns.map((turn) => (

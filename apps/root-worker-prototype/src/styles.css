@@ -1490,9 +1490,10 @@ svg {
 
 .context-trend-grid {
   display: grid;
-  grid-auto-rows: minmax(18px, auto);
+  grid-auto-rows: 18px;
   align-items: center;
-  gap: 6px 8px;
+  justify-content: start;
+  gap: 4px 6px;
 }
 
 .context-trend-layout {
@@ -1505,9 +1506,9 @@ svg {
 .context-trend-labels {
   display: grid;
   grid-template-rows: minmax(12px, auto);
-  grid-auto-rows: minmax(18px, auto);
+  grid-auto-rows: 18px;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .context-trend-scroll {
@@ -1520,7 +1521,7 @@ svg {
 }
 
 .context-trend-corner {
-  min-height: 18px;
+  height: 18px;
 }
 
 .context-trend-turn-label,
@@ -1531,7 +1532,7 @@ svg {
 
 .context-trend-turn-label {
   text-align: center;
-  min-width: 24px;
+  width: 18px;
 }
 
 .context-trend-row-label {
@@ -1541,9 +1542,9 @@ svg {
 
 .context-trend-cell {
   display: block;
-  width: 100%;
+  width: 18px;
   aspect-ratio: 1;
-  min-width: 24px;
+  min-width: 18px;
   min-height: 18px;
   border: 1px solid rgba(255, 255, 255, 0.72);
   border-radius: 6px;

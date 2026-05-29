@@ -132,6 +132,8 @@ const CATEGORY_COLORS: Record<ContextUsageCategoryId, string> = {
   reasoning: "#8b5cf6",
 };
 
+const MAX_TREND_TURNS = 16;
+
 export function getContextUsageCategoryColor(categoryId: ContextUsageCategoryId) {
   return CATEGORY_COLORS[categoryId];
 }
@@ -348,13 +350,14 @@ function buildTurnTrendRows(
     units: Record<ContextUsageCategoryId, number>;
   }>,
 ) {
+  const visibleTurns = turns.slice(-MAX_TREND_TURNS);
   const maxCategoryUnits = Math.max(
-    ...turns.flatMap((turn) => CATEGORY_ORDER.map((category) => turn.units[category.id])),
+    ...visibleTurns.flatMap((turn) => CATEGORY_ORDER.map((category) => turn.units[category.id])),
     0,
   );
 
   return {
-    turns: turns.map((turn) => ({
+    turns: visibleTurns.map((turn) => ({
       turnId: turn.turnId,
       label: turn.label,
     })),
@@ -363,7 +366,7 @@ function buildTurnTrendRows(
       label: category.label,
       shortLabel: category.shortLabel,
       color: getContextUsageCategoryColor(category.id),
-      cells: turns.map((turn) => {
+      cells: visibleTurns.map((turn) => {
         const units = turn.units[category.id];
         return {
           turnId: turn.turnId,
@@ -538,7 +541,7 @@ function sanitizePercent(value: number | null | undefined) {
 }
 
 function budgetPercentFromTokenUsage(tokenUsage: ThreadTokenUsage | null | undefined) {
-  const totalTokens = tokenUsage?.total.totalTokens ?? 0;
+  const totalTokens = tokenUsage?.last.totalTokens ?? 0;
   const modelContextWindow = tokenUsage?.modelContextWindow ?? 0;
 
   if (modelContextWindow <= 0 || totalTokens <= 0) {
@@ -549,5 +552,5 @@ function budgetPercentFromTokenUsage(tokenUsage: ThreadTokenUsage | null | undef
 }
 
 function hasTokenUsage(tokenUsage: ThreadTokenUsage | null | undefined) {
-  return (tokenUsage?.modelContextWindow ?? 0) > 0 && (tokenUsage?.total.totalTokens ?? 0) > 0;
+  return (tokenUsage?.modelContextWindow ?? 0) > 0 && (tokenUsage?.last.totalTokens ?? 0) > 0;
 }
