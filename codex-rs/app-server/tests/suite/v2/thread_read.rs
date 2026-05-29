@@ -880,8 +880,8 @@ async fn thread_read_loaded_thread_returns_precomputed_path_before_materializati
     let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
     let thread_path = thread.path.clone().expect("thread path");
     assert!(
-        !thread_path.exists(),
-        "fresh thread rollout should not be materialized yet"
+        thread_path.exists(),
+        "fresh thread rollout should be materialized at thread start"
     );
 
     let read_id = mcp
@@ -1064,7 +1064,7 @@ async fn thread_name_set_is_reflected_in_read_list_and_resume() -> Result<()> {
 }
 
 #[tokio::test]
-async fn thread_read_include_turns_rejects_unmaterialized_loaded_thread() -> Result<()> {
+async fn thread_read_include_turns_returns_initial_context_for_fresh_loaded_thread() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
@@ -1086,8 +1086,8 @@ async fn thread_read_include_turns_rejects_unmaterialized_loaded_thread() -> Res
     let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
     let thread_path = thread.path.clone().expect("thread path");
     assert!(
-        !thread_path.exists(),
-        "fresh thread rollout should not be materialized yet"
+        thread_path.exists(),
+        "fresh thread rollout should be materialized at thread start"
     );
 
     let read_id = mcp
@@ -1096,26 +1096,24 @@ async fn thread_read_include_turns_rejects_unmaterialized_loaded_thread() -> Res
             include_turns: true,
         })
         .await?;
-    let read_err: JSONRPCError = timeout(
+    let read_resp: JSONRPCResponse = timeout(
         DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_error_message(RequestId::Integer(read_id)),
+        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
     )
     .await??;
+    let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
 
-    assert!(
-        read_err
-            .error
-            .message
-            .contains("includeTurns is unavailable before first user message"),
-        "unexpected error: {}",
-        read_err.error.message
-    );
+    assert_eq!(thread.turns.len(), 1);
+    assert!(matches!(
+        thread.turns[0].items.first(),
+        Some(ThreadItem::InjectedContext { .. })
+    ));
 
     Ok(())
 }
 
 #[tokio::test]
-async fn thread_turns_list_rejects_unmaterialized_loaded_thread() -> Result<()> {
+async fn thread_turns_list_returns_initial_context_for_fresh_loaded_thread() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
@@ -1137,8 +1135,8 @@ async fn thread_turns_list_rejects_unmaterialized_loaded_thread() -> Result<()> 
     let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
     let thread_path = thread.path.clone().expect("thread path");
     assert!(
-        !thread_path.exists(),
-        "fresh thread rollout should not be materialized yet"
+        thread_path.exists(),
+        "fresh thread rollout should be materialized at thread start"
     );
 
     let read_id = mcp
@@ -1150,20 +1148,18 @@ async fn thread_turns_list_rejects_unmaterialized_loaded_thread() -> Result<()> 
             items_view: None,
         })
         .await?;
-    let read_err: JSONRPCError = timeout(
+    let read_resp: JSONRPCResponse = timeout(
         DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_error_message(RequestId::Integer(read_id)),
+        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
     )
     .await??;
+    let ThreadTurnsListResponse { data, .. } = to_response::<ThreadTurnsListResponse>(read_resp)?;
 
-    assert!(
-        read_err
-            .error
-            .message
-            .contains("thread/turns/list is unavailable before first user message"),
-        "unexpected error: {}",
-        read_err.error.message
-    );
+    assert_eq!(data.len(), 1);
+    assert!(matches!(
+        data[0].items.first(),
+        Some(ThreadItem::InjectedContext { .. })
+    ));
 
     Ok(())
 }
