@@ -106,17 +106,102 @@ test("builds compact context usage analysis with loaded skill ratios and timelin
   assert.equal(analysis.loadedSkills, 2);
   assert.equal(analysis.totalSkills, 12);
   assert.equal(analysis.totalConcreteLoads, 3);
-  assert.equal(analysis.turnTrend.length, 1);
-  assert.equal(analysis.turnTrend[0]?.intensity, 1);
+  assert.equal(analysis.hasBudgetData, false);
+  assert.equal(analysis.turnTrend.turns.length, 1);
+  assert.equal(analysis.turnTrend.rows.length, 8);
+  assert.ok(
+    (analysis.turnTrend.rows.find((row) => row.id === "userMessages")?.cells[0]?.units ?? 0) > 0,
+  );
   assert.equal(analysis.categories.length, 8);
   assert.equal(analysis.loadedConcreteSkills[0]?.name, "openai-docs");
   assert.equal(analysis.loadedConcreteSkills[0]?.loadCount, 2);
   assert.equal(analysis.loadedConcreteSkills[1]?.name, "skill-creator");
   assert.equal(analysis.loadedConcreteSkills[1]?.loadCount, 1);
-  assert.ok(analysis.budgetUsedPercent > 0);
+  assert.equal(analysis.budgetUsedPercent, 0);
   assert.ok(
     analysis.categories.some(
-      (category) => category.id === "toolCalls" && category.sharePercent > 0,
+      (category) => category.id === "toolCalls" && category.sharePercent === 0,
     ),
   );
+});
+
+test("uses token usage for budget percent and context usage ratios for token distribution", () => {
+  const thread = makeThread(
+    [
+      {
+        type: "userMessage",
+        id: "user-1",
+        content: [
+          {
+            type: "text",
+            text: "Load the openai-docs skill and inspect the current thread context usage.",
+          },
+        ],
+      },
+      {
+        type: "agentMessage",
+        id: "agent-1",
+        text: "Skill loaded. I am checking the panel state now.",
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    [
+      {
+        name: "openai-docs",
+        path: "/skills/openai-docs/SKILL.md",
+        kind: "explicit",
+      },
+    ],
+  );
+
+  thread.contextUsage = {
+    totalBytes: 128430,
+    budgetUsedPercent: 64,
+    categories: {
+      compact: 0,
+      skillsMetadata: 18210,
+      concreteSkills: 22563,
+      toolsMetadata: 10398,
+      toolCalls: 19565,
+      userMessages: 24145,
+      llmMessages: 25484,
+      reasoning: 7865,
+    },
+    loadedSkills: {
+      loadedCount: 0,
+      totalCount: 12,
+      skills: [],
+    },
+  };
+  thread.tokenUsage = {
+    total: {
+      totalTokens: 100000,
+      inputTokens: 76000,
+      cachedInputTokens: 12000,
+      outputTokens: 24000,
+      reasoningOutputTokens: 8000,
+    },
+    last: {
+      totalTokens: 18000,
+      inputTokens: 13000,
+      cachedInputTokens: 2000,
+      outputTokens: 5000,
+      reasoningOutputTokens: 1500,
+    },
+    modelContextWindow: 200000,
+  };
+
+  const analysis = buildContextUsageAnalysis(thread, 12);
+
+  assert.equal(analysis.hasBudgetData, true);
+  assert.equal(analysis.budgetUsedPercent, 50);
+  assert.equal(analysis.loadedSkills, 1);
+  assert.equal(analysis.loadedConcreteSkills.length, 1);
+  assert.equal(analysis.loadedConcreteSkills[0]?.name, "openai-docs");
+  assert.equal(analysis.loadedConcreteSkills[0]?.loadCount, 1);
+  assert.equal(analysis.turnTrend.turns[0]?.label, "1");
+  assert.equal(analysis.turnTrend.rows.find((row) => row.id === "llmMessages")?.cells.length, 1);
+  assert.equal(analysis.categories.find((row) => row.id === "llmMessages")?.sharePercent, 19.9);
+  assert.equal(analysis.categories.find((row) => row.id === "llmMessages")?.units, 19900);
 });

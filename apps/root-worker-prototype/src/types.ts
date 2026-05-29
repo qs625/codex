@@ -130,6 +130,14 @@ export type ThreadItem =
       durationMs: number | null;
     }
   | {
+      type: "builtinToolCall";
+      id: string;
+      tool: string;
+      arguments: unknown;
+      status: string;
+      output: unknown | null;
+    }
+  | {
       type: "eventDrivenToolCall";
       id: string;
       tool: string;
@@ -232,6 +240,20 @@ export type ThreadContextUsage = {
   };
 };
 
+export type TokenUsageBreakdown = {
+  totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+};
+
+export type ThreadTokenUsage = {
+  total: TokenUsageBreakdown;
+  last: TokenUsageBreakdown;
+  modelContextWindow: number | null;
+};
+
 export type Thread = {
   id: string;
   sessionId: string;
@@ -254,6 +276,7 @@ export type Thread = {
   gitInfo: unknown | null;
   name: string | null;
   skills: ThreadSkill[];
+  tokenUsage?: ThreadTokenUsage | null;
   contextUsage?: ThreadContextUsage | null;
   turns: Turn[];
 };

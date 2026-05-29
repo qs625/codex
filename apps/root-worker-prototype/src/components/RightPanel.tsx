@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, type ReactNode } from "react";
 import Editor from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 
@@ -189,10 +189,14 @@ function ContextUsagePanel({ contextUsage }: { contextUsage: ContextUsageAnalysi
         <section className="context-budget-card">
           <div className="context-budget-header">
             <div>
-              <span className="context-budget-label">Estimated Budget Used</span>
-              <strong>{contextUsage.budgetUsedPercent}%</strong>
+              <span className="context-budget-label">Context Window Used</span>
+              <strong>
+                {contextUsage.hasBudgetData ? `${contextUsage.budgetUsedPercent}%` : "Unavailable"}
+              </strong>
             </div>
-            <span className="context-budget-note">Relative share only</span>
+            <span className="context-budget-note">
+              {contextUsage.hasBudgetData ? "From thread token usage" : "Waiting for token usage"}
+            </span>
           </div>
           <div className="context-budget-track" aria-hidden="true">
             <span
@@ -207,7 +211,7 @@ function ContextUsagePanel({ contextUsage }: { contextUsage: ContextUsageAnalysi
                   className="context-category-dot"
                   style={{ backgroundColor: getContextUsageCategoryColor(category.id) }}
                 />
-                <span className="context-category-pill-label">{category.shortLabel}</span>
+                <span className="context-category-pill-label">{category.label}</span>
                 <span className="context-category-pill-value">{category.sharePercent}%</span>
               </div>
             ))}
@@ -253,17 +257,57 @@ function ContextUsagePanel({ contextUsage }: { contextUsage: ContextUsageAnalysi
             <span className="context-inline-metric">{contextUsage.reasoningSharePercent}% reasoning</span>
           </div>
 
-          {contextUsage.turnTrend.length > 0 ? (
-            <div className="context-trend-chart" aria-label="Context usage trend by turn">
-              {contextUsage.turnTrend.map((turn) => (
-                <div key={turn.turnId} className="context-trend-column">
-                  <div
-                    className="context-trend-bar"
-                    style={{ height: `${Math.max(10, Math.round(turn.intensity * 100))}%` }}
-                  />
-                  <span>{turn.label}</span>
+          {contextUsage.turnTrend.turns.length > 0 ? (
+            <div className="context-trend-panel" aria-label="Context usage trend by turn">
+              <div className="context-trend-legend">
+                <span>Low</span>
+                <div className="context-trend-legend-scale" aria-hidden="true">
+                  <span />
                 </div>
-              ))}
+                <span>High</span>
+              </div>
+
+              <div className="context-trend-layout">
+                <div className="context-trend-labels" aria-hidden="true">
+                  <div className="context-trend-corner" />
+                  {contextUsage.turnTrend.rows.map((row) => (
+                    <span key={row.id} className="context-trend-row-label" title={row.label}>
+                      {row.label}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="context-trend-scroll">
+                  <div
+                    className="context-trend-grid"
+                    style={{
+                      gridTemplateColumns: `repeat(${contextUsage.turnTrend.turns.length}, minmax(24px, 1fr))`,
+                    }}
+                  >
+                    {contextUsage.turnTrend.turns.map((turn) => (
+                      <span key={turn.turnId} className="context-trend-turn-label">
+                        {turn.label}
+                      </span>
+                    ))}
+
+                    {contextUsage.turnTrend.rows.map((row) => (
+                      <Fragment key={row.id}>
+                        {row.cells.map((cell) => (
+                          <span
+                            key={`${row.id}:${cell.turnId}`}
+                            className={`context-trend-cell ${cell.units > 0 ? "active" : ""}`}
+                            title={`${row.label} · Turn ${cell.label}: ${cell.units} units`}
+                            style={{
+                              backgroundColor: row.color,
+                              opacity: cell.units > 0 ? Math.max(0.18, cell.intensity) : 0.08,
+                            }}
+                          />
+                        ))}
+                      </Fragment>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
           ) : (
             <div className="empty-card">
@@ -271,48 +315,6 @@ function ContextUsagePanel({ contextUsage }: { contextUsage: ContextUsageAnalysi
             </div>
           )}
         </section>
-
-        {contextUsage.categories.length > 0 ? (
-          <section className="context-section-card">
-            <div className="context-section-header">
-              <div>
-                <span className="context-section-eyebrow">Category Breakdown</span>
-                <strong>Context Mix</strong>
-              </div>
-            </div>
-
-            <div className="context-breakdown-list">
-              {contextUsage.categories.map((category) => (
-                <article key={category.id} className="context-breakdown-row">
-                  <div className="context-breakdown-copy">
-                    <div className="context-breakdown-title-line">
-                      <span
-                        className="context-category-dot"
-                        style={{ backgroundColor: getContextUsageCategoryColor(category.id) }}
-                      />
-                      <strong>{category.label}</strong>
-                      <span>{category.sharePercent}%</span>
-                    </div>
-                    <p>{category.description}</p>
-                  </div>
-                  <div className="context-breakdown-track" aria-hidden="true">
-                    <span
-                      className="context-breakdown-fill"
-                      style={{
-                        width: `${category.sharePercent}%`,
-                        backgroundColor: getContextUsageCategoryColor(category.id),
-                      }}
-                    />
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-        ) : (
-          <div className="empty-card">
-            <p>No context usage yet.</p>
-          </div>
-        )}
       </div>
     </div>
   );
