@@ -26,6 +26,8 @@ type EventRowProps = {
 
 type ToolRowProps = {
   entries: ConversationEntry[];
+  isOpen?: boolean;
+  onToggleOpen?: (open: boolean) => void;
 };
 
 type LocalImageCacheEntry = {
@@ -601,7 +603,11 @@ export const EventRow = memo(function EventRow({ entry }: EventRowProps) {
   );
 }, areEventRowPropsEqual);
 
-export const ToolRow = memo(function ToolRow({ entries }: ToolRowProps) {
+export const ToolRow = memo(function ToolRow({
+  entries,
+  isOpen,
+  onToggleOpen,
+}: ToolRowProps) {
   const firstEntry = entries[0];
   const doneCount = entries.filter(
     (entry) => threadStatusClass(entry.toolStatus ?? "todo") === "done",
@@ -614,7 +620,13 @@ export const ToolRow = memo(function ToolRow({ entries }: ToolRowProps) {
       <div className={`event-icon tool-icon tool-icon-${toolCategory}`}>
         {icon}
       </div>
-      <details className={`tool-card tool-card-${toolCategory}`}>
+      <details
+        className={`tool-card tool-card-${toolCategory}`}
+        open={isOpen}
+        onToggle={(event) => {
+          onToggleOpen?.(event.currentTarget.open);
+        }}
+      >
         <summary className="tool-card-summary">
           <div className="tool-card-copy">
             <strong>
@@ -687,7 +699,7 @@ function areToolRowPropsEqual(
   previous: Readonly<ToolRowProps>,
   next: Readonly<ToolRowProps>,
 ) {
-  return previous.entries === next.entries;
+  return previous.entries === next.entries && previous.isOpen === next.isOpen;
 }
 
 function getToolIcon(category: NonNullable<ConversationEntry["toolCategory"]>) {
