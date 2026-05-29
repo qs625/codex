@@ -368,25 +368,25 @@ impl ThreadHistoryBuilder {
         if matches!(
             communication.operation,
             codex_protocol::protocol::InterAgentOperation::ChildCompletion
-        )
-            && let Some(mut status) = communication.status.map(CollabAgentState::from) {
-                status.path = Some(communication.author.to_string());
-                self.ensure_turn()
-                    .items
-                    .push(ThreadItem::CollabAgentStatusUpdate {
-                        id,
-                        sender_thread_id: communication
-                            .sender_thread_id
-                            .map(|value| value.to_string()),
-                        sender_path: communication.author.to_string(),
-                        recipient_thread_id: communication
-                            .recipient_thread_id
-                            .map(|value| value.to_string()),
-                        recipient_path: communication.recipient.to_string(),
-                        status,
-                    });
-                return;
-            }
+        ) && let Some(mut status) = communication.status.map(CollabAgentState::from)
+        {
+            status.path = Some(communication.author.to_string());
+            self.ensure_turn()
+                .items
+                .push(ThreadItem::CollabAgentStatusUpdate {
+                    id,
+                    sender_thread_id: communication
+                        .sender_thread_id
+                        .map(|value| value.to_string()),
+                    sender_path: communication.author.to_string(),
+                    recipient_thread_id: communication
+                        .recipient_thread_id
+                        .map(|value| value.to_string()),
+                    recipient_path: communication.recipient.to_string(),
+                    status,
+                });
+            return;
+        }
 
         self.ensure_turn()
             .items

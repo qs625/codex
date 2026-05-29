@@ -326,6 +326,9 @@ async fn run_codex_tool_session_inner(
                     EventMsg::ThreadSkillsUpdated(_) => {
                         // Ignore thread skill metadata updates in MCP tool runner.
                     }
+                    EventMsg::ThreadContextUsageUpdated(_) => {
+                        // Ignore thread context usage metadata updates in MCP tool runner.
+                    }
                     EventMsg::McpStartupUpdate(_) | EventMsg::McpStartupComplete(_) => {
                         // Ignored in MCP tool runner.
                     }

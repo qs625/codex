@@ -806,7 +806,6 @@ pub enum InterAgentOperation {
     ChildCompletion,
 }
 
-
 fn default_true() -> bool {
     true
 }

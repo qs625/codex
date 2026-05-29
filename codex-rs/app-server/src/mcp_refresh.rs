@@ -123,7 +123,6 @@ mod tests {
     use std::sync::Weak;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
-    use std::sync::Weak;
     use tempfile::TempDir;
 
     #[tokio::test]

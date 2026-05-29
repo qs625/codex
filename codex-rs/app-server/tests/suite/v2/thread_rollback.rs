@@ -184,7 +184,12 @@ async fn thread_rollback_drops_last_turns_and_persists_to_rollout() -> Result<()
             .len(),
         2
     );
-    match &thread.turns.last().expect("expected user turn after resume").items[0] {
+    match &thread
+        .turns
+        .last()
+        .expect("expected user turn after resume")
+        .items[0]
+    {
         ThreadItem::UserMessage { content, .. } => {
             assert_eq!(
                 content,
