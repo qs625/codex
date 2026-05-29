@@ -279,6 +279,82 @@ async fn skill_roots_from_layer_stack_includes_disabled_project_layers() -> anyh
 }
 
 #[tokio::test]
+async fn skill_roots_from_layer_stack_includes_nested_dot_codex_skills_for_cwd()
+-> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+
+    let home_folder = tmp.path().join("home");
+    let user_folder = home_folder.join("codex");
+    fs::create_dir_all(&user_folder)?;
+
+    let project_root = tmp.path().join("repo");
+    let nested_dir = project_root.join("nested/inner");
+    let root_dot_codex = project_root.join(".codex");
+    let nested_dot_codex = project_root.join("nested/.codex");
+    fs::create_dir_all(&nested_dir)?;
+    fs::create_dir_all(&root_dot_codex)?;
+    fs::create_dir_all(&nested_dot_codex)?;
+    fs::create_dir_all(root_dot_codex.join("skills"))?;
+    fs::create_dir_all(nested_dot_codex.join("skills"))?;
+    mark_as_git_repo(&project_root);
+
+    let user_file = user_folder.join("config.toml").abs();
+
+    let layers = vec![
+        ConfigLayerEntry::new(
+            ConfigLayerSource::User {
+                file: user_file,
+                profile: None,
+            },
+            TomlValue::Table(toml::map::Map::new()),
+        ),
+        ConfigLayerEntry::new(
+            ConfigLayerSource::Project {
+                dot_codex_folder: root_dot_codex.abs(),
+            },
+            TomlValue::Table(toml::map::Map::new()),
+        ),
+    ];
+    let stack = ConfigLayerStack::new(
+        layers,
+        ConfigRequirements::default(),
+        ConfigRequirementsToml::default(),
+    )?;
+
+    let home_folder_abs = home_folder.abs();
+    let nested_dir_abs = nested_dir.abs();
+    let got = skill_roots_from_layer_stack(
+        Arc::clone(&LOCAL_FS),
+        &stack,
+        &nested_dir_abs,
+        Some(&home_folder_abs),
+    )
+    .await
+    .into_iter()
+    .map(|root| (root.scope, root.path.to_path_buf()))
+    .collect::<Vec<_>>();
+
+    assert_eq!(
+        got,
+        vec![
+            (SkillScope::Repo, root_dot_codex.join("skills")),
+            (SkillScope::User, user_folder.join("skills")),
+            (
+                SkillScope::User,
+                home_folder.join(AGENTS_DIR_NAME).join(SKILLS_DIR_NAME)
+            ),
+            (
+                SkillScope::System,
+                user_folder.join("skills").join(".system")
+            ),
+            (SkillScope::Repo, nested_dot_codex.join("skills")),
+        ]
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn loads_skills_from_home_agents_dir_for_user_scope() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
 

@@ -7043,6 +7043,61 @@ async fn build_initial_context_trims_skill_metadata_from_context_window_budget()
     );
 }
 
+#[tokio::test]
+async fn build_initial_context_loads_skills_from_current_cwd_local_roots() {
+    fn write_skill(root: &Path, dir: &str, name: &str, description: &str) {
+        let skill_dir = root.join(dir);
+        std::fs::create_dir_all(&skill_dir).expect("create skill dir");
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {description}\n---\n\n# Body\n"),
+        )
+        .expect("write skill");
+    }
+
+    let codex_home = tempfile::tempdir().expect("create codex home");
+    let child_cwd = codex_home.path().join("child");
+    std::fs::create_dir_all(&child_cwd).expect("create child cwd");
+    write_skill(
+        &child_cwd.join(".codex/skills"),
+        "cwd-dot-codex",
+        "cwd-dot-codex-skill",
+        "from cwd .codex",
+    );
+    write_skill(
+        &child_cwd.join(".agents/skills"),
+        "cwd-dot-agents",
+        "cwd-dot-agents-skill",
+        "from cwd .agents",
+    );
+
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_config_home_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        codex_home.path(),
+        |config| {
+            config.cwd = child_cwd.abs();
+        },
+    )
+    .await;
+
+    let initial_context = session.build_initial_context(turn_context.as_ref()).await;
+    let developer_texts = developer_input_texts(&initial_context);
+
+    assert!(
+        developer_texts
+            .iter()
+            .any(|text| text.contains("- cwd-dot-codex-skill:")),
+        "expected cwd .codex skill in initial context, got {developer_texts:?}"
+    );
+    assert!(
+        developer_texts
+            .iter()
+            .any(|text| text.contains("- cwd-dot-agents-skill:")),
+        "expected cwd .agents skill in initial context, got {developer_texts:?}"
+    );
+}
+
 #[test]
 fn emit_thread_start_skill_metrics_records_enabled_kept_and_truncated_values() {
     let session_telemetry = test_session_telemetry_without_metadata();

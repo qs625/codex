@@ -261,6 +261,7 @@ async fn skill_roots_with_home_dir(
         file_system: Arc::clone(&LOCAL_FS),
         plugin_id: Some(root.plugin_id),
     }));
+    roots.extend(repo_dot_codex_skill_roots(Arc::clone(&repo_fs), config_layer_stack, cwd).await);
     roots.extend(repo_agents_skill_roots(repo_fs, config_layer_stack, cwd).await);
     dedupe_skill_roots_by_path(&mut roots);
     roots
@@ -344,15 +345,32 @@ async fn repo_agents_skill_roots(
     config_layer_stack: &ConfigLayerStack,
     cwd: &AbsolutePathBuf,
 ) -> Vec<SkillRoot> {
+    repo_skills_roots_for_dirname(fs, config_layer_stack, cwd, AGENTS_DIR_NAME).await
+}
+
+async fn repo_dot_codex_skill_roots(
+    fs: Arc<dyn ExecutorFileSystem>,
+    config_layer_stack: &ConfigLayerStack,
+    cwd: &AbsolutePathBuf,
+) -> Vec<SkillRoot> {
+    repo_skills_roots_for_dirname(fs, config_layer_stack, cwd, ".codex").await
+}
+
+async fn repo_skills_roots_for_dirname(
+    fs: Arc<dyn ExecutorFileSystem>,
+    config_layer_stack: &ConfigLayerStack,
+    cwd: &AbsolutePathBuf,
+    dirname: &str,
+) -> Vec<SkillRoot> {
     let project_root_markers = project_root_markers_from_stack(config_layer_stack);
     let project_root = find_project_root(fs.as_ref(), cwd, &project_root_markers).await;
     let dirs = dirs_between_project_root_and_cwd(cwd, &project_root);
     let mut roots = Vec::new();
     for dir in dirs {
-        let agents_skills = dir.join(AGENTS_DIR_NAME).join(SKILLS_DIR_NAME);
-        match fs.get_metadata(&agents_skills, /*sandbox*/ None).await {
+        let repo_skills = dir.join(dirname).join(SKILLS_DIR_NAME);
+        match fs.get_metadata(&repo_skills, /*sandbox*/ None).await {
             Ok(metadata) if metadata.is_directory => roots.push(SkillRoot {
-                path: agents_skills,
+                path: repo_skills,
                 scope: SkillScope::Repo,
                 file_system: Arc::clone(&fs),
                 plugin_id: None,
@@ -362,7 +380,7 @@ async fn repo_agents_skill_roots(
             Err(err) => {
                 tracing::warn!(
                     "failed to stat repo skills root {}: {err:#}",
-                    agents_skills.display()
+                    repo_skills.display()
                 );
             }
         }
