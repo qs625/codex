@@ -286,6 +286,101 @@ async fn thread_read_restores_usage_without_notifications() -> Result<()> {
 }
 
 #[tokio::test]
+async fn thread_read_keeps_restored_context_usage_after_thread_resume() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let filename_ts = "2025-01-05T12-00-00";
+    let meta_rfc3339 = "2025-01-05T12:00:00Z";
+    let conversation_id = create_fake_rollout_with_token_usage(
+        codex_home.path(),
+        filename_ts,
+        meta_rfc3339,
+        "Saved user message",
+        Some("mock_provider"),
+    )?;
+    let rollout_file_path = rollout_path(codex_home.path(), filename_ts, &conversation_id);
+    let persisted_rollout = std::fs::read_to_string(&rollout_file_path)?;
+    let appended_rollout = json!({
+        "timestamp": meta_rfc3339,
+        "type": "event_msg",
+        "payload": serde_json::to_value(EventMsg::ThreadContextUsageUpdated(
+            ThreadContextUsageUpdatedEvent {
+                usage: ThreadContextUsage {
+                    total_bytes: 123456,
+                    budget_used_percent: Some(61),
+                    categories: ThreadContextUsageCategoryBreakdown {
+                        compact: 10,
+                        skills_metadata: 11,
+                        concrete_skills: 12,
+                        tools_metadata: 13,
+                        tool_calls: 14,
+                        user_messages: 15,
+                        llm_messages: 16,
+                        reasoning: 17,
+                    },
+                    loaded_skills: ThreadContextUsageLoadedSkills {
+                        loaded_count: 1,
+                        total_count: Some(4),
+                        skills: Vec::new(),
+                    },
+                },
+            },
+        ))?,
+    })
+    .to_string();
+    std::fs::write(
+        &rollout_file_path,
+        format!("{persisted_rollout}{appended_rollout}\n"),
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let resume_id = mcp
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: conversation_id.clone(),
+            ..Default::default()
+        })
+        .await?;
+    let resume_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(resume_id)),
+    )
+    .await??;
+    let ThreadResumeResponse { thread, .. } = to_response::<ThreadResumeResponse>(resume_resp)?;
+    let resume_context_usage = thread
+        .context_usage
+        .expect("thread/resume should restore context usage");
+    assert_eq!(resume_context_usage.total_bytes, 123456);
+    assert_eq!(resume_context_usage.budget_used_percent, Some(61));
+
+    let read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: conversation_id,
+            include_turns: true,
+        })
+        .await?;
+    let read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
+    )
+    .await??;
+    let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
+
+    let context_usage = thread
+        .context_usage
+        .expect("thread/read should preserve restored context usage after resume");
+    assert_eq!(context_usage.total_bytes, 123456);
+    assert_eq!(context_usage.budget_used_percent, Some(61));
+    assert_eq!(context_usage.categories.tool_calls, 14);
+    assert_eq!(context_usage.loaded_skills.loaded_count, 1);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn thread_turns_list_can_page_backward_and_forward() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;

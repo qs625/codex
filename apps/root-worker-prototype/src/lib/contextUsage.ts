@@ -50,6 +50,8 @@ export type ContextUsageTurnTrendRow = {
 export type ContextUsageAnalysis = {
   hasBudgetData: boolean;
   budgetUsedPercent: number;
+  usedTokens: number | null;
+  contextWindowTokens: number | null;
   loadedSkills: number;
   totalSkills: number;
   totalConcreteLoads: number;
@@ -146,6 +148,8 @@ export function buildContextUsageAnalysis(
     return {
       hasBudgetData: false,
       budgetUsedPercent: 0,
+      usedTokens: null,
+      contextWindowTokens: null,
       loadedSkills: 0,
       totalSkills: totalSkillMetadataCount,
       totalConcreteLoads: 0,
@@ -196,6 +200,8 @@ export function buildContextUsageAnalysis(
   return {
     hasBudgetData: hasTokenUsage(thread.tokenUsage),
     budgetUsedPercent: budgetPercentFromTokenUsage(thread.tokenUsage),
+    usedTokens: usedTokensFromTokenUsage(thread.tokenUsage),
+    contextWindowTokens: contextWindowTokensFromTokenUsage(thread.tokenUsage),
     loadedSkills: loadedConcreteSkills.length,
     totalSkills: normalizedTotalSkills,
     totalConcreteLoads,
@@ -229,13 +235,19 @@ function buildContextUsageAnalysisFromBackend(
   rawCategoryUnits.reasoning = contextUsage.categories.reasoning;
 
   const totalUnits = sumCategoryUnits(rawCategoryUnits);
-  const totalUsedTokens = thread.tokenUsage?.total.totalTokens ?? 0;
+  const totalUsedTokens = usedTokensFromTokenUsage(thread.tokenUsage) ?? 0;
+  const contextWindowTokens = contextWindowTokensFromTokenUsage(thread.tokenUsage) ?? 0;
   const categories = CATEGORY_ORDER.map((category) => {
     const units = rawCategoryUnits[category.id];
-    const sharePercent = totalUnits > 0 ? roundPercent((units / totalUnits) * 100) : 0;
+    const mixSharePercent = totalUnits > 0 ? roundPercent((units / totalUnits) * 100) : 0;
+    const categoryTokens = totalUsedTokens > 0 ? Math.round((mixSharePercent / 100) * totalUsedTokens) : 0;
+    const sharePercent =
+      contextWindowTokens > 0 && categoryTokens > 0
+        ? roundPercent((categoryTokens / contextWindowTokens) * 100)
+        : mixSharePercent;
     return {
       ...category,
-      units: totalUsedTokens > 0 ? Math.round((sharePercent / 100) * totalUsedTokens) : 0,
+      units: categoryTokens,
       sharePercent,
     };
   });
@@ -246,6 +258,8 @@ function buildContextUsageAnalysisFromBackend(
   return {
     hasBudgetData: hasTokenUsage(thread.tokenUsage),
     budgetUsedPercent: budgetPercentFromTokenUsage(thread.tokenUsage),
+    usedTokens: usedTokensFromTokenUsage(thread.tokenUsage),
+    contextWindowTokens: contextWindowTokensFromTokenUsage(thread.tokenUsage),
     loadedSkills: Math.max(contextUsage.loadedSkills.loadedCount, loadedConcreteSkills.length),
     totalSkills: normalizedTotalSkills,
     totalConcreteLoads,
@@ -543,8 +557,8 @@ function sanitizePercent(value: number | null | undefined) {
 }
 
 function budgetPercentFromTokenUsage(tokenUsage: ThreadTokenUsage | null | undefined) {
-  const totalTokens = tokenUsage?.last.totalTokens ?? 0;
-  const modelContextWindow = tokenUsage?.modelContextWindow ?? 0;
+  const totalTokens = usedTokensFromTokenUsage(tokenUsage) ?? 0;
+  const modelContextWindow = contextWindowTokensFromTokenUsage(tokenUsage) ?? 0;
 
   if (modelContextWindow <= 0 || totalTokens <= 0) {
     return 0;
@@ -554,5 +568,16 @@ function budgetPercentFromTokenUsage(tokenUsage: ThreadTokenUsage | null | undef
 }
 
 function hasTokenUsage(tokenUsage: ThreadTokenUsage | null | undefined) {
-  return (tokenUsage?.modelContextWindow ?? 0) > 0 && (tokenUsage?.last.totalTokens ?? 0) > 0;
+  return (contextWindowTokensFromTokenUsage(tokenUsage) ?? 0) > 0
+    && (usedTokensFromTokenUsage(tokenUsage) ?? 0) > 0;
+}
+
+function usedTokensFromTokenUsage(tokenUsage: ThreadTokenUsage | null | undefined) {
+  const totalTokens = tokenUsage?.last.totalTokens ?? 0;
+  return totalTokens > 0 ? totalTokens : null;
+}
+
+function contextWindowTokensFromTokenUsage(tokenUsage: ThreadTokenUsage | null | undefined) {
+  const modelContextWindow = tokenUsage?.modelContextWindow ?? 0;
+  return modelContextWindow > 0 ? modelContextWindow : null;
 }
