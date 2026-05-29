@@ -141,7 +141,11 @@ pub struct InProcessStartArgs {
     pub enable_codex_api_key_env: bool,
     /// Initialize params used for initial handshake.
     pub initialize: InitializeParams,
-    /// Capacity used for all runtime queues (clamped to at least 1).
+    /// Capacity used for all runtime queues.
+    ///
+    /// Zero falls back to [`DEFAULT_IN_PROCESS_CHANNEL_CAPACITY`] so embedded
+    /// callers can omit tuning without forcing every internal queue into a
+    /// single-slot backpressure configuration.
     pub channel_capacity: usize,
 }
 
@@ -341,9 +345,10 @@ impl InProcessClientHandle {
 
 /// Starts an in-process app-server runtime and performs initialize handshake.
 ///
-/// This function sends `initialize` followed by `initialized` before returning
-/// the handle, so callers receive a ready-to-use runtime. If initialize fails,
-/// the runtime is shut down and an `InvalidData` error is returned.
+/// In-process clients become outbound-ready during the `initialize` request
+/// itself, so no follow-up `initialized` notification is required before
+/// returning a ready-to-use handle. If initialize fails, the runtime is shut
+/// down and an `InvalidData` error is returned.
 pub async fn start(args: InProcessStartArgs) -> IoResult<InProcessClientHandle> {
     let initialize = args.initialize.clone();
     let client = start_uninitialized(args).await?;
@@ -361,13 +366,16 @@ pub async fn start(args: InProcessStartArgs) -> IoResult<InProcessClientHandle> 
             format!("in-process initialize failed: {}", error.message),
         ));
     }
-    client.notify(ClientNotification::Initialized)?;
 
     Ok(client)
 }
 
 async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClientHandle> {
-    let channel_capacity = args.channel_capacity.max(1);
+    let channel_capacity = if args.channel_capacity == 0 {
+        DEFAULT_IN_PROCESS_CHANNEL_CAPACITY
+    } else {
+        args.channel_capacity
+    };
     let installation_id = resolve_installation_id(&args.config.codex_home).await?;
     let (client_tx, mut client_rx) = mpsc::channel::<InProcessClientMessage>(channel_capacity);
     let (event_tx, event_rx) = mpsc::channel::<InProcessServerEvent>(channel_capacity);
@@ -735,6 +743,7 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
     use codex_app_server_protocol::ClientInfo;
     use codex_app_server_protocol::ConfigRequirementsReadResponse;
     use codex_app_server_protocol::SessionSource as ApiSessionSource;
@@ -746,8 +755,31 @@ mod tests {
     use codex_app_server_protocol::TurnStatus;
     use codex_core::config::ConfigBuilder;
     use pretty_assertions::assert_eq;
+    use std::future::Future;
     use std::path::Path;
     use tempfile::TempDir;
+
+    fn run_current_thread_test_with_stack<F>(name: &str, future: F) -> Result<()>
+    where
+        F: Future<Output = Result<()>> + Send + 'static,
+    {
+        const TEST_STACK_SIZE_BYTES: usize = 4 * 1024 * 1024;
+
+        let handle = std::thread::Builder::new()
+            .name(name.to_string())
+            .stack_size(TEST_STACK_SIZE_BYTES)
+            .spawn(move || -> Result<()> {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                runtime.block_on(Box::pin(future))
+            })?;
+
+        match handle.join() {
+            Ok(result) => result,
+            Err(_) => Err(anyhow::anyhow!("{name} thread panicked")),
+        }
+    }
 
     async fn build_test_config(codex_home: &Path) -> Config {
         match ConfigBuilder::default()
@@ -808,80 +840,89 @@ mod tests {
         start_test_client_with_capacity(session_source, DEFAULT_IN_PROCESS_CHANNEL_CAPACITY).await
     }
 
-    #[tokio::test]
-    async fn in_process_start_initializes_and_handles_typed_v2_request() {
-        let client = start_test_client(SessionSource::Cli).await;
-        let response = client
-            .request(ClientRequest::ConfigRequirementsRead {
-                request_id: RequestId::Integer(1),
-                params: None,
-            })
-            .await
-            .expect("request transport should work")
-            .expect("request should succeed");
-        assert!(response.is_object());
-
-        let _parsed: ConfigRequirementsReadResponse =
-            serde_json::from_value(response).expect("response should match v2 schema");
-        client
-            .shutdown()
-            .await
-            .expect("in-process runtime should shutdown cleanly");
-    }
-
-    #[tokio::test]
-    async fn in_process_start_uses_requested_session_source_for_thread_start() {
-        for (requested_source, expected_source) in [
-            (SessionSource::Cli, ApiSessionSource::Cli),
-            (SessionSource::Exec, ApiSessionSource::Exec),
-        ] {
-            let client = start_test_client(requested_source).await;
+    #[test]
+    fn in_process_start_initializes_and_handles_typed_v2_request() -> Result<()> {
+        run_current_thread_test_with_stack("in-process-config-requirements-read", async move {
+            let client = start_test_client(SessionSource::Cli).await;
             let response = client
-                .request(ClientRequest::ThreadStart {
-                    request_id: RequestId::Integer(2),
-                    params: ThreadStartParams {
-                        ephemeral: Some(true),
-                        ..ThreadStartParams::default()
-                    },
+                .request(ClientRequest::ConfigRequirementsRead {
+                    request_id: RequestId::Integer(1),
+                    params: None,
                 })
                 .await
                 .expect("request transport should work")
-                .expect("thread/start should succeed");
-            let parsed: ThreadStartResponse =
-                serde_json::from_value(response).expect("thread/start response should parse");
-            assert_eq!(parsed.thread.source, expected_source);
+                .expect("request should succeed");
+            assert!(response.is_object());
+
+            let _parsed: ConfigRequirementsReadResponse =
+                serde_json::from_value(response).expect("response should match v2 schema");
             client
                 .shutdown()
                 .await
                 .expect("in-process runtime should shutdown cleanly");
-        }
+            Ok(())
+        })
     }
 
-    #[tokio::test]
-    async fn in_process_start_clamps_zero_channel_capacity() {
-        let client =
-            start_test_client_with_capacity(SessionSource::Cli, /*channel_capacity*/ 0).await;
-        let response = loop {
-            match client
-                .request(ClientRequest::ConfigRequirementsRead {
-                    request_id: RequestId::Integer(4),
-                    params: None,
-                })
-                .await
-            {
-                Ok(response) => break response.expect("request should succeed"),
-                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                    tokio::task::yield_now().await;
-                }
-                Err(err) => panic!("request transport should work: {err}"),
+    #[test]
+    fn in_process_start_uses_requested_session_source_for_thread_start() -> Result<()> {
+        run_current_thread_test_with_stack("in-process-thread-start-session-source", async move {
+            for (requested_source, expected_source) in [
+                (SessionSource::Cli, ApiSessionSource::Cli),
+                (SessionSource::Exec, ApiSessionSource::Exec),
+            ] {
+                let client = start_test_client(requested_source).await;
+                let response = client
+                    .request(ClientRequest::ThreadStart {
+                        request_id: RequestId::Integer(2),
+                        params: ThreadStartParams {
+                            ephemeral: Some(true),
+                            ..ThreadStartParams::default()
+                        },
+                    })
+                    .await
+                    .expect("request transport should work")
+                    .expect("thread/start should succeed");
+                let parsed: ThreadStartResponse =
+                    serde_json::from_value(response).expect("thread/start response should parse");
+                assert_eq!(parsed.thread.source, expected_source);
+                client
+                    .shutdown()
+                    .await
+                    .expect("in-process runtime should shutdown cleanly");
             }
-        };
-        let _parsed: ConfigRequirementsReadResponse =
-            serde_json::from_value(response).expect("response should match v2 schema");
-        client
-            .shutdown()
-            .await
-            .expect("in-process runtime should shutdown cleanly");
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn in_process_start_clamps_zero_channel_capacity() -> Result<()> {
+        run_current_thread_test_with_stack("in-process-zero-channel-capacity", async move {
+            let client =
+                start_test_client_with_capacity(SessionSource::Cli, /*channel_capacity*/ 0).await;
+            let response = loop {
+                match client
+                    .request(ClientRequest::ConfigRequirementsRead {
+                        request_id: RequestId::Integer(4),
+                        params: None,
+                    })
+                    .await
+                {
+                    Ok(response) => break response.expect("request should succeed"),
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        tokio::task::yield_now().await;
+                    }
+                    Err(err) => panic!("request transport should work: {err}"),
+                }
+            };
+            let _parsed: ConfigRequirementsReadResponse =
+                serde_json::from_value(response).expect("response should match v2 schema");
+            client
+                .shutdown()
+                .await
+                .expect("in-process runtime should shutdown cleanly");
+            Ok(())
+        })
     }
 
     #[test]

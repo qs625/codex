@@ -183,22 +183,35 @@ fn fallback_transcript_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
                 .unwrap_or_else(|| tool.clone());
             vec![format!("tool: {name} · {status:?}").dim().into()]
         }
-        ThreadItem::BuiltinToolCall { tool, status, .. } => {
-            vec![format!("builtin tool: {tool} · {status:?}").dim().into()]
+        ThreadItem::EventDrivenToolCall { tool, status, .. } => {
+            vec![
+                format!("event-driven tool call: {tool} · {status:?}")
+                    .dim()
+                    .into(),
+            ]
         }
-        ThreadItem::InjectedContext { title, preview, .. } => vec![format!(
-            "injected context: {title} · {}",
-            preview.trim()
-        )
-        .dim()
-        .into()],
+        ThreadItem::EventDrivenTool {
+            tool, title, text, ..
+        } => {
+            vec![
+                format!("event-driven tool: {tool} · {title}").dim().into(),
+                vec!["  ".dim(), text.clone().dim()].into(),
+            ]
+        }
+        ThreadItem::InjectedContext { title, preview, .. } => vec![
+            format!("injected context: {title} · {}", preview.trim())
+                .dim()
+                .into(),
+        ],
         ThreadItem::CollabAgentMessage {
             operation,
             recipient_path,
             ..
-        } => vec![format!("agent message: {operation:?} · {recipient_path}")
-            .dim()
-            .into()],
+        } => vec![
+            format!("agent message: {operation:?} · {recipient_path}")
+                .dim()
+                .into(),
+        ],
         ThreadItem::CollabAgentToolCall { tool, status, .. } => {
             vec![format!("agent tool: {tool:?} · {status:?}").dim().into()]
         }
@@ -206,12 +219,11 @@ fn fallback_transcript_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
             recipient_path,
             status,
             ..
-        } => vec![format!(
-            "agent status: {} · {:?}",
-            recipient_path, status.status
-        )
-        .dim()
-        .into()],
+        } => vec![
+            format!("agent status: {} · {:?}", recipient_path, status.status)
+                .dim()
+                .into(),
+        ],
         ThreadItem::WebSearch { query, .. } => {
             vec![vec!["web search: ".dim(), query.clone().into()].into()]
         }

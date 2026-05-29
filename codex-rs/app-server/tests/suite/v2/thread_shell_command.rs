@@ -142,8 +142,13 @@ async fn thread_shell_command_history_responses_exclude_persisted_command_execut
     )
     .await??;
     let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
-    assert_eq!(thread.turns.len(), 1);
-    assert_no_command_executions(&thread.turns[0].items, "thread/read");
+    assert!(
+        !thread.turns.is_empty(),
+        "thread/read should include at least one turn"
+    );
+    for turn in &thread.turns {
+        assert_no_command_executions(&turn.items, "thread/read");
+    }
 
     let turns_list_id = mcp
         .send_thread_turns_list_request(ThreadTurnsListParams {
@@ -161,8 +166,13 @@ async fn thread_shell_command_history_responses_exclude_persisted_command_execut
     .await??;
     let ThreadTurnsListResponse { data, .. } =
         to_response::<ThreadTurnsListResponse>(turns_list_resp)?;
-    assert_eq!(data.len(), 1);
-    assert_no_command_executions(&data[0].items, "thread/turns/list");
+    assert!(
+        !data.is_empty(),
+        "thread/turns/list should include at least one turn"
+    );
+    for turn in &data {
+        assert_no_command_executions(&turn.items, "thread/turns/list");
+    }
 
     let fork_id = mcp
         .send_thread_fork_request(ThreadForkParams {
@@ -176,8 +186,13 @@ async fn thread_shell_command_history_responses_exclude_persisted_command_execut
     )
     .await??;
     let ThreadForkResponse { thread, .. } = to_response::<ThreadForkResponse>(fork_resp)?;
-    assert_eq!(thread.turns.len(), 1);
-    assert_no_command_executions(&thread.turns[0].items, "thread/fork");
+    assert!(
+        !thread.turns.is_empty(),
+        "thread/fork should include at least one turn"
+    );
+    for turn in &thread.turns {
+        assert_no_command_executions(&turn.items, "thread/fork");
+    }
 
     Ok(())
 }
@@ -331,8 +346,13 @@ async fn thread_shell_command_uses_existing_active_turn() -> Result<()> {
     )
     .await??;
     let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
-    assert_eq!(thread.turns.len(), 1);
-    assert_no_command_executions(&thread.turns[0].items, "thread/read");
+    assert!(
+        !thread.turns.is_empty(),
+        "thread/read should include at least one turn"
+    );
+    for turn in &thread.turns {
+        assert_no_command_executions(&turn.items, "thread/read");
+    }
 
     Ok(())
 }

@@ -14,9 +14,8 @@ use codex_file_watcher::Receiver;
 use codex_file_watcher::WatchPath;
 use codex_file_watcher::WatchRegistration;
 use codex_protocol::ThreadId;
-use codex_protocol::protocol::Op;
+use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::subscriptions::PersistedSubscription;
-use codex_protocol::user_input::UserInput;
 use codex_thread_store::ThreadMetadataPatch;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::oneshot;
@@ -97,10 +96,10 @@ impl FsSubscriptionRegistry {
         }
     }
 
-    async fn send_text_to_thread(
+    async fn send_trigger_to_thread(
         thread_manager: &Weak<ThreadManager>,
         thread_id: ThreadId,
-        text: String,
+        trigger: EventDrivenToolTrigger,
     ) -> Result<(), String> {
         let Some(thread_manager) = thread_manager.upgrade() else {
             return Err("thread manager unavailable".to_string());
@@ -109,17 +108,7 @@ impl FsSubscriptionRegistry {
             .get_thread(thread_id)
             .await
             .map_err(|err| err.to_string())?;
-        let _ = thread
-            .submit(Op::UserInput {
-                items: vec![UserInput::Text {
-                    text,
-                    text_elements: vec![],
-                }],
-                environments: None,
-                final_output_json_schema: None,
-                responsesapi_client_metadata: None,
-            })
-            .await;
+        let _ = thread.append_message(trigger.to_response_item()).await;
         Ok(())
     }
 
@@ -294,7 +283,13 @@ impl FsSubscriptionRegistry {
                     .map(|l| format!(" ({l})"))
                     .unwrap_or_default();
                 let text = format!("[File subscription{label_part}] File changed: {paths_str}");
-                if let Err(err) = Self::send_text_to_thread(&thread_manager, thread_id, text).await
+                let trigger = EventDrivenToolTrigger {
+                    tool: "fs_subscribe".to_string(),
+                    title: "File watch triggered".to_string(),
+                    text,
+                };
+                if let Err(err) =
+                    Self::send_trigger_to_thread(&thread_manager, thread_id, trigger).await
                 {
                     if err != "thread manager unavailable" {
                         warn!(
@@ -388,7 +383,13 @@ impl FsSubscriptionRegistry {
                     "[Schedule subscription{label_part}] Trigger fired: {}",
                     schedule.summary()
                 );
-                if let Err(err) = Self::send_text_to_thread(&thread_manager, thread_id, text).await
+                let trigger = EventDrivenToolTrigger {
+                    tool: "schedule_subscribe".to_string(),
+                    title: "Schedule triggered".to_string(),
+                    text,
+                };
+                if let Err(err) =
+                    Self::send_trigger_to_thread(&thread_manager, thread_id, trigger).await
                 {
                     if err != "thread manager unavailable" {
                         warn!(
@@ -500,7 +501,13 @@ impl FsSubscriptionRegistry {
                 text.push_str("\nCaptured output:\n");
                 text.push_str(retained_output);
             }
-            if let Err(err) = Self::send_text_to_thread(&thread_manager, thread_id, text).await
+            let trigger = EventDrivenToolTrigger {
+                tool: "process_exit_subscribe".to_string(),
+                title: "Process exited".to_string(),
+                text,
+            };
+            if let Err(err) =
+                Self::send_trigger_to_thread(&thread_manager, thread_id, trigger).await
                 && err != "thread manager unavailable"
             {
                 warn!(
@@ -618,8 +625,16 @@ impl FsSubscriptionRegistry {
                         let text = format!(
                             "[Schedule subscription restore] Failed to restore subscription {subscription_id}: {err}"
                         );
-                        let _ =
-                            Self::send_text_to_thread(&self.thread_manager, thread_id, text).await;
+                        let _ = Self::send_trigger_to_thread(
+                            &self.thread_manager,
+                            thread_id,
+                            EventDrivenToolTrigger {
+                                tool: "schedule_subscribe".to_string(),
+                                title: "Schedule restore failed".to_string(),
+                                text,
+                            },
+                        )
+                        .await;
                     }
                 },
                 PersistedSubscription::ProcessExit {
@@ -650,8 +665,16 @@ impl FsSubscriptionRegistry {
                         let text = format!(
                             "[Process exit subscription restore{label_part}] Could not restore session {session_id} after restart because the original exec session is no longer available."
                         );
-                        let _ =
-                            Self::send_text_to_thread(&self.thread_manager, thread_id, text).await;
+                        let _ = Self::send_trigger_to_thread(
+                            &self.thread_manager,
+                            thread_id,
+                            EventDrivenToolTrigger {
+                                tool: "process_exit_subscribe".to_string(),
+                                title: "Process exit restore failed".to_string(),
+                                text,
+                            },
+                        )
+                        .await;
                     }
                 }
             }

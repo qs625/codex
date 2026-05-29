@@ -1235,7 +1235,8 @@ Today both notifications carry an empty `items` array even when item events were
 - `fileChange` — `{id, changes, status}` describing proposed edits; `changes` list `{path, kind, diff}` and `status` is `inProgress`, `completed`, `failed`, or `declined`.
 - `mcpToolCall` — `{id, server, tool, status, arguments, result?, error?}` describing MCP calls; `status` is `inProgress`, `completed`, or `failed`.
 - `collabToolCall` — `{id, tool, status, senderThreadId, receiverThreadId?, newThreadId?, prompt?, agentStatus?}` describing collab tool calls (`spawn_agent`, `send_input`, `resume_agent`, `wait`, `close_agent`); `status` is `inProgress`, `completed`, or `failed`.
-- `builtinToolCall` — `{id, tool, status, arguments, output?}` describing built-in tool calls that do not have a more specific item type (for example `fs_subscribe`, `process_exit_subscribe`, `schedule_subscribe`); `status` is `inProgress`, `completed`, or `failed`.
+- `eventDrivenToolCall` — `{id, tool, status, arguments, output?}` describing event-driven tool calls such as `fs_subscribe`, `process_exit_subscribe`, and `schedule_subscribe`; `status` is `inProgress`, `completed`, or `failed`.
+- `eventDrivenTool` — `{id, tool, title, text}` describing an event emitted by an event-driven subscription, for example a filesystem change, a schedule firing, or a watched process exit.
 - `webSearch` — `{id, query, action?}` for a web search request issued by the agent; `action` mirrors the Responses API web_search action payload (`search`, `open_page`, `find_in_page`) and may be omitted until completion.
 - `imageView` — `{id, path}` emitted when the agent invokes the image viewer tool.
 - `enteredReviewMode` — `{id, review}` sent when the reviewer starts; `review` is a short user-facing label such as `"current changes"` or the requested target description.

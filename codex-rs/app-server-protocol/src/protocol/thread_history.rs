@@ -22,6 +22,7 @@ use crate::protocol::v2::TurnItemsView;
 use crate::protocol::v2::TurnStatus;
 use crate::protocol::v2::UserInput;
 use crate::protocol::v2::WebSearchAction;
+use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::items::parse_hook_prompt_message;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::MessagePhase;
@@ -266,6 +267,17 @@ impl ThreadHistoryBuilder {
                     return;
                 }
 
+                if let Some(trigger) = EventDrivenToolTrigger::parse_message_content(content) {
+                    let id = id.clone().unwrap_or_else(|| self.next_item_id());
+                    self.ensure_turn().items.push(ThreadItem::EventDrivenTool {
+                        id,
+                        tool: trigger.tool,
+                        title: trigger.title,
+                        text: trigger.text,
+                    });
+                    return;
+                }
+
                 if let Some(communication) = self.parse_inter_agent_message(role, content) {
                     self.handle_inter_agent_communication(id.as_ref(), communication);
                     return;
@@ -295,41 +307,41 @@ impl ThreadHistoryBuilder {
                 call_id,
                 ..
             } => {
-                let Some(tool_name) = builtin_tool_name(namespace.as_deref(), name) else {
+                let Some(tool_name) = event_driven_tool_name(namespace.as_deref(), name) else {
                     return;
                 };
-                let item = ThreadItem::BuiltinToolCall {
+                let item = ThreadItem::EventDrivenToolCall {
                     id: call_id.clone(),
                     tool: tool_name,
                     arguments: parse_raw_function_call_arguments(arguments),
                     status: DynamicToolCallStatus::InProgress,
                     output: None,
                 };
-                self.upsert_builtin_tool_item_in_current_turn(item);
+                self.upsert_event_driven_tool_call_in_current_turn(item);
             }
             ResponseItem::FunctionCallOutput { call_id, output } => {
-                let existing = self.find_builtin_tool_call_in_current_turn(call_id);
+                let existing = self.find_event_driven_tool_call_in_current_turn(call_id);
                 if existing.is_none() {
                     return;
                 }
-                let item = ThreadItem::BuiltinToolCall {
+                let item = ThreadItem::EventDrivenToolCall {
                     id: call_id.clone(),
                     tool: existing
                         .map(|item| match item {
-                            ThreadItem::BuiltinToolCall { tool, .. } => tool.clone(),
+                            ThreadItem::EventDrivenToolCall { tool, .. } => tool.clone(),
                             _ => "tool".to_string(),
                         })
                         .unwrap_or_else(|| "tool".to_string()),
                     arguments: existing
                         .map(|item| match item {
-                            ThreadItem::BuiltinToolCall { arguments, .. } => arguments.clone(),
+                            ThreadItem::EventDrivenToolCall { arguments, .. } => arguments.clone(),
                             _ => serde_json::Value::Null,
                         })
                         .unwrap_or(serde_json::Value::Null),
                     status: DynamicToolCallStatus::Completed,
                     output: Some(function_call_output_payload_to_json(output)),
                 };
-                self.upsert_builtin_tool_item_in_current_turn(item);
+                self.upsert_event_driven_tool_call_in_current_turn(item);
             }
             _ => {}
         }
@@ -1274,12 +1286,12 @@ impl ThreadHistoryBuilder {
         upsert_turn_item(&mut turn.items, item);
     }
 
-    fn upsert_builtin_tool_item_in_current_turn(&mut self, item: ThreadItem) {
+    fn upsert_event_driven_tool_call_in_current_turn(&mut self, item: ThreadItem) {
         let turn = self.ensure_turn();
-        upsert_builtin_tool_item(&mut turn.items, item);
+        upsert_event_driven_tool_call(&mut turn.items, item);
     }
 
-    fn find_builtin_tool_call_in_current_turn(&self, item_id: &str) -> Option<&ThreadItem> {
+    fn find_event_driven_tool_call_in_current_turn(&self, item_id: &str) -> Option<&ThreadItem> {
         self.current_turn
             .as_ref()
             .and_then(|turn| turn.items.iter().find(|item| item.id() == item_id))
@@ -1354,7 +1366,7 @@ fn function_call_output_payload_to_json(
     serde_json::to_value(output).unwrap_or_else(|_| serde_json::Value::String(output.to_string()))
 }
 
-fn builtin_tool_name(namespace: Option<&str>, name: &str) -> Option<String> {
+fn event_driven_tool_name(namespace: Option<&str>, name: &str) -> Option<String> {
     if namespace.is_some() {
         return None;
     }
@@ -1501,12 +1513,12 @@ fn upsert_turn_item(items: &mut Vec<ThreadItem>, item: ThreadItem) {
     items.push(item);
 }
 
-fn upsert_builtin_tool_item(items: &mut Vec<ThreadItem>, item: ThreadItem) {
+fn upsert_event_driven_tool_call(items: &mut Vec<ThreadItem>, item: ThreadItem) {
     if let Some(existing_item) = items
         .iter_mut()
         .find(|existing_item| existing_item.id() == item.id())
     {
-        if matches!(existing_item, ThreadItem::BuiltinToolCall { .. }) {
+        if matches!(existing_item, ThreadItem::EventDrivenToolCall { .. }) {
             *existing_item = item;
         }
         return;
@@ -2433,7 +2445,7 @@ mod tests {
     }
 
     #[test]
-    fn reconstructs_builtin_tool_items_from_raw_response_history() {
+    fn reconstructs_event_driven_tool_items_from_raw_response_history() {
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".into(),
@@ -2465,7 +2477,7 @@ mod tests {
         assert_eq!(turns[0].items.len(), 2);
         assert_eq!(
             turns[0].items[1],
-            ThreadItem::BuiltinToolCall {
+            ThreadItem::EventDrivenToolCall {
                 id: "builtin-1".into(),
                 tool: "fs_subscribe".into(),
                 arguments: serde_json::json!({
@@ -2479,7 +2491,7 @@ mod tests {
     }
 
     #[test]
-    fn builtin_tool_replay_does_not_override_specialized_items() {
+    fn event_driven_tool_replay_does_not_override_specialized_items() {
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".into(),
@@ -2535,6 +2547,37 @@ mod tests {
                 aggregated_output: None,
                 exit_code: Some(0),
                 duration_ms: Some(0),
+            }
+        );
+    }
+
+    #[test]
+    fn reconstructs_event_driven_tool_trigger_items_from_response_messages() {
+        let trigger = EventDrivenToolTrigger {
+            tool: "schedule_subscribe".into(),
+            title: "Schedule triggered".into(),
+            text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
+        };
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(trigger.to_response_item()),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 1);
+        assert_eq!(
+            turns[0].items[0],
+            ThreadItem::EventDrivenTool {
+                id: "item-1".into(),
+                tool: "schedule_subscribe".into(),
+                title: "Schedule triggered".into(),
+                text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
             }
         );
     }

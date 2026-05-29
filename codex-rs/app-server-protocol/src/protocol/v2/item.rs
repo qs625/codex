@@ -317,12 +317,20 @@ pub enum ThreadItem {
     },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
-    BuiltinToolCall {
+    EventDrivenToolCall {
         id: String,
         tool: String,
         arguments: JsonValue,
         status: DynamicToolCallStatus,
         output: Option<JsonValue>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    EventDrivenTool {
+        id: String,
+        tool: String,
+        title: String,
+        text: String,
     },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
@@ -458,7 +466,8 @@ impl ThreadItem {
             | ThreadItem::FileChange { id, .. }
             | ThreadItem::McpToolCall { id, .. }
             | ThreadItem::DynamicToolCall { id, .. }
-            | ThreadItem::BuiltinToolCall { id, .. }
+            | ThreadItem::EventDrivenToolCall { id, .. }
+            | ThreadItem::EventDrivenTool { id, .. }
             | ThreadItem::CollabAgentMessage { id, .. }
             | ThreadItem::CollabAgentToolCall { id, .. }
             | ThreadItem::CollabAgentStatusUpdate { id, .. }

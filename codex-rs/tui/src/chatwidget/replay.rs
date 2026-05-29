@@ -193,7 +193,8 @@ impl ChatWidget {
                 agents_states,
             }),
             ThreadItem::CollabAgentStatusUpdate { .. } => {}
-            ThreadItem::BuiltinToolCall { .. } => {}
+            ThreadItem::EventDrivenToolCall { .. } => {}
+            ThreadItem::EventDrivenTool { .. } => {}
             ThreadItem::DynamicToolCall { .. } => {}
         }
 

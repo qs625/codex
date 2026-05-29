@@ -635,7 +635,7 @@ function getToolIcon(category: NonNullable<ConversationEntry["toolCategory"]>) {
   switch (category) {
     case "command":
       return <TerminalIcon />;
-    case "builtin":
+    case "eventDriven":
       return <GearIcon />;
     case "multiAgent":
       return <BranchIcon />;

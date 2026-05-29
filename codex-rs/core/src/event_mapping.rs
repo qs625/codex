@@ -1,3 +1,4 @@
+use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
 use codex_protocol::items::ReasoningItem;
@@ -141,9 +142,15 @@ pub fn parse_turn_item(item: &ResponseItem) -> Option<TurnItem> {
             phase,
             ..
         } => match role.as_str() {
-            "user" => parse_visible_hook_prompt_message(id.as_ref(), content)
-                .map(TurnItem::HookPrompt)
-                .or_else(|| parse_user_message(content).map(TurnItem::UserMessage)),
+            "user" => {
+                if EventDrivenToolTrigger::parse_message_content(content).is_some() {
+                    None
+                } else {
+                    parse_visible_hook_prompt_message(id.as_ref(), content)
+                        .map(TurnItem::HookPrompt)
+                        .or_else(|| parse_user_message(content).map(TurnItem::UserMessage))
+                }
+            }
             "assistant" => Some(TurnItem::AgentMessage(parse_agent_message(
                 id.as_ref(),
                 content,

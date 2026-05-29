@@ -130,12 +130,19 @@ export type ThreadItem =
       durationMs: number | null;
     }
   | {
-      type: "builtinToolCall";
+      type: "eventDrivenToolCall";
       id: string;
       tool: string;
       arguments: unknown;
       status: string;
       output: unknown | null;
+    }
+  | {
+      type: "eventDrivenTool";
+      id: string;
+      tool: string;
+      title: string;
+      text: string;
     }
   | {
       type: "mcpToolCall";
@@ -282,7 +289,7 @@ export type ConversationEntry = {
   toolName?: string;
   toolStatus?: string;
   toolDetails?: string;
-  toolCategory?: "command" | "builtin" | "multiAgent" | "external" | "context";
+  toolCategory?: "command" | "eventDriven" | "multiAgent" | "external" | "context";
 };
 
 export type ConversationCell = {

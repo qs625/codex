@@ -135,6 +135,7 @@ mod tests {
             agent_role: None,
             git_info: None,
             name: None,
+            skills: Vec::new(),
             turns: Vec::new(),
         }
     }

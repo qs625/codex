@@ -42,7 +42,7 @@ function makeThread(items: Thread["turns"][number]["items"]): Thread {
   };
 }
 
-test("separates command, builtin, and multi-agent items into different tool cells", () => {
+test("separates command, event-driven, and multi-agent items into different tool cells", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
@@ -56,7 +56,7 @@ test("separates command, builtin, and multi-agent items into different tool cell
         durationMs: 10,
       },
       {
-        type: "builtinToolCall",
+        type: "eventDrivenToolCall",
         id: "builtin-1",
         tool: "view_image",
         arguments: { path: "/tmp/image.png" },
@@ -84,7 +84,7 @@ test("separates command, builtin, and multi-agent items into different tool cell
     entries.map((entry) => [entry.toolCategory, entry.toolName]),
     [
       ["command", "ls"],
-      ["builtin", "view_image"],
+      ["eventDriven", "view_image"],
       ["multiAgent", "spawn agent"],
     ],
   );

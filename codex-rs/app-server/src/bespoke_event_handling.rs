@@ -5,7 +5,7 @@ use crate::outgoing_message::ThreadScopedOutgoingMessageSender;
 use crate::request_processors::populate_thread_turns_from_history;
 use crate::request_processors::thread_from_stored_thread;
 use crate::server_request_error::is_turn_transition_server_request_error;
-use crate::thread_state::BuiltinToolCallSummary;
+use crate::thread_state::EventDrivenToolCallSummary;
 use crate::thread_state::ThreadState;
 use crate::thread_state::TurnSummary;
 use crate::thread_state::resolve_server_request_on_thread_listener;
@@ -1037,7 +1037,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 &outgoing,
             )
             .await;
-            maybe_emit_builtin_tool_call_notifications(
+            maybe_emit_event_driven_tool_call_notifications(
                 conversation_id,
                 &event_turn_id,
                 &raw_response_item_event.item,
@@ -1422,7 +1422,7 @@ async fn maybe_emit_raw_response_item_completed(
         .await;
 }
 
-async fn maybe_emit_builtin_tool_call_notifications(
+async fn maybe_emit_event_driven_tool_call_notifications(
     conversation_id: ThreadId,
     turn_id: &str,
     item: &codex_protocol::models::ResponseItem,
@@ -1437,15 +1437,15 @@ async fn maybe_emit_builtin_tool_call_notifications(
             call_id,
             ..
         } => {
-            let Some(tool) = builtin_tool_name(namespace.as_deref(), name) else {
+            let Some(tool) = event_driven_tool_name(namespace.as_deref(), name) else {
                 return;
             };
             let arguments = parse_raw_function_call_arguments(arguments);
             {
                 let mut state = thread_state.lock().await;
-                state.turn_summary.builtin_tool_calls.insert(
+                state.turn_summary.event_driven_tool_calls.insert(
                     call_id.clone(),
-                    BuiltinToolCallSummary {
+                    EventDrivenToolCallSummary {
                         tool: tool.clone(),
                         arguments: arguments.clone(),
                     },
@@ -1455,7 +1455,7 @@ async fn maybe_emit_builtin_tool_call_notifications(
                 thread_id: conversation_id.to_string(),
                 turn_id: turn_id.to_string(),
                 started_at_ms: now_unix_timestamp_ms(),
-                item: ThreadItem::BuiltinToolCall {
+                item: ThreadItem::EventDrivenToolCall {
                     id: call_id.clone(),
                     tool,
                     arguments,
@@ -1472,7 +1472,7 @@ async fn maybe_emit_builtin_tool_call_notifications(
                 .lock()
                 .await
                 .turn_summary
-                .builtin_tool_calls
+                .event_driven_tool_calls
                 .remove(call_id)
             else {
                 return;
@@ -1481,7 +1481,7 @@ async fn maybe_emit_builtin_tool_call_notifications(
                 thread_id: conversation_id.to_string(),
                 turn_id: turn_id.to_string(),
                 completed_at_ms: now_unix_timestamp_ms(),
-                item: ThreadItem::BuiltinToolCall {
+                item: ThreadItem::EventDrivenToolCall {
                     id: call_id.clone(),
                     tool: summary.tool,
                     arguments: summary.arguments,
@@ -1546,7 +1546,7 @@ fn function_call_output_payload_to_json(
     serde_json::to_value(output).unwrap_or_else(|_| serde_json::Value::String(output.to_string()))
 }
 
-fn builtin_tool_name(namespace: Option<&str>, name: &str) -> Option<String> {
+fn event_driven_tool_name(namespace: Option<&str>, name: &str) -> Option<String> {
     if namespace.is_some() {
         return None;
     }
@@ -2726,7 +2726,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn builtin_tool_call_notifications_emit_started_then_completed() -> Result<()> {
+    async fn event_driven_tool_call_notifications_emit_started_then_completed() -> Result<()> {
         let conversation_id = ThreadId::new();
         let thread_state = new_thread_state();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
@@ -2740,7 +2740,7 @@ mod tests {
             ThreadId::new(),
         );
 
-        maybe_emit_builtin_tool_call_notifications(
+        maybe_emit_event_driven_tool_call_notifications(
             conversation_id,
             "turn-1",
             &codex_protocol::models::ResponseItem::FunctionCall {
@@ -2760,7 +2760,7 @@ mod tests {
             OutgoingMessage::AppServerNotification(ServerNotification::ItemStarted(payload)) => {
                 assert_eq!(
                     payload.item,
-                    ThreadItem::BuiltinToolCall {
+                    ThreadItem::EventDrivenToolCall {
                         id: "call-1".to_string(),
                         tool: "fs_subscribe".to_string(),
                         arguments: json!({
@@ -2775,7 +2775,7 @@ mod tests {
             other => bail!("unexpected message: {other:?}"),
         }
 
-        maybe_emit_builtin_tool_call_notifications(
+        maybe_emit_event_driven_tool_call_notifications(
             conversation_id,
             "turn-1",
             &codex_protocol::models::ResponseItem::FunctionCallOutput {
@@ -2792,7 +2792,7 @@ mod tests {
             OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(payload)) => {
                 assert_eq!(
                     payload.item,
-                    ThreadItem::BuiltinToolCall {
+                    ThreadItem::EventDrivenToolCall {
                         id: "call-1".to_string(),
                         tool: "fs_subscribe".to_string(),
                         arguments: json!({
@@ -2809,13 +2809,13 @@ mod tests {
 
         assert!(
             rx.try_recv().is_err(),
-            "builtin tool call should emit exactly twice"
+            "event-driven tool call should emit exactly twice"
         );
         Ok(())
     }
 
     #[tokio::test]
-    async fn builtin_tool_call_output_without_start_does_not_emit() -> Result<()> {
+    async fn event_driven_tool_call_output_without_start_does_not_emit() -> Result<()> {
         let conversation_id = ThreadId::new();
         let thread_state = new_thread_state();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
@@ -2829,7 +2829,7 @@ mod tests {
             ThreadId::new(),
         );
 
-        maybe_emit_builtin_tool_call_notifications(
+        maybe_emit_event_driven_tool_call_notifications(
             conversation_id,
             "turn-1",
             &codex_protocol::models::ResponseItem::FunctionCallOutput {

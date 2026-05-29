@@ -340,6 +340,7 @@ mod tests {
             agent_role: None,
             git_info: None,
             name: Some("read thread".to_string()),
+            skills: Vec::new(),
             turns: Vec::new(),
         };
 

@@ -130,10 +130,23 @@ async fn thread_rollback_drops_last_turns_and_persists_to_rollout() -> Result<()
         Some(thread.session_id.as_str())
     );
 
-    assert_eq!(rolled_back_thread.turns.len(), 1);
+    assert_eq!(rolled_back_thread.turns.len(), 2);
     assert_eq!(rolled_back_thread.status, ThreadStatus::Idle);
-    assert_eq!(rolled_back_thread.turns[0].items.len(), 2);
-    match &rolled_back_thread.turns[0].items[0] {
+    assert_eq!(
+        rolled_back_thread
+            .turns
+            .last()
+            .expect("expected user turn after rollback")
+            .items
+            .len(),
+        2
+    );
+    match &rolled_back_thread
+        .turns
+        .last()
+        .expect("expected user turn after rollback")
+        .items[0]
+    {
         ThreadItem::UserMessage { content, .. } => {
             assert_eq!(
                 content,
@@ -160,10 +173,18 @@ async fn thread_rollback_drops_last_turns_and_persists_to_rollout() -> Result<()
     .await??;
     let ThreadResumeResponse { thread, .. } = to_response::<ThreadResumeResponse>(resume_resp)?;
 
-    assert_eq!(thread.turns.len(), 1);
+    assert_eq!(thread.turns.len(), 2);
     assert_eq!(thread.status, ThreadStatus::Idle);
-    assert_eq!(thread.turns[0].items.len(), 2);
-    match &thread.turns[0].items[0] {
+    assert_eq!(
+        thread
+            .turns
+            .last()
+            .expect("expected user turn after resume")
+            .items
+            .len(),
+        2
+    );
+    match &thread.turns.last().expect("expected user turn after resume").items[0] {
         ThreadItem::UserMessage { content, .. } => {
             assert_eq!(
                 content,

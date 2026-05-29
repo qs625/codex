@@ -88,6 +88,7 @@ async fn collab_spawn_end_shows_requested_model_and_effort() {
                 agents_states: HashMap::from([(
                     spawned_thread_id.to_string(),
                     AppServerCollabAgentState {
+                        path: None,
                         status: AppServerCollabAgentStatus::PendingInit,
                         message: None,
                     },
@@ -490,6 +491,7 @@ async fn live_app_server_collab_wait_items_render_history() {
                     (
                         receiver_thread_id.to_string(),
                         AppServerCollabAgentState {
+                            path: None,
                             status: AppServerCollabAgentStatus::Completed,
                             message: Some("Done".to_string()),
                         },
@@ -497,6 +499,7 @@ async fn live_app_server_collab_wait_items_render_history() {
                     (
                         other_receiver_thread_id.to_string(),
                         AppServerCollabAgentState {
+                            path: None,
                             status: AppServerCollabAgentStatus::Running,
                             message: None,
                         },
@@ -564,6 +567,7 @@ async fn live_app_server_collab_spawn_completed_renders_requested_model_and_effo
                 agents_states: HashMap::from([(
                     spawned_thread_id.to_string(),
                     AppServerCollabAgentState {
+                        path: None,
                         status: AppServerCollabAgentStatus::PendingInit,
                         message: None,
                     },

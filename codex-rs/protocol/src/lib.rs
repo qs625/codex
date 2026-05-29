@@ -12,6 +12,7 @@ pub mod approvals;
 pub mod config_types;
 pub mod dynamic_tools;
 pub mod error;
+pub mod event_driven_tool;
 pub mod exec_output;
 pub mod items;
 pub mod mcp;
