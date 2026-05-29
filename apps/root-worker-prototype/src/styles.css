@@ -722,7 +722,7 @@ svg {
   background: linear-gradient(180deg, #f0fdfa 0%, #ccfbf1 100%);
 }
 
-.tool-icon-builtin {
+.tool-icon-eventDriven {
   color: #7c2d12;
   background: linear-gradient(180deg, #fff7ed 0%, #fed7aa 100%);
 }
@@ -742,7 +742,7 @@ svg {
   background: linear-gradient(180deg, rgba(240, 253, 250, 0.88), rgba(255, 255, 255, 0.72));
 }
 
-.tool-card-builtin {
+.tool-card-eventDriven {
   border-color: rgba(234, 88, 12, 0.14);
   background: linear-gradient(180deg, rgba(255, 247, 237, 0.9), rgba(255, 255, 255, 0.72));
 }
@@ -760,7 +760,7 @@ svg {
   background: linear-gradient(180deg, rgba(240, 253, 250, 0.96), rgba(255, 255, 255, 0.82));
 }
 
-.tool-card-builtin[open] {
+.tool-card-eventDriven[open] {
   background: linear-gradient(180deg, rgba(255, 247, 237, 0.96), rgba(255, 255, 255, 0.82));
 }
 

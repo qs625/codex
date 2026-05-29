@@ -63,7 +63,7 @@ durationMs: number | null, } | { "type": "dynamicToolCall", id: string, namespac
 /**
  * The duration of the dynamic tool call in milliseconds.
  */
-durationMs: number | null, } | { "type": "builtinToolCall", id: string, tool: string, arguments: JsonValue, status: DynamicToolCallStatus, output: JsonValue | null, } | { "type": "collabAgentMessage", id: string, operation: CollabAgentOperation, senderThreadId: string | null, senderPath: string, recipientThreadId: string | null, recipientPath: string, otherRecipientPaths: Array<string>, content: string, triggerTurn: boolean, } | { "type": "collabAgentToolCall",
+durationMs: number | null, } | { "type": "eventDrivenToolCall", id: string, tool: string, arguments: JsonValue, status: DynamicToolCallStatus, output: JsonValue | null, } | { "type": "eventDrivenTool", id: string, tool: string, title: string, text: string, } | { "type": "collabAgentMessage", id: string, operation: CollabAgentOperation, senderThreadId: string | null, senderPath: string, recipientThreadId: string | null, recipientPath: string, otherRecipientPaths: Array<string>, content: string, triggerTurn: boolean, } | { "type": "collabAgentToolCall",
 /**
  * Unique identifier for this collab tool call.
  */

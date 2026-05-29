@@ -160,26 +160,21 @@ async fn thread_resume_rejects_unmaterialized_thread() -> Result<()> {
     .await??;
     let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
 
-    // Resume should fail before the first user message materializes rollout storage.
+    // Fresh started threads are already materialized and resumable.
     let resume_id = mcp
         .send_thread_resume_request(ThreadResumeParams {
             thread_id: thread.id.clone(),
             ..Default::default()
         })
         .await?;
-    let resume_err: JSONRPCError = timeout(
+    let resume_resp: JSONRPCResponse = timeout(
         DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_error_message(RequestId::Integer(resume_id)),
+        mcp.read_stream_until_response_message(RequestId::Integer(resume_id)),
     )
     .await??;
-    assert!(
-        resume_err
-            .error
-            .message
-            .contains("no rollout found for thread id"),
-        "unexpected resume error: {}",
-        resume_err.error.message
-    );
+    let ThreadResumeResponse { thread: resumed, .. } =
+        to_response::<ThreadResumeResponse>(resume_resp)?;
+    assert_eq!(resumed.id, thread.id);
 
     Ok(())
 }

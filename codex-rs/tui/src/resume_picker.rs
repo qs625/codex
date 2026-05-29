@@ -5752,6 +5752,7 @@ session_picker_view = "dense"
             agent_role: None,
             git_info: None,
             name: Some(String::from("Named thread")),
+            skills: Vec::new(),
             turns: Vec::new(),
         };
 
@@ -5786,6 +5787,7 @@ session_picker_view = "dense"
             agent_role: None,
             git_info: None,
             name: None,
+            skills: Vec::new(),
             turns: vec![codex_app_server_protocol::Turn {
                 id: String::from("turn-1"),
                 items_view: codex_app_server_protocol::TurnItemsView::Full,
@@ -5853,6 +5855,7 @@ session_picker_view = "dense"
             agent_role: None,
             git_info: None,
             name: None,
+            skills: Vec::new(),
             turns: vec![codex_app_server_protocol::Turn {
                 id: String::from("turn-1"),
                 items_view: codex_app_server_protocol::TurnItemsView::Full,
@@ -5910,6 +5913,7 @@ session_picker_view = "dense"
             agent_role: None,
             git_info: None,
             name: None,
+            skills: Vec::new(),
             turns: vec![codex_app_server_protocol::Turn {
                 id: String::from("turn-1"),
                 items_view: codex_app_server_protocol::TurnItemsView::Full,
@@ -5938,7 +5942,7 @@ session_picker_view = "dense"
     }
 
     #[test]
-    fn thread_to_transcript_cells_renders_builtin_tool_calls() {
+    fn thread_to_transcript_cells_renders_event_driven_tool_calls() {
         use transcript::thread_to_transcript_cells;
 
         let thread_id = ThreadId::new();
@@ -5961,10 +5965,11 @@ session_picker_view = "dense"
             agent_role: None,
             git_info: None,
             name: None,
+            skills: Vec::new(),
             turns: vec![codex_app_server_protocol::Turn {
                 id: String::from("turn-1"),
                 items_view: codex_app_server_protocol::TurnItemsView::Full,
-                items: vec![ThreadItem::BuiltinToolCall {
+                items: vec![ThreadItem::EventDrivenToolCall {
                     id: String::from("builtin-1"),
                     tool: String::from("fs_subscribe"),
                     arguments: serde_json::json!({
@@ -5989,8 +5994,61 @@ session_picker_view = "dense"
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(rendered.contains("builtin tool: fs_subscribe"));
+        assert!(rendered.contains("event-driven tool call: fs_subscribe"));
         assert!(rendered.contains("Completed"));
+    }
+
+    #[test]
+    fn thread_to_transcript_cells_renders_event_driven_tool_items() {
+        use transcript::thread_to_transcript_cells;
+
+        let thread_id = ThreadId::new();
+        let thread = Thread {
+            id: thread_id.to_string(),
+            session_id: thread_id.to_string(),
+            forked_from_id: None,
+            preview: String::from("preview"),
+            ephemeral: false,
+            model_provider: String::from("openai"),
+            created_at: 1,
+            updated_at: 2,
+            status: codex_app_server_protocol::ThreadStatus::Idle,
+            path: None,
+            cwd: test_path_buf("/tmp").abs(),
+            cli_version: String::from("0.0.0"),
+            source: codex_app_server_protocol::SessionSource::Cli,
+            thread_source: None,
+            agent_nickname: None,
+            agent_role: None,
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            turns: vec![codex_app_server_protocol::Turn {
+                id: String::from("turn-1"),
+                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items: vec![ThreadItem::EventDrivenTool {
+                    id: String::from("evt-1"),
+                    tool: String::from("process_exit_subscribe"),
+                    title: String::from("Process exited"),
+                    text: String::from("[Process exit subscription] Session 42 exited"),
+                }],
+                status: codex_app_server_protocol::TurnStatus::Completed,
+                error: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+            }],
+        };
+
+        let rendered = thread_to_transcript_cells(&thread, RawReasoningVisibility::Visible)
+            .into_iter()
+            .flat_map(|cell| cell.transcript_lines(/*width*/ 80))
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("event-driven tool: process_exit_subscribe"));
+        assert!(rendered.contains("Session 42 exited"));
     }
 
     #[tokio::test]

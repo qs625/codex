@@ -207,12 +207,12 @@ export function buildConversationEntries(thread: Thread | null): ConversationEnt
       if (
         item.type === "dynamicToolCall" ||
         item.type === "mcpToolCall" ||
-        item.type === "builtinToolCall"
+        item.type === "eventDrivenToolCall"
       ) {
         const details =
           item.type === "dynamicToolCall"
             ? formatStructuredToolDetails(item.arguments, item.contentItems)
-            : item.type === "builtinToolCall"
+            : item.type === "eventDrivenToolCall"
               ? formatStructuredToolDetails(item.arguments, item.output)
               : formatStructuredToolDetails(item.arguments, item.result ?? item.error);
         return [
@@ -228,11 +228,25 @@ export function buildConversationEntries(thread: Thread | null): ConversationEnt
             toolStatus: item.status,
             toolDetails: details,
             toolCategory:
-              item.type === "builtinToolCall"
-                ? "builtin"
+              item.type === "eventDrivenToolCall"
+                ? "eventDriven"
                 : item.type === "mcpToolCall"
                   ? "external"
                   : "external",
+          },
+        ];
+      }
+
+      if (item.type === "eventDrivenTool") {
+        return [
+          {
+            id: item.id,
+            kind: "event" as const,
+            author,
+            role: "system" as const,
+            text: `${item.title}: ${item.text}`,
+            timestamp,
+            attachments: [],
           },
         ];
       }
@@ -384,12 +398,12 @@ function formatDeltaKind(kind: string) {
 }
 
 function summarizeToolCall(
-  item: Extract<ThreadItem, { type: "dynamicToolCall" | "mcpToolCall" | "builtinToolCall" }>,
+  item: Extract<ThreadItem, { type: "dynamicToolCall" | "mcpToolCall" | "eventDrivenToolCall" }>,
 ) {
   if (item.type === "mcpToolCall") {
     return `${item.server}/${item.tool}`;
   }
-  if (item.type === "builtinToolCall") {
+  if (item.type === "eventDrivenToolCall") {
     return item.tool;
   }
   if (item.namespace) {

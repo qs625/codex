@@ -362,7 +362,8 @@ impl TurnToolCounts {
             | ThreadItem::AgentMessage { .. }
             | ThreadItem::Plan { .. }
             | ThreadItem::Reasoning { .. }
-            | ThreadItem::BuiltinToolCall { .. }
+            | ThreadItem::EventDrivenToolCall { .. }
+            | ThreadItem::EventDrivenTool { .. }
             | ThreadItem::CollabAgentMessage { .. }
             | ThreadItem::CollabAgentStatusUpdate { .. }
             | ThreadItem::ImageView { .. }
@@ -1595,7 +1596,8 @@ fn tracked_tool_item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::AgentMessage { .. }
         | ThreadItem::Plan { .. }
         | ThreadItem::Reasoning { .. }
-        | ThreadItem::BuiltinToolCall { .. }
+        | ThreadItem::EventDrivenToolCall { .. }
+        | ThreadItem::EventDrivenTool { .. }
         | ThreadItem::CollabAgentMessage { .. }
         | ThreadItem::CollabAgentStatusUpdate { .. }
         | ThreadItem::ImageView { .. }

@@ -64,12 +64,12 @@ pub(crate) enum ThreadListenerCommand {
 pub(crate) struct TurnSummary {
     pub(crate) started_at: Option<i64>,
     pub(crate) command_execution_started: HashSet<String>,
-    pub(crate) builtin_tool_calls: HashMap<String, BuiltinToolCallSummary>,
+    pub(crate) event_driven_tool_calls: HashMap<String, EventDrivenToolCallSummary>,
     pub(crate) last_error: Option<TurnError>,
 }
 
 #[derive(Clone)]
-pub(crate) struct BuiltinToolCallSummary {
+pub(crate) struct EventDrivenToolCallSummary {
     pub(crate) tool: String,
     pub(crate) arguments: serde_json::Value,
 }
@@ -249,17 +249,28 @@ impl ThreadStateManager {
         thread_id: ThreadId,
     ) -> Option<ConnectionId> {
         let state = self.state.lock().await;
+        let subscribed_connection = state.threads.get(&thread_id).and_then(|thread_entry| {
+            thread_entry
+                .connection_ids
+                .iter()
+                .filter_map(|connection_id| {
+                    state
+                        .live_connections
+                        .get(connection_id)?
+                        .request_attestation
+                        .then_some(*connection_id)
+                })
+                .min_by_key(|connection_id| connection_id.0)
+        });
+        if subscribed_connection.is_some() {
+            return subscribed_connection;
+        }
+
         state
-            .threads
-            .get(&thread_id)?
-            .connection_ids
+            .live_connections
             .iter()
-            .filter_map(|connection_id| {
-                state
-                    .live_connections
-                    .get(connection_id)?
-                    .request_attestation
-                    .then_some(*connection_id)
+            .filter_map(|(connection_id, capabilities)| {
+                capabilities.request_attestation.then_some(*connection_id)
             })
             .min_by_key(|connection_id| connection_id.0)
     }

@@ -430,25 +430,23 @@ async fn thread_fork_rejects_unmaterialized_thread() -> Result<()> {
     )
     .await??;
     let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
+    let source_thread_id = thread.id.clone();
 
     let fork_id = mcp
         .send_thread_fork_request(ThreadForkParams {
-            thread_id: thread.id,
+            thread_id: source_thread_id.clone(),
             ..Default::default()
         })
         .await?;
-    let fork_err: JSONRPCError = timeout(
+    let fork_resp: JSONRPCResponse = timeout(
         DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_error_message(RequestId::Integer(fork_id)),
+        mcp.read_stream_until_response_message(RequestId::Integer(fork_id)),
     )
     .await??;
-    assert!(
-        fork_err
-            .error
-            .message
-            .contains("no rollout found for thread id"),
-        "unexpected fork error: {}",
-        fork_err.error.message
+    let ThreadForkResponse { thread: forked, .. } = to_response::<ThreadForkResponse>(fork_resp)?;
+    assert_eq!(
+        forked.forked_from_id.as_deref(),
+        Some(source_thread_id.as_str())
     );
 
     Ok(())

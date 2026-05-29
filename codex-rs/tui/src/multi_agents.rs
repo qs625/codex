@@ -866,6 +866,7 @@ mod tests {
 
     fn agent_state(status: CollabAgentStatus, message: Option<&str>) -> CollabAgentState {
         CollabAgentState {
+            path: None,
             status,
             message: message.map(str::to_string),
         }

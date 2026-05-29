@@ -1415,9 +1415,9 @@
             },
             "type": {
               "enum": [
-                "builtinToolCall"
+                "eventDrivenToolCall"
               ],
-              "title": "BuiltinToolCallThreadItemType",
+              "title": "EventDrivenToolCallThreadItemType",
               "type": "string"
             }
           },
@@ -1428,7 +1428,39 @@
             "tool",
             "type"
           ],
-          "title": "BuiltinToolCallThreadItem",
+          "title": "EventDrivenToolCallThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "tool": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "eventDrivenTool"
+              ],
+              "title": "EventDrivenToolThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "text",
+            "title",
+            "tool",
+            "type"
+          ],
+          "title": "EventDrivenToolThreadItem",
           "type": "object"
         },
         {

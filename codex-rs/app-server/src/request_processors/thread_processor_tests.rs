@@ -1423,4 +1423,42 @@ mod thread_processor_behavior_tests {
         );
         Ok(())
     }
+
+    #[tokio::test]
+    async fn first_attestation_capable_connection_for_thread_falls_back_before_subscription()
+    -> Result<()> {
+        let manager = ThreadStateManager::new();
+        let thread_id = ThreadId::from_string("dfbd9a95-2f44-470a-8bd8-1cfc04efc243")?;
+        let earlier_supported_connection = ConnectionId(2);
+        let later_supported_connection = ConnectionId(3);
+        let unsupported_connection = ConnectionId(4);
+
+        manager
+            .connection_initialized(
+                later_supported_connection,
+                ConnectionCapabilities {
+                    request_attestation: true,
+                },
+            )
+            .await;
+        manager
+            .connection_initialized(unsupported_connection, ConnectionCapabilities::default())
+            .await;
+        manager
+            .connection_initialized(
+                earlier_supported_connection,
+                ConnectionCapabilities {
+                    request_attestation: true,
+                },
+            )
+            .await;
+
+        assert_eq!(
+            manager
+                .first_attestation_capable_connection_for_thread(thread_id)
+                .await,
+            Some(earlier_supported_connection)
+        );
+        Ok(())
+    }
 }

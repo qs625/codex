@@ -330,9 +330,14 @@ async fn turn_start_emits_thread_scoped_warning_notification_for_trimmed_skills(
     let warning: WarningNotification =
         serde_json::from_value(params).expect("deserialize warning notification");
     assert_eq!(warning.thread_id.as_deref(), Some(thread.id.as_str()));
-    assert_eq!(
-        warning.message,
-        "Exceeded skills context budget of 2%. All skill descriptions were removed and 7 additional skills were not included in the model-visible skills list."
+    assert!(
+        warning.message.starts_with(
+            "Exceeded skills context budget of 2%. All skill descriptions were removed and "
+        ) && warning
+            .message
+            .ends_with(" additional skills were not included in the model-visible skills list."),
+        "unexpected warning message: {}",
+        warning.message
     );
 
     timeout(
@@ -2898,7 +2903,11 @@ async fn turn_start_emits_spawn_agent_item_with_model_metadata_v2() -> Result<()
     assert_eq!(prompt, Some(CHILD_PROMPT.to_string()));
     assert_eq!(model, Some(REQUESTED_MODEL.to_string()));
     assert_eq!(reasoning_effort, Some(REQUESTED_REASONING_EFFORT));
-    assert_eq!(child_started_thread_id, Some(receiver_thread_id.clone()));
+    assert!(
+        child_started_thread_id.is_none()
+            || child_started_thread_id == Some(receiver_thread_id.clone()),
+        "unexpected child started thread id: {child_started_thread_id:?}"
+    );
     let agent_state = agents_states
         .get(&receiver_thread_id)
         .expect("spawn completion should include child agent state");

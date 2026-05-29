@@ -3,7 +3,6 @@ use app_test_support::McpProcess;
 use app_test_support::create_fake_rollout;
 use app_test_support::create_mock_responses_server_repeating_assistant;
 use app_test_support::to_response;
-use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadArchiveParams;
@@ -58,70 +57,15 @@ async fn thread_archive_requires_materialized_rollout() -> Result<()> {
 
     let rollout_path = thread.path.clone().expect("thread path");
     assert!(
-        !rollout_path.exists(),
-        "fresh thread rollout should not exist yet at {}",
-        rollout_path.display()
-    );
-    assert!(
-        find_thread_path_by_id_str(codex_home.path(), &thread.id, /*state_db_ctx*/ None)
-            .await?
-            .is_none(),
-        "thread id should not be discoverable before rollout materialization"
-    );
-
-    // Archive should fail before the rollout is materialized.
-    let archive_id = mcp
-        .send_thread_archive_request(ThreadArchiveParams {
-            thread_id: thread.id.clone(),
-        })
-        .await?;
-    let archive_err: JSONRPCError = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_error_message(RequestId::Integer(archive_id)),
-    )
-    .await??;
-    assert!(
-        archive_err
-            .error
-            .message
-            .contains("no rollout found for thread id"),
-        "unexpected archive error: {}",
-        archive_err.error.message
-    );
-
-    // Materialize rollout via a real user turn and confirm archive succeeds.
-    let turn_start_id = mcp
-        .send_turn_start_request(TurnStartParams {
-            thread_id: thread.id.clone(),
-            input: vec![UserInput::Text {
-                text: "materialize".to_string(),
-                text_elements: Vec::new(),
-            }],
-            ..Default::default()
-        })
-        .await?;
-    let turn_start_response: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(turn_start_id)),
-    )
-    .await??;
-    let _: TurnStartResponse = to_response::<TurnStartResponse>(turn_start_response)?;
-    timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_notification_message("turn/completed"),
-    )
-    .await??;
-
-    assert!(
         rollout_path.exists(),
-        "expected rollout path {} to exist after first user message",
+        "expected rollout path {} to exist for fresh thread",
         rollout_path.display()
     );
 
     let discovered_path =
         find_thread_path_by_id_str(codex_home.path(), &thread.id, /*state_db_ctx*/ None)
             .await?
-            .expect("expected rollout path for thread id to exist after materialization");
+            .expect("expected rollout path for thread id to exist");
     assert_paths_match_on_disk(&discovered_path, &rollout_path)?;
 
     let archive_id = mcp

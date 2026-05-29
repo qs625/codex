@@ -828,11 +828,11 @@ async fn replayed_reasoning_item_shows_raw_reasoning_when_enabled() {
 }
 
 #[tokio::test]
-async fn replayed_builtin_tool_call_does_not_emit_history_cells() {
+async fn replayed_event_driven_tool_call_does_not_emit_history_cells() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
     chat.replay_thread_item(
-        AppServerThreadItem::BuiltinToolCall {
+        AppServerThreadItem::EventDrivenToolCall {
             id: "builtin-1".to_string(),
             tool: "fs_subscribe".to_string(),
             arguments: serde_json::json!({

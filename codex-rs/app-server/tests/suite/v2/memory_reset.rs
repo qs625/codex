@@ -38,6 +38,7 @@ async fn memory_reset_clears_memory_files_and_rows_preserves_threads() -> Result
 
     let mut mcp = McpProcess::new(codex_home.path()).await?;
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    let memory_mode_before = state_db.get_thread_memory_mode(thread_id).await?;
 
     let request_id = mcp
         .send_raw_request("memory/reset", /*params*/ None)
@@ -51,10 +52,7 @@ async fn memory_reset_clears_memory_files_and_rows_preserves_threads() -> Result
 
     let stage1_outputs = state_db.list_stage1_outputs_for_global(/*n*/ 10).await?;
     assert_eq!(stage1_outputs, Vec::new());
-    assert_eq!(
-        state_db.get_thread_memory_mode(thread_id).await?.as_deref(),
-        Some("enabled")
-    );
+    assert_eq!(state_db.get_thread_memory_mode(thread_id).await?, memory_mode_before);
 
     let mut remaining_entries = tokio::fs::read_dir(&memory_root).await?;
     assert!(
