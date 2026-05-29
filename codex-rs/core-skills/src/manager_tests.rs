@@ -328,11 +328,13 @@ async fn skills_for_cwd_loads_repo_and_user_roots_with_local_fs() {
 }
 
 #[tokio::test]
-async fn skills_for_cwd_without_fs_skips_repo_roots() {
+async fn skills_for_cwd_without_fs_falls_back_to_local_repo_roots() {
     let codex_home = tempfile::tempdir().expect("tempdir");
     let cwd = tempfile::tempdir().expect("tempdir");
     let repo_dot_codex = cwd.path().join(".codex");
     fs::create_dir_all(&repo_dot_codex).expect("create repo config dir");
+    let repo_agents = cwd.path().join(".agents/skills/repo-agents");
+    fs::create_dir_all(&repo_agents).expect("create repo agents skill dir");
 
     write_user_skill(&codex_home, "user", "user-skill", "from local user root");
     let repo_skill_dir = repo_dot_codex.join("skills/repo");
@@ -342,6 +344,11 @@ async fn skills_for_cwd_without_fs_skips_repo_roots() {
         "---\nname: repo-skill\ndescription: from repo root\n---\n\n# Body\n",
     )
     .expect("write repo skill");
+    fs::write(
+        repo_agents.join("SKILL.md"),
+        "---\nname: repo-agents-skill\ndescription: from repo agents root\n---\n\n# Body\n",
+    )
+    .expect("write repo agents skill");
 
     let config_layer_stack = ConfigLayerStack::new(
         vec![
@@ -383,7 +390,8 @@ async fn skills_for_cwd_without_fs_skips_repo_roots() {
         .map(|skill| skill.name.as_str())
         .collect::<HashSet<_>>();
     assert!(loaded_names.contains("user-skill"));
-    assert!(!loaded_names.contains("repo-skill"));
+    assert!(loaded_names.contains("repo-skill"));
+    assert!(loaded_names.contains("repo-agents-skill"));
 }
 
 #[tokio::test]

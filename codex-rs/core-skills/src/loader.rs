@@ -252,14 +252,16 @@ async fn skill_roots_with_home_dir(
     home_dir: Option<&AbsolutePathBuf>,
     plugin_skill_roots: Vec<PluginSkillRoot>,
 ) -> Vec<SkillRoot> {
-    let mut roots = skill_roots_from_layer_stack_inner(config_layer_stack, home_dir, fs.clone());
+    let repo_fs = fs.unwrap_or_else(|| Arc::clone(&LOCAL_FS));
+    let mut roots =
+        skill_roots_from_layer_stack_inner(config_layer_stack, home_dir, Arc::clone(&repo_fs));
     roots.extend(plugin_skill_roots.into_iter().map(|root| SkillRoot {
         path: root.path,
         scope: SkillScope::User,
         file_system: Arc::clone(&LOCAL_FS),
         plugin_id: Some(root.plugin_id),
     }));
-    roots.extend(repo_agents_skill_roots(fs, config_layer_stack, cwd).await);
+    roots.extend(repo_agents_skill_roots(repo_fs, config_layer_stack, cwd).await);
     dedupe_skill_roots_by_path(&mut roots);
     roots
 }
@@ -267,7 +269,7 @@ async fn skill_roots_with_home_dir(
 fn skill_roots_from_layer_stack_inner(
     config_layer_stack: &ConfigLayerStack,
     home_dir: Option<&AbsolutePathBuf>,
-    repo_fs: Option<Arc<dyn ExecutorFileSystem>>,
+    repo_fs: Arc<dyn ExecutorFileSystem>,
 ) -> Vec<SkillRoot> {
     let mut roots = Vec::new();
 
@@ -281,14 +283,12 @@ fn skill_roots_from_layer_stack_inner(
 
         match &layer.name {
             ConfigLayerSource::Project { .. } => {
-                if let Some(repo_fs) = &repo_fs {
-                    roots.push(SkillRoot {
-                        path: config_folder.join(SKILLS_DIR_NAME),
-                        scope: SkillScope::Repo,
-                        file_system: Arc::clone(repo_fs),
-                        plugin_id: None,
-                    });
-                }
+                roots.push(SkillRoot {
+                    path: config_folder.join(SKILLS_DIR_NAME),
+                    scope: SkillScope::Repo,
+                    file_system: Arc::clone(&repo_fs),
+                    plugin_id: None,
+                });
             }
             ConfigLayerSource::User { .. } => {
                 // Deprecated user skills location (`$CODEX_HOME/skills`), kept for backward
@@ -340,13 +340,10 @@ fn skill_roots_from_layer_stack_inner(
 }
 
 async fn repo_agents_skill_roots(
-    fs: Option<Arc<dyn ExecutorFileSystem>>,
+    fs: Arc<dyn ExecutorFileSystem>,
     config_layer_stack: &ConfigLayerStack,
     cwd: &AbsolutePathBuf,
 ) -> Vec<SkillRoot> {
-    let Some(fs) = fs else {
-        return Vec::new();
-    };
     let project_root_markers = project_root_markers_from_stack(config_layer_stack);
     let project_root = find_project_root(fs.as_ref(), cwd, &project_root_markers).await;
     let dirs = dirs_between_project_root_and_cwd(cwd, &project_root);

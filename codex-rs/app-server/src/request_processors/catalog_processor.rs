@@ -396,11 +396,17 @@ impl CatalogRequestProcessor {
             .await;
         let skills_manager = self.thread_manager.skills_manager();
         let plugins_manager = self.thread_manager.plugins_manager();
-        let fs = self
-            .thread_manager
-            .environment_manager()
-            .default_environment()
-            .map(|environment| environment.get_filesystem());
+        let fs = Some(
+            self.thread_manager
+                .environment_manager()
+                .default_environment()
+                .unwrap_or_else(|| {
+                    self.thread_manager
+                        .environment_manager()
+                        .local_environment()
+                })
+                .get_filesystem(),
+        );
         let mut data = futures::stream::iter(cwds.into_iter().enumerate())
             .map(|(index, cwd)| {
                 let config = &config;

@@ -381,7 +381,7 @@ async fn skills_list_excludes_plugin_skills_when_workspace_codex_plugins_disable
 }
 
 #[tokio::test]
-async fn skills_list_skips_cwd_roots_when_environment_disabled() -> Result<()> {
+async fn skills_list_loads_cwd_roots_when_environment_disabled() -> Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
     write_skill(&codex_home, "home-skill")?;
@@ -425,7 +425,7 @@ async fn skills_list_skips_cwd_roots_when_environment_disabled() -> Result<()> {
         data[0]
             .skills
             .iter()
-            .all(|skill| skill.name != "repo-skill")
+            .any(|skill| skill.name == "repo-skill")
     );
     Ok(())
 }
