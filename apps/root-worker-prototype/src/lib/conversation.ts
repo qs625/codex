@@ -1,360 +1,486 @@
-import type { ConversationCell, ConversationEntry, Thread, ThreadItem } from "../types";
-import { formatClockTime, getThreadLabel, trimPath, trimThreadId } from "./thread";
+import type {
+  ConversationCell,
+  ConversationEntry,
+  Thread,
+  ThreadItem,
+} from "../types";
+import {
+  formatClockTime,
+  getThreadLabel,
+  trimPath,
+  trimThreadId,
+} from "./thread";
 
-export function buildConversationEntries(thread: Thread | null): ConversationEntry[] {
+export type ConversationBuildState = {
+  threadId: string | null;
+  author: string | null;
+  flatItems: ConversationFlatItemState[];
+  entries: ConversationEntry[];
+  cells: ConversationCell[];
+};
+
+type ConversationFlatItemState = {
+  id: string;
+  item: ThreadItem;
+  timestamp: string;
+  entries: ConversationEntry[];
+};
+
+export function buildConversationEntries(
+  thread: Thread | null,
+): ConversationEntry[] {
+  return buildConversationState(thread).entries;
+}
+
+export function buildConversationState(
+  thread: Thread | null,
+  previous?: ConversationBuildState | null,
+): ConversationBuildState {
   if (!thread) {
-    return [];
+    return {
+      threadId: null,
+      author: null,
+      flatItems: [],
+      entries: [],
+      cells: [],
+    };
   }
 
   const author = getThreadLabel(thread);
+  const canReusePrevious =
+    previous?.threadId === thread.id && previous.author === author;
+  const flatItems: ConversationFlatItemState[] = [];
+  const entries: ConversationEntry[] = [];
+  let flatItemIndex = 0;
 
-  return thread.turns.flatMap((turn) =>
-    turn.items.flatMap<ConversationEntry>((item) => {
-      const timestamp = formatClockTime(turn.completedAt ?? turn.startedAt ?? thread.updatedAt);
+  for (const turn of thread.turns) {
+    const timestamp = formatClockTime(
+      turn.completedAt ?? turn.startedAt ?? thread.updatedAt,
+    );
 
-      if (item.type === "userMessage") {
-        const text = item.content
-          .filter((content) => content.type === "text")
-          .map((content) => content.text ?? "")
-          .join("\n")
-          .trim();
-        const skillAttachments = item.content
-          .filter((content) => content.type === "skill")
-          .map((content) => ({
-            kind: "file" as const,
-            label: `/${content.name ?? "skill"}`,
-            path: content.path,
-          }));
-        const imageAttachments = item.content
-          .filter((content) => content.type === "image")
-          .map((content, index) => ({
-            kind: "image" as const,
-            label: content.name ?? `Image ${index + 1}`,
-            url: content.image_url,
-          }));
-        return [
-          {
-            id: item.id,
-            kind: "message" as const,
-            author: "You",
-            role: "user" as const,
-            text:
-              text ||
-              (skillAttachments.length > 0
-                ? `Activated ${skillAttachments.length} skill${skillAttachments.length === 1 ? "" : "s"}.`
-                : "") ||
-              (imageAttachments.length > 0
-                ? `Attached ${imageAttachments.length} image${imageAttachments.length === 1 ? "" : "s"}.`
-                : ""),
-            timestamp,
-            attachments: [...skillAttachments, ...imageAttachments],
-          },
-        ];
-      }
+    for (const item of turn.items) {
+      const previousFlatItem = canReusePrevious
+        ? previous.flatItems[flatItemIndex]
+        : undefined;
+      const nextEntries =
+        previousFlatItem &&
+        previousFlatItem.id === item.id &&
+        previousFlatItem.item === item &&
+        previousFlatItem.timestamp === timestamp
+          ? previousFlatItem.entries
+          : buildConversationItemEntries(item, { author, timestamp });
 
-      if (item.type === "agentMessage") {
-        return [
-          {
-            id: item.id,
-            kind: "message" as const,
-            author,
-            role: "agent" as const,
-            text: item.text || "…",
-            timestamp,
-            attachments: [],
-          },
-        ];
-      }
+      flatItems.push({
+        id: item.id,
+        item,
+        timestamp,
+        entries: nextEntries,
+      });
+      entries.push(...nextEntries);
+      flatItemIndex += 1;
+    }
+  }
 
-      if (item.type === "injectedContext") {
-        return [
-          {
-            id: item.id,
-            kind: "tool" as const,
-            author,
-            role: "system" as const,
-            text: item.preview,
-            timestamp,
-            attachments: [],
-            toolName: item.title,
-            toolStatus: "completed",
-            toolDetails: formatInjectedContextDetails(item),
-            toolCategory: "context",
-          },
-        ];
-      }
+  return {
+    threadId: thread.id,
+    author,
+    flatItems,
+    entries,
+    cells: buildConversationCells(entries, previous?.cells),
+  };
+}
 
-      if (item.type === "fileChange") {
-        return [
-          {
-            id: item.id,
-            kind: "message" as const,
-            author,
-            role: "agent" as const,
-            text: summarizeFileChanges(item),
-            timestamp,
-            attachments: item.changes.map((change) => ({
-              kind: "file" as const,
-              label: `${change.path} ${formatDeltaKind(change.kind)}`,
-            })),
-          },
-        ];
-      }
+function buildConversationItemEntries(
+  item: ThreadItem,
+  {
+    author,
+    timestamp,
+  }: {
+    author: string;
+    timestamp: string;
+  },
+): ConversationEntry[] {
+  if (item.type === "userMessage") {
+    const text = item.content
+      .filter((content) => content.type === "text")
+      .map((content) => content.text ?? "")
+      .join("\n")
+      .trim();
+    const skillAttachments = item.content
+      .filter((content) => content.type === "skill")
+      .map((content) => ({
+        kind: "file" as const,
+        label: `/${content.name ?? "skill"}`,
+        path: content.path,
+      }));
+    const imageAttachments = item.content
+      .filter((content) => content.type === "image")
+      .map((content, index) => ({
+        kind: "image" as const,
+        label: content.name ?? `Image ${index + 1}`,
+        url: content.image_url,
+      }));
+    return [
+      {
+        id: item.id,
+        kind: "message" as const,
+        author: "You",
+        role: "user" as const,
+        text:
+          text ||
+          (skillAttachments.length > 0
+            ? `Activated ${skillAttachments.length} skill${skillAttachments.length === 1 ? "" : "s"}.`
+            : "") ||
+          (imageAttachments.length > 0
+            ? `Attached ${imageAttachments.length} image${imageAttachments.length === 1 ? "" : "s"}.`
+            : ""),
+        timestamp,
+        attachments: [...skillAttachments, ...imageAttachments],
+      },
+    ];
+  }
 
-      if (item.type === "commandExecution") {
-        return [
-          {
-            id: item.id,
-            kind: "tool" as const,
-            author,
-            role: "system" as const,
-            text: summarizeCommandExecution(item),
-            timestamp,
-            attachments: [],
-            toolName: item.command,
-            toolStatus: item.status,
-            toolDetails: formatCommandExecutionDetails(item),
-            toolCategory: "command",
-          },
-        ];
-      }
+  if (item.type === "agentMessage") {
+    return [
+      {
+        id: item.id,
+        kind: "message" as const,
+        author,
+        role: "agent" as const,
+        text: item.text || "…",
+        timestamp,
+        attachments: [],
+      },
+    ];
+  }
 
-      if (item.type === "collabAgentToolCall") {
-        return [
-          {
-            id: item.id,
-            kind: "tool" as const,
-            author,
-            role: "system" as const,
-            text: summarizeCollabAgentToolCall(item),
-            timestamp,
-            attachments: [],
-            toolName: formatCollabAgentToolTitle(item),
-            toolStatus: item.status,
-            toolDetails: formatCollabAgentToolDetails(item),
-            toolCategory: "multiAgent",
-          },
-        ];
-      }
+  if (item.type === "injectedContext") {
+    return [
+      {
+        id: item.id,
+        kind: "tool" as const,
+        author,
+        role: "system" as const,
+        text: item.preview,
+        timestamp,
+        attachments: [],
+        toolName: item.title,
+        toolStatus: "completed",
+        toolDetails: formatInjectedContextDetails(item),
+        toolCategory: "context",
+      },
+    ];
+  }
 
-      if (item.type === "collabAgentMessage") {
-        return [
-          {
-            id: item.id,
-            kind: "tool" as const,
-            author,
-            role: "system" as const,
-            text: summarizeCollabAgentMessage(item),
-            timestamp,
-            attachments: [],
-            toolName: formatCollabAgentMessageTitle(item),
-            toolStatus: "completed",
-            toolDetails: formatCollabAgentMessageDetails(item),
-            toolCategory: "multiAgent",
-          },
-        ];
-      }
+  if (item.type === "fileChange") {
+    return [
+      {
+        id: item.id,
+        kind: "message" as const,
+        author,
+        role: "agent" as const,
+        text: summarizeFileChanges(item),
+        timestamp,
+        attachments: item.changes.map((change) => ({
+          kind: "file" as const,
+          label: `${change.path} ${formatDeltaKind(change.kind)}`,
+        })),
+      },
+    ];
+  }
 
-      if (item.type === "collabAgentStatusUpdate") {
-        return [
-          {
-            id: item.id,
-            kind: "tool" as const,
-            author,
-            role: "system" as const,
-            text: summarizeCollabAgentStatusUpdate(item),
-            timestamp,
-            attachments: [],
-            toolName: formatCollabAgentStatusUpdateTitle(item),
-            toolStatus: "completed",
-            toolDetails: formatCollabAgentStatusUpdateDetails(item),
-            toolCategory: "multiAgent",
-          },
-        ];
-      }
+  if (item.type === "commandExecution") {
+    return [
+      {
+        id: item.id,
+        kind: "tool" as const,
+        author,
+        role: "system" as const,
+        text: summarizeCommandExecution(item),
+        timestamp,
+        attachments: [],
+        toolName: item.command,
+        toolStatus: item.status,
+        toolDetails: formatCommandExecutionDetails(item),
+        toolCategory: "command",
+      },
+    ];
+  }
 
-      if (item.type === "plan") {
-        return [
+  if (item.type === "collabAgentToolCall") {
+    return [
+      {
+        id: item.id,
+        kind: "tool" as const,
+        author,
+        role: "system" as const,
+        text: summarizeCollabAgentToolCall(item),
+        timestamp,
+        attachments: [],
+        toolName: formatCollabAgentToolTitle(item),
+        toolStatus: item.status,
+        toolDetails: formatCollabAgentToolDetails(item),
+        toolCategory: "multiAgent",
+      },
+    ];
+  }
+
+  if (item.type === "collabAgentMessage") {
+    return [
+      {
+        id: item.id,
+        kind: "tool" as const,
+        author,
+        role: "system" as const,
+        text: summarizeCollabAgentMessage(item),
+        timestamp,
+        attachments: [],
+        toolName: formatCollabAgentMessageTitle(item),
+        toolStatus: "completed",
+        toolDetails: formatCollabAgentMessageDetails(item),
+        toolCategory: "multiAgent",
+      },
+    ];
+  }
+
+  if (item.type === "collabAgentStatusUpdate") {
+    return [
+      {
+        id: item.id,
+        kind: "tool" as const,
+        author,
+        role: "system" as const,
+        text: summarizeCollabAgentStatusUpdate(item),
+        timestamp,
+        attachments: [],
+        toolName: formatCollabAgentStatusUpdateTitle(item),
+        toolStatus: "completed",
+        toolDetails: formatCollabAgentStatusUpdateDetails(item),
+        toolCategory: "multiAgent",
+      },
+    ];
+  }
+
+  if (item.type === "plan") {
+    return [
+      {
+        id: item.id,
+        kind: "event" as const,
+        author,
+        role: "system" as const,
+        text: item.text,
+        timestamp,
+        attachments: [],
+      },
+    ];
+  }
+
+  if (item.type === "reasoning") {
+    const text =
+      item.summary.join("\n").trim() || item.content.join("\n").trim();
+    return text
+      ? [
           {
             id: item.id,
             kind: "event" as const,
             author,
             role: "system" as const,
-            text: item.text,
+            text,
             timestamp,
             attachments: [],
           },
-        ];
-      }
+        ]
+      : [];
+  }
 
-      if (item.type === "reasoning") {
-        const text = item.summary.join("\n").trim() || item.content.join("\n").trim();
-        return text
+  if (
+    item.type === "dynamicToolCall" ||
+    item.type === "mcpToolCall" ||
+    item.type === "eventDrivenToolCall"
+  ) {
+    const details =
+      item.type === "dynamicToolCall"
+        ? formatStructuredToolDetails(item.arguments, item.contentItems)
+        : item.type === "eventDrivenToolCall"
+          ? formatStructuredToolDetails(item.arguments, item.output)
+          : formatStructuredToolDetails(
+              item.arguments,
+              item.result ?? item.error,
+            );
+    return [
+      {
+        id: item.id,
+        kind: "tool" as const,
+        author,
+        role: "system" as const,
+        text: summarizeToolCall(item),
+        timestamp,
+        attachments: [],
+        toolName: item.tool,
+        toolStatus: item.status,
+        toolDetails: details,
+        toolCategory:
+          item.type === "eventDrivenToolCall"
+            ? "eventDriven"
+            : item.type === "mcpToolCall"
+              ? "external"
+              : "external",
+      },
+    ];
+  }
+
+  if (item.type === "eventDrivenTool") {
+    return [
+      {
+        id: item.id,
+        kind: "event" as const,
+        author,
+        role: "system" as const,
+        text: `${item.title}: ${item.text}`,
+        timestamp,
+        attachments: [],
+      },
+    ];
+  }
+
+  if (item.type === "webSearch") {
+    return [
+      {
+        id: item.id,
+        kind: "event" as const,
+        author,
+        role: "system" as const,
+        text: `Searched for ${item.query}`,
+        timestamp,
+        attachments: [],
+      },
+    ];
+  }
+
+  if (item.type === "imageGeneration") {
+    const label = item.savedPath ? basename(item.savedPath) : "Generated image";
+    const promptText = item.revisedPrompt?.trim();
+    const captionText =
+      promptText && promptText.length > 0
+        ? promptText
+        : item.savedPath
+          ? `Generated ${label}.`
+          : "Generating image…";
+    return [
+      {
+        id: item.id,
+        kind: "message" as const,
+        author,
+        role: "agent" as const,
+        text: captionText,
+        timestamp,
+        attachments: item.savedPath
           ? [
               {
-                id: item.id,
-                kind: "event" as const,
-                author,
-                role: "system" as const,
-                text,
-                timestamp,
-                attachments: [],
+                kind: "image" as const,
+                label,
+                path: item.savedPath,
               },
             ]
-          : [];
-      }
+          : [],
+      },
+    ];
+  }
 
-      if (
-        item.type === "dynamicToolCall" ||
-        item.type === "mcpToolCall" ||
-        item.type === "eventDrivenToolCall"
-      ) {
-        const details =
-          item.type === "dynamicToolCall"
-            ? formatStructuredToolDetails(item.arguments, item.contentItems)
-            : item.type === "eventDrivenToolCall"
-              ? formatStructuredToolDetails(item.arguments, item.output)
-              : formatStructuredToolDetails(item.arguments, item.result ?? item.error);
-        return [
-          {
-            id: item.id,
-            kind: "tool" as const,
-            author,
-            role: "system" as const,
-            text: summarizeToolCall(item),
-            timestamp,
-            attachments: [],
-            toolName: item.tool,
-            toolStatus: item.status,
-            toolDetails: details,
-            toolCategory:
-              item.type === "eventDrivenToolCall"
-                ? "eventDriven"
-                : item.type === "mcpToolCall"
-                  ? "external"
-                  : "external",
-          },
-        ];
-      }
+  if (item.type === "imageView") {
+    const label = item.path ? basename(item.path) : "Viewed image";
+    return [
+      {
+        id: item.id,
+        kind: "message" as const,
+        author,
+        role: "agent" as const,
+        text: `Viewed ${label}.`,
+        timestamp,
+        attachments: item.path
+          ? [
+              {
+                kind: "image" as const,
+                label,
+                path: item.path,
+              },
+            ]
+          : [],
+      },
+    ];
+  }
 
-      if (item.type === "eventDrivenTool") {
-        return [
-          {
-            id: item.id,
-            kind: "event" as const,
-            author,
-            role: "system" as const,
-            text: `${item.title}: ${item.text}`,
-            timestamp,
-            attachments: [],
-          },
-        ];
-      }
+  if (item.type === "enteredReviewMode" || item.type === "exitedReviewMode") {
+    return [
+      {
+        id: item.id,
+        kind: "event" as const,
+        author,
+        role: "system" as const,
+        text: item.review,
+        timestamp,
+        attachments: [],
+      },
+    ];
+  }
 
-      if (item.type === "webSearch") {
-        return [
-          {
-            id: item.id,
-            kind: "event" as const,
-            author,
-            role: "system" as const,
-            text: `Searched for ${item.query}`,
-            timestamp,
-            attachments: [],
-          },
-        ];
-      }
-
-      if (item.type === "imageGeneration") {
-        const label = item.savedPath ? basename(item.savedPath) : "Generated image";
-        const promptText = item.revisedPrompt?.trim();
-        const captionText =
-          promptText && promptText.length > 0
-            ? promptText
-            : item.savedPath
-              ? `Generated ${label}.`
-              : "Generating image…";
-        return [
-          {
-            id: item.id,
-            kind: "message" as const,
-            author,
-            role: "agent" as const,
-            text: captionText,
-            timestamp,
-            attachments: item.savedPath
-              ? [
-                  {
-                    kind: "image" as const,
-                    label,
-                    path: item.savedPath,
-                  },
-                ]
-              : [],
-          },
-        ];
-      }
-
-      if (item.type === "imageView") {
-        const label = item.path ? basename(item.path) : "Viewed image";
-        return [
-          {
-            id: item.id,
-            kind: "message" as const,
-            author,
-            role: "agent" as const,
-            text: `Viewed ${label}.`,
-            timestamp,
-            attachments: item.path
-              ? [
-                  {
-                    kind: "image" as const,
-                    label,
-                    path: item.path,
-                  },
-                ]
-              : [],
-          },
-        ];
-      }
-
-      if (item.type === "enteredReviewMode" || item.type === "exitedReviewMode") {
-        return [
-          {
-            id: item.id,
-            kind: "event" as const,
-            author,
-            role: "system" as const,
-            text: item.review,
-            timestamp,
-            attachments: [],
-          },
-        ];
-      }
-
-      return [];
-    }),
-  );
+  return [];
 }
 
-export function buildConversationCells(entries: ConversationEntry[]): ConversationCell[] {
-  return entries.reduce<ConversationCell[]>((cells, entry) => {
-    const previousCell = cells.at(-1);
-    if (previousCell && shouldMergeConversationEntry(previousCell, entry)) {
-      previousCell.entries.push(entry);
-      return cells;
+export function buildConversationCells(
+  entries: ConversationEntry[],
+  previousCells?: ConversationCell[] | null,
+): ConversationCell[] {
+  const cells: ConversationCell[] = [];
+  let entryIndex = 0;
+  let cellIndex = 0;
+
+  while (entryIndex < entries.length) {
+    const nextCellEntries = [entries[entryIndex]];
+    while (
+      entryIndex + nextCellEntries.length < entries.length &&
+      shouldMergeConversationEntry(
+        {
+          id: nextCellEntries[0].id,
+          kind: nextCellEntries[0].kind,
+          entries: nextCellEntries,
+        },
+        entries[entryIndex + nextCellEntries.length],
+      )
+    ) {
+      nextCellEntries.push(entries[entryIndex + nextCellEntries.length]);
     }
 
-    cells.push({
-      id: entry.id,
-      kind: entry.kind,
-      entries: [entry],
-    });
-    return cells;
-  }, []);
+    const existingCell = previousCells?.[cellIndex];
+    if (
+      existingCell &&
+      existingCell.id === nextCellEntries[0].id &&
+      existingCell.kind === nextCellEntries[0].kind &&
+      existingCell.entries.length === nextCellEntries.length &&
+      existingCell.entries.every(
+        (entry, index) => entry === nextCellEntries[index],
+      )
+    ) {
+      cells.push(existingCell);
+    } else {
+      cells.push({
+        id: nextCellEntries[0].id,
+        kind: nextCellEntries[0].kind,
+        entries: nextCellEntries,
+      });
+    }
+
+    entryIndex += nextCellEntries.length;
+    cellIndex += 1;
+  }
+
+  return cells;
 }
 
-function shouldMergeConversationEntry(cell: ConversationCell, nextEntry: ConversationEntry) {
+function shouldMergeConversationEntry(
+  cell: ConversationCell,
+  nextEntry: ConversationEntry,
+) {
   const previousEntry = cell.entries.at(-1);
   if (!previousEntry) {
     return false;
@@ -376,7 +502,9 @@ function shouldMergeConversationEntry(cell: ConversationCell, nextEntry: Convers
   return false;
 }
 
-function summarizeFileChanges(item: Extract<ThreadItem, { type: "fileChange" }>) {
+function summarizeFileChanges(
+  item: Extract<ThreadItem, { type: "fileChange" }>,
+) {
   const count = item.changes.length;
   if (count === 0) {
     return "Applied file changes.";
@@ -398,7 +526,10 @@ function formatDeltaKind(kind: string) {
 }
 
 function summarizeToolCall(
-  item: Extract<ThreadItem, { type: "dynamicToolCall" | "mcpToolCall" | "eventDrivenToolCall" }>,
+  item: Extract<
+    ThreadItem,
+    { type: "dynamicToolCall" | "mcpToolCall" | "eventDrivenToolCall" }
+  >,
 ) {
   if (item.type === "mcpToolCall") {
     return `${item.server}/${item.tool}`;
@@ -437,7 +568,9 @@ function summarizeCollabAgentToolCall(
   }
 }
 
-function formatCollabAgentToolName(tool: Extract<ThreadItem, { type: "collabAgentToolCall" }>["tool"]) {
+function formatCollabAgentToolName(
+  tool: Extract<ThreadItem, { type: "collabAgentToolCall" }>["tool"],
+) {
   switch (tool) {
     case "spawnAgent":
       return "spawn_agent";
@@ -454,7 +587,9 @@ function formatCollabAgentToolName(tool: Extract<ThreadItem, { type: "collabAgen
   }
 }
 
-function formatCollabAgentToolTitle(item: Extract<ThreadItem, { type: "collabAgentToolCall" }>) {
+function formatCollabAgentToolTitle(
+  item: Extract<ThreadItem, { type: "collabAgentToolCall" }>,
+) {
   switch (item.tool) {
     case "spawnAgent":
       return "spawn agent";
@@ -480,9 +615,7 @@ function formatCollabAgentToolDetails(
   ];
 
   if (item.receiverPaths.length > 0) {
-    sections.push(
-      `Receivers\n${item.receiverPaths.join("\n")}`,
-    );
+    sections.push(`Receivers\n${item.receiverPaths.join("\n")}`);
   }
 
   if (item.prompt?.trim()) {
@@ -502,7 +635,11 @@ function formatCollabAgentToolDetails(
     sections.push(
       `Agent States\n${agentStates
         .map(([threadId, state]) =>
-          [state.path?.trim() || trimThreadId(threadId), state.status, state.message?.trim()]
+          [
+            state.path?.trim() || trimThreadId(threadId),
+            state.status,
+            state.message?.trim(),
+          ]
             .filter((value) => value && value.length > 0)
             .join(" • "),
         )
@@ -513,7 +650,9 @@ function formatCollabAgentToolDetails(
   return sections.join("\n\n");
 }
 
-function summarizeCollabAgentMessage(item: Extract<ThreadItem, { type: "collabAgentMessage" }>) {
+function summarizeCollabAgentMessage(
+  item: Extract<ThreadItem, { type: "collabAgentMessage" }>,
+) {
   switch (item.operation) {
     case "spawnAgent":
       return `Received initial task from ${item.senderPath}.`;
@@ -528,7 +667,9 @@ function summarizeCollabAgentMessage(item: Extract<ThreadItem, { type: "collabAg
   }
 }
 
-function formatCollabAgentMessageTitle(item: Extract<ThreadItem, { type: "collabAgentMessage" }>) {
+function formatCollabAgentMessageTitle(
+  item: Extract<ThreadItem, { type: "collabAgentMessage" }>,
+) {
   if (item.operation === "childCompletion") {
     return `${resolveAgentPath(item.senderPath, item.recipientPath)} subagent completion`;
   }
@@ -558,7 +699,9 @@ function summarizeCollabAgentStatusUpdate(
 ) {
   const agentPath = item.status.path?.trim() || item.senderPath;
   const message = item.status.message?.trim();
-  return [agentPath, item.status.status, message].filter((value) => value && value.length > 0).join(" • ");
+  return [agentPath, item.status.status, message]
+    .filter((value) => value && value.length > 0)
+    .join(" • ");
 }
 
 function formatCollabAgentStatusUpdateTitle(
@@ -590,15 +733,25 @@ function formatCollabAgentStatusUpdateDetails(
   return sections.join("\n\n");
 }
 
-function summarizeCommandExecution(item: Extract<ThreadItem, { type: "commandExecution" }>) {
+function summarizeCommandExecution(
+  item: Extract<ThreadItem, { type: "commandExecution" }>,
+) {
   const cwd = trimPath(item.cwd);
   const exitCode =
-    item.exitCode === null || item.exitCode === undefined ? "running" : `exit ${item.exitCode}`;
+    item.exitCode === null || item.exitCode === undefined
+      ? "running"
+      : `exit ${item.exitCode}`;
   return `${cwd} • ${exitCode}`;
 }
 
-function formatCommandExecutionDetails(item: Extract<ThreadItem, { type: "commandExecution" }>) {
-  const sections = [`Command\n${item.command}`, `Cwd\n${item.cwd}`, `Status\n${item.status}`];
+function formatCommandExecutionDetails(
+  item: Extract<ThreadItem, { type: "commandExecution" }>,
+) {
+  const sections = [
+    `Command\n${item.command}`,
+    `Cwd\n${item.cwd}`,
+    `Status\n${item.status}`,
+  ];
 
   if (item.durationMs !== null && item.durationMs !== undefined) {
     sections.push(`Duration\n${item.durationMs} ms`);
@@ -629,7 +782,9 @@ function formatStructuredToolDetails(input: unknown, output: unknown) {
   return sections.join("\n\n");
 }
 
-function formatInjectedContextDetails(item: Extract<ThreadItem, { type: "injectedContext" }>) {
+function formatInjectedContextDetails(
+  item: Extract<ThreadItem, { type: "injectedContext" }>,
+) {
   return item.sections
     .map((section) => `${section.label}\n${section.text.trim()}`)
     .join("\n\n");
@@ -638,7 +793,9 @@ function formatInjectedContextDetails(item: Extract<ThreadItem, { type: "injecte
 function basename(filePath: string) {
   const normalized = filePath.replace(/\\/g, "/").replace(/\/+$/u, "");
   const lastSlash = normalized.lastIndexOf("/");
-  return lastSlash === -1 ? normalized : normalized.slice(lastSlash + 1) || normalized;
+  return lastSlash === -1
+    ? normalized
+    : normalized.slice(lastSlash + 1) || normalized;
 }
 
 function safeJson(value: unknown) {
@@ -654,5 +811,8 @@ function safeJson(value: unknown) {
 }
 
 function resolveAgentPath(...paths: Array<string | null | undefined>) {
-  return paths.map((path) => path?.trim()).find((path) => path && path.length > 0) ?? "unknown";
+  return (
+    paths.map((path) => path?.trim()).find((path) => path && path.length > 0) ??
+    "unknown"
+  );
 }
