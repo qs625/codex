@@ -665,6 +665,7 @@ pub(super) async fn handle_pending_thread_resume_request(
             connection_id,
             conversation_id,
             &token_usage_thread,
+            conversation.as_ref(),
             pending.history_items.as_slice(),
         )
         .await;

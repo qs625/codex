@@ -2293,6 +2293,8 @@ mod tests {
                     git_info: None,
                     name: None,
                     skills: Vec::new(),
+                    token_usage: None,
+                    context_usage: None,
                     turns: Vec::new(),
                 },
                 model: "gpt-5".to_string(),
@@ -2339,6 +2341,8 @@ mod tests {
                         "gitInfo": null,
                         "name": null,
                         "skills": [],
+                        "tokenUsage": null,
+                        "contextUsage": null,
                         "turns": []
                     },
                     "model": "gpt-5",

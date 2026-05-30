@@ -15221,6 +15221,17 @@
             "description": "Version of the CLI that created the thread.",
             "type": "string"
           },
+          "contextUsage": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/v2/ThreadContextUsage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Restored aggregate thread context usage, when available."
+          },
           "createdAt": {
             "description": "Unix timestamp (in seconds) when the thread was created.",
             "format": "int64",
@@ -15319,6 +15330,17 @@
               }
             ],
             "description": "Optional analytics source classification for this thread."
+          },
+          "tokenUsage": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/v2/ThreadTokenUsage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Restored aggregate thread token usage, when available."
           },
           "turns": {
             "description": "Only populated on `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read` (when `includeTurns` is true) responses. For all other responses and notifications returning a Thread, the turns field will be an empty list.",
@@ -15576,6 +15598,9 @@
           "threadId": {
             "type": "string"
           },
+          "tokenUsage": {
+            "$ref": "#/definitions/v2/ThreadTokenUsage"
+          },
           "turnId": {
             "type": "string"
           }
@@ -15583,6 +15608,7 @@
         "required": [
           "contextUsage",
           "threadId",
+          "tokenUsage",
           "turnId"
         ],
         "title": "ThreadContextUsageUpdatedNotification",

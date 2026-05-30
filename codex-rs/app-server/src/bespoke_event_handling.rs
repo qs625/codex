@@ -1225,9 +1225,17 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .await;
         }
         EventMsg::ThreadContextUsageUpdated(thread_context_usage_event) => {
+            let Some(token_usage) = conversation
+                .token_usage_info()
+                .await
+                .map(ThreadTokenUsage::from)
+            else {
+                return;
+            };
             let notification = ThreadContextUsageUpdatedNotification {
                 thread_id: conversation_id.to_string(),
                 turn_id: event_turn_id.clone(),
+                token_usage,
                 context_usage: thread_context_usage_event.usage.into(),
             };
             outgoing

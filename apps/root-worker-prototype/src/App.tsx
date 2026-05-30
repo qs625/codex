@@ -53,6 +53,7 @@ import type {
   ThreadItem,
   ThreadSkill,
   ThreadTokenUsage,
+  ThreadUsage,
   TreeMenuState,
   Turn,
 } from "./types";
@@ -108,6 +109,8 @@ function App() {
   const filePreviewRef = useRef<FilePreview | null>(null);
   const symbolBackStackRef = useRef<FileLocation[]>([]);
   const symbolForwardStackRef = useRef<FileLocation[]>([]);
+  const selectedThreadIdRef = useRef<string | null>(null);
+  const loadThreadRequestIdRef = useRef(0);
   const resizeStateRef = useRef<{
     startX: number;
     startWidth: number;
@@ -136,6 +139,21 @@ function App() {
     }
     void loadThread(selectedThreadId);
   }, [selectedThreadId]);
+
+  useEffect(() => {
+    selectedThreadIdRef.current = selectedThreadId;
+    if (!selectedThreadId) {
+      setIsLoadingThread(false);
+      setSelectedThread(null);
+      return;
+    }
+
+    const cachedThread =
+      threads.find((thread) => thread.id === selectedThreadId) ?? null;
+    setSelectedThread((current) =>
+      cachedThread ? mergeThreadSnapshot(current, cachedThread) : null,
+    );
+  }, [selectedThreadId, threads]);
 
   useEffect(() => {
     setAvailableSkills([]);
@@ -464,25 +482,46 @@ function App() {
     );
   }
 
-  function updateThreadContextUsageLocally(threadId: string, contextUsage: ThreadContextUsage) {
+  function updateThreadUsageLocally(threadId: string, threadUsage: ThreadUsage) {
     setThreads((current) =>
-      current.map((thread) => (thread.id === threadId ? { ...thread, contextUsage } : thread)),
+      current.map((thread) =>
+        thread.id === threadId
+          ? {
+              ...thread,
+              threadUsage: {
+                tokenUsage: threadUsage.tokenUsage ?? thread.threadUsage?.tokenUsage ?? thread.tokenUsage ?? null,
+                contextUsage:
+                  threadUsage.contextUsage ?? thread.threadUsage?.contextUsage ?? thread.contextUsage ?? null,
+              },
+              tokenUsage: threadUsage.tokenUsage ?? thread.threadUsage?.tokenUsage ?? thread.tokenUsage ?? null,
+              contextUsage:
+                threadUsage.contextUsage ?? thread.threadUsage?.contextUsage ?? thread.contextUsage ?? null,
+            }
+          : thread,
+      ),
     );
     setSelectedThread((current) =>
-      current?.id === threadId ? { ...current, contextUsage } : current,
-    );
-  }
-
-  function updateThreadTokenUsageLocally(threadId: string, tokenUsage: ThreadTokenUsage) {
-    setThreads((current) =>
-      current.map((thread) => (thread.id === threadId ? { ...thread, tokenUsage } : thread)),
-    );
-    setSelectedThread((current) =>
-      current?.id === threadId ? { ...current, tokenUsage } : current,
+      current?.id === threadId
+        ? {
+            ...current,
+            threadUsage: {
+              tokenUsage:
+                threadUsage.tokenUsage ?? current.threadUsage?.tokenUsage ?? current.tokenUsage ?? null,
+              contextUsage:
+                threadUsage.contextUsage ?? current.threadUsage?.contextUsage ?? current.contextUsage ?? null,
+            },
+            tokenUsage:
+              threadUsage.tokenUsage ?? current.threadUsage?.tokenUsage ?? current.tokenUsage ?? null,
+            contextUsage:
+              threadUsage.contextUsage ?? current.threadUsage?.contextUsage ?? current.contextUsage ?? null,
+          }
+        : current,
     );
   }
 
   async function loadThread(threadId: string) {
+    const requestId = loadThreadRequestIdRef.current + 1;
+    loadThreadRequestIdRef.current = requestId;
     setIsLoadingThread(true);
     setError(null);
     try {
@@ -492,16 +531,32 @@ function App() {
       )) as {
         thread: Thread;
       };
-      setSelectedThread((current) => mergeThreadSnapshot(current, payload.thread));
       setThreads((current) => upsertThread(current, payload.thread));
+      if (
+        selectedThreadIdRef.current === threadId &&
+        loadThreadRequestIdRef.current === requestId
+      ) {
+        setSelectedThread((current) => mergeThreadSnapshot(current, payload.thread));
+      }
     } catch (loadError) {
+      if (
+        selectedThreadIdRef.current !== threadId ||
+        loadThreadRequestIdRef.current !== requestId
+      ) {
+        return;
+      }
       const message = toErrorMessage(loadError);
       if (isThreadNotFoundError(message)) {
         removeThreadLocally([threadId]);
       }
       setError(message);
     } finally {
-      setIsLoadingThread(false);
+      if (
+        selectedThreadIdRef.current === threadId &&
+        loadThreadRequestIdRef.current === requestId
+      ) {
+        setIsLoadingThread(false);
+      }
     }
   }
 
@@ -774,13 +829,23 @@ function App() {
           break;
         }
         case "thread/contextUsage/updated": {
-          const notification = params as { threadId: string; contextUsage: ThreadContextUsage };
-          updateThreadContextUsageLocally(notification.threadId, notification.contextUsage);
+          const notification = params as {
+            threadId: string;
+            tokenUsage: ThreadTokenUsage;
+            contextUsage: ThreadContextUsage;
+          };
+          updateThreadUsageLocally(notification.threadId, {
+            tokenUsage: notification.tokenUsage,
+            contextUsage: notification.contextUsage,
+          });
           break;
         }
         case "thread/tokenUsage/updated": {
           const notification = params as { threadId: string; tokenUsage: ThreadTokenUsage };
-          updateThreadTokenUsageLocally(notification.threadId, notification.tokenUsage);
+          updateThreadUsageLocally(notification.threadId, {
+            tokenUsage: notification.tokenUsage,
+            contextUsage: null,
+          });
           break;
         }
         case "skills/changed": {

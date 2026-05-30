@@ -254,6 +254,11 @@ export type ThreadTokenUsage = {
   modelContextWindow: number | null;
 };
 
+export type ThreadUsage = {
+  tokenUsage: ThreadTokenUsage | null;
+  contextUsage: ThreadContextUsage | null;
+};
+
 export type Thread = {
   id: string;
   sessionId: string;
@@ -276,6 +281,7 @@ export type Thread = {
   gitInfo: unknown | null;
   name: string | null;
   skills: ThreadSkill[];
+  threadUsage?: ThreadUsage | null;
   tokenUsage?: ThreadTokenUsage | null;
   contextUsage?: ThreadContextUsage | null;
   turns: Turn[];

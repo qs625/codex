@@ -173,14 +173,16 @@ export function buildContextUsageAnalysis(
     };
   }
 
+  const tokenUsage = thread.threadUsage?.tokenUsage ?? thread.tokenUsage;
+  const contextUsage = thread.threadUsage?.contextUsage ?? thread.contextUsage;
   const { skillLoads, turnTrend } = collectThreadUsage(thread);
 
-  if (thread.contextUsage) {
-    const loadedConcreteSkills = mergeLoadedSkills(skillLoads, thread.contextUsage);
+  if (contextUsage) {
+    const loadedConcreteSkills = mergeLoadedSkills(skillLoads, contextUsage);
     const totalConcreteLoads = loadedConcreteSkills.reduce((sum, skill) => sum + skill.loadCount, 0);
     return buildContextUsageAnalysisFromBackend(
-      thread.contextUsage,
-      thread,
+      contextUsage,
+      tokenUsage,
       totalSkillMetadataCount,
       loadedConcreteSkills,
       totalConcreteLoads,
@@ -198,10 +200,10 @@ export function buildContextUsageAnalysis(
   const normalizedTotalSkills = Math.max(totalSkillMetadataCount, loadedConcreteSkills.length);
 
   return {
-    hasBudgetData: hasTokenUsage(thread.tokenUsage),
-    budgetUsedPercent: budgetPercentFromTokenUsage(thread.tokenUsage),
-    usedTokens: usedTokensFromTokenUsage(thread.tokenUsage),
-    contextWindowTokens: contextWindowTokensFromTokenUsage(thread.tokenUsage),
+    hasBudgetData: hasTokenUsage(tokenUsage),
+    budgetUsedPercent: budgetPercentFromTokenUsage(tokenUsage),
+    usedTokens: usedTokensFromTokenUsage(tokenUsage),
+    contextWindowTokens: contextWindowTokensFromTokenUsage(tokenUsage),
     loadedSkills: loadedConcreteSkills.length,
     totalSkills: normalizedTotalSkills,
     totalConcreteLoads,
@@ -218,7 +220,7 @@ export function buildContextUsageAnalysis(
 
 function buildContextUsageAnalysisFromBackend(
   contextUsage: ThreadContextUsage,
-  thread: Thread,
+  tokenUsage: ThreadTokenUsage | null | undefined,
   totalSkillMetadataCount: number,
   loadedConcreteSkills: LoadedSkillSummary[],
   totalConcreteLoads: number,
@@ -235,8 +237,8 @@ function buildContextUsageAnalysisFromBackend(
   rawCategoryUnits.reasoning = contextUsage.categories.reasoning;
 
   const totalUnits = sumCategoryUnits(rawCategoryUnits);
-  const totalUsedTokens = usedTokensFromTokenUsage(thread.tokenUsage) ?? 0;
-  const contextWindowTokens = contextWindowTokensFromTokenUsage(thread.tokenUsage) ?? 0;
+  const totalUsedTokens = usedTokensFromTokenUsage(tokenUsage) ?? 0;
+  const contextWindowTokens = contextWindowTokensFromTokenUsage(tokenUsage) ?? 0;
   const categories = CATEGORY_ORDER.map((category) => {
     const units = rawCategoryUnits[category.id];
     const mixSharePercent = totalUnits > 0 ? roundPercent((units / totalUnits) * 100) : 0;
@@ -256,10 +258,10 @@ function buildContextUsageAnalysisFromBackend(
     contextUsage.loadedSkills.totalCount ?? Math.max(totalSkillMetadataCount, loadedConcreteSkills.length);
 
   return {
-    hasBudgetData: hasTokenUsage(thread.tokenUsage),
-    budgetUsedPercent: budgetPercentFromTokenUsage(thread.tokenUsage),
-    usedTokens: usedTokensFromTokenUsage(thread.tokenUsage),
-    contextWindowTokens: contextWindowTokensFromTokenUsage(thread.tokenUsage),
+    hasBudgetData: hasTokenUsage(tokenUsage),
+    budgetUsedPercent: budgetPercentFromTokenUsage(tokenUsage),
+    usedTokens: usedTokensFromTokenUsage(tokenUsage),
+    contextWindowTokens: contextWindowTokensFromTokenUsage(tokenUsage),
     loadedSkills: Math.max(contextUsage.loadedSkills.loadedCount, loadedConcreteSkills.length),
     totalSkills: normalizedTotalSkills,
     totalConcreteLoads,

@@ -301,6 +301,7 @@ function normalizeNotification(notification) {
       ...notification,
       params: {
         ...notification.params,
+        tokenUsage: normalizeThreadTokenUsage(notification.params.tokenUsage),
         contextUsage: normalizeThreadContextUsage(notification.params.contextUsage),
       },
     };
@@ -330,25 +331,30 @@ function normalizeNotification(notification) {
 }
 
 function normalizeThread(thread, runtime = null) {
+  const tokenUsage = Object.prototype.hasOwnProperty.call(thread, "tokenUsage")
+    ? thread.tokenUsage
+      ? normalizeThreadTokenUsage(thread.tokenUsage)
+      : null
+    : null;
+  const contextUsage = Object.prototype.hasOwnProperty.call(thread, "contextUsage")
+    ? thread.contextUsage
+      ? normalizeThreadContextUsage(thread.contextUsage)
+      : null
+    : null;
+  const threadUsage = { tokenUsage, contextUsage };
+
   return {
     ...thread,
     model: runtime?.model ?? thread.model ?? null,
     reasoningEffort: runtime?.reasoningEffort ?? thread.reasoningEffort ?? null,
     status: normalizeStatusValue(thread.status),
     skills: (thread.skills ?? []).map(normalizeThreadSkill),
+    threadUsage,
     ...(Object.prototype.hasOwnProperty.call(thread, "tokenUsage")
-      ? {
-          tokenUsage: thread.tokenUsage
-            ? normalizeThreadTokenUsage(thread.tokenUsage)
-            : null,
-        }
+      ? { tokenUsage }
       : {}),
     ...(Object.prototype.hasOwnProperty.call(thread, "contextUsage")
-      ? {
-          contextUsage: thread.contextUsage
-            ? normalizeThreadContextUsage(thread.contextUsage)
-            : null,
-        }
+      ? { contextUsage }
       : {}),
     turns: (thread.turns ?? []).map(normalizeTurn),
   };

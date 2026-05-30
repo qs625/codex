@@ -4,8 +4,10 @@ use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::Thread;
 use codex_app_server_protocol::ThreadContextUsageUpdatedNotification;
 use codex_app_server_protocol::ThreadHistoryBuilder;
+use codex_app_server_protocol::ThreadTokenUsage;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnStatus;
+use codex_core::CodexThread;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::RolloutItem;
@@ -19,8 +21,16 @@ pub(super) async fn send_thread_context_usage_update_to_connection(
     connection_id: ConnectionId,
     thread_id: ThreadId,
     thread: &Thread,
+    conversation: &CodexThread,
     rollout_items: &[RolloutItem],
 ) {
+    let Some(token_usage) = conversation
+        .token_usage_info()
+        .await
+        .map(ThreadTokenUsage::from)
+    else {
+        return;
+    };
     let Some(context_usage) = latest_thread_context_usage_from_rollout_items(rollout_items) else {
         return;
     };
@@ -31,6 +41,7 @@ pub(super) async fn send_thread_context_usage_update_to_connection(
             thread.turns.as_slice(),
         )
         .unwrap_or_else(|| latest_context_usage_turn_id(thread)),
+        token_usage,
         context_usage: context_usage.into(),
     };
     outgoing

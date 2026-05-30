@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import Editor from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 
@@ -259,73 +259,6 @@ function ContextUsagePanel({ contextUsage }: { contextUsage: ContextUsageAnalysi
           ) : (
             <div className="empty-card">
               <p>No loaded skills yet.</p>
-            </div>
-          )}
-        </section>
-
-        <section className="context-section-card">
-          <div className="context-section-header">
-            <div>
-              <span className="context-section-eyebrow">Context Over Time</span>
-              <strong>Turn Trend</strong>
-            </div>
-          </div>
-
-          {contextUsage.turnTrend.turns.length > 0 ? (
-            <div className="context-trend-panel" aria-label="Context usage trend by turn">
-              <div className="context-trend-legend">
-                <span>Low</span>
-                <div className="context-trend-legend-scale" aria-hidden="true">
-                  <span />
-                </div>
-                <span>High</span>
-              </div>
-
-              <div className="context-trend-layout">
-                <div className="context-trend-labels" aria-hidden="true">
-                  <div className="context-trend-corner" />
-                  {contextUsage.turnTrend.rows.map((row) => (
-                    <span key={row.id} className="context-trend-row-label" title={row.label}>
-                      {row.label}
-                    </span>
-                  ))}
-                </div>
-
-                <div className="context-trend-scroll">
-                  <div
-                    className="context-trend-grid"
-                    style={{
-                      gridTemplateColumns: `repeat(${contextUsage.turnTrend.turns.length}, 18px)`,
-                    }}
-                  >
-                    {contextUsage.turnTrend.turns.map((turn) => (
-                      <span key={turn.turnId} className="context-trend-turn-label">
-                        {turn.label}
-                      </span>
-                    ))}
-
-                    {contextUsage.turnTrend.rows.map((row) => (
-                      <Fragment key={row.id}>
-                        {row.cells.map((cell) => (
-                          <span
-                            key={`${row.id}:${cell.turnId}`}
-                            className={`context-trend-cell ${cell.units > 0 ? "active" : ""}`}
-                            title={`${row.label} · Turn ${cell.label}: ${cell.units} units`}
-                            style={{
-                              backgroundColor: row.color,
-                              opacity: cell.units > 0 ? Math.max(0.18, cell.intensity) : 0.08,
-                            }}
-                          />
-                        ))}
-                      </Fragment>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="empty-card">
-              <p>No turn activity yet.</p>
             </div>
           )}
         </section>

@@ -28,6 +28,44 @@ function makeThread(): Thread {
     name: null,
     skills: [],
     turns: [],
+    threadUsage: {
+      tokenUsage: {
+        total: {
+          totalTokens: 1200,
+          inputTokens: 800,
+          cachedInputTokens: 100,
+          outputTokens: 400,
+          reasoningOutputTokens: 50,
+        },
+        last: {
+          totalTokens: 200,
+          inputTokens: 120,
+          cachedInputTokens: 20,
+          outputTokens: 80,
+          reasoningOutputTokens: 10,
+        },
+        modelContextWindow: 200000,
+      },
+      contextUsage: {
+        totalBytes: 1234,
+        budgetUsedPercent: 12,
+        categories: {
+          compact: 0,
+          skillsMetadata: 0,
+          concreteSkills: 0,
+          toolsMetadata: 0,
+          toolCalls: 0,
+          userMessages: 0,
+          llmMessages: 0,
+          reasoning: 0,
+        },
+        loadedSkills: {
+          loadedCount: 0,
+          totalCount: 0,
+          skills: [],
+        },
+      },
+    },
     tokenUsage: {
       total: {
         totalTokens: 1200,
@@ -87,11 +125,14 @@ test("mergeThreadSnapshot preserves usage fields when thread/read omits them", (
   };
   delete next.tokenUsage;
   delete next.contextUsage;
+  delete next.threadUsage;
 
   const merged = mergeThreadSnapshot(existing, next);
 
   assert.equal(merged.preview, "fresh preview");
   assert.equal(merged.turns.length, 1);
+  assert.equal(merged.threadUsage?.tokenUsage?.total.totalTokens, 1200);
+  assert.equal(merged.threadUsage?.contextUsage?.budgetUsedPercent, 12);
   assert.equal(merged.tokenUsage?.total.totalTokens, 1200);
   assert.equal(merged.contextUsage?.budgetUsedPercent, 12);
 });
@@ -99,11 +140,14 @@ test("mergeThreadSnapshot preserves usage fields when thread/read omits them", (
 test("mergeThreadSnapshot hydrates restored usage fields from thread/read", () => {
   const existing = {
     ...makeThread(),
+    threadUsage: undefined,
     tokenUsage: undefined,
     contextUsage: undefined,
   };
   const merged = mergeThreadSnapshot(existing, makeThread());
 
+  assert.equal(merged.threadUsage?.tokenUsage?.total.totalTokens, 1200);
+  assert.equal(merged.threadUsage?.contextUsage?.budgetUsedPercent, 12);
   assert.equal(merged.tokenUsage?.total.totalTokens, 1200);
   assert.equal(merged.contextUsage?.budgetUsedPercent, 12);
 });

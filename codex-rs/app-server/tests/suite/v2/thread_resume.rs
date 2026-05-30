@@ -1256,6 +1256,9 @@ async fn thread_resume_emits_restored_context_usage_before_next_turn() -> Result
 
     assert_eq!(notification.thread_id, thread.id);
     assert_eq!(notification.turn_id, thread.turns[0].id);
+    assert_eq!(notification.token_usage.total.total_tokens, 150);
+    assert_eq!(notification.token_usage.last.total_tokens, 90);
+    assert_eq!(notification.token_usage.model_context_window, Some(200_000));
     assert_eq!(notification.context_usage.total_bytes, 123456);
     assert_eq!(notification.context_usage.budget_used_percent, Some(61));
     assert_eq!(notification.context_usage.categories.tool_calls, 14);

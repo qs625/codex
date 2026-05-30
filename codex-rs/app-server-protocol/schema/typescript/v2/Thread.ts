@@ -4,9 +4,11 @@
 import type { AbsolutePathBuf } from "../AbsolutePathBuf";
 import type { GitInfo } from "./GitInfo";
 import type { SessionSource } from "./SessionSource";
+import type { ThreadContextUsage } from "./ThreadContextUsage";
 import type { ThreadSkill } from "./ThreadSkill";
 import type { ThreadSource } from "./ThreadSource";
 import type { ThreadStatus } from "./ThreadStatus";
+import type { ThreadTokenUsage } from "./ThreadTokenUsage";
 import type { Turn } from "./Turn";
 
 export type Thread = { id: string,
@@ -82,6 +84,14 @@ name: string | null,
  * Aggregate thread-level skill usage observed so far.
  */
 skills: Array<ThreadSkill>,
+/**
+ * Restored aggregate thread token usage, when available.
+ */
+tokenUsage: ThreadTokenUsage | null,
+/**
+ * Restored aggregate thread context usage, when available.
+ */
+contextUsage: ThreadContextUsage | null,
 /**
  * Only populated on `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read`
  * (when `includeTurns` is true) responses.

@@ -1106,6 +1106,7 @@ pub struct ThreadTokenUsageUpdatedNotification {
 pub struct ThreadContextUsageUpdatedNotification {
     pub thread_id: String,
     pub turn_id: String,
+    pub token_usage: ThreadTokenUsage,
     pub context_usage: ThreadContextUsage,
 }
 

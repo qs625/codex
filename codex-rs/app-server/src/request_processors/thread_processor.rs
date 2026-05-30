@@ -2686,6 +2686,7 @@ impl ThreadRequestProcessor {
                         connection_id,
                         thread_id,
                         &token_usage_thread,
+                        codex_thread.as_ref(),
                         response_history.get_rollout_items().as_slice(),
                     )
                     .await;
@@ -3360,6 +3361,7 @@ impl ThreadRequestProcessor {
                 connection_id,
                 thread_id,
                 &token_usage_thread,
+                forked_thread.as_ref(),
                 history_items.as_slice(),
             )
             .await;
