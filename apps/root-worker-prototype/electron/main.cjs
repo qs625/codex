@@ -4,6 +4,7 @@ const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { AppServerClient } = require("./appServerClient.cjs");
 const { isLocalLinkTarget, localFilePathFromTarget, parseLocalFileTarget } = require("./fileTargets.cjs");
 const { LspManager } = require("./lsp/manager.cjs");
+const { mergeThreadSnapshots } = require("./threadSnapshots.cjs");
 const { withRealtimeConversationFeature } = require("./threadConfig.cjs");
 const { buildTurnInput } = require("./turnInput.cjs");
 const { ensureDefaultWorkspace, resolveDefaultWorkspace } = require("./workspace.cjs");
@@ -135,6 +136,7 @@ ipcMain.handle("codex:archiveThread", async (_event, threadId) => {
 
 ipcMain.handle("codex:readThread", async (_event, threadId, subscribe = true) => {
   let runtime = null;
+  let resumedThread = null;
   if (subscribe) {
     const resume = await appServerClient.request(
       "thread/resume",
@@ -144,8 +146,12 @@ ipcMain.handle("codex:readThread", async (_event, threadId, subscribe = true) =>
       model: resume.model ?? null,
       reasoningEffort: resume.reasoningEffort ?? null,
     };
+    resumedThread = resume.thread ? normalizeThread(resume.thread, runtime) : null;
   }
-  return readThread(threadId, true, runtime);
+  const payload = await readThread(threadId, true, runtime);
+  return {
+    thread: mergeThreadSnapshots(resumedThread, payload.thread),
+  };
 });
 
 ipcMain.handle("codex:openLink", async (_event, target) => {
