@@ -4,6 +4,7 @@ const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { AppServerClient } = require("./appServerClient.cjs");
 const { isLocalLinkTarget, localFilePathFromTarget, parseLocalFileTarget } = require("./fileTargets.cjs");
 const { LspManager } = require("./lsp/manager.cjs");
+const { withRealtimeConversationFeature } = require("./threadConfig.cjs");
 const { buildTurnInput } = require("./turnInput.cjs");
 const { ensureDefaultWorkspace, resolveDefaultWorkspace } = require("./workspace.cjs");
 
@@ -106,12 +107,12 @@ ipcMain.handle("codex:listSkills", async (_event, cwd = defaultWorkspace) => {
 
 ipcMain.handle("codex:createThread", async (_event, payload) => {
   await ensureDefaultWorkspace();
-  const params = {
+  const params = withRealtimeConversationFeature({
     cwd: payload?.cwd ?? defaultWorkspace,
     approvalPolicy: "never",
     sandbox: "danger-full-access",
     threadSource: "user",
-  };
+  });
   const start = await appServerClient.request("thread/start", params);
 
   if (payload?.name && payload.name.trim()) {
@@ -135,7 +136,10 @@ ipcMain.handle("codex:archiveThread", async (_event, threadId) => {
 ipcMain.handle("codex:readThread", async (_event, threadId, subscribe = true) => {
   let runtime = null;
   if (subscribe) {
-    const resume = await appServerClient.request("thread/resume", { threadId });
+    const resume = await appServerClient.request(
+      "thread/resume",
+      withRealtimeConversationFeature({ threadId }),
+    );
     runtime = {
       model: resume.model ?? null,
       reasoningEffort: resume.reasoningEffort ?? null,
@@ -276,10 +280,7 @@ async function listSkills(cwd) {
 }
 
 async function readThread(threadId, includeTurns, runtime = null) {
-  const response = await appServerClient.request("thread/read", {
-    threadId,
-    includeTurns,
-  });
+  const response = await appServerClient.request("thread/read", { threadId, includeTurns });
   return { thread: normalizeThread(response.thread, runtime) };
 }
 
