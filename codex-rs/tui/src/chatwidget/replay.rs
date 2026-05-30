@@ -178,6 +178,7 @@ impl ChatWidget {
                 prompt,
                 model,
                 reasoning_effort,
+                timeout_ms,
                 agents_states,
             } => self.on_collab_agent_tool_call(ThreadItem::CollabAgentToolCall {
                 id,
@@ -190,6 +191,7 @@ impl ChatWidget {
                 prompt,
                 model,
                 reasoning_effort,
+                timeout_ms,
                 agents_states,
             }),
             ThreadItem::CollabAgentStatusUpdate { .. } => {}
