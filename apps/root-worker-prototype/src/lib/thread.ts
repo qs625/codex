@@ -335,15 +335,15 @@ export function appendAgentDelta(thread: Thread, turnId: string, itemId: string,
               text: delta,
               phase: null,
               memoryCitation: null,
-            },
+            } satisfies ThreadItem,
           ],
-          itemsView: "full",
-          status: "running",
+          itemsView: "full" as const,
+          status: "running" as const,
           error: null,
           startedAt: null,
           completedAt: null,
           durationMs: null,
-        },
+        } satisfies Turn,
       ];
   return { ...thread, turns };
 }
@@ -421,8 +421,38 @@ export function upsertThread(threads: Thread[], next: Thread) {
   );
 }
 
-function isTurnInFlight(turn: Turn) {
+export function isTurnInFlight(turn: Turn) {
   return turn.status === "running" || turn.status === "inProgress";
+}
+
+export function isThreadThinking(
+  thread: Thread | null,
+  {
+    isLoadingThread,
+    isSending,
+  }: {
+    isLoadingThread: boolean;
+    isSending: boolean;
+  },
+) {
+  if (isLoadingThread) {
+    return false;
+  }
+  if (isSending) {
+    return true;
+  }
+
+  const lastTurn = thread?.turns.at(-1) ?? null;
+  if (!lastTurn || !isTurnInFlight(lastTurn)) {
+    return false;
+  }
+  if (lastTurn.items.length === 0) {
+    return true;
+  }
+
+  return lastTurn.items.some(
+    (item) => item.type !== "userMessage" && item.type !== "injectedContext",
+  );
 }
 
 function mergeThreadItem(existing: ThreadItem, next: ThreadItem): ThreadItem {
