@@ -44,9 +44,15 @@ export function ConversationVirtualList({
   const [openToolCellIds, setOpenToolCellIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const [selectedToolEntryIds, setSelectedToolEntryIds] = useState<
+    Map<string, string>
+  >(() => new Map());
 
   useEffect(() => {
     const liveCellIds = new Set(cells.map((cell) => cell.id));
+    const entryIdsByCellId = new Map(
+      cells.map((cell) => [cell.id, new Set(cell.entries.map((entry) => entry.id))]),
+    );
     let removedMeasuredHeights = false;
 
     for (const cellId of measuredHeightsRef.current.keys()) {
@@ -63,6 +69,17 @@ export function ConversationVirtualList({
     setOpenToolCellIds((current) => {
       const next = new Set(
         Array.from(current).filter((cellId) => liveCellIds.has(cellId)),
+      );
+      return next.size === current.size ? current : next;
+    });
+
+    setSelectedToolEntryIds((current) => {
+      const next = new Map(
+        Array.from(current.entries()).filter(
+          ([cellId, entryId]) =>
+            liveCellIds.has(cellId) &&
+            (entryIdsByCellId.get(cellId)?.has(entryId) ?? false),
+        ),
       );
       return next.size === current.size ? current : next;
     });
@@ -201,6 +218,33 @@ export function ConversationVirtualList({
       }
       return next;
     });
+
+    if (!isOpen) {
+      setSelectedToolEntryIds((current) => {
+        if (!current.has(cellId)) {
+          return current;
+        }
+        const next = new Map(current);
+        next.delete(cellId);
+        return next;
+      });
+    }
+  }
+
+  function handleToolEntrySelection(cellId: string, entryId: string | null) {
+    setSelectedToolEntryIds((current) => {
+      const existing = current.get(cellId) ?? null;
+      if (existing === entryId) {
+        return current;
+      }
+      const next = new Map(current);
+      if (entryId) {
+        next.set(cellId, entryId);
+      } else {
+        next.delete(cellId);
+      }
+      return next;
+    });
   }
 
   return (
@@ -223,8 +267,10 @@ export function ConversationVirtualList({
               {renderConversationCell(
                 cell,
                 openToolCellIds.has(cell.id),
+                selectedToolEntryIds.get(cell.id) ?? null,
                 onOpenLocalFile,
                 handleToolOpenChange,
+                handleToolEntrySelection,
               )}
             </MeasuredConversationCell>
           );
@@ -236,8 +282,10 @@ export function ConversationVirtualList({
 function renderConversationCell(
   cell: ConversationCell,
   isToolOpen: boolean,
+  selectedToolEntryId: string | null,
   onOpenLocalFile: (target: string) => void,
   onToolOpenChange: (cellId: string, isOpen: boolean) => void,
+  onToolEntrySelection: (cellId: string, entryId: string | null) => void,
 ) {
   if (cell.kind === "event") {
     return <EventRow entry={cell.entries[0]} />;
@@ -249,6 +297,8 @@ function renderConversationCell(
         entries={cell.entries}
         isOpen={isToolOpen}
         onToggleOpen={(open) => onToolOpenChange(cell.id, open)}
+        selectedEntryId={selectedToolEntryId}
+        onSelectEntry={(entryId) => onToolEntrySelection(cell.id, entryId)}
       />
     );
   }

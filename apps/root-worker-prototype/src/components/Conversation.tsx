@@ -28,6 +28,8 @@ type ToolRowProps = {
   entries: ConversationEntry[];
   isOpen?: boolean;
   onToggleOpen?: (open: boolean) => void;
+  selectedEntryId?: string | null;
+  onSelectEntry?: (entryId: string | null) => void;
 };
 
 type LocalImageCacheEntry = {
@@ -607,6 +609,8 @@ export const ToolRow = memo(function ToolRow({
   entries,
   isOpen,
   onToggleOpen,
+  selectedEntryId,
+  onSelectEntry,
 }: ToolRowProps) {
   const firstEntry = entries[0];
   const doneCount = entries.filter(
@@ -614,6 +618,8 @@ export const ToolRow = memo(function ToolRow({
   ).length;
   const toolCategory = firstEntry.toolCategory ?? "external";
   const icon = getToolIcon(toolCategory);
+  const selectedEntry =
+    entries.find((entry) => entry.id === selectedEntryId) ?? null;
 
   return (
     <article className={`tool-row tool-row-${toolCategory}`}>
@@ -654,7 +660,13 @@ export const ToolRow = memo(function ToolRow({
         <div className="tool-card-list">
           {entries.map((entry) => (
             <section key={entry.id} className="tool-card-item">
-              <div className="tool-card-item-head">
+              <button
+                type="button"
+                className={`tool-card-item-head ${selectedEntry?.id === entry.id ? "selected" : ""}`}
+                onClick={() =>
+                  onSelectEntry?.(selectedEntry?.id === entry.id ? null : entry.id)
+                }
+              >
                 <div className="tool-card-copy">
                   <strong>{entry.toolName ?? entry.author}</strong>
                   <span>{entry.text}</span>
@@ -667,15 +679,15 @@ export const ToolRow = memo(function ToolRow({
                   </span>
                   <time>{entry.timestamp}</time>
                 </div>
-              </div>
-              {entry.toolDetails ? (
-                <div className="tool-card-body">
-                  <pre>{entry.toolDetails}</pre>
-                </div>
-              ) : null}
+              </button>
             </section>
           ))}
         </div>
+        {selectedEntry?.toolDetails ? (
+          <div className="tool-card-body">
+            <pre>{selectedEntry.toolDetails}</pre>
+          </div>
+        ) : null}
       </details>
     </article>
   );
@@ -699,7 +711,11 @@ function areToolRowPropsEqual(
   previous: Readonly<ToolRowProps>,
   next: Readonly<ToolRowProps>,
 ) {
-  return previous.entries === next.entries && previous.isOpen === next.isOpen;
+  return (
+    previous.entries === next.entries &&
+    previous.isOpen === next.isOpen &&
+    previous.selectedEntryId === next.selectedEntryId
+  );
 }
 
 function getToolIcon(category: NonNullable<ConversationEntry["toolCategory"]>) {

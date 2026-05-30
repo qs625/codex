@@ -62,10 +62,17 @@ test("separates command, event-driven, and multi-agent items into different tool
       {
         type: "eventDrivenToolCall",
         id: "builtin-1",
-        tool: "view_image",
-        arguments: { path: "/tmp/image.png" },
+        tool: "process_exit_subscribe",
+        arguments: { session_id: 42, label: "watch build" },
         status: "completed",
         output: { ok: true },
+      },
+      {
+        type: "eventDrivenTool",
+        id: "builtin-2",
+        tool: "process_exit_subscribe",
+        title: "Process exited",
+        text: "watch build • session 42 completed",
       },
       {
         type: "collabAgentToolCall",
@@ -85,11 +92,12 @@ test("separates command, event-driven, and multi-agent items into different tool
   );
 
   assert.deepEqual(
-    entries.map((entry) => [entry.toolCategory, entry.toolName]),
+    entries.map((entry) => [entry.toolCategory, entry.toolName, entry.text]),
     [
-      ["command", "ls"],
-      ["eventDriven", "view_image"],
-      ["multiAgent", "spawn agent"],
+      ["command", "ls", "tmp/project • exit 0"],
+      ["eventDriven", "process_exit_subscribe", "process_exit_subscribe • label watch build"],
+      ["eventDriven", "Process exited", "watch build • session 42 completed"],
+      ["multiAgent", "spawn agent", "/root -> /root/worker"],
     ],
   );
 
@@ -131,6 +139,37 @@ test("uses meaningful multi-agent titles for received work and child completion"
   assert.deepEqual(
     entries.map((entry) => entry.toolName),
     ["received from /root", "/root/worker subagent completion"],
+  );
+});
+
+test("renders context compaction as a context tool entry", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "contextCompaction",
+        id: "compact-1",
+      },
+    ]),
+  );
+
+  assert.equal(entries.length, 1);
+  assert.deepEqual(
+    {
+      id: entries[0]?.id,
+      kind: entries[0]?.kind,
+      text: entries[0]?.text,
+      toolName: entries[0]?.toolName,
+      toolStatus: entries[0]?.toolStatus,
+      toolCategory: entries[0]?.toolCategory,
+    },
+    {
+      id: "compact-1",
+      kind: "tool",
+      text: "Conversation history compacted.",
+      toolName: "compact context",
+      toolStatus: "completed",
+      toolCategory: "context",
+    },
   );
 });
 

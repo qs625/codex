@@ -869,7 +869,20 @@ svg {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  width: 100%;
   padding: 14px 16px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-card-item-head.selected {
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.tool-card-item-head:hover {
+  background: rgba(255, 255, 255, 0.44);
 }
 
 .tool-card-item .tool-card-body {

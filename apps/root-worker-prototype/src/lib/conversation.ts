@@ -261,6 +261,25 @@ function buildConversationItemEntries(
     ];
   }
 
+  if (item.type === "contextCompaction") {
+    return [
+      {
+        id: item.id,
+        kind: "tool" as const,
+        author,
+        role: "system" as const,
+        text: "Conversation history compacted.",
+        timestamp,
+        attachments: [],
+        toolName: "compact context",
+        toolStatus: "completed",
+        toolDetails:
+          "Codex compacted the conversation history for this thread to reduce context usage.",
+        toolCategory: "context",
+      },
+    ];
+  }
+
   if (item.type === "plan") {
     return [
       {
@@ -333,12 +352,16 @@ function buildConversationItemEntries(
     return [
       {
         id: item.id,
-        kind: "event" as const,
+        kind: "tool" as const,
         author,
         role: "system" as const,
-        text: `${item.title}: ${item.text}`,
+        text: summarizeEventDrivenTool(item),
         timestamp,
         attachments: [],
+        toolName: item.title,
+        toolStatus: "completed",
+        toolDetails: formatEventDrivenToolDetails(item),
+        toolCategory: "eventDriven",
       },
     ];
   }
@@ -535,7 +558,7 @@ function summarizeToolCall(
     return `${item.server}/${item.tool}`;
   }
   if (item.type === "eventDrivenToolCall") {
-    return item.tool;
+    return summarizeEventDrivenToolCall(item);
   }
   if (item.namespace) {
     return `${item.namespace}/${item.tool}`;
@@ -550,22 +573,43 @@ function summarizeCollabAgentToolCall(
     item.receiverPaths.length === 1
       ? item.receiverPaths[0]
       : `${item.receiverPaths.length} workers`;
-  const prompt = item.prompt?.trim();
+  const senderLabel = resolveAgentPath(item.senderPath);
 
   switch (item.tool) {
     case "spawnAgent":
-      return prompt || `Spawned ${receiverLabel}.`;
+      return `${senderLabel} -> ${receiverLabel}`;
     case "sendInput":
-      return prompt || `Sent message to ${receiverLabel}.`;
+      return `${senderLabel} -> ${receiverLabel}`;
     case "resumeAgent":
-      return prompt || `Queued follow-up for ${receiverLabel}.`;
+      return `${senderLabel} -> ${receiverLabel}`;
     case "wait":
       return `Waiting on ${receiverLabel}.`;
     case "closeAgent":
       return `Closed ${receiverLabel}.`;
     default:
-      return prompt || `${item.tool} for ${receiverLabel}.`;
+      return `${item.tool} for ${receiverLabel}.`;
   }
+}
+
+function summarizeEventDrivenToolCall(
+  item: Extract<ThreadItem, { type: "eventDrivenToolCall" }>,
+) {
+  const details = extractEventDrivenSummaryDetails(item.tool, item.arguments);
+  return details ? `${item.tool} • ${details}` : item.tool;
+}
+
+function summarizeEventDrivenTool(
+  item: Extract<ThreadItem, { type: "eventDrivenTool" }>,
+) {
+  return item.text.trim() || item.title;
+}
+
+function formatEventDrivenToolDetails(
+  item: Extract<ThreadItem, { type: "eventDrivenTool" }>,
+) {
+  return [`Tool\n${item.tool}`, `Event\n${item.title}`, `Details\n${item.text}`].join(
+    "\n\n",
+  );
 }
 
 function formatCollabAgentToolName(
@@ -782,6 +826,41 @@ function formatStructuredToolDetails(input: unknown, output: unknown) {
   return sections.join("\n\n");
 }
 
+function extractEventDrivenSummaryDetails(tool: string, args: unknown) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return null;
+  }
+
+  const record = args as Record<string, unknown>;
+  const label =
+    typeof record.label === "string" && record.label.trim().length > 0
+      ? record.label.trim()
+      : null;
+
+  switch (tool) {
+    case "process_exit_subscribe":
+      if (label) {
+        return `label ${label}`;
+      }
+      if (typeof record.session_id === "number") {
+        return `session ${record.session_id}`;
+      }
+      return null;
+    case "fs_subscribe":
+      if (label) {
+        return `${label} • ${stringOrNull(record.path) ?? "watch"}`;
+      }
+      return stringOrNull(record.path);
+    case "schedule_subscribe":
+      if (label) {
+        return `${label} • ${stringOrNull(record.schedule) ?? "schedule"}`;
+      }
+      return stringOrNull(record.schedule);
+    default:
+      return label;
+  }
+}
+
 function formatInjectedContextDetails(
   item: Extract<ThreadItem, { type: "injectedContext" }>,
 ) {
@@ -815,4 +894,10 @@ function resolveAgentPath(...paths: Array<string | null | undefined>) {
     paths.map((path) => path?.trim()).find((path) => path && path.length > 0) ??
     "unknown"
   );
+}
+
+function stringOrNull(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
 }
