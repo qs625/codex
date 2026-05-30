@@ -145,6 +145,14 @@ function App() {
     }
   }, [selectedThreadId]);
 
+  const selectedThread = useMemo(
+    () =>
+      selectedThreadId
+        ? threads.find((thread) => thread.id === selectedThreadId) ?? null
+        : null,
+    [selectedThreadId, threads],
+  );
+
   useEffect(() => {
     setAvailableSkills([]);
     setDraftSkills([]);
@@ -347,14 +355,6 @@ function App() {
       window.removeEventListener("mousedown", handleWindowMouseDown);
     };
   });
-
-  const selectedThread = useMemo(
-    () =>
-      selectedThreadId
-        ? threads.find((thread) => thread.id === selectedThreadId) ?? null
-        : null,
-    [selectedThreadId, threads],
-  );
 
   const conversationCells = useMemo(() => {
     const nextConversationState = buildConversationState(
