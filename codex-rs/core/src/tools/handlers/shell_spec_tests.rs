@@ -15,12 +15,11 @@ fn exec_command_tool_matches_expected_spec() {
 
     let description = if cfg!(windows) {
         format!(
-            "Runs a command in a PTY, returning output or a session ID for ongoing interaction.{}",
+            "Runs a command in a PTY, returning output or a session ID for ongoing interaction. If the command keeps running and you need a completion notification, use `process_exit_subscribe` with the returned session ID instead of `wait_agent`. If you need ongoing log or file updates while it runs, redirect output to a file and use `fs_subscribe`.{}",
             windows_shell_guidance_description()
         )
     } else {
-        "Runs a command in a PTY, returning output or a session ID for ongoing interaction."
-            .to_string()
+        "Runs a command in a PTY, returning output or a session ID for ongoing interaction. If the command keeps running and you need a completion notification, use `process_exit_subscribe` with the returned session ID instead of `wait_agent`. If you need ongoing log or file updates while it runs, redirect output to a file and use `fs_subscribe`.".to_string()
     };
 
     let mut properties = BTreeMap::from([

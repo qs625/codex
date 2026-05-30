@@ -764,7 +764,6 @@ async fn spawn_agent_description_uses_configured_usage_hint_text() {
     );
 }
 
-#[tokio::test]
 async fn multi_agent_v2_wait_agent_schema_uses_configured_timeouts() {
     let wait_agent_min_timeout_ms = Some(20_000);
     let wait_agent_max_timeout_ms = Some(120_000);

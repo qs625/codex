@@ -5,6 +5,11 @@ use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;
 
+fn exec_command_description() -> String {
+    "Runs a command in a PTY, returning output or a session ID for ongoing interaction. If the command keeps running and you need a completion notification, use `process_exit_subscribe` with the returned session ID instead of `wait_agent`. If you need ongoing log or file updates while it runs, redirect output to a file and use `fs_subscribe`."
+        .to_string()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandToolOptions {
     pub allow_login_shell: bool,
@@ -82,12 +87,12 @@ pub(crate) fn create_exec_command_tool_with_environment_id(
         name: "exec_command".to_string(),
         description: if cfg!(windows) {
             format!(
-                "Runs a command in a PTY, returning output or a session ID for ongoing interaction.\n\n{}",
+                "{}\n\n{}",
+                exec_command_description(),
                 windows_shell_guidance()
             )
         } else {
-            "Runs a command in a PTY, returning output or a session ID for ongoing interaction."
-                .to_string()
+            exec_command_description()
         },
         strict: false,
         defer_loading: None,

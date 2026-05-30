@@ -268,6 +268,9 @@ fn wait_agent_tool_v2_uses_timeout_only_summary_output() {
     assert!(description.contains(
         "Does not return the content; returns either a summary of which agents have updates (if any)"
     ));
+    assert!(description.contains("Use this only for subagent mailbox activity"));
+    assert!(description.contains("process_exit_subscribe"));
+    assert!(description.contains("fs_subscribe"));
     assert_eq!(
         properties
             .get("timeout_ms")
