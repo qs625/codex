@@ -308,11 +308,12 @@ impl RealtimeConversationManager {
             audio_rx,
         };
 
-        let client = RealtimeWebsocketClient::new(api_provider);
+        let client = RealtimeWebsocketClient::new(api_provider.clone());
         let (task, sdp) = if let Some(sdp) = sdp {
             let call = model_client
                 .create_realtime_call_with_headers(
                     sdp,
+                    api_provider.clone(),
                     session_config.clone(),
                     extra_headers.unwrap_or_default(),
                 )

@@ -517,11 +517,15 @@ impl ModelClient {
     pub(crate) async fn create_realtime_call_with_headers(
         &self,
         sdp: String,
+        api_provider: codex_api::Provider,
         session_config: ApiRealtimeSessionConfig,
         mut extra_headers: ApiHeaderMap,
     ) -> Result<RealtimeWebrtcCallStart> {
         // Create the media call over HTTP first, then retain matching auth so realtime can attach
-        // the server-side control WebSocket to the call id from that HTTP response.
+        // the server-side control WebSocket to the call id from that HTTP response. The realtime
+        // provider may already have been rewritten away from the session's default provider (for
+        // example, ChatGPT backend auth routed to OpenAI `/v1`), so reuse the caller-prepared
+        // provider instead of resolving a fresh one here.
         let client_setup = self.current_client_setup().await?;
         if let Some(header_value) = self.generate_attestation_header_for().await {
             extra_headers.insert(X_OAI_ATTESTATION_HEADER, header_value);
@@ -531,11 +535,10 @@ impl ModelClient {
             client_setup.api_auth.as_ref(),
         ));
         let transport = ReqwestTransport::new(build_reqwest_client());
-        let response =
-            ApiRealtimeCallClient::new(transport, client_setup.api_provider, client_setup.api_auth)
-                .create_with_session_and_headers(sdp, session_config, extra_headers)
-                .await
-                .map_err(map_api_error)?;
+        let response = ApiRealtimeCallClient::new(transport, api_provider, client_setup.api_auth)
+            .create_with_session_and_headers(sdp, session_config, extra_headers)
+            .await
+            .map_err(map_api_error)?;
         Ok(RealtimeWebrtcCallStart {
             sdp: response.sdp,
             call_id: response.call_id,
