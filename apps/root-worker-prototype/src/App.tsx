@@ -44,6 +44,10 @@ import {
   finalizeVoiceTranscriptSegment,
   type VoiceDraftState,
 } from "./lib/voiceInput";
+import {
+  beginVoiceCaptureStop,
+  type ActiveVoiceSession,
+} from "./lib/voiceCaptureState";
 import type {
   BootstrapResponse,
   ComposerImage,
@@ -78,11 +82,6 @@ const LEFT_PANEL_MIN_RATIO = 0.13;
 const LEFT_PANEL_MAX_RATIO = 0.34;
 const RIGHT_PANEL_MIN_RATIO = 0.22;
 const RIGHT_PANEL_MAX_RATIO = 0.46;
-
-type ActiveVoiceSession = {
-  threadId: string;
-  status: VoiceCaptureStatus;
-};
 
 function getViewportWidth() {
   return window.innerWidth;
@@ -862,17 +861,18 @@ function App() {
   }
 
   async function stopVoiceCapture(threadId = voiceSessionRef.current?.threadId, silent = false) {
-    if (!threadId) {
+    const pendingStop = beginVoiceCaptureStop(threadId, silent);
+    if (!pendingStop) {
       return;
     }
 
-    setVoiceCaptureStatus("stopping");
-    setVoiceCaptureMessage(silent ? null : "Stopping voice input…");
+    voiceSessionRef.current = pendingStop.nextSession;
+    setVoiceCaptureStatus(pendingStop.nextStatus);
+    setVoiceCaptureMessage(pendingStop.nextMessage);
     cleanupVoiceTransport();
 
     try {
-      await window.codexDesktop.stopRealtime({ threadId });
-      clearVoiceSession("idle", null);
+      await window.codexDesktop.stopRealtime({ threadId: pendingStop.nextSession.threadId });
     } catch (stopError) {
       clearVoiceSession("error", toErrorMessage(stopError));
     }
