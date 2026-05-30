@@ -387,9 +387,26 @@ export function mergeThreadSnapshot(existing: Thread | null, next: Thread) {
     }
   }
 
+  const tokenUsage =
+    next.tokenUsage ?? existing.tokenUsage ?? existing.threadUsage?.tokenUsage ?? null;
+  const contextUsage =
+    next.contextUsage ?? existing.contextUsage ?? existing.threadUsage?.contextUsage ?? null;
+  const threadUsage = next.threadUsage
+    ? {
+        tokenUsage: next.threadUsage.tokenUsage ?? tokenUsage,
+        contextUsage: next.threadUsage.contextUsage ?? contextUsage,
+      }
+    : existing.threadUsage ?? {
+        tokenUsage,
+        contextUsage,
+      };
+
   return {
     ...existing,
     ...next,
+    threadUsage,
+    tokenUsage,
+    contextUsage,
     turns,
   };
 }

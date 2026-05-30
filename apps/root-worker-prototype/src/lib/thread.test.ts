@@ -152,6 +152,26 @@ test("mergeThreadSnapshot hydrates restored usage fields from thread/read", () =
   assert.equal(merged.contextUsage?.budgetUsedPercent, 12);
 });
 
+test("mergeThreadSnapshot preserves restored usage when a later snapshot sends null fields", () => {
+  const existing = makeThread();
+  const next = {
+    ...makeThread(),
+    tokenUsage: null,
+    contextUsage: null,
+    threadUsage: {
+      tokenUsage: null,
+      contextUsage: null,
+    },
+  };
+
+  const merged = mergeThreadSnapshot(existing, next);
+
+  assert.equal(merged.threadUsage?.tokenUsage?.total.totalTokens, 1200);
+  assert.equal(merged.threadUsage?.contextUsage?.budgetUsedPercent, 12);
+  assert.equal(merged.tokenUsage?.total.totalTokens, 1200);
+  assert.equal(merged.contextUsage?.budgetUsedPercent, 12);
+});
+
 test("mergeThreadSnapshot preserves an in-flight turn missing from a stale snapshot", () => {
   const existing = {
     ...makeThread(),
