@@ -328,7 +328,7 @@ svg {
 }
 
 .tree-inline-status.doing {
-  background: #57534e;
+  background: #16a34a;
 }
 
 .tree-inline-status.blocked {
@@ -351,7 +351,7 @@ svg {
 }
 
 .status-dot.doing {
-  background: #57534e;
+  background: #16a34a;
 }
 
 .status-dot.blocked {
@@ -2107,10 +2107,10 @@ svg {
 @keyframes status-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(87, 83, 78, 0.45);
+    box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.4);
   }
   50% {
-    box-shadow: 0 0 0 5px rgba(87, 83, 78, 0);
+    box-shadow: 0 0 0 5px rgba(22, 163, 74, 0);
   }
 }
 
