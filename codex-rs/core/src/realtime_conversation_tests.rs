@@ -1,9 +1,13 @@
 use super::RealtimeHandoffState;
 use super::RealtimeSessionKind;
+use super::build_realtime_api_provider;
 use super::realtime_delegation_from_handoff;
 use super::realtime_text_from_handoff_request;
 use super::wrap_realtime_delegation_input;
 use async_channel::bounded;
+use codex_login::CodexAuth;
+use codex_model_provider_info::CHATGPT_CODEX_BASE_URL;
+use codex_model_provider_info::ModelProviderInfo;
 use codex_protocol::protocol::RealtimeHandoffRequested;
 use codex_protocol::protocol::RealtimeTranscriptEntry;
 use pretty_assertions::assert_eq;
@@ -121,6 +125,32 @@ fn wraps_realtime_delegation_input_with_xml_escaping_without_transcript() {
         wrap_realtime_delegation_input("use a < b && c > d", /*transcript_delta*/ None),
         "<realtime_delegation>\n  <input>use a &lt; b &amp;&amp; c &gt; d</input>\n</realtime_delegation>"
     );
+}
+
+#[test]
+fn realtime_provider_rewrites_chatgpt_backend_to_openai_api() {
+    let provider =
+        ModelProviderInfo::create_openai_provider(Some(CHATGPT_CODEX_BASE_URL.to_string()));
+    let auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
+
+    let api_provider =
+        build_realtime_api_provider(&provider, Some(&auth), /*realtime_ws_base_url*/ None)
+            .expect("provider should build");
+
+    assert_eq!(api_provider.base_url, "https://api.openai.com/v1");
+}
+
+#[test]
+fn realtime_provider_preserves_explicit_override() {
+    let provider =
+        ModelProviderInfo::create_openai_provider(Some(CHATGPT_CODEX_BASE_URL.to_string()));
+    let auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
+
+    let api_provider =
+        build_realtime_api_provider(&provider, Some(&auth), Some("https://realtime.example/v1"))
+            .expect("provider should build");
+
+    assert_eq!(api_provider.base_url, "https://realtime.example/v1");
 }
 
 #[tokio::test]

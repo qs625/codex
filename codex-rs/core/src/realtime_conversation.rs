@@ -26,6 +26,7 @@ use codex_config::config_toml::RealtimeWsVersion;
 use codex_login::CodexAuth;
 use codex_login::default_client::default_headers;
 use codex_login::read_openai_api_key_from_env;
+use codex_model_provider_info::CHATGPT_CODEX_BASE_URL;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
@@ -73,6 +74,7 @@ const REALTIME_V2_STEER_ACKNOWLEDGEMENT: &str =
     "This was sent to steer the previous background agent task.";
 const REALTIME_ACTIVE_RESPONSE_ERROR_PREFIX: &str =
     "Conversation already has an active response in progress:";
+const DEFAULT_REALTIME_API_BASE_URL: &str = "https://api.openai.com/v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RealtimeConversationEnd {
@@ -621,10 +623,11 @@ async fn prepare_realtime_start(
     let transport = params
         .transport
         .unwrap_or(ConversationStartTransport::Websocket);
-    let mut api_provider = provider.to_api_provider(Some(AuthMode::ApiKey))?;
-    if let Some(realtime_ws_base_url) = &config.experimental_realtime_ws_base_url {
-        api_provider.base_url = realtime_ws_base_url.clone();
-    }
+    let api_provider = build_realtime_api_provider(
+        &provider,
+        auth.as_ref(),
+        config.experimental_realtime_ws_base_url.as_deref(),
+    )?;
     let version = config.realtime.version;
     let session_config = build_realtime_session_config(
         sess,
@@ -658,6 +661,31 @@ async fn prepare_realtime_start(
         session_config,
         transport,
     })
+}
+
+fn build_realtime_api_provider(
+    provider: &ModelProviderInfo,
+    auth: Option<&CodexAuth>,
+    realtime_ws_base_url: Option<&str>,
+) -> CodexResult<ApiProvider> {
+    let mut api_provider = provider.to_api_provider(Some(AuthMode::ApiKey))?;
+    if auth.is_some_and(CodexAuth::uses_codex_backend)
+        && provider.is_openai()
+        && provider
+            .base_url
+            .as_deref()
+            .is_some_and(is_chatgpt_codex_base_url)
+    {
+        api_provider.base_url = DEFAULT_REALTIME_API_BASE_URL.to_string();
+    }
+    if let Some(realtime_ws_base_url) = realtime_ws_base_url {
+        api_provider.base_url = realtime_ws_base_url.to_string();
+    }
+    Ok(api_provider)
+}
+
+fn is_chatgpt_codex_base_url(base_url: &str) -> bool {
+    base_url.trim_end_matches('/') == CHATGPT_CODEX_BASE_URL
 }
 
 pub(crate) async fn build_realtime_session_config(
