@@ -58,11 +58,11 @@ test("single tool rows render a single inline item and auto-expand details with 
   assert.ok(singleEntry);
 
   const collapsedMarkup = renderToStaticMarkup(
-    <ToolRow entries={[singleEntry]} isOpen selectedEntryId={null} />,
+    <ToolRow entries={[singleEntry]} selectedEntryId={null} />,
   );
 
   assert.doesNotMatch(collapsedMarkup, /tool-card-list/);
-  assert.match(collapsedMarkup, /tool-card-item-single/);
+  assert.doesNotMatch(collapsedMarkup, /tool-card-item-single/);
   assert.doesNotMatch(collapsedMarkup, /first details/);
 
   const expandedMarkup = renderToStaticMarkup(
@@ -70,4 +70,9 @@ test("single tool rows render a single inline item and auto-expand details with 
   );
 
   assert.match(expandedMarkup, /first summary[\s\S]*first details/);
+  assert.doesNotMatch(expandedMarkup, /tool-card-item-single/);
+  assert.equal(
+    expandedMarkup.match(/first summary/g)?.length ?? 0,
+    1,
+  );
 });
