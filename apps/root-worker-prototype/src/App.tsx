@@ -31,7 +31,6 @@ import {
   getThreadDepth,
   isRootThread,
   isSubagentThread,
-  mergeThreadSnapshot,
   pickInitialRootThread,
   pickInitialThread,
   updateThreadItem,
@@ -82,7 +81,6 @@ function App() {
   const [workspace, setWorkspace] = useState("");
   const [threads, setThreads] = useState<Thread[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
-  const [selectedThread, setSelectedThread] = useState<Thread | null>(null);
   const [availableSkills, setAvailableSkills] = useState<ThreadSkill[]>([]);
   const [draft, setDraft] = useState("");
   const [draftSkills, setDraftSkills] = useState<DraftSkill[]>([]);
@@ -144,16 +142,8 @@ function App() {
     selectedThreadIdRef.current = selectedThreadId;
     if (!selectedThreadId) {
       setIsLoadingThread(false);
-      setSelectedThread(null);
-      return;
     }
-
-    const cachedThread =
-      threads.find((thread) => thread.id === selectedThreadId) ?? null;
-    setSelectedThread((current) =>
-      cachedThread ? mergeThreadSnapshot(current, cachedThread) : null,
-    );
-  }, [selectedThreadId, threads]);
+  }, [selectedThreadId]);
 
   useEffect(() => {
     setAvailableSkills([]);
@@ -358,6 +348,14 @@ function App() {
     };
   });
 
+  const selectedThread = useMemo(
+    () =>
+      selectedThreadId
+        ? threads.find((thread) => thread.id === selectedThreadId) ?? null
+        : null,
+    [selectedThreadId, threads],
+  );
+
   const conversationCells = useMemo(() => {
     const nextConversationState = buildConversationState(
       selectedThread,
@@ -417,7 +415,6 @@ function App() {
       const rootThread = await ensureInitialRootThread(payload.workspace);
       setThreads((current) => upsertThread(current, rootThread));
       setSelectedThreadId(rootThread.id);
-      setSelectedThread(rootThread);
     } catch (loadError) {
       setError(toErrorMessage(loadError));
     }
@@ -428,6 +425,17 @@ function App() {
       thread: Thread;
     };
     setThreads((current) => upsertThread(current, payload.thread));
+  }
+
+  function updateThreadLocally(
+    threadId: string,
+    update: (thread: Thread) => Thread,
+  ) {
+    setThreads((current) =>
+      current.map((thread) =>
+        thread.id === threadId ? update(thread) : thread,
+      ),
+    );
   }
 
   function removeThreadLocally(threadIds: Iterable<string>) {
@@ -441,82 +449,37 @@ function App() {
       );
       return next;
     });
-    setSelectedThread((current) =>
-      current?.id && threadIdSet.has(current.id) ? null : current,
-    );
   }
 
   function updateThreadStatusLocally(
     threadId: string,
     status: Thread["status"],
   ) {
-    setThreads((current) =>
-      current.map((thread) =>
-        thread.id === threadId ? { ...thread, status } : thread,
-      ),
-    );
-    setSelectedThread((current) =>
-      current?.id === threadId ? { ...current, status } : current,
-    );
+    updateThreadLocally(threadId, (thread) => ({ ...thread, status }));
   }
 
   function updateThreadNameLocally(threadId: string, name: Thread["name"]) {
-    setThreads((current) =>
-      current.map((thread) =>
-        thread.id === threadId ? { ...thread, name } : thread,
-      ),
-    );
-    setSelectedThread((current) =>
-      current?.id === threadId ? { ...current, name } : current,
-    );
+    updateThreadLocally(threadId, (thread) => ({ ...thread, name }));
   }
 
   function updateThreadSkillsLocally(threadId: string, skills: ThreadSkill[]) {
-    setThreads((current) =>
-      current.map((thread) =>
-        thread.id === threadId ? updateThreadSkills(thread, skills) : thread,
-      ),
-    );
-    setSelectedThread((current) =>
-      current?.id === threadId ? updateThreadSkills(current, skills) : current,
-    );
+    updateThreadLocally(threadId, (thread) => updateThreadSkills(thread, skills));
   }
 
   function updateThreadUsageLocally(threadId: string, threadUsage: ThreadUsage) {
-    setThreads((current) =>
-      current.map((thread) =>
-        thread.id === threadId
-          ? {
-              ...thread,
-              threadUsage: {
-                tokenUsage: threadUsage.tokenUsage ?? thread.threadUsage?.tokenUsage ?? thread.tokenUsage ?? null,
-                contextUsage:
-                  threadUsage.contextUsage ?? thread.threadUsage?.contextUsage ?? thread.contextUsage ?? null,
-              },
-              tokenUsage: threadUsage.tokenUsage ?? thread.threadUsage?.tokenUsage ?? thread.tokenUsage ?? null,
-              contextUsage:
-                threadUsage.contextUsage ?? thread.threadUsage?.contextUsage ?? thread.contextUsage ?? null,
-            }
-          : thread,
-      ),
-    );
-    setSelectedThread((current) =>
-      current?.id === threadId
-        ? {
-            ...current,
-            threadUsage: {
-              tokenUsage:
-                threadUsage.tokenUsage ?? current.threadUsage?.tokenUsage ?? current.tokenUsage ?? null,
-              contextUsage:
-                threadUsage.contextUsage ?? current.threadUsage?.contextUsage ?? current.contextUsage ?? null,
-            },
-            tokenUsage:
-              threadUsage.tokenUsage ?? current.threadUsage?.tokenUsage ?? current.tokenUsage ?? null,
-            contextUsage:
-              threadUsage.contextUsage ?? current.threadUsage?.contextUsage ?? current.contextUsage ?? null,
-          }
-        : current,
-    );
+    updateThreadLocally(threadId, (thread) => ({
+      ...thread,
+      threadUsage: {
+        tokenUsage:
+          threadUsage.tokenUsage ?? thread.threadUsage?.tokenUsage ?? thread.tokenUsage ?? null,
+        contextUsage:
+          threadUsage.contextUsage ?? thread.threadUsage?.contextUsage ?? thread.contextUsage ?? null,
+      },
+      tokenUsage:
+        threadUsage.tokenUsage ?? thread.threadUsage?.tokenUsage ?? thread.tokenUsage ?? null,
+      contextUsage:
+        threadUsage.contextUsage ?? thread.threadUsage?.contextUsage ?? thread.contextUsage ?? null,
+    }));
   }
 
   async function loadThread(threadId: string) {
@@ -532,12 +495,6 @@ function App() {
         thread: Thread;
       };
       setThreads((current) => upsertThread(current, payload.thread));
-      if (
-        selectedThreadIdRef.current === threadId &&
-        loadThreadRequestIdRef.current === requestId
-      ) {
-        setSelectedThread((current) => mergeThreadSnapshot(current, payload.thread));
-      }
     } catch (loadError) {
       if (
         selectedThreadIdRef.current !== threadId ||
@@ -572,7 +529,6 @@ function App() {
       })) as { thread: Thread };
       setThreads((current) => upsertThread(current, payload.thread));
       setSelectedThreadId(payload.thread.id);
-      setSelectedThread(payload.thread);
     } catch (createError) {
       setError(toErrorMessage(createError));
     }
@@ -620,7 +576,6 @@ function App() {
       setThreads((current) =>
         current.filter((thread) => !threadIdsToArchive.includes(thread.id)),
       );
-      setSelectedThread(null);
       setSelectedThreadId(null);
       await createRootThread(replacementName);
       setDraft("");
@@ -899,11 +854,9 @@ function App() {
           ) {
             setIsStoppingTurn(false);
           }
-          if (notification.threadId === selectedThreadId) {
-            setSelectedThread((current) =>
-              current ? updateThreadTurn(current, notification.turn) : current,
-            );
-          }
+          updateThreadLocally(notification.threadId, (thread) =>
+            updateThreadTurn(thread, notification.turn),
+          );
           break;
         }
         case "item/started":
@@ -913,17 +866,9 @@ function App() {
             turnId: string;
             item: ThreadItem;
           };
-          if (notification.threadId === selectedThreadId) {
-            setSelectedThread((current) =>
-              current
-                ? updateThreadItem(
-                    current,
-                    notification.turnId,
-                    notification.item,
-                  )
-                : current,
-            );
-          }
+          updateThreadLocally(notification.threadId, (thread) =>
+            updateThreadItem(thread, notification.turnId, notification.item),
+          );
           break;
         }
         case "item/agentMessage/delta": {
@@ -933,18 +878,14 @@ function App() {
             itemId: string;
             delta: string;
           };
-          if (notification.threadId === selectedThreadId) {
-            setSelectedThread((current) =>
-              current
-                ? appendAgentDelta(
-                    current,
-                    notification.turnId,
-                    notification.itemId,
-                    notification.delta,
-                  )
-                : current,
-            );
-          }
+          updateThreadLocally(notification.threadId, (thread) =>
+            appendAgentDelta(
+              thread,
+              notification.turnId,
+              notification.itemId,
+              notification.delta,
+            ),
+          );
           break;
         }
         default:

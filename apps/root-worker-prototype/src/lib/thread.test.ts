@@ -151,3 +151,97 @@ test("mergeThreadSnapshot hydrates restored usage fields from thread/read", () =
   assert.equal(merged.tokenUsage?.total.totalTokens, 1200);
   assert.equal(merged.contextUsage?.budgetUsedPercent, 12);
 });
+
+test("mergeThreadSnapshot preserves an in-flight turn missing from a stale snapshot", () => {
+  const existing = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "collabAgentMessage" as const,
+            id: "item-1",
+            operation: "send_message",
+            senderThreadId: "thread-2",
+            senderPath: "/root/worker",
+            recipientThreadId: "thread-1",
+            recipientPath: "/root",
+            otherRecipientPaths: [],
+            content: "new backend message",
+            triggerTurn: true,
+          },
+        ],
+        itemsView: "full" as const,
+        status: "running" as const,
+        error: null,
+        startedAt: 1,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  };
+
+  const merged = mergeThreadSnapshot(existing, {
+    ...makeThread(),
+    turns: [],
+  });
+
+  assert.deepEqual(merged.turns, existing.turns);
+});
+
+test("mergeThreadSnapshot keeps the more complete in-flight agent message text", () => {
+  const existing = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "agentMessage" as const,
+            id: "item-1",
+            text: "hello world",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: "full" as const,
+        status: "running" as const,
+        error: null,
+        startedAt: 1,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  };
+
+  const merged = mergeThreadSnapshot(existing, {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "agentMessage" as const,
+            id: "item-1",
+            text: "hello",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: "full" as const,
+        status: "running" as const,
+        error: null,
+        startedAt: 1,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  });
+
+  assert.equal(merged.turns[0]?.items[0]?.type, "agentMessage");
+  if (merged.turns[0]?.items[0]?.type !== "agentMessage") {
+    assert.fail("expected an agent message item");
+  }
+  assert.equal(merged.turns[0].items[0].text, "hello world");
+});

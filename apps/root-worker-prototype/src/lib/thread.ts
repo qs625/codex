@@ -335,15 +335,20 @@ export function appendAgentDelta(thread: Thread, turnId: string, itemId: string,
 }
 
 export function mergeTurn(existing: Turn, next: Turn): Turn {
-  const mergedItems = [...existing.items];
-  for (const item of next.items) {
-    const index = mergedItems.findIndex((candidate) => candidate.id === item.id);
-    if (index === -1) {
-      mergedItems.push(item);
-    } else {
-      mergedItems[index] = item;
+  const existingItemsById = new Map(existing.items.map((item) => [item.id, item]));
+  const mergedItems = next.items.map((item) => {
+    const existingItem = existingItemsById.get(item.id);
+    return existingItem ? mergeThreadItem(existingItem, item) : item;
+  });
+
+  if (isTurnInFlight(existing) || isTurnInFlight(next)) {
+    for (const item of existing.items) {
+      if (!mergedItems.some((candidate) => candidate.id === item.id)) {
+        mergedItems.push(item);
+      }
     }
   }
+
   return {
     ...existing,
     ...next,
@@ -356,9 +361,22 @@ export function mergeThreadSnapshot(existing: Thread | null, next: Thread) {
     return next;
   }
 
+  const nextTurnIds = new Set(next.turns.map((turn) => turn.id));
+  const turns = next.turns.map((turn) => {
+    const existingTurn = existing.turns.find((candidate) => candidate.id === turn.id);
+    return existingTurn ? mergeTurn(existingTurn, turn) : turn;
+  });
+
+  for (const turn of existing.turns) {
+    if (!nextTurnIds.has(turn.id) && isTurnInFlight(turn)) {
+      turns.push(turn);
+    }
+  }
+
   return {
     ...existing,
     ...next,
+    turns,
   };
 }
 
@@ -370,6 +388,32 @@ export function upsertThread(threads: Thread[], next: Thread) {
   return threads.map((thread) =>
     thread.id === next.id ? mergeThreadSnapshot(thread, next) : thread,
   );
+}
+
+function isTurnInFlight(turn: Turn) {
+  return turn.status === "running" || turn.status === "inProgress";
+}
+
+function mergeThreadItem(existing: ThreadItem, next: ThreadItem): ThreadItem {
+  if (existing.type === "agentMessage" && next.type === "agentMessage") {
+    return {
+      ...existing,
+      ...next,
+      text: preferMoreCompleteText(existing.text, next.text),
+    };
+  }
+
+  return next;
+}
+
+function preferMoreCompleteText(existing: string, next: string) {
+  if (existing === next) {
+    return next;
+  }
+  if (existing.startsWith(next)) {
+    return existing;
+  }
+  return next;
 }
 
 export function threadStatusClass(status: string) {
