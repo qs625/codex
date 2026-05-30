@@ -583,7 +583,13 @@ function summarizeCollabAgentToolCall(
     case "resumeAgent":
       return `${senderLabel} -> ${receiverLabel}`;
     case "wait":
-      return `Waiting on ${receiverLabel}.`;
+      if (item.receiverPaths.length > 0 && item.timeoutMs !== null && item.timeoutMs !== undefined) {
+        return `wait on ${receiverLabel} for ${formatWaitTimeout(item.timeoutMs)}`;
+      }
+      if (item.receiverPaths.length > 0) {
+        return `wait on ${receiverLabel}`;
+      }
+      return "wait_agent";
     case "closeAgent":
       return `Closed ${receiverLabel}.`;
     default:
@@ -662,6 +668,10 @@ function formatCollabAgentToolDetails(
     sections.push(`Receivers\n${item.receiverPaths.join("\n")}`);
   }
 
+  if (item.timeoutMs !== null && item.timeoutMs !== undefined) {
+    sections.push(`Timeout\n${formatWaitTimeout(item.timeoutMs)}`);
+  }
+
   if (item.prompt?.trim()) {
     sections.push(`Prompt\n${item.prompt.trim()}`);
   }
@@ -692,6 +702,25 @@ function formatCollabAgentToolDetails(
   }
 
   return sections.join("\n\n");
+}
+
+function formatWaitTimeout(timeoutMs: number) {
+  if (timeoutMs % 1000 !== 0) {
+    return `${timeoutMs}ms`;
+  }
+
+  const totalSeconds = timeoutMs / 1000;
+  if (totalSeconds % 60 !== 0) {
+    return `${totalSeconds}s`;
+  }
+
+  const totalMinutes = totalSeconds / 60;
+  if (totalMinutes % 60 !== 0) {
+    return `${totalMinutes}m`;
+  }
+
+  const totalHours = totalMinutes / 60;
+  return `${totalHours}h`;
 }
 
 function summarizeCollabAgentMessage(

@@ -88,6 +88,7 @@ export type ThreadItem =
       senderPath: string;
       receiverThreadIds: string[];
       receiverPaths: string[];
+      timeoutMs?: number | null;
       prompt: string | null;
       model: string | null;
       reasoningEffort: string | null;

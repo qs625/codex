@@ -363,6 +363,8 @@ pub enum ThreadItem {
         receiver_thread_ids: Vec<String>,
         /// Canonical paths of the receiving agents, when applicable.
         receiver_paths: Vec<String>,
+        /// Timeout requested for wait_agent, in milliseconds, when applicable.
+        timeout_ms: Option<i64>,
         /// Prompt text sent as part of the collab tool call, when available.
         prompt: Option<String>,
         /// Model requested for the spawned agent, when applicable.

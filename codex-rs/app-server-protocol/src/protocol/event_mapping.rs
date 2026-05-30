@@ -81,6 +81,7 @@ pub fn item_event_to_server_notification(
                 sender_path: begin_event.sender_agent_path,
                 receiver_thread_ids: Vec::new(),
                 receiver_paths: Vec::new(),
+                timeout_ms: None,
                 prompt: Some(begin_event.prompt),
                 model: Some(begin_event.model),
                 reasoning_effort: Some(begin_event.reasoning_effort),
@@ -123,6 +124,7 @@ pub fn item_event_to_server_notification(
                 sender_path: end_event.sender_agent_path,
                 receiver_thread_ids,
                 receiver_paths: end_event.new_agent_path.into_iter().collect(),
+                timeout_ms: None,
                 prompt: Some(end_event.prompt),
                 model: Some(end_event.model),
                 reasoning_effort: Some(end_event.reasoning_effort),
@@ -145,6 +147,7 @@ pub fn item_event_to_server_notification(
                 sender_path: begin_event.sender_agent_path,
                 receiver_thread_ids,
                 receiver_paths: vec![begin_event.receiver_agent_path],
+                timeout_ms: None,
                 prompt: Some(begin_event.prompt),
                 model: None,
                 reasoning_effort: None,
@@ -176,6 +179,7 @@ pub fn item_event_to_server_notification(
                 sender_path: end_event.sender_agent_path,
                 receiver_thread_ids: vec![receiver_id.clone()],
                 receiver_paths: vec![end_event.receiver_agent_path],
+                timeout_ms: None,
                 prompt: Some(end_event.prompt),
                 model: None,
                 reasoning_effort: None,
@@ -206,6 +210,7 @@ pub fn item_event_to_server_notification(
                     .into_iter()
                     .filter_map(|agent| agent.agent_path)
                     .collect(),
+                timeout_ms: Some(begin_event.timeout_ms),
                 prompt: None,
                 model: None,
                 reasoning_effort: None,
@@ -256,6 +261,7 @@ pub fn item_event_to_server_notification(
                     .iter()
                     .filter_map(|entry| entry.agent_path.clone())
                     .collect(),
+                timeout_ms: Some(end_event.timeout_ms),
                 prompt: None,
                 model: None,
                 reasoning_effort: None,
@@ -277,6 +283,7 @@ pub fn item_event_to_server_notification(
                 sender_path: begin_event.sender_agent_path,
                 receiver_thread_ids: vec![begin_event.receiver_thread_id.to_string()],
                 receiver_paths: vec![begin_event.receiver_agent_path],
+                timeout_ms: None,
                 prompt: None,
                 model: None,
                 reasoning_effort: None,
@@ -311,6 +318,7 @@ pub fn item_event_to_server_notification(
                 sender_path: end_event.sender_agent_path,
                 receiver_thread_ids: vec![receiver_id],
                 receiver_paths: vec![end_event.receiver_agent_path],
+                timeout_ms: None,
                 prompt: None,
                 model: None,
                 reasoning_effort: None,
@@ -332,6 +340,7 @@ pub fn item_event_to_server_notification(
                 sender_path: begin_event.sender_agent_path,
                 receiver_thread_ids: vec![begin_event.receiver_thread_id.to_string()],
                 receiver_paths: vec![begin_event.receiver_agent_path],
+                timeout_ms: None,
                 prompt: None,
                 model: None,
                 reasoning_effort: None,
@@ -366,6 +375,7 @@ pub fn item_event_to_server_notification(
                 sender_path: end_event.sender_agent_path,
                 receiver_thread_ids: vec![receiver_id],
                 receiver_paths: vec![end_event.receiver_agent_path],
+                timeout_ms: None,
                 prompt: None,
                 model: None,
                 reasoning_effort: None,
@@ -491,6 +501,7 @@ mod tests {
     use codex_protocol::ThreadId;
     use codex_protocol::protocol::CollabResumeBeginEvent;
     use codex_protocol::protocol::CollabResumeEndEvent;
+    use codex_protocol::protocol::CollabWaitingBeginEvent;
     use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
     use codex_protocol::protocol::ExecOutputStream;
     use pretty_assertions::assert_eq;
@@ -559,6 +570,7 @@ mod tests {
                     sender_path: event.sender_agent_path,
                     receiver_thread_ids: vec![event.receiver_thread_id.to_string()],
                     receiver_paths: vec![event.receiver_agent_path],
+                    timeout_ms: None,
                     prompt: None,
                     model: None,
                     reasoning_effort: None,
@@ -602,6 +614,7 @@ mod tests {
                     sender_path: event.sender_agent_path,
                     receiver_thread_ids: vec![receiver_id.clone()],
                     receiver_paths: vec![event.receiver_agent_path.clone()],
+                    timeout_ms: None,
                     prompt: None,
                     model: None,
                     reasoning_effort: None,
@@ -616,6 +629,54 @@ mod tests {
                     )]
                     .into_iter()
                     .collect(),
+                },
+            },
+        );
+    }
+
+    #[test]
+    fn collab_wait_begin_maps_timeout_and_receiver_path() {
+        let sender_thread_id = ThreadId::new();
+        let receiver_thread_id = ThreadId::new();
+        let event = CollabWaitingBeginEvent {
+            started_at_ms: 123,
+            sender_thread_id,
+            sender_agent_path: "/root".to_string(),
+            receiver_thread_ids: vec![receiver_thread_id],
+            receiver_agents: vec![codex_protocol::protocol::CollabAgentRef {
+                thread_id: receiver_thread_id,
+                agent_path: Some("/root/scout".to_string()),
+                agent_nickname: None,
+                agent_role: None,
+            }],
+            timeout_ms: 30_000,
+            call_id: "wait-1".to_string(),
+        };
+
+        let notification = item_event_to_server_notification(
+            EventMsg::CollabWaitingBegin(event.clone()),
+            "thread-3",
+            "turn-3",
+        );
+        assert_item_started_server_notification(
+            notification,
+            ItemStartedNotification {
+                thread_id: "thread-3".to_string(),
+                turn_id: "turn-3".to_string(),
+                started_at_ms: event.started_at_ms,
+                item: ThreadItem::CollabAgentToolCall {
+                    id: event.call_id,
+                    tool: CollabAgentTool::Wait,
+                    status: CollabAgentToolCallStatus::InProgress,
+                    sender_thread_id: sender_thread_id.to_string(),
+                    sender_path: event.sender_agent_path,
+                    receiver_thread_ids: vec![receiver_thread_id.to_string()],
+                    receiver_paths: vec!["/root/scout".to_string()],
+                    timeout_ms: Some(30_000),
+                    prompt: None,
+                    model: None,
+                    reasoning_effort: None,
+                    agents_states: HashMap::new(),
                 },
             },
         );

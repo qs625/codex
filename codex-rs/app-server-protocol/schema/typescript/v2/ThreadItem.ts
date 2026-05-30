@@ -94,6 +94,10 @@ receiverThreadIds: Array<string>,
  */
 receiverPaths: Array<string>,
 /**
+ * Timeout requested for wait_agent, in milliseconds, when applicable.
+ */
+timeoutMs: bigint | null,
+/**
  * Prompt text sent as part of the collab tool call, when available.
  */
 prompt: string | null,

@@ -150,6 +150,37 @@ test("uses meaningful multi-agent titles for received work and child completion"
   );
 });
 
+test("summarizes wait_agent with receiver path and timeout", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "collabAgentToolCall",
+        id: "wait-1",
+        tool: "wait",
+        status: "completed",
+        senderThreadId: "thread-1",
+        senderPath: "/root",
+        receiverThreadIds: ["thread-2"],
+        receiverPaths: ["/root/worker"],
+        timeoutMs: 30000,
+        prompt: null,
+        model: null,
+        reasoningEffort: null,
+        agentsStates: {},
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.toolName, entry.text, entry.toolDetails]),
+    [[
+      "wait for agent",
+      "wait on /root/worker for 30s",
+      "Tool\nwait_agent\n\nSender\n/root\n\nReceivers\n/root/worker\n\nTimeout\n30s",
+    ]],
+  );
+});
+
 test("renders context compaction as a context tool entry", () => {
   const entries = buildConversationEntries(
     makeThread([

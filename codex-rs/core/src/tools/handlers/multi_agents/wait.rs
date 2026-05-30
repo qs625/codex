@@ -98,6 +98,7 @@ impl ToolExecutor<ToolInvocation> for Handler {
                         .to_string(),
                     receiver_thread_ids: receiver_thread_ids.clone(),
                     receiver_agents: receiver_agents.clone(),
+                    timeout_ms,
                     call_id: call_id.clone(),
                 }
                 .into(),
@@ -133,6 +134,7 @@ impl ToolExecutor<ToolInvocation> for Handler {
                                     .to_string(),
                                 call_id: call_id.clone(),
                                 completed_at_ms: now_unix_timestamp_ms(),
+                                timeout_ms,
                                 agent_statuses: build_wait_agent_statuses(
                                     &statuses,
                                     &receiver_agents,
@@ -207,6 +209,7 @@ impl ToolExecutor<ToolInvocation> for Handler {
                         .to_string(),
                     call_id,
                     completed_at_ms: now_unix_timestamp_ms(),
+                    timeout_ms,
                     agent_statuses,
                     statuses: statuses_by_id,
                 }
