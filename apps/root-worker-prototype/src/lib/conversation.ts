@@ -340,7 +340,7 @@ function buildConversationItemEntries(
         toolDetails: details,
         toolCategory:
           item.type === "eventDrivenToolCall"
-            ? "eventDriven"
+            ? "eventDrivenSubscription"
             : item.type === "mcpToolCall"
               ? "external"
               : "external",
@@ -361,7 +361,7 @@ function buildConversationItemEntries(
         toolName: item.title,
         toolStatus: "completed",
         toolDetails: formatEventDrivenToolDetails(item),
-        toolCategory: "eventDriven",
+        toolCategory: "eventDrivenEvent",
       },
     ];
   }

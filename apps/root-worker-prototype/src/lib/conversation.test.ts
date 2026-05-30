@@ -46,7 +46,7 @@ function makeThread(items: Thread["turns"][number]["items"]): Thread {
   };
 }
 
-test("separates command, event-driven, and multi-agent items into different tool cells", () => {
+test("separates command, event subscriptions, event notifications, and multi-agent items into different tool cells", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
@@ -95,14 +95,22 @@ test("separates command, event-driven, and multi-agent items into different tool
     entries.map((entry) => [entry.toolCategory, entry.toolName, entry.text]),
     [
       ["command", "ls", "tmp/project • exit 0"],
-      ["eventDriven", "process_exit_subscribe", "process_exit_subscribe • label watch build"],
-      ["eventDriven", "Process exited", "watch build • session 42 completed"],
+      [
+        "eventDrivenSubscription",
+        "process_exit_subscribe",
+        "process_exit_subscribe • label watch build",
+      ],
+      [
+        "eventDrivenEvent",
+        "Process exited",
+        "watch build • session 42 completed",
+      ],
       ["multiAgent", "spawn agent", "/root -> /root/worker"],
     ],
   );
 
   const cells = buildConversationCells(entries);
-  assert.equal(cells.length, 3);
+  assert.equal(cells.length, 4);
 });
 
 test("uses meaningful multi-agent titles for received work and child completion", () => {

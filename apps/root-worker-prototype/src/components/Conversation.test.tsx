@@ -17,7 +17,7 @@ const entries: ConversationEntry[] = [
     toolName: "first tool",
     toolStatus: "completed",
     toolDetails: "first details",
-    toolCategory: "eventDriven",
+    toolCategory: "eventDrivenSubscription",
   },
   {
     id: "tool-2",
@@ -30,7 +30,7 @@ const entries: ConversationEntry[] = [
     toolName: "second tool",
     toolStatus: "completed",
     toolDetails: "second details",
-    toolCategory: "eventDriven",
+    toolCategory: "eventDrivenEvent",
   },
 ];
 
@@ -49,5 +49,25 @@ test("tool rows show compact lists first and only reveal the selected detail bod
 
   assert.match(detailMarkup, /second details/);
   assert.doesNotMatch(detailMarkup, /first details/);
+  assert.match(detailMarkup, /second summary[\s\S]*second details/);
   assert.match(detailMarkup, /tool-card-item-head selected/);
+});
+
+test("single tool rows render a single inline item and auto-expand details with the card", () => {
+  const [singleEntry] = entries;
+  assert.ok(singleEntry);
+
+  const collapsedMarkup = renderToStaticMarkup(
+    <ToolRow entries={[singleEntry]} isOpen selectedEntryId={null} />,
+  );
+
+  assert.doesNotMatch(collapsedMarkup, /tool-card-list/);
+  assert.match(collapsedMarkup, /tool-card-item-single/);
+  assert.doesNotMatch(collapsedMarkup, /first details/);
+
+  const expandedMarkup = renderToStaticMarkup(
+    <ToolRow entries={[singleEntry]} isOpen />,
+  );
+
+  assert.match(expandedMarkup, /first summary[\s\S]*first details/);
 });

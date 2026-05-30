@@ -389,7 +389,13 @@ export type ConversationEntry = {
   toolName?: string;
   toolStatus?: string;
   toolDetails?: string;
-  toolCategory?: "command" | "eventDriven" | "multiAgent" | "external" | "context";
+  toolCategory?:
+    | "command"
+    | "eventDrivenSubscription"
+    | "eventDrivenEvent"
+    | "multiAgent"
+    | "external"
+    | "context";
 };
 
 export type ConversationCell = {
