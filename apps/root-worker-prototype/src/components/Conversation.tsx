@@ -2,7 +2,6 @@ import { memo, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { MarkdownContent } from "../lib/markdown";
-import { threadStatusClass } from "../lib/thread";
 import type { ConversationEntry } from "../types";
 import {
   BranchIcon,
@@ -44,9 +43,60 @@ const LOCAL_IMAGE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
 
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 8;
+const TOOL_DONE_STATUSES = new Set(["completed", "success", "succeeded"]);
+const TOOL_DOING_STATUSES = new Set([
+  "running",
+  "in_progress",
+  "inprogress",
+  "pending",
+  "queued",
+  "started",
+]);
+const TOOL_BLOCKED_STATUSES = new Set([
+  "failed",
+  "error",
+  "errored",
+  "cancelled",
+  "canceled",
+  "timed_out",
+]);
 
 function clampScale(value: number) {
   return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value));
+}
+
+function toolStatusClass(status?: string) {
+  const normalized = status?.trim().toLowerCase();
+  if (!normalized) {
+    return "todo";
+  }
+  if (TOOL_DONE_STATUSES.has(normalized)) {
+    return "done";
+  }
+  if (TOOL_DOING_STATUSES.has(normalized)) {
+    return "doing";
+  }
+  if (TOOL_BLOCKED_STATUSES.has(normalized)) {
+    return "blocked";
+  }
+  return "todo";
+}
+
+function toolGroupStatusClass(entries: ConversationEntry[]) {
+  const classes = entries.map((entry) => toolStatusClass(entry.toolStatus));
+  if (classes.every((statusClass) => statusClass === "done")) {
+    return "done";
+  }
+  if (classes.includes("blocked")) {
+    return "blocked";
+  }
+  if (
+    classes.includes("doing") ||
+    classes.includes("done")
+  ) {
+    return "doing";
+  }
+  return "todo";
 }
 
 function currentLocalImageCacheBytes() {
@@ -615,8 +665,11 @@ export const ToolRow = memo(function ToolRow({
   const firstEntry = entries[0];
   const hasSingleEntry = entries.length === 1;
   const doneCount = entries.filter(
-    (entry) => threadStatusClass(entry.toolStatus ?? "todo") === "done",
+    (entry) => toolStatusClass(entry.toolStatus) === "done",
   ).length;
+  const summaryStatusClass = hasSingleEntry
+    ? toolStatusClass(firstEntry.toolStatus)
+    : toolGroupStatusClass(entries);
   const toolCategory = firstEntry.toolCategory ?? "external";
   const icon = getToolIcon(toolCategory);
 
@@ -647,7 +700,7 @@ export const ToolRow = memo(function ToolRow({
           </div>
           <div className="tool-card-meta">
             <span
-              className={`tool-status-badge ${threadStatusClass(firstEntry.toolStatus ?? "todo")}`}
+              className={`tool-status-badge ${summaryStatusClass}`}
             >
               {hasSingleEntry
                 ? (firstEntry.toolStatus ?? "unknown")
@@ -681,7 +734,7 @@ export const ToolRow = memo(function ToolRow({
                     </div>
                     <div className="tool-card-meta">
                       <span
-                        className={`tool-status-badge ${threadStatusClass(entry.toolStatus ?? "todo")}`}
+                        className={`tool-status-badge ${toolStatusClass(entry.toolStatus)}`}
                       >
                         {entry.toolStatus ?? "unknown"}
                       </span>

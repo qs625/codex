@@ -40,6 +40,8 @@ test("tool rows show compact lists first and only reveal the selected detail bod
   );
 
   assert.match(listMarkup, /tool-card-list/);
+  assert.match(listMarkup, /2\/2 done/);
+  assert.match(listMarkup, /tool-status-badge done/);
   assert.doesNotMatch(listMarkup, /first details/);
   assert.doesNotMatch(listMarkup, /second details/);
 
@@ -75,4 +77,24 @@ test("single tool rows render a single inline item and auto-expand details with 
     expandedMarkup.match(/first summary/g)?.length ?? 0,
     1,
   );
+});
+
+test("tool rows treat partially completed lists as in progress", () => {
+  const mixedEntries: ConversationEntry[] = [
+    entries[0]!,
+    {
+      ...entries[1]!,
+      id: "tool-3",
+      toolStatus: "running",
+    },
+  ];
+
+  const markup = renderToStaticMarkup(
+    <ToolRow entries={mixedEntries} isOpen selectedEntryId={null} />,
+  );
+
+  assert.match(markup, /1\/2 done/);
+  assert.match(markup, /tool-status-badge doing/);
+  assert.match(markup, /tool-status-badge done[^>]*>completed/);
+  assert.match(markup, /tool-status-badge doing[^>]*>running/);
 });
