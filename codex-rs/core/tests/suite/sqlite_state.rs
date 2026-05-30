@@ -168,6 +168,7 @@ async fn backfill_scans_existing_rollouts() -> Result<()> {
                         message: "hello from backfill".to_string(),
                         images: None,
                         local_images: Vec::new(),
+                        skills: Vec::new(),
                         text_elements: Vec::new(),
                     })),
                 },

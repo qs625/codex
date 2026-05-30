@@ -583,6 +583,7 @@ mod tests {
             message: message.to_string(),
             images: None,
             local_images: Vec::new(),
+            skills: Vec::new(),
             text_elements: Vec::new(),
         }
     }

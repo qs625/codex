@@ -178,6 +178,7 @@ mod tests {
                 message: "first turn".to_string(),
                 images: None,
                 local_images: Vec::new(),
+                skills: Vec::new(),
                 text_elements: Vec::new(),
             })),
             RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
@@ -209,6 +210,7 @@ mod tests {
                 message: "second turn".to_string(),
                 images: None,
                 local_images: Vec::new(),
+                skills: Vec::new(),
                 text_elements: Vec::new(),
             })),
         ]

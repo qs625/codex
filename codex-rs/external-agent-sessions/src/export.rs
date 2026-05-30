@@ -80,6 +80,7 @@ fn rollout_items_from_messages(messages: &[ConversationMessage]) -> Vec<RolloutI
                         message: message.text.clone(),
                         images: None,
                         local_images: Vec::new(),
+                        skills: Vec::new(),
                         text_elements: Vec::new(),
                     },
                 )));

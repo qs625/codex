@@ -1304,6 +1304,12 @@ impl ThreadHistoryBuilder {
 
     fn build_user_inputs(&self, payload: &UserMessageEvent) -> Vec<UserInput> {
         let mut content = Vec::new();
+        for skill in &payload.skills {
+            content.push(UserInput::Skill {
+                name: skill.name.clone(),
+                path: skill.path.clone(),
+            });
+        }
         if !payload.message.trim().is_empty() {
             content.push(UserInput::Text {
                 text: payload.message.clone(),
@@ -1673,6 +1679,7 @@ mod tests {
     use codex_protocol::protocol::TurnCompleteEvent;
     use codex_protocol::protocol::TurnStartedEvent;
     use codex_protocol::protocol::UserMessageEvent;
+    use codex_protocol::protocol::UserMessageSkill;
     use codex_protocol::protocol::WebSearchEndEvent;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
@@ -1687,8 +1694,9 @@ mod tests {
             EventMsg::UserMessage(UserMessageEvent {
                 message: "First turn".into(),
                 images: Some(vec!["https://example.com/one.png".into()]),
-                text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
+                text_elements: Vec::new(),
             }),
             EventMsg::AgentMessage(AgentMessageEvent {
                 message: "Hi there".into(),
@@ -1704,8 +1712,9 @@ mod tests {
             EventMsg::UserMessage(UserMessageEvent {
                 message: "Second turn".into(),
                 images: None,
-                text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
+                text_elements: Vec::new(),
             }),
             EventMsg::AgentMessage(AgentMessageEvent {
                 message: "Reply two".into(),
@@ -1784,6 +1793,45 @@ mod tests {
     }
 
     #[test]
+    fn preserves_loaded_skills_in_user_message_history() {
+        let skill_path = test_path_buf("/tmp/skills/demo/SKILL.md");
+        let events = vec![EventMsg::UserMessage(UserMessageEvent {
+            message: "Use the selected skill.".into(),
+            images: None,
+            local_images: Vec::new(),
+            skills: vec![UserMessageSkill {
+                name: "demo".into(),
+                path: skill_path.clone(),
+            }],
+            text_elements: Vec::new(),
+        })];
+
+        let mut builder = ThreadHistoryBuilder::new();
+        for event in &events {
+            builder.handle_event(event);
+        }
+
+        let turns = builder.finish();
+
+        assert_eq!(
+            turns[0].items[0],
+            ThreadItem::UserMessage {
+                id: "item-1".into(),
+                content: vec![
+                    UserInput::Skill {
+                        name: "demo".into(),
+                        path: skill_path,
+                    },
+                    UserInput::Text {
+                        text: "Use the selected skill.".into(),
+                        text_elements: Vec::new(),
+                    },
+                ],
+            }
+        );
+    }
+
+    #[test]
     fn ignores_non_plan_item_lifecycle_events() {
         let turn_id = "turn-1";
         let thread_id = ThreadId::new();
@@ -1799,6 +1847,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::ItemStarted(ItemStartedEvent {
                 thread_id,
@@ -1876,6 +1925,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             })),
             RolloutItem::EventMsg(EventMsg::ImageGenerationEnd(ImageGenerationEndEvent {
                 call_id: "ig_123".into(),
@@ -1933,6 +1983,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::AgentReasoning(AgentReasoningEvent {
                 text: "first summary".into(),
@@ -1985,6 +2036,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::AgentMessage(AgentMessageEvent {
                 message: "Working...".into(),
@@ -2002,6 +2054,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::AgentMessage(AgentMessageEvent {
                 message: "Second attempt complete.".into(),
@@ -2072,6 +2125,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::AgentMessage(AgentMessageEvent {
                 message: "A1".into(),
@@ -2083,6 +2137,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::AgentMessage(AgentMessageEvent {
                 message: "A2".into(),
@@ -2095,6 +2150,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::AgentMessage(AgentMessageEvent {
                 message: "A3".into(),
@@ -2160,6 +2216,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::AgentMessage(AgentMessageEvent {
                 message: "A1".into(),
@@ -2171,6 +2228,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::AgentMessage(AgentMessageEvent {
                 message: "A2".into(),
@@ -2202,12 +2260,14 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 message: "Steer".into(),
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::TurnComplete(TurnCompleteEvent {
                 turn_id: "turn-a".into(),
@@ -2260,6 +2320,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::WebSearchEnd(WebSearchEndEvent {
                 call_id: "search-1".into(),
@@ -2432,6 +2493,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::DynamicToolCallRequest(
                 codex_protocol::dynamic_tools::DynamicToolCallRequest {
@@ -2497,6 +2559,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             })),
             RolloutItem::ResponseItem(ResponseItem::FunctionCall {
                 id: None,
@@ -2635,6 +2698,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::ExecCommandEnd(ExecCommandEndEvent {
                 call_id: "exec-declined".into(),
@@ -2724,6 +2788,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::GuardianAssessment(GuardianAssessmentEvent {
                 id: "review-guardian-exec".into(),
@@ -2807,6 +2872,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::GuardianAssessment(GuardianAssessmentEvent {
                 id: "review-guardian-execve".into(),
@@ -2870,6 +2936,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::TurnComplete(TurnCompleteEvent {
                 turn_id: "turn-a".into(),
@@ -2889,6 +2956,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::ExecCommandEnd(ExecCommandEndEvent {
                 call_id: "exec-late".into(),
@@ -2962,6 +3030,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::TurnComplete(TurnCompleteEvent {
                 turn_id: "turn-a".into(),
@@ -2981,6 +3050,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::ExecCommandEnd(ExecCommandEndEvent {
                 call_id: "exec-unknown-turn".into(),
@@ -3049,6 +3119,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
                 call_id: "patch-call".into(),
@@ -3113,6 +3184,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent {
                 call_id: "patch-call".into(),
@@ -3177,6 +3249,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::TurnComplete(TurnCompleteEvent {
                 turn_id: "turn-a".into(),
@@ -3196,6 +3269,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::TurnComplete(TurnCompleteEvent {
                 turn_id: "turn-a".into(),
@@ -3243,6 +3317,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::TurnComplete(TurnCompleteEvent {
                 turn_id: "turn-a".into(),
@@ -3262,6 +3337,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::TurnAborted(TurnAbortedEvent {
                 turn_id: Some("turn-a".into()),
@@ -3334,6 +3410,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::CollabResumeEnd(codex_protocol::protocol::CollabResumeEndEvent {
                 call_id: "resume-1".into(),
@@ -3396,6 +3473,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::CollabAgentSpawnEnd(codex_protocol::protocol::CollabAgentSpawnEndEvent {
                 call_id: "spawn-1".into(),
@@ -3459,6 +3537,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::CollabAgentSpawnBegin(codex_protocol::protocol::CollabAgentSpawnBeginEvent {
                 call_id: "spawn-1".into(),
@@ -3535,6 +3614,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::CollabAgentInteractionBegin(
                 codex_protocol::protocol::CollabAgentInteractionBeginEvent {
@@ -3605,6 +3685,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::AgentMessage(AgentMessageEvent {
                 message: "done".into(),
@@ -3641,6 +3722,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::TurnComplete(TurnCompleteEvent {
                 turn_id: "turn-a".into(),
@@ -3696,6 +3778,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             }),
             EventMsg::Error(ErrorEvent {
                 message: "stream failure".into(),
@@ -3753,6 +3836,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             })),
             RolloutItem::ResponseItem(hook_prompt),
             RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
@@ -3851,6 +3935,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             })),
         ];
 
@@ -3906,6 +3991,7 @@ mod tests {
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
+                skills: Vec::new(),
             })),
         ];
 

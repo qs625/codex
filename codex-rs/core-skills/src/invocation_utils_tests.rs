@@ -43,6 +43,17 @@ fn script_run_detection_matches_runner_plus_extension() {
 }
 
 #[test]
+fn script_run_detection_matches_rtk_prefixed_runner() {
+    let tokens = vec![
+        "rtk".to_string(),
+        "python3".to_string(),
+        "scripts/fetch_comments.py".to_string(),
+    ];
+
+    assert_eq!(script_run_token(&tokens), Some("scripts/fetch_comments.py"));
+}
+
+#[test]
 fn script_run_detection_excludes_python_c() {
     let tokens = vec![
         "python3".to_string(),
@@ -69,6 +80,82 @@ fn skill_doc_read_detection_matches_absolute_path() {
         test_path_display("/tmp/skill-test/SKILL.md"),
         "|".to_string(),
         "head".to_string(),
+    ];
+    let found = detect_skill_doc_read(&outcome, &tokens, &test_path_buf("/tmp").abs());
+
+    assert_eq!(
+        found.map(|value| value.name),
+        Some("test-skill".to_string())
+    );
+}
+
+#[test]
+fn skill_doc_read_detection_matches_file_under_skill_root() {
+    let skill_doc_path = test_path_buf("/tmp/skill-test/SKILL.md").abs();
+    let normalized_skill_root = canonicalize_if_exists(&test_path_buf("/tmp/skill-test").abs());
+    let skill = test_skill_metadata(skill_doc_path);
+    let outcome = SkillLoadOutcome {
+        implicit_skills_by_scripts_dir: Arc::new(HashMap::new()),
+        implicit_skills_by_doc_path: Arc::new(HashMap::new()),
+        implicit_skills_by_root_dir: Arc::new(HashMap::from([(normalized_skill_root, skill)])),
+        ..Default::default()
+    };
+
+    let tokens = vec![
+        "rtk".to_string(),
+        "cat".to_string(),
+        test_path_display("/tmp/skill-test/templates/prompt.md"),
+    ];
+    let found = detect_skill_doc_read(&outcome, &tokens, &test_path_buf("/tmp").abs());
+
+    assert_eq!(
+        found.map(|value| value.name),
+        Some("test-skill".to_string())
+    );
+}
+
+#[test]
+fn skill_doc_read_detection_matches_rtk_prefixed_reader() {
+    let skill_doc_path = test_path_buf("/tmp/skill-test/SKILL.md").abs();
+    let normalized_skill_doc_path = canonicalize_if_exists(&skill_doc_path);
+    let skill = test_skill_metadata(skill_doc_path);
+    let outcome = SkillLoadOutcome {
+        implicit_skills_by_scripts_dir: Arc::new(HashMap::new()),
+        implicit_skills_by_doc_path: Arc::new(HashMap::from([(normalized_skill_doc_path, skill)])),
+        ..Default::default()
+    };
+
+    let tokens = vec![
+        "rtk".to_string(),
+        "sed".to_string(),
+        "-n".to_string(),
+        "1,20p".to_string(),
+        test_path_display("/tmp/skill-test/SKILL.md"),
+    ];
+    let found = detect_skill_doc_read(&outcome, &tokens, &test_path_buf("/tmp").abs());
+
+    assert_eq!(
+        found.map(|value| value.name),
+        Some("test-skill".to_string())
+    );
+}
+
+#[test]
+fn skill_doc_read_detection_matches_rtk_proxy_prefixed_reader() {
+    let skill_doc_path = test_path_buf("/tmp/skill-test/SKILL.md").abs();
+    let normalized_skill_doc_path = canonicalize_if_exists(&skill_doc_path);
+    let skill = test_skill_metadata(skill_doc_path);
+    let outcome = SkillLoadOutcome {
+        implicit_skills_by_scripts_dir: Arc::new(HashMap::new()),
+        implicit_skills_by_doc_path: Arc::new(HashMap::from([(normalized_skill_doc_path, skill)])),
+        ..Default::default()
+    };
+
+    let tokens = vec![
+        "rtk".to_string(),
+        "proxy".to_string(),
+        "cat".to_string(),
+        test_path_display("/tmp/skill-test/SKILL.md"),
     ];
     let found = detect_skill_doc_read(&outcome, &tokens, &test_path_buf("/tmp").abs());
 
@@ -134,12 +221,19 @@ fn implicit_skill_indexes_include_reference_files() {
     fs::write(reference_path.as_path(), "guide").expect("write reference");
 
     let skill = test_skill_metadata(skill_doc_path);
-    let (_, by_doc_path) = build_implicit_skill_path_indexes(vec![skill.clone()]);
+    let expected_name = skill.name.clone();
+    let (_, by_doc_path, by_root_dir) = build_implicit_skill_path_indexes(vec![skill.clone()]);
 
     assert_eq!(
         by_doc_path
             .get(&canonicalize_if_exists(&reference_path))
             .map(|value| value.name.clone()),
         Some(skill.name)
+    );
+    assert_eq!(
+        by_root_dir
+            .get(&canonicalize_if_exists(&skill_root))
+            .map(|value| value.name.clone()),
+        Some(expected_name)
     );
 }

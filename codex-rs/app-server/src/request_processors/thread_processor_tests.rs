@@ -274,6 +274,7 @@ mod thread_processor_behavior_tests {
                 message: "persisted".to_string(),
                 images: None,
                 local_images: Vec::new(),
+                skills: Vec::new(),
                 text_elements: Vec::new(),
             },
         ))];

@@ -1631,6 +1631,7 @@ fn store_history_items() -> Vec<RolloutItem> {
             message: "history from store".to_string(),
             images: None,
             local_images: Vec::new(),
+            skills: Vec::new(),
             text_elements: Vec::new(),
         },
     ))]

@@ -207,6 +207,7 @@ mod tests {
             message: format!("{USER_MESSAGE_BEGIN} actual user request"),
             images: Some(vec![]),
             local_images: vec![],
+            skills: Vec::new(),
             text_elements: vec![],
         }));
 
@@ -227,6 +228,7 @@ mod tests {
             message: String::new(),
             images: Some(vec!["https://example.com/image.png".to_string()]),
             local_images: vec![],
+            skills: Vec::new(),
             text_elements: vec![],
         }));
 
@@ -250,6 +252,7 @@ mod tests {
             message: "   ".to_string(),
             images: Some(vec![]),
             local_images: vec![],
+            skills: Vec::new(),
             text_elements: vec![],
         }));
 
@@ -289,6 +292,7 @@ mod tests {
             message: format!("{USER_MESSAGE_BEGIN} next normal prompt"),
             images: Some(vec![]),
             local_images: vec![],
+            skills: Vec::new(),
             text_elements: vec![],
         }));
 

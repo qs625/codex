@@ -18,6 +18,7 @@ use crate::protocol::PatchApplyBeginEvent;
 use crate::protocol::PatchApplyEndEvent;
 use crate::protocol::PatchApplyStatus;
 use crate::protocol::UserMessageEvent;
+use crate::protocol::UserMessageSkill;
 use crate::protocol::ViewImageToolCallEvent;
 use crate::protocol::WebSearchEndEvent;
 use crate::user_input::ByteRange;
@@ -244,6 +245,7 @@ impl UserMessageItem {
             message: self.message(),
             images: Some(self.image_urls()),
             local_images: self.local_image_paths(),
+            skills: self.skills(),
             text_elements: self.text_elements(),
         })
     }
@@ -301,6 +303,19 @@ impl UserMessageItem {
             .iter()
             .filter_map(|c| match c {
                 UserInput::LocalImage { path } => Some(path.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn skills(&self) -> Vec<UserMessageSkill> {
+        self.content
+            .iter()
+            .filter_map(|c| match c {
+                UserInput::Skill { name, path } => Some(UserMessageSkill {
+                    name: name.clone(),
+                    path: path.clone(),
+                }),
                 _ => None,
             })
             .collect()

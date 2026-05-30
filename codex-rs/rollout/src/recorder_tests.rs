@@ -140,6 +140,7 @@ async fn state_db_init_backfills_before_returning() -> anyhow::Result<()> {
                 message: "hello from startup backfill".to_string(),
                 images: None,
                 local_images: Vec::new(),
+                skills: Vec::new(),
                 text_elements: Vec::new(),
             })),
         },
@@ -464,6 +465,7 @@ async fn recorder_materializes_on_flush_with_pending_items() -> std::io::Result<
                 message: "first-user-message".to_string(),
                 images: None,
                 local_images: Vec::new(),
+                skills: Vec::new(),
                 text_elements: Vec::new(),
             },
         ))])
