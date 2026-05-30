@@ -734,9 +734,14 @@ svg {
   background: linear-gradient(180deg, #f0fdfa 0%, #ccfbf1 100%);
 }
 
-.tool-icon-eventDriven {
+.tool-icon-eventDrivenSubscription {
   color: #7c2d12;
   background: linear-gradient(180deg, #fff7ed 0%, #fed7aa 100%);
+}
+
+.tool-icon-eventDrivenEvent {
+  color: #1f2937;
+  background: linear-gradient(180deg, #eff6ff 0%, #bfdbfe 100%);
 }
 
 .tool-icon-multiAgent {
@@ -754,9 +759,14 @@ svg {
   background: linear-gradient(180deg, rgba(240, 253, 250, 0.88), rgba(255, 255, 255, 0.72));
 }
 
-.tool-card-eventDriven {
+.tool-card-eventDrivenSubscription {
   border-color: rgba(234, 88, 12, 0.14);
   background: linear-gradient(180deg, rgba(255, 247, 237, 0.9), rgba(255, 255, 255, 0.72));
+}
+
+.tool-card-eventDrivenEvent {
+  border-color: rgba(59, 130, 246, 0.16);
+  background: linear-gradient(180deg, rgba(239, 246, 255, 0.92), rgba(255, 255, 255, 0.74));
 }
 
 .tool-card-multiAgent {
@@ -772,8 +782,12 @@ svg {
   background: linear-gradient(180deg, rgba(240, 253, 250, 0.96), rgba(255, 255, 255, 0.82));
 }
 
-.tool-card-eventDriven[open] {
+.tool-card-eventDrivenSubscription[open] {
   background: linear-gradient(180deg, rgba(255, 247, 237, 0.96), rgba(255, 255, 255, 0.82));
+}
+
+.tool-card-eventDrivenEvent[open] {
+  background: linear-gradient(180deg, rgba(239, 246, 255, 0.97), rgba(255, 255, 255, 0.82));
 }
 
 .tool-card-multiAgent[open] {
@@ -864,6 +878,10 @@ svg {
   border-top: 1px solid rgba(16, 24, 40, 0.06);
 }
 
+.tool-card-item-single {
+  border-top: 1px solid rgba(16, 24, 40, 0.06);
+}
+
 .tool-card-item-head {
   display: flex;
   align-items: flex-start;
@@ -885,7 +903,15 @@ svg {
   background: rgba(255, 255, 255, 0.44);
 }
 
-.tool-card-item .tool-card-body {
+.tool-card-item-head-static {
+  cursor: default;
+}
+
+.tool-card-item-head-static:hover {
+  background: transparent;
+}
+
+.tool-card-item-body {
   border-top: 0;
   padding-top: 0;
 }

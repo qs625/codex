@@ -613,13 +613,12 @@ export const ToolRow = memo(function ToolRow({
   onSelectEntry,
 }: ToolRowProps) {
   const firstEntry = entries[0];
+  const hasSingleEntry = entries.length === 1;
   const doneCount = entries.filter(
     (entry) => threadStatusClass(entry.toolStatus ?? "todo") === "done",
   ).length;
   const toolCategory = firstEntry.toolCategory ?? "external";
   const icon = getToolIcon(toolCategory);
-  const selectedEntry =
-    entries.find((entry) => entry.id === selectedEntryId) ?? null;
 
   return (
     <article className={`tool-row tool-row-${toolCategory}`}>
@@ -636,12 +635,12 @@ export const ToolRow = memo(function ToolRow({
         <summary className="tool-card-summary">
           <div className="tool-card-copy">
             <strong>
-              {entries.length === 1
+              {hasSingleEntry
                 ? (firstEntry.toolName ?? firstEntry.author)
                 : `${entries.length} tool calls`}
             </strong>
             <span>
-              {entries.length === 1
+              {hasSingleEntry
                 ? firstEntry.text
                 : `${firstEntry.toolName ?? firstEntry.author} and ${entries.length - 1} more`}
             </span>
@@ -650,44 +649,71 @@ export const ToolRow = memo(function ToolRow({
             <span
               className={`tool-status-badge ${threadStatusClass(firstEntry.toolStatus ?? "todo")}`}
             >
-              {entries.length === 1
+              {hasSingleEntry
                 ? (firstEntry.toolStatus ?? "unknown")
                 : `${doneCount}/${entries.length} done`}
             </span>
             <time>{entries.at(-1)?.timestamp ?? firstEntry.timestamp}</time>
           </div>
         </summary>
-        <div className="tool-card-list">
-          {entries.map((entry) => (
-            <section key={entry.id} className="tool-card-item">
-              <button
-                type="button"
-                className={`tool-card-item-head ${selectedEntry?.id === entry.id ? "selected" : ""}`}
-                onClick={() =>
-                  onSelectEntry?.(selectedEntry?.id === entry.id ? null : entry.id)
-                }
-              >
-                <div className="tool-card-copy">
-                  <strong>{entry.toolName ?? entry.author}</strong>
-                  <span>{entry.text}</span>
-                </div>
-                <div className="tool-card-meta">
-                  <span
-                    className={`tool-status-badge ${threadStatusClass(entry.toolStatus ?? "todo")}`}
+        {hasSingleEntry ? (
+          <section className="tool-card-item tool-card-item-single">
+            <div className="tool-card-item-head tool-card-item-head-static">
+              <div className="tool-card-copy">
+                <strong>{firstEntry.toolName ?? firstEntry.author}</strong>
+                <span>{firstEntry.text}</span>
+              </div>
+              <div className="tool-card-meta">
+                <span
+                  className={`tool-status-badge ${threadStatusClass(firstEntry.toolStatus ?? "todo")}`}
+                >
+                  {firstEntry.toolStatus ?? "unknown"}
+                </span>
+                <time>{firstEntry.timestamp}</time>
+              </div>
+            </div>
+            {isOpen && firstEntry.toolDetails ? (
+              <div className="tool-card-body tool-card-item-body">
+                <pre>{firstEntry.toolDetails}</pre>
+              </div>
+            ) : null}
+          </section>
+        ) : (
+          <div className="tool-card-list">
+            {entries.map((entry) => {
+              const isSelected = selectedEntryId === entry.id;
+              return (
+                <section key={entry.id} className="tool-card-item">
+                  <button
+                    type="button"
+                    className={`tool-card-item-head ${isSelected ? "selected" : ""}`}
+                    onClick={() =>
+                      onSelectEntry?.(isSelected ? null : entry.id)
+                    }
                   >
-                    {entry.toolStatus ?? "unknown"}
-                  </span>
-                  <time>{entry.timestamp}</time>
-                </div>
-              </button>
-            </section>
-          ))}
-        </div>
-        {selectedEntry?.toolDetails ? (
-          <div className="tool-card-body">
-            <pre>{selectedEntry.toolDetails}</pre>
+                    <div className="tool-card-copy">
+                      <strong>{entry.toolName ?? entry.author}</strong>
+                      <span>{entry.text}</span>
+                    </div>
+                    <div className="tool-card-meta">
+                      <span
+                        className={`tool-status-badge ${threadStatusClass(entry.toolStatus ?? "todo")}`}
+                      >
+                        {entry.toolStatus ?? "unknown"}
+                      </span>
+                      <time>{entry.timestamp}</time>
+                    </div>
+                  </button>
+                  {isSelected && entry.toolDetails ? (
+                    <div className="tool-card-body tool-card-item-body">
+                      <pre>{entry.toolDetails}</pre>
+                    </div>
+                  ) : null}
+                </section>
+              );
+            })}
           </div>
-        ) : null}
+        )}
       </details>
     </article>
   );
@@ -722,7 +748,8 @@ function getToolIcon(category: NonNullable<ConversationEntry["toolCategory"]>) {
   switch (category) {
     case "command":
       return <TerminalIcon />;
-    case "eventDriven":
+    case "eventDrivenSubscription":
+    case "eventDrivenEvent":
       return <GearIcon />;
     case "multiAgent":
       return <BranchIcon />;
