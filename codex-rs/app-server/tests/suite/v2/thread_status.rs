@@ -9,6 +9,10 @@ use codex_app_server_protocol::JSONRPCMessage;
 use codex_app_server_protocol::JSONRPCNotification;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
+use codex_app_server_protocol::ThreadListParams;
+use codex_app_server_protocol::ThreadListResponse;
+use codex_app_server_protocol::ThreadLoadedListParams;
+use codex_app_server_protocol::ThreadLoadedListResponse;
 use codex_app_server_protocol::ThreadReadParams;
 use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadStartParams;
@@ -294,6 +298,123 @@ async fn thread_read_stays_active_while_event_subscription_is_pending() -> Resul
 
     assert_eq!(
         thread.status,
+        ThreadStatus::Active {
+            active_flags: vec![],
+        },
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn startup_restores_threads_with_persisted_event_subscriptions() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let schedule_args = serde_json::to_string(&json!({
+        "schedule": {
+            "kind": "once_after",
+            "delay_ms": 60_000u64
+        }
+    }))?;
+    let responses = vec![
+        responses::sse(vec![
+            responses::ev_response_created("resp-1"),
+            responses::ev_function_call("call-schedule", "schedule_subscribe", &schedule_args),
+            responses::ev_completed("resp-1"),
+        ]),
+        create_final_assistant_message_sse_response("scheduled")?,
+    ];
+    let server = create_mock_responses_server_sequence(responses).await;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let thread_id = {
+        let mut first_mcp =
+            McpProcess::new_with_env(codex_home.path(), &[("RUST_LOG", Some("info"))]).await?;
+        timeout(DEFAULT_READ_TIMEOUT, first_mcp.initialize()).await??;
+
+        let thread_start_id = first_mcp
+            .send_thread_start_request(ThreadStartParams {
+                model: Some("mock-model".to_string()),
+                ..Default::default()
+            })
+            .await?;
+        let thread_start_resp: JSONRPCResponse = timeout(
+            DEFAULT_READ_TIMEOUT,
+            first_mcp.read_stream_until_response_message(RequestId::Integer(thread_start_id)),
+        )
+        .await??;
+        let ThreadStartResponse { thread, .. } = to_response(thread_start_resp)?;
+
+        let turn_start_id = first_mcp
+            .send_turn_start_request(TurnStartParams {
+                thread_id: thread.id.clone(),
+                input: vec![V2UserInput::Text {
+                    text: "schedule a reminder".to_string(),
+                    text_elements: Vec::new(),
+                }],
+                model: Some("mock-model".to_string()),
+                ..Default::default()
+            })
+            .await?;
+        let turn_start_resp: JSONRPCResponse = timeout(
+            DEFAULT_READ_TIMEOUT,
+            first_mcp.read_stream_until_response_message(RequestId::Integer(turn_start_id)),
+        )
+        .await??;
+        let _: TurnStartResponse = to_response(turn_start_resp)?;
+
+        timeout(
+            DEFAULT_READ_TIMEOUT,
+            first_mcp.read_stream_until_notification_message("turn/completed"),
+        )
+        .await??;
+
+        thread.id
+    };
+
+    let mut second_mcp =
+        McpProcess::new_with_env(codex_home.path(), &[("RUST_LOG", Some("info"))]).await?;
+    timeout(DEFAULT_READ_TIMEOUT, second_mcp.initialize()).await??;
+
+    let loaded_list_id = second_mcp
+        .send_thread_loaded_list_request(ThreadLoadedListParams::default())
+        .await?;
+    let loaded_list_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        second_mcp.read_stream_until_response_message(RequestId::Integer(loaded_list_id)),
+    )
+    .await??;
+    let ThreadLoadedListResponse { data, .. } = to_response(loaded_list_resp)?;
+    assert!(
+        data.contains(&thread_id),
+        "restored thread should be loaded after app-server restart"
+    );
+
+    let list_id = second_mcp
+        .send_thread_list_request(ThreadListParams {
+            cursor: None,
+            limit: Some(10),
+            sort_key: None,
+            sort_direction: None,
+            model_providers: Some(Vec::new()),
+            source_kinds: None,
+            archived: None,
+            cwd: None,
+            use_state_db_only: false,
+            search_term: None,
+        })
+        .await?;
+    let list_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        second_mcp.read_stream_until_response_message(RequestId::Integer(list_id)),
+    )
+    .await??;
+    let ThreadListResponse { data, .. } = to_response(list_resp)?;
+    let restored_thread = data
+        .into_iter()
+        .find(|thread| thread.id == thread_id)
+        .expect("thread/list should include the restored thread");
+    assert_eq!(
+        restored_thread.status,
         ThreadStatus::Active {
             active_flags: vec![],
         },

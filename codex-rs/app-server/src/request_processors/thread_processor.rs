@@ -2,6 +2,7 @@ use super::*;
 use crate::error_code::method_not_found;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
+use tokio::sync::OnceCell;
 
 const THREAD_LIST_DEFAULT_LIMIT: usize = 25;
 const THREAD_LIST_MAX_LIMIT: usize = 100;
@@ -382,6 +383,7 @@ pub(crate) struct ThreadRequestProcessor {
     pub(super) state_db: Option<StateDbHandle>,
     pub(super) background_tasks: TaskTracker,
     pub(super) skills_watcher: Arc<SkillsWatcher>,
+    pub(super) startup_active_threads_restored: Arc<OnceCell<()>>,
 }
 
 impl ThreadRequestProcessor {
@@ -418,6 +420,7 @@ impl ThreadRequestProcessor {
             state_db,
             background_tasks: TaskTracker::new(),
             skills_watcher,
+            startup_active_threads_restored: Arc::new(OnceCell::new()),
         }
     }
 
@@ -1852,6 +1855,7 @@ impl ThreadRequestProcessor {
         &self,
         params: ThreadListParams,
     ) -> Result<ThreadListResponse, JSONRPCErrorError> {
+        self.restore_persisted_active_threads_on_startup().await;
         let ThreadListParams {
             cursor,
             limit,
@@ -1933,6 +1937,7 @@ impl ThreadRequestProcessor {
         &self,
         params: ThreadLoadedListParams,
     ) -> Result<ThreadLoadedListResponse, JSONRPCErrorError> {
+        self.restore_persisted_active_threads_on_startup().await;
         let ThreadLoadedListParams { cursor, limit } = params;
         let mut data: Vec<String> = self
             .thread_manager
@@ -2369,6 +2374,163 @@ impl ThreadRequestProcessor {
 
     pub(crate) fn subscribe_running_assistant_turn_count(&self) -> watch::Receiver<usize> {
         self.thread_watch_manager.subscribe_running_turn_count()
+    }
+
+    async fn restore_persisted_active_threads_on_startup(&self) {
+        self.startup_active_threads_restored
+            .get_or_init(|| async {
+                self.restore_persisted_active_threads_on_startup_inner()
+                    .await;
+            })
+            .await;
+    }
+
+    async fn restore_persisted_active_threads_on_startup_inner(&self) {
+        let thread_ids = self
+            .list_threads_with_persisted_subscriptions()
+            .await
+            .unwrap_or_else(|err| {
+                warn!("failed to list threads with persisted subscriptions: {err:?}");
+                Vec::new()
+            });
+
+        for thread_id in thread_ids {
+            if self.thread_manager.get_thread(thread_id).await.is_ok() {
+                continue;
+            }
+            self.restore_persisted_active_thread(thread_id).await;
+        }
+    }
+
+    async fn list_threads_with_persisted_subscriptions(
+        &self,
+    ) -> Result<Vec<ThreadId>, JSONRPCErrorError> {
+        let Some(_local_thread_store) = self
+            .thread_store
+            .as_any()
+            .downcast_ref::<LocalThreadStore>()
+        else {
+            return Ok(Vec::new());
+        };
+        let mut cursor = None;
+        let mut thread_ids = Vec::new();
+
+        loop {
+            let page = self
+                .thread_store
+                .list_threads(codex_thread_store::ListThreadsParams {
+                    page_size: THREAD_LIST_MAX_LIMIT,
+                    cursor,
+                    sort_key: codex_thread_store::ThreadSortKey::UpdatedAt,
+                    sort_direction: codex_thread_store::SortDirection::Desc,
+                    allowed_sources: Vec::new(),
+                    model_providers: Some(Vec::new()),
+                    cwd_filters: None,
+                    archived: false,
+                    search_term: None,
+                    use_state_db_only: false,
+                })
+                .await
+                .map_err(thread_store_list_error)?;
+
+            for thread in page.items {
+                if persisted_subscription_count_from_rollout(thread.rollout_path.as_deref()) > 0 {
+                    thread_ids.push(thread.thread_id);
+                }
+            }
+
+            if let Some(next_cursor) = page.next_cursor {
+                cursor = Some(next_cursor);
+            } else {
+                break;
+            }
+        }
+
+        Ok(thread_ids)
+    }
+
+    async fn restore_persisted_active_thread(&self, thread_id: ThreadId) {
+        let thread_id_string = thread_id.to_string();
+        let (thread_history, stored_thread) = match self
+            .resume_thread_from_rollout(&thread_id_string, /*path*/ None)
+            .await
+        {
+            Ok(value) => value,
+            Err(err) => {
+                warn!("failed to load persisted active thread {thread_id}: {err:?}");
+                return;
+            }
+        };
+
+        let persisted_subscription_count = persisted_subscription_count(&stored_thread);
+        if persisted_subscription_count == 0 {
+            return;
+        }
+
+        let history_cwd = thread_history.session_cwd();
+        let mut request_overrides = None;
+        let mut typesafe_overrides = self.build_thread_config_overrides(
+            /*model*/ None, /*model_provider*/ None, /*service_tier*/ None,
+            /*cwd*/ None, /*runtime_workspace_roots*/ None,
+            /*approval_policy*/ None, /*approvals_reviewer*/ None, /*sandbox*/ None,
+            /*permissions*/ None, /*base_instructions*/ None,
+            /*developer_instructions*/ None, /*personality*/ None,
+        );
+        self.load_and_apply_persisted_resume_metadata(
+            &thread_history,
+            &mut request_overrides,
+            &mut typesafe_overrides,
+        )
+        .await;
+
+        let config = match self
+            .config_manager
+            .load_for_cwd(request_overrides, typesafe_overrides, history_cwd)
+            .await
+        {
+            Ok(config) => config,
+            Err(err) => {
+                warn!("failed to load config while restoring thread {thread_id}: {err}");
+                return;
+            }
+        };
+
+        match self
+            .thread_manager
+            .resume_thread_with_history(
+                config,
+                thread_history,
+                self.auth_manager.clone(),
+                /*persist_extended_history*/ false,
+                /*parent_trace*/ None,
+            )
+            .await
+        {
+            Ok(NewThread {
+                thread_id, thread, ..
+            }) => {
+                let thread_id_str = thread_id.to_string();
+                let config_snapshot = thread.config_snapshot().await;
+                let loaded_thread = build_thread_from_snapshot(
+                    thread_id,
+                    thread.session_configured().session_id.to_string(),
+                    &config_snapshot,
+                    thread.rollout_path(),
+                );
+                self.thread_watch_manager
+                    .upsert_thread_silently(loaded_thread)
+                    .await;
+                self.thread_watch_manager
+                    .note_active_event_subscriptions(
+                        thread_id_str.as_str(),
+                        persisted_subscription_count,
+                    )
+                    .await;
+            }
+            Err(err) => {
+                warn!("failed to restore persisted active thread {thread_id}: {err}");
+            }
+        }
     }
 
     /// Best-effort: ensure initialized connections are subscribed to this thread.
@@ -3009,34 +3171,11 @@ impl ThreadRequestProcessor {
             InitialHistory::Resumed(resumed) => {
                 let fallback_provider = config_snapshot.model_provider_id.as_str();
                 if let Some(stored_thread) = resume_source_thread {
-                    let stored_thread =
-                        if let Some(rollout_path) = stored_thread.rollout_path.clone() {
-                            self.thread_store
-                                .read_thread_by_rollout_path(StoreReadThreadByRolloutPathParams {
-                                    rollout_path,
-                                    include_archived: true,
-                                    include_history: false,
-                                })
-                                .await
-                                .unwrap_or(StoredThread {
-                                    history: None,
-                                    ..stored_thread
-                                })
-                        } else {
-                            self.thread_store
-                                .read_thread(StoreReadThreadParams {
-                                    thread_id: stored_thread.thread_id,
-                                    include_archived: true,
-                                    include_history: false,
-                                })
-                                .await
-                                .unwrap_or(StoredThread {
-                                    history: None,
-                                    ..stored_thread
-                                })
-                        };
                     Ok(thread_from_stored_thread(
-                        stored_thread,
+                        StoredThread {
+                            history: None,
+                            ..stored_thread
+                        },
                         fallback_provider,
                         &self.config.cwd,
                     )
@@ -3923,6 +4062,52 @@ pub(crate) fn thread_from_stored_thread(
         apply_thread_usage_from_rollout_items(&mut thread, history.items.as_slice());
     }
     (thread, history)
+}
+
+fn persisted_subscription_count(thread: &StoredThread) -> usize {
+    thread
+        .history
+        .as_ref()
+        .and_then(|history| {
+            history.items.iter().rev().find_map(|item| match item {
+                RolloutItem::SessionMeta(meta_line) => Some(
+                    meta_line
+                        .meta
+                        .subscriptions
+                        .as_ref()
+                        .map_or(0, std::vec::Vec::len),
+                ),
+                _ => None,
+            })
+        })
+        .unwrap_or_default()
+}
+
+fn persisted_subscription_count_from_rollout(path: Option<&Path>) -> usize {
+    let Some(path) = path else {
+        return 0;
+    };
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return 0;
+    };
+    contents
+        .lines()
+        .rev()
+        .find_map(|line| {
+            let value: serde_json::Value = serde_json::from_str(line).ok()?;
+            let item_type = value.get("type")?.as_str()?;
+            if item_type != "session_meta" {
+                return None;
+            }
+            Some(
+                value
+                    .get("payload")
+                    .and_then(|payload| payload.get("subscriptions"))
+                    .and_then(|subscriptions| subscriptions.as_array())
+                    .map_or(0, std::vec::Vec::len),
+            )
+        })
+        .unwrap_or_default()
 }
 
 fn summary_from_stored_thread(
