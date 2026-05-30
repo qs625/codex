@@ -30,6 +30,8 @@ import {
   getThreadModelLabel,
   getThreadPath,
   getThreadReasoningLabel,
+  isThreadThinking,
+  isTurnInFlight,
   isRootThread,
   threadStatusClass,
   trimPath,
@@ -179,17 +181,13 @@ export function ConversationPanel({
   voiceCaptureStatus: VoiceCaptureStatus;
 }) {
   const lastTurn = selectedThread?.turns.at(-1) ?? null;
-  const lastTurnInProgress =
-    lastTurn != null && (lastTurn.status === "inProgress" || lastTurn.completedAt == null);
+  const lastTurnInProgress = lastTurn != null && isTurnInFlight(lastTurn);
   const activeTurnId = lastTurnInProgress ? lastTurn.id : null;
-  const lastItem = lastTurn?.items.at(-1) ?? null;
-  const isStreamingAgentMessage =
-    lastTurnInProgress && lastItem?.type === "agentMessage" && (lastItem.text ?? "").length > 0;
   const threadActive = threadStatusClass(selectedThread?.status ?? "waiting") === "doing";
-  const isThinking =
-    !isLoadingThread &&
-    !isStreamingAgentMessage &&
-    (isSending || lastTurnInProgress || threadActive);
+  const isThinking = isThreadThinking(selectedThread, {
+    isLoadingThread,
+    isSending,
+  });
   const [selectedSkillIndex, setSelectedSkillIndex] = useState(0);
   const [dismissedSkillQuery, setDismissedSkillQuery] = useState<string | null>(null);
   const selectedSkillOptionRef = useRef<HTMLButtonElement | null>(null);

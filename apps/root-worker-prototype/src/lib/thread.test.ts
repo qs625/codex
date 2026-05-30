@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { getPresenceLabel, mergeThreadSnapshot, threadStatusClass } from "./thread";
+import {
+  getPresenceLabel,
+  isThreadThinking,
+  mergeThreadSnapshot,
+  threadStatusClass,
+} from "./thread";
 import type { Thread } from "../types";
 
 function makeThread(): Thread {
@@ -297,5 +302,133 @@ test("getPresenceLabel surfaces active thread flags", () => {
       activeFlags: [],
     }),
     "Active",
+  );
+});
+
+test("isThreadThinking stays false while a turn only injects init context", () => {
+  const thread = {
+    ...makeThread(),
+    status: {
+      type: "active" as const,
+      activeFlags: [],
+    },
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "userMessage" as const,
+            id: "msg-1",
+            content: [{ type: "text", text: "hello" }],
+          },
+          {
+            type: "injectedContext" as const,
+            id: "ctx-1",
+            title: "environment",
+            preview: "workspace context",
+            sections: [],
+          },
+        ],
+        itemsView: "full" as const,
+        status: "inProgress" as const,
+        error: null,
+        startedAt: 1,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  };
+
+  assert.equal(
+    isThreadThinking(thread, {
+      isLoadingThread: false,
+      isSending: false,
+    }),
+    false,
+  );
+});
+
+test("isThreadThinking stays false when thread is only active for subscriptions", () => {
+  const thread = {
+    ...makeThread(),
+    status: {
+      type: "active" as const,
+      activeFlags: [],
+    },
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "eventDrivenToolCall" as const,
+            id: "sub-1",
+            tool: "schedule_subscribe",
+            arguments: { delay_ms: 60000 },
+            status: "completed",
+            output: { ok: true },
+          },
+        ],
+        itemsView: "full" as const,
+        status: "completed" as const,
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1000,
+      },
+    ],
+  };
+
+  assert.equal(
+    isThreadThinking(thread, {
+      isLoadingThread: false,
+      isSending: false,
+    }),
+    false,
+  );
+});
+
+test("isThreadThinking turns true once non-context output begins", () => {
+  const thread = {
+    ...makeThread(),
+    status: {
+      type: "active" as const,
+      activeFlags: [],
+    },
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "userMessage" as const,
+            id: "msg-1",
+            content: [{ type: "text", text: "hello" }],
+          },
+          {
+            type: "commandExecution" as const,
+            id: "cmd-1",
+            command: "rtk git status --short",
+            cwd: "/tmp",
+            status: "running",
+            aggregatedOutput: null,
+            exitCode: null,
+            durationMs: null,
+          },
+        ],
+        itemsView: "full" as const,
+        status: "inProgress" as const,
+        error: null,
+        startedAt: 1,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  };
+
+  assert.equal(
+    isThreadThinking(thread, {
+      isLoadingThread: false,
+      isSending: false,
+    }),
+    true,
   );
 });
