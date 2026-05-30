@@ -13,17 +13,43 @@ use codex_file_watcher::FileWatcher;
 use codex_protocol::ThreadId;
 use codex_protocol::error::CodexErr;
 
+use crate::thread_status::ThreadWatchManager;
+
+struct ThreadSubscriptionActivityObserver {
+    thread_watch_manager: ThreadWatchManager,
+}
+
+impl codex_file_subscription::SubscriptionActivityObserver for ThreadSubscriptionActivityObserver {
+    fn active_subscription_count_changed(&self, thread_id: ThreadId, active_count: usize) {
+        let thread_watch_manager = self.thread_watch_manager.clone();
+        let thread_id = thread_id.to_string();
+        tokio::spawn(async move {
+            thread_watch_manager
+                .note_active_event_subscriptions(&thread_id, active_count)
+                .await;
+        });
+    }
+}
+
 pub(crate) fn thread_extensions<S>(
     guardian_agent_spawner: S,
     file_watcher: Arc<FileWatcher>,
     thread_manager: Weak<ThreadManager>,
+    thread_watch_manager: ThreadWatchManager,
 ) -> Arc<ExtensionRegistry<Config>>
 where
     S: AgentSpawner<StartThreadOptions, Spawned = NewThread, Error = CodexErr> + 'static,
 {
     let mut builder = ExtensionRegistryBuilder::<Config>::new();
     codex_guardian::install(&mut builder, guardian_agent_spawner);
-    codex_file_subscription::install(&mut builder, file_watcher, thread_manager);
+    codex_file_subscription::install(
+        &mut builder,
+        file_watcher,
+        thread_manager,
+        Some(Arc::new(ThreadSubscriptionActivityObserver {
+            thread_watch_manager,
+        })),
+    );
     Arc::new(builder.build())
 }
 

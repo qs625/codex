@@ -303,6 +303,8 @@ impl MessageProcessor {
         let thread_store = codex_core::thread_store_from_config(config.as_ref(), state_db.clone());
         let fs_watch_manager = FsWatchManager::new(outgoing.clone());
         let shared_file_watcher = fs_watch_manager.file_watcher();
+        let thread_watch_manager =
+            crate::thread_status::ThreadWatchManager::new_with_outgoing(outgoing.clone());
         let thread_manager = Arc::new_cyclic(|thread_manager| {
             ThreadManager::new(
                 config.as_ref(),
@@ -313,6 +315,7 @@ impl MessageProcessor {
                     guardian_agent_spawner(thread_manager.clone()),
                     shared_file_watcher,
                     thread_manager.clone(),
+                    thread_watch_manager.clone(),
                 ),
                 Some(analytics_events_client.clone()),
                 Arc::clone(&thread_store),
@@ -330,8 +333,6 @@ impl MessageProcessor {
         let skills_watcher = SkillsWatcher::new(thread_manager.skills_manager(), outgoing.clone());
 
         let pending_thread_unloads = Arc::new(Mutex::new(HashSet::new()));
-        let thread_watch_manager =
-            crate::thread_status::ThreadWatchManager::new_with_outgoing(outgoing.clone());
         let thread_list_state_permit = Arc::new(Semaphore::new(/*permits*/ 1));
         let workspace_settings_cache =
             Arc::new(workspace_settings::WorkspaceSettingsCache::default());

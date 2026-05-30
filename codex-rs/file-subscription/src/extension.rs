@@ -12,6 +12,7 @@ use codex_extension_api::ToolContributor;
 use codex_file_watcher::FileWatcher;
 use codex_protocol::ThreadId;
 
+use crate::SubscriptionActivityObserver;
 use crate::registry::FsSubscriptionRegistry;
 use crate::tools;
 
@@ -28,9 +29,17 @@ pub struct FsSubscriptionExtension {
 }
 
 impl FsSubscriptionExtension {
-    pub(crate) fn new(file_watcher: Arc<FileWatcher>, thread_manager: Weak<ThreadManager>) -> Self {
+    pub(crate) fn new(
+        file_watcher: Arc<FileWatcher>,
+        thread_manager: Weak<ThreadManager>,
+        activity_observer: Option<Arc<dyn SubscriptionActivityObserver>>,
+    ) -> Self {
         Self {
-            registry: Arc::new(FsSubscriptionRegistry::new(file_watcher, thread_manager)),
+            registry: Arc::new(FsSubscriptionRegistry::new(
+                file_watcher,
+                thread_manager,
+                activity_observer,
+            )),
         }
     }
 }

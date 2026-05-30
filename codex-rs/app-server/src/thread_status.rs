@@ -164,6 +164,7 @@ impl ThreadWatchManager {
             runtime.running = false;
             runtime.pending_permission_requests = 0;
             runtime.pending_user_input_requests = 0;
+            runtime.pending_event_subscription_count = 0;
             runtime.is_loaded = false;
         })
         .await;
@@ -175,6 +176,18 @@ impl ThreadWatchManager {
             runtime.pending_permission_requests = 0;
             runtime.pending_user_input_requests = 0;
             runtime.has_system_error = true;
+        })
+        .await;
+    }
+
+    pub(crate) async fn note_active_event_subscriptions(
+        &self,
+        thread_id: &str,
+        active_count: usize,
+    ) {
+        self.update_runtime_for_thread(thread_id, move |runtime| {
+            runtime.is_loaded = true;
+            runtime.pending_event_subscription_count = active_count.try_into().unwrap_or(u32::MAX);
         })
         .await;
     }
@@ -423,6 +436,7 @@ struct RuntimeFacts {
     running: bool,
     pending_permission_requests: u32,
     pending_user_input_requests: u32,
+    pending_event_subscription_count: u32,
     has_system_error: bool,
 }
 
@@ -439,7 +453,7 @@ fn loaded_thread_status(runtime: &RuntimeFacts) -> ThreadStatus {
         active_flags.push(ThreadActiveFlag::WaitingOnUserInput);
     }
 
-    if runtime.running || !active_flags.is_empty() {
+    if runtime.running || runtime.pending_event_subscription_count > 0 || !active_flags.is_empty() {
         return ThreadStatus::Active { active_flags };
     }
 
@@ -565,6 +579,44 @@ mod tests {
 
         manager
             .note_turn_completed(INTERACTIVE_THREAD_ID, false)
+            .await;
+        assert_eq!(
+            manager
+                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
+                .await,
+            ThreadStatus::Idle,
+        );
+    }
+
+    #[tokio::test]
+    async fn event_subscriptions_keep_thread_active_after_turn_completion() {
+        let manager = ThreadWatchManager::new();
+        manager
+            .upsert_thread(test_thread(
+                INTERACTIVE_THREAD_ID,
+                codex_app_server_protocol::SessionSource::Cli,
+            ))
+            .await;
+
+        manager.note_turn_started(INTERACTIVE_THREAD_ID).await;
+        manager
+            .note_active_event_subscriptions(INTERACTIVE_THREAD_ID, 2)
+            .await;
+        manager
+            .note_turn_completed(INTERACTIVE_THREAD_ID, false)
+            .await;
+
+        assert_eq!(
+            manager
+                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
+                .await,
+            ThreadStatus::Active {
+                active_flags: vec![],
+            },
+        );
+
+        manager
+            .note_active_event_subscriptions(INTERACTIVE_THREAD_ID, 0)
             .await;
         assert_eq!(
             manager
@@ -756,6 +808,53 @@ mod tests {
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
                 status: ThreadStatus::NotLoaded,
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn event_subscription_count_changes_emit_status_notifications() {
+        let (outgoing_tx, mut outgoing_rx) = mpsc::channel(8);
+        let manager = ThreadWatchManager::new_with_outgoing(Arc::new(OutgoingMessageSender::new(
+            outgoing_tx,
+            codex_analytics::AnalyticsEventsClient::disabled(),
+        )));
+
+        manager
+            .upsert_thread(test_thread(
+                INTERACTIVE_THREAD_ID,
+                codex_app_server_protocol::SessionSource::Cli,
+            ))
+            .await;
+        assert_eq!(
+            recv_status_changed_notification(&mut outgoing_rx).await,
+            ThreadStatusChangedNotification {
+                thread_id: INTERACTIVE_THREAD_ID.to_string(),
+                status: ThreadStatus::Idle,
+            },
+        );
+
+        manager
+            .note_active_event_subscriptions(INTERACTIVE_THREAD_ID, 1)
+            .await;
+        assert_eq!(
+            recv_status_changed_notification(&mut outgoing_rx).await,
+            ThreadStatusChangedNotification {
+                thread_id: INTERACTIVE_THREAD_ID.to_string(),
+                status: ThreadStatus::Active {
+                    active_flags: vec![],
+                },
+            },
+        );
+
+        manager
+            .note_active_event_subscriptions(INTERACTIVE_THREAD_ID, 0)
+            .await;
+        assert_eq!(
+            recv_status_changed_notification(&mut outgoing_rx).await,
+            ThreadStatusChangedNotification {
+                thread_id: INTERACTIVE_THREAD_ID.to_string(),
+                status: ThreadStatus::Idle,
             },
         );
     }

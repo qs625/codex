@@ -9,6 +9,8 @@ use codex_app_server_protocol::JSONRPCMessage;
 use codex_app_server_protocol::JSONRPCNotification;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
+use codex_app_server_protocol::ThreadReadParams;
+use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::ThreadStatus;
@@ -16,6 +18,8 @@ use codex_app_server_protocol::ThreadStatusChangedNotification;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::UserInput as V2UserInput;
+use core_test_support::responses;
+use serde_json::json;
 use tempfile::TempDir;
 use tokio::time::timeout;
 
@@ -210,6 +214,90 @@ async fn thread_status_changed_can_be_opted_out() -> Result<()> {
             );
         }
     }
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn thread_read_stays_active_while_event_subscription_is_pending() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let schedule_args = serde_json::to_string(&json!({
+        "schedule": {
+            "kind": "once_after",
+            "delay_ms": 60_000u64
+        }
+    }))?;
+    let responses = vec![
+        responses::sse(vec![
+            responses::ev_response_created("resp-1"),
+            responses::ev_function_call("call-schedule", "schedule_subscribe", &schedule_args),
+            responses::ev_completed("resp-1"),
+        ]),
+        create_final_assistant_message_sse_response("scheduled")?,
+    ];
+    let server = create_mock_responses_server_sequence(responses).await;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let mut mcp =
+        McpProcess::new_with_env(codex_home.path(), &[("RUST_LOG", Some("info"))]).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let thread_start_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            model: Some("mock-model".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let thread_start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(thread_start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response(thread_start_resp)?;
+
+    let turn_start_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![V2UserInput::Text {
+                text: "schedule a reminder".to_string(),
+                text_elements: Vec::new(),
+            }],
+            model: Some("mock-model".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let turn_start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_start_id)),
+    )
+    .await??;
+    let _: TurnStartResponse = to_response(turn_start_resp)?;
+
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let thread_read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread.id.clone(),
+            include_turns: false,
+        })
+        .await?;
+    let thread_read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(thread_read_id)),
+    )
+    .await??;
+    let ThreadReadResponse { thread } = to_response(thread_read_resp)?;
+
+    assert_eq!(
+        thread.status,
+        ThreadStatus::Active {
+            active_flags: vec![],
+        },
+    );
 
     Ok(())
 }

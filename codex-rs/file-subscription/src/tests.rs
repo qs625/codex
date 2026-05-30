@@ -24,11 +24,15 @@ fn make_thread_store(registry: Arc<FsSubscriptionRegistry>) -> ExtensionData {
 
 #[test]
 fn tools_include_file_and_timer_subscriptions_without_exec_manager() {
-    let extension =
-        FsSubscriptionExtension::new(Arc::new(FileWatcher::noop()), Weak::<ThreadManager>::new());
+    let extension = FsSubscriptionExtension::new(
+        Arc::new(FileWatcher::noop()),
+        Weak::<ThreadManager>::new(),
+        None,
+    );
     let registry = Arc::new(FsSubscriptionRegistry::new(
         Arc::new(FileWatcher::noop()),
         Weak::<ThreadManager>::new(),
+        None,
     ));
     let thread_store = make_thread_store(registry);
 
@@ -51,11 +55,15 @@ fn tools_include_file_and_timer_subscriptions_without_exec_manager() {
 
 #[test]
 fn process_exit_tools_are_contributed_with_exec_manager_handle() {
-    let extension =
-        FsSubscriptionExtension::new(Arc::new(FileWatcher::noop()), Weak::<ThreadManager>::new());
+    let extension = FsSubscriptionExtension::new(
+        Arc::new(FileWatcher::noop()),
+        Weak::<ThreadManager>::new(),
+        None,
+    );
     let registry = Arc::new(FsSubscriptionRegistry::new(
         Arc::new(FileWatcher::noop()),
         Weak::<ThreadManager>::new(),
+        None,
     ));
     let session_store = ExtensionData::new("session");
     let unified_exec_manager = Arc::new(UnifiedExecProcessManager::default());

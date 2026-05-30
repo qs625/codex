@@ -182,6 +182,7 @@ mod tests {
             .await
             .expect("refresh tests require state db");
         let thread_store = thread_store_from_config(&good_config, Some(state_db.clone()));
+        let thread_watch_manager = crate::thread_status::ThreadWatchManager::new();
         let thread_manager = Arc::new_cyclic(|thread_manager| {
             ThreadManager::new(
                 &good_config,
@@ -192,6 +193,7 @@ mod tests {
                     guardian_agent_spawner(thread_manager.clone()),
                     Arc::new(FileWatcher::noop()),
                     Weak::<ThreadManager>::clone(thread_manager),
+                    thread_watch_manager.clone(),
                 ),
                 /*analytics_events_client*/ None,
                 thread_store,

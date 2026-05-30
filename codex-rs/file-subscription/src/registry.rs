@@ -22,6 +22,7 @@ use tokio::sync::oneshot;
 use tokio::time::Instant;
 use tracing::warn;
 
+use crate::SubscriptionActivityObserver;
 use crate::tools::schedule::CompiledSchedule;
 
 const DEBOUNCE_INTERVAL: Duration = Duration::from_millis(200);
@@ -85,15 +86,38 @@ pub(crate) struct FsSubscriptionRegistry {
     file_watcher: Arc<FileWatcher>,
     thread_manager: Weak<ThreadManager>,
     state: Arc<AsyncMutex<HashMap<SubscriptionKey, SubscriptionEntry>>>,
+    activity_observer: Option<Arc<dyn SubscriptionActivityObserver>>,
 }
 
 impl FsSubscriptionRegistry {
-    pub(crate) fn new(file_watcher: Arc<FileWatcher>, thread_manager: Weak<ThreadManager>) -> Self {
+    pub(crate) fn new(
+        file_watcher: Arc<FileWatcher>,
+        thread_manager: Weak<ThreadManager>,
+        activity_observer: Option<Arc<dyn SubscriptionActivityObserver>>,
+    ) -> Self {
         Self {
             file_watcher,
             thread_manager,
             state: Arc::new(AsyncMutex::new(HashMap::new())),
+            activity_observer,
         }
+    }
+
+    async fn active_subscription_count(&self, thread_id: ThreadId) -> usize {
+        self.state
+            .lock()
+            .await
+            .keys()
+            .filter(|key| key.thread_id == thread_id)
+            .count()
+    }
+
+    async fn notify_active_subscription_count(&self, thread_id: ThreadId) {
+        let Some(observer) = self.activity_observer.as_ref() else {
+            return;
+        };
+        let active_count = self.active_subscription_count(thread_id).await;
+        observer.active_subscription_count_changed(thread_id, active_count);
     }
 
     async fn send_trigger_to_thread(
@@ -308,6 +332,7 @@ impl FsSubscriptionRegistry {
             },
             Self::subscription_entry(cancel_tx, Some(subscriber), Some(registration), persisted),
         );
+        self.notify_active_subscription_count(thread_id).await;
         if persist_after
             && let Err(err) =
                 Self::persist_thread_subscriptions(&self.thread_manager, &self.state, thread_id)
@@ -348,6 +373,7 @@ impl FsSubscriptionRegistry {
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         let thread_manager = self.thread_manager.clone();
         let state = Arc::clone(&self.state);
+        let activity_observer = self.activity_observer.clone();
         let sub_id_for_log = subscription_id.clone();
         let persisted = PersistedSubscription::Schedule {
             subscription_id: subscription_id.clone(),
@@ -410,6 +436,14 @@ impl FsSubscriptionRegistry {
                         warn!(
                             "failed to persist completed schedule subscription {sub_id_for_log}: {err}"
                         );
+                    } else if let Some(observer) = activity_observer.as_ref() {
+                        let active_count = state
+                            .lock()
+                            .await
+                            .keys()
+                            .filter(|key| key.thread_id == thread_id)
+                            .count();
+                        observer.active_subscription_count_changed(thread_id, active_count);
                     }
                     break;
                 }
@@ -423,6 +457,7 @@ impl FsSubscriptionRegistry {
             },
             Self::subscription_entry(cancel_tx, None, None, persisted),
         );
+        self.notify_active_subscription_count(thread_id).await;
         if persist_after
             && let Err(err) =
                 Self::persist_thread_subscriptions(&self.thread_manager, &self.state, thread_id)
@@ -471,6 +506,7 @@ impl FsSubscriptionRegistry {
         let thread_manager = self.thread_manager.clone();
         let sub_id_for_log = subscription_id.clone();
         let state = Arc::clone(&self.state);
+        let activity_observer = self.activity_observer.clone();
         let persisted = PersistedSubscription::ProcessExit {
             subscription_id: subscription_id.clone(),
             session_id: process_id,
@@ -525,6 +561,14 @@ impl FsSubscriptionRegistry {
                 warn!(
                     "failed to persist completed process exit subscription {sub_id_for_log}: {err}"
                 );
+            } else if let Some(observer) = activity_observer.as_ref() {
+                let active_count = state
+                    .lock()
+                    .await
+                    .keys()
+                    .filter(|key| key.thread_id == thread_id)
+                    .count();
+                observer.active_subscription_count_changed(thread_id, active_count);
             }
         });
 
@@ -535,6 +579,7 @@ impl FsSubscriptionRegistry {
             },
             Self::subscription_entry(cancel_tx, None, None, persisted),
         );
+        self.notify_active_subscription_count(thread_id).await;
         if persist_after
             && let Err(err) =
                 Self::persist_thread_subscriptions(&self.thread_manager, &self.state, thread_id)
@@ -555,7 +600,12 @@ impl FsSubscriptionRegistry {
         )
         .await
         {
-            Ok(unsubscribed) => unsubscribed,
+            Ok(unsubscribed) => {
+                if unsubscribed {
+                    self.notify_active_subscription_count(thread_id).await;
+                }
+                unsubscribed
+            }
             Err(err) => {
                 warn!("failed to persist subscription removal {subscription_id}: {err}");
                 false
@@ -571,6 +621,7 @@ impl FsSubscriptionRegistry {
             .await
             .extract_if(|key, _| key.thread_id == thread_id)
             .count();
+        self.notify_active_subscription_count(thread_id).await;
     }
 
     pub(crate) async fn restore_thread_subscriptions(
