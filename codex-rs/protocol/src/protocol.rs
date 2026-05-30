@@ -4056,6 +4056,8 @@ pub struct CollabWaitingBeginEvent {
     /// Optional nicknames/roles for receivers.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub receiver_agents: Vec<CollabAgentRef>,
+    /// Timeout requested for the wait call, in milliseconds.
+    pub timeout_ms: i64,
     /// ID of the waiting call.
     pub call_id: String,
 }
@@ -4070,6 +4072,8 @@ pub struct CollabWaitingEndEvent {
     pub call_id: String,
     #[serde(default)]
     pub completed_at_ms: i64,
+    /// Timeout requested for the wait call, in milliseconds.
+    pub timeout_ms: i64,
     /// Optional receiver metadata paired with final statuses.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agent_statuses: Vec<CollabAgentStatusEntry>,

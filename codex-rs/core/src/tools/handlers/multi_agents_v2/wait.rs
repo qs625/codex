@@ -74,6 +74,7 @@ impl ToolExecutor<ToolInvocation> for Handler {
                         .to_string(),
                     receiver_thread_ids: Vec::new(),
                     receiver_agents: Vec::new(),
+                    timeout_ms,
                     call_id: call_id.clone(),
                 }
                 .into(),
@@ -100,6 +101,7 @@ impl ToolExecutor<ToolInvocation> for Handler {
                         .to_string(),
                     call_id,
                     completed_at_ms: now_unix_timestamp_ms(),
+                    timeout_ms,
                     agent_statuses: Vec::new(),
                     statuses: HashMap::new(),
                 }

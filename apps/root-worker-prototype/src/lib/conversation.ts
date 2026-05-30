@@ -583,7 +583,13 @@ function summarizeCollabAgentToolCall(
     case "resumeAgent":
       return `${senderLabel} -> ${receiverLabel}`;
     case "wait":
-      return `Waiting on ${receiverLabel}.`;
+      if (item.receiverPaths.length > 0 && item.timeoutMs !== null && item.timeoutMs !== undefined) {
+        return `wait on ${receiverLabel} for ${formatWaitTimeout(item.timeoutMs)}`;
+      }
+      if (item.receiverPaths.length > 0) {
+        return `wait on ${receiverLabel}`;
+      }
+      return "wait_agent";
     case "closeAgent":
       return `Closed ${receiverLabel}.`;
     default:
@@ -666,9 +672,12 @@ function formatCollabAgentToolDetails(
     );
   }
 
-  const prompt = stringOrNull(item.prompt);
-  if (prompt) {
-    sections.push(`Prompt\n${prompt}`);
+  if (item.timeoutMs !== null && item.timeoutMs !== undefined) {
+    sections.push(`Timeout\n${formatWaitTimeout(item.timeoutMs)}`);
+  }
+
+  if (item.prompt?.trim()) {
+    sections.push(`Prompt\n${item.prompt.trim()}`);
   }
 
   if (item.model) {
@@ -697,6 +706,25 @@ function formatCollabAgentToolDetails(
   }
 
   return sections.join("\n\n");
+}
+
+function formatWaitTimeout(timeoutMs: number) {
+  if (timeoutMs % 1000 !== 0) {
+    return `${timeoutMs}ms`;
+  }
+
+  const totalSeconds = timeoutMs / 1000;
+  if (totalSeconds % 60 !== 0) {
+    return `${totalSeconds}s`;
+  }
+
+  const totalMinutes = totalSeconds / 60;
+  if (totalMinutes % 60 !== 0) {
+    return `${totalMinutes}m`;
+  }
+
+  const totalHours = totalMinutes / 60;
+  return `${totalHours}h`;
 }
 
 function summarizeCollabAgentMessage(

@@ -1739,6 +1739,14 @@
               ],
               "description": "Current status of the collab tool call."
             },
+            "timeoutMs": {
+              "description": "Timeout requested for wait_agent, in milliseconds, when applicable.",
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "tool": {
               "allOf": [
                 {

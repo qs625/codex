@@ -811,6 +811,7 @@ impl ThreadHistoryBuilder {
             sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids: Vec::new(),
             receiver_paths: Vec::new(),
+            timeout_ms: None,
             prompt: Some(payload.prompt.clone()),
             model: Some(payload.model.clone()),
             reasoning_effort: Some(payload.reasoning_effort),
@@ -849,6 +850,7 @@ impl ThreadHistoryBuilder {
             sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids,
             receiver_paths: payload.new_agent_path.clone().into_iter().collect(),
+            timeout_ms: None,
             prompt: Some(payload.prompt.clone()),
             model: Some(payload.model.clone()),
             reasoning_effort: Some(payload.reasoning_effort),
@@ -868,6 +870,7 @@ impl ThreadHistoryBuilder {
             sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids: vec![payload.receiver_thread_id.to_string()],
             receiver_paths: vec![payload.receiver_agent_path.clone()],
+            timeout_ms: None,
             prompt: Some(payload.prompt.clone()),
             model: None,
             reasoning_effort: None,
@@ -895,6 +898,7 @@ impl ThreadHistoryBuilder {
             sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids: vec![receiver_id.clone()],
             receiver_paths: vec![payload.receiver_agent_path.clone()],
+            timeout_ms: None,
             prompt: Some(payload.prompt.clone()),
             model: None,
             reasoning_effort: None,
@@ -922,6 +926,7 @@ impl ThreadHistoryBuilder {
                 .iter()
                 .filter_map(|agent| agent.agent_path.clone())
                 .collect(),
+            timeout_ms: Some(payload.timeout_ms),
             prompt: None,
             model: None,
             reasoning_effort: None,
@@ -971,6 +976,7 @@ impl ThreadHistoryBuilder {
                 .iter()
                 .filter_map(|entry| entry.agent_path.clone())
                 .collect(),
+            timeout_ms: Some(payload.timeout_ms),
             prompt: None,
             model: None,
             reasoning_effort: None,
@@ -990,6 +996,7 @@ impl ThreadHistoryBuilder {
             sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids: vec![payload.receiver_thread_id.to_string()],
             receiver_paths: vec![payload.receiver_agent_path.clone()],
+            timeout_ms: None,
             prompt: None,
             model: None,
             reasoning_effort: None,
@@ -1015,6 +1022,7 @@ impl ThreadHistoryBuilder {
             sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids: vec![receiver_id],
             receiver_paths: vec![payload.receiver_agent_path.clone()],
+            timeout_ms: None,
             prompt: None,
             model: None,
             reasoning_effort: None,
@@ -1034,6 +1042,7 @@ impl ThreadHistoryBuilder {
             sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids: vec![payload.receiver_thread_id.to_string()],
             receiver_paths: vec![payload.receiver_agent_path.clone()],
+            timeout_ms: None,
             prompt: None,
             model: None,
             reasoning_effort: None,
@@ -1062,6 +1071,7 @@ impl ThreadHistoryBuilder {
             sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids: vec![receiver_id],
             receiver_paths: vec![payload.receiver_agent_path.clone()],
+            timeout_ms: None,
             prompt: None,
             model: None,
             reasoning_effort: None,
@@ -3444,6 +3454,7 @@ mod tests {
                 sender_path: "/root".into(),
                 receiver_thread_ids: vec!["00000000-0000-0000-0000-000000000002".into()],
                 receiver_paths: vec!["/root/scout".into()],
+                timeout_ms: None,
                 prompt: None,
                 model: None,
                 reasoning_effort: None,
@@ -3508,6 +3519,7 @@ mod tests {
                 sender_path: "/root".into(),
                 receiver_thread_ids: vec!["00000000-0000-0000-0000-000000000002".into()],
                 receiver_paths: vec!["/root/scout".into()],
+                timeout_ms: None,
                 prompt: Some("inspect the repo".into()),
                 model: Some("gpt-5.4-mini".into()),
                 reasoning_effort: Some(codex_protocol::openai_models::ReasoningEffort::Medium),
@@ -3582,6 +3594,7 @@ mod tests {
                 sender_path: "/root".into(),
                 receiver_thread_ids: vec!["00000000-0000-0000-0000-000000000002".into()],
                 receiver_paths: vec!["/root/scout".into()],
+                timeout_ms: None,
                 prompt: Some("inspect the repo".into()),
                 model: Some("gpt-5.4-mini".into()),
                 reasoning_effort: Some(codex_protocol::openai_models::ReasoningEffort::Medium),
@@ -3660,6 +3673,7 @@ mod tests {
                 sender_path: "/root".into(),
                 receiver_thread_ids: vec![receiver.to_string()],
                 receiver_paths: vec!["/root/scout".into()],
+                timeout_ms: None,
                 prompt: Some("new task".into()),
                 model: None,
                 reasoning_effort: None,
@@ -3668,6 +3682,88 @@ mod tests {
                     CollabAgentState {
                         path: Some("/root/scout".into()),
                         status: crate::protocol::v2::CollabAgentStatus::Interrupted,
+                        message: None,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            }
+        );
+    }
+
+    #[test]
+    fn reconstructs_wait_call_with_timeout_and_receiver_path() {
+        let sender = ThreadId::try_from("00000000-0000-0000-0000-000000000001")
+            .expect("valid sender thread id");
+        let receiver = ThreadId::try_from("00000000-0000-0000-0000-000000000002")
+            .expect("valid receiver thread id");
+        let events = vec![
+            EventMsg::UserMessage(UserMessageEvent {
+                message: "wait".into(),
+                images: None,
+                text_elements: Vec::new(),
+                local_images: Vec::new(),
+                skills: Vec::new(),
+            }),
+            EventMsg::CollabWaitingBegin(codex_protocol::protocol::CollabWaitingBeginEvent {
+                started_at_ms: 0,
+                sender_thread_id: sender,
+                sender_agent_path: "/root".into(),
+                receiver_thread_ids: vec![receiver],
+                receiver_agents: vec![codex_protocol::protocol::CollabAgentRef {
+                    thread_id: receiver,
+                    agent_path: Some("/root/scout".into()),
+                    agent_nickname: None,
+                    agent_role: None,
+                }],
+                timeout_ms: 30_000,
+                call_id: "wait-1".into(),
+            }),
+            EventMsg::CollabWaitingEnd(codex_protocol::protocol::CollabWaitingEndEvent {
+                sender_thread_id: sender,
+                sender_agent_path: "/root".into(),
+                call_id: "wait-1".into(),
+                completed_at_ms: 1,
+                timeout_ms: 30_000,
+                agent_statuses: vec![codex_protocol::protocol::CollabAgentStatusEntry {
+                    thread_id: receiver,
+                    agent_path: Some("/root/scout".into()),
+                    agent_nickname: None,
+                    agent_role: None,
+                    status: AgentStatus::Completed(None),
+                }],
+                statuses: [(receiver, AgentStatus::Completed(None))]
+                    .into_iter()
+                    .collect(),
+            }),
+        ];
+
+        let items = events
+            .into_iter()
+            .map(RolloutItem::EventMsg)
+            .collect::<Vec<_>>();
+        let turns = build_turns_from_rollout_items(&items);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 2);
+        assert_eq!(
+            turns[0].items[1],
+            ThreadItem::CollabAgentToolCall {
+                id: "wait-1".into(),
+                tool: CollabAgentTool::Wait,
+                status: CollabAgentToolCallStatus::Completed,
+                sender_thread_id: sender.to_string(),
+                sender_path: "/root".into(),
+                receiver_thread_ids: vec![receiver.to_string()],
+                receiver_paths: vec!["/root/scout".into()],
+                timeout_ms: Some(30_000),
+                prompt: None,
+                model: None,
+                reasoning_effort: None,
+                agents_states: [(
+                    receiver.to_string(),
+                    CollabAgentState {
+                        path: Some("/root/scout".into()),
+                        status: crate::protocol::v2::CollabAgentStatus::Completed,
                         message: None,
                     },
                 )]

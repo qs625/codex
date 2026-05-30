@@ -301,12 +301,14 @@ mod tests {
                 sender_agent_path: sender_agent_path.clone(),
                 receiver_thread_ids: vec![receiver_thread_id],
                 receiver_agents: Vec::new(),
+                timeout_ms: 30_000,
             }),
             EventMsg::CollabWaitingEnd(CollabWaitingEndEvent {
                 call_id: "wait-end".into(),
                 completed_at_ms: 6,
                 sender_thread_id,
                 sender_agent_path: sender_agent_path.clone(),
+                timeout_ms: 30_000,
                 agent_statuses: Vec::new(),
                 statuses: [(receiver_thread_id, AgentStatus::Completed(None))]
                     .into_iter()
