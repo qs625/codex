@@ -9,6 +9,11 @@ test("withRealtimeConversationFeature enables realtime conversation by default",
       features: {
         realtime_conversation: true,
       },
+      realtime: {
+        version: "v2",
+        type: "transcription",
+        transport: "webrtc",
+      },
     },
   });
 });
@@ -22,6 +27,9 @@ test("withRealtimeConversationFeature preserves existing config entries", () => 
         features: {
           plugins: true,
         },
+        realtime: {
+          voice: "cedar",
+        },
       },
     }),
     {
@@ -31,6 +39,12 @@ test("withRealtimeConversationFeature preserves existing config entries", () => 
         features: {
           plugins: true,
           realtime_conversation: true,
+        },
+        realtime: {
+          voice: "cedar",
+          version: "v2",
+          type: "transcription",
+          transport: "webrtc",
         },
       },
     },
@@ -48,6 +62,33 @@ test("withRealtimeConversationFeature replaces non-object features values", () =
       config: {
         features: {
           realtime_conversation: true,
+        },
+        realtime: {
+          version: "v2",
+          type: "transcription",
+          transport: "webrtc",
+        },
+      },
+    },
+  );
+});
+
+test("withRealtimeConversationFeature replaces non-object realtime values", () => {
+  assert.deepEqual(
+    withRealtimeConversationFeature({
+      config: {
+        realtime: "invalid",
+      },
+    }),
+    {
+      config: {
+        features: {
+          realtime_conversation: true,
+        },
+        realtime: {
+          version: "v2",
+          type: "transcription",
+          transport: "webrtc",
         },
       },
     },

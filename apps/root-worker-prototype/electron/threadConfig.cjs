@@ -7,6 +7,12 @@ function withRealtimeConversationFeature(params = {}) {
         ...readObject(params.config?.features),
         realtime_conversation: true,
       },
+      realtime: {
+        ...readObject(params.config?.realtime),
+        version: "v2",
+        type: "transcription",
+        transport: "webrtc",
+      },
     },
   };
 }
