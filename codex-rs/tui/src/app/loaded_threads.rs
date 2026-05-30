@@ -136,6 +136,8 @@ mod tests {
             git_info: None,
             name: None,
             skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
             turns: Vec::new(),
         }
     }

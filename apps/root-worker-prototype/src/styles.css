@@ -1020,6 +1020,9 @@ svg {
   gap: 2px;
   margin: 2px 0 8px;
   padding: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid rgba(16, 24, 40, 0.08);
   border-radius: 14px;
   background: rgba(250, 250, 249, 0.96);

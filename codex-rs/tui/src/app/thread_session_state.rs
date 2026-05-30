@@ -341,6 +341,8 @@ mod tests {
             git_info: None,
             name: Some("read thread".to_string()),
             skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
             turns: Vec::new(),
         };
 

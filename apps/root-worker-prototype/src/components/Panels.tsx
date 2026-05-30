@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type ClipboardEvent, type RefObject } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ClipboardEvent,
+  type RefObject,
+} from "react";
 
 import { AgentTreeNode } from "./AgentTree";
 import { ThinkingIndicator } from "./Conversation";
@@ -176,6 +184,7 @@ export function ConversationPanel({
     (isSending || lastTurnInProgress || threadActive);
   const [selectedSkillIndex, setSelectedSkillIndex] = useState(0);
   const [dismissedSkillQuery, setDismissedSkillQuery] = useState<string | null>(null);
+  const selectedSkillOptionRef = useRef<HTMLButtonElement | null>(null);
   const skillQuery = getActiveSkillSlashQuery(draft);
   const skillSuggestions = useMemo(
     () => filterSkillSlashSuggestions(availableSkills, draftSkills, skillQuery),
@@ -201,6 +210,15 @@ export function ConversationPanel({
     }
     setSelectedSkillIndex((current) => Math.min(current, skillSuggestions.length - 1));
   }, [skillSuggestions]);
+
+  useEffect(() => {
+    if (!skillMenuVisible) {
+      return;
+    }
+    selectedSkillOptionRef.current?.scrollIntoView({
+      block: "nearest",
+    });
+  }, [selectedSkillIndex, skillMenuVisible]);
 
   function selectSkill(skill: ThreadSkill) {
     onAddDraftSkill({
@@ -366,6 +384,7 @@ export function ConversationPanel({
               {skillSuggestions.map((skill, index) => (
                 <button
                   key={skill.path}
+                  ref={index === selectedSkillIndex ? selectedSkillOptionRef : null}
                   type="button"
                   className={`composer-skill-option ${index === selectedSkillIndex ? "selected" : ""}`}
                   role="option"
