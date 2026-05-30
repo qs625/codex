@@ -259,6 +259,17 @@ export type ThreadUsage = {
   contextUsage: ThreadContextUsage | null;
 };
 
+export type ThreadActiveFlag = "waitingOnApproval" | "waitingOnUserInput";
+
+export type ThreadStatus =
+  | { type: "notLoaded" }
+  | { type: "idle" }
+  | { type: "systemError" }
+  | {
+      type: "active";
+      activeFlags: ThreadActiveFlag[];
+    };
+
 export type Thread = {
   id: string;
   sessionId: string;
@@ -270,7 +281,7 @@ export type Thread = {
   reasoningEffort: string | null;
   createdAt: number;
   updatedAt: number;
-  status: string;
+  status: ThreadStatus;
   path: string | null;
   cwd: string;
   cliVersion: string;

@@ -325,6 +325,16 @@ function normalizeNotification(notification) {
     };
   }
 
+  if (notification.method === "thread/status/changed") {
+    return {
+      ...notification,
+      params: {
+        ...notification.params,
+        status: normalizeThreadStatus(notification.params.status),
+      },
+    };
+  }
+
   if (notification.method === "turn/started" || notification.method === "turn/completed") {
     return {
       ...notification,
@@ -365,7 +375,7 @@ function normalizeThread(thread, runtime = null) {
     ...thread,
     model: runtime?.model ?? thread.model ?? null,
     reasoningEffort: runtime?.reasoningEffort ?? thread.reasoningEffort ?? null,
-    status: normalizeStatusValue(thread.status),
+    status: normalizeThreadStatus(thread.status),
     skills: (thread.skills ?? []).map(normalizeThreadSkill),
     threadUsage,
     ...(Object.prototype.hasOwnProperty.call(thread, "tokenUsage")
@@ -520,6 +530,27 @@ function normalizeStatusValue(status) {
     return status.type;
   }
   return "unknown";
+}
+
+function normalizeThreadStatus(status) {
+  if (status && typeof status === "object" && typeof status.type === "string") {
+    return {
+      type: status.type,
+      ...(status.type === "active"
+        ? {
+            activeFlags: Array.isArray(status.activeFlags)
+              ? status.activeFlags.filter((flag) => typeof flag === "string")
+              : [],
+          }
+        : {}),
+    };
+  }
+
+  if (typeof status === "string") {
+    return { type: status };
+  }
+
+  return { type: "notLoaded" };
 }
 
 function normalizePatchChangeKind(kind) {

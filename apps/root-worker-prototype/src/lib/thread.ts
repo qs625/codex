@@ -1,8 +1,10 @@
 import type {
   TaskFilter,
   Thread,
+  ThreadActiveFlag,
   ThreadItem,
   ThreadSkill,
+  ThreadStatus,
   TodoCardItem,
   TreeNode,
   Turn,
@@ -235,8 +237,20 @@ export function getAgentRoleLabel(thread: Thread) {
   return "Root Agent";
 }
 
-export function getPresenceLabel(status: string) {
-  return threadStatusClass(status) === "doing" ? "Online" : "Idle";
+export function getPresenceLabel(status: ThreadStatus) {
+  if (status.type === "active") {
+    return getActivePresenceLabel(status.activeFlags);
+  }
+
+  switch (status.type) {
+    case "systemError":
+      return "System Error";
+    case "notLoaded":
+      return "Not Loaded";
+    case "idle":
+    default:
+      return "Idle";
+  }
 }
 
 export function getThreadModelLabel(thread: Thread | null) {
@@ -416,18 +430,12 @@ function preferMoreCompleteText(existing: string, next: string) {
   return next;
 }
 
-export function threadStatusClass(status: string) {
-  switch (status) {
-    case "running":
-    case "inProgress":
+export function threadStatusClass(status: ThreadStatus) {
+  switch (status.type) {
+    case "active":
       return "doing";
-    case "interrupted":
-    case "errored":
-    case "failed":
-    case "declined":
+    case "systemError":
       return "blocked";
-    case "completed":
-      return "done";
     default:
       return "todo";
   }
@@ -472,12 +480,22 @@ export function trimThreadId(threadId: string) {
   return threadId.slice(0, 8);
 }
 
-function mapTaskStatus(status: string): Exclude<TaskFilter, "all"> {
+function mapTaskStatus(status: ThreadStatus): Exclude<TaskFilter, "all"> {
   const mapped = threadStatusClass(status);
   if (mapped === "blocked" || mapped === "done" || mapped === "doing") {
     return mapped;
   }
   return "todo";
+}
+
+function getActivePresenceLabel(activeFlags: ThreadActiveFlag[]) {
+  if (activeFlags.includes("waitingOnApproval")) {
+    return "Waiting on Approval";
+  }
+  if (activeFlags.includes("waitingOnUserInput")) {
+    return "Waiting on Input";
+  }
+  return "Active";
 }
 
 function getThreadSpawnSource(thread: Thread): Record<string, unknown> | null {

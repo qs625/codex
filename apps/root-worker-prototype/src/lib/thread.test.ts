@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { mergeThreadSnapshot } from "./thread";
+import { getPresenceLabel, mergeThreadSnapshot, threadStatusClass } from "./thread";
 import type { Thread } from "../types";
 
 function makeThread(): Thread {
@@ -16,7 +16,7 @@ function makeThread(): Thread {
     reasoningEffort: null,
     createdAt: 1,
     updatedAt: 1,
-    status: "idle",
+    status: { type: "idle" },
     path: null,
     cwd: "/tmp",
     cliVersion: "test",
@@ -244,4 +244,38 @@ test("mergeThreadSnapshot keeps the more complete in-flight agent message text",
     assert.fail("expected an agent message item");
   }
   assert.equal(merged.turns[0].items[0].text, "hello world");
+});
+
+test("threadStatusClass treats active thread status as doing", () => {
+  assert.equal(
+    threadStatusClass({
+      type: "active",
+      activeFlags: [],
+    }),
+    "doing",
+  );
+});
+
+test("getPresenceLabel surfaces active thread flags", () => {
+  assert.equal(
+    getPresenceLabel({
+      type: "active",
+      activeFlags: ["waitingOnApproval"],
+    }),
+    "Waiting on Approval",
+  );
+  assert.equal(
+    getPresenceLabel({
+      type: "active",
+      activeFlags: ["waitingOnUserInput"],
+    }),
+    "Waiting on Input",
+  );
+  assert.equal(
+    getPresenceLabel({
+      type: "active",
+      activeFlags: [],
+    }),
+    "Active",
+  );
 });
