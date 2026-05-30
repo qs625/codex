@@ -527,8 +527,8 @@ function accumulateItemUnits(
   }
 }
 
-function estimateTextUnits(value: string | null | undefined) {
-  if (!value) {
+function estimateTextUnits(value: unknown) {
+  if (typeof value !== "string" || value.length === 0) {
     return 0;
   }
 

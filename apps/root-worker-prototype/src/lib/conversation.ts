@@ -601,7 +601,7 @@ function summarizeEventDrivenToolCall(
 function summarizeEventDrivenTool(
   item: Extract<ThreadItem, { type: "eventDrivenTool" }>,
 ) {
-  return item.text.trim() || item.title;
+  return stringOrNull(item.text) ?? item.title;
 }
 
 function formatEventDrivenToolDetails(
@@ -655,15 +655,20 @@ function formatCollabAgentToolDetails(
 ) {
   const sections = [
     `Tool\n${formatCollabAgentToolName(item.tool)}`,
-    `Sender\n${item.senderPath}`,
+    `Sender\n${stringOrFallback(item.senderPath, "unknown")}`,
   ];
 
   if (item.receiverPaths.length > 0) {
-    sections.push(`Receivers\n${item.receiverPaths.join("\n")}`);
+    sections.push(
+      `Receivers\n${item.receiverPaths
+        .map((path) => stringOrFallback(path, "unknown"))
+        .join("\n")}`,
+    );
   }
 
-  if (item.prompt?.trim()) {
-    sections.push(`Prompt\n${item.prompt.trim()}`);
+  const prompt = stringOrNull(item.prompt);
+  if (prompt) {
+    sections.push(`Prompt\n${prompt}`);
   }
 
   if (item.model) {
@@ -680,9 +685,9 @@ function formatCollabAgentToolDetails(
       `Agent States\n${agentStates
         .map(([threadId, state]) =>
           [
-            state.path?.trim() || trimThreadId(threadId),
+            stringOrNull(state.path) ?? trimThreadId(threadId),
             state.status,
-            state.message?.trim(),
+            stringOrNull(state.message),
           ]
             .filter((value) => value && value.length > 0)
             .join(" • "),
@@ -697,17 +702,18 @@ function formatCollabAgentToolDetails(
 function summarizeCollabAgentMessage(
   item: Extract<ThreadItem, { type: "collabAgentMessage" }>,
 ) {
+  const senderPath = stringOrFallback(item.senderPath, "unknown");
   switch (item.operation) {
     case "spawnAgent":
-      return `Received initial task from ${item.senderPath}.`;
+      return `Received initial task from ${senderPath}.`;
     case "sendMessage":
-      return `Received message from ${item.senderPath}.`;
+      return `Received message from ${senderPath}.`;
     case "followupTask":
-      return `Received follow-up from ${item.senderPath}.`;
+      return `Received follow-up from ${senderPath}.`;
     case "childCompletion":
-      return `Received child completion from ${item.senderPath}.`;
+      return `Received child completion from ${senderPath}.`;
     default:
-      return `Received agent message from ${item.senderPath}.`;
+      return `Received agent message from ${senderPath}.`;
   }
 }
 
@@ -723,16 +729,21 @@ function formatCollabAgentMessageTitle(
 function formatCollabAgentMessageDetails(
   item: Extract<ThreadItem, { type: "collabAgentMessage" }>,
 ) {
+  const message = stringOrNull(item.content) ?? "…";
   const sections = [
     `Operation\n${item.operation}`,
-    `From\n${item.senderPath}`,
-    `To\n${item.recipientPath}`,
-    `Message\n${item.content.trim() || "…"}`,
+    `From\n${stringOrFallback(item.senderPath, "unknown")}`,
+    `To\n${stringOrFallback(item.recipientPath, "unknown")}`,
+    `Message\n${message}`,
     `Trigger Turn\n${item.triggerTurn ? "true" : "false"}`,
   ];
 
   if (item.otherRecipientPaths.length > 0) {
-    sections.push(`Other Recipients\n${item.otherRecipientPaths.join("\n")}`);
+    sections.push(
+      `Other Recipients\n${item.otherRecipientPaths
+        .map((path) => stringOrFallback(path, "unknown"))
+        .join("\n")}`,
+    );
   }
 
   return sections.join("\n\n");
@@ -741,8 +752,11 @@ function formatCollabAgentMessageDetails(
 function summarizeCollabAgentStatusUpdate(
   item: Extract<ThreadItem, { type: "collabAgentStatusUpdate" }>,
 ) {
-  const agentPath = item.status.path?.trim() || item.senderPath;
-  const message = item.status.message?.trim();
+  const agentPath =
+    stringOrNull(item.status.path) ??
+    stringOrNull(item.senderPath) ??
+    "unknown";
+  const message = stringOrNull(item.status.message);
   return [agentPath, item.status.status, message]
     .filter((value) => value && value.length > 0)
     .join(" • ");
@@ -761,17 +775,19 @@ function formatCollabAgentStatusUpdateDetails(
   item: Extract<ThreadItem, { type: "collabAgentStatusUpdate" }>,
 ) {
   const sections = [
-    `From\n${item.senderPath}`,
-    `To\n${item.recipientPath}`,
+    `From\n${stringOrFallback(item.senderPath, "unknown")}`,
+    `To\n${stringOrFallback(item.recipientPath, "unknown")}`,
     `Status\n${item.status.status}`,
   ];
 
-  if (item.status.path?.trim()) {
-    sections.push(`Agent\n${item.status.path.trim()}`);
+  const statusPath = stringOrNull(item.status.path);
+  if (statusPath) {
+    sections.push(`Agent\n${statusPath}`);
   }
 
-  if (item.status.message?.trim()) {
-    sections.push(`Message\n${item.status.message.trim()}`);
+  const statusMessage = stringOrNull(item.status.message);
+  if (statusMessage) {
+    sections.push(`Message\n${statusMessage}`);
   }
 
   return sections.join("\n\n");
@@ -805,8 +821,9 @@ function formatCommandExecutionDetails(
     sections.push(`Exit Code\n${item.exitCode}`);
   }
 
-  if (item.aggregatedOutput?.trim()) {
-    sections.push(`Output\n${item.aggregatedOutput.trim()}`);
+  const aggregatedOutput = stringOrNull(item.aggregatedOutput);
+  if (aggregatedOutput) {
+    sections.push(`Output\n${aggregatedOutput}`);
   }
 
   return sections.join("\n\n");
@@ -865,7 +882,7 @@ function formatInjectedContextDetails(
   item: Extract<ThreadItem, { type: "injectedContext" }>,
 ) {
   return item.sections
-    .map((section) => `${section.label}\n${section.text.trim()}`)
+    .map((section) => `${section.label}\n${stringOrFallback(section.text, "")}`)
     .join("\n\n");
 }
 
@@ -889,15 +906,16 @@ function safeJson(value: unknown) {
   }
 }
 
-function resolveAgentPath(...paths: Array<string | null | undefined>) {
-  return (
-    paths.map((path) => path?.trim()).find((path) => path && path.length > 0) ??
-    "unknown"
-  );
+function resolveAgentPath(...paths: Array<unknown>) {
+  return paths.map(stringOrNull).find((path) => path && path.length > 0) ?? "unknown";
 }
 
 function stringOrNull(value: unknown) {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : null;
+}
+
+function stringOrFallback(value: unknown, fallback: string) {
+  return stringOrNull(value) ?? fallback;
 }

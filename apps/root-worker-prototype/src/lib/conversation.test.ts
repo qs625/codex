@@ -150,6 +150,59 @@ test("uses meaningful multi-agent titles for received work and child completion"
   );
 });
 
+test("tolerates non-string multi-agent history fields without crashing", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "collabAgentMessage",
+        id: "msg-1",
+        operation: "childCompletion",
+        senderThreadId: "thread-2",
+        senderPath: { path: "/root/worker" } as never,
+        recipientThreadId: "thread-1",
+        recipientPath: null as never,
+        otherRecipientPaths: [{ path: "/root/other" } as never],
+        content: { text: "done" } as never,
+        triggerTurn: true,
+      },
+      {
+        type: "collabAgentStatusUpdate",
+        id: "status-1",
+        senderThreadId: "thread-2",
+        senderPath: { path: "/root/worker" } as never,
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        status: {
+          path: { path: "/root/worker" } as never,
+          status: "completed",
+          message: { text: "done" } as never,
+        },
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      toolName: entry.toolName,
+      text: entry.text,
+      toolDetails: entry.toolDetails,
+    })),
+    [
+      {
+        toolName: "received from unknown",
+        text: "Received child completion from unknown.",
+        toolDetails:
+          "Operation\nchildCompletion\n\nFrom\nunknown\n\nTo\nunknown\n\nMessage\n…\n\nTrigger Turn\ntrue\n\nOther Recipients\nunknown",
+      },
+      {
+        toolName: "status from unknown",
+        text: "unknown • completed",
+        toolDetails: "From\nunknown\n\nTo\n/root\n\nStatus\ncompleted",
+      },
+    ],
+  );
+});
+
 test("renders context compaction as a context tool entry", () => {
   const entries = buildConversationEntries(
     makeThread([

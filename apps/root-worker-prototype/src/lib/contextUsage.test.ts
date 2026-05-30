@@ -256,6 +256,38 @@ test("uses last token usage instead of cumulative token usage for budget percent
   assert.equal(analysis.contextWindowTokens, 100000);
 });
 
+test("ignores malformed non-string tool text in context usage estimation", () => {
+  const thread = makeThread([
+    {
+      type: "collabAgentMessage",
+      id: "msg-1",
+      operation: "childCompletion",
+      senderThreadId: "thread-2",
+      senderPath: "/root/worker",
+      recipientThreadId: "thread-1",
+      recipientPath: "/root",
+      otherRecipientPaths: [],
+      content: { text: "done" } as never,
+      triggerTurn: true,
+    },
+    {
+      type: "imageGeneration",
+      id: "image-1",
+      status: "completed",
+      revisedPrompt: { prompt: "draw" } as never,
+      result: "saved",
+      savedPath: null,
+    },
+  ]);
+
+  const analysis = buildContextUsageAnalysis(thread, 0);
+
+  assert.equal(analysis.turnTrend.turns.length, 1);
+  assert.ok(
+    (analysis.turnTrend.rows.find((row) => row.id === "toolCalls")?.cells[0]?.units ?? 0) > 0,
+  );
+});
+
 test("turn trend only counts skill injected context as concrete skills", () => {
   const thread = makeThread(
     [
