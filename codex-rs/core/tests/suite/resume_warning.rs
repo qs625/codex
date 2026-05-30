@@ -63,6 +63,7 @@ fn resume_history(
                 message: "seed".to_string(),
                 images: None,
                 local_images: vec![],
+                skills: Vec::new(),
                 text_elements: vec![],
             })),
             RolloutItem::TurnContext(turn_ctx),

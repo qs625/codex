@@ -2398,6 +2398,7 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
                 message: "forked seed".to_string(),
                 images: None,
                 local_images: Vec::new(),
+                skills: Vec::new(),
                 text_elements: Vec::new(),
             },
         )),
@@ -2592,6 +2593,7 @@ async fn thread_rollback_recomputes_previous_turn_settings_and_reference_context
                 message: "turn 1 user".to_string(),
                 images: None,
                 local_images: Vec::new(),
+                skills: Vec::new(),
                 text_elements: Vec::new(),
             },
         )),
@@ -2618,6 +2620,7 @@ async fn thread_rollback_recomputes_previous_turn_settings_and_reference_context
                 message: "turn 2 user".to_string(),
                 images: None,
                 local_images: Vec::new(),
+                skills: Vec::new(),
                 text_elements: Vec::new(),
             },
         )),
@@ -2700,6 +2703,7 @@ async fn thread_rollback_restores_cleared_reference_context_item_after_compactio
             message: "turn 1 user".to_string(),
             images: None,
             local_images: Vec::new(),
+            skills: Vec::new(),
             text_elements: Vec::new(),
         })),
         RolloutItem::TurnContext(first_context_item.clone()),
@@ -2743,6 +2747,7 @@ async fn thread_rollback_restores_cleared_reference_context_item_after_compactio
             message: "turn 2 user".to_string(),
             images: None,
             local_images: Vec::new(),
+            skills: Vec::new(),
             text_elements: Vec::new(),
         })),
         RolloutItem::TurnContext(TurnContextItem {
@@ -2797,6 +2802,7 @@ async fn thread_rollback_persists_marker_and_replays_cumulatively() {
             message: "turn 1 user".to_string(),
             images: None,
             local_images: Vec::new(),
+            skills: Vec::new(),
             text_elements: Vec::new(),
         })),
         RolloutItem::TurnContext(turn_context_item.clone()),
@@ -2821,6 +2827,7 @@ async fn thread_rollback_persists_marker_and_replays_cumulatively() {
             message: "turn 2 user".to_string(),
             images: None,
             local_images: Vec::new(),
+            skills: Vec::new(),
             text_elements: Vec::new(),
         })),
         RolloutItem::TurnContext(turn_context_item.clone()),
@@ -2845,6 +2852,7 @@ async fn thread_rollback_persists_marker_and_replays_cumulatively() {
             message: "turn 3 user".to_string(),
             images: None,
             local_images: Vec::new(),
+            skills: Vec::new(),
             text_elements: Vec::new(),
         })),
         RolloutItem::TurnContext(turn_context_item),
@@ -7636,6 +7644,7 @@ async fn record_context_updates_and_set_reference_context_item_persists_full_rei
                 message: "seed rollout".to_string(),
                 images: None,
                 local_images: Vec::new(),
+                skills: Vec::new(),
                 text_elements: Vec::new(),
             },
         ))])
@@ -8062,6 +8071,7 @@ async fn task_finish_emits_turn_item_lifecycle_for_leftover_pending_user_input()
             images,
             text_elements,
             local_images,
+            ..
         }) if message == "late pending input"
             && images == Some(Vec::new())
             && text_elements.is_empty()

@@ -2281,6 +2281,12 @@ pub struct AgentMessageEvent {
     pub memory_citation: Option<MemoryCitation>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct UserMessageSkill {
+    pub name: String,
+    pub path: std::path::PathBuf,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct UserMessageEvent {
     pub message: String,
@@ -2294,6 +2300,10 @@ pub struct UserMessageEvent {
     /// to the model or treated as API-ready URLs.
     #[serde(default)]
     pub local_images: Vec<std::path::PathBuf>,
+    /// Skill selections sourced from `UserInput::Skill`. These preserve explicit
+    /// loaded-skill attachments in legacy UI history events.
+    #[serde(default)]
+    pub skills: Vec<UserMessageSkill>,
     /// UI-defined spans within `message` used to render or persist special elements.
     #[serde(default)]
     pub text_elements: Vec<crate::user_input::TextElement>,
@@ -5381,6 +5391,7 @@ mod tests {
             message: "hello".to_string(),
             images: None,
             local_images: Vec::new(),
+            skills: Vec::new(),
             text_elements: Vec::new(),
         };
 
@@ -5390,6 +5401,7 @@ mod tests {
             json!({
                 "message": "hello",
                 "local_images": [],
+                "skills": [],
                 "text_elements": [],
             })
         );

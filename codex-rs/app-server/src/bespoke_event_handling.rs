@@ -2285,6 +2285,7 @@ mod tests {
                 message: "before rollback".to_string(),
                 images: None,
                 local_images: Vec::new(),
+                skills: Vec::new(),
                 text_elements: Vec::new(),
             })),
             RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
@@ -3482,6 +3483,7 @@ mod tests {
                     message: "already tracked".to_string(),
                     images: None,
                     local_images: Vec::new(),
+                    skills: Vec::new(),
                     text_elements: Vec::new(),
                 }),
             );

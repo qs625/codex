@@ -95,6 +95,7 @@ pub struct SkillLoadOutcome {
     pub(crate) file_systems_by_skill_path: SkillFileSystemsByPath,
     pub(crate) implicit_skills_by_scripts_dir: Arc<HashMap<AbsolutePathBuf, SkillMetadata>>,
     pub(crate) implicit_skills_by_doc_path: Arc<HashMap<AbsolutePathBuf, SkillMetadata>>,
+    pub(crate) implicit_skills_by_root_dir: Arc<HashMap<AbsolutePathBuf, SkillMetadata>>,
 }
 
 impl SkillLoadOutcome {
@@ -203,6 +204,14 @@ pub fn filter_skill_load_outcome_for_product(
     outcome.implicit_skills_by_doc_path = Arc::new(
         outcome
             .implicit_skills_by_doc_path
+            .iter()
+            .filter(|(_, skill)| skill.matches_product_restriction_for_product(restriction_product))
+            .map(|(path, skill)| (path.clone(), skill.clone()))
+            .collect(),
+    );
+    outcome.implicit_skills_by_root_dir = Arc::new(
+        outcome
+            .implicit_skills_by_root_dir
             .iter()
             .filter(|(_, skill)| skill.matches_product_restriction_for_product(restriction_product))
             .map(|(path, skill)| (path.clone(), skill.clone()))
