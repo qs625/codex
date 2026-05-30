@@ -135,6 +135,17 @@ export function StopIcon() {
   );
 }
 
+export function MicrophoneIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="9" y="4" width="6" height="10" rx="3" />
+      <path d="M7 11.5a5 5 0 0 0 10 0" />
+      <path d="M12 16.5v3.5" />
+      <path d="M9 20h6" />
+    </svg>
+  );
+}
+
 export function FilterIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">

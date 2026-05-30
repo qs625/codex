@@ -1072,6 +1072,30 @@ svg {
   gap: 8px;
 }
 
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.composer-status {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #57534e;
+}
+
+.composer-status-requesting,
+.composer-status-connecting,
+.composer-status-listening,
+.composer-status-stopping {
+  color: #57534e;
+}
+
+.composer-status-error {
+  color: #b91c1c;
+}
+
 .tool-button,
 .send-button {
   display: grid;
@@ -1085,6 +1109,19 @@ svg {
   height: 34px;
   border-radius: 12px;
   color: #57534e;
+}
+
+.voice-button.is-active {
+  color: #ffffff;
+  border-color: rgba(120, 53, 15, 0.16);
+  background: linear-gradient(180deg, #f59e0b 0%, #d97706 100%);
+  box-shadow: 0 10px 20px rgba(217, 119, 6, 0.22);
+}
+
+.voice-button.is-error {
+  color: #b91c1c;
+  border-color: rgba(185, 28, 28, 0.18);
+  background: rgba(254, 242, 242, 0.96);
 }
 
 .send-button {

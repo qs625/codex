@@ -309,6 +309,47 @@ export type NotificationEnvelope = {
   };
 };
 
+export type VoiceCaptureStatus =
+  | "idle"
+  | "requesting"
+  | "connecting"
+  | "listening"
+  | "stopping"
+  | "error";
+
+export type ThreadRealtimeStartedNotification = {
+  threadId: string;
+  realtimeSessionId: string | null;
+  version: string;
+};
+
+export type ThreadRealtimeTranscriptDeltaNotification = {
+  threadId: string;
+  role: string;
+  delta: string;
+};
+
+export type ThreadRealtimeTranscriptDoneNotification = {
+  threadId: string;
+  role: string;
+  text: string;
+};
+
+export type ThreadRealtimeSdpNotification = {
+  threadId: string;
+  sdp: string;
+};
+
+export type ThreadRealtimeErrorNotification = {
+  threadId: string;
+  message: string;
+};
+
+export type ThreadRealtimeClosedNotification = {
+  threadId: string;
+  reason: string | null;
+};
+
 export type TreeNode = {
   key: string;
   label: string;

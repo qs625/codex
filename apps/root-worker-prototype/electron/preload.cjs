@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   openLink: (target) => ipcRenderer.invoke("codex:openLink", target),
   sendMessage: (payload) => ipcRenderer.invoke("codex:sendMessage", payload),
   interruptTurn: (payload) => ipcRenderer.invoke("codex:interruptTurn", payload),
+  startRealtime: (payload) => ipcRenderer.invoke("codex:startRealtime", payload),
+  stopRealtime: (payload) => ipcRenderer.invoke("codex:stopRealtime", payload),
   subscribe(listener) {
     const onNotification = (_event, notification) => {
       listener({ type: "notification", notification });

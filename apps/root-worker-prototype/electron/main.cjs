@@ -193,6 +193,23 @@ ipcMain.handle("codex:interruptTurn", async (_event, payload) => {
   });
 });
 
+ipcMain.handle("codex:startRealtime", async (_event, payload) => {
+  return appServerClient.request("thread/realtime/start", {
+    threadId: payload.threadId,
+    outputModality: payload.outputModality ?? "text",
+    prompt: payload.prompt ?? undefined,
+    realtimeSessionId: payload.realtimeSessionId ?? undefined,
+    transport: payload.transport,
+    voice: payload.voice ?? undefined,
+  });
+});
+
+ipcMain.handle("codex:stopRealtime", async (_event, payload) => {
+  return appServerClient.request("thread/realtime/stop", {
+    threadId: payload.threadId,
+  });
+});
+
 app.whenReady().then(() => {
   void ensureDefaultWorkspace()
     .then(() => createWindow())

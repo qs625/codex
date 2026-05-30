@@ -38,6 +38,12 @@ import {
   updateThreadTurn,
   upsertThread,
 } from "./lib/thread";
+import {
+  appendVoiceTranscriptDelta,
+  buildVoiceDraft,
+  finalizeVoiceTranscriptSegment,
+  type VoiceDraftState,
+} from "./lib/voiceInput";
 import type {
   BootstrapResponse,
   ComposerImage,
@@ -53,8 +59,15 @@ import type {
   ThreadSkill,
   ThreadTokenUsage,
   ThreadUsage,
+  ThreadRealtimeClosedNotification,
+  ThreadRealtimeErrorNotification,
+  ThreadRealtimeSdpNotification,
+  ThreadRealtimeStartedNotification,
+  ThreadRealtimeTranscriptDeltaNotification,
+  ThreadRealtimeTranscriptDoneNotification,
   TreeMenuState,
   Turn,
+  VoiceCaptureStatus,
 } from "./types";
 
 let initialRootThreadPromise: Promise<Thread> | null = null;
@@ -65,6 +78,11 @@ const LEFT_PANEL_MIN_RATIO = 0.13;
 const LEFT_PANEL_MAX_RATIO = 0.34;
 const RIGHT_PANEL_MIN_RATIO = 0.22;
 const RIGHT_PANEL_MAX_RATIO = 0.46;
+
+type ActiveVoiceSession = {
+  threadId: string;
+  status: VoiceCaptureStatus;
+};
 
 function getViewportWidth() {
   return window.innerWidth;
@@ -97,6 +115,8 @@ function App() {
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [voiceCaptureStatus, setVoiceCaptureStatus] = useState<VoiceCaptureStatus>("idle");
+  const [voiceCaptureMessage, setVoiceCaptureMessage] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const conversationStateRef = useRef<ReturnType<
@@ -109,6 +129,10 @@ function App() {
   const symbolForwardStackRef = useRef<FileLocation[]>([]);
   const selectedThreadIdRef = useRef<string | null>(null);
   const loadThreadRequestIdRef = useRef(0);
+  const voiceSessionRef = useRef<ActiveVoiceSession | null>(null);
+  const voiceDraftStateRef = useRef<VoiceDraftState | null>(null);
+  const voicePeerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const voiceMediaStreamRef = useRef<MediaStream | null>(null);
   const resizeStateRef = useRef<{
     startX: number;
     startWidth: number;
@@ -145,6 +169,12 @@ function App() {
     }
   }, [selectedThreadId]);
 
+  useEffect(() => {
+    return () => {
+      cleanupVoiceTransport();
+    };
+  }, []);
+
   const selectedThread = useMemo(
     () =>
       selectedThreadId
@@ -153,9 +183,46 @@ function App() {
     [selectedThreadId, threads],
   );
 
+  function cleanupVoiceTransport() {
+    voicePeerConnectionRef.current?.close();
+    voicePeerConnectionRef.current = null;
+
+    const mediaStream = voiceMediaStreamRef.current;
+    if (mediaStream) {
+      for (const track of mediaStream.getTracks()) {
+        track.stop();
+      }
+    }
+    voiceMediaStreamRef.current = null;
+  }
+
+  function clearVoiceSession(nextStatus: VoiceCaptureStatus, nextMessage: string | null) {
+    cleanupVoiceTransport();
+    voiceSessionRef.current = null;
+    voiceDraftStateRef.current = null;
+    setVoiceCaptureStatus(nextStatus);
+    setVoiceCaptureMessage(nextMessage);
+  }
+
+  function syncVoiceDraftState(nextState: VoiceDraftState) {
+    voiceDraftStateRef.current = nextState;
+    setDraft(buildVoiceDraft(nextState));
+  }
+
   useEffect(() => {
     setAvailableSkills([]);
     setDraftSkills([]);
+  }, [selectedThreadId]);
+
+  useEffect(() => {
+    const activeVoiceSession = voiceSessionRef.current;
+    if (!activeVoiceSession) {
+      return;
+    }
+    if (selectedThreadId === activeVoiceSession.threadId) {
+      return;
+    }
+    void stopVoiceCapture(activeVoiceSession.threadId, true);
   }, [selectedThreadId]);
 
   async function loadAvailableSkills(cwd: string) {
@@ -167,17 +234,18 @@ function App() {
   }
 
   useEffect(() => {
-    const cwd = selectedThread?.cwd;
+    const cwd = selectedThread?.cwd ?? null;
     if (!cwd) {
       setAvailableSkills([]);
       return;
     }
+    const threadCwd = cwd;
 
     let cancelled = false;
 
     async function refreshAvailableSkills() {
       try {
-        const skills = await loadAvailableSkills(cwd);
+        const skills = await loadAvailableSkills(threadCwd);
         if (cancelled) {
           return;
         }
@@ -214,7 +282,7 @@ function App() {
   }, [filePreview]);
 
   useEffect(() => {
-    function handlePointerMove(event: PointerEvent) {
+    function handlePointerMove(event: globalThis.PointerEvent) {
       const resizeState = resizeStateRef.current;
       if (!resizeState) {
         return;
@@ -277,17 +345,18 @@ function App() {
       return;
     }
 
+    const previewPath = filePreview.path;
     let cancelled = false;
 
     async function refreshLspStatus() {
       try {
-        const status = await window.codexDesktop.lspStatus(filePreview.path);
+        const status = await window.codexDesktop.lspStatus(previewPath);
         if (cancelled) {
           return;
         }
 
         setFilePreview((current) =>
-          current?.path === filePreview.path
+          current?.path === previewPath
             ? {
                 ...current,
                 lsp: {
@@ -692,8 +761,129 @@ function App() {
     );
   }
 
+  function handleDraftChange(value: string) {
+    setDraft(value);
+    if (voiceSessionRef.current?.threadId === selectedThreadId) {
+      voiceDraftStateRef.current = {
+        baseDraft: value,
+        committedSegments: [],
+        liveSegment: "",
+      };
+    }
+  }
+
   function removeDraftSkill(path: string) {
     setDraftSkills((current) => current.filter((skill) => skill.path !== path));
+  }
+
+  async function startVoiceCapture() {
+    if (
+      !selectedThreadId ||
+      voiceSessionRef.current ||
+      !navigator.mediaDevices?.getUserMedia ||
+      typeof RTCPeerConnection === "undefined"
+    ) {
+      if (!navigator.mediaDevices?.getUserMedia || typeof RTCPeerConnection === "undefined") {
+        setVoiceCaptureStatus("error");
+        setVoiceCaptureMessage("Voice input is not supported in this renderer.");
+      }
+      return;
+    }
+
+    setError(null);
+    setVoiceCaptureStatus("requesting");
+    setVoiceCaptureMessage("Requesting microphone access…");
+    const threadId = selectedThreadId;
+
+    try {
+      const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const peerConnection = new RTCPeerConnection();
+
+      voiceMediaStreamRef.current = mediaStream;
+      voicePeerConnectionRef.current = peerConnection;
+      voiceSessionRef.current = {
+        threadId,
+        status: "connecting",
+      };
+      voiceDraftStateRef.current = {
+        baseDraft: draft,
+        committedSegments: [],
+        liveSegment: "",
+      };
+
+      peerConnection.onconnectionstatechange = () => {
+        if (voiceSessionRef.current?.threadId !== threadId) {
+          return;
+        }
+        if (peerConnection.connectionState === "connected") {
+          setVoiceCaptureStatus("listening");
+          setVoiceCaptureMessage("Listening… tap stop when finished.");
+          return;
+        }
+        if (
+          peerConnection.connectionState === "failed" ||
+          peerConnection.connectionState === "disconnected"
+        ) {
+          clearVoiceSession(
+            "error",
+            `Voice connection ${peerConnection.connectionState}.`,
+          );
+        }
+      };
+
+      for (const track of mediaStream.getAudioTracks()) {
+        peerConnection.addTrack(track, mediaStream);
+      }
+
+      peerConnection.createDataChannel("oai-events");
+
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+
+      const sdp = peerConnection.localDescription?.sdp;
+      if (!sdp) {
+        throw new Error("Failed to prepare a realtime voice session.");
+      }
+
+      setVoiceCaptureStatus("connecting");
+      setVoiceCaptureMessage("Connecting voice input…");
+
+      await window.codexDesktop.startRealtime({
+        threadId,
+        outputModality: "text",
+        transport: {
+          type: "webrtc",
+          sdp,
+        },
+      });
+    } catch (voiceError) {
+      clearVoiceSession("error", toErrorMessage(voiceError));
+    }
+  }
+
+  async function stopVoiceCapture(threadId = voiceSessionRef.current?.threadId, silent = false) {
+    if (!threadId) {
+      return;
+    }
+
+    setVoiceCaptureStatus("stopping");
+    setVoiceCaptureMessage(silent ? null : "Stopping voice input…");
+    cleanupVoiceTransport();
+
+    try {
+      await window.codexDesktop.stopRealtime({ threadId });
+      clearVoiceSession("idle", null);
+    } catch (stopError) {
+      clearVoiceSession("error", toErrorMessage(stopError));
+    }
+  }
+
+  function toggleVoiceCapture() {
+    if (voiceSessionRef.current) {
+      void stopVoiceCapture();
+      return;
+    }
+    void startVoiceCapture();
   }
 
   async function handleComposerPaste(
@@ -888,6 +1078,93 @@ function App() {
           );
           break;
         }
+        case "thread/realtime/started": {
+          const notification = params as ThreadRealtimeStartedNotification;
+          if (voiceSessionRef.current?.threadId !== notification.threadId) {
+            break;
+          }
+          voiceSessionRef.current = {
+            threadId: notification.threadId,
+            status: "connecting",
+          };
+          setVoiceCaptureStatus("connecting");
+          setVoiceCaptureMessage("Voice session started. Finalizing connection…");
+          break;
+        }
+        case "thread/realtime/sdp": {
+          const notification = params as ThreadRealtimeSdpNotification;
+          if (voiceSessionRef.current?.threadId !== notification.threadId) {
+            break;
+          }
+          const peerConnection = voicePeerConnectionRef.current;
+          if (!peerConnection) {
+            break;
+          }
+          void peerConnection
+            .setRemoteDescription({
+              type: "answer",
+              sdp: notification.sdp,
+            })
+            .then(() => {
+              if (voiceSessionRef.current?.threadId !== notification.threadId) {
+                return;
+              }
+              voiceSessionRef.current = {
+                threadId: notification.threadId,
+                status: "listening",
+              };
+              setVoiceCaptureStatus("listening");
+              setVoiceCaptureMessage("Listening… tap stop when finished.");
+            })
+            .catch((voiceError) => {
+              clearVoiceSession("error", toErrorMessage(voiceError));
+            });
+          break;
+        }
+        case "thread/realtime/transcript/delta": {
+          const notification = params as ThreadRealtimeTranscriptDeltaNotification;
+          if (
+            notification.role !== "user" ||
+            voiceSessionRef.current?.threadId !== notification.threadId ||
+            !voiceDraftStateRef.current
+          ) {
+            break;
+          }
+          syncVoiceDraftState(
+            appendVoiceTranscriptDelta(voiceDraftStateRef.current, notification.delta),
+          );
+          break;
+        }
+        case "thread/realtime/transcript/done": {
+          const notification = params as ThreadRealtimeTranscriptDoneNotification;
+          if (
+            notification.role !== "user" ||
+            voiceSessionRef.current?.threadId !== notification.threadId ||
+            !voiceDraftStateRef.current
+          ) {
+            break;
+          }
+          syncVoiceDraftState(
+            finalizeVoiceTranscriptSegment(voiceDraftStateRef.current, notification.text),
+          );
+          break;
+        }
+        case "thread/realtime/error": {
+          const notification = params as ThreadRealtimeErrorNotification;
+          if (voiceSessionRef.current?.threadId !== notification.threadId) {
+            break;
+          }
+          clearVoiceSession("error", notification.message);
+          break;
+        }
+        case "thread/realtime/closed": {
+          const notification = params as ThreadRealtimeClosedNotification;
+          if (voiceSessionRef.current?.threadId !== notification.threadId) {
+            break;
+          }
+          clearVoiceSession("idle", notification.reason ? `Voice input ended: ${notification.reason}` : null);
+          break;
+        }
         default:
           break;
       }
@@ -1046,7 +1323,7 @@ function App() {
           isStoppingTurn={isStoppingTurn}
           onAddDraftSkill={addDraftSkill}
           onConversationScroll={handleConversationScroll}
-          onDraftChange={setDraft}
+          onDraftChange={handleDraftChange}
           onHandleComposerPaste={(event) => void handleComposerPaste(event)}
           onHandleImageSelection={(event) => void handleImageSelection(event)}
           onOpenLocalFile={(target) => void handleOpenLocalFile(target)}
@@ -1054,8 +1331,11 @@ function App() {
           onRemoveDraftSkill={removeDraftSkill}
           onSendMessage={() => void sendMessage()}
           onStopTurn={() => void interruptCurrentTurn()}
+          onToggleVoiceCapture={toggleVoiceCapture}
           selectedThread={selectedThread}
           selectedThreadId={selectedThreadId}
+          voiceCaptureMessage={voiceCaptureMessage}
+          voiceCaptureStatus={voiceCaptureStatus}
         />
         <div
           className="panel-resizer"

@@ -97,6 +97,20 @@ declare global {
         expectedTurnId?: string | null;
       }) => Promise<unknown>;
       interruptTurn: (payload: { threadId: string; turnId: string }) => Promise<unknown>;
+      startRealtime: (payload: {
+        threadId: string;
+        outputModality?: "text" | "audio";
+        prompt?: string | null;
+        realtimeSessionId?: string | null;
+        transport?:
+          | { type: "websocket" }
+          | {
+              type: "webrtc";
+              sdp: string;
+            };
+        voice?: string | null;
+      }) => Promise<unknown>;
+      stopRealtime: (payload: { threadId: string }) => Promise<unknown>;
       subscribe: (
         listener: (event: {
           type: "notification" | "status";

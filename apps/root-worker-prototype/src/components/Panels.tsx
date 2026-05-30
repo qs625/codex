@@ -15,6 +15,7 @@ import {
   CodeIcon,
   GearIcon,
   ImageIcon,
+  MicrophoneIcon,
   MoreIcon,
   OpenIcon,
   PaperclipIcon,
@@ -41,6 +42,7 @@ import type {
   ThreadSkill,
   TreeMenuState,
   TreeNode,
+  VoiceCaptureStatus,
 } from "../types";
 
 export function SidebarPanel({
@@ -144,8 +146,11 @@ export function ConversationPanel({
   onRemoveDraftSkill,
   onSendMessage,
   onStopTurn,
+  onToggleVoiceCapture,
   selectedThread,
   selectedThreadId,
+  voiceCaptureMessage,
+  voiceCaptureStatus,
 }: {
   availableSkills: ThreadSkill[];
   conversationCells: ConversationCell[];
@@ -167,8 +172,11 @@ export function ConversationPanel({
   onRemoveDraftSkill: (path: string) => void;
   onSendMessage: () => void;
   onStopTurn: () => void;
+  onToggleVoiceCapture: () => void;
   selectedThread: Thread | null;
   selectedThreadId: string | null;
+  voiceCaptureMessage: string | null;
+  voiceCaptureStatus: VoiceCaptureStatus;
 }) {
   const lastTurn = selectedThread?.turns.at(-1) ?? null;
   const lastTurnInProgress =
@@ -192,6 +200,11 @@ export function ConversationPanel({
   );
   const skillMenuVisible =
     skillQuery !== null && skillSuggestions.length > 0 && dismissedSkillQuery !== skillQuery;
+  const voiceCaptureActive =
+    voiceCaptureStatus === "requesting" ||
+    voiceCaptureStatus === "connecting" ||
+    voiceCaptureStatus === "listening" ||
+    voiceCaptureStatus === "stopping";
 
   useEffect(() => {
     setSelectedSkillIndex(0);
@@ -401,6 +414,11 @@ export function ConversationPanel({
               ))}
             </div>
           ) : null}
+          {voiceCaptureMessage ? (
+            <div className={`composer-status composer-status-${voiceCaptureStatus}`}>
+              {voiceCaptureMessage}
+            </div>
+          ) : null}
           <div className="composer-toolbar">
             <div className="composer-tools">
               <button type="button" className="tool-button" aria-label="Attach file">
@@ -418,6 +436,18 @@ export function ConversationPanel({
                 <ImageIcon />
               </button>
             </div>
+            <div className="composer-actions">
+              <button
+                type="button"
+                className={`tool-button voice-button ${voiceCaptureActive ? "is-active" : ""} ${
+                  voiceCaptureStatus === "error" ? "is-error" : ""
+                }`}
+                aria-label={voiceCaptureActive ? "Stop voice input" : "Start voice input"}
+                disabled={!selectedThreadId || !!activeTurnId || isSending || isStoppingTurn}
+                onClick={onToggleVoiceCapture}
+              >
+                {voiceCaptureActive ? <StopIcon /> : <MicrophoneIcon />}
+              </button>
             <button
               type="button"
               className={`send-button ${activeTurnId ? "is-stop-button" : ""}`}
@@ -426,6 +456,7 @@ export function ConversationPanel({
                   ? isStoppingTurn
                   : !selectedThreadId ||
                     isSending ||
+                    voiceCaptureActive ||
                     (!draft.trim() && draftImages.length === 0 && draftSkills.length === 0)
               }
               aria-label={activeTurnId ? "Stop current turn" : "Send message"}
@@ -433,6 +464,7 @@ export function ConversationPanel({
             >
               {activeTurnId ? <StopIcon /> : <SendIcon />}
             </button>
+            </div>
           </div>
         </div>
       </footer>
