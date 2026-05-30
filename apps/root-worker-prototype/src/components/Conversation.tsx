@@ -657,27 +657,11 @@ export const ToolRow = memo(function ToolRow({
           </div>
         </summary>
         {hasSingleEntry ? (
-          <section className="tool-card-item tool-card-item-single">
-            <div className="tool-card-item-head tool-card-item-head-static">
-              <div className="tool-card-copy">
-                <strong>{firstEntry.toolName ?? firstEntry.author}</strong>
-                <span>{firstEntry.text}</span>
-              </div>
-              <div className="tool-card-meta">
-                <span
-                  className={`tool-status-badge ${threadStatusClass(firstEntry.toolStatus ?? "todo")}`}
-                >
-                  {firstEntry.toolStatus ?? "unknown"}
-                </span>
-                <time>{firstEntry.timestamp}</time>
-              </div>
+          isOpen && firstEntry.toolDetails ? (
+            <div className="tool-card-body tool-card-item-body">
+              <pre>{firstEntry.toolDetails}</pre>
             </div>
-            {isOpen && firstEntry.toolDetails ? (
-              <div className="tool-card-body tool-card-item-body">
-                <pre>{firstEntry.toolDetails}</pre>
-              </div>
-            ) : null}
-          </section>
+          ) : null
         ) : (
           <div className="tool-card-list">
             {entries.map((entry) => {
