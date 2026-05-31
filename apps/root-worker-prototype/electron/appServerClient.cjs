@@ -47,7 +47,8 @@ class AppServerClient extends EventEmitter {
   }
 
   start() {
-    const command = process.env.CODEX_APP_SERVER_CMD ?? DEFAULT_APP_SERVER_COMMAND;
+    const command =
+      process.env.CODEX_APP_SERVER_CMD ?? DEFAULT_APP_SERVER_COMMAND;
     const codexHome = process.env.CODEX_HOME ?? DEFAULT_CODEX_HOME;
     fs.mkdirSync(codexHome, { recursive: true });
     this.child = spawn(command, {
@@ -109,7 +110,9 @@ class AppServerClient extends EventEmitter {
         pid: this.child?.pid ?? null,
       });
     } catch (error) {
-      this.readyReject(error instanceof Error ? error : new Error(String(error)));
+      this.readyReject(
+        error instanceof Error ? error : new Error(String(error)),
+      );
     }
   }
 
@@ -144,7 +147,10 @@ class AppServerClient extends EventEmitter {
       return;
     }
 
-    if (typeof message.id === "number" && Object.prototype.hasOwnProperty.call(message, "result")) {
+    if (
+      typeof message.id === "number" &&
+      Object.prototype.hasOwnProperty.call(message, "result")
+    ) {
       const pending = this.pending.get(message.id);
       if (!pending) {
         return;
@@ -154,7 +160,10 @@ class AppServerClient extends EventEmitter {
       return;
     }
 
-    if (typeof message.id === "number" && Object.prototype.hasOwnProperty.call(message, "error")) {
+    if (
+      typeof message.id === "number" &&
+      Object.prototype.hasOwnProperty.call(message, "error")
+    ) {
       const pending = this.pending.get(message.id);
       if (!pending) {
         return;
@@ -183,9 +192,15 @@ module.exports = {
 };
 
 function resolveWorkspaceCodexBinary() {
-  const workspaceBinary = path.resolve(__dirname, "../../../codex-rs/target/debug/codex");
-  if (fs.existsSync(workspaceBinary)) {
-    return shellQuote(workspaceBinary);
+  for (
+    let current = __dirname;
+    current !== path.dirname(current);
+    current = path.dirname(current)
+  ) {
+    const workspaceBinary = path.join(current, "codex-rs/target/debug/codex");
+    if (fs.existsSync(workspaceBinary)) {
+      return shellQuote(workspaceBinary);
+    }
   }
   return "codex";
 }

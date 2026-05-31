@@ -24,9 +24,15 @@ declare global {
         skills: unknown[];
         errors: string[];
       }>;
-      createThread: (payload: { cwd?: string; name?: string }) => Promise<{ thread: unknown }>;
+      createThread: (payload: {
+        cwd?: string;
+        name?: string;
+      }) => Promise<{ thread: unknown }>;
       archiveThread: (threadId: string) => Promise<{ ok: boolean }>;
-      readThread: (threadId: string, subscribe?: boolean) => Promise<{ thread: unknown }>;
+      readThread: (
+        threadId: string,
+        subscribe?: boolean,
+      ) => Promise<{ thread: unknown }>;
       readLocalImage: (target: string) => Promise<{
         path: string;
         name: string;
@@ -45,7 +51,13 @@ declare global {
           enabled: boolean;
           languageId: string | null;
           lspStatus: {
-            phase: "plain" | "unavailable" | "starting" | "indexing" | "ready" | "error";
+            phase:
+              | "plain"
+              | "unavailable"
+              | "starting"
+              | "indexing"
+              | "ready"
+              | "error";
             detail: string | null;
           };
           serverLabel: string | null;
@@ -75,7 +87,13 @@ declare global {
       lspStatus: (filePath: string) => Promise<{
         enabled: boolean;
         lspStatus: {
-          phase: "plain" | "unavailable" | "starting" | "indexing" | "ready" | "error";
+          phase:
+            | "plain"
+            | "unavailable"
+            | "starting"
+            | "indexing"
+            | "ready"
+            | "error";
           detail: string | null;
         };
         reason: string | null;
@@ -96,7 +114,15 @@ declare global {
         }>;
         expectedTurnId?: string | null;
       }) => Promise<unknown>;
-      interruptTurn: (payload: { threadId: string; turnId: string }) => Promise<unknown>;
+      interruptTurn: (payload: {
+        threadId: string;
+        turnId: string;
+      }) => Promise<unknown>;
+      requestMicrophoneAccess: () => Promise<{
+        granted: boolean;
+        status: string;
+        platform: string;
+      }>;
       startRealtime: (payload: {
         threadId: string;
         outputModality?: "text" | "audio";

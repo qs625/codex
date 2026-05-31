@@ -6,17 +6,24 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   listThreads: (cwd) => ipcRenderer.invoke("codex:listThreads", cwd),
   listSkills: (cwd) => ipcRenderer.invoke("codex:listSkills", cwd),
   createThread: (payload) => ipcRenderer.invoke("codex:createThread", payload),
-  archiveThread: (threadId) => ipcRenderer.invoke("codex:archiveThread", threadId),
+  archiveThread: (threadId) =>
+    ipcRenderer.invoke("codex:archiveThread", threadId),
   readThread: (threadId, subscribe = true) =>
     ipcRenderer.invoke("codex:readThread", threadId, subscribe),
   readLocalFile: (target) => ipcRenderer.invoke("codex:readLocalFile", target),
-  readLocalImage: (target) => ipcRenderer.invoke("codex:readLocalImage", target),
-  lspDefinition: (payload) => ipcRenderer.invoke("codex:lspDefinition", payload),
+  readLocalImage: (target) =>
+    ipcRenderer.invoke("codex:readLocalImage", target),
+  lspDefinition: (payload) =>
+    ipcRenderer.invoke("codex:lspDefinition", payload),
   lspStatus: (filePath) => ipcRenderer.invoke("codex:lspStatus", filePath),
   openLink: (target) => ipcRenderer.invoke("codex:openLink", target),
   sendMessage: (payload) => ipcRenderer.invoke("codex:sendMessage", payload),
-  interruptTurn: (payload) => ipcRenderer.invoke("codex:interruptTurn", payload),
-  startRealtime: (payload) => ipcRenderer.invoke("codex:startRealtime", payload),
+  interruptTurn: (payload) =>
+    ipcRenderer.invoke("codex:interruptTurn", payload),
+  requestMicrophoneAccess: () =>
+    ipcRenderer.invoke("codex:requestMicrophoneAccess"),
+  startRealtime: (payload) =>
+    ipcRenderer.invoke("codex:startRealtime", payload),
   stopRealtime: (payload) => ipcRenderer.invoke("codex:stopRealtime", payload),
   subscribe(listener) {
     const onNotification = (_event, notification) => {

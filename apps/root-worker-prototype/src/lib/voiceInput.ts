@@ -5,7 +5,10 @@ export type VoiceDraftState = {
 };
 
 export function buildVoiceDraft(state: VoiceDraftState): string {
-  const transcript = buildVoiceTranscript(state.committedSegments, state.liveSegment);
+  const transcript = buildVoiceTranscript(
+    state.committedSegments,
+    state.liveSegment,
+  );
   if (!transcript) {
     return state.baseDraft;
   }
@@ -17,7 +20,10 @@ export function buildVoiceDraft(state: VoiceDraftState): string {
   return `${state.baseDraft}${separator}${transcript}`;
 }
 
-export function buildVoiceTranscript(committedSegments: string[], liveSegment: string): string {
+export function buildVoiceTranscript(
+  committedSegments: string[],
+  liveSegment: string,
+): string {
   const transcriptParts = committedSegments
     .map((segment) => segment.trim())
     .filter(Boolean);
@@ -30,7 +36,10 @@ export function buildVoiceTranscript(committedSegments: string[], liveSegment: s
   return transcriptParts.join(" ");
 }
 
-export function appendVoiceTranscriptDelta(state: VoiceDraftState, delta: string): VoiceDraftState {
+export function appendVoiceTranscriptDelta(
+  state: VoiceDraftState,
+  delta: string,
+): VoiceDraftState {
   return {
     ...state,
     liveSegment: `${state.liveSegment}${delta}`,

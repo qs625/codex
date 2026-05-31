@@ -1,13 +1,27 @@
 const path = require("node:path");
 const fs = require("node:fs/promises");
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  session,
+  shell,
+  systemPreferences,
+} = require("electron");
 const { AppServerClient } = require("./appServerClient.cjs");
-const { isLocalLinkTarget, localFilePathFromTarget, parseLocalFileTarget } = require("./fileTargets.cjs");
+const {
+  isLocalLinkTarget,
+  localFilePathFromTarget,
+  parseLocalFileTarget,
+} = require("./fileTargets.cjs");
 const { LspManager } = require("./lsp/manager.cjs");
 const { mergeThreadSnapshots } = require("./threadSnapshots.cjs");
 const { withRealtimeConversationFeature } = require("./threadConfig.cjs");
 const { buildTurnInput } = require("./turnInput.cjs");
-const { ensureDefaultWorkspace, resolveDefaultWorkspace } = require("./workspace.cjs");
+const {
+  ensureDefaultWorkspace,
+  resolveDefaultWorkspace,
+} = require("./workspace.cjs");
 
 const rendererMode = process.env.ROOT_WORKER_RENDERER_MODE ?? "built";
 const isDev = rendererMode === "dev";
@@ -47,6 +61,26 @@ async function createWindow() {
   }
 
   return window;
+}
+
+async function primeMicrophoneAccessPrompt() {
+  if (process.platform !== "darwin") {
+    return;
+  }
+  const before = systemPreferences.getMediaAccessStatus("microphone");
+  if (before !== "not-determined") {
+    return;
+  }
+  try {
+    await systemPreferences.askForMediaAccess("microphone");
+  } catch (error) {
+    console.error(
+      "[prototype] microphone access prime failed",
+      JSON.stringify({
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }
 }
 
 function broadcast(channel, payload) {
@@ -134,25 +168,30 @@ ipcMain.handle("codex:archiveThread", async (_event, threadId) => {
   return { ok: true };
 });
 
-ipcMain.handle("codex:readThread", async (_event, threadId, subscribe = true) => {
-  let runtime = null;
-  let resumedThread = null;
-  if (subscribe) {
-    const resume = await appServerClient.request(
-      "thread/resume",
-      withRealtimeConversationFeature({ threadId }),
-    );
-    runtime = {
-      model: resume.model ?? null,
-      reasoningEffort: resume.reasoningEffort ?? null,
+ipcMain.handle(
+  "codex:readThread",
+  async (_event, threadId, subscribe = true) => {
+    let runtime = null;
+    let resumedThread = null;
+    if (subscribe) {
+      const resume = await appServerClient.request(
+        "thread/resume",
+        withRealtimeConversationFeature({ threadId }),
+      );
+      runtime = {
+        model: resume.model ?? null,
+        reasoningEffort: resume.reasoningEffort ?? null,
+      };
+      resumedThread = resume.thread
+        ? normalizeThread(resume.thread, runtime)
+        : null;
+    }
+    const payload = await readThread(threadId, true, runtime);
+    return {
+      thread: mergeThreadSnapshots(resumedThread, payload.thread),
     };
-    resumedThread = resume.thread ? normalizeThread(resume.thread, runtime) : null;
-  }
-  const payload = await readThread(threadId, true, runtime);
-  return {
-    thread: mergeThreadSnapshots(resumedThread, payload.thread),
-  };
-});
+  },
+);
 
 ipcMain.handle("codex:openLink", async (_event, target) => {
   await openLinkTarget(target);
@@ -203,6 +242,40 @@ ipcMain.handle("codex:interruptTurn", async (_event, payload) => {
   });
 });
 
+ipcMain.handle("codex:requestMicrophoneAccess", async () => {
+  if (process.platform !== "darwin") {
+    return {
+      granted: true,
+      status: "granted",
+      platform: process.platform,
+    };
+  }
+
+  const before = systemPreferences.getMediaAccessStatus("microphone");
+  if (before === "granted") {
+    return {
+      granted: true,
+      status: before,
+      platform: process.platform,
+    };
+  }
+  if (before === "denied" || before === "restricted") {
+    return {
+      granted: false,
+      status: before,
+      platform: process.platform,
+    };
+  }
+
+  const granted = await systemPreferences.askForMediaAccess("microphone");
+  const after = systemPreferences.getMediaAccessStatus("microphone");
+  return {
+    granted: granted || after === "not-determined",
+    status: after,
+    platform: process.platform,
+  };
+});
+
 ipcMain.handle("codex:startRealtime", async (_event, payload) => {
   return appServerClient.request("thread/realtime/start", {
     threadId: payload.threadId,
@@ -221,8 +294,25 @@ ipcMain.handle("codex:stopRealtime", async (_event, payload) => {
 });
 
 app.whenReady().then(() => {
+  session.defaultSession.setPermissionCheckHandler(
+    (_webContents, permission) => {
+      return permission === "media";
+    },
+  );
+  session.defaultSession.setPermissionRequestHandler(
+    (_webContents, permission, callback) => {
+      if (permission === "media") {
+        callback(true);
+        return;
+      }
+      callback(false);
+    },
+  );
   void ensureDefaultWorkspace()
-    .then(() => createWindow())
+    .then(async () => {
+      await primeMicrophoneAccessPrompt();
+      return createWindow();
+    })
     .catch(handleStartupError);
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -281,12 +371,17 @@ async function listSkills(cwd) {
   const entry = response.data?.[0];
   return {
     skills: (entry?.skills ?? []).map(normalizeAvailableSkill),
-    errors: (entry?.errors ?? []).map((error) => error.message ?? String(error)),
+    errors: (entry?.errors ?? []).map(
+      (error) => error.message ?? String(error),
+    ),
   };
 }
 
 async function readThread(threadId, includeTurns, runtime = null) {
-  const response = await appServerClient.request("thread/read", { threadId, includeTurns });
+  const response = await appServerClient.request("thread/read", {
+    threadId,
+    includeTurns,
+  });
   return { thread: normalizeThread(response.thread, runtime) };
 }
 
@@ -326,7 +421,9 @@ function normalizeNotification(notification) {
       params: {
         ...notification.params,
         tokenUsage: normalizeThreadTokenUsage(notification.params.tokenUsage),
-        contextUsage: normalizeThreadContextUsage(notification.params.contextUsage),
+        contextUsage: normalizeThreadContextUsage(
+          notification.params.contextUsage,
+        ),
       },
     };
   }
@@ -341,7 +438,10 @@ function normalizeNotification(notification) {
     };
   }
 
-  if (notification.method === "turn/started" || notification.method === "turn/completed") {
+  if (
+    notification.method === "turn/started" ||
+    notification.method === "turn/completed"
+  ) {
     return {
       ...notification,
       params: {
@@ -351,7 +451,10 @@ function normalizeNotification(notification) {
     };
   }
 
-  if (notification.method === "item/started" || notification.method === "item/completed") {
+  if (
+    notification.method === "item/started" ||
+    notification.method === "item/completed"
+  ) {
     return {
       ...notification,
       params: {
@@ -370,7 +473,10 @@ function normalizeThread(thread, runtime = null) {
       ? normalizeThreadTokenUsage(thread.tokenUsage)
       : null
     : null;
-  const contextUsage = Object.prototype.hasOwnProperty.call(thread, "contextUsage")
+  const contextUsage = Object.prototype.hasOwnProperty.call(
+    thread,
+    "contextUsage",
+  )
     ? thread.contextUsage
       ? normalizeThreadContextUsage(thread.contextUsage)
       : null
@@ -410,7 +516,9 @@ function normalizeThreadContextUsage(contextUsage) {
     ...contextUsage,
     loadedSkills: {
       ...contextUsage.loadedSkills,
-      skills: (contextUsage.loadedSkills?.skills ?? []).map(normalizeThreadSkillUsage),
+      skills: (contextUsage.loadedSkills?.skills ?? []).map(
+        normalizeThreadSkillUsage,
+      ),
     },
   };
 }
@@ -518,7 +626,11 @@ function normalizeUserInput(input) {
     return input;
   }
 
-  if (input.type === "image" && typeof input.url === "string" && input.image_url == null) {
+  if (
+    input.type === "image" &&
+    typeof input.url === "string" &&
+    input.image_url == null
+  ) {
     return {
       ...input,
       image_url: input.url,
@@ -596,7 +708,10 @@ function openLinkTarget(target) {
 
   const normalizedTarget = target.trim();
   if (isLocalLinkTarget(normalizedTarget)) {
-    const filePath = localFilePathFromTarget(normalizedTarget, defaultWorkspace);
+    const filePath = localFilePathFromTarget(
+      normalizedTarget,
+      defaultWorkspace,
+    );
     return openLocalPath(filePath);
   }
 
@@ -620,7 +735,11 @@ async function readLocalFileTarget(target) {
     throw new Error("Only local file links can be previewed");
   }
 
-  const { line, column, path: filePath } = parseLocalFileTarget(target.trim(), defaultWorkspace);
+  const {
+    line,
+    column,
+    path: filePath,
+  } = parseLocalFileTarget(target.trim(), defaultWorkspace);
   const displayPath = path.relative(defaultWorkspace, filePath) || filePath;
   const extension = path.extname(filePath).toLowerCase();
   const imageMime = imageMimeForExtension(extension);

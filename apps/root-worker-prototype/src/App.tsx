@@ -114,8 +114,11 @@ function App() {
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [voiceCaptureStatus, setVoiceCaptureStatus] = useState<VoiceCaptureStatus>("idle");
-  const [voiceCaptureMessage, setVoiceCaptureMessage] = useState<string | null>(null);
+  const [voiceCaptureStatus, setVoiceCaptureStatus] =
+    useState<VoiceCaptureStatus>("idle");
+  const [voiceCaptureMessage, setVoiceCaptureMessage] = useState<string | null>(
+    null,
+  );
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const conversationStateRef = useRef<ReturnType<
@@ -132,6 +135,7 @@ function App() {
   const voiceDraftStateRef = useRef<VoiceDraftState | null>(null);
   const voicePeerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const voiceMediaStreamRef = useRef<MediaStream | null>(null);
+  const voiceEventsChannelRef = useRef<RTCDataChannel | null>(null);
   const resizeStateRef = useRef<{
     startX: number;
     startWidth: number;
@@ -177,12 +181,13 @@ function App() {
   const selectedThread = useMemo(
     () =>
       selectedThreadId
-        ? threads.find((thread) => thread.id === selectedThreadId) ?? null
+        ? (threads.find((thread) => thread.id === selectedThreadId) ?? null)
         : null,
     [selectedThreadId, threads],
   );
 
   function cleanupVoiceTransport() {
+    voiceEventsChannelRef.current = null;
     voicePeerConnectionRef.current?.close();
     voicePeerConnectionRef.current = null;
 
@@ -195,7 +200,10 @@ function App() {
     voiceMediaStreamRef.current = null;
   }
 
-  function clearVoiceSession(nextStatus: VoiceCaptureStatus, nextMessage: string | null) {
+  function clearVoiceSession(
+    nextStatus: VoiceCaptureStatus,
+    nextMessage: string | null,
+  ) {
     cleanupVoiceTransport();
     voiceSessionRef.current = null;
     voiceDraftStateRef.current = null;
@@ -531,22 +539,39 @@ function App() {
   }
 
   function updateThreadSkillsLocally(threadId: string, skills: ThreadSkill[]) {
-    updateThreadLocally(threadId, (thread) => updateThreadSkills(thread, skills));
+    updateThreadLocally(threadId, (thread) =>
+      updateThreadSkills(thread, skills),
+    );
   }
 
-  function updateThreadUsageLocally(threadId: string, threadUsage: ThreadUsage) {
+  function updateThreadUsageLocally(
+    threadId: string,
+    threadUsage: ThreadUsage,
+  ) {
     updateThreadLocally(threadId, (thread) => ({
       ...thread,
       threadUsage: {
         tokenUsage:
-          threadUsage.tokenUsage ?? thread.threadUsage?.tokenUsage ?? thread.tokenUsage ?? null,
+          threadUsage.tokenUsage ??
+          thread.threadUsage?.tokenUsage ??
+          thread.tokenUsage ??
+          null,
         contextUsage:
-          threadUsage.contextUsage ?? thread.threadUsage?.contextUsage ?? thread.contextUsage ?? null,
+          threadUsage.contextUsage ??
+          thread.threadUsage?.contextUsage ??
+          thread.contextUsage ??
+          null,
       },
       tokenUsage:
-        threadUsage.tokenUsage ?? thread.threadUsage?.tokenUsage ?? thread.tokenUsage ?? null,
+        threadUsage.tokenUsage ??
+        thread.threadUsage?.tokenUsage ??
+        thread.tokenUsage ??
+        null,
       contextUsage:
-        threadUsage.contextUsage ?? thread.threadUsage?.contextUsage ?? thread.contextUsage ?? null,
+        threadUsage.contextUsage ??
+        thread.threadUsage?.contextUsage ??
+        thread.contextUsage ??
+        null,
     }));
   }
 
@@ -782,9 +807,14 @@ function App() {
       !navigator.mediaDevices?.getUserMedia ||
       typeof RTCPeerConnection === "undefined"
     ) {
-      if (!navigator.mediaDevices?.getUserMedia || typeof RTCPeerConnection === "undefined") {
+      if (
+        !navigator.mediaDevices?.getUserMedia ||
+        typeof RTCPeerConnection === "undefined"
+      ) {
         setVoiceCaptureStatus("error");
-        setVoiceCaptureMessage("Voice input is not supported in this renderer.");
+        setVoiceCaptureMessage(
+          "Voice input is not supported in this renderer.",
+        );
       }
       return;
     }
@@ -795,7 +825,19 @@ function App() {
     const threadId = selectedThreadId;
 
     try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const microphoneAccess =
+        await window.codexDesktop.requestMicrophoneAccess();
+      if (!microphoneAccess.granted) {
+        setVoiceCaptureStatus("error");
+        setVoiceCaptureMessage(
+          `Microphone access is ${microphoneAccess.status}. Enable it in System Settings.`,
+        );
+        return;
+      }
+
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
       const peerConnection = new RTCPeerConnection();
 
       voiceMediaStreamRef.current = mediaStream;
@@ -834,7 +876,8 @@ function App() {
         peerConnection.addTrack(track, mediaStream);
       }
 
-      peerConnection.createDataChannel("oai-events");
+      const eventsChannel = peerConnection.createDataChannel("oai-events");
+      voiceEventsChannelRef.current = eventsChannel;
 
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
@@ -860,7 +903,10 @@ function App() {
     }
   }
 
-  async function stopVoiceCapture(threadId = voiceSessionRef.current?.threadId, silent = false) {
+  async function stopVoiceCapture(
+    threadId = voiceSessionRef.current?.threadId,
+    silent = false,
+  ) {
     const pendingStop = beginVoiceCaptureStop(threadId, silent);
     if (!pendingStop) {
       return;
@@ -869,10 +915,25 @@ function App() {
     voiceSessionRef.current = pendingStop.nextSession;
     setVoiceCaptureStatus(pendingStop.nextStatus);
     setVoiceCaptureMessage(pendingStop.nextMessage);
-    cleanupVoiceTransport();
+
+    const eventsChannel = voiceEventsChannelRef.current;
+    if (eventsChannel?.readyState === "open") {
+      try {
+        eventsChannel.send(
+          JSON.stringify({ type: "input_audio_buffer.commit" }),
+        );
+        await new Promise((resolve) => window.setTimeout(resolve, 1800));
+      } catch (commitError) {
+        clearVoiceSession("error", toErrorMessage(commitError));
+        return;
+      }
+    }
 
     try {
-      await window.codexDesktop.stopRealtime({ threadId: pendingStop.nextSession.threadId });
+      await window.codexDesktop.stopRealtime({
+        threadId: pendingStop.nextSession.threadId,
+      });
+      cleanupVoiceTransport();
     } catch (stopError) {
       clearVoiceSession("error", toErrorMessage(stopError));
     }
@@ -986,7 +1047,10 @@ function App() {
           break;
         }
         case "thread/tokenUsage/updated": {
-          const notification = params as { threadId: string; tokenUsage: ThreadTokenUsage };
+          const notification = params as {
+            threadId: string;
+            tokenUsage: ThreadTokenUsage;
+          };
           updateThreadUsageLocally(notification.threadId, {
             tokenUsage: notification.tokenUsage,
             contextUsage: null,
@@ -1088,7 +1152,9 @@ function App() {
             status: "connecting",
           };
           setVoiceCaptureStatus("connecting");
-          setVoiceCaptureMessage("Voice session started. Finalizing connection…");
+          setVoiceCaptureMessage(
+            "Voice session started. Finalizing connection…",
+          );
           break;
         }
         case "thread/realtime/sdp": {
@@ -1122,7 +1188,8 @@ function App() {
           break;
         }
         case "thread/realtime/transcript/delta": {
-          const notification = params as ThreadRealtimeTranscriptDeltaNotification;
+          const notification =
+            params as ThreadRealtimeTranscriptDeltaNotification;
           if (
             notification.role !== "user" ||
             voiceSessionRef.current?.threadId !== notification.threadId ||
@@ -1131,12 +1198,16 @@ function App() {
             break;
           }
           syncVoiceDraftState(
-            appendVoiceTranscriptDelta(voiceDraftStateRef.current, notification.delta),
+            appendVoiceTranscriptDelta(
+              voiceDraftStateRef.current,
+              notification.delta,
+            ),
           );
           break;
         }
         case "thread/realtime/transcript/done": {
-          const notification = params as ThreadRealtimeTranscriptDoneNotification;
+          const notification =
+            params as ThreadRealtimeTranscriptDoneNotification;
           if (
             notification.role !== "user" ||
             voiceSessionRef.current?.threadId !== notification.threadId ||
@@ -1145,7 +1216,10 @@ function App() {
             break;
           }
           syncVoiceDraftState(
-            finalizeVoiceTranscriptSegment(voiceDraftStateRef.current, notification.text),
+            finalizeVoiceTranscriptSegment(
+              voiceDraftStateRef.current,
+              notification.text,
+            ),
           );
           break;
         }
@@ -1162,7 +1236,12 @@ function App() {
           if (voiceSessionRef.current?.threadId !== notification.threadId) {
             break;
           }
-          clearVoiceSession("idle", notification.reason ? `Voice input ended: ${notification.reason}` : null);
+          clearVoiceSession(
+            "idle",
+            notification.reason
+              ? `Voice input ended: ${notification.reason}`
+              : null,
+          );
           break;
         }
         default:

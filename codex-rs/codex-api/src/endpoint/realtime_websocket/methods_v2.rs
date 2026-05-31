@@ -35,6 +35,7 @@ const REALTIME_V2_BACKGROUND_AGENT_TOOL_DESCRIPTION: &str = "Send a user request
 const REALTIME_V2_SILENCE_TOOL_NAME: &str = "remain_silent";
 const REALTIME_V2_SILENCE_TOOL_DESCRIPTION: &str = "Call this when the best response is to say nothing. Use it instead of speaking after hidden system/control messages, after background agent updates in silent modes, or whenever acknowledging aloud would be distracting. This tool has no user-visible effect.";
 const REALTIME_V2_INPUT_TRANSCRIPTION_MODEL: &str = "gpt-4o-mini-transcribe";
+const REALTIME_V2_TRANSCRIPTION_SESSION_MODEL: &str = "gpt-realtime-whisper";
 
 pub(super) fn conversation_item_create_message(text: String) -> RealtimeOutboundMessage {
     RealtimeOutboundMessage::ConversationItemCreate {
@@ -146,7 +147,7 @@ pub(super) fn session_update_session(
                     },
                     noise_reduction: None,
                     transcription: Some(SessionInputAudioTranscription {
-                        model: REALTIME_V2_INPUT_TRANSCRIPTION_MODEL.to_string(),
+                        model: REALTIME_V2_TRANSCRIPTION_SESSION_MODEL.to_string(),
                     }),
                     turn_detection: None,
                 },

@@ -14,7 +14,10 @@ test("voice draft appends committed and live transcript onto the base draft", ()
     liveSegment: " before lunch",
   });
 
-  assert.equal(draft, "Summarize this please review the latest diff before lunch");
+  assert.equal(
+    draft,
+    "Summarize this please review the latest diff before lunch",
+  );
 });
 
 test("voice transcript done commits the finalized segment and clears the live buffer", () => {

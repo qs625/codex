@@ -2047,8 +2047,13 @@ mod tests {
             assert_eq!(
                 first_json["session"]["audio"]["input"]["transcription"],
                 json!({
-                    "model": "gpt-4o-mini-transcribe",
+                    "model": "gpt-realtime-whisper",
                 })
+            );
+            assert!(
+                first_json["session"]["audio"]["input"]
+                    .get("turn_detection")
+                    .is_none()
             );
             assert!(first_json["session"]["audio"].get("output").is_none());
             assert!(first_json["session"].get("tools").is_none());
