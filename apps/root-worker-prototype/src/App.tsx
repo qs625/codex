@@ -130,6 +130,7 @@ function App() {
   const symbolBackStackRef = useRef<FileLocation[]>([]);
   const symbolForwardStackRef = useRef<FileLocation[]>([]);
   const selectedThreadIdRef = useRef<string | null>(null);
+  const hydratedInitialThreadIdsRef = useRef<Set<string>>(new Set());
   const loadThreadRequestIdRef = useRef(0);
   const voiceSessionRef = useRef<ActiveVoiceSession | null>(null);
   const voiceDraftStateRef = useRef<VoiceDraftState | null>(null);
@@ -160,6 +161,9 @@ function App() {
 
   useEffect(() => {
     if (!selectedThreadId) {
+      return;
+    }
+    if (hydratedInitialThreadIdsRef.current.delete(selectedThreadId)) {
       return;
     }
     void loadThread(selectedThreadId);
@@ -485,6 +489,12 @@ function App() {
       setThreads(payload.threads);
       const preferredRoot = pickInitialRootThread(payload.threads);
       if (preferredRoot) {
+        try {
+          await subscribeThread(preferredRoot.id);
+          hydratedInitialThreadIdsRef.current.add(preferredRoot.id);
+        } catch (loadError) {
+          setError(toErrorMessage(loadError));
+        }
         setSelectedThreadId(preferredRoot.id);
         return;
       }
