@@ -36,6 +36,7 @@ import {
   threadStatusClass,
   trimPath,
 } from "../lib/thread";
+import { isVoiceCaptureToggleDisabled } from "../lib/voiceCaptureState";
 import type {
   ComposerImage,
   ConversationCell,
@@ -441,7 +442,11 @@ export function ConversationPanel({
                   voiceCaptureStatus === "error" ? "is-error" : ""
                 }`}
                 aria-label={voiceCaptureActive ? "Stop voice input" : "Start voice input"}
-                disabled={!selectedThreadId || !!activeTurnId || isSending || isStoppingTurn}
+                disabled={isVoiceCaptureToggleDisabled({
+                  selectedThreadId,
+                  isSending,
+                  isStoppingTurn,
+                })}
                 onClick={onToggleVoiceCapture}
               >
                 {voiceCaptureActive ? <StopIcon /> : <MicrophoneIcon />}

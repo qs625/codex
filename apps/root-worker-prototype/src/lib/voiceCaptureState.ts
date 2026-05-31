@@ -11,6 +11,18 @@ export type PendingVoiceStop = {
   nextMessage: string | null;
 };
 
+export function isVoiceCaptureToggleDisabled({
+  selectedThreadId,
+  isSending,
+  isStoppingTurn,
+}: {
+  selectedThreadId: string | null;
+  isSending: boolean;
+  isStoppingTurn: boolean;
+}) {
+  return !selectedThreadId || isSending || isStoppingTurn;
+}
+
 export function beginVoiceCaptureStop(
   threadId: string | null | undefined,
   silent: boolean,
