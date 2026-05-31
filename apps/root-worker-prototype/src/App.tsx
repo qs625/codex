@@ -137,6 +137,9 @@ function App() {
   const voicePeerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const voiceMediaStreamRef = useRef<MediaStream | null>(null);
   const voiceEventsChannelRef = useRef<RTCDataChannel | null>(null);
+  const voiceFinalTranscriptWaitersRef = useRef(
+    new Map<string, Set<() => void>>(),
+  );
   const resizeStateRef = useRef<{
     startX: number;
     startWidth: number;
@@ -208,9 +211,13 @@ function App() {
     nextStatus: VoiceCaptureStatus,
     nextMessage: string | null,
   ) {
+    const threadId = voiceSessionRef.current?.threadId;
     cleanupVoiceTransport();
     voiceSessionRef.current = null;
     voiceDraftStateRef.current = null;
+    if (threadId) {
+      resolveVoiceFinalTranscriptWaiters(threadId);
+    }
     setVoiceCaptureStatus(nextStatus);
     setVoiceCaptureMessage(nextMessage);
   }
@@ -218,6 +225,46 @@ function App() {
   function syncVoiceDraftState(nextState: VoiceDraftState) {
     voiceDraftStateRef.current = nextState;
     setDraft(buildVoiceDraft(nextState));
+  }
+
+  function resolveVoiceFinalTranscriptWaiters(threadId: string) {
+    const waiters = voiceFinalTranscriptWaitersRef.current.get(threadId);
+    if (!waiters) {
+      return;
+    }
+    voiceFinalTranscriptWaitersRef.current.delete(threadId);
+    for (const resolve of waiters) {
+      resolve();
+    }
+  }
+
+  function waitForVoiceFinalTranscript(threadId: string, timeoutMs: number) {
+    if (!voiceDraftStateRef.current?.liveSegment.trim()) {
+      return Promise.resolve();
+    }
+
+    return new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        window.clearTimeout(timeout);
+        const waiters = voiceFinalTranscriptWaitersRef.current.get(threadId);
+        waiters?.delete(finish);
+        if (waiters?.size === 0) {
+          voiceFinalTranscriptWaitersRef.current.delete(threadId);
+        }
+        resolve();
+      };
+      const timeout = window.setTimeout(finish, timeoutMs);
+      const waiters =
+        voiceFinalTranscriptWaitersRef.current.get(threadId) ??
+        new Set<() => void>();
+      waiters.add(finish);
+      voiceFinalTranscriptWaitersRef.current.set(threadId, waiters);
+    });
   }
 
   useEffect(() => {
@@ -929,10 +976,14 @@ function App() {
     const eventsChannel = voiceEventsChannelRef.current;
     if (eventsChannel?.readyState === "open") {
       try {
+        const finalTranscript = waitForVoiceFinalTranscript(
+          pendingStop.nextSession.threadId,
+          3500,
+        );
         eventsChannel.send(
           JSON.stringify({ type: "input_audio_buffer.commit" }),
         );
-        await new Promise((resolve) => window.setTimeout(resolve, 1800));
+        await finalTranscript;
       } catch (commitError) {
         clearVoiceSession("error", toErrorMessage(commitError));
         return;
@@ -1231,6 +1282,7 @@ function App() {
               notification.text,
             ),
           );
+          resolveVoiceFinalTranscriptWaiters(notification.threadId);
           break;
         }
         case "thread/realtime/error": {
