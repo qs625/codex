@@ -1,6 +1,7 @@
 use crate::endpoint::realtime_websocket::methods_common::conversation_function_call_output_message;
 use crate::endpoint::realtime_websocket::methods_common::conversation_item_create_message;
 use crate::endpoint::realtime_websocket::methods_common::normalized_session_mode;
+use crate::endpoint::realtime_websocket::methods_common::session_accepts_top_level_model;
 use crate::endpoint::realtime_websocket::methods_common::session_update_session;
 use crate::endpoint::realtime_websocket::methods_common::websocket_intent;
 use crate::endpoint::realtime_websocket::protocol::RealtimeAudioFrame;
@@ -563,10 +564,13 @@ impl RealtimeWebsocketClient {
         extra_headers: HeaderMap,
         default_headers: HeaderMap,
     ) -> Result<RealtimeWebsocketConnection, ApiError> {
+        let model = session_accepts_top_level_model(config.event_parser, config.session_mode)
+            .then_some(config.model.as_deref())
+            .flatten();
         let ws_url = websocket_url_from_api_url(
             self.provider.base_url.as_str(),
             self.provider.query_params.as_ref(),
-            config.model.as_deref(),
+            model,
             config.event_parser,
             config.session_mode,
         )?;
@@ -733,7 +737,7 @@ fn websocket_url_from_api_url(
     query_params: Option<&HashMap<String, String>>,
     model: Option<&str>,
     event_parser: RealtimeEventParser,
-    _session_mode: RealtimeSessionMode,
+    session_mode: RealtimeSessionMode,
 ) -> Result<Url, ApiError> {
     let mut url = Url::parse(api_url)
         .map_err(|err| ApiError::Stream(format!("failed to parse realtime api_url: {err}")))?;
@@ -754,6 +758,9 @@ fn websocket_url_from_api_url(
     }
 
     let intent = websocket_intent(event_parser);
+    let model = session_accepts_top_level_model(event_parser, session_mode)
+        .then_some(model)
+        .flatten();
     let has_extra_query_params = query_params.is_some_and(|query_params| {
         query_params
             .iter()
@@ -1488,7 +1495,7 @@ mod tests {
         let url = websocket_url_from_api_url(
             "https://example.com",
             /*query_params*/ None,
-            /*model*/ None,
+            Some("snapshot"),
             RealtimeEventParser::RealtimeV2,
             RealtimeSessionMode::Transcription,
         )
@@ -2035,6 +2042,7 @@ mod tests {
                 first_json["session"]["type"],
                 Value::String("transcription".to_string())
             );
+            assert!(first_json["session"].get("model").is_none());
             assert!(first_json["session"].get("instructions").is_none());
             assert_eq!(
                 first_json["session"]["audio"]["input"]["transcription"],

@@ -30,6 +30,16 @@ pub(super) fn normalized_session_mode(
     }
 }
 
+pub(super) fn session_accepts_top_level_model(
+    event_parser: RealtimeEventParser,
+    session_mode: RealtimeSessionMode,
+) -> bool {
+    match normalized_session_mode(event_parser, session_mode) {
+        RealtimeSessionMode::Conversational => true,
+        RealtimeSessionMode::Transcription => false,
+    }
+}
+
 pub(super) fn conversation_item_create_message(
     event_parser: RealtimeEventParser,
     text: String,
@@ -73,15 +83,26 @@ pub(super) fn session_update_session(
 }
 
 pub fn session_update_session_json(config: RealtimeSessionConfig) -> JsonResult<Value> {
+    let RealtimeSessionConfig {
+        instructions,
+        model,
+        session_id,
+        event_parser,
+        session_mode,
+        output_modality,
+        voice,
+    } = config;
     let mut session = session_update_session(
-        config.event_parser,
-        config.instructions,
-        config.session_mode,
-        config.output_modality,
-        config.voice,
+        event_parser,
+        instructions,
+        session_mode,
+        output_modality,
+        voice,
     );
-    session.id = config.session_id;
-    session.model = config.model;
+    session.id = session_id;
+    if session_accepts_top_level_model(event_parser, session_mode) {
+        session.model = model;
+    }
     to_value(session)
 }
 
