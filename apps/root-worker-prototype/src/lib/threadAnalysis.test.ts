@@ -63,7 +63,7 @@ test("returns empty monitor sections when no thread is selected", () => {
   );
 });
 
-test("summarizes filesystem, process, and schedule subscriptions", () => {
+test("hides subscriptions after their event is observed", () => {
   const analysis = buildThreadAnalysis(
     makeThread([
       {
@@ -122,7 +122,7 @@ test("summarizes filesystem, process, and schedule subscriptions", () => {
     0,
   );
 
-  assert.equal(analysis.monitors.totalCount, 3);
+  assert.equal(analysis.monitors.totalCount, 0);
   assert.equal(analysis.monitors.eventCount, 3);
   assert.deepEqual(
     analysis.monitors.sections.map((section) => ({
@@ -132,49 +132,15 @@ test("summarizes filesystem, process, and schedule subscriptions", () => {
     [
       {
         kind: "filesystem",
-        monitors: [
-          {
-            id: "fs-1",
-            subscriptionId: "sub-fs",
-            kind: "filesystem",
-            label: "build log",
-            detail: "/tmp/out.log (recursive)",
-            status: "Event received",
-            eventCount: 1,
-            latestEvent:
-              "[File subscription (build log)] File changed: /tmp/out.log",
-          },
-        ],
+        monitors: [],
       },
       {
         kind: "process",
-        monitors: [
-          {
-            id: "process-1",
-            subscriptionId: "sub-process",
-            kind: "process",
-            label: "Session 42",
-            detail: "session 42",
-            status: "Event received",
-            eventCount: 1,
-            latestEvent: "session 42 exited with code 0",
-          },
-        ],
+        monitors: [],
       },
       {
         kind: "schedule",
-        monitors: [
-          {
-            id: "schedule-1",
-            subscriptionId: null,
-            kind: "schedule",
-            label: "standup ping",
-            detail: "once after 60s",
-            status: "Event received",
-            eventCount: 1,
-            latestEvent: "[Schedule subscription (standup ping)] Trigger fired",
-          },
-        ],
+        monitors: [],
       },
     ],
   );
@@ -249,16 +215,6 @@ test("attributes same-kind events to matching subscriptions only", () => {
       status: "Listening",
       eventCount: 0,
       latestEvent: null,
-    },
-    {
-      id: "fs-2",
-      subscriptionId: null,
-      kind: "filesystem",
-      label: "test log",
-      detail: "/tmp/test.log",
-      status: "Event received",
-      eventCount: 1,
-      latestEvent: "[File subscription (test log)] File changed: /tmp/test.log",
     },
   ]);
 });

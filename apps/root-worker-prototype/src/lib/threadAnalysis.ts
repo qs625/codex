@@ -111,6 +111,7 @@ function buildMonitorSections(
     }
   }
 
+  const activeMonitors: MonitorSummary[] = [];
   for (const monitor of monitors) {
     const tool = toolFromMonitorKind(monitor.kind);
     const events = eventsByTool.get(tool) ?? [];
@@ -126,21 +127,18 @@ function buildMonitorSections(
       matchingEvents.length > 0 ? matchingEvents : fallbackEvents;
 
     if (observedEvents.length === 0) {
+      activeMonitors.push(monitor);
       continue;
     }
-
-    monitor.eventCount = observedEvents.length;
-    monitor.latestEvent = observedEvents[observedEvents.length - 1] ?? null;
-    monitor.status = "Event received";
   }
 
   const sections = MONITOR_SECTIONS.map((section) => ({
     ...section,
-    monitors: monitors.filter((monitor) => monitor.kind === section.kind),
+    monitors: activeMonitors.filter((monitor) => monitor.kind === section.kind),
   }));
 
   return {
-    totalCount: monitors.length,
+    totalCount: activeMonitors.length,
     eventCount: [...eventsByTool.values()].reduce(
       (sum, events) => sum + events.length,
       0,

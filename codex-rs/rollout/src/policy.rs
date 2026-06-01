@@ -138,6 +138,7 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::AgentReasoningRawContent(_)
         | EventMsg::PatchApplyEnd(_)
         | EventMsg::TokenCount(_)
+        | EventMsg::ThreadContextUsageUpdated(_)
         | EventMsg::ThreadGoalUpdated(_)
         | EventMsg::ThreadSkillsUpdated(_)
         | EventMsg::ContextCompacted(_)
@@ -214,8 +215,7 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::PlanDelta(_)
         | EventMsg::ReasoningContentDelta(_)
         | EventMsg::ReasoningRawContentDelta(_)
-        | EventMsg::ImageGenerationBegin(_)
-        | EventMsg::ThreadContextUsageUpdated(_) => None,
+        | EventMsg::ImageGenerationBegin(_) => None,
     }
 }
 
@@ -239,6 +239,40 @@ mod tests {
     use codex_protocol::protocol::CollabWaitingBeginEvent;
     use codex_protocol::protocol::CollabWaitingEndEvent;
     use codex_protocol::protocol::EventMsg;
+    use codex_protocol::protocol::ThreadContextUsage;
+    use codex_protocol::protocol::ThreadContextUsageCategoryBreakdown;
+    use codex_protocol::protocol::ThreadContextUsageLoadedSkills;
+    use codex_protocol::protocol::ThreadContextUsageUpdatedEvent;
+
+    #[test]
+    fn limited_mode_persists_thread_context_usage() {
+        let event = EventMsg::ThreadContextUsageUpdated(ThreadContextUsageUpdatedEvent {
+            usage: ThreadContextUsage {
+                total_bytes: 256,
+                budget_used_percent: Some(3),
+                categories: ThreadContextUsageCategoryBreakdown {
+                    compact: 0,
+                    skills_metadata: 0,
+                    concrete_skills: 0,
+                    tools_metadata: 0,
+                    tool_calls: 0,
+                    user_messages: 256,
+                    llm_messages: 0,
+                    reasoning: 0,
+                },
+                loaded_skills: ThreadContextUsageLoadedSkills {
+                    loaded_count: 0,
+                    total_count: Some(0),
+                    skills: Vec::new(),
+                },
+            },
+        });
+
+        assert_eq!(
+            should_persist_event_msg(&event, EventPersistenceMode::Limited),
+            true
+        );
+    }
 
     #[test]
     fn limited_mode_persists_collab_agent_events() {

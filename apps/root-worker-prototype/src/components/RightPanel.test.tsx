@@ -116,10 +116,9 @@ test("renders filesystem, process, and schedule subscriptions", () => {
     ]),
   );
 
-  assert.match(markup, /build log/);
-  assert.match(markup, /\/tmp\/out\.log/);
-  assert.match(markup, /Event received/);
-  assert.match(markup, /File changed: \/tmp\/out\.log/);
+  assert.doesNotMatch(markup, /build log/);
+  assert.doesNotMatch(markup, /File changed: \/tmp\/out\.log/);
+  assert.match(markup, /No file watches\./);
   assert.match(markup, /Session 42/);
   assert.match(markup, /standup ping/);
   assert.match(markup, /once_after:60/);

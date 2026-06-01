@@ -1227,6 +1227,93 @@ async fn thread_resume_recomputes_context_usage_without_persisted_snapshot() -> 
 }
 
 #[tokio::test]
+async fn thread_resume_ignores_persisted_zero_context_usage_snapshot() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let filename_ts = "2025-01-05T12-00-00";
+    let meta_rfc3339 = "2025-01-05T12:00:00Z";
+    let conversation_id = create_fake_rollout_with_token_usage(
+        codex_home.path(),
+        filename_ts,
+        meta_rfc3339,
+        "Saved user message",
+        Some("mock_provider"),
+    )?;
+    let rollout_file_path = rollout_path(codex_home.path(), filename_ts, &conversation_id);
+    let zero_context_usage = json!({
+        "timestamp": meta_rfc3339,
+        "type": "event_msg",
+        "payload": serde_json::to_value(EventMsg::ThreadContextUsageUpdated(
+            ThreadContextUsageUpdatedEvent {
+                usage: ThreadContextUsage {
+                    total_bytes: 0,
+                    budget_used_percent: Some(0),
+                    categories: ThreadContextUsageCategoryBreakdown {
+                        compact: 0,
+                        skills_metadata: 0,
+                        concrete_skills: 0,
+                        tools_metadata: 0,
+                        tool_calls: 0,
+                        user_messages: 0,
+                        llm_messages: 0,
+                        reasoning: 0,
+                    },
+                    loaded_skills: ThreadContextUsageLoadedSkills {
+                        loaded_count: 0,
+                        total_count: Some(0),
+                        skills: Vec::new(),
+                    },
+                },
+            }
+        ))?,
+    })
+    .to_string();
+    std::fs::write(
+        &rollout_file_path,
+        format!(
+            "{}{}\n",
+            std::fs::read_to_string(&rollout_file_path)?,
+            zero_context_usage
+        ),
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let resume_id = mcp
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: conversation_id,
+            ..Default::default()
+        })
+        .await?;
+    let resume_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(resume_id)),
+    )
+    .await??;
+    let ThreadResumeResponse { thread, .. } = to_response::<ThreadResumeResponse>(resume_resp)?;
+    let response_context_usage = thread.context_usage.expect("thread/resume context usage");
+    assert!(response_context_usage.total_bytes > 0);
+    assert!(response_context_usage.categories.user_messages > 0);
+
+    let note = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/contextUsage/updated"),
+    )
+    .await??;
+    let parsed: ServerNotification = note.try_into()?;
+    let ServerNotification::ThreadContextUsageUpdated(notification) = parsed else {
+        panic!("expected thread/contextUsage/updated notification");
+    };
+    assert!(notification.context_usage.total_bytes > 0);
+    assert!(notification.context_usage.categories.user_messages > 0);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn thread_resume_emits_restored_context_usage_before_next_turn() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;

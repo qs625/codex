@@ -12,6 +12,9 @@ use codex_protocol::ThreadId;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::ThreadContextUsage;
+use codex_protocol::protocol::ThreadContextUsageCategoryBreakdown;
+use codex_protocol::protocol::ThreadContextUsageLoadedSkills;
+use codex_protocol::protocol::TokenUsageInfo;
 
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::OutgoingMessageSender;
@@ -31,13 +34,8 @@ pub(super) async fn send_thread_context_usage_update_to_connection(
     else {
         return;
     };
-    let context_usage = if let Some(context_usage) =
-        latest_thread_context_usage_from_rollout_items(rollout_items)
-    {
-        context_usage
-    } else {
-        conversation.thread_context_usage().await
-    };
+    let context_usage =
+        thread_context_usage_from_rollout_or_conversation(conversation, rollout_items).await;
     let notification = ThreadContextUsageUpdatedNotification {
         thread_id: thread_id.to_string(),
         turn_id: latest_context_usage_turn_id_from_rollout_items(
@@ -54,6 +52,21 @@ pub(super) async fn send_thread_context_usage_update_to_connection(
             ServerNotification::ThreadContextUsageUpdated(notification),
         )
         .await;
+}
+
+pub(super) async fn thread_context_usage_from_rollout_or_conversation(
+    conversation: &CodexThread,
+    rollout_items: &[RolloutItem],
+) -> ThreadContextUsage {
+    if let Some(usage) = latest_nonzero_thread_context_usage_from_rollout_items(rollout_items) {
+        return usage;
+    }
+    let usage = conversation.thread_context_usage().await;
+    if usage.total_bytes > 0 {
+        usage
+    } else {
+        legacy_thread_context_usage_from_rollout_items(rollout_items).unwrap_or(usage)
+    }
 }
 
 struct ContextUsageTurnOwner {
@@ -106,6 +119,116 @@ pub(super) fn latest_thread_context_usage_from_rollout_items(
         | RolloutItem::TurnContext(_)
         | RolloutItem::SessionMeta(_)
         | RolloutItem::EventMsg(_) => None,
+    })
+}
+
+pub(super) fn latest_nonzero_thread_context_usage_from_rollout_items(
+    rollout_items: &[RolloutItem],
+) -> Option<ThreadContextUsage> {
+    latest_thread_context_usage_from_rollout_items(rollout_items)
+        .filter(|usage| usage.total_bytes > 0)
+}
+
+pub(super) fn legacy_thread_context_usage_from_rollout_items(
+    rollout_items: &[RolloutItem],
+) -> Option<ThreadContextUsage> {
+    let mut categories = ThreadContextUsageCategoryBreakdown {
+        compact: 0,
+        skills_metadata: 0,
+        concrete_skills: 0,
+        tools_metadata: 0,
+        tool_calls: 0,
+        user_messages: 0,
+        llm_messages: 0,
+        reasoning: 0,
+    };
+    let mut token_info = None;
+
+    for item in rollout_items {
+        let RolloutItem::EventMsg(event) = item else {
+            continue;
+        };
+        match event {
+            EventMsg::UserMessage(event) => {
+                categories.user_messages = categories
+                    .user_messages
+                    .saturating_add(estimated_text_bytes(event.message.as_str()));
+                categories.skills_metadata = categories
+                    .skills_metadata
+                    .saturating_add(i64::try_from(event.skills.len()).unwrap_or(i64::MAX) * 36);
+                categories.concrete_skills = categories
+                    .concrete_skills
+                    .saturating_add(i64::try_from(event.skills.len()).unwrap_or(i64::MAX) * 120);
+            }
+            EventMsg::AgentMessage(event) => {
+                categories.llm_messages = categories
+                    .llm_messages
+                    .saturating_add(estimated_text_bytes(event.message.as_str()));
+            }
+            EventMsg::AgentReasoning(event) => {
+                categories.reasoning = categories
+                    .reasoning
+                    .saturating_add(estimated_text_bytes(event.text.as_str()));
+            }
+            EventMsg::AgentReasoningRawContent(event) => {
+                categories.reasoning = categories
+                    .reasoning
+                    .saturating_add(estimated_text_bytes(event.text.as_str()));
+            }
+            EventMsg::TokenCount(event) => {
+                token_info = event.info.clone();
+            }
+            _ => {}
+        }
+    }
+
+    let total_bytes = [
+        categories.compact,
+        categories.skills_metadata,
+        categories.concrete_skills,
+        categories.tools_metadata,
+        categories.tool_calls,
+        categories.user_messages,
+        categories.llm_messages,
+        categories.reasoning,
+    ]
+    .into_iter()
+    .fold(0i64, i64::saturating_add);
+    if total_bytes <= 0 {
+        return None;
+    }
+
+    Some(ThreadContextUsage {
+        total_bytes,
+        budget_used_percent: context_budget_percent(token_info.as_ref()),
+        categories,
+        loaded_skills: ThreadContextUsageLoadedSkills {
+            loaded_count: 0,
+            total_count: None,
+            skills: Vec::new(),
+        },
+    })
+}
+
+fn estimated_text_bytes(text: &str) -> i64 {
+    i64::try_from(text.trim().len()).unwrap_or(i64::MAX)
+}
+
+fn context_budget_percent(token_info: Option<&TokenUsageInfo>) -> Option<i64> {
+    token_info.and_then(|info| {
+        info.model_context_window.and_then(|window| {
+            if window <= 0 {
+                None
+            } else {
+                Some(
+                    info.total_token_usage
+                        .total_tokens
+                        .saturating_mul(100)
+                        .saturating_div(window)
+                        .clamp(0, 100),
+                )
+            }
+        })
     })
 }
 

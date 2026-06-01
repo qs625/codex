@@ -2163,7 +2163,14 @@ impl ThreadRequestProcessor {
             thread.token_usage = Some(token_usage);
         }
         if thread.context_usage.is_none() {
-            thread.context_usage = Some(loaded_thread.thread_context_usage().await.into());
+            thread.context_usage = Some(
+                super::context_usage_replay::thread_context_usage_from_rollout_or_conversation(
+                    loaded_thread,
+                    history.items.as_slice(),
+                )
+                .await
+                .into(),
+            );
         }
 
         if include_turns {
@@ -3221,7 +3228,14 @@ impl ThreadRequestProcessor {
             thread.token_usage = Some(token_usage);
         }
         if thread.context_usage.is_none() {
-            thread.context_usage = Some(codex_thread.thread_context_usage().await.into());
+            thread.context_usage = Some(
+                super::context_usage_replay::thread_context_usage_from_rollout_or_conversation(
+                    codex_thread,
+                    history_items.as_slice(),
+                )
+                .await
+                .into(),
+            );
         }
         if include_turns {
             populate_thread_turns_from_history(
@@ -3440,7 +3454,14 @@ impl ThreadRequestProcessor {
             thread.token_usage = Some(token_usage);
         }
         if thread.context_usage.is_none() {
-            thread.context_usage = Some(forked_thread.thread_context_usage().await.into());
+            thread.context_usage = Some(
+                super::context_usage_replay::thread_context_usage_from_rollout_or_conversation(
+                    &forked_thread,
+                    history_items.as_slice(),
+                )
+                .await
+                .into(),
+            );
         }
 
         self.thread_watch_manager
@@ -4006,8 +4027,10 @@ fn apply_thread_usage_from_rollout_items(thread: &mut Thread, rollout_items: &[R
     thread.token_usage =
         super::token_usage_replay::latest_thread_token_usage_from_rollout_items(rollout_items);
     thread.context_usage =
-        super::context_usage_replay::latest_thread_context_usage_from_rollout_items(rollout_items)
-            .map(Into::into);
+        super::context_usage_replay::latest_nonzero_thread_context_usage_from_rollout_items(
+            rollout_items,
+        )
+        .map(Into::into);
 }
 
 pub(crate) fn thread_from_stored_thread(

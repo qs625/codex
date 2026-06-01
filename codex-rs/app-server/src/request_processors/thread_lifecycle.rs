@@ -544,7 +544,7 @@ pub(super) async fn handle_pending_thread_resume_request(
         pending.history_items.as_slice(),
     );
     thread.context_usage =
-        super::context_usage_replay::latest_thread_context_usage_from_rollout_items(
+        super::context_usage_replay::latest_nonzero_thread_context_usage_from_rollout_items(
             pending.history_items.as_slice(),
         )
         .map(Into::into);
@@ -552,7 +552,14 @@ pub(super) async fn handle_pending_thread_resume_request(
         thread.token_usage = Some(token_usage);
     }
     if thread.context_usage.is_none() {
-        thread.context_usage = Some(conversation.thread_context_usage().await.into());
+        thread.context_usage = Some(
+            super::context_usage_replay::thread_context_usage_from_rollout_or_conversation(
+                conversation,
+                pending.history_items.as_slice(),
+            )
+            .await
+            .into(),
+        );
     }
     if pending.include_turns {
         populate_thread_turns_from_history(
