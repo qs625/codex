@@ -1400,6 +1400,12 @@ svg {
   gap: 10px;
 }
 
+.thread-analysis-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .context-budget-card,
 .context-section-card {
   border: 1px solid rgba(16, 24, 40, 0.07);
@@ -1538,6 +1544,121 @@ svg {
   display: block;
   margin-top: 2px;
   color: #78716c;
+  font-size: 11px;
+}
+
+.monitor-section-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.monitor-section {
+  min-width: 0;
+}
+
+.monitor-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #57534e;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.monitor-kind-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex: none;
+}
+
+.monitor-kind-dot.filesystem {
+  background: #0d9488;
+}
+
+.monitor-kind-dot.process {
+  background: #4f46e5;
+}
+
+.monitor-kind-dot.schedule {
+  background: #d97706;
+}
+
+.monitor-list {
+  margin-top: 6px;
+}
+
+.monitor-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(16, 24, 40, 0.06);
+}
+
+.monitor-list > .monitor-row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.monitor-row-main {
+  min-width: 0;
+}
+
+.monitor-row-main strong,
+.monitor-row-main span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitor-row-main strong {
+  color: #171717;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.monitor-row-main span {
+  margin-top: 2px;
+  color: #78716c;
+  font-size: 11px;
+}
+
+.monitor-status {
+  flex: none;
+  max-width: 96px;
+  overflow: hidden;
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: #57534e;
+  font-size: 10px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitor-status.evented {
+  border-color: rgba(13, 148, 136, 0.2);
+  background: rgba(13, 148, 136, 0.08);
+  color: #0f766e;
+}
+
+.monitor-status.failed {
+  border-color: rgba(220, 38, 38, 0.2);
+  background: rgba(220, 38, 38, 0.08);
+  color: #b91c1c;
+}
+
+.monitor-empty {
+  margin-top: 6px;
+  border-top: 1px solid rgba(16, 24, 40, 0.06);
+  padding-top: 7px;
+  color: #a8a29e;
   font-size: 11px;
 }
 

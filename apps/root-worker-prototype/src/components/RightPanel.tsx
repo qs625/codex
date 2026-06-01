@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import React, { useEffect, useRef, type ReactNode } from "react";
 import Editor from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 
@@ -14,11 +14,11 @@ import {
   SearchIcon,
 } from "./icons";
 import { LocalImagePreview } from "./Conversation";
+import { getContextUsageCategoryColor } from "../lib/contextUsage";
 import {
-  buildContextUsageAnalysis,
-  getContextUsageCategoryColor,
-  type ContextUsageAnalysis,
-} from "../lib/contextUsage";
+  buildThreadAnalysis,
+  type ThreadAnalysis,
+} from "../lib/threadAnalysis";
 import type {
   FileLocation,
   FilePreview,
@@ -92,7 +92,8 @@ export function RightPanel({
   todoItems: TodoCardItem[];
 }) {
   const todoStats = buildTodoStats(todoItems);
-  const contextUsage = buildContextUsageAnalysis(thread, availableSkillCount);
+  const threadAnalysis = buildThreadAnalysis(thread, availableSkillCount);
+  const { contextUsage } = threadAnalysis;
 
   return (
     <aside className="right-panel">
@@ -109,7 +110,7 @@ export function RightPanel({
               todoItems={todoItems}
             />
           ) : activeView === "skills" ? (
-            <ContextUsagePanel contextUsage={contextUsage} />
+            <ThreadAnalysisPanel analysis={threadAnalysis} />
           ) : (
             <FilePreviewPanel
               onNavigateToSymbol={onNavigateToSymbol}
@@ -122,49 +123,56 @@ export function RightPanel({
         </div>
 
         <nav className="panel-rail" aria-label="Right panel views">
-          {([
-            {
-              view: "todo",
-              label: "Todo Board",
-              icon: <FilterIcon />,
-              badge: String(todoStats.openCount),
-            },
-            {
-              view: "skills",
-              label: "Context Usage",
-              icon: <GearIcon />,
-              badge: contextUsage.loadedSkills > 0 ? String(contextUsage.loadedSkills) : "",
-            },
-            {
-              view: "preview",
-              label: "File Preview",
-              icon: <DocumentIcon />,
-              badge: preview ? "1" : "",
-            },
-            {
-              view: null,
-              label: "Search",
-              icon: <SearchIcon />,
-              badge: "",
-            },
-            {
-              view: null,
-              label: "Graph",
-              icon: <BranchIcon />,
-              badge: "",
-            },
-            {
-              view: null,
-              label: "Artifacts",
-              icon: <GridIcon />,
-              badge: "",
-            },
-          ] satisfies Array<{
-            view: RightPanelView | null;
-            label: string;
-            icon: ReactNode;
-            badge: string;
-          }>).map((item) => (
+          {(
+            [
+              {
+                view: "todo",
+                label: "Todo Board",
+                icon: <FilterIcon />,
+                badge: String(todoStats.openCount),
+              },
+              {
+                view: "skills",
+                label: "Thread Analysis",
+                icon: <GearIcon />,
+                badge:
+                  threadAnalysis.monitors.totalCount > 0
+                    ? String(threadAnalysis.monitors.totalCount)
+                    : contextUsage.loadedSkills > 0
+                      ? String(contextUsage.loadedSkills)
+                      : "",
+              },
+              {
+                view: "preview",
+                label: "File Preview",
+                icon: <DocumentIcon />,
+                badge: preview ? "1" : "",
+              },
+              {
+                view: null,
+                label: "Search",
+                icon: <SearchIcon />,
+                badge: "",
+              },
+              {
+                view: null,
+                label: "Graph",
+                icon: <BranchIcon />,
+                badge: "",
+              },
+              {
+                view: null,
+                label: "Artifacts",
+                icon: <GridIcon />,
+                badge: "",
+              },
+            ] satisfies Array<{
+              view: RightPanelView | null;
+              label: string;
+              icon: ReactNode;
+              badge: string;
+            }>
+          ).map((item) => (
             <button
               key={item.label}
               type="button"
@@ -187,24 +195,49 @@ export function RightPanel({
   );
 }
 
-function ContextUsagePanel({ contextUsage }: { contextUsage: ContextUsageAnalysis }) {
+function ThreadAnalysisPanel({ analysis }: { analysis: ThreadAnalysis }) {
+  const { contextUsage, monitors } = analysis;
+
   return (
     <div className="skills-panel context-usage-panel">
       <header className="panel-content-header">
         <div className="panel-content-copy">
           <span className="panel-eyebrow">Thread Analysis</span>
-          <h2>Context Usage</h2>
-          <p>Estimated mix of the current thread context.</p>
+          <h2>Thread Analysis</h2>
+          <p>Context mix, loaded skills, and active thread monitors.</p>
         </div>
       </header>
 
       <div className="skills-scroll">
+        <section
+          className="thread-analysis-summary"
+          aria-label="Thread analysis summary"
+        >
+          <OverviewMetric
+            label="Context"
+            value={contextUsage.hasBudgetData ? contextUsage.budgetUsedPercent : 0}
+            tone="open"
+          />
+          <OverviewMetric
+            label="Monitors"
+            value={monitors.totalCount}
+            tone="doing"
+          />
+          <OverviewMetric
+            label="Events"
+            value={monitors.eventCount}
+            tone="blocked"
+          />
+        </section>
+
         <section className="context-budget-card">
           <div className="context-budget-header">
             <div>
               <span className="context-budget-label">Context Window Used</span>
               <strong>
-                {contextUsage.hasBudgetData ? `${contextUsage.budgetUsedPercent}%` : "Unavailable"}
+                {contextUsage.hasBudgetData
+                  ? `${contextUsage.budgetUsedPercent}%`
+                  : "Unavailable"}
               </strong>
             </div>
             <span className="context-budget-note">
@@ -224,10 +257,60 @@ function ContextUsagePanel({ contextUsage }: { contextUsage: ContextUsageAnalysi
               <div key={category.id} className="context-category-pill">
                 <span
                   className="context-category-dot"
-                  style={{ backgroundColor: getContextUsageCategoryColor(category.id) }}
+                  style={{
+                    backgroundColor: getContextUsageCategoryColor(category.id),
+                  }}
                 />
                 <span className="context-category-pill-label">{category.label}</span>
                 <span className="context-category-pill-value">{category.sharePercent}%</span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="context-section-card">
+          <div className="context-section-header">
+            <div>
+              <span className="context-section-eyebrow">Active Monitors</span>
+              <strong>Subscriptions</strong>
+            </div>
+            <span className="context-inline-metric">
+              {monitors.totalCount} listener
+              {monitors.totalCount === 1 ? "" : "s"}
+            </span>
+          </div>
+
+          <div className="monitor-section-list">
+            {monitors.sections.map((section) => (
+              <div key={section.kind} className="monitor-section">
+                <div className="monitor-section-title">
+                  <span className={`monitor-kind-dot ${section.kind}`} />
+                  <span>{section.title}</span>
+                </div>
+                {section.monitors.length > 0 ? (
+                  <div className="monitor-list">
+                    {section.monitors.map((monitor) => (
+                      <article key={monitor.id} className="monitor-row">
+                        <div className="monitor-row-main">
+                          <strong title={monitor.label}>{monitor.label}</strong>
+                          <span title={monitor.detail}>{monitor.detail}</span>
+                          {monitor.latestEvent ? (
+                            <span title={monitor.latestEvent}>
+                              {monitor.latestEvent}
+                            </span>
+                          ) : null}
+                        </div>
+                        <span
+                          className={`monitor-status ${statusClassName(monitor.status)}`}
+                        >
+                          {monitor.status}
+                        </span>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="monitor-empty">{section.emptyLabel}</div>
+                )}
               </div>
             ))}
           </div>
@@ -265,6 +348,14 @@ function ContextUsagePanel({ contextUsage }: { contextUsage: ContextUsageAnalysi
       </div>
     </div>
   );
+}
+
+function statusClassName(status: string) {
+  if (status === "Event received") {
+    return "evented";
+  }
+
+  return status.toLowerCase();
 }
 
 function TodoPanel({
