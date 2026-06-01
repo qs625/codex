@@ -3618,6 +3618,7 @@ impl ThreadRequestProcessor {
                     it.source.clone(),
                     it.agent_nickname.clone(),
                     it.agent_role.clone(),
+                    it.agent_path.clone(),
                 );
                 if source_kind_filter
                     .as_ref()
@@ -4027,6 +4028,7 @@ pub(crate) fn thread_from_stored_thread(
         thread.source,
         thread.agent_nickname.clone(),
         thread.agent_role.clone(),
+        thread.agent_path.clone(),
     );
     let history = thread.history;
     let thread_id = thread.thread_id.to_string();
@@ -4119,6 +4121,7 @@ fn summary_from_stored_thread(
         thread.source,
         thread.agent_nickname.clone(),
         thread.agent_role.clone(),
+        thread.agent_path.clone(),
     );
     let git_info = thread.git_info.map(|git| ConversationGitInfo {
         sha: git.commit_hash.map(|sha| sha.0),
@@ -4177,7 +4180,12 @@ fn summary_from_state_db_metadata(
     let source = serde_json::from_str(&source)
         .or_else(|_| serde_json::from_value(serde_json::Value::String(source.clone())))
         .unwrap_or(codex_protocol::protocol::SessionSource::Unknown);
-    let source = with_thread_spawn_agent_metadata(source, agent_nickname, agent_role);
+    let source = with_thread_spawn_agent_metadata(
+        source,
+        agent_nickname,
+        agent_role,
+        /*agent_path*/ None,
+    );
     let git_info = if git_sha.is_none() && git_branch.is_none() && git_origin_url.is_none() {
         None
     } else {

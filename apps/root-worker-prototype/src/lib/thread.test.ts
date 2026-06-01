@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   getPresenceLabel,
+  getParentThreadId,
+  getThreadPath,
   isThreadThinking,
   mergeThreadSnapshot,
   threadStatusClass,
@@ -279,6 +281,46 @@ test("threadStatusClass treats active thread status as doing", () => {
     }),
     "doing",
   );
+});
+
+test("thread path helpers read snake_case thread spawn metadata", () => {
+  const thread = {
+    ...makeThread(),
+    source: {
+      subAgent: {
+        thread_spawn: {
+          parent_thread_id: "parent-1",
+          depth: 1,
+          agent_path: "/root/worker",
+          agent_nickname: "worker",
+          agent_role: "Worker Agent",
+        },
+      },
+    },
+  } satisfies Thread;
+
+  assert.equal(getThreadPath(thread), "/root/worker");
+  assert.equal(getParentThreadId(thread), "parent-1");
+});
+
+test("thread path helpers read camelCase thread spawn metadata", () => {
+  const thread = {
+    ...makeThread(),
+    source: {
+      subAgent: {
+        threadSpawn: {
+          parentThreadId: "parent-2",
+          depth: 1,
+          agentPath: "/root/reviewer",
+          agentNickname: "reviewer",
+          agentRole: "Reviewer",
+        },
+      },
+    } as unknown as Thread["source"],
+  };
+
+  assert.equal(getThreadPath(thread), "/root/reviewer");
+  assert.equal(getParentThreadId(thread), "parent-2");
 });
 
 test("getPresenceLabel surfaces active thread flags", () => {

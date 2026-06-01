@@ -1036,6 +1036,7 @@ fn fill_missing_thread_item_metadata_preserves_identity_and_prefers_state_git_fi
         source: None,
         agent_nickname: None,
         agent_role: None,
+        agent_path: None,
         model_provider: None,
         cli_version: None,
         created_at: None,
@@ -1053,6 +1054,7 @@ fn fill_missing_thread_item_metadata_preserves_identity_and_prefers_state_git_fi
         source: Some(SessionSource::Exec),
         agent_nickname: Some("state-agent".to_string()),
         agent_role: Some("state-role".to_string()),
+        agent_path: Some("/root/state-agent".to_string()),
         model_provider: Some("state-provider".to_string()),
         cli_version: Some("state-version".to_string()),
         created_at: Some("2025-01-03T16:00:00Z".to_string()),
@@ -1078,6 +1080,7 @@ fn fill_missing_thread_item_metadata_preserves_identity_and_prefers_state_git_fi
     assert_eq!(item.source, Some(SessionSource::Exec));
     assert_eq!(item.agent_nickname.as_deref(), Some("state-agent"));
     assert_eq!(item.agent_role.as_deref(), Some("state-role"));
+    assert_eq!(item.agent_path.as_deref(), Some("/root/state-agent"));
     assert_eq!(item.model_provider.as_deref(), Some("state-provider"));
     assert_eq!(item.cli_version.as_deref(), Some("state-version"));
     assert_eq!(item.created_at.as_deref(), Some("2025-01-03T16:00:00Z"));

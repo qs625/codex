@@ -18,6 +18,13 @@ use crate::ThreadSortKey;
 use crate::ThreadStoreError;
 use crate::ThreadStoreResult;
 
+struct ThreadMetadataOverlay {
+    title: Option<String>,
+    agent_nickname: Option<String>,
+    agent_role: Option<String>,
+    agent_path: Option<String>,
+}
+
 pub(super) async fn list_threads(
     store: &LocalThreadStore,
     params: ListThreadsParams,
@@ -79,28 +86,54 @@ pub(super) async fn list_threads(
         .iter()
         .map(|thread| thread.thread_id)
         .collect::<HashSet<_>>();
-    let mut names = HashMap::<ThreadId, String>::with_capacity(thread_ids.len());
+    let mut metadata_overlays =
+        HashMap::<ThreadId, ThreadMetadataOverlay>::with_capacity(thread_ids.len());
     if let Some(state_db_ctx) = store.state_db().await {
         for &thread_id in &thread_ids {
             let Ok(Some(metadata)) = state_db_ctx.get_thread(thread_id).await else {
                 continue;
             };
-            if let Some(title) = distinct_thread_metadata_title(&metadata) {
-                names.insert(thread_id, title);
-            }
+            metadata_overlays.insert(
+                thread_id,
+                ThreadMetadataOverlay {
+                    title: distinct_thread_metadata_title(&metadata),
+                    agent_nickname: metadata.agent_nickname,
+                    agent_role: metadata.agent_role,
+                    agent_path: metadata.agent_path,
+                },
+            );
         }
     }
-    if names.len() < thread_ids.len()
+    if metadata_overlays.len() < thread_ids.len()
         && let Ok(legacy_names) =
             find_thread_names_by_ids(store.config.codex_home.as_path(), &thread_ids).await
     {
         for (thread_id, title) in legacy_names {
-            names.entry(thread_id).or_insert(title);
+            metadata_overlays
+                .entry(thread_id)
+                .or_insert(ThreadMetadataOverlay {
+                    title: Some(title),
+                    agent_nickname: None,
+                    agent_role: None,
+                    agent_path: None,
+                });
         }
     }
     for thread in &mut items {
-        if let Some(title) = names.get(&thread.thread_id).cloned() {
+        let Some(overlay) = metadata_overlays.remove(&thread.thread_id) else {
+            continue;
+        };
+        if let Some(title) = overlay.title {
             set_thread_name_from_title(thread, title);
+        }
+        if thread.agent_nickname.is_none() {
+            thread.agent_nickname = overlay.agent_nickname;
+        }
+        if thread.agent_role.is_none() {
+            thread.agent_role = overlay.agent_role;
+        }
+        if thread.agent_path.is_none() {
+            thread.agent_path = overlay.agent_path;
         }
     }
 

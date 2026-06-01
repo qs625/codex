@@ -35,6 +35,7 @@ pub(crate) async fn read_summary_from_rollout(
         session_meta.source.clone(),
         session_meta.agent_nickname.clone(),
         session_meta.agent_role.clone(),
+        session_meta.agent_path.clone(),
     );
 
     let created_at = if session_meta.timestamp.is_empty() {
@@ -142,17 +143,27 @@ pub(super) fn with_thread_spawn_agent_metadata(
     source: codex_protocol::protocol::SessionSource,
     agent_nickname: Option<String>,
     agent_role: Option<String>,
+    agent_path: Option<String>,
 ) -> codex_protocol::protocol::SessionSource {
-    if agent_nickname.is_none() && agent_role.is_none() {
+    if agent_nickname.is_none() && agent_role.is_none() && agent_path.is_none() {
         return source;
     }
+
+    let stored_agent_path =
+        agent_path.and_then(|path| match codex_protocol::AgentPath::try_from(path) {
+            Ok(path) => Some(path),
+            Err(err) => {
+                warn!("stored thread agent_path is invalid and will be ignored: {err}");
+                None
+            }
+        });
 
     match source {
         codex_protocol::protocol::SessionSource::SubAgent(
             codex_protocol::protocol::SubAgentSource::ThreadSpawn {
                 parent_thread_id,
                 depth,
-                agent_path,
+                agent_path: existing_agent_path,
                 agent_nickname: existing_agent_nickname,
                 agent_role: existing_agent_role,
             },
@@ -160,7 +171,7 @@ pub(super) fn with_thread_spawn_agent_metadata(
             codex_protocol::protocol::SubAgentSource::ThreadSpawn {
                 parent_thread_id,
                 depth,
-                agent_path,
+                agent_path: existing_agent_path.or(stored_agent_path),
                 agent_nickname: agent_nickname.or(existing_agent_nickname),
                 agent_role: agent_role.or(existing_agent_role),
             },
