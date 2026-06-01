@@ -66,6 +66,8 @@ pub struct ThreadItem {
     pub agent_nickname: Option<String>,
     /// Role (agent_role) from session metadata for AgentControl-spawned sub-agents.
     pub agent_role: Option<String>,
+    /// Canonical path from session metadata for thread-spawned sub-agents.
+    pub agent_path: Option<String>,
     /// Model provider from session metadata.
     pub model_provider: Option<String>,
     /// CLI version from session metadata.
@@ -97,6 +99,7 @@ struct HeadTailSummary {
     source: Option<SessionSource>,
     agent_nickname: Option<String>,
     agent_role: Option<String>,
+    agent_path: Option<String>,
     model_provider: Option<String>,
     cli_version: Option<String>,
     created_at: Option<String>,
@@ -780,6 +783,7 @@ async fn build_thread_item(
             source,
             agent_nickname,
             agent_role,
+            agent_path,
             model_provider,
             cli_version,
             created_at,
@@ -801,6 +805,7 @@ async fn build_thread_item(
             source,
             agent_nickname,
             agent_role,
+            agent_path,
             model_provider,
             cli_version,
             created_at,
@@ -1103,6 +1108,7 @@ async fn read_head_summary(path: &Path, head_limit: usize) -> io::Result<HeadTai
                     summary.source = Some(session_meta_line.meta.source.clone());
                     summary.agent_nickname = session_meta_line.meta.agent_nickname.clone();
                     summary.agent_role = session_meta_line.meta.agent_role.clone();
+                    summary.agent_path = session_meta_line.meta.agent_path.clone();
                     summary.model_provider = session_meta_line.meta.model_provider.clone();
                     summary.thread_id = Some(session_meta_line.meta.id);
                     summary.cwd = Some(session_meta_line.meta.cwd.clone());

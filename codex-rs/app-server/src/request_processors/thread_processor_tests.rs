@@ -488,6 +488,65 @@ mod thread_processor_behavior_tests {
     }
 
     #[test]
+    fn summary_from_stored_thread_restores_agent_path_from_metadata() {
+        let created_at =
+            DateTime::parse_from_rfc3339("2025-01-02T03:04:05.678Z").expect("valid timestamp");
+        let thread_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000123").expect("valid thread");
+        let parent_thread_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000456").expect("valid thread");
+        let stored_thread = StoredThread {
+            thread_id,
+            rollout_path: Some(PathBuf::from("/tmp/thread.jsonl")),
+            forked_from_id: None,
+            preview: "preview".to_string(),
+            name: None,
+            model_provider: "openai".to_string(),
+            model: None,
+            reasoning_effort: None,
+            created_at: created_at.with_timezone(&Utc),
+            updated_at: created_at.with_timezone(&Utc),
+            archived_at: None,
+            cwd: PathBuf::from("/tmp"),
+            cli_version: "0.0.0".to_string(),
+            source: SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id,
+                depth: 1,
+                agent_path: None,
+                agent_nickname: None,
+                agent_role: None,
+            }),
+            thread_source: Some(codex_protocol::protocol::ThreadSource::Subagent),
+            agent_nickname: Some("researcher".to_string()),
+            agent_role: Some("explorer".to_string()),
+            agent_path: Some("/root/researcher".to_string()),
+            git_info: None,
+            approval_mode: AskForApproval::OnRequest,
+            sandbox_policy: SandboxPolicy::new_read_only_policy(),
+            skills: Vec::new(),
+            token_usage: None,
+            first_user_message: Some("first user message".to_string()),
+            history: None,
+        };
+
+        let summary = summary_from_stored_thread(stored_thread, "fallback");
+
+        assert_eq!(
+            summary.source,
+            SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id,
+                depth: 1,
+                agent_path: Some(
+                    codex_protocol::AgentPath::from_string("/root/researcher".to_string())
+                        .expect("agent path")
+                ),
+                agent_nickname: Some("researcher".to_string()),
+                agent_role: Some("explorer".to_string()),
+            })
+        );
+    }
+
+    #[test]
     fn requested_permissions_trust_project_uses_permission_profile_intent() {
         let cwd = test_path_buf("/tmp/project").abs();
         let full_access_profile = codex_protocol::models::PermissionProfile::Disabled;

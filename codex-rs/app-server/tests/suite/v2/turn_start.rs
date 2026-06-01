@@ -2838,6 +2838,7 @@ async fn turn_start_emits_spawn_agent_item_with_model_metadata_v2() -> Result<()
             prompt: Some(CHILD_PROMPT.to_string()),
             model: Some(REQUESTED_MODEL.to_string()),
             reasoning_effort: Some(REQUESTED_REASONING_EFFORT),
+            timeout_ms: None,
             agents_states: HashMap::new(),
         }
     );
@@ -2886,6 +2887,7 @@ async fn turn_start_emits_spawn_agent_item_with_model_metadata_v2() -> Result<()
         prompt,
         model,
         reasoning_effort,
+        timeout_ms: _,
         agents_states,
     } = spawn_completed
     else {
@@ -3077,6 +3079,7 @@ config_file = "./custom-role.toml"
         prompt,
         model,
         reasoning_effort,
+        timeout_ms: _,
         agents_states,
     } = spawn_completed
     else {

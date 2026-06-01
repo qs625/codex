@@ -21,6 +21,10 @@ import {
   readImageFile,
   revokeComposerImage,
 } from "./lib/images";
+import {
+  readStoredRightPanelView,
+  storeRightPanelView,
+} from "./lib/rightPanelView";
 import { isThreadNotFoundError, toErrorMessage } from "./lib/shared";
 import {
   appendAgentDelta,
@@ -110,7 +114,9 @@ function App() {
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
   const [collapsedPaths, setCollapsedPaths] = useState<string[]>([]);
   const [treeMenu, setTreeMenu] = useState<TreeMenuState | null>(null);
-  const [rightPanelView, setRightPanelView] = useState<RightPanelView>("todo");
+  const [rightPanelView, setRightPanelView] = useState<RightPanelView>(
+    readStoredRightPanelView,
+  );
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -149,6 +155,10 @@ function App() {
   useEffect(() => {
     void loadBootstrap();
   }, []);
+
+  useEffect(() => {
+    storeRightPanelView(rightPanelView);
+  }, [rightPanelView]);
 
   useEffect(() => {
     draftImagesRef.current = draftImages;

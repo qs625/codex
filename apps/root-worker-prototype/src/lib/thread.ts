@@ -132,7 +132,7 @@ export function getTreeNodeSubtitle(thread: Thread) {
   return thread.agentRole ?? getAgentRoleLabel(thread);
 }
 
-export function getThreadPath(thread: Thread) {
+export function getThreadPath(thread: Thread): string {
   const threadSpawn = getThreadSpawnSource(thread);
   if (threadSpawn) {
     return (
@@ -148,7 +148,7 @@ export function isSubagentThread(thread: Thread) {
   return getThreadSpawnSource(thread) !== null || thread.threadSource === "subagent";
 }
 
-export function getParentThreadId(thread: Thread) {
+export function getParentThreadId(thread: Thread): string | null {
   const threadSpawn = getThreadSpawnSource(thread);
   if (threadSpawn) {
     return threadSpawn.parentThreadId ?? threadSpawn.parent_thread_id ?? null;
@@ -529,7 +529,7 @@ export function trimThreadId(threadId: string) {
 
 function mapTaskStatus(status: ThreadStatus): Exclude<TaskFilter, "all"> {
   const mapped = threadStatusClass(status);
-  if (mapped === "blocked" || mapped === "done" || mapped === "doing") {
+  if (mapped === "blocked" || mapped === "doing") {
     return mapped;
   }
   return "todo";
@@ -545,21 +545,45 @@ function getActivePresenceLabel(activeFlags: ThreadActiveFlag[]) {
   return "Active";
 }
 
-function getThreadSpawnSource(thread: Thread): Record<string, unknown> | null {
+type ThreadSpawnSource = {
+  parent_thread_id?: string;
+  parentThreadId?: string;
+  depth?: number;
+  agent_path?: string | null;
+  agentPath?: string | null;
+  agent_nickname?: string | null;
+  agentNickname?: string | null;
+  agent_role?: string | null;
+  agentRole?: string | null;
+};
+
+type SubAgentSourceRecord = {
+  thread_spawn?: ThreadSpawnSource;
+  threadSpawn?: ThreadSpawnSource;
+};
+
+type ThreadSourceRecord = {
+  subAgent?: SubAgentSourceRecord | string;
+  subagent?: SubAgentSourceRecord | string;
+};
+
+function getThreadSpawnSource(thread: Thread): ThreadSpawnSource | null {
   const source = thread.source;
   if (!source || typeof source !== "object") {
     return null;
   }
 
+  const sourceRecord = source as ThreadSourceRecord;
   const subAgentSource =
-    ("subAgent" in source ? source.subAgent : undefined) ??
-    ("subagent" in source ? source.subagent : undefined);
+    sourceRecord.subAgent ??
+    sourceRecord.subagent;
   if (!subAgentSource || typeof subAgentSource !== "object") {
     return null;
   }
 
+  const subAgentSourceRecord = subAgentSource as SubAgentSourceRecord;
   const threadSpawn =
-    ("thread_spawn" in subAgentSource ? subAgentSource.thread_spawn : undefined) ??
-    ("threadSpawn" in subAgentSource ? subAgentSource.threadSpawn : undefined);
-  return threadSpawn && typeof threadSpawn === "object" ? (threadSpawn as Record<string, unknown>) : null;
+    subAgentSourceRecord.thread_spawn ??
+    subAgentSourceRecord.threadSpawn;
+  return threadSpawn && typeof threadSpawn === "object" ? threadSpawn : null;
 }

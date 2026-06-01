@@ -27,6 +27,7 @@ use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::UserInput;
 use codex_core::ARCHIVED_SESSIONS_SUBDIR;
 use codex_git_utils::GitSha;
+use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::GitInfo as CoreGitInfo;
 use codex_protocol::protocol::RolloutItem;
@@ -880,6 +881,98 @@ async fn thread_list_filters_by_source_kind_subagent_thread_spawn() -> Result<()
     assert_ne!(cli_id, subagent_id);
     assert!(matches!(data[0].source, SessionSource::SubAgent(_)));
     assert_eq!(data[0].session_id, subagent_id);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_list_restores_subagent_path_from_stored_metadata() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        r#"
+model = "mock-model"
+approval_policy = "never"
+suppress_unstable_features_warning = true
+
+[features]
+sqlite = true
+"#,
+    )?;
+
+    let parent_thread_id = ThreadId::from_string(&Uuid::new_v4().to_string())?;
+    let subagent_id = create_fake_rollout_with_source(
+        codex_home.path(),
+        "2025-02-01T11-00-00",
+        "2025-02-01T11:00:00Z",
+        "SubAgent",
+        Some("mock_provider"),
+        /*git_info*/ None,
+        CoreSessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id,
+            depth: 1,
+            agent_path: None,
+            agent_nickname: None,
+            agent_role: None,
+        }),
+    )?;
+    let rollout_path = rollout_path(
+        codex_home.path(),
+        "2025-02-01T11-00-00",
+        subagent_id.as_str(),
+    );
+    let state_db =
+        codex_state::StateRuntime::init(codex_home.path().to_path_buf(), "mock_provider".into())
+            .await?;
+    state_db
+        .mark_backfill_complete(/*last_watermark*/ None)
+        .await?;
+    let thread_id = ThreadId::from_string(&subagent_id)?;
+    let mut builder = codex_state::ThreadMetadataBuilder::new(
+        thread_id,
+        rollout_path,
+        DateTime::parse_from_rfc3339("2025-02-01T11:00:00Z")?.with_timezone(&Utc),
+        CoreSessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id,
+            depth: 1,
+            agent_path: None,
+            agent_nickname: None,
+            agent_role: None,
+        }),
+    );
+    builder.model_provider = Some("mock_provider".to_string());
+    builder.cwd = Path::new("/").to_path_buf();
+    builder.cli_version = Some("0.0.0".to_string());
+    builder.agent_path = Some("/root/researcher".to_string());
+    let mut metadata = builder.build("mock_provider");
+    metadata.preview = Some("SubAgent".to_string());
+    metadata.first_user_message = Some("SubAgent".to_string());
+    state_db.upsert_thread(&metadata).await?;
+
+    let mut mcp = init_mcp(codex_home.path()).await?;
+
+    let ThreadListResponse { data, .. } = list_threads(
+        &mut mcp,
+        /*cursor*/ None,
+        Some(10),
+        Some(vec!["mock_provider".to_string()]),
+        Some(vec![ThreadSourceKind::SubAgentThreadSpawn]),
+        /*archived*/ None,
+    )
+    .await?;
+
+    assert_eq!(data.len(), 1);
+    assert_eq!(data[0].id, subagent_id);
+    assert_eq!(
+        data[0].source,
+        SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id,
+            depth: 1,
+            agent_path: Some(AgentPath::try_from("/root/researcher").map_err(anyhow::Error::msg)?),
+            agent_nickname: None,
+            agent_role: None,
+        })
+    );
 
     Ok(())
 }
