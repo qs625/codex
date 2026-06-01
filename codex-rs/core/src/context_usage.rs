@@ -96,6 +96,41 @@ pub(crate) fn build_thread_context_usage(
     turn_context: &TurnContext,
     thread_skills: &[ThreadSkill],
 ) -> ThreadContextUsage {
+    let total_skills = turn_context
+        .turn_skills
+        .outcome
+        .skills_with_enabled()
+        .filter(|(_, enabled)| *enabled)
+        .count();
+    build_thread_context_usage_inner(
+        history,
+        thread_skills,
+        Some(SkillDetectionContext {
+            outcome: &turn_context.turn_skills.outcome,
+            cwd: selected_turn_cwd(turn_context),
+            total_count: Some(u32::try_from(total_skills).unwrap_or(u32::MAX)),
+        }),
+    )
+}
+
+pub(crate) fn build_thread_context_usage_from_history(
+    history: &ContextManager,
+    thread_skills: &[ThreadSkill],
+) -> ThreadContextUsage {
+    build_thread_context_usage_inner(history, thread_skills, None)
+}
+
+struct SkillDetectionContext<'a> {
+    outcome: &'a SkillLoadOutcome,
+    cwd: &'a AbsolutePathBuf,
+    total_count: Option<u32>,
+}
+
+fn build_thread_context_usage_inner(
+    history: &ContextManager,
+    thread_skills: &[ThreadSkill],
+    skill_detection: Option<SkillDetectionContext<'_>>,
+) -> ThreadContextUsage {
     let mut categories = ThreadContextUsageCategoryBreakdown {
         compact: 0,
         skills_metadata: 0,
@@ -179,12 +214,13 @@ pub(crate) fn build_thread_context_usage(
                 categories.tool_calls = categories
                     .tool_calls
                     .saturating_add(estimate_response_item_model_visible_bytes(item));
-                if let Some(call_id) = call_id.as_ref()
+                if let Some(skill_detection) = skill_detection.as_ref()
+                    && let Some(call_id) = call_id.as_ref()
                     && let Some((name, path)) = detect_skill_for_command(
-                        &turn_context.turn_skills.outcome,
+                        skill_detection.outcome,
                         action.command.as_slice(),
                         action.working_directory.as_deref(),
-                        selected_turn_cwd(turn_context),
+                        skill_detection.cwd,
                     )
                 {
                     pending_skill_outputs
@@ -198,20 +234,21 @@ pub(crate) fn build_thread_context_usage(
                 categories.tool_calls = categories
                     .tool_calls
                     .saturating_add(estimate_response_item_model_visible_bytes(item));
-                if let Some((command, workdir)) = extract_command_from_function_arguments(
-                    arguments,
-                    selected_turn_cwd(turn_context),
-                ) && let Some((name, path)) = detect_implicit_skill_invocation_for_command(
-                    &turn_context.turn_skills.outcome,
-                    command.as_str(),
-                    &workdir,
-                )
-                .map(|skill| {
-                    (
-                        skill.name,
-                        skill.path_to_skills_md.to_string_lossy().into_owned(),
+                if let Some(skill_detection) = skill_detection.as_ref()
+                    && let Some((command, workdir)) =
+                        extract_command_from_function_arguments(arguments, skill_detection.cwd)
+                    && let Some((name, path)) = detect_implicit_skill_invocation_for_command(
+                        skill_detection.outcome,
+                        command.as_str(),
+                        &workdir,
                     )
-                }) {
+                    .map(|skill| {
+                        (
+                            skill.name,
+                            skill.path_to_skills_md.to_string_lossy().into_owned(),
+                        )
+                    })
+                {
                     pending_skill_outputs
                         .insert(call_id.clone(), PendingSkillOutput { path: path.clone() });
                     skills.increment(name.as_str(), path.as_str(), ThreadSkillKind::Implicit);
@@ -272,19 +309,12 @@ pub(crate) fn build_thread_context_usage(
             }
         })
     });
-    let total_skills = turn_context
-        .turn_skills
-        .outcome
-        .skills_with_enabled()
-        .filter(|(_, enabled)| *enabled)
-        .count();
-
     ThreadContextUsage {
         total_bytes,
         budget_used_percent,
         categories,
         loaded_skills: skills
-            .into_loaded_skills(Some(u32::try_from(total_skills).unwrap_or(u32::MAX))),
+            .into_loaded_skills(skill_detection.and_then(|context| context.total_count)),
     }
 }
 

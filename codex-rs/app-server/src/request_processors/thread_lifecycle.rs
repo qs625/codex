@@ -551,6 +551,9 @@ pub(super) async fn handle_pending_thread_resume_request(
     if let Some(token_usage) = conversation.token_usage_info().await.map(Into::into) {
         thread.token_usage = Some(token_usage);
     }
+    if thread.context_usage.is_none() {
+        thread.context_usage = Some(conversation.thread_context_usage().await.into());
+    }
     if pending.include_turns {
         populate_thread_turns_from_history(
             &mut thread,

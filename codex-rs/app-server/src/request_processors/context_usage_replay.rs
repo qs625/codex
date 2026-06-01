@@ -31,8 +31,12 @@ pub(super) async fn send_thread_context_usage_update_to_connection(
     else {
         return;
     };
-    let Some(context_usage) = latest_thread_context_usage_from_rollout_items(rollout_items) else {
-        return;
+    let context_usage = if let Some(context_usage) =
+        latest_thread_context_usage_from_rollout_items(rollout_items)
+    {
+        context_usage
+    } else {
+        conversation.thread_context_usage().await
     };
     let notification = ThreadContextUsageUpdatedNotification {
         thread_id: thread_id.to_string(),

@@ -28,6 +28,7 @@ use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::Submission;
+use codex_protocol::protocol::ThreadContextUsage;
 use codex_protocol::protocol::ThreadMemoryMode;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TokenUsageInfo;
@@ -332,6 +333,11 @@ impl CodexThread {
     /// `thread/tokenUsage/updated` payload incomplete.
     pub async fn token_usage_info(&self) -> Option<TokenUsageInfo> {
         self.codex.session.token_usage_info().await
+    }
+
+    /// Returns a context usage snapshot computed from the thread's live history.
+    pub async fn thread_context_usage(&self) -> ThreadContextUsage {
+        self.codex.session.thread_context_usage().await
     }
 
     /// Records a user-role session-prefix message without creating a new user turn boundary.

@@ -2162,13 +2162,8 @@ impl ThreadRequestProcessor {
         if let Some(token_usage) = loaded_thread.token_usage_info().await.map(Into::into) {
             thread.token_usage = Some(token_usage);
         }
-        if let Some(context_usage) =
-            super::context_usage_replay::latest_thread_context_usage_from_rollout_items(
-                history.items.as_slice(),
-            )
-            .map(Into::into)
-        {
-            thread.context_usage = Some(context_usage);
+        if thread.context_usage.is_none() {
+            thread.context_usage = Some(loaded_thread.thread_context_usage().await.into());
         }
 
         if include_turns {
@@ -3225,6 +3220,9 @@ impl ThreadRequestProcessor {
         if let Some(token_usage) = codex_thread.token_usage_info().await.map(Into::into) {
             thread.token_usage = Some(token_usage);
         }
+        if thread.context_usage.is_none() {
+            thread.context_usage = Some(codex_thread.thread_context_usage().await.into());
+        }
         if include_turns {
             populate_thread_turns_from_history(
                 &mut thread,
@@ -3438,6 +3436,12 @@ impl ThreadRequestProcessor {
             .await
             .thread_source
             .map(Into::into);
+        if let Some(token_usage) = forked_thread.token_usage_info().await.map(Into::into) {
+            thread.token_usage = Some(token_usage);
+        }
+        if thread.context_usage.is_none() {
+            thread.context_usage = Some(forked_thread.thread_context_usage().await.into());
+        }
 
         self.thread_watch_manager
             .upsert_thread_silently(thread.clone())
