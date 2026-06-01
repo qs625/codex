@@ -61,6 +61,33 @@ function makeThread(overrides = {}) {
   };
 }
 
+function makeCollabMessageTurn(overrides = {}) {
+  return {
+    id: "turn-1",
+    items: [
+      {
+        type: "collabAgentMessage",
+        id: "item-1",
+        operation: "send_message",
+        senderThreadId: "thread-2",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        otherRecipientPaths: [],
+        content: "same backend message",
+        triggerTurn: true,
+      },
+    ],
+    itemsView: "full",
+    status: "running",
+    error: null,
+    startedAt: 10,
+    completedAt: null,
+    durationMs: null,
+    ...overrides,
+  };
+}
+
 test("mergeThreadSnapshots preserves restored usage when thread/read omits usage fields", () => {
   const restored = makeThread();
   const readThread = {
@@ -110,4 +137,153 @@ test("mergeThreadSnapshots prefers newer usage snapshots when thread/read has th
   assert.equal(merged.threadUsage?.contextUsage?.budgetUsedPercent, 24);
   assert.equal(merged.tokenUsage?.total.totalTokens, 2400);
   assert.equal(merged.contextUsage?.budgetUsedPercent, 24);
+});
+
+test("mergeThreadSnapshots keeps resume-only in-flight items missing from a stale read", () => {
+  const restoredTurn = makeCollabMessageTurn();
+  const restored = makeThread({ turns: [restoredTurn] });
+  const readThread = makeThread({ turns: [] });
+
+  const merged = mergeThreadSnapshots(restored, readThread);
+
+  assert.deepEqual(merged.turns, [restoredTurn]);
+});
+
+test("mergeThreadSnapshots drops duplicate in-flight items already present in the read snapshot", () => {
+  const restoredTurn = makeCollabMessageTurn({
+    id: "restored-turn",
+    items: [
+      {
+        ...makeCollabMessageTurn().items[0],
+        id: "restored-item",
+      },
+    ],
+  });
+  const readTurn = makeCollabMessageTurn({
+    id: "read-turn",
+    items: [
+      {
+        ...restoredTurn.items[0],
+        id: "read-item",
+      },
+    ],
+    status: "completed",
+    completedAt: 12,
+    durationMs: 2000,
+  });
+
+  const merged = mergeThreadSnapshots(
+    makeThread({ turns: [restoredTurn] }),
+    makeThread({ turns: [readTurn] }),
+  );
+
+  assert.deepEqual(merged.turns, [readTurn]);
+});
+
+test("mergeThreadSnapshots only matches one existing item per semantic read item", () => {
+  const restoredTurn = makeCollabMessageTurn({
+    id: "restored-turn",
+    items: [
+      {
+        ...makeCollabMessageTurn().items[0],
+        id: "restored-item-1",
+      },
+      {
+        ...makeCollabMessageTurn().items[0],
+        id: "restored-item-2",
+      },
+    ],
+  });
+  const readTurn = makeCollabMessageTurn({
+    id: "read-turn",
+    items: [
+      {
+        ...restoredTurn.items[0],
+        id: "read-item",
+      },
+    ],
+    status: "completed",
+    completedAt: 12,
+    durationMs: 2000,
+  });
+
+  const merged = mergeThreadSnapshots(
+    makeThread({ turns: [restoredTurn] }),
+    makeThread({ turns: [readTurn] }),
+  );
+
+  assert.deepEqual(merged.turns, [
+    readTurn,
+    {
+      ...restoredTurn,
+      items: [restoredTurn.items[1]],
+    },
+  ]);
+});
+
+test("mergeThreadSnapshots drops duplicate placeholder turns with no timing metadata", () => {
+  const restoredTurn = makeCollabMessageTurn({
+    id: "restored-turn",
+    startedAt: null,
+    completedAt: null,
+    durationMs: null,
+    items: [
+      {
+        ...makeCollabMessageTurn().items[0],
+        id: "restored-item",
+      },
+    ],
+  });
+  const readTurn = makeCollabMessageTurn({
+    id: "read-turn",
+    items: [
+      {
+        ...restoredTurn.items[0],
+        id: "read-item",
+      },
+    ],
+    status: "completed",
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  });
+
+  const merged = mergeThreadSnapshots(
+    makeThread({ turns: [restoredTurn] }),
+    makeThread({ turns: [readTurn] }),
+  );
+
+  assert.deepEqual(merged.turns, [readTurn]);
+});
+
+test("mergeThreadSnapshots preserves distinct in-flight items with matching content", () => {
+  const readTurn = makeCollabMessageTurn({
+    id: "read-turn",
+    items: [
+      {
+        ...makeCollabMessageTurn().items[0],
+        id: "read-item",
+      },
+    ],
+    status: "completed",
+    completedAt: 12,
+    durationMs: 2000,
+  });
+  const liveTurn = makeCollabMessageTurn({
+    id: "live-turn",
+    items: [
+      {
+        ...readTurn.items[0],
+        id: "live-item",
+      },
+    ],
+    startedAt: 20,
+  });
+
+  const merged = mergeThreadSnapshots(
+    makeThread({ turns: [liveTurn] }),
+    makeThread({ turns: [readTurn] }),
+  );
+
+  assert.deepEqual(merged.turns, [readTurn, liveTurn]);
 });

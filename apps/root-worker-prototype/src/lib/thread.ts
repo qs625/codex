@@ -11,11 +11,18 @@ import type {
 } from "../types";
 
 export function pickInitialThread(threads: Thread[]) {
-  return [...threads].sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null;
+  return (
+    [...threads].sort((left, right) => right.updatedAt - left.updatedAt)[0] ??
+    null
+  );
 }
 
 export function pickInitialRootThread(threads: Thread[]) {
-  return pickInitialThread(threads.filter((thread) => isRootThread(thread) && getThreadPath(thread) === "/root"));
+  return pickInitialThread(
+    threads.filter(
+      (thread) => isRootThread(thread) && getThreadPath(thread) === "/root",
+    ),
+  );
 }
 
 export function buildAgentTree(
@@ -92,7 +99,10 @@ export function buildAgentTree(
     .map(buildNode);
 }
 
-export function buildTodoItems(threads: Thread[], filter: TaskFilter): TodoCardItem[] {
+export function buildTodoItems(
+  threads: Thread[],
+  filter: TaskFilter,
+): TodoCardItem[] {
   const items = [...threads]
     .sort((left, right) => right.updatedAt - left.updatedAt)
     .map((thread) => {
@@ -125,7 +135,10 @@ export function getTreeNodeLabel(thread: Thread) {
   if (isRootThread(thread)) {
     return getThreadPath(thread);
   }
-  return getThreadPath(thread).split("/").filter(Boolean).at(-1) ?? getThreadLabel(thread);
+  return (
+    getThreadPath(thread).split("/").filter(Boolean).at(-1) ??
+    getThreadLabel(thread)
+  );
 }
 
 export function getTreeNodeSubtitle(thread: Thread) {
@@ -145,7 +158,9 @@ export function getThreadPath(thread: Thread): string {
 }
 
 export function isSubagentThread(thread: Thread) {
-  return getThreadSpawnSource(thread) !== null || thread.threadSource === "subagent";
+  return (
+    getThreadSpawnSource(thread) !== null || thread.threadSource === "subagent"
+  );
 }
 
 export function getParentThreadId(thread: Thread): string | null {
@@ -160,10 +175,7 @@ export function isRootThread(thread: Thread) {
   return !getParentThreadId(thread);
 }
 
-export function getTreeRootThreadId(
-  threads: Thread[],
-  threadId: string,
-) {
+export function getTreeRootThreadId(threads: Thread[], threadId: string) {
   const byId = new Map(threads.map((thread) => [thread.id, thread]));
   let current = byId.get(threadId) ?? null;
   let currentId = current?.id ?? threadId;
@@ -182,10 +194,7 @@ export function getTreeRootThreadId(
   return current?.id ?? currentId;
 }
 
-export function getThreadDepth(
-  threads: Thread[],
-  threadId: string,
-) {
+export function getThreadDepth(threads: Thread[], threadId: string) {
   const byId = new Map(threads.map((thread) => [thread.id, thread]));
   let depth = 0;
   let current = byId.get(threadId) ?? null;
@@ -200,10 +209,7 @@ export function getThreadDepth(
   return depth;
 }
 
-export function getThreadSubtreeIds(
-  threads: Thread[],
-  rootThreadId: string,
-) {
+export function getThreadSubtreeIds(threads: Thread[], rootThreadId: string) {
   const byParent = new Map<string, string[]>();
   for (const thread of threads) {
     const parentId = getParentThreadId(thread);
@@ -268,13 +274,33 @@ export function getThreadReasoningLabel(thread: Thread | null) {
 }
 
 export function updateThreadTurn(thread: Thread, turn: Turn) {
-  const turns = thread.turns.some((existing) => existing.id === turn.id)
-    ? thread.turns.map((existing) => (existing.id === turn.id ? mergeTurn(existing, turn) : existing))
-    : [...thread.turns, turn];
+  const hasExistingTurn = thread.turns.some(
+    (existing) => existing.id === turn.id,
+  );
+  if (hasExistingTurn) {
+    const turns = thread.turns.map((existing) =>
+      existing.id === turn.id ? mergeTurn(existing, turn) : existing,
+    );
+    return { ...thread, turns };
+  }
+
+  const turnMatcher = createTurnItemMatcher(
+    buildTurnItemIndex([{ turn, items: turn.items }]),
+  );
+  const turns = [
+    ...thread.turns.flatMap((existing) =>
+      getUnmatchedInFlightTurn(existing, turnMatcher),
+    ),
+    turn,
+  ];
   return { ...thread, turns };
 }
 
-export function updateThreadItem(thread: Thread, turnId: string, item: ThreadItem) {
+export function updateThreadItem(
+  thread: Thread,
+  turnId: string,
+  item: ThreadItem,
+) {
   return {
     ...thread,
     turns: thread.turns.map((turn) => {
@@ -284,9 +310,9 @@ export function updateThreadItem(thread: Thread, turnId: string, item: ThreadIte
       const items = turn.items.some((existing) => existing.id === item.id)
         ? turn.items.map((existing) =>
             existing.id === item.id
-              // The server can refine an in-flight item into eventDrivenToolCall
-              // once it recognizes a generic function call as an event-driven tool.
-              ? item
+              ? // The server can refine an in-flight item into eventDrivenToolCall
+                // once it recognizes a generic function call as an event-driven tool.
+                item
               : existing,
           )
         : [...turn.items, item];
@@ -299,7 +325,12 @@ export function updateThreadSkills(thread: Thread, skills: ThreadSkill[]) {
   return { ...thread, skills };
 }
 
-export function appendAgentDelta(thread: Thread, turnId: string, itemId: string, delta: string) {
+export function appendAgentDelta(
+  thread: Thread,
+  turnId: string,
+  itemId: string,
+  delta: string,
+) {
   const turns = thread.turns.some((turn) => turn.id === turnId)
     ? thread.turns.map((turn) => {
         if (turn.id !== turnId) {
@@ -349,15 +380,20 @@ export function appendAgentDelta(thread: Thread, turnId: string, itemId: string,
 }
 
 export function mergeTurn(existing: Turn, next: Turn): Turn {
-  const existingItemsById = new Map(existing.items.map((item) => [item.id, item]));
+  const existingItemsById = new Map(
+    existing.items.map((item) => [item.id, item]),
+  );
   const mergedItems = next.items.map((item) => {
     const existingItem = existingItemsById.get(item.id);
     return existingItem ? mergeThreadItem(existingItem, item) : item;
   });
 
   if (isTurnInFlight(existing) || isTurnInFlight(next)) {
+    const mergedItemsMatcher = createTurnItemMatcher(
+      buildTurnItemIndex([{ turn: next, items: mergedItems }]),
+    );
     for (const item of existing.items) {
-      if (!mergedItems.some((candidate) => candidate.id === item.id)) {
+      if (!consumeMatchingTurnItem(mergedItemsMatcher, existing, item)) {
         mergedItems.push(item);
       }
     }
@@ -377,29 +413,40 @@ export function mergeThreadSnapshot(existing: Thread | null, next: Thread) {
 
   const nextTurnIds = new Set(next.turns.map((turn) => turn.id));
   const turns = next.turns.map((turn) => {
-    const existingTurn = existing.turns.find((candidate) => candidate.id === turn.id);
+    const existingTurn = existing.turns.find(
+      (candidate) => candidate.id === turn.id,
+    );
     return existingTurn ? mergeTurn(existingTurn, turn) : turn;
   });
+  const nextItemsMatcher = createTurnItemMatcher(
+    buildTurnItemIndex(turns.map((turn) => ({ turn, items: turn.items }))),
+  );
 
   for (const turn of existing.turns) {
     if (!nextTurnIds.has(turn.id) && isTurnInFlight(turn)) {
-      turns.push(turn);
+      turns.push(...getUnmatchedInFlightTurn(turn, nextItemsMatcher));
     }
   }
 
   const tokenUsage =
-    next.tokenUsage ?? existing.tokenUsage ?? existing.threadUsage?.tokenUsage ?? null;
+    next.tokenUsage ??
+    existing.tokenUsage ??
+    existing.threadUsage?.tokenUsage ??
+    null;
   const contextUsage =
-    next.contextUsage ?? existing.contextUsage ?? existing.threadUsage?.contextUsage ?? null;
+    next.contextUsage ??
+    existing.contextUsage ??
+    existing.threadUsage?.contextUsage ??
+    null;
   const threadUsage = next.threadUsage
     ? {
         tokenUsage: next.threadUsage.tokenUsage ?? tokenUsage,
         contextUsage: next.threadUsage.contextUsage ?? contextUsage,
       }
-    : existing.threadUsage ?? {
+    : (existing.threadUsage ?? {
         tokenUsage,
         contextUsage,
-      };
+      });
 
   return {
     ...existing,
@@ -467,6 +514,134 @@ function mergeThreadItem(existing: ThreadItem, next: ThreadItem): ThreadItem {
   return next;
 }
 
+type TurnItemIndex = {
+  ids: Set<string>;
+  semantic: Map<string, Turn[]>;
+};
+
+type TurnItemMatcher = {
+  index: TurnItemIndex;
+  consumedSemantic: Map<string, Set<number>>;
+};
+
+function createTurnItemMatcher(index: TurnItemIndex): TurnItemMatcher {
+  return {
+    index,
+    consumedSemantic: new Map(),
+  };
+}
+
+function buildTurnItemIndex(
+  entries: Array<{ turn: Turn; items: ThreadItem[] }>,
+): TurnItemIndex {
+  const ids = new Set<string>();
+  const semantic = new Map<string, Turn[]>();
+
+  for (const { turn, items } of entries) {
+    for (const item of items) {
+      ids.add(item.id);
+      const key = getThreadItemSemanticKey(item);
+      const matchingTurns = semantic.get(key) ?? [];
+      matchingTurns.push(turn);
+      semantic.set(key, matchingTurns);
+    }
+  }
+
+  return { ids, semantic };
+}
+
+function consumeMatchingTurnItem(
+  matcher: TurnItemMatcher,
+  turn: Turn,
+  item: ThreadItem,
+) {
+  if (matcher.index.ids.has(item.id)) {
+    return true;
+  }
+
+  const key = getThreadItemSemanticKey(item);
+  const matchingTurns = matcher.index.semantic.get(key) ?? [];
+  const consumed = matcher.consumedSemantic.get(key) ?? new Set<number>();
+  for (const [index, candidate] of matchingTurns.entries()) {
+    if (!consumed.has(index) && haveCompatibleTurnTimes(candidate, turn)) {
+      consumed.add(index);
+      matcher.consumedSemantic.set(key, consumed);
+      return true;
+    }
+  }
+  return false;
+}
+
+function getUnmatchedInFlightTurn(
+  turn: Turn,
+  matcher: TurnItemMatcher,
+): Turn[] {
+  if (!isTurnInFlight(turn)) {
+    return [turn];
+  }
+
+  const items = turn.items.filter(
+    (item) => !consumeMatchingTurnItem(matcher, turn, item),
+  );
+  if (items.length === 0) {
+    return [];
+  }
+  return [items.length === turn.items.length ? turn : { ...turn, items }];
+}
+
+function haveCompatibleTurnTimes(left: Turn, right: Turn) {
+  if (hasNoTurnTimes(left) || hasNoTurnTimes(right)) {
+    return true;
+  }
+  if (
+    left.startedAt !== null &&
+    left.startedAt !== undefined &&
+    right.startedAt !== null &&
+    right.startedAt !== undefined &&
+    left.startedAt === right.startedAt
+  ) {
+    return true;
+  }
+  return (
+    left.completedAt !== null &&
+    left.completedAt !== undefined &&
+    right.completedAt !== null &&
+    right.completedAt !== undefined &&
+    left.completedAt === right.completedAt
+  );
+}
+
+function hasNoTurnTimes(turn: Turn) {
+  return (
+    turn.startedAt === null &&
+    turn.completedAt === null &&
+    turn.durationMs === null
+  );
+}
+
+function getThreadItemSemanticKey(item: ThreadItem) {
+  const { id: _id, ...content } = item;
+  return `${item.type}:${stableStringify(content)}`;
+}
+
+function stableStringify(value: unknown): string {
+  if (value === undefined) {
+    return "undefined";
+  }
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "undefined";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(",")}}`;
+}
+
 function preferMoreCompleteText(existing: string, next: string) {
   if (existing === next) {
     return next;
@@ -489,7 +664,10 @@ export function threadStatusClass(status: ThreadStatus) {
 }
 
 export function countDescendants(node: TreeNode): number {
-  return node.children.reduce((count, child) => count + 1 + countDescendants(child), 0);
+  return node.children.reduce(
+    (count, child) => count + 1 + countDescendants(child),
+    0,
+  );
 }
 
 export function formatClockTime(unixSeconds: number) {
@@ -574,16 +752,13 @@ function getThreadSpawnSource(thread: Thread): ThreadSpawnSource | null {
   }
 
   const sourceRecord = source as ThreadSourceRecord;
-  const subAgentSource =
-    sourceRecord.subAgent ??
-    sourceRecord.subagent;
+  const subAgentSource = sourceRecord.subAgent ?? sourceRecord.subagent;
   if (!subAgentSource || typeof subAgentSource !== "object") {
     return null;
   }
 
   const subAgentSourceRecord = subAgentSource as SubAgentSourceRecord;
   const threadSpawn =
-    subAgentSourceRecord.thread_spawn ??
-    subAgentSourceRecord.threadSpawn;
+    subAgentSourceRecord.thread_spawn ?? subAgentSourceRecord.threadSpawn;
   return threadSpawn && typeof threadSpawn === "object" ? threadSpawn : null;
 }

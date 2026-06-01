@@ -2,12 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  appendAgentDelta,
   getPresenceLabel,
   getParentThreadId,
   getThreadPath,
   isThreadThinking,
   mergeThreadSnapshot,
   threadStatusClass,
+  updateThreadTurn,
 } from "./thread";
 import type { Thread } from "../types";
 
@@ -215,6 +217,291 @@ test("mergeThreadSnapshot preserves an in-flight turn missing from a stale snaps
   });
 
   assert.deepEqual(merged.turns, existing.turns);
+});
+
+test("mergeThreadSnapshot drops duplicate in-flight items already present in the read snapshot", () => {
+  const restoredTurn = {
+    id: "restored-turn",
+    items: [
+      {
+        type: "collabAgentMessage" as const,
+        id: "restored-item",
+        operation: "send_message",
+        senderThreadId: "thread-2",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        otherRecipientPaths: [],
+        content: "same backend message",
+        triggerTurn: true,
+      },
+    ],
+    itemsView: "full" as const,
+    status: "running" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: null,
+    durationMs: null,
+  };
+  const readTurn = {
+    ...restoredTurn,
+    id: "read-turn",
+    items: [
+      {
+        ...restoredTurn.items[0],
+        id: "read-item",
+      },
+    ],
+    status: "completed" as const,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+
+  const merged = mergeThreadSnapshot(
+    {
+      ...makeThread(),
+      turns: [restoredTurn],
+    },
+    {
+      ...makeThread(),
+      turns: [readTurn],
+    },
+  );
+
+  assert.deepEqual(merged.turns, [readTurn]);
+});
+
+test("mergeThreadSnapshot only matches one existing item per semantic read item", () => {
+  const restoredTurn = {
+    id: "restored-turn",
+    items: [
+      {
+        type: "agentMessage" as const,
+        id: "restored-item-1",
+        text: "same response",
+        phase: null,
+        memoryCitation: null,
+      },
+      {
+        type: "agentMessage" as const,
+        id: "restored-item-2",
+        text: "same response",
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    itemsView: "full" as const,
+    status: "running" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: null,
+    durationMs: null,
+  };
+  const readTurn = {
+    ...restoredTurn,
+    id: "read-turn",
+    items: [
+      {
+        ...restoredTurn.items[0],
+        id: "read-item",
+      },
+    ],
+    status: "completed" as const,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+
+  const merged = mergeThreadSnapshot(
+    {
+      ...makeThread(),
+      turns: [restoredTurn],
+    },
+    {
+      ...makeThread(),
+      turns: [readTurn],
+    },
+  );
+
+  assert.deepEqual(merged.turns, [
+    readTurn,
+    {
+      ...restoredTurn,
+      items: [restoredTurn.items[1]],
+    },
+  ]);
+});
+
+test("mergeThreadSnapshot preserves distinct in-flight items with matching content", () => {
+  const readTurn = {
+    id: "read-turn",
+    items: [
+      {
+        type: "collabAgentMessage" as const,
+        id: "read-item",
+        operation: "send_message",
+        senderThreadId: "thread-2",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        otherRecipientPaths: [],
+        content: "same backend message",
+        triggerTurn: true,
+      },
+    ],
+    itemsView: "full" as const,
+    status: "completed" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+  const liveTurn = {
+    ...readTurn,
+    id: "live-turn",
+    items: [
+      {
+        ...readTurn.items[0],
+        id: "live-item",
+      },
+    ],
+    status: "running" as const,
+    startedAt: 20,
+    completedAt: null,
+    durationMs: null,
+  };
+
+  const merged = mergeThreadSnapshot(
+    {
+      ...makeThread(),
+      turns: [liveTurn],
+    },
+    {
+      ...makeThread(),
+      turns: [readTurn],
+    },
+  );
+
+  assert.deepEqual(merged.turns, [readTurn, liveTurn]);
+});
+
+test("updateThreadTurn drops duplicate in-flight items when a completed turn arrives with new ids", () => {
+  const runningTurn = {
+    id: "running-turn",
+    items: [
+      {
+        type: "agentMessage" as const,
+        id: "running-item",
+        text: "same response",
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    itemsView: "full" as const,
+    status: "running" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: null,
+    durationMs: null,
+  };
+  const completedTurn = {
+    ...runningTurn,
+    id: "completed-turn",
+    items: [
+      {
+        ...runningTurn.items[0],
+        id: "completed-item",
+      },
+    ],
+    status: "completed" as const,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+
+  const updated = updateThreadTurn(
+    {
+      ...makeThread(),
+      turns: [runningTurn],
+    },
+    completedTurn,
+  );
+
+  assert.deepEqual(updated.turns, [completedTurn]);
+});
+
+test("updateThreadTurn drops duplicate placeholder delta turns when a completed turn arrives with new ids", () => {
+  const placeholderThread = appendAgentDelta(
+    makeThread(),
+    "placeholder-turn",
+    "placeholder-item",
+    "same response",
+  );
+  const completedTurn = {
+    id: "completed-turn",
+    items: [
+      {
+        type: "agentMessage" as const,
+        id: "completed-item",
+        text: "same response",
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    itemsView: "full" as const,
+    status: "completed" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+
+  const updated = updateThreadTurn(placeholderThread, completedTurn);
+
+  assert.deepEqual(updated.turns, [completedTurn]);
+});
+
+test("updateThreadTurn preserves distinct running items when appending a same-content turn from another time", () => {
+  const completedTurn = {
+    id: "completed-turn",
+    items: [
+      {
+        type: "agentMessage" as const,
+        id: "completed-item",
+        text: "same response",
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    itemsView: "full" as const,
+    status: "completed" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+  const runningTurn = {
+    ...completedTurn,
+    id: "running-turn",
+    items: [
+      {
+        ...completedTurn.items[0],
+        id: "running-item",
+      },
+    ],
+    status: "running" as const,
+    startedAt: 20,
+    completedAt: null,
+    durationMs: null,
+  };
+
+  const updated = updateThreadTurn(
+    {
+      ...makeThread(),
+      turns: [runningTurn],
+    },
+    completedTurn,
+  );
+
+  assert.deepEqual(updated.turns, [runningTurn, completedTurn]);
 });
 
 test("mergeThreadSnapshot keeps the more complete in-flight agent message text", () => {
