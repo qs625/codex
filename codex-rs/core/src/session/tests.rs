@@ -1834,6 +1834,57 @@ async fn record_initial_history_seeds_token_info_from_rollout() {
 }
 
 #[tokio::test]
+async fn thread_context_usage_recomputes_after_resume_without_persisted_snapshot() {
+    let (session, turn_context) = make_session_and_context().await;
+    let (mut rollout_items, _expected) = sample_rollout(&session, &turn_context).await;
+    rollout_items.push(RolloutItem::EventMsg(EventMsg::TokenCount(
+        TokenCountEvent {
+            info: Some(TokenUsageInfo {
+                total_token_usage: TokenUsage {
+                    input_tokens: 100,
+                    cached_input_tokens: 50,
+                    output_tokens: 200,
+                    reasoning_output_tokens: 25,
+                    total_tokens: 375,
+                },
+                last_token_usage: TokenUsage {
+                    input_tokens: 10,
+                    cached_input_tokens: 0,
+                    output_tokens: 20,
+                    reasoning_output_tokens: 5,
+                    total_tokens: 35,
+                },
+                model_context_window: Some(1_000),
+            }),
+            rate_limits: None,
+        },
+    )));
+
+    assert!(
+        rollout_items.iter().all(|item| !matches!(
+            item,
+            RolloutItem::EventMsg(EventMsg::ThreadContextUsageUpdated(_))
+        )),
+        "test history should reproduce rollouts without persisted context usage"
+    );
+
+    session
+        .record_initial_history(InitialHistory::Resumed(ResumedHistory {
+            conversation_id: ThreadId::default(),
+            history: rollout_items,
+            rollout_path: Some(PathBuf::from("/tmp/resume.jsonl")),
+        }))
+        .await;
+
+    let usage = session.thread_context_usage().await;
+
+    assert!(usage.total_bytes > 0);
+    assert!(usage.categories.user_messages > 0);
+    assert!(usage.categories.llm_messages > 0);
+    assert_eq!(usage.budget_used_percent, Some(37));
+}
+
+#[tokio::test]
 async fn recompute_token_usage_uses_session_base_instructions() {
     let (session, turn_context) = make_session_and_context().await;
 

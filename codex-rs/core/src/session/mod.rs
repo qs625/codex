@@ -30,6 +30,7 @@ use crate::context::NetworkRuleSaved;
 use crate::context::PermissionsInstructions;
 use crate::context::PersonalitySpecInstructions;
 use crate::context_usage::build_thread_context_usage;
+use crate::context_usage::build_thread_context_usage_from_history;
 use crate::default_skill_metadata_budget;
 use crate::environment_selection::ResolvedTurnEnvironments;
 use crate::exec_policy::ExecPolicyManager;
@@ -108,6 +109,7 @@ use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
+use codex_protocol::protocol::ThreadContextUsage;
 use codex_protocol::protocol::ThreadContextUsageUpdatedEvent;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TurnAbortReason;
@@ -1127,6 +1129,16 @@ impl Session {
     pub(crate) async fn token_usage_info(&self) -> Option<TokenUsageInfo> {
         let state = self.state.lock().await;
         state.token_info()
+    }
+
+    /// Recomputes the context usage snapshot from the current reconstructed history.
+    ///
+    /// Restored sessions may predate persisted `ThreadContextUsageUpdated` rollout
+    /// events. Recomputing from live history lets app-server restore the context usage
+    /// panel as soon as a client attaches, matching the token usage restore path.
+    pub(crate) async fn thread_context_usage(&self) -> ThreadContextUsage {
+        let state = self.state.lock().await;
+        build_thread_context_usage_from_history(&state.history, &state.thread_skills())
     }
 
     pub(crate) async fn get_estimated_token_count(
