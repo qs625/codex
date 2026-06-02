@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::AgentMode;
 use crate::agent::control::SpawnAgentForkMode;
 use crate::agent::control::SpawnAgentOptions;
 use crate::agent::control::render_input_preview;
@@ -161,6 +162,7 @@ async fn handle_spawn_agent(
                     turn.as_ref(),
                     args.cwd.as_ref(),
                 )),
+                agent_mode: args.agent_mode.unwrap_or_default(),
             },
         ),
     )
@@ -267,6 +269,7 @@ struct SpawnAgentArgs {
     model: Option<String>,
     reasoning_effort: Option<ReasoningEffort>,
     service_tier: Option<String>,
+    agent_mode: Option<AgentMode>,
     fork_turns: Option<String>,
     fork_context: Option<bool>,
 }

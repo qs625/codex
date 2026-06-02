@@ -2,6 +2,7 @@ use super::*;
 use crate::CodexThread;
 use crate::StateDbHandle;
 use crate::ThreadManager;
+use crate::agent::AgentMode;
 use crate::agent::agent_status_from_event;
 use crate::config::AgentRoleConfig;
 use crate::config::Config;
@@ -1377,6 +1378,7 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
         })),
         tester_path.to_string(),
         Some(tester_path.clone()),
+        AgentMode::Normal,
     );
     let tester_turn = tester_thread.codex.session.new_default_turn().await;
     tester_thread
@@ -1480,6 +1482,7 @@ async fn multi_agent_v2_completion_waits_for_pending_mailbox_input() {
         .session
         .abort_all_tasks(TurnAbortReason::Replaced)
         .await;
+    sleep(Duration::from_millis(100)).await;
     let queued_update = InterAgentCommunication::new(
         AgentPath::root(),
         worker_path.clone(),
@@ -1491,8 +1494,14 @@ async fn multi_agent_v2_completion_waits_for_pending_mailbox_input() {
     worker_thread
         .codex
         .session
-        .queue_response_items_for_next_turn(vec![queued_update.to_response_input_item()])
-        .await;
+        .enqueue_mailbox_communication(queued_update);
+    assert!(
+        worker_thread
+            .codex
+            .session
+            .has_pending_mailbox_items()
+            .await
+    );
     let baseline_op_count = harness.manager.captured_ops().len();
 
     emit_turn_complete(&worker_thread, "done").await;
@@ -1612,6 +1621,52 @@ async fn multi_agent_v2_completion_waits_for_unfinished_subagent() {
 }
 
 #[tokio::test]
+async fn multi_agent_v2_management_agent_does_not_notify_parent_on_completion() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let mut config = harness.config.clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    let worker_path = AgentPath::root().join("manager").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent_with_metadata(
+            config,
+            text_input("manage this project"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("explorer".to_string()),
+            })),
+            SpawnAgentOptions {
+                agent_mode: AgentMode::Management,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("worker spawn should succeed")
+        .thread_id;
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+    let baseline_op_count = harness.manager.captured_ops().len();
+
+    emit_turn_complete(&worker_thread, "done").await;
+    sleep(Duration::from_millis(100)).await;
+    let captured_ops = harness.manager.captured_ops();
+
+    assert!(!captured_child_completion(
+        &captured_ops[baseline_op_count..],
+        root_thread_id,
+        &worker_path,
+        &AgentPath::root(),
+    ));
+}
+
+#[tokio::test]
 async fn completion_watcher_notifies_parent_when_child_is_missing() {
     let harness = AgentControlHarness::new().await;
     let (parent_thread_id, parent_thread) = harness.start_thread().await;
@@ -1628,6 +1683,7 @@ async fn completion_watcher_notifies_parent_when_child_is_missing() {
         })),
         child_thread_id.to_string(),
         /*child_agent_path*/ None,
+        AgentMode::Normal,
     );
 
     assert_eq!(wait_for_subagent_notification(&parent_thread).await, true);
@@ -1650,6 +1706,37 @@ async fn completion_watcher_notifies_parent_when_child_is_missing() {
         history_contains_text(&history_items, "\"status\":\"not_found\""),
         true
     );
+}
+
+#[tokio::test]
+async fn completion_watcher_skips_management_agent() {
+    let harness = AgentControlHarness::new().await;
+    let (parent_thread_id, parent_thread) = harness.start_thread().await;
+    let child_thread_id = ThreadId::new();
+
+    harness.control.maybe_start_completion_watcher(
+        child_thread_id,
+        Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id,
+            depth: 1,
+            agent_path: None,
+            agent_nickname: None,
+            agent_role: Some("explorer".to_string()),
+        })),
+        child_thread_id.to_string(),
+        /*child_agent_path*/ None,
+        AgentMode::Management,
+    );
+
+    sleep(Duration::from_millis(100)).await;
+    let history_items = parent_thread
+        .codex
+        .session
+        .clone_history()
+        .await
+        .raw_items()
+        .to_vec();
+    assert_eq!(has_subagent_notification(&history_items), false);
 }
 
 #[tokio::test]

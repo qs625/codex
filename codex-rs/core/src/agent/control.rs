@@ -1,5 +1,6 @@
 use crate::agent::AgentStatus;
 use crate::agent::registry::AgentMetadata;
+use crate::agent::registry::AgentMode;
 use crate::agent::registry::AgentRegistry;
 use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::resolve_role_config;
@@ -54,6 +55,7 @@ pub(crate) struct SpawnAgentOptions {
     pub(crate) fork_parent_spawn_call_id: Option<String>,
     pub(crate) fork_mode: Option<SpawnAgentForkMode>,
     pub(crate) environments: Option<Vec<TurnEnvironmentSelection>>,
+    pub(crate) agent_mode: AgentMode,
 }
 
 #[derive(Clone, Debug)]
@@ -221,6 +223,7 @@ impl AgentControl {
                     depth,
                     agent_path,
                     agent_role,
+                    options.agent_mode,
                     /*preferred_agent_nickname*/ None,
                 )?;
                 (Some(session_source), agent_metadata)
@@ -328,6 +331,7 @@ impl AgentControl {
                 notification_source,
                 child_reference,
                 agent_metadata.agent_path.clone(),
+                agent_metadata.agent_mode,
             );
         }
 
@@ -573,6 +577,7 @@ impl AgentControl {
                     depth,
                     agent_path.or(resumed_agent_path),
                     resumed_agent_role,
+                    AgentMode::Normal,
                     resumed_agent_nickname,
                 )?
             }
@@ -628,6 +633,7 @@ impl AgentControl {
                 Some(notification_source.clone()),
                 child_reference,
                 agent_metadata.agent_path.clone(),
+                agent_metadata.agent_mode,
             );
         }
         self.persist_thread_spawn_edge_for_source(
@@ -958,7 +964,11 @@ impl AgentControl {
         session_source: Option<SessionSource>,
         child_reference: String,
         child_agent_path: Option<AgentPath>,
+        child_agent_mode: AgentMode,
     ) {
+        if child_agent_mode == AgentMode::Management {
+            return;
+        }
         let Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
             parent_thread_id, ..
         })) = session_source
@@ -1037,6 +1047,7 @@ impl AgentControl {
         depth: i32,
         agent_path: Option<AgentPath>,
         agent_role: Option<String>,
+        agent_mode: AgentMode,
         preferred_agent_nickname: Option<String>,
     ) -> CodexResult<(SessionSource, AgentMetadata)> {
         if depth == 1 {
@@ -1063,6 +1074,7 @@ impl AgentControl {
             agent_path,
             agent_nickname,
             agent_role,
+            agent_mode,
             last_task_message: None,
         };
         Ok((session_source, agent_metadata))

@@ -84,6 +84,12 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
     assert!(properties.contains_key("message"));
     assert!(properties.contains_key("cwd"));
     assert!(properties.contains_key("fork_turns"));
+    assert_eq!(
+        properties
+            .get("agent_mode")
+            .and_then(|schema| schema.enum_values.as_ref()),
+        Some(&vec![json!("normal"), json!("management")])
+    );
     assert!(!properties.contains_key("items"));
     assert!(!properties.contains_key("fork_context"));
     assert_eq!(
@@ -137,6 +143,12 @@ fn spawn_agent_tool_v1_keeps_legacy_fork_context_field() {
 
     assert!(properties.contains_key("fork_context"));
     assert!(properties.contains_key("cwd"));
+    assert_eq!(
+        properties
+            .get("agent_mode")
+            .and_then(|schema| schema.enum_values.as_ref()),
+        Some(&vec![json!("normal"), json!("management")])
+    );
     assert!(!properties.contains_key("fork_turns"));
     assert_eq!(
         properties

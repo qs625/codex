@@ -9,6 +9,7 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 use crate::agent::AgentControl;
+use crate::agent::AgentMode;
 use crate::agent::AgentStatus;
 use crate::agent::Mailbox;
 use crate::agent::MailboxReceiver;
@@ -1653,6 +1654,14 @@ impl Session {
             return;
         };
         if !is_final(&status) {
+            return;
+        }
+        if self
+            .services
+            .agent_control
+            .get_agent_metadata(self.conversation_id)
+            .is_some_and(|metadata| metadata.agent_mode == AgentMode::Management)
+        {
             return;
         }
         if self.has_pending_child_completion_work().await {
