@@ -1,3 +1,4 @@
+use crate::ActiveEventSubscriptionTracker;
 use crate::SkillsManager;
 use crate::agent::AgentControl;
 use crate::attestation::AttestationProvider;
@@ -226,6 +227,7 @@ pub(crate) struct ThreadManagerState {
     installation_id: String,
     analytics_events_client: Option<AnalyticsEventsClient>,
     state_db: Option<StateDbHandle>,
+    active_event_subscriptions: Arc<ActiveEventSubscriptionTracker>,
     // Captures submitted ops for testing purpose when test mode is enabled.
     ops_log: Option<SharedCapturedOps>,
 }
@@ -298,6 +300,7 @@ impl ThreadManager {
                 installation_id,
                 analytics_events_client,
                 state_db,
+                active_event_subscriptions: Arc::new(ActiveEventSubscriptionTracker::default()),
                 ops_log: should_use_test_thread_manager_behavior()
                     .then(|| Arc::new(std::sync::Mutex::new(Vec::new()))),
             }),
@@ -399,6 +402,7 @@ impl ThreadManager {
                 installation_id,
                 analytics_events_client: None,
                 state_db,
+                active_event_subscriptions: Arc::new(ActiveEventSubscriptionTracker::default()),
                 ops_log: should_use_test_thread_manager_behavior()
                     .then(|| Arc::new(std::sync::Mutex::new(Vec::new()))),
             }),
@@ -408,6 +412,10 @@ impl ThreadManager {
 
     pub fn session_source(&self) -> SessionSource {
         self.state.session_source.clone()
+    }
+
+    pub fn active_event_subscriptions(&self) -> Arc<ActiveEventSubscriptionTracker> {
+        Arc::clone(&self.state.active_event_subscriptions)
     }
 
     pub fn auth_manager(&self) -> Arc<AuthManager> {
@@ -1236,6 +1244,7 @@ impl ThreadManagerState {
             analytics_events_client: self.analytics_events_client.clone(),
             thread_store: Arc::clone(&self.thread_store),
             attestation_provider: self.attestation_provider.clone(),
+            active_event_subscriptions: Arc::clone(&self.active_event_subscriptions),
         })
         .await?;
         let new_thread = self

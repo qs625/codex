@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::sync::Weak;
 
+use codex_core::ActiveEventSubscriptionTracker;
 use codex_core::NewThread;
 use codex_core::StartThreadOptions;
 use codex_core::ThreadManager;
@@ -17,10 +18,13 @@ use crate::thread_status::ThreadWatchManager;
 
 struct ThreadSubscriptionActivityObserver {
     thread_watch_manager: ThreadWatchManager,
+    active_event_subscriptions: Arc<ActiveEventSubscriptionTracker>,
 }
 
 impl codex_file_subscription::SubscriptionActivityObserver for ThreadSubscriptionActivityObserver {
     fn active_subscription_count_changed(&self, thread_id: ThreadId, active_count: usize) {
+        self.active_event_subscriptions
+            .set_active_count(thread_id, active_count);
         let thread_watch_manager = self.thread_watch_manager.clone();
         let thread_id = thread_id.to_string();
         tokio::spawn(async move {
@@ -40,6 +44,10 @@ pub(crate) fn thread_extensions<S>(
 where
     S: AgentSpawner<StartThreadOptions, Spawned = NewThread, Error = CodexErr> + 'static,
 {
+    let active_event_subscriptions = thread_manager
+        .upgrade()
+        .map(|thread_manager| thread_manager.active_event_subscriptions())
+        .unwrap_or_default();
     let mut builder = ExtensionRegistryBuilder::<Config>::new();
     codex_guardian::install(&mut builder, guardian_agent_spawner);
     codex_file_subscription::install(
@@ -48,6 +56,7 @@ where
         thread_manager,
         Some(Arc::new(ThreadSubscriptionActivityObserver {
             thread_watch_manager,
+            active_event_subscriptions,
         })),
     );
     Arc::new(builder.build())

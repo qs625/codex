@@ -5,6 +5,7 @@
 // the TUI or the tracing stack).
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
+mod active_event_subscriptions;
 mod apply_patch;
 mod apps;
 mod arc_monitor;
@@ -24,6 +25,7 @@ pub use codex_thread::CodexThreadTurnContextOverrides;
 pub use codex_thread::ThreadConfigSnapshot;
 pub use session::turn_context::TurnContext;
 mod agent;
+pub use active_event_subscriptions::ActiveEventSubscriptionTracker;
 mod attestation;
 mod codex_delegate;
 mod command_canonicalization;

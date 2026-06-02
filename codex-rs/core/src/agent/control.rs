@@ -1013,7 +1013,7 @@ impl AgentControl {
                     message,
                     codex_protocol::protocol::InterAgentOperation::ChildCompletion,
                 )
-                .with_trigger_turn(false);
+                .with_trigger_turn(true);
                 let _ = control
                     .send_inter_agent_communication(parent_thread_id, communication)
                     .await;

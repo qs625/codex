@@ -239,6 +239,43 @@ async fn wait_for_live_thread_spawn_children(
     .expect("expected persisted child tree");
 }
 
+async fn emit_turn_complete(thread: &Arc<CodexThread>, last_agent_message: &str) {
+    let turn = thread.codex.session.new_default_turn().await;
+    thread
+        .codex
+        .session
+        .send_event(
+            turn.as_ref(),
+            EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: turn.sub_id.clone(),
+                last_agent_message: Some(last_agent_message.to_string()),
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            }),
+        )
+        .await;
+}
+
+fn captured_child_completion(
+    captured_ops: &[(ThreadId, Op)],
+    parent_thread_id: ThreadId,
+    child_agent_path: &AgentPath,
+    parent_agent_path: &AgentPath,
+) -> bool {
+    captured_ops.iter().any(|(thread_id, op)| {
+        *thread_id == parent_thread_id
+            && matches!(
+                op,
+                Op::InterAgentCommunication { communication }
+                    if communication.author == *child_agent_path
+                        && communication.recipient == *parent_agent_path
+                        && communication.operation
+                            == codex_protocol::protocol::InterAgentOperation::ChildCompletion
+            )
+    })
+}
+
 #[tokio::test]
 async fn send_input_errors_when_manager_dropped() {
     let control = AgentControl::default();
@@ -1371,7 +1408,7 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
                 expected_message.clone(),
                 codex_protocol::protocol::InterAgentOperation::ChildCompletion,
             )
-            .with_trigger_turn(false),
+            .with_trigger_turn(true),
         },
     );
 
@@ -1407,7 +1444,170 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
             expected_message,
             codex_protocol::protocol::InterAgentOperation::ChildCompletion,
         )
-        .with_trigger_turn(false)
+        .with_trigger_turn(true)
+    ));
+}
+
+#[tokio::test]
+async fn multi_agent_v2_completion_waits_for_pending_mailbox_input() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let mut config = harness.config.clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            config,
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("explorer".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+    worker_thread
+        .codex
+        .session
+        .abort_all_tasks(TurnAbortReason::Replaced)
+        .await;
+    let queued_update = InterAgentCommunication::new(
+        AgentPath::root(),
+        worker_path.clone(),
+        Vec::new(),
+        "queued parent update".to_string(),
+        codex_protocol::protocol::InterAgentOperation::Unknown,
+    )
+    .with_trigger_turn(false);
+    worker_thread
+        .codex
+        .session
+        .queue_response_items_for_next_turn(vec![queued_update.to_response_input_item()])
+        .await;
+    let baseline_op_count = harness.manager.captured_ops().len();
+
+    emit_turn_complete(&worker_thread, "done").await;
+    sleep(Duration::from_millis(100)).await;
+    let captured_ops = harness.manager.captured_ops();
+
+    assert!(!captured_child_completion(
+        &captured_ops[baseline_op_count..],
+        root_thread_id,
+        &worker_path,
+        &AgentPath::root(),
+    ));
+}
+
+#[tokio::test]
+async fn multi_agent_v2_completion_waits_for_active_event_subscription() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let mut config = harness.config.clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            config,
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("explorer".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+    worker_thread
+        .codex
+        .session
+        .services
+        .active_event_subscriptions
+        .set_active_count(worker_thread_id, 1);
+    let baseline_op_count = harness.manager.captured_ops().len();
+
+    emit_turn_complete(&worker_thread, "done").await;
+    sleep(Duration::from_millis(100)).await;
+    let captured_ops = harness.manager.captured_ops();
+
+    assert!(!captured_child_completion(
+        &captured_ops[baseline_op_count..],
+        root_thread_id,
+        &worker_path,
+        &AgentPath::root(),
+    ));
+}
+
+#[tokio::test]
+async fn multi_agent_v2_completion_waits_for_unfinished_subagent() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let mut config = harness.config.clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            config.clone(),
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("explorer".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let tester_path = worker_path.join("tester").expect("tester path");
+    let _tester_thread_id = harness
+        .control
+        .spawn_agent(
+            config,
+            text_input("hello tester"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: worker_thread_id,
+                depth: 2,
+                agent_path: Some(tester_path),
+                agent_nickname: None,
+                agent_role: Some("explorer".to_string()),
+            })),
+        )
+        .await
+        .expect("tester spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+    let baseline_op_count = harness.manager.captured_ops().len();
+
+    emit_turn_complete(&worker_thread, "done").await;
+    sleep(Duration::from_millis(100)).await;
+    let captured_ops = harness.manager.captured_ops();
+
+    assert!(!captured_child_completion(
+        &captured_ops[baseline_op_count..],
+        root_thread_id,
+        &worker_path,
+        &AgentPath::root(),
     ));
 }
 

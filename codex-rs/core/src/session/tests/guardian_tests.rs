@@ -692,6 +692,7 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
         analytics_events_client: None,
         thread_store,
         attestation_provider: None,
+        active_event_subscriptions: Arc::new(crate::ActiveEventSubscriptionTracker::default()),
     })
     .await
     .expect("spawn guardian subagent");

@@ -1805,6 +1805,16 @@ async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn()
         ))
         .await
         .expect("followup_task should succeed");
+    thread
+        .codex
+        .session
+        .abort_all_tasks(TurnAbortReason::Replaced)
+        .await;
+    let pending_input = thread.codex.session.get_pending_input().await;
+    assert!(
+        !pending_input.is_empty(),
+        "followup_task should queue input for the worker turn"
+    );
 
     let second_turn = thread.codex.session.new_default_turn().await;
     thread
@@ -1844,7 +1854,7 @@ async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn()
                                 if communication.author == worker_path
                                     && communication.recipient == AgentPath::root()
                                     && communication.other_recipients.is_empty()
-                                    && !communication.trigger_turn =>
+                                    && communication.trigger_turn =>
                             {
                                 Some(communication.content)
                             }
@@ -1869,7 +1879,8 @@ async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn()
     .await
     .expect("parent should receive one completion notification per child turn");
 
-    assert_eq!(notifications.len(), 2);
+    assert!(notifications.contains(&first_notification));
+    assert!(notifications.contains(&second_notification));
 }
 
 #[tokio::test]

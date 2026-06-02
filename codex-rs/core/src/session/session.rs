@@ -464,6 +464,7 @@ impl Session {
         thread_store: Arc<dyn ThreadStore>,
         parent_rollout_thread_trace: ThreadTraceContext,
         attestation_provider: Option<Arc<dyn AttestationProvider>>,
+        active_event_subscriptions: Arc<crate::ActiveEventSubscriptionTracker>,
     ) -> anyhow::Result<Arc<Self>> {
         debug!(
             "Configuring session: model={}; provider={:?}",
@@ -956,6 +957,7 @@ impl Session {
                 live_thread: live_thread_init.as_ref().cloned(),
                 thread_store: Arc::clone(&thread_store),
                 attestation_provider: attestation_provider.clone(),
+                active_event_subscriptions,
                 model_client: ModelClient::new(
                     Some(Arc::clone(&auth_manager)),
                     session_id,

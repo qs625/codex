@@ -420,6 +420,7 @@ pub(crate) struct CodexSpawnArgs {
     pub(crate) analytics_events_client: Option<AnalyticsEventsClient>,
     pub(crate) thread_store: Arc<dyn ThreadStore>,
     pub(crate) attestation_provider: Option<Arc<dyn AttestationProvider>>,
+    pub(crate) active_event_subscriptions: Arc<crate::ActiveEventSubscriptionTracker>,
 }
 
 pub(crate) const INITIAL_SUBMIT_ID: &str = "";
@@ -480,6 +481,7 @@ impl Codex {
             analytics_events_client,
             thread_store,
             attestation_provider,
+            active_event_subscriptions,
         } = args;
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
         let (tx_event, rx_event) = async_channel::unbounded();
@@ -666,6 +668,7 @@ impl Codex {
             thread_store,
             parent_rollout_thread_trace,
             attestation_provider,
+            active_event_subscriptions,
         )
         .await
         .map_err(|e| {
@@ -1652,6 +1655,9 @@ impl Session {
         if !is_final(&status) {
             return;
         }
+        if self.has_pending_child_completion_work().await {
+            return;
+        }
 
         self.forward_child_completion_to_parent(
             turn_context,
@@ -1693,7 +1699,7 @@ impl Session {
             message,
             codex_protocol::protocol::InterAgentOperation::ChildCompletion,
         )
-        .with_trigger_turn(false)
+        .with_trigger_turn(true)
         .with_thread_ids(self.conversation_id, parent_thread_id)
         .with_status(status.clone());
         if let Err(err) = self
@@ -1718,6 +1724,44 @@ impl Session {
                     },
                 );
         }
+    }
+
+    async fn has_pending_child_completion_work(&self) -> bool {
+        if self.has_queued_response_items_for_next_turn().await
+            || self.has_pending_mailbox_items().await
+            || self
+                .services
+                .active_event_subscriptions
+                .active_count(self.conversation_id)
+                > 0
+        {
+            return true;
+        }
+
+        let Ok(descendant_thread_ids) = self
+            .services
+            .agent_control
+            .list_live_agent_subtree_thread_ids(self.conversation_id)
+            .await
+        else {
+            return false;
+        };
+
+        for descendant_thread_id in descendant_thread_ids {
+            if descendant_thread_id == self.conversation_id {
+                continue;
+            }
+            let status = self
+                .services
+                .agent_control
+                .get_status(descendant_thread_id)
+                .await;
+            if !is_final(&status) {
+                return true;
+            }
+        }
+
+        false
     }
 
     async fn maybe_mirror_event_text_to_realtime(&self, msg: &EventMsg) {
