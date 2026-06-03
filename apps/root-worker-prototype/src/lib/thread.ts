@@ -117,7 +117,9 @@ export function buildCurrentThreadTodoItems(
   }
   return filterTodoItems(
     buildTodoCardItems(
-      threads.filter((thread) => getParentThreadId(thread) === selectedThreadId),
+      threads.filter(
+        (thread) => getParentThreadId(thread) === selectedThreadId,
+      ),
     ),
     filter,
   );
@@ -312,7 +314,7 @@ export function updateThreadTurn(thread: Thread, turn: Turn) {
   );
   const turns = [
     ...thread.turns.flatMap((existing) =>
-      getUnmatchedInFlightTurn(existing, turnMatcher),
+      getRetainedUnmatchedTurn(existing, turnMatcher),
     ),
     turn,
   ];
@@ -340,12 +342,12 @@ export function updateThreadItem(
       existingItemIndex === -1
         ? [...turn.items, nextItem]
         : turn.items.map((existing, index) =>
-          index === existingItemIndex
-            ? // The server can refine an in-flight item into eventDrivenToolCall
-              // once it recognizes a generic function call as an event-driven tool.
-              mergeThreadItem(existing, nextItem)
-            : existing,
-        );
+            index === existingItemIndex
+              ? // The server can refine an in-flight item into eventDrivenToolCall
+                // once it recognizes a generic function call as an event-driven tool.
+                mergeThreadItem(existing, nextItem)
+              : existing,
+          );
     return { ...turn, items };
   });
   const turns = foundTurn
@@ -472,8 +474,8 @@ export function mergeThreadSnapshot(existing: Thread | null, next: Thread) {
   );
 
   for (const turn of existing.turns) {
-    if (!nextTurnIds.has(turn.id) && isTurnInFlight(turn)) {
-      turns.push(...getUnmatchedInFlightTurn(turn, nextItemsMatcher));
+    if (!nextTurnIds.has(turn.id)) {
+      turns.push(...getRetainedUnmatchedTurn(turn, nextItemsMatcher));
     }
   }
 
@@ -538,7 +540,10 @@ export function applyPendingThreadUpdates(
     return thread;
   }
   pendingUpdates.delete(thread.id);
-  return updates.reduce((updated, update) => update(updated), thread);
+  return dropDuplicatePendingAgentTurns(
+    thread,
+    updates.reduce((updated, update) => update(updated), thread),
+  );
 }
 
 export function isTurnInFlight(turn: Turn) {
@@ -593,21 +598,19 @@ function mergeThreadItem(existing: ThreadItem, next: ThreadItem): ThreadItem {
   };
 }
 
-function findMatchingThreadItemIndex(items: ThreadItem[], nextItem: ThreadItem) {
+function findMatchingThreadItemIndex(
+  items: ThreadItem[],
+  nextItem: ThreadItem,
+) {
   const idIndex = items.findIndex((item) => item.id === nextItem.id);
   if (idIndex !== -1) {
     return idIndex;
   }
 
-  return items.findIndex((item) =>
-    canMergeSameTurnThreadItems(item, nextItem),
-  );
+  return items.findIndex((item) => canMergeSameTurnThreadItems(item, nextItem));
 }
 
-function canMergeSameTurnThreadItems(
-  existing: ThreadItem,
-  next: ThreadItem,
-) {
+function canMergeSameTurnThreadItems(existing: ThreadItem, next: ThreadItem) {
   if (
     existing.type !== next.type ||
     !canMatchThreadItemSemantically(existing)
@@ -628,7 +631,8 @@ function haveCompatibleAgentMessages(
 ) {
   if (
     existing.phase !== next.phase ||
-    stableStringify(existing.memoryCitation) !== stableStringify(next.memoryCitation)
+    stableStringify(existing.memoryCitation) !==
+      stableStringify(next.memoryCitation)
   ) {
     return false;
   }
@@ -641,7 +645,9 @@ function haveCompatibleAgentMessages(
     return false;
   }
 
-  return existing.text.startsWith(next.text) || next.text.startsWith(existing.text);
+  return (
+    existing.text.startsWith(next.text) || next.text.startsWith(existing.text)
+  );
 }
 
 function mergeItemTimestamps(
@@ -689,12 +695,10 @@ function applyItemTimestamps(
   return next;
 }
 
-function itemNotificationTimeSeconds(
-  timestamps?: {
-    startedAtMs?: number | null;
-    completedAtMs?: number | null;
-  },
-) {
+function itemNotificationTimeSeconds(timestamps?: {
+  startedAtMs?: number | null;
+  completedAtMs?: number | null;
+}) {
   const timestampMs = timestamps?.startedAtMs ?? timestamps?.completedAtMs;
   return timestampMs === null || timestampMs === undefined
     ? null
@@ -704,6 +708,10 @@ function itemNotificationTimeSeconds(
 type TurnItemIndex = {
   ids: Set<string>;
   semantic: Map<string, Turn[]>;
+  agentMessages: Array<{
+    turn: Turn;
+    item: Extract<ThreadItem, { type: "agentMessage" }>;
+  }>;
 };
 
 type TurnItemMatcher = {
@@ -723,10 +731,14 @@ function buildTurnItemIndex(
 ): TurnItemIndex {
   const ids = new Set<string>();
   const semantic = new Map<string, Turn[]>();
+  const agentMessages: TurnItemIndex["agentMessages"] = [];
 
   for (const { turn, items } of entries) {
     for (const item of items) {
       ids.add(item.id);
+      if (item.type === "agentMessage") {
+        agentMessages.push({ turn, item });
+      }
       const key = getThreadItemSemanticKey(item);
       const matchingTurns = semantic.get(key) ?? [];
       matchingTurns.push(turn);
@@ -734,7 +746,7 @@ function buildTurnItemIndex(
     }
   }
 
-  return { ids, semantic };
+  return { ids, semantic, agentMessages };
 }
 
 function consumeMatchingTurnItem(
@@ -747,6 +759,9 @@ function consumeMatchingTurnItem(
   }
   if (!canMatchThreadItemSemantically(item)) {
     return false;
+  }
+  if (item.type === "agentMessage") {
+    return consumeMatchingAgentMessage(matcher, turn, item);
   }
 
   const key = getThreadItemSemanticKey(item);
@@ -762,11 +777,32 @@ function consumeMatchingTurnItem(
   return false;
 }
 
-function getUnmatchedInFlightTurn(
+function consumeMatchingAgentMessage(
+  matcher: TurnItemMatcher,
+  turn: Turn,
+  item: Extract<ThreadItem, { type: "agentMessage" }>,
+) {
+  const consumed =
+    matcher.consumedSemantic.get("agentMessage") ?? new Set<number>();
+  for (const [index, candidate] of matcher.index.agentMessages.entries()) {
+    if (
+      !consumed.has(index) &&
+      haveCompatibleTurnTimes(candidate.turn, turn) &&
+      haveCompatibleAgentMessageContent(candidate.item, item)
+    ) {
+      consumed.add(index);
+      matcher.consumedSemantic.set("agentMessage", consumed);
+      return true;
+    }
+  }
+  return false;
+}
+
+function getRetainedUnmatchedTurn(
   turn: Turn,
   matcher: TurnItemMatcher,
 ): Turn[] {
-  if (!isTurnInFlight(turn)) {
+  if (!isTurnInFlight(turn) && !isLiveDerivedCompletedAgentTurn(turn)) {
     return [turn];
   }
 
@@ -777,6 +813,40 @@ function getUnmatchedInFlightTurn(
     return [];
   }
   return [items.length === turn.items.length ? turn : { ...turn, items }];
+}
+
+function dropDuplicatePendingAgentTurns(snapshot: Thread, updated: Thread) {
+  const snapshotTurnIds = new Set(snapshot.turns.map((turn) => turn.id));
+  const matcher = createTurnItemMatcher(
+    buildTurnItemIndex(
+      snapshot.turns.map((turn) => ({ turn, items: turn.items })),
+    ),
+  );
+  const turns = updated.turns.flatMap((turn) => {
+    if (
+      snapshotTurnIds.has(turn.id) ||
+      !turn.items.every((item) => item.type === "agentMessage")
+    ) {
+      return [turn];
+    }
+    const items = turn.items.filter(
+      (item) => !consumeMatchingTurnItem(matcher, turn, item),
+    );
+    if (items.length === 0) {
+      return [];
+    }
+    return [items.length === turn.items.length ? turn : { ...turn, items }];
+  });
+  return { ...updated, turns };
+}
+
+function isLiveDerivedCompletedAgentTurn(turn: Turn) {
+  return (
+    turn.status === "completed" &&
+    turn.itemsView !== "full" &&
+    turn.items.length > 0 &&
+    turn.items.every((item) => item.type === "agentMessage")
+  );
 }
 
 function haveCompatibleTurnTimes(left: Turn, right: Turn) {
@@ -835,6 +905,18 @@ function canMatchThreadItemSemantically(item: ThreadItem) {
     case "webSearch":
       return false;
   }
+}
+
+function haveCompatibleAgentMessageContent(
+  left: Extract<ThreadItem, { type: "agentMessage" }>,
+  right: Extract<ThreadItem, { type: "agentMessage" }>,
+) {
+  return (
+    left.phase === right.phase &&
+    stableStringify(left.memoryCitation) ===
+      stableStringify(right.memoryCitation) &&
+    (left.text.startsWith(right.text) || right.text.startsWith(left.text))
+  );
 }
 
 function getThreadItemSemanticKey(item: ThreadItem) {

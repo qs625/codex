@@ -180,6 +180,83 @@ test("mergeThreadSnapshots drops duplicate in-flight items already present in th
   assert.deepEqual(merged.turns, [readTurn]);
 });
 
+test("mergeThreadSnapshots drops duplicate completed live agent turns already present in the read snapshot", () => {
+  const restoredTurn = {
+    id: "restored-turn",
+    items: [
+      {
+        type: "agentMessage",
+        id: "restored-item",
+        text: "same response",
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    itemsView: "notLoaded",
+    status: "completed",
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+  const readTurn = {
+    ...restoredTurn,
+    id: "read-turn",
+    items: [
+      {
+        ...restoredTurn.items[0],
+        id: "read-item",
+      },
+    ],
+    itemsView: "full",
+  };
+
+  const merged = mergeThreadSnapshots(
+    makeThread({ turns: [restoredTurn] }),
+    makeThread({ turns: [readTurn] }),
+  );
+
+  assert.deepEqual(merged.turns, [readTurn]);
+});
+
+test("mergeThreadSnapshots preserves completed full agent turns with matching content", () => {
+  const restoredTurn = {
+    id: "restored-turn",
+    items: [
+      {
+        type: "agentMessage",
+        id: "restored-item",
+        text: "same response",
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+  const readTurn = {
+    ...restoredTurn,
+    id: "read-turn",
+    items: [
+      {
+        ...restoredTurn.items[0],
+        id: "read-item",
+      },
+    ],
+  };
+
+  const merged = mergeThreadSnapshots(
+    makeThread({ turns: [restoredTurn] }),
+    makeThread({ turns: [readTurn] }),
+  );
+
+  assert.deepEqual(merged.turns, [readTurn, restoredTurn]);
+});
+
 test("mergeThreadSnapshots only matches one existing item per semantic read item", () => {
   const restoredTurn = makeCollabMessageTurn({
     id: "restored-turn",

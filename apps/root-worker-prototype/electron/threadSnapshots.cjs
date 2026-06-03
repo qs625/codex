@@ -42,21 +42,63 @@ function mergeTurns(existingTurns, nextTurns) {
   const nextItemsMatcher = createTurnItemMatcher(nextItemsIndex);
 
   for (const turn of existingTurns) {
-    if (!nextTurnIds.has(turn.id) && isTurnInFlight(turn)) {
-      const items = (turn.items ?? []).filter(
-        (item) => !consumeMatchingTurnItem(nextItemsMatcher, turn, item),
-      );
-      if (items.length > 0) {
-        turns.push(
-          items.length === (turn.items ?? []).length
-            ? turn
-            : { ...turn, items },
-        );
-      }
+    if (nextTurnIds.has(turn.id)) {
+      continue;
     }
+    turns.push(...getRetainedUnmatchedTurn(turn, nextItemsMatcher));
   }
 
   return turns;
+}
+
+function getRetainedUnmatchedTurn(turn, matcher) {
+  if (!isTurnInFlight(turn) && !isLiveDerivedCompletedAgentTurn(turn)) {
+    return [turn];
+  }
+
+  const items = (turn.items ?? []).filter(
+    (item) => !consumeMatchingTurnItem(matcher, turn, item),
+  );
+  if (items.length === 0) {
+    return [];
+  }
+  return [
+    items.length === (turn.items ?? []).length ? turn : { ...turn, items },
+  ];
+}
+
+function isLiveDerivedCompletedAgentTurn(turn) {
+  return (
+    turn.status === "completed" &&
+    turn.itemsView !== "full" &&
+    (turn.items ?? []).length > 0 &&
+    (turn.items ?? []).every((item) => item.type === "agentMessage")
+  );
+}
+
+function haveCompatibleAgentMessageContent(left, right) {
+  return (
+    left.phase === right.phase &&
+    stableStringify(left.memoryCitation) ===
+      stableStringify(right.memoryCitation) &&
+    (left.text.startsWith(right.text) || right.text.startsWith(left.text))
+  );
+}
+
+function consumeMatchingAgentMessage(matcher, turn, item) {
+  const consumed = matcher.consumedSemantic.get("agentMessage") ?? new Set();
+  for (const [index, candidate] of matcher.index.agentMessages.entries()) {
+    if (
+      !consumed.has(index) &&
+      haveCompatibleTurnTimes(candidate.turn, turn) &&
+      haveCompatibleAgentMessageContent(candidate.item, item)
+    ) {
+      consumed.add(index);
+      matcher.consumedSemantic.set("agentMessage", consumed);
+      return true;
+    }
+  }
+  return false;
 }
 
 function mergeTurn(existing, next) {
@@ -101,10 +143,14 @@ function mergeThreadItem(existing, next) {
 function buildTurnItemIndex(entries) {
   const ids = new Set();
   const semantic = new Map();
+  const agentMessages = [];
 
   for (const { turn, items } of entries) {
     for (const item of items) {
       ids.add(item.id);
+      if (item.type === "agentMessage") {
+        agentMessages.push({ turn, item });
+      }
       const key = getThreadItemSemanticKey(item);
       const matchingTurns = semantic.get(key) ?? [];
       matchingTurns.push(turn);
@@ -112,7 +158,7 @@ function buildTurnItemIndex(entries) {
     }
   }
 
-  return { ids, semantic };
+  return { ids, semantic, agentMessages };
 }
 
 function createTurnItemMatcher(index) {
@@ -128,6 +174,9 @@ function consumeMatchingTurnItem(matcher, turn, item) {
   }
   if (!canMatchThreadItemSemantically(item)) {
     return false;
+  }
+  if (item.type === "agentMessage") {
+    return consumeMatchingAgentMessage(matcher, turn, item);
   }
 
   const key = getThreadItemSemanticKey(item);
@@ -187,7 +236,12 @@ function canMatchThreadItemSemantically(item) {
 }
 
 function getThreadItemSemanticKey(item) {
-  const { id: _id, ...content } = item;
+  const {
+    id: _id,
+    startedAtMs: _startedAtMs,
+    completedAtMs: _completedAtMs,
+    ...content
+  } = item;
   return `${item.type}:${stableStringify(content)}`;
 }
 
