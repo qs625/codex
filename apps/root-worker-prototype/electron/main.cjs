@@ -15,7 +15,10 @@ const {
   parseLocalFileTarget,
 } = require("./fileTargets.cjs");
 const { LspManager } = require("./lsp/manager.cjs");
-const { mergeThreadSnapshots } = require("./threadSnapshots.cjs");
+const {
+  mergeThreadSnapshots,
+  normalizeThreadSnapshot,
+} = require("./threadSnapshots.cjs");
 const { withRealtimeConversationFeature } = require("./threadConfig.cjs");
 const { buildTurnInput } = require("./turnInput.cjs");
 const {
@@ -483,7 +486,7 @@ function normalizeThread(thread, runtime = null) {
     : null;
   const threadUsage = { tokenUsage, contextUsage };
 
-  return {
+  return normalizeThreadSnapshot({
     ...thread,
     model: runtime?.model ?? thread.model ?? null,
     reasoningEffort: runtime?.reasoningEffort ?? thread.reasoningEffort ?? null,
@@ -497,7 +500,7 @@ function normalizeThread(thread, runtime = null) {
       ? { contextUsage }
       : {}),
     turns: (thread.turns ?? []).map(normalizeTurn),
-  };
+  });
 }
 
 function normalizeThreadSkill(skill) {

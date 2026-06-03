@@ -458,12 +458,13 @@ export function mergeTurn(existing: Turn, next: Turn): Turn {
 }
 
 export function mergeThreadSnapshot(existing: Thread | null, next: Thread) {
-  if (!existing || existing.id !== next.id) {
-    return next;
+  const normalizedNext = normalizeThreadSnapshot(next);
+  if (!existing || existing.id !== normalizedNext.id) {
+    return normalizedNext;
   }
 
-  const nextTurnIds = new Set(next.turns.map((turn) => turn.id));
-  const turns = next.turns.map((turn) => {
+  const nextTurnIds = new Set(normalizedNext.turns.map((turn) => turn.id));
+  const turns = normalizedNext.turns.map((turn) => {
     const existingTurn = existing.turns.find(
       (candidate) => candidate.id === turn.id,
     );
@@ -480,19 +481,19 @@ export function mergeThreadSnapshot(existing: Thread | null, next: Thread) {
   }
 
   const tokenUsage =
-    next.tokenUsage ??
+    normalizedNext.tokenUsage ??
     existing.tokenUsage ??
     existing.threadUsage?.tokenUsage ??
     null;
   const contextUsage =
-    next.contextUsage ??
+    normalizedNext.contextUsage ??
     existing.contextUsage ??
     existing.threadUsage?.contextUsage ??
     null;
-  const threadUsage = next.threadUsage
+  const threadUsage = normalizedNext.threadUsage
     ? {
-        tokenUsage: next.threadUsage.tokenUsage ?? tokenUsage,
-        contextUsage: next.threadUsage.contextUsage ?? contextUsage,
+        tokenUsage: normalizedNext.threadUsage.tokenUsage ?? tokenUsage,
+        contextUsage: normalizedNext.threadUsage.contextUsage ?? contextUsage,
       }
     : (existing.threadUsage ?? {
         tokenUsage,
@@ -501,7 +502,7 @@ export function mergeThreadSnapshot(existing: Thread | null, next: Thread) {
 
   return {
     ...existing,
-    ...next,
+    ...normalizedNext,
     threadUsage,
     tokenUsage,
     contextUsage,
@@ -509,10 +510,69 @@ export function mergeThreadSnapshot(existing: Thread | null, next: Thread) {
   };
 }
 
+export function normalizeThreadSnapshot(thread: Thread): Thread {
+  const turns = thread.turns.reduce<Turn[]>((normalizedTurns, turn) => {
+    const normalizedTurn = normalizeTurnSnapshot(turn);
+    const existingIndex = normalizedTurns.findIndex(
+      (candidate) => candidate.id === normalizedTurn.id,
+    );
+    if (existingIndex !== -1) {
+      return normalizedTurns.map((existing, index) =>
+        index === existingIndex
+          ? mergeTurn(existing, normalizedTurn)
+          : existing,
+      );
+    }
+
+    const incomingMatcher = createTurnItemMatcher(
+      buildTurnItemIndex([
+        { turn: normalizedTurn, items: normalizedTurn.items },
+      ]),
+    );
+    const retainedExistingTurns = normalizedTurns.flatMap((existing) =>
+      getRetainedUnmatchedTurn(existing, incomingMatcher),
+    );
+    const existingMatcher = createTurnItemMatcher(
+      buildTurnItemIndex(
+        retainedExistingTurns.map((existing) => ({
+          turn: existing,
+          items: existing.items,
+        })),
+      ),
+    );
+    return [
+      ...retainedExistingTurns,
+      ...getRetainedUnmatchedTurn(normalizedTurn, existingMatcher),
+    ];
+  }, []);
+
+  return turns.length === thread.turns.length &&
+    turns.every((turn, index) => turn === thread.turns[index])
+    ? thread
+    : { ...thread, turns };
+}
+
+function normalizeTurnSnapshot(turn: Turn): Turn {
+  const items = turn.items.reduce<ThreadItem[]>((normalizedItems, item) => {
+    const existingIndex = findMatchingThreadItemIndex(normalizedItems, item);
+    if (existingIndex === -1) {
+      return [...normalizedItems, item];
+    }
+    return normalizedItems.map((existing, index) =>
+      index === existingIndex ? mergeThreadItem(existing, item) : existing,
+    );
+  }, []);
+
+  return items.length === turn.items.length &&
+    items.every((item, index) => item === turn.items[index])
+    ? turn
+    : { ...turn, items };
+}
+
 export function upsertThread(threads: Thread[], next: Thread) {
   const existing = threads.find((thread) => thread.id === next.id);
   if (!existing) {
-    return [...threads, next];
+    return [...threads, normalizeThreadSnapshot(next)];
   }
   return threads.map((thread) =>
     thread.id === next.id ? mergeThreadSnapshot(thread, next) : thread,

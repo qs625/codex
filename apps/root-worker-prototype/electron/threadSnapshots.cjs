@@ -1,31 +1,97 @@
 function mergeThreadSnapshots(existing, next) {
+  const normalizedNext = normalizeThreadSnapshot(next);
   if (!existing) {
-    return next;
+    return normalizedNext;
   }
 
-  const turns = mergeTurns(existing.turns ?? [], next.turns ?? []);
+  const turns = mergeTurns(existing.turns ?? [], normalizedNext.turns ?? []);
   const tokenUsage =
-    next.tokenUsage ??
+    normalizedNext.tokenUsage ??
     existing.tokenUsage ??
     existing.threadUsage?.tokenUsage ??
     null;
   const contextUsage =
-    next.contextUsage ??
+    normalizedNext.contextUsage ??
     existing.contextUsage ??
     existing.threadUsage?.contextUsage ??
     null;
 
   return {
     ...existing,
-    ...next,
+    ...normalizedNext,
     threadUsage: {
-      tokenUsage: next.threadUsage?.tokenUsage ?? tokenUsage,
-      contextUsage: next.threadUsage?.contextUsage ?? contextUsage,
+      tokenUsage: normalizedNext.threadUsage?.tokenUsage ?? tokenUsage,
+      contextUsage: normalizedNext.threadUsage?.contextUsage ?? contextUsage,
     },
     tokenUsage,
     contextUsage,
     turns,
   };
+}
+
+function normalizeThreadSnapshot(thread) {
+  const turns = (thread.turns ?? []).reduce((normalizedTurns, turn) => {
+    const normalizedTurn = normalizeTurnSnapshot(turn);
+    const existingIndex = normalizedTurns.findIndex(
+      (candidate) => candidate.id === normalizedTurn.id,
+    );
+    if (existingIndex !== -1) {
+      return normalizedTurns.map((existing, index) =>
+        index === existingIndex
+          ? mergeTurn(existing, normalizedTurn)
+          : existing,
+      );
+    }
+
+    const incomingMatcher = createTurnItemMatcher(
+      buildTurnItemIndex([
+        { turn: normalizedTurn, items: normalizedTurn.items ?? [] },
+      ]),
+    );
+    const retainedExistingTurns = normalizedTurns.flatMap((existing) =>
+      getRetainedUnmatchedTurn(existing, incomingMatcher),
+    );
+    const existingMatcher = createTurnItemMatcher(
+      buildTurnItemIndex(
+        retainedExistingTurns.map((existing) => ({
+          turn: existing,
+          items: existing.items ?? [],
+        })),
+      ),
+    );
+    return [
+      ...retainedExistingTurns,
+      ...getRetainedUnmatchedTurn(normalizedTurn, existingMatcher),
+    ];
+  }, []);
+
+  if (
+    turns.length === (thread.turns ?? []).length &&
+    turns.every((turn, index) => turn === thread.turns?.[index])
+  ) {
+    return thread;
+  }
+  return { ...thread, turns };
+}
+
+function normalizeTurnSnapshot(turn) {
+  const items = (turn.items ?? []).reduce((normalizedItems, item) => {
+    const existingIndex = findMatchingThreadItemIndex(normalizedItems, item);
+    if (existingIndex === -1) {
+      return [...normalizedItems, item];
+    }
+    return normalizedItems.map((existing, index) =>
+      index === existingIndex ? mergeThreadItem(existing, item) : existing,
+    );
+  }, []);
+
+  if (
+    items.length === (turn.items ?? []).length &&
+    items.every((item, index) => item === turn.items?.[index])
+  ) {
+    return turn;
+  }
+  return { ...turn, items };
 }
 
 function mergeTurns(existingTurns, nextTurns) {
@@ -138,6 +204,30 @@ function mergeThreadItem(existing, next) {
   }
 
   return next;
+}
+
+function findMatchingThreadItemIndex(items, nextItem) {
+  const idIndex = items.findIndex((item) => item.id === nextItem.id);
+  if (idIndex !== -1) {
+    return idIndex;
+  }
+
+  return items.findIndex((item) => canMergeSameTurnThreadItems(item, nextItem));
+}
+
+function canMergeSameTurnThreadItems(existing, next) {
+  if (
+    existing.type !== next.type ||
+    !canMatchThreadItemSemantically(existing)
+  ) {
+    return false;
+  }
+
+  if (existing.type === "agentMessage" && next.type === "agentMessage") {
+    return haveCompatibleAgentMessageContent(existing, next);
+  }
+
+  return getThreadItemSemanticKey(existing) === getThreadItemSemanticKey(next);
 }
 
 function buildTurnItemIndex(entries) {
@@ -278,4 +368,5 @@ function preferMoreCompleteText(existing, next) {
 
 module.exports = {
   mergeThreadSnapshots,
+  normalizeThreadSnapshot,
 };

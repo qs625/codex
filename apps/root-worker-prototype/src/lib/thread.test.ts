@@ -17,6 +17,7 @@ import {
   treeThreadStatusLabel,
   updateThreadItem,
   updateThreadTurn,
+  upsertThread,
 } from "./thread";
 import type { Thread, TreeNode } from "../types";
 
@@ -330,6 +331,248 @@ test("mergeThreadSnapshot preserves restored usage when a later snapshot sends n
   assert.equal(merged.threadUsage?.contextUsage?.budgetUsedPercent, 12);
   assert.equal(merged.tokenUsage?.total.totalTokens, 1200);
   assert.equal(merged.contextUsage?.budgetUsedPercent, 12);
+});
+
+test("mergeThreadSnapshot normalizes duplicate items when existing is null", () => {
+  const thread = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "agentMessage" as const,
+            id: "item-1",
+            text: "same response",
+            phase: null,
+            memoryCitation: null,
+          },
+          {
+            type: "agentMessage" as const,
+            id: "item-2",
+            text: "same response",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: "full" as const,
+        status: "completed" as const,
+        error: null,
+        startedAt: 10,
+        completedAt: 12,
+        durationMs: 2000,
+      },
+    ],
+  };
+
+  const merged = mergeThreadSnapshot(null, thread);
+
+  assert.deepEqual(merged.turns, [
+    {
+      ...thread.turns[0],
+      items: [thread.turns[0].items[1]],
+    },
+  ]);
+});
+
+test("upsertThread normalizes the first inserted snapshot", () => {
+  const thread = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "agentMessage" as const,
+            id: "item-1",
+            text: "same response",
+            phase: null,
+            memoryCitation: null,
+          },
+          {
+            type: "agentMessage" as const,
+            id: "item-2",
+            text: "same response",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: "full" as const,
+        status: "completed" as const,
+        error: null,
+        startedAt: 10,
+        completedAt: 12,
+        durationMs: 2000,
+      },
+    ],
+  };
+
+  const threads = upsertThread([], thread);
+
+  assert.deepEqual(threads, [
+    {
+      ...thread,
+      turns: [
+        {
+          ...thread.turns[0],
+          items: [thread.turns[0].items[1]],
+        },
+      ],
+    },
+  ]);
+});
+
+test("mergeThreadSnapshot normalizes duplicate live-derived turns within next snapshot", () => {
+  const liveTurn = {
+    id: "live-turn",
+    items: [
+      {
+        type: "agentMessage" as const,
+        id: "live-item",
+        text: "same response",
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    itemsView: "notLoaded" as const,
+    status: "completed" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+  const readTurn = {
+    ...liveTurn,
+    id: "read-turn",
+    items: [
+      {
+        ...liveTurn.items[0],
+        id: "read-item",
+      },
+    ],
+    itemsView: "full" as const,
+  };
+
+  const merged = mergeThreadSnapshot(null, {
+    ...makeThread(),
+    turns: [liveTurn, readTurn],
+  });
+
+  assert.deepEqual(merged.turns, [readTurn]);
+});
+
+test("mergeThreadSnapshot preserves completed full agent turns with matching content in one snapshot", () => {
+  const firstTurn = {
+    id: "first-turn",
+    items: [
+      {
+        type: "agentMessage" as const,
+        id: "first-item",
+        text: "same response",
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    itemsView: "full" as const,
+    status: "completed" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+  const secondTurn = {
+    ...firstTurn,
+    id: "second-turn",
+    items: [
+      {
+        ...firstTurn.items[0],
+        id: "second-item",
+      },
+    ],
+  };
+
+  const merged = mergeThreadSnapshot(null, {
+    ...makeThread(),
+    turns: [firstTurn, secondTurn],
+  });
+
+  assert.deepEqual(merged.turns, [firstTurn, secondTurn]);
+});
+
+test("mergeThreadSnapshot preserves duplicate dynamic tool calls in one snapshot", () => {
+  const item = {
+    type: "dynamicToolCall" as const,
+    id: "item-1",
+    namespace: "functions",
+    tool: "read",
+    arguments: { path: "/tmp/file" },
+    status: "completed" as const,
+    contentItems: [{ text: "same output" }],
+    success: true,
+    durationMs: 10,
+  };
+  const firstTurn = {
+    id: "first-turn",
+    items: [item],
+    itemsView: "full" as const,
+    status: "completed" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+  const secondTurn = {
+    ...firstTurn,
+    id: "second-turn",
+    items: [
+      {
+        ...item,
+        id: "item-2",
+      },
+    ],
+  };
+
+  const merged = mergeThreadSnapshot(null, {
+    ...makeThread(),
+    turns: [firstTurn, secondTurn],
+  });
+
+  assert.deepEqual(merged.turns, [firstTurn, secondTurn]);
+});
+
+test("mergeThreadSnapshot preserves duplicate context compaction markers in one snapshot", () => {
+  const firstTurn = {
+    id: "first-turn",
+    items: [
+      {
+        type: "contextCompaction" as const,
+        id: "first-item",
+      },
+    ],
+    itemsView: "full" as const,
+    status: "completed" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+  const secondTurn = {
+    ...firstTurn,
+    id: "second-turn",
+    items: [
+      {
+        ...firstTurn.items[0],
+        id: "second-item",
+      },
+    ],
+  };
+
+  const merged = mergeThreadSnapshot(null, {
+    ...makeThread(),
+    turns: [firstTurn, secondTurn],
+  });
+
+  assert.deepEqual(merged.turns, [firstTurn, secondTurn]);
 });
 
 test("mergeThreadSnapshot preserves an in-flight turn missing from a stale snapshot", () => {
