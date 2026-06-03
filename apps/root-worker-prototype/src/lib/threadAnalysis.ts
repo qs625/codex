@@ -83,6 +83,10 @@ export function buildThreadAnalysis(
   };
 }
 
+export function hasActiveMonitors(thread: Thread | null) {
+  return buildMonitorSections(thread).totalCount > 0;
+}
+
 function buildMonitorSections(
   thread: Thread | null,
 ): ThreadAnalysis["monitors"] {
