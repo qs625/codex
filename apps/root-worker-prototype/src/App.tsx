@@ -44,6 +44,7 @@ import {
   getThreadDepth,
   isRootThread,
   isSubagentThread,
+  normalizeThreadSnapshot,
   pickInitialRootThread,
   pickInitialThread,
   queuePendingThreadUpdate,
@@ -568,7 +569,8 @@ function App() {
     [selectedTreeRootId, sessionThreads],
   );
   const todoItems = useMemo(
-    () => buildCurrentThreadTodoItems(sessionThreads, selectedThreadId, taskFilter),
+    () =>
+      buildCurrentThreadTodoItems(sessionThreads, selectedThreadId, taskFilter),
     [selectedThreadId, sessionThreads, taskFilter],
   );
   const collapsedSet = useMemo(() => new Set(collapsedPaths), [collapsedPaths]);
@@ -578,8 +580,9 @@ function App() {
       const payload =
         (await window.codexDesktop.bootstrap()) as BootstrapResponse;
       setWorkspace(payload.workspace);
-      setThreads(payload.threads.map(applyQueuedThreadUpdates));
-      const preferredRoot = pickInitialRootThread(payload.threads);
+      const normalizedThreads = payload.threads.map(normalizeThreadSnapshot);
+      setThreads(normalizedThreads.map(applyQueuedThreadUpdates));
+      const preferredRoot = pickInitialRootThread(normalizedThreads);
       if (preferredRoot) {
         try {
           await subscribeThread(preferredRoot.id);

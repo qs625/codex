@@ -139,6 +139,87 @@ test("mergeThreadSnapshots prefers newer usage snapshots when thread/read has th
   assert.equal(merged.contextUsage?.budgetUsedPercent, 24);
 });
 
+test("mergeThreadSnapshots normalizes duplicate items when existing is null", () => {
+  const turn = {
+    id: "turn-1",
+    items: [
+      {
+        type: "agentMessage",
+        id: "item-1",
+        text: "same response",
+        phase: null,
+        memoryCitation: null,
+      },
+      {
+        type: "agentMessage",
+        id: "item-2",
+        text: "same response",
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+
+  const merged = mergeThreadSnapshots(null, makeThread({ turns: [turn] }));
+
+  assert.deepEqual(merged.turns, [
+    {
+      ...turn,
+      items: [turn.items[1]],
+    },
+  ]);
+});
+
+test("mergeThreadSnapshots normalizes duplicate live-derived turns in each input", () => {
+  const makeDuplicateTurns = (prefix) => {
+    const liveTurn = {
+      id: `${prefix}-live-turn`,
+      items: [
+        {
+          type: "agentMessage",
+          id: `${prefix}-live-item`,
+          text: "same response",
+          phase: null,
+          memoryCitation: null,
+        },
+      ],
+      itemsView: "notLoaded",
+      status: "completed",
+      error: null,
+      startedAt: 10,
+      completedAt: 12,
+      durationMs: 2000,
+    };
+    const readTurn = {
+      ...liveTurn,
+      id: `${prefix}-read-turn`,
+      items: [
+        {
+          ...liveTurn.items[0],
+          id: `${prefix}-read-item`,
+        },
+      ],
+      itemsView: "full",
+    };
+    return [liveTurn, readTurn];
+  };
+  const resumeReadTurn = makeDuplicateTurns("resume")[1];
+  const readTurn = makeDuplicateTurns("read")[1];
+
+  const merged = mergeThreadSnapshots(
+    makeThread({ turns: makeDuplicateTurns("resume") }),
+    makeThread({ turns: makeDuplicateTurns("read") }),
+  );
+
+  assert.deepEqual(merged.turns, [readTurn, resumeReadTurn]);
+});
+
 test("mergeThreadSnapshots keeps resume-only in-flight items missing from a stale read", () => {
   const restoredTurn = makeCollabMessageTurn();
   const restored = makeThread({ turns: [restoredTurn] });
