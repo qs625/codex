@@ -706,6 +706,38 @@ impl ThreadManager {
         .await
     }
 
+    pub async fn resume_thread_with_history_and_source(
+        &self,
+        config: Config,
+        initial_history: InitialHistory,
+        auth_manager: Arc<AuthManager>,
+        session_source: SessionSource,
+        parent_trace: Option<W3cTraceContext>,
+    ) -> CodexResult<NewThread> {
+        let environments = default_thread_environment_selections(
+            self.state.environment_manager.as_ref(),
+            &config.cwd,
+        );
+        let thread_source = initial_history.get_resumed_thread_source();
+        Box::pin(self.state.spawn_thread_with_source(
+            config,
+            initial_history,
+            auth_manager,
+            self.agent_control(),
+            session_source,
+            thread_source,
+            Vec::new(),
+            /*persist_extended_history*/ false,
+            /*metrics_service_name*/ None,
+            /*inherited_shell_snapshot*/ None,
+            /*inherited_exec_policy*/ None,
+            parent_trace,
+            environments,
+            /*user_shell_override*/ None,
+        ))
+        .await
+    }
+
     pub(crate) async fn start_thread_with_user_shell_override_for_tests(
         &self,
         config: Config,

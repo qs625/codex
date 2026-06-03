@@ -547,6 +547,66 @@ mod thread_processor_behavior_tests {
     }
 
     #[test]
+    fn thread_from_stored_thread_restores_agent_path_from_metadata() -> Result<()> {
+        let created_at = DateTime::parse_from_rfc3339("2025-01-02T03:04:05.678Z")?;
+        let thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000123")?;
+        let parent_thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000456")?;
+        let stored_thread = StoredThread {
+            thread_id,
+            rollout_path: Some(PathBuf::from("/tmp/thread.jsonl")),
+            forked_from_id: None,
+            preview: "preview".to_string(),
+            name: None,
+            model_provider: "openai".to_string(),
+            model: None,
+            reasoning_effort: None,
+            created_at: created_at.with_timezone(&Utc),
+            updated_at: created_at.with_timezone(&Utc),
+            archived_at: None,
+            cwd: PathBuf::from("/tmp"),
+            cli_version: "0.0.0".to_string(),
+            source: SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id,
+                depth: 1,
+                agent_path: None,
+                agent_nickname: None,
+                agent_role: None,
+            }),
+            thread_source: Some(codex_protocol::protocol::ThreadSource::Subagent),
+            agent_nickname: Some("researcher".to_string()),
+            agent_role: Some("explorer".to_string()),
+            agent_path: Some("/root/researcher".to_string()),
+            git_info: None,
+            approval_mode: AskForApproval::OnRequest,
+            sandbox_policy: SandboxPolicy::new_read_only_policy(),
+            skills: Vec::new(),
+            token_usage: None,
+            first_user_message: Some("first user message".to_string()),
+            history: None,
+        };
+        let fallback_cwd = AbsolutePathBuf::from_absolute_path("/")?;
+
+        let (thread, _) = thread_from_stored_thread(stored_thread, "fallback", &fallback_cwd);
+
+        assert_eq!(
+            thread.source,
+            codex_app_server_protocol::SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id,
+                depth: 1,
+                agent_path: Some(
+                    codex_protocol::AgentPath::from_string("/root/researcher".to_string())
+                        .expect("agent path")
+                ),
+                agent_nickname: Some("researcher".to_string()),
+                agent_role: Some("explorer".to_string()),
+            })
+        );
+        assert_eq!(thread.agent_nickname, Some("researcher".to_string()));
+        assert_eq!(thread.agent_role, Some("explorer".to_string()));
+        Ok(())
+    }
+
+    #[test]
     fn requested_permissions_trust_project_uses_permission_profile_intent() {
         let cwd = test_path_buf("/tmp/project").abs();
         let full_access_profile = codex_protocol::models::PermissionProfile::Disabled;
@@ -1227,6 +1287,7 @@ mod thread_processor_behavior_tests {
             Some(codex_protocol::protocol::ThreadSource::Subagent),
             Some("atlas".to_string()),
             Some("explorer".to_string()),
+            Some("/root/atlas".to_string()),
             /*git_sha*/ None,
             /*git_branch*/ None,
             /*git_origin_url*/ None,
@@ -1237,6 +1298,19 @@ mod thread_processor_behavior_tests {
 
         assert_eq!(thread.agent_nickname, Some("atlas".to_string()));
         assert_eq!(thread.agent_role, Some("explorer".to_string()));
+        assert_eq!(
+            thread.source,
+            codex_app_server_protocol::SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: ThreadId::from_string("ad7f0408-99b8-4f6e-a46f-bd0eec433370")?,
+                depth: 1,
+                agent_path: Some(
+                    codex_protocol::AgentPath::from_string("/root/atlas".to_string())
+                        .expect("agent path")
+                ),
+                agent_nickname: Some("atlas".to_string()),
+                agent_role: Some("explorer".to_string()),
+            })
+        );
         Ok(())
     }
 

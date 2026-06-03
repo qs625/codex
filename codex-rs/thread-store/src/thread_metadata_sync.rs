@@ -207,7 +207,14 @@ impl ThreadMetadataSync {
                     update.thread_source = Some(meta_line.meta.thread_source);
                     update.agent_nickname = Some(meta_line.meta.agent_nickname.clone());
                     update.agent_role = Some(meta_line.meta.agent_role.clone());
-                    update.agent_path = Some(meta_line.meta.agent_path.clone());
+                    if let Some(agent_path) = meta_line
+                        .meta
+                        .agent_path
+                        .clone()
+                        .or_else(|| meta_line.meta.source.get_agent_path().map(Into::into))
+                    {
+                        update.agent_path = Some(Some(agent_path));
+                    }
                     if let Some(model_provider) = meta_line.meta.model_provider.clone()
                         && !model_provider.is_empty()
                     {
@@ -386,10 +393,12 @@ fn git_info_patch_from_observation(git_info: GitInfo) -> GitInfoPatch {
 
 #[cfg(test)]
 mod tests {
+    use codex_protocol::AgentPath;
     use codex_protocol::protocol::CompactedItem;
     use codex_protocol::protocol::SessionMeta;
     use codex_protocol::protocol::SessionMetaLine;
     use codex_protocol::protocol::SessionSource;
+    use codex_protocol::protocol::SubAgentSource;
     use codex_protocol::protocol::ThreadGoal;
     use codex_protocol::protocol::ThreadGoalStatus;
     use codex_protocol::protocol::ThreadGoalUpdatedEvent;
@@ -533,6 +542,34 @@ mod tests {
             ))])
             .is_some(),
             "the first append should flush resume metadata together with append metadata"
+        );
+    }
+
+    #[test]
+    fn resume_history_restores_agent_path_from_session_source() {
+        let thread_id = ThreadId::new();
+        let parent_thread_id = ThreadId::new();
+        let mut meta_line = session_meta(thread_id);
+        meta_line.meta.source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id,
+            depth: 1,
+            agent_path: Some(
+                AgentPath::from_string("/root/researcher".to_string()).expect("agent path"),
+            ),
+            agent_nickname: Some("researcher".to_string()),
+            agent_role: Some("explorer".to_string()),
+        });
+        meta_line.meta.agent_path = None;
+
+        let sync = ThreadMetadataSync::for_resume(&resume_params(
+            thread_id,
+            vec![RolloutItem::SessionMeta(meta_line)],
+        ));
+
+        let update = sync.take_pending_update().expect("pending metadata update");
+        assert_eq!(
+            update.patch.agent_path,
+            Some(Some("/root/researcher".to_string()))
         );
     }
 

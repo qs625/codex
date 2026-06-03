@@ -113,6 +113,15 @@ pub(super) async fn read_thread_by_rollout_path(
         });
     }
     if let Some(metadata) = read_sqlite_metadata(store, thread.thread_id).await {
+        if thread.agent_nickname.is_none() {
+            thread.agent_nickname = metadata.agent_nickname.clone();
+        }
+        if thread.agent_role.is_none() {
+            thread.agent_role = metadata.agent_role.clone();
+        }
+        if thread.agent_path.is_none() {
+            thread.agent_path = metadata.agent_path.clone();
+        }
         let existing_git_info = thread.git_info.take();
         let (fallback_sha, fallback_branch, fallback_origin_url) = match existing_git_info {
             Some(info) => (
@@ -543,6 +552,9 @@ mod tests {
             SessionSource::Cli,
         );
         builder.model_provider = Some(config.default_model_provider_id.clone());
+        builder.agent_nickname = Some("atlas".to_string());
+        builder.agent_role = Some("explorer".to_string());
+        builder.agent_path = Some("/root/atlas".to_string());
         builder.git_branch = Some("sqlite-branch".to_string());
         runtime
             .upsert_thread(&builder.build(config.default_model_provider_id.as_str()))
@@ -568,6 +580,9 @@ mod tests {
             git_info.repository_url.as_deref(),
             Some("https://example.com/repo.git")
         );
+        assert_eq!(thread.agent_nickname.as_deref(), Some("atlas"));
+        assert_eq!(thread.agent_role.as_deref(), Some("explorer"));
+        assert_eq!(thread.agent_path.as_deref(), Some("/root/atlas"));
     }
 
     #[tokio::test]
