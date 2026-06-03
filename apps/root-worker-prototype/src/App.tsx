@@ -34,6 +34,7 @@ import {
   storeRightPanelView,
 } from "./lib/rightPanelView";
 import { isThreadNotFoundError, toErrorMessage } from "./lib/shared";
+import { decideThreadSelectionAction } from "./lib/threadSelectionPolicy";
 import {
   appendAgentDelta,
   applyPendingThreadUpdates,
@@ -151,7 +152,12 @@ function App() {
   const symbolBackStackRef = useRef<FileLocation[]>([]);
   const symbolForwardStackRef = useRef<FileLocation[]>([]);
   const selectedThreadIdRef = useRef<string | null>(null);
-  const hydratedInitialThreadIdsRef = useRef<Set<string>>(new Set());
+  const loadedThreadIdsRef = useRef<Set<string>>(new Set());
+  const subscribedThreadIdsRef = useRef<Set<string>>(new Set());
+  const subscribeThreadPromisesRef = useRef<Map<string, Promise<boolean>>>(
+    new Map(),
+  );
+  const loadingThreadIdsRef = useRef<Set<string>>(new Set());
   const loadThreadRequestIdRef = useRef(0);
   const pendingThreadUpdatesRef = useRef(new Map<string, ThreadUpdate[]>());
   const voiceSessionRef = useRef<ActiveVoiceSession | null>(null);
@@ -202,11 +208,21 @@ function App() {
     if (!selectedThreadId) {
       return;
     }
-    if (hydratedInitialThreadIdsRef.current.delete(selectedThreadId)) {
+    const action = decideThreadSelectionAction({
+      selectedThreadId,
+      hasLocalThread: threads.some((thread) => thread.id === selectedThreadId),
+      isLoaded: loadedThreadIdsRef.current.has(selectedThreadId),
+      isSubscribed: subscribedThreadIdsRef.current.has(selectedThreadId),
+      isLoading: loadingThreadIdsRef.current.has(selectedThreadId),
+    });
+    if (action === "readAndSubscribe") {
+      void loadThread(selectedThreadId);
       return;
     }
-    void loadThread(selectedThreadId);
-  }, [selectedThreadId]);
+    if (action === "subscribeOnly") {
+      void ensureThreadSubscribed(selectedThreadId);
+    }
+  }, [selectedThreadId, threads]);
 
   useEffect(() => {
     selectedThreadIdRef.current = selectedThreadId;
@@ -584,16 +600,12 @@ function App() {
       setThreads(normalizedThreads.map(applyQueuedThreadUpdates));
       const preferredRoot = pickInitialRootThread(normalizedThreads);
       if (preferredRoot) {
-        try {
-          await subscribeThread(preferredRoot.id);
-          hydratedInitialThreadIdsRef.current.add(preferredRoot.id);
-        } catch (loadError) {
-          setError(toErrorMessage(loadError));
-        }
         setSelectedThreadId(preferredRoot.id);
         return;
       }
       const rootThread = await ensureInitialRootThread(payload.workspace);
+      markThreadLoaded(rootThread.id);
+      markThreadSubscribed(rootThread.id);
       setThreads((current) => upsertThreadWithPending(current, rootThread));
       setSelectedThreadId(rootThread.id);
     } catch (loadError) {
@@ -601,11 +613,42 @@ function App() {
     }
   }
 
-  async function subscribeThread(threadId: string) {
-    const payload = (await window.codexDesktop.readThread(threadId, true)) as {
-      thread: Thread;
-    };
-    setThreads((current) => upsertThreadWithPending(current, payload.thread));
+  function markThreadLoaded(threadId: string) {
+    loadedThreadIdsRef.current.add(threadId);
+  }
+
+  function markThreadSubscribed(threadId: string) {
+    subscribedThreadIdsRef.current.add(threadId);
+  }
+
+  async function ensureThreadSubscribed(threadId: string) {
+    if (subscribedThreadIdsRef.current.has(threadId)) {
+      return true;
+    }
+    const existingPromise = subscribeThreadPromisesRef.current.get(threadId);
+    if (existingPromise) {
+      return existingPromise;
+    }
+    const subscribePromise = window.codexDesktop
+      .subscribeThread(threadId)
+      .then((payload) => {
+        const response = payload as { thread?: Thread | null };
+        markThreadSubscribed(threadId);
+        if (response.thread) {
+          const thread = response.thread;
+          setThreads((current) => upsertThreadWithPending(current, thread));
+        }
+        return true;
+      })
+      .catch((subscribeError) => {
+        setError(toErrorMessage(subscribeError));
+        return false;
+      })
+      .finally(() => {
+        subscribeThreadPromisesRef.current.delete(threadId);
+      });
+    subscribeThreadPromisesRef.current.set(threadId, subscribePromise);
+    return subscribePromise;
   }
 
   function updateThreadLocally(
@@ -682,6 +725,12 @@ function App() {
 
   function removeThreadLocally(threadIds: Iterable<string>) {
     const threadIdSet = new Set(threadIds);
+    for (const threadId of threadIdSet) {
+      loadedThreadIdsRef.current.delete(threadId);
+      subscribedThreadIdsRef.current.delete(threadId);
+      subscribeThreadPromisesRef.current.delete(threadId);
+      loadingThreadIdsRef.current.delete(threadId);
+    }
     clearComposerDraftsForThreads(threadIdSet);
     setLatestPlansByThreadId((current) => {
       const next = { ...current };
@@ -764,15 +813,17 @@ function App() {
   async function loadThread(threadId: string) {
     const requestId = loadThreadRequestIdRef.current + 1;
     loadThreadRequestIdRef.current = requestId;
+    loadingThreadIdsRef.current.add(threadId);
     setIsLoadingThread(true);
     setError(null);
     try {
-      const payload = (await window.codexDesktop.readThread(
-        threadId,
-        true,
-      )) as {
+      if (!(await ensureThreadSubscribed(threadId))) {
+        return;
+      }
+      const payload = (await window.codexDesktop.readThread(threadId)) as {
         thread: Thread;
       };
+      markThreadLoaded(threadId);
       setThreads((current) => upsertThreadWithPending(current, payload.thread));
     } catch (loadError) {
       if (
@@ -793,6 +844,7 @@ function App() {
       ) {
         setIsLoadingThread(false);
       }
+      loadingThreadIdsRef.current.delete(threadId);
     }
   }
 
@@ -806,6 +858,8 @@ function App() {
         cwd,
         name,
       })) as { thread: Thread };
+      markThreadLoaded(payload.thread.id);
+      markThreadSubscribed(payload.thread.id);
       setThreads((current) => upsertThreadWithPending(current, payload.thread));
       setSelectedThreadId(payload.thread.id);
     } catch (createError) {
@@ -1198,6 +1252,25 @@ function App() {
   function handleStreamEvent(payload: NotificationEnvelope) {
     try {
       if (payload.type === "status" && payload.status) {
+        if (!payload.status.connected) {
+          subscribedThreadIdsRef.current.clear();
+          return;
+        }
+        if (!selectedThreadId) {
+          return;
+        }
+        const action = decideThreadSelectionAction({
+          selectedThreadId,
+          hasLocalThread: Boolean(selectedThread),
+          isLoaded: loadedThreadIdsRef.current.has(selectedThreadId),
+          isSubscribed: subscribedThreadIdsRef.current.has(selectedThreadId),
+          isLoading: loadingThreadIdsRef.current.has(selectedThreadId),
+        });
+        if (action === "readAndSubscribe") {
+          void loadThread(selectedThreadId);
+        } else if (action === "subscribeOnly") {
+          void ensureThreadSubscribed(selectedThreadId);
+        }
         return;
       }
 
@@ -1212,7 +1285,9 @@ function App() {
           const thread = (params as { thread: Thread }).thread;
           setThreads((current) => upsertThreadWithPending(current, thread));
           if (isSubagentThread(thread)) {
-            void subscribeThread(thread.id);
+            void ensureThreadSubscribed(thread.id);
+          } else {
+            markThreadSubscribed(thread.id);
           }
           if (!selectedThreadId) {
             setSelectedThreadId(thread.id);
