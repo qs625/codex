@@ -331,6 +331,14 @@ svg {
   background: #16a34a;
 }
 
+.tree-inline-status.waiting-subagent {
+  background: #2563eb;
+}
+
+.tree-inline-status.waiting-eventtool {
+  background: #9333ea;
+}
+
 .tree-inline-status.blocked {
   background: #d97706;
 }
@@ -2345,6 +2353,11 @@ svg {
   animation: status-pulse 1.8s ease-in-out infinite;
 }
 
+.tree-inline-status.waiting-subagent,
+.tree-inline-status.waiting-eventtool {
+  animation: tree-status-waiting-pulse 2s ease-in-out infinite;
+}
+
 @keyframes status-pulse {
   0%,
   100% {
@@ -2352,6 +2365,18 @@ svg {
   }
   50% {
     box-shadow: 0 0 0 5px rgba(22, 163, 74, 0);
+  }
+}
+
+@keyframes tree-status-waiting-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 currentColor;
+    opacity: 0.95;
+  }
+  50% {
+    box-shadow: 0 0 0 4px transparent;
+    opacity: 0.65;
   }
 }
 

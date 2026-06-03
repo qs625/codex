@@ -1,6 +1,11 @@
 import type { CSSProperties, MouseEvent } from "react";
 
-import { countDescendants, isRootThread, threadStatusClass } from "../lib/thread";
+import {
+  countDescendants,
+  isRootThread,
+  treeThreadStatusClass,
+  treeThreadStatusLabel,
+} from "../lib/thread";
 import type { TreeMenuState, TreeNode } from "../types";
 import { ChevronDownIcon, RobotIcon } from "./icons";
 
@@ -25,6 +30,8 @@ export function AgentTreeNode({
   const isCollapsed = collapsedSet.has(node.threadId);
   const hasChildren = node.children.length > 0;
   const isRoot = node.thread ? isRootThread(node.thread) : depth === 0;
+  const statusClass = treeThreadStatusClass(node);
+  const statusLabel = treeThreadStatusLabel(statusClass);
   const openContextMenu = (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -74,7 +81,9 @@ export function AgentTreeNode({
               <RobotIcon />
             </span>
             <span
-              className={`tree-inline-status ${node.thread ? threadStatusClass(node.thread.status) : "todo"}`}
+              className={`tree-inline-status ${statusClass}`}
+              title={statusLabel}
+              aria-label={statusLabel}
             />
           </span>
         </span>

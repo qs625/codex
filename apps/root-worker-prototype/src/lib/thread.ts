@@ -9,6 +9,7 @@ import type {
   TreeNode,
   Turn,
 } from "../types";
+import { hasActiveMonitors } from "./threadAnalysis";
 
 export function pickInitialThread(threads: Thread[]) {
   return (
@@ -770,6 +771,137 @@ export function threadStatusClass(status: ThreadStatus) {
     default:
       return "todo";
   }
+}
+
+export type TreeThreadStatusClass =
+  | "todo"
+  | "doing"
+  | "blocked"
+  | "done"
+  | "waiting-subagent"
+  | "waiting-eventtool";
+
+const MONITOR_TOOL_NAMES = new Set([
+  "fs_subscribe",
+  "process_exit_subscribe",
+  "schedule_subscribe",
+]);
+
+export function treeThreadStatusClass(node: TreeNode): TreeThreadStatusClass {
+  const selfClass = node.thread
+    ? selfTreeThreadStatusClass(node.thread)
+    : "todo";
+
+  if (selfClass !== "todo") {
+    return selfClass;
+  }
+
+  let hasBlocked = false;
+  let hasWaitingEventTool = false;
+  for (const child of node.children) {
+    const childClass = treeThreadStatusClass(child);
+    if (childClass === "doing" || childClass === "waiting-subagent") {
+      return "waiting-subagent";
+    }
+    if (childClass === "blocked") {
+      hasBlocked = true;
+      continue;
+    }
+    if (childClass === "waiting-eventtool") {
+      hasWaitingEventTool = true;
+    }
+  }
+
+  if (hasBlocked) {
+    return "blocked";
+  }
+  return hasWaitingEventTool ? "waiting-eventtool" : "todo";
+}
+
+export function treeThreadStatusLabel(statusClass: TreeThreadStatusClass) {
+  switch (statusClass) {
+    case "doing":
+      return "Active";
+    case "waiting-subagent":
+      return "Waiting on subagent";
+    case "waiting-eventtool":
+      return "Waiting on event tool";
+    case "blocked":
+      return "System error";
+    case "done":
+      return "Done";
+    case "todo":
+      return "Inactive";
+  }
+}
+
+function selfTreeThreadStatusClass(thread: Thread): TreeThreadStatusClass {
+  if (thread.status.type === "systemError") {
+    return "blocked";
+  }
+  if (thread.status.type !== "active") {
+    return "todo";
+  }
+  if (hasInFlightSubagentWait(thread)) {
+    return "waiting-subagent";
+  }
+  if (hasActiveTurnWork(thread)) {
+    return "doing";
+  }
+  if (hasActiveMonitorWait(thread)) {
+    return "waiting-eventtool";
+  }
+  return "doing";
+}
+
+function hasInFlightSubagentWait(thread: Thread) {
+  return thread.turns.some(
+    (turn) =>
+      isTurnInFlight(turn) &&
+      turn.items.some(
+        (item) =>
+          item.type === "collabAgentToolCall" &&
+          item.tool.toLowerCase() === "wait" &&
+          isItemInProgress(item.status),
+      ),
+  );
+}
+
+function hasActiveMonitorWait(thread: Thread) {
+  return hasActiveMonitors(thread);
+}
+
+function hasActiveTurnWork(thread: Thread) {
+  return thread.turns.some((turn) => {
+    if (!isTurnInFlight(turn)) {
+      return false;
+    }
+    if (turn.items.length === 0) {
+      return true;
+    }
+    return turn.items.some(
+      (item) =>
+        item.type !== "userMessage" &&
+        item.type !== "injectedContext" &&
+        !isMonitorToolItem(item),
+    );
+  });
+}
+
+function isMonitorToolItem(item: ThreadItem) {
+  if (item.type === "eventDrivenTool" || item.type === "eventDrivenToolCall") {
+    return isMonitorToolName(item.tool);
+  }
+  return false;
+}
+
+function isMonitorToolName(tool: string) {
+  return MONITOR_TOOL_NAMES.has(tool);
+}
+
+function isItemInProgress(status: string) {
+  const normalized = status.toLowerCase();
+  return normalized === "inprogress" || normalized === "in_progress";
 }
 
 export function countDescendants(node: TreeNode): number {
