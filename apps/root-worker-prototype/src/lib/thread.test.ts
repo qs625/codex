@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   appendAgentDelta,
+  applyPendingThreadUpdates,
   buildCurrentThreadTodoItems,
   formatUpdatedLabel,
   getPresenceLabel,
@@ -10,6 +11,7 @@ import {
   getThreadPath,
   isThreadThinking,
   mergeThreadSnapshot,
+  queuePendingThreadUpdate,
   threadStatusClass,
   treeThreadStatusClass,
   treeThreadStatusLabel,
@@ -704,6 +706,100 @@ test("mergeThreadSnapshot keeps the more complete in-flight agent message text",
     assert.fail("expected an agent message item");
   }
   assert.equal(merged.turns[0].items[0].text, "hello world");
+});
+
+test("updateThreadItem merges same-turn event-driven items with different ids", () => {
+  const thread = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "eventDrivenTool" as const,
+            id: "snapshot-item",
+            tool: "fs_subscribe",
+            title: "File watch triggered",
+            text: "build.log changed",
+            completedAtMs: 100,
+          },
+        ],
+        itemsView: "full" as const,
+        status: "running" as const,
+        error: null,
+        startedAt: 1,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  };
+
+  const updated = updateThreadItem(thread, "turn-1", {
+    type: "eventDrivenTool",
+    id: "live-item",
+    tool: "fs_subscribe",
+    title: "File watch triggered",
+    text: "build.log changed",
+    completedAtMs: 200,
+  });
+
+  assert.deepEqual(updated.turns[0]?.items, [
+    {
+      type: "eventDrivenTool",
+      id: "live-item",
+      tool: "fs_subscribe",
+      title: "File watch triggered",
+      text: "build.log changed",
+      completedAtMs: 200,
+    },
+  ]);
+});
+
+test("pending thread updates replay when the thread snapshot arrives", () => {
+  const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
+  queuePendingThreadUpdate(pendingUpdates, "thread-1", (thread) =>
+    updateThreadItem(thread, "turn-1", {
+      type: "collabAgentStatusUpdate",
+      id: "subagent-complete",
+      senderThreadId: "thread-child",
+      senderPath: "/root/worker",
+      recipientThreadId: "thread-1",
+      recipientPath: "/root",
+      status: {
+        status: "completed",
+        message: "done",
+      },
+    }),
+  );
+
+  const updated = applyPendingThreadUpdates(makeThread(), pendingUpdates);
+
+  assert.equal(pendingUpdates.size, 0);
+  assert.deepEqual(updated.turns, [
+    {
+      id: "turn-1",
+      items: [
+        {
+          type: "collabAgentStatusUpdate",
+          id: "subagent-complete",
+          senderThreadId: "thread-child",
+          senderPath: "/root/worker",
+          recipientThreadId: "thread-1",
+          recipientPath: "/root",
+          status: {
+            status: "completed",
+            message: "done",
+          },
+        },
+      ],
+      itemsView: "full",
+      status: "running",
+      error: null,
+      startedAt: null,
+      completedAt: null,
+      durationMs: null,
+    },
+  ]);
 });
 
 test("threadStatusClass treats active thread status as doing", () => {

@@ -63,7 +63,7 @@ test("returns empty monitor sections when no thread is selected", () => {
   );
 });
 
-test("hides subscriptions after their event is observed", () => {
+test("keeps repeating subscriptions active after events are observed", () => {
   const analysis = buildThreadAnalysis(
     makeThread([
       {
@@ -122,7 +122,7 @@ test("hides subscriptions after their event is observed", () => {
     0,
   );
 
-  assert.equal(analysis.monitors.totalCount, 0);
+  assert.equal(analysis.monitors.totalCount, 2);
   assert.equal(analysis.monitors.eventCount, 3);
   assert.deepEqual(
     analysis.monitors.sections.map((section) => ({
@@ -132,7 +132,19 @@ test("hides subscriptions after their event is observed", () => {
     [
       {
         kind: "filesystem",
-        monitors: [],
+        monitors: [
+          {
+            id: "fs-1",
+            subscriptionId: "sub-fs",
+            kind: "filesystem",
+            label: "build log",
+            detail: "/tmp/out.log (recursive)",
+            status: "Listening",
+            eventCount: 1,
+            latestEvent:
+              "[File subscription (build log)] File changed: /tmp/out.log",
+          },
+        ],
       },
       {
         kind: "process",
@@ -140,7 +152,18 @@ test("hides subscriptions after their event is observed", () => {
       },
       {
         kind: "schedule",
-        monitors: [],
+        monitors: [
+          {
+            id: "schedule-1",
+            subscriptionId: null,
+            kind: "schedule",
+            label: "standup ping",
+            detail: "once after 60s",
+            status: "Listening",
+            eventCount: 1,
+            latestEvent: "[Schedule subscription (standup ping)] Trigger fired",
+          },
+        ],
       },
     ],
   );
@@ -215,6 +238,16 @@ test("attributes same-kind events to matching subscriptions only", () => {
       status: "Listening",
       eventCount: 0,
       latestEvent: null,
+    },
+    {
+      id: "fs-2",
+      subscriptionId: null,
+      kind: "filesystem",
+      label: "test log",
+      detail: "/tmp/test.log",
+      status: "Listening",
+      eventCount: 1,
+      latestEvent: "[File subscription (test log)] File changed: /tmp/test.log",
     },
   ]);
 });
