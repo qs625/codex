@@ -335,15 +335,17 @@ export function updateThreadItem(
       return turn;
     }
     foundTurn = true;
-    const items = turn.items.some((existing) => existing.id === nextItem.id)
-      ? turn.items.map((existing) =>
-          existing.id === nextItem.id
+    const existingItemIndex = findMatchingThreadItemIndex(turn.items, nextItem);
+    const items =
+      existingItemIndex === -1
+        ? [...turn.items, nextItem]
+        : turn.items.map((existing, index) =>
+          index === existingItemIndex
             ? // The server can refine an in-flight item into eventDrivenToolCall
               // once it recognizes a generic function call as an event-driven tool.
               mergeThreadItem(existing, nextItem)
             : existing,
-        )
-      : [...turn.items, nextItem];
+        );
     return { ...turn, items };
   });
   const turns = foundTurn
@@ -515,6 +517,30 @@ export function upsertThread(threads: Thread[], next: Thread) {
   );
 }
 
+export type ThreadUpdate = (thread: Thread) => Thread;
+
+export function queuePendingThreadUpdate(
+  pendingUpdates: Map<string, ThreadUpdate[]>,
+  threadId: string,
+  update: ThreadUpdate,
+) {
+  const updates = pendingUpdates.get(threadId) ?? [];
+  updates.push(update);
+  pendingUpdates.set(threadId, updates);
+}
+
+export function applyPendingThreadUpdates(
+  thread: Thread,
+  pendingUpdates: Map<string, ThreadUpdate[]>,
+) {
+  const updates = pendingUpdates.get(thread.id);
+  if (!updates || updates.length === 0) {
+    return thread;
+  }
+  pendingUpdates.delete(thread.id);
+  return updates.reduce((updated, update) => update(updated), thread);
+}
+
 export function isTurnInFlight(turn: Turn) {
   return turn.status === "running" || turn.status === "inProgress";
 }
@@ -565,6 +591,26 @@ function mergeThreadItem(existing: ThreadItem, next: ThreadItem): ThreadItem {
     ...next,
     ...timestamps,
   };
+}
+
+function findMatchingThreadItemIndex(items: ThreadItem[], nextItem: ThreadItem) {
+  const idIndex = items.findIndex((item) => item.id === nextItem.id);
+  if (idIndex !== -1) {
+    return idIndex;
+  }
+  if (!isEventDrivenThreadItem(nextItem)) {
+    return -1;
+  }
+
+  const nextKey = getThreadItemSemanticKey(nextItem);
+  return items.findIndex(
+    (item) =>
+      isEventDrivenThreadItem(item) && getThreadItemSemanticKey(item) === nextKey,
+  );
+}
+
+function isEventDrivenThreadItem(item: ThreadItem) {
+  return item.type === "eventDrivenTool" || item.type === "eventDrivenToolCall";
 }
 
 function mergeItemTimestamps(
@@ -730,7 +776,12 @@ function hasNoTurnTimes(turn: Turn) {
 }
 
 function getThreadItemSemanticKey(item: ThreadItem) {
-  const { id: _id, ...content } = item;
+  const {
+    id: _id,
+    startedAtMs: _startedAtMs,
+    completedAtMs: _completedAtMs,
+    ...content
+  } = item;
   return `${item.type}:${stableStringify(content)}`;
 }
 

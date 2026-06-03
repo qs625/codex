@@ -15,6 +15,14 @@ import {
   TreeContextMenu,
 } from "./components/Panels";
 import { RightPanel } from "./components/RightPanel";
+import {
+  clearComposerDraft,
+  getComposerDraft,
+  isClearComposerCommand,
+  updateComposerDraft,
+  type ComposerDraft,
+  type ComposerDraftsByThreadId,
+} from "./lib/composerDraft";
 import { buildConversationState } from "./lib/conversation";
 import {
   readImageBlob,
@@ -28,6 +36,7 @@ import {
 import { isThreadNotFoundError, toErrorMessage } from "./lib/shared";
 import {
   appendAgentDelta,
+  applyPendingThreadUpdates,
   buildAgentTree,
   buildCurrentThreadTodoItems,
   getThreadSubtreeIds,
@@ -37,10 +46,12 @@ import {
   isSubagentThread,
   pickInitialRootThread,
   pickInitialThread,
+  queuePendingThreadUpdate,
   updateThreadItem,
   updateThreadSkills,
   updateThreadTurn,
   upsertThread,
+  type ThreadUpdate,
 } from "./lib/thread";
 import {
   appendVoiceTranscriptDelta,
@@ -107,14 +118,13 @@ function App() {
     Record<string, ThreadPlanUpdate>
   >({});
   const [availableSkills, setAvailableSkills] = useState<ThreadSkill[]>([]);
-  const [draft, setDraft] = useState("");
-  const [draftSkills, setDraftSkills] = useState<DraftSkill[]>([]);
+  const [composerDraftsByThreadId, setComposerDraftsByThreadId] =
+    useState<ComposerDraftsByThreadId>({});
   const [isSending, setIsSending] = useState(false);
   const [isStoppingTurn, setIsStoppingTurn] = useState(false);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
   const [newRootName, setNewRootName] = useState("root");
   const [error, setError] = useState<string | null>(null);
-  const [draftImages, setDraftImages] = useState<ComposerImage[]>([]);
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
   const [collapsedPaths, setCollapsedPaths] = useState<string[]>([]);
   const [treeMenu, setTreeMenu] = useState<TreeMenuState | null>(null);
@@ -134,7 +144,7 @@ function App() {
   const conversationStateRef = useRef<ReturnType<
     typeof buildConversationState
   > | null>(null);
-  const draftImagesRef = useRef<ComposerImage[]>([]);
+  const composerDraftsRef = useRef<ComposerDraftsByThreadId>({});
   const shouldStickConversationToBottomRef = useRef(true);
   const filePreviewRef = useRef<FilePreview | null>(null);
   const symbolBackStackRef = useRef<FileLocation[]>([]);
@@ -142,6 +152,7 @@ function App() {
   const selectedThreadIdRef = useRef<string | null>(null);
   const hydratedInitialThreadIdsRef = useRef<Set<string>>(new Set());
   const loadThreadRequestIdRef = useRef(0);
+  const pendingThreadUpdatesRef = useRef(new Map<string, ThreadUpdate[]>());
   const voiceSessionRef = useRef<ActiveVoiceSession | null>(null);
   const voiceDraftStateRef = useRef<VoiceDraftState | null>(null);
   const voicePeerConnectionRef = useRef<RTCPeerConnection | null>(null);
@@ -164,14 +175,24 @@ function App() {
     storeRightPanelView(rightPanelView);
   }, [rightPanelView]);
 
+  const selectedComposerDraft = getComposerDraft(
+    composerDraftsByThreadId,
+    selectedThreadId,
+  );
+  const draft = selectedComposerDraft.text;
+  const draftSkills = selectedComposerDraft.skills;
+  const draftImages = selectedComposerDraft.images;
+
   useEffect(() => {
-    draftImagesRef.current = draftImages;
-  }, [draftImages]);
+    composerDraftsRef.current = composerDraftsByThreadId;
+  }, [composerDraftsByThreadId]);
 
   useEffect(() => {
     return () => {
-      for (const image of draftImagesRef.current) {
-        revokeComposerImage(image);
+      for (const draft of Object.values(composerDraftsRef.current)) {
+        for (const image of draft.images) {
+          revokeComposerImage(image);
+        }
       }
     };
   }, []);
@@ -243,7 +264,13 @@ function App() {
 
   function syncVoiceDraftState(nextState: VoiceDraftState) {
     voiceDraftStateRef.current = nextState;
-    setDraft(buildVoiceDraft(nextState));
+    const threadId = voiceSessionRef.current?.threadId;
+    if (threadId) {
+      updateComposerDraftForThread(threadId, (draft) => ({
+        ...draft,
+        text: buildVoiceDraft(nextState),
+      }));
+    }
   }
 
   function resolveVoiceFinalTranscriptWaiters(threadId: string) {
@@ -288,7 +315,6 @@ function App() {
 
   useEffect(() => {
     setAvailableSkills([]);
-    setDraftSkills([]);
   }, [selectedThreadId]);
 
   useEffect(() => {
@@ -552,7 +578,7 @@ function App() {
       const payload =
         (await window.codexDesktop.bootstrap()) as BootstrapResponse;
       setWorkspace(payload.workspace);
-      setThreads(payload.threads);
+      setThreads(payload.threads.map(applyQueuedThreadUpdates));
       const preferredRoot = pickInitialRootThread(payload.threads);
       if (preferredRoot) {
         try {
@@ -565,7 +591,7 @@ function App() {
         return;
       }
       const rootThread = await ensureInitialRootThread(payload.workspace);
-      setThreads((current) => upsertThread(current, rootThread));
+      setThreads((current) => upsertThreadWithPending(current, rootThread));
       setSelectedThreadId(rootThread.id);
     } catch (loadError) {
       setError(toErrorMessage(loadError));
@@ -576,26 +602,89 @@ function App() {
     const payload = (await window.codexDesktop.readThread(threadId, true)) as {
       thread: Thread;
     };
-    setThreads((current) => upsertThread(current, payload.thread));
+    setThreads((current) => upsertThreadWithPending(current, payload.thread));
   }
 
   function updateThreadLocally(
     threadId: string,
     update: (thread: Thread) => Thread,
   ) {
-    setThreads((current) =>
-      current.map((thread) =>
-        thread.id === threadId ? update(thread) : thread,
-      ),
+    setThreads((current) => {
+      let foundThread = false;
+      const next = current.map((thread) => {
+        if (thread.id !== threadId) {
+          return thread;
+        }
+        foundThread = true;
+        return update(thread);
+      });
+      if (!foundThread) {
+        queuePendingThreadUpdate(
+          pendingThreadUpdatesRef.current,
+          threadId,
+          update,
+        );
+        return current;
+      }
+      return next;
+    });
+  }
+
+  function upsertThreadWithPending(current: Thread[], thread: Thread) {
+    return upsertThread(current, applyQueuedThreadUpdates(thread));
+  }
+
+  function applyQueuedThreadUpdates(thread: Thread) {
+    return applyPendingThreadUpdates(thread, pendingThreadUpdatesRef.current);
+  }
+
+  function updateSelectedComposerDraft(
+    update: (draft: ComposerDraft) => ComposerDraft,
+  ) {
+    setComposerDraftsByThreadId((current) =>
+      updateComposerDraft(current, selectedThreadId, update),
     );
+  }
+
+  function updateComposerDraftForThread(
+    threadId: string,
+    update: (draft: ComposerDraft) => ComposerDraft,
+  ) {
+    setComposerDraftsByThreadId((current) =>
+      updateComposerDraft(current, threadId, update),
+    );
+  }
+
+  function clearComposerDraftForThread(threadId: string | null) {
+    setComposerDraftsByThreadId((current) =>
+      clearComposerDraft(current, threadId),
+    );
+  }
+
+  function clearComposerDraftsForThreads(threadIds: Iterable<string>) {
+    setComposerDraftsByThreadId((current) => {
+      let next = current;
+      for (const threadId of threadIds) {
+        const draft = next[threadId];
+        if (draft) {
+          for (const image of draft.images) {
+            revokeComposerImage(image);
+          }
+        }
+        next = clearComposerDraft(next, threadId);
+      }
+      return next;
+    });
   }
 
   function removeThreadLocally(threadIds: Iterable<string>) {
     const threadIdSet = new Set(threadIds);
+    clearComposerDraftsForThreads(threadIdSet);
     setLatestPlansByThreadId((current) => {
       const next = { ...current };
       for (const threadId of threadIdSet) {
         delete next[threadId];
+        pendingThreadUpdatesRef.current.delete(threadId);
       }
       return next;
     });
@@ -681,7 +770,7 @@ function App() {
       )) as {
         thread: Thread;
       };
-      setThreads((current) => upsertThread(current, payload.thread));
+      setThreads((current) => upsertThreadWithPending(current, payload.thread));
     } catch (loadError) {
       if (
         selectedThreadIdRef.current !== threadId ||
@@ -714,7 +803,7 @@ function App() {
         cwd,
         name,
       })) as { thread: Thread };
-      setThreads((current) => upsertThread(current, payload.thread));
+      setThreads((current) => upsertThreadWithPending(current, payload.thread));
       setSelectedThreadId(payload.thread.id);
     } catch (createError) {
       setError(toErrorMessage(createError));
@@ -764,12 +853,8 @@ function App() {
         current.filter((thread) => !threadIdsToArchive.includes(thread.id)),
       );
       setSelectedThreadId(null);
+      clearComposerDraftsForThreads(threadIdsToArchive);
       await createRootThread(replacementName);
-      setDraft("");
-      for (const image of draftImages) {
-        revokeComposerImage(image);
-      }
-      setDraftImages([]);
     } catch (clearError) {
       setError(toErrorMessage(clearError));
     } finally {
@@ -778,17 +863,17 @@ function App() {
   }
 
   async function sendMessage() {
+    const threadId = selectedThreadId;
+    const draftToSend = getComposerDraft(composerDraftsByThreadId, threadId);
     if (
-      !selectedThreadId ||
-      (!draft.trim() && draftImages.length === 0 && draftSkills.length === 0)
+      !threadId ||
+      (!draftToSend.text.trim() &&
+        draftToSend.images.length === 0 &&
+        draftToSend.skills.length === 0)
     ) {
       return;
     }
-    if (
-      draft.trim() === "/clear" &&
-      draftImages.length === 0 &&
-      draftSkills.length === 0
-    ) {
+    if (isClearComposerCommand(draftToSend)) {
       await clearCurrentRootSession();
       return;
     }
@@ -796,21 +881,19 @@ function App() {
     setError(null);
     try {
       await window.codexDesktop.sendMessage({
-        threadId: selectedThreadId,
-        text: draft.trim(),
-        skills: draftSkills,
-        images: draftImages.map(({ name, mimeType, bytes }) => ({
+        threadId,
+        text: draftToSend.text.trim(),
+        skills: draftToSend.skills,
+        images: draftToSend.images.map(({ name, mimeType, bytes }) => ({
           name,
           mimeType,
           bytes,
         })),
       });
-      setDraft("");
-      setDraftSkills([]);
-      for (const image of draftImages) {
+      for (const image of draftToSend.images) {
         revokeComposerImage(image);
       }
-      setDraftImages([]);
+      clearComposerDraftForThread(threadId);
     } catch (sendError) {
       setError(toErrorMessage(sendError));
     } finally {
@@ -852,7 +935,10 @@ function App() {
 
     try {
       const images = await Promise.all(files.map(readImageFile));
-      setDraftImages((current) => [...current, ...images]);
+      updateSelectedComposerDraft((draft) => ({
+        ...draft,
+        images: [...draft.images, ...images],
+      }));
     } catch (loadError) {
       setError(toErrorMessage(loadError));
     } finally {
@@ -861,26 +947,26 @@ function App() {
   }
 
   function removeDraftImage(imageId: string) {
-    setDraftImages((current) => {
-      const next = current.filter((image) => image.id !== imageId);
-      const removed = current.find((image) => image.id === imageId);
+    updateSelectedComposerDraft((draft) => {
+      const next = draft.images.filter((image) => image.id !== imageId);
+      const removed = draft.images.find((image) => image.id === imageId);
       if (removed) {
         revokeComposerImage(removed);
       }
-      return next;
+      return { ...draft, images: next };
     });
   }
 
   function addDraftSkill(skill: DraftSkill) {
-    setDraftSkills((current) =>
-      current.some((candidate) => candidate.path === skill.path)
-        ? current
-        : [...current, skill],
+    updateSelectedComposerDraft((draft) =>
+      draft.skills.some((candidate) => candidate.path === skill.path)
+        ? draft
+        : { ...draft, skills: [...draft.skills, skill] },
     );
   }
 
   function handleDraftChange(value: string) {
-    setDraft(value);
+    updateSelectedComposerDraft((draft) => ({ ...draft, text: value }));
     if (voiceSessionRef.current?.threadId === selectedThreadId) {
       voiceDraftStateRef.current = {
         baseDraft: value,
@@ -891,7 +977,10 @@ function App() {
   }
 
   function removeDraftSkill(path: string) {
-    setDraftSkills((current) => current.filter((skill) => skill.path !== path));
+    updateSelectedComposerDraft((draft) => ({
+      ...draft,
+      skills: draft.skills.filter((skill) => skill.path !== path),
+    }));
   }
 
   async function startVoiceCapture() {
@@ -1065,7 +1154,10 @@ function App() {
           readImageBlob(file, file.name || `pasted-image-${index + 1}.png`),
         ),
       );
-      setDraftImages((current) => [...current, ...images]);
+      updateSelectedComposerDraft((draft) => ({
+        ...draft,
+        images: [...draft.images, ...images],
+      }));
     } catch (loadError) {
       setError(toErrorMessage(loadError));
     }
@@ -1115,7 +1207,7 @@ function App() {
       switch (method) {
         case "thread/started": {
           const thread = (params as { thread: Thread }).thread;
-          setThreads((current) => upsertThread(current, thread));
+          setThreads((current) => upsertThreadWithPending(current, thread));
           if (isSubagentThread(thread)) {
             void subscribeThread(thread.id);
           }

@@ -130,10 +130,19 @@ function buildMonitorSections(
     const observedEvents =
       matchingEvents.length > 0 ? matchingEvents : fallbackEvents;
 
-    if (observedEvents.length === 0) {
-      activeMonitors.push(monitor);
+    if (observedEvents.length > 0) {
+      if (monitor.kind === "process") {
+        continue;
+      }
+      activeMonitors.push({
+        ...monitor,
+        eventCount: observedEvents.length,
+        latestEvent: observedEvents.at(-1) ?? null,
+      });
       continue;
     }
+
+    activeMonitors.push(monitor);
   }
 
   const sections = MONITOR_SECTIONS.map((section) => ({
