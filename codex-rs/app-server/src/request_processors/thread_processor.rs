@@ -2469,6 +2469,7 @@ impl ThreadRequestProcessor {
             return;
         }
 
+        let session_source = stored_thread_session_source_with_agent_metadata(&stored_thread);
         let history_cwd = thread_history.session_cwd();
         let mut request_overrides = None;
         let mut typesafe_overrides = self.build_thread_config_overrides(
@@ -2499,11 +2500,11 @@ impl ThreadRequestProcessor {
 
         match self
             .thread_manager
-            .resume_thread_with_history(
+            .resume_thread_with_history_and_source(
                 config,
                 thread_history,
                 self.auth_manager.clone(),
-                /*persist_extended_history*/ false,
+                session_source,
                 /*parent_trace*/ None,
             )
             .await
@@ -2669,6 +2670,9 @@ impl ThreadRequestProcessor {
                 return Ok(());
             }
         };
+        let resume_session_source = resume_source_thread
+            .as_ref()
+            .map(stored_thread_session_source_with_agent_metadata);
 
         let history_cwd = thread_history.session_cwd();
         let mut typesafe_overrides = self.build_thread_config_overrides(
@@ -2708,18 +2712,31 @@ impl ThreadRequestProcessor {
 
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
         let response_history = thread_history.clone();
+        let parent_trace = self.request_trace_context(&request_id).await;
 
-        match self
-            .thread_manager
-            .resume_thread_with_history(
-                config.clone(),
-                thread_history,
-                self.auth_manager.clone(),
-                /*persist_extended_history*/ false,
-                self.request_trace_context(&request_id).await,
-            )
-            .await
-        {
+        let resume_result = if let Some(session_source) = resume_session_source {
+            self.thread_manager
+                .resume_thread_with_history_and_source(
+                    config.clone(),
+                    thread_history,
+                    self.auth_manager.clone(),
+                    session_source,
+                    parent_trace,
+                )
+                .await
+        } else {
+            self.thread_manager
+                .resume_thread_with_history(
+                    config.clone(),
+                    thread_history,
+                    self.auth_manager.clone(),
+                    /*persist_extended_history*/ false,
+                    parent_trace,
+                )
+                .await
+        };
+
+        match resume_result {
             Ok(NewThread {
                 thread_id,
                 thread: codex_thread,
@@ -4033,11 +4050,23 @@ fn apply_thread_usage_from_rollout_items(thread: &mut Thread, rollout_items: &[R
         .map(Into::into);
 }
 
+fn stored_thread_session_source_with_agent_metadata(
+    thread: &StoredThread,
+) -> codex_protocol::protocol::SessionSource {
+    with_thread_spawn_agent_metadata(
+        thread.source.clone(),
+        thread.agent_nickname.clone(),
+        thread.agent_role.clone(),
+        thread.agent_path.clone(),
+    )
+}
+
 pub(crate) fn thread_from_stored_thread(
     thread: StoredThread,
     fallback_provider: &str,
     fallback_cwd: &AbsolutePathBuf,
 ) -> (Thread, Option<codex_thread_store::StoredThreadHistory>) {
+    let source = stored_thread_session_source_with_agent_metadata(&thread);
     let path = thread.rollout_path;
     let git_info = thread.git_info.map(|info| ApiGitInfo {
         sha: info.commit_hash.map(|sha| sha.0),
@@ -4051,12 +4080,6 @@ pub(crate) fn thread_from_stored_thread(
         warn!("failed to normalize thread cwd while reading stored thread: {err}");
         fallback_cwd.clone()
     });
-    let source = with_thread_spawn_agent_metadata(
-        thread.source,
-        thread.agent_nickname.clone(),
-        thread.agent_role.clone(),
-        thread.agent_path.clone(),
-    );
     let history = thread.history;
     let thread_id = thread.thread_id.to_string();
     let mut thread = Thread {
@@ -4199,6 +4222,7 @@ fn summary_from_state_db_metadata(
     _thread_source: Option<codex_protocol::protocol::ThreadSource>,
     agent_nickname: Option<String>,
     agent_role: Option<String>,
+    agent_path: Option<String>,
     git_sha: Option<String>,
     git_branch: Option<String>,
     git_origin_url: Option<String>,
@@ -4207,12 +4231,7 @@ fn summary_from_state_db_metadata(
     let source = serde_json::from_str(&source)
         .or_else(|_| serde_json::from_value(serde_json::Value::String(source.clone())))
         .unwrap_or(codex_protocol::protocol::SessionSource::Unknown);
-    let source = with_thread_spawn_agent_metadata(
-        source,
-        agent_nickname,
-        agent_role,
-        /*agent_path*/ None,
-    );
+    let source = with_thread_spawn_agent_metadata(source, agent_nickname, agent_role, agent_path);
     let git_info = if git_sha.is_none() && git_branch.is_none() && git_origin_url.is_none() {
         None
     } else {
@@ -4256,6 +4275,7 @@ fn summary_from_thread_metadata(metadata: &ThreadMetadata) -> ConversationSummar
         metadata.thread_source,
         metadata.agent_nickname.clone(),
         metadata.agent_role.clone(),
+        metadata.agent_path.clone(),
         metadata.git_sha.clone(),
         metadata.git_branch.clone(),
         metadata.git_origin_url.clone(),
