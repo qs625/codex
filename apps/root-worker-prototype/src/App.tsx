@@ -1221,9 +1221,14 @@ function App() {
             threadId: string;
             turnId: string;
             item: ThreadItem;
+            startedAtMs?: number | null;
+            completedAtMs?: number | null;
           };
           updateThreadLocally(notification.threadId, (thread) =>
-            updateThreadItem(thread, notification.turnId, notification.item),
+            updateThreadItem(thread, notification.turnId, notification.item, {
+              startedAtMs: notification.startedAtMs,
+              completedAtMs: notification.completedAtMs,
+            }),
           );
           break;
         }

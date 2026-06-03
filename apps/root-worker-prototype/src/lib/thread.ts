@@ -322,24 +322,48 @@ export function updateThreadItem(
   thread: Thread,
   turnId: string,
   item: ThreadItem,
+  timestamps?: {
+    startedAtMs?: number | null;
+    completedAtMs?: number | null;
+  },
 ) {
+  const nextItem = applyItemTimestamps(item, timestamps);
+  let foundTurn = false;
+  const updatedTurns = thread.turns.map((turn) => {
+    if (turn.id !== turnId) {
+      return turn;
+    }
+    foundTurn = true;
+    const items = turn.items.some((existing) => existing.id === nextItem.id)
+      ? turn.items.map((existing) =>
+          existing.id === nextItem.id
+            ? // The server can refine an in-flight item into eventDrivenToolCall
+              // once it recognizes a generic function call as an event-driven tool.
+              mergeThreadItem(existing, nextItem)
+            : existing,
+        )
+      : [...turn.items, nextItem];
+    return { ...turn, items };
+  });
+  const turns = foundTurn
+    ? updatedTurns
+    : [
+        ...thread.turns,
+        {
+          id: turnId,
+          items: [nextItem],
+          itemsView: "full",
+          status: "running",
+          error: null,
+          startedAt: itemNotificationTimeSeconds(timestamps) ?? null,
+          completedAt: null,
+          durationMs: null,
+        } satisfies Turn,
+      ];
+
   return {
     ...thread,
-    turns: thread.turns.map((turn) => {
-      if (turn.id !== turnId) {
-        return turn;
-      }
-      const items = turn.items.some((existing) => existing.id === item.id)
-        ? turn.items.map((existing) =>
-            existing.id === item.id
-              ? // The server can refine an in-flight item into eventDrivenToolCall
-                // once it recognizes a generic function call as an event-driven tool.
-                item
-              : existing,
-          )
-        : [...turn.items, item];
-      return { ...turn, items };
-    }),
+    turns,
   };
 }
 
@@ -525,15 +549,78 @@ export function isThreadThinking(
 }
 
 function mergeThreadItem(existing: ThreadItem, next: ThreadItem): ThreadItem {
+  const timestamps = mergeItemTimestamps(existing, next);
+
   if (existing.type === "agentMessage" && next.type === "agentMessage") {
     return {
       ...existing,
       ...next,
+      ...timestamps,
       text: preferMoreCompleteText(existing.text, next.text),
     };
   }
 
+  return {
+    ...next,
+    ...timestamps,
+  };
+}
+
+function mergeItemTimestamps(
+  existing: ThreadItem,
+  next: ThreadItem,
+): Pick<ThreadItem, "startedAtMs" | "completedAtMs"> {
+  const timestamps: Pick<ThreadItem, "startedAtMs" | "completedAtMs"> = {};
+  const startedAtMs = existing.startedAtMs ?? next.startedAtMs;
+  if (startedAtMs !== null && startedAtMs !== undefined) {
+    timestamps.startedAtMs = startedAtMs;
+  }
+  const completedAtMs = next.completedAtMs ?? existing.completedAtMs;
+  if (completedAtMs !== null && completedAtMs !== undefined) {
+    timestamps.completedAtMs = completedAtMs;
+  }
+  return timestamps;
+}
+
+function applyItemTimestamps(
+  item: ThreadItem,
+  timestamps?: {
+    startedAtMs?: number | null;
+    completedAtMs?: number | null;
+  },
+): ThreadItem {
+  if (
+    !timestamps ||
+    ((timestamps.startedAtMs === null ||
+      timestamps.startedAtMs === undefined) &&
+      (timestamps.completedAtMs === null ||
+        timestamps.completedAtMs === undefined))
+  ) {
+    return item;
+  }
+  const next = { ...item };
+  if (timestamps.startedAtMs !== null && timestamps.startedAtMs !== undefined) {
+    next.startedAtMs = timestamps.startedAtMs;
+  }
+  if (
+    timestamps.completedAtMs !== null &&
+    timestamps.completedAtMs !== undefined
+  ) {
+    next.completedAtMs = timestamps.completedAtMs;
+  }
   return next;
+}
+
+function itemNotificationTimeSeconds(
+  timestamps?: {
+    startedAtMs?: number | null;
+    completedAtMs?: number | null;
+  },
+) {
+  const timestampMs = timestamps?.startedAtMs ?? timestamps?.completedAtMs;
+  return timestampMs === null || timestampMs === undefined
+    ? null
+    : timestampMs / 1000;
 }
 
 type TurnItemIndex = {

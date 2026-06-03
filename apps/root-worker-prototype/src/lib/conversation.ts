@@ -54,11 +54,12 @@ export function buildConversationState(
   let flatItemIndex = 0;
 
   for (const turn of thread.turns) {
-    const timestamp = formatClockTime(
+    const turnTimestamp = formatClockTime(
       turn.completedAt ?? turn.startedAt ?? thread.updatedAt,
     );
 
     for (const item of turn.items) {
+      const timestamp = formatItemTimestamp(item) ?? turnTimestamp;
       const previousFlatItem = canReusePrevious
         ? previous.flatItems[flatItemIndex]
         : undefined;
@@ -448,6 +449,13 @@ function buildConversationItemEntries(
   }
 
   return [];
+}
+
+function formatItemTimestamp(item: ThreadItem) {
+  const timestampMs = item.completedAtMs ?? item.startedAtMs;
+  return timestampMs === null || timestampMs === undefined
+    ? null
+    : formatClockTime(timestampMs / 1000);
 }
 
 export function buildConversationCells(

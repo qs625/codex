@@ -184,7 +184,9 @@ export function ConversationPanel({
   const lastTurn = selectedThread?.turns.at(-1) ?? null;
   const lastTurnInProgress = lastTurn != null && isTurnInFlight(lastTurn);
   const activeTurnId = lastTurnInProgress ? lastTurn.id : null;
-  const threadActive = threadStatusClass(selectedThread?.status ?? "waiting") === "doing";
+  const threadActive =
+    threadStatusClass(selectedThread?.status ?? { type: "notLoaded" }) ===
+    "doing";
   const isThinking = isThreadThinking(selectedThread, {
     isLoadingThread,
     isSending,
@@ -248,7 +250,9 @@ export function ConversationPanel({
         <div className="conversation-heading">
           <div className="conversation-title-row">
             <h1>{selectedThread ? getThreadPath(selectedThread) : "/root"}</h1>
-            <span className={`status-dot ${threadStatusClass(selectedThread?.status ?? "waiting")}`} />
+            <span
+              className={`status-dot ${threadStatusClass(selectedThread?.status ?? { type: "notLoaded" })}`}
+            />
             <span>{selectedThread ? getAgentRoleLabel(selectedThread) : "Root Agent"}</span>
             <span className="subtitle-separator">•</span>
             <span>{selectedThread ? getPresenceLabel(selectedThread.status) : "Idle"}</span>

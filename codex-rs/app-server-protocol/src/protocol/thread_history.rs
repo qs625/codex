@@ -488,6 +488,30 @@ impl ThreadHistoryBuilder {
             return;
         }
 
+        if let Some(trigger) = EventDrivenToolTrigger::parse_message_text(&text) {
+            let id = self.next_item_id();
+            self.ensure_turn().items.push(ThreadItem::EventDrivenTool {
+                id,
+                tool: trigger.tool,
+                title: trigger.title,
+                text: trigger.text,
+            });
+            return;
+        }
+
+        let inter_agent_communication = serde_json::from_str::<InterAgentCommunication>(&text)
+            .ok()
+            .filter(|communication| {
+                !matches!(
+                    communication.operation,
+                    codex_protocol::protocol::InterAgentOperation::Unknown
+                )
+            });
+        if let Some(communication) = inter_agent_communication {
+            self.handle_inter_agent_communication(None, communication);
+            return;
+        }
+
         let id = self.next_item_id();
         self.ensure_turn().items.push(ThreadItem::AgentMessage {
             id,
@@ -1657,7 +1681,9 @@ impl From<&PendingTurn> for Turn {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::v2::CollabAgentStatus;
     use crate::protocol::v2::CommandExecutionSource;
+    use codex_protocol::AgentPath;
     use codex_protocol::ThreadId;
     use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
     use codex_protocol::items::HookPromptFragment as CoreHookPromptFragment;
@@ -1679,6 +1705,8 @@ mod tests {
     use codex_protocol::protocol::DynamicToolCallResponseEvent;
     use codex_protocol::protocol::ExecCommandEndEvent;
     use codex_protocol::protocol::ExecCommandSource;
+    use codex_protocol::protocol::InterAgentCommunication;
+    use codex_protocol::protocol::InterAgentOperation;
     use codex_protocol::protocol::ItemStartedEvent;
     use codex_protocol::protocol::McpInvocation;
     use codex_protocol::protocol::McpToolCallEndEvent;
@@ -1799,6 +1827,214 @@ mod tests {
                 phase: None,
                 memory_citation: None,
             }
+        );
+    }
+
+    #[test]
+    fn maps_live_inter_agent_message_to_collab_item() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "done".into(),
+            InterAgentOperation::SendMessage,
+        )
+        .with_trigger_turn(false);
+        let events = [EventMsg::AgentMessage(AgentMessageEvent {
+            message: serde_json::to_string(&communication).expect("serialize communication"),
+            phase: None,
+            memory_citation: None,
+        })];
+
+        let mut builder = ThreadHistoryBuilder::new();
+        for event in &events {
+            builder.handle_event(event);
+        }
+        let turns = builder.finish();
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::CollabAgentMessage {
+                id: "item-1".into(),
+                operation: InterAgentOperation::SendMessage.into(),
+                sender_thread_id: None,
+                sender_path: "/root/worker".into(),
+                recipient_thread_id: None,
+                recipient_path: "/root".into(),
+                other_recipient_paths: Vec::new(),
+                content: "done".into(),
+                trigger_turn: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn maps_live_child_completion_message_to_collab_status_update() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "completed".into(),
+            InterAgentOperation::ChildCompletion,
+        )
+        .with_status(codex_protocol::protocol::AgentStatus::Completed(Some(
+            "completed".into(),
+        )));
+        let events = [EventMsg::AgentMessage(AgentMessageEvent {
+            message: serde_json::to_string(&communication).expect("serialize communication"),
+            phase: None,
+            memory_citation: None,
+        })];
+
+        let mut builder = ThreadHistoryBuilder::new();
+        for event in &events {
+            builder.handle_event(event);
+        }
+        let turns = builder.finish();
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::CollabAgentStatusUpdate {
+                id: "item-1".into(),
+                sender_thread_id: None,
+                sender_path: "/root/worker".into(),
+                recipient_thread_id: None,
+                recipient_path: "/root".into(),
+                status: CollabAgentState {
+                    path: Some("/root/worker".into()),
+                    status: CollabAgentStatus::Completed,
+                    message: Some("completed".into()),
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn maps_live_event_driven_tool_trigger_to_event_item() {
+        let trigger = EventDrivenToolTrigger {
+            tool: "process_exit_subscribe".into(),
+            title: "Process exited".into(),
+            text: "[Process exit subscription] Session 42 exited with code 0".into(),
+        };
+        let events = [EventMsg::AgentMessage(AgentMessageEvent {
+            message: trigger.render_message_text(),
+            phase: None,
+            memory_citation: None,
+        })];
+
+        let mut builder = ThreadHistoryBuilder::new();
+        for event in &events {
+            builder.handle_event(event);
+        }
+        let turns = builder.finish();
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::EventDrivenTool {
+                id: "item-1".into(),
+                tool: "process_exit_subscribe".into(),
+                title: "Process exited".into(),
+                text: "[Process exit subscription] Session 42 exited with code 0".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn keeps_unmarked_event_driven_tool_json_as_agent_message() {
+        let message = serde_json::json!({
+            "tool": "process_exit_subscribe",
+            "title": "Process exited",
+            "text": "[Process exit subscription] Session 42 exited with code 0",
+        })
+        .to_string();
+        let events = [EventMsg::AgentMessage(AgentMessageEvent {
+            message: message.clone(),
+            phase: None,
+            memory_citation: None,
+        })];
+
+        let mut builder = ThreadHistoryBuilder::new();
+        for event in &events {
+            builder.handle_event(event);
+        }
+        let turns = builder.finish();
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::AgentMessage {
+                id: "item-1".into(),
+                text: message,
+                phase: None,
+                memory_citation: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn keeps_malformed_event_driven_tool_marker_as_agent_message() {
+        let message = concat!(
+            "<event_driven_tool>",
+            r#"{"tool":"process_exit_subscribe","title":"Process exited""#,
+            "</event_driven_tool>"
+        )
+        .to_string();
+        let events = [EventMsg::AgentMessage(AgentMessageEvent {
+            message: message.clone(),
+            phase: None,
+            memory_citation: None,
+        })];
+
+        let mut builder = ThreadHistoryBuilder::new();
+        for event in &events {
+            builder.handle_event(event);
+        }
+        let turns = builder.finish();
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::AgentMessage {
+                id: "item-1".into(),
+                text: message,
+                phase: None,
+                memory_citation: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn keeps_unknown_inter_agent_shaped_json_as_agent_message() {
+        let message = serde_json::json!({
+            "author": "/root/worker",
+            "recipient": "/root",
+            "content": "plain assistant json",
+        })
+        .to_string();
+        let events = [EventMsg::AgentMessage(AgentMessageEvent {
+            message: message.clone(),
+            phase: None,
+            memory_citation: None,
+        })];
+
+        let mut builder = ThreadHistoryBuilder::new();
+        for event in &events {
+            builder.handle_event(event);
+        }
+        let turns = builder.finish();
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::AgentMessage {
+                id: "item-1".into(),
+                text: message,
+                phase: None,
+                memory_citation: None,
+            }]
         );
     }
 

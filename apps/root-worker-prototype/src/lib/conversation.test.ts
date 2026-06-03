@@ -6,6 +6,7 @@ import {
   buildConversationEntries,
   buildConversationState,
 } from "./conversation";
+import { formatClockTime } from "./thread";
 import type { Thread } from "../types";
 
 function makeThread(items: Thread["turns"][number]["items"]): Thread {
@@ -20,7 +21,7 @@ function makeThread(items: Thread["turns"][number]["items"]): Thread {
     reasoningEffort: null,
     createdAt: 1,
     updatedAt: 1,
-    status: "running",
+    status: { type: "active", activeFlags: [] },
     path: null,
     cwd: "/tmp",
     cliVersion: "test",
@@ -111,6 +112,39 @@ test("separates command, event subscriptions, event notifications, and multi-age
 
   const cells = buildConversationCells(entries);
   assert.equal(cells.length, 4);
+});
+
+test("uses event-driven item timestamps instead of the parent turn timestamp", () => {
+  const thread = makeThread([
+    {
+      type: "eventDrivenToolCall",
+      id: "builtin-1",
+      tool: "process_exit_subscribe",
+      arguments: { session_id: 42 },
+      status: "inProgress",
+      output: null,
+      startedAtMs: 2_000,
+    },
+    {
+      type: "eventDrivenToolCall",
+      id: "builtin-2",
+      tool: "process_exit_subscribe",
+      arguments: { session_id: 43 },
+      status: "completed",
+      output: { ok: true },
+      startedAtMs: 3_000,
+      completedAtMs: 4_000,
+    },
+  ]);
+  thread.turns[0].startedAt = 10;
+  thread.turns[0].completedAt = 20;
+
+  const entries = buildConversationEntries(thread);
+
+  assert.deepEqual(
+    entries.map((entry) => entry.timestamp),
+    [formatClockTime(2), formatClockTime(4)],
+  );
 });
 
 test("uses meaningful multi-agent titles for received work and child completion", () => {
@@ -220,13 +254,13 @@ test("tolerates non-string multi-agent history fields without crashing", () => {
     })),
     [
       {
-        toolName: "received from unknown",
+        toolName: "unknown subagent completion",
         text: "Received child completion from unknown.",
         toolDetails:
           "Operation\nchildCompletion\n\nFrom\nunknown\n\nTo\nunknown\n\nMessage\n…\n\nTrigger Turn\ntrue\n\nOther Recipients\nunknown",
       },
       {
-        toolName: "status from unknown",
+        toolName: "unknown subagent completion",
         text: "unknown • completed",
         toolDetails: "From\nunknown\n\nTo\n/root\n\nStatus\ncompleted",
       },

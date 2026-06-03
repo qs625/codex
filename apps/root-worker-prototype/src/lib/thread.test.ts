@@ -11,6 +11,7 @@ import {
   isThreadThinking,
   mergeThreadSnapshot,
   threadStatusClass,
+  updateThreadItem,
   updateThreadTurn,
 } from "./thread";
 import type { Thread } from "../types";
@@ -146,6 +147,135 @@ test("mergeThreadSnapshot preserves usage fields when thread/read omits them", (
   assert.equal(merged.threadUsage?.contextUsage?.budgetUsedPercent, 12);
   assert.equal(merged.tokenUsage?.total.totalTokens, 1200);
   assert.equal(merged.contextUsage?.budgetUsedPercent, 12);
+});
+
+test("updateThreadItem creates a running turn when item notifications arrive first", () => {
+  const thread = makeThread();
+
+  const updated = updateThreadItem(
+    thread,
+    "turn-1",
+    {
+      type: "eventDrivenToolCall",
+      id: "item-1",
+      tool: "process_exit_subscribe",
+      arguments: { session_id: 42 },
+      status: "inProgress",
+      output: null,
+    },
+    { startedAtMs: 2_000 },
+  );
+
+  assert.deepEqual(updated.turns, [
+    {
+      id: "turn-1",
+      items: [
+        {
+          type: "eventDrivenToolCall",
+          id: "item-1",
+          tool: "process_exit_subscribe",
+          arguments: { session_id: 42 },
+          status: "inProgress",
+          output: null,
+          startedAtMs: 2_000,
+        },
+      ],
+      itemsView: "full",
+      status: "running",
+      error: null,
+      startedAt: 2,
+      completedAt: null,
+      durationMs: null,
+    },
+  ]);
+});
+
+test("updateThreadItem preserves started time when completion updates the same item", () => {
+  const thread = updateThreadItem(
+    makeThread(),
+    "turn-1",
+    {
+      type: "eventDrivenToolCall",
+      id: "item-1",
+      tool: "process_exit_subscribe",
+      arguments: { session_id: 42 },
+      status: "inProgress",
+      output: null,
+    },
+    { startedAtMs: 2_000 },
+  );
+
+  const updated = updateThreadItem(
+    thread,
+    "turn-1",
+    {
+      type: "eventDrivenToolCall",
+      id: "item-1",
+      tool: "process_exit_subscribe",
+      arguments: { session_id: 42 },
+      status: "completed",
+      output: { subscription_id: "sub-1" },
+    },
+    { completedAtMs: 3_000 },
+  );
+
+  assert.deepEqual(updated.turns[0]?.items[0], {
+    type: "eventDrivenToolCall",
+    id: "item-1",
+    tool: "process_exit_subscribe",
+    arguments: { session_id: 42 },
+    status: "completed",
+    output: { subscription_id: "sub-1" },
+    startedAtMs: 2_000,
+    completedAtMs: 3_000,
+  });
+});
+
+test("updateThreadTurn preserves item timestamps when a completed turn snapshot arrives", () => {
+  const thread = updateThreadItem(
+    makeThread(),
+    "turn-1",
+    {
+      type: "eventDrivenToolCall",
+      id: "item-1",
+      tool: "process_exit_subscribe",
+      arguments: { session_id: 42 },
+      status: "completed",
+      output: { subscription_id: "sub-1" },
+    },
+    { startedAtMs: 2_000, completedAtMs: 3_000 },
+  );
+
+  const updated = updateThreadTurn(thread, {
+    id: "turn-1",
+    items: [
+      {
+        type: "eventDrivenToolCall",
+        id: "item-1",
+        tool: "process_exit_subscribe",
+        arguments: { session_id: 42 },
+        status: "completed",
+        output: { subscription_id: "sub-1" },
+      },
+    ],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 2,
+    completedAt: 4,
+    durationMs: 2_000,
+  });
+
+  assert.deepEqual(updated.turns[0]?.items[0], {
+    type: "eventDrivenToolCall",
+    id: "item-1",
+    tool: "process_exit_subscribe",
+    arguments: { session_id: 42 },
+    status: "completed",
+    output: { subscription_id: "sub-1" },
+    startedAtMs: 2_000,
+    completedAtMs: 3_000,
+  });
 });
 
 test("mergeThreadSnapshot hydrates restored usage fields from thread/read", () => {

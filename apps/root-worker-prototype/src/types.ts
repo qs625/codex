@@ -22,8 +22,14 @@ export type SubAgentSource =
       };
     };
 
-export type ThreadItem =
-  | {
+export type ThreadItemTimestamps = {
+  startedAtMs?: number | null;
+  completedAtMs?: number | null;
+};
+
+export type ThreadItem = ThreadItemTimestamps &
+  (
+    | {
       type: "userMessage";
       id: string;
       content: Array<{
@@ -191,7 +197,8 @@ export type ThreadItem =
   | {
       type: "contextCompaction";
       id: string;
-    };
+    }
+  );
 
 export type Turn = {
   id: string;
