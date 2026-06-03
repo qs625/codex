@@ -598,19 +598,50 @@ function findMatchingThreadItemIndex(items: ThreadItem[], nextItem: ThreadItem) 
   if (idIndex !== -1) {
     return idIndex;
   }
-  if (!isEventDrivenThreadItem(nextItem)) {
-    return -1;
-  }
 
-  const nextKey = getThreadItemSemanticKey(nextItem);
-  return items.findIndex(
-    (item) =>
-      isEventDrivenThreadItem(item) && getThreadItemSemanticKey(item) === nextKey,
+  return items.findIndex((item) =>
+    canMergeSameTurnThreadItems(item, nextItem),
   );
 }
 
-function isEventDrivenThreadItem(item: ThreadItem) {
-  return item.type === "eventDrivenTool" || item.type === "eventDrivenToolCall";
+function canMergeSameTurnThreadItems(
+  existing: ThreadItem,
+  next: ThreadItem,
+) {
+  if (
+    existing.type !== next.type ||
+    !canMatchThreadItemSemantically(existing)
+  ) {
+    return false;
+  }
+
+  if (existing.type === "agentMessage" && next.type === "agentMessage") {
+    return haveCompatibleAgentMessages(existing, next);
+  }
+
+  return getThreadItemSemanticKey(existing) === getThreadItemSemanticKey(next);
+}
+
+function haveCompatibleAgentMessages(
+  existing: Extract<ThreadItem, { type: "agentMessage" }>,
+  next: Extract<ThreadItem, { type: "agentMessage" }>,
+) {
+  if (
+    existing.phase !== next.phase ||
+    stableStringify(existing.memoryCitation) !== stableStringify(next.memoryCitation)
+  ) {
+    return false;
+  }
+  if (
+    existing.completedAtMs !== null &&
+    existing.completedAtMs !== undefined &&
+    next.completedAtMs !== null &&
+    next.completedAtMs !== undefined
+  ) {
+    return false;
+  }
+
+  return existing.text.startsWith(next.text) || next.text.startsWith(existing.text);
 }
 
 function mergeItemTimestamps(
@@ -714,6 +745,9 @@ function consumeMatchingTurnItem(
   if (matcher.index.ids.has(item.id)) {
     return true;
   }
+  if (!canMatchThreadItemSemantically(item)) {
+    return false;
+  }
 
   const key = getThreadItemSemanticKey(item);
   const matchingTurns = matcher.index.semantic.get(key) ?? [];
@@ -773,6 +807,34 @@ function hasNoTurnTimes(turn: Turn) {
     turn.completedAt === null &&
     turn.durationMs === null
   );
+}
+
+function canMatchThreadItemSemantically(item: ThreadItem) {
+  switch (item.type) {
+    case "agentMessage":
+    case "collabAgentMessage":
+    case "collabAgentStatusUpdate":
+    case "eventDrivenTool":
+    case "eventDrivenToolCall":
+      return true;
+    case "builtinToolCall":
+    case "collabAgentToolCall":
+    case "commandExecution":
+    case "contextCompaction":
+    case "dynamicToolCall":
+    case "enteredReviewMode":
+    case "exitedReviewMode":
+    case "fileChange":
+    case "imageGeneration":
+    case "imageView":
+    case "injectedContext":
+    case "mcpToolCall":
+    case "plan":
+    case "reasoning":
+    case "userMessage":
+    case "webSearch":
+      return false;
+  }
 }
 
 function getThreadItemSemanticKey(item: ThreadItem) {

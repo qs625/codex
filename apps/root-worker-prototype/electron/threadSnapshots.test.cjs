@@ -287,3 +287,71 @@ test("mergeThreadSnapshots preserves distinct in-flight items with matching cont
 
   assert.deepEqual(merged.turns, [readTurn, liveTurn]);
 });
+
+test("mergeThreadSnapshots preserves duplicate context compaction markers", () => {
+  const restoredTurn = makeCollabMessageTurn({
+    id: "restored-turn",
+    items: [
+      {
+        type: "contextCompaction",
+        id: "restored-item",
+      },
+    ],
+  });
+  const readTurn = makeCollabMessageTurn({
+    id: "read-turn",
+    items: [
+      {
+        type: "contextCompaction",
+        id: "read-item",
+      },
+    ],
+    status: "completed",
+    completedAt: 12,
+    durationMs: 2000,
+  });
+
+  const merged = mergeThreadSnapshots(
+    makeThread({ turns: [restoredTurn] }),
+    makeThread({ turns: [readTurn] }),
+  );
+
+  assert.deepEqual(merged.turns, [readTurn, restoredTurn]);
+});
+
+test("mergeThreadSnapshots preserves duplicate dynamic tool calls", () => {
+  const item = {
+    type: "dynamicToolCall",
+    id: "restored-item",
+    namespace: "functions",
+    tool: "read",
+    arguments: { path: "/tmp/file" },
+    status: "completed",
+    contentItems: [{ text: "same output" }],
+    success: true,
+    durationMs: 10,
+  };
+  const restoredTurn = makeCollabMessageTurn({
+    id: "restored-turn",
+    items: [item],
+  });
+  const readTurn = makeCollabMessageTurn({
+    id: "read-turn",
+    items: [
+      {
+        ...item,
+        id: "read-item",
+      },
+    ],
+    status: "completed",
+    completedAt: 12,
+    durationMs: 2000,
+  });
+
+  const merged = mergeThreadSnapshots(
+    makeThread({ turns: [restoredTurn] }),
+    makeThread({ turns: [readTurn] }),
+  );
+
+  assert.deepEqual(merged.turns, [readTurn, restoredTurn]);
+});

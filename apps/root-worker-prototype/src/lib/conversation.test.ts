@@ -268,6 +268,160 @@ test("tolerates non-string multi-agent history fields without crashing", () => {
   );
 });
 
+test("renders child completion envelopes in event-driven tools as multi-agent tools", () => {
+  const content =
+    '<subagent_notification>\n{"agent_path":"/root/worker","status":{"completed":"done"}}\n</subagent_notification>';
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "eventDrivenTool",
+        id: "event-1",
+        tool: "spawn_agent",
+        title: "Subagent completed",
+        text: JSON.stringify({
+          author: "/root/worker",
+          recipient: "/root",
+          other_recipients: [],
+          content,
+          operation: "childCompletion",
+          trigger_turn: true,
+          sender_thread_id: "thread-2",
+          recipient_thread_id: "thread-1",
+          status: {
+            completed: "done",
+          },
+        }),
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      kind: entry.kind,
+      role: entry.role,
+      text: entry.text,
+      toolName: entry.toolName,
+      toolDetails: entry.toolDetails,
+      toolCategory: entry.toolCategory,
+    })),
+    [
+      {
+        kind: "tool",
+        role: "system",
+        text: "Received child completion from /root/worker.",
+        toolName: "/root/worker subagent completion",
+        toolDetails:
+          "Operation\nchildCompletion\n\nFrom\n/root/worker\n\nTo\n/root\n\nMessage\ndone\n\nTrigger Turn\ntrue",
+        toolCategory: "multiAgent",
+      },
+    ],
+  );
+});
+
+test("renders child completion envelopes in agent messages as multi-agent tools", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "agentMessage",
+        id: "msg-1",
+        text: JSON.stringify({
+          author: "/root/worker",
+          recipient: "/root",
+          other_recipients: [],
+          content: "done",
+          operation: "childCompletion",
+          trigger_turn: true,
+          sender_thread_id: "thread-2",
+          recipient_thread_id: "thread-1",
+        }),
+        phase: null,
+        memoryCitation: null,
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.kind, entry.text, entry.toolName]),
+    [
+      [
+        "tool",
+        "Received child completion from /root/worker.",
+        "/root/worker subagent completion",
+      ],
+    ],
+  );
+});
+
+test("keeps ordinary child completion JSON in agent messages as text", () => {
+  const text = JSON.stringify({
+    operation: "childCompletion",
+    content: "this is ordinary model output",
+  });
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "agentMessage",
+        id: "msg-1",
+        text,
+        phase: null,
+        memoryCitation: null,
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      kind: entry.kind,
+      role: entry.role,
+      text: entry.text,
+      toolCategory: entry.toolCategory,
+    })),
+    [
+      {
+        kind: "message",
+        role: "agent",
+        text,
+        toolCategory: undefined,
+      },
+    ],
+  );
+});
+
+test("keeps ordinary child completion JSON in event-driven tools as event text", () => {
+  const text = JSON.stringify({
+    operation: "childCompletion",
+    content: "not a collab envelope",
+  });
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "eventDrivenTool",
+        id: "event-1",
+        tool: "schedule_subscribe",
+        title: "Schedule fired",
+        text,
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      kind: entry.kind,
+      text: entry.text,
+      toolName: entry.toolName,
+      toolCategory: entry.toolCategory,
+    })),
+    [
+      {
+        kind: "tool",
+        text,
+        toolName: "Schedule fired",
+        toolCategory: "eventDrivenEvent",
+      },
+    ],
+  );
+});
+
 test("renders context compaction as a context tool entry", () => {
   const entries = buildConversationEntries(
     makeThread([
