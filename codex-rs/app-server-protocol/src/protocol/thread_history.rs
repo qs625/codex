@@ -66,6 +66,7 @@ use codex_protocol::protocol::SKILLS_INSTRUCTIONS_OPEN_TAG;
 use codex_protocol::protocol::ThreadRolledBackEvent;
 use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnCompleteEvent;
+use codex_protocol::protocol::TurnContextItem;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::UserMessageEvent;
 use codex_protocol::protocol::ViewImageToolCallEvent;
@@ -111,7 +112,8 @@ pub struct ThreadHistoryBuilder {
     next_item_index: i64,
     current_rollout_index: usize,
     next_rollout_index: usize,
-    pending_agent_message_response_text: Option<String>,
+    pending_agent_message_responses: Vec<PendingAgentMessageResponse>,
+    pending_legacy_agent_messages: Vec<PendingLegacyAgentMessage>,
 }
 
 impl Default for ThreadHistoryBuilder {
@@ -128,7 +130,8 @@ impl ThreadHistoryBuilder {
             next_item_index: 1,
             current_rollout_index: 0,
             next_rollout_index: 0,
-            pending_agent_message_response_text: None,
+            pending_agent_message_responses: Vec::new(),
+            pending_legacy_agent_messages: Vec::new(),
         }
     }
 
@@ -256,7 +259,8 @@ impl ThreadHistoryBuilder {
             RolloutItem::EventMsg(event) => self.handle_event(event),
             RolloutItem::Compacted(payload) => self.handle_compacted(payload),
             RolloutItem::ResponseItem(item) => self.handle_response_item(item),
-            RolloutItem::TurnContext(_) | RolloutItem::SessionMeta(_) => {}
+            RolloutItem::TurnContext(payload) => self.handle_turn_context(payload),
+            RolloutItem::SessionMeta(_) => {}
         }
     }
 
@@ -289,13 +293,25 @@ impl ThreadHistoryBuilder {
                         return;
                     };
                     let id = id.clone().unwrap_or_else(|| self.next_item_id());
+                    if self.consume_duplicate_legacy_agent_message_response(
+                        &id,
+                        text,
+                        phase.clone(),
+                    ) {
+                        return;
+                    }
                     self.ensure_turn().items.push(normalize_agent_message_item(
-                        id,
+                        id.clone(),
                         text.to_string(),
                         phase.clone(),
                         None,
                     ));
-                    self.pending_agent_message_response_text = Some(text.to_string());
+                    self.pending_agent_message_responses
+                        .push(PendingAgentMessageResponse {
+                            id,
+                            text: text.to_string(),
+                            phase: phase.clone(),
+                        });
                     return;
                 }
 
@@ -415,6 +431,7 @@ impl ThreadHistoryBuilder {
         // close any implicit/inactive turn and start a fresh one for this input.
         if let Some(turn) = self.current_turn.as_ref()
             && !turn.opened_explicitly
+            && !turn.items.is_empty()
             && !turn.has_only_injected_context()
             && !(turn.saw_compaction && turn.items.is_empty())
         {
@@ -449,6 +466,12 @@ impl ThreadHistoryBuilder {
         }
 
         let id = self.next_item_id();
+        self.pending_legacy_agent_messages
+            .push(PendingLegacyAgentMessage {
+                id: id.clone(),
+                text: text.clone(),
+                phase: phase.clone(),
+            });
         self.ensure_turn().items.push(normalize_agent_message_item(
             id,
             text,
@@ -463,20 +486,25 @@ impl ThreadHistoryBuilder {
         phase: Option<MessagePhase>,
         memory_citation: Option<crate::protocol::v2::MemoryCitation>,
     ) -> bool {
-        let Some(pending_text) = self.pending_agent_message_response_text.take() else {
+        let Some(pending_index) = self
+            .pending_agent_message_responses
+            .iter()
+            .position(|pending| pending.matches(text, phase.as_ref()))
+        else {
             return false;
         };
-
-        if pending_text != text {
-            return false;
-        }
+        let pending = self.pending_agent_message_responses.remove(pending_index);
 
         if let Some(ThreadItem::AgentMessage {
             text: item_text,
             phase: item_phase,
             memory_citation: item_memory_citation,
             ..
-        }) = self.ensure_turn().items.last_mut()
+        }) = self
+            .ensure_turn()
+            .items
+            .iter_mut()
+            .find(|item| item.id() == pending.id)
             && item_text == text
         {
             if phase.is_some() {
@@ -488,6 +516,71 @@ impl ThreadHistoryBuilder {
         }
 
         true
+    }
+
+    fn consume_duplicate_legacy_agent_message_response(
+        &mut self,
+        response_id: &str,
+        text: &str,
+        phase: Option<MessagePhase>,
+    ) -> bool {
+        let Some(pending_index) = self
+            .pending_legacy_agent_messages
+            .iter()
+            .position(|pending| pending.matches(text, phase.as_ref()))
+        else {
+            return false;
+        };
+        let pending = self.pending_legacy_agent_messages.remove(pending_index);
+
+        let Some(existing_item) = self
+            .ensure_turn()
+            .items
+            .iter_mut()
+            .find(|item| item.id() == pending.id)
+        else {
+            return false;
+        };
+
+        match existing_item {
+            ThreadItem::AgentMessage {
+                id,
+                text: item_text,
+                phase: item_phase,
+                ..
+            } if item_text == text => {
+                *id = response_id.to_string();
+                if phase.is_some() {
+                    *item_phase = phase;
+                }
+                true
+            }
+            item if matches!(
+                item,
+                ThreadItem::CollabAgentMessage { .. } | ThreadItem::CollabAgentStatusUpdate { .. }
+            ) =>
+            {
+                let response_item = normalize_agent_message_item(
+                    response_id.to_string(),
+                    text.to_string(),
+                    phase,
+                    None,
+                );
+                if collab_items_are_equivalent(item, &response_item) {
+                    match item {
+                        ThreadItem::CollabAgentMessage { id, .. }
+                        | ThreadItem::CollabAgentStatusUpdate { id, .. } => {
+                            *id = response_id.to_string();
+                        }
+                        _ => {}
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
     }
 
     fn handle_agent_reasoning(&mut self, payload: &AgentReasoningEvent) {
@@ -1157,6 +1250,36 @@ impl ThreadHistoryBuilder {
         );
     }
 
+    fn handle_turn_context(&mut self, payload: &TurnContextItem) {
+        let Some(turn_id) = payload
+            .turn_id
+            .as_ref()
+            .filter(|turn_id| !turn_id.is_empty())
+        else {
+            return;
+        };
+
+        if self
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.id == *turn_id)
+        {
+            return;
+        }
+
+        if let Some(turn) = self.current_turn.as_mut()
+            && !turn.opened_explicitly
+            && (turn.items.is_empty() || turn.has_only_injected_context())
+        {
+            turn.id = turn_id.clone();
+            turn.rollout_start_index = self.current_rollout_index;
+            return;
+        }
+
+        self.finish_current_turn();
+        self.current_turn = Some(self.new_turn(Some(turn_id.clone())));
+    }
+
     fn handle_turn_complete(&mut self, payload: &TurnCompleteEvent) {
         let mark_completed = |turn: &mut PendingTurn| {
             if matches!(turn.status, TurnStatus::Completed | TurnStatus::InProgress) {
@@ -1221,7 +1344,8 @@ impl ThreadHistoryBuilder {
     }
 
     fn finish_current_turn(&mut self) {
-        self.pending_agent_message_response_text = None;
+        self.pending_agent_message_responses.clear();
+        self.pending_legacy_agent_messages.clear();
         if let Some(turn) = self.current_turn.take() {
             if turn.items.is_empty() && !turn.opened_explicitly && !turn.saw_compaction {
                 return;
@@ -1335,6 +1459,111 @@ impl ThreadHistoryBuilder {
         }
         content
     }
+}
+
+struct PendingAgentMessageResponse {
+    id: String,
+    text: String,
+    phase: Option<MessagePhase>,
+}
+
+impl PendingAgentMessageResponse {
+    fn matches(&self, text: &str, phase: Option<&MessagePhase>) -> bool {
+        self.text == text && phases_are_compatible(self.phase.as_ref(), phase)
+    }
+}
+
+struct PendingLegacyAgentMessage {
+    id: String,
+    text: String,
+    phase: Option<MessagePhase>,
+}
+
+impl PendingLegacyAgentMessage {
+    fn matches(&self, text: &str, phase: Option<&MessagePhase>) -> bool {
+        self.text == text && phases_are_compatible(self.phase.as_ref(), phase)
+    }
+}
+
+fn phases_are_compatible(
+    response_phase: Option<&MessagePhase>,
+    event_phase: Option<&MessagePhase>,
+) -> bool {
+    response_phase.is_none() || event_phase.is_none() || response_phase == event_phase
+}
+
+fn collab_items_are_equivalent(left: &ThreadItem, right: &ThreadItem) -> bool {
+    collab_agent_messages_are_equivalent(left, right)
+        || collab_agent_status_updates_are_equivalent(left, right)
+}
+
+fn collab_agent_messages_are_equivalent(left: &ThreadItem, right: &ThreadItem) -> bool {
+    let (
+        ThreadItem::CollabAgentMessage {
+            operation: left_operation,
+            sender_thread_id: left_sender_thread_id,
+            sender_path: left_sender_path,
+            recipient_thread_id: left_recipient_thread_id,
+            recipient_path: left_recipient_path,
+            other_recipient_paths: left_other_recipient_paths,
+            content: left_content,
+            trigger_turn: left_trigger_turn,
+            ..
+        },
+        ThreadItem::CollabAgentMessage {
+            operation: right_operation,
+            sender_thread_id: right_sender_thread_id,
+            sender_path: right_sender_path,
+            recipient_thread_id: right_recipient_thread_id,
+            recipient_path: right_recipient_path,
+            other_recipient_paths: right_other_recipient_paths,
+            content: right_content,
+            trigger_turn: right_trigger_turn,
+            ..
+        },
+    ) = (left, right)
+    else {
+        return false;
+    };
+
+    left_operation == right_operation
+        && left_sender_thread_id == right_sender_thread_id
+        && left_sender_path == right_sender_path
+        && left_recipient_thread_id == right_recipient_thread_id
+        && left_recipient_path == right_recipient_path
+        && left_other_recipient_paths == right_other_recipient_paths
+        && left_content == right_content
+        && left_trigger_turn == right_trigger_turn
+}
+
+fn collab_agent_status_updates_are_equivalent(left: &ThreadItem, right: &ThreadItem) -> bool {
+    let (
+        ThreadItem::CollabAgentStatusUpdate {
+            sender_thread_id: left_sender_thread_id,
+            sender_path: left_sender_path,
+            recipient_thread_id: left_recipient_thread_id,
+            recipient_path: left_recipient_path,
+            status: left_status,
+            ..
+        },
+        ThreadItem::CollabAgentStatusUpdate {
+            sender_thread_id: right_sender_thread_id,
+            sender_path: right_sender_path,
+            recipient_thread_id: right_recipient_thread_id,
+            recipient_path: right_recipient_path,
+            status: right_status,
+            ..
+        },
+    ) = (left, right)
+    else {
+        return false;
+    };
+
+    left_sender_thread_id == right_sender_thread_id
+        && left_sender_path == right_sender_path
+        && left_recipient_thread_id == right_recipient_thread_id
+        && left_recipient_path == right_recipient_path
+        && left_status == right_status
 }
 
 const REVIEW_FALLBACK_MESSAGE: &str = "Reviewer failed to output a response.";
@@ -1677,6 +1906,7 @@ mod tests {
     use codex_protocol::protocol::AgentReasoningEvent;
     use codex_protocol::protocol::AgentReasoningRawContentEvent;
     use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
+    use codex_protocol::protocol::AskForApproval;
     use codex_protocol::protocol::CodexErrorInfo;
     use codex_protocol::protocol::CompactedItem;
     use codex_protocol::protocol::DynamicToolCallResponseEvent;
@@ -1688,6 +1918,7 @@ mod tests {
     use codex_protocol::protocol::McpInvocation;
     use codex_protocol::protocol::McpToolCallEndEvent;
     use codex_protocol::protocol::PatchApplyBeginEvent;
+    use codex_protocol::protocol::SandboxPolicy;
     use codex_protocol::protocol::ThreadRolledBackEvent;
     use codex_protocol::protocol::TurnAbortReason;
     use codex_protocol::protocol::TurnAbortedEvent;
@@ -1702,6 +1933,31 @@ mod tests {
     use std::path::PathBuf;
     use std::time::Duration;
     use uuid::Uuid;
+
+    fn turn_context_item_with_id(turn_id: &str) -> TurnContextItem {
+        TurnContextItem {
+            turn_id: Some(turn_id.to_string()),
+            trace_id: None,
+            cwd: PathBuf::from("/tmp"),
+            current_date: None,
+            timezone: None,
+            approval_policy: AskForApproval::Never,
+            sandbox_policy: SandboxPolicy::DangerFullAccess,
+            permission_profile: None,
+            network: None,
+            file_system_sandbox_policy: None,
+            model: "test-model".into(),
+            personality: None,
+            collaboration_mode: None,
+            realtime_active: None,
+            effort: None,
+            summary: codex_protocol::config_types::ReasoningSummary::Auto,
+            user_instructions: None,
+            developer_instructions: None,
+            final_output_json_schema: None,
+            truncation_policy: None,
+        }
+    }
 
     #[test]
     fn builds_multiple_turns_with_reasoning_items() {
@@ -2991,6 +3247,388 @@ mod tests {
                     memory_citation: None,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn rollout_turn_context_restores_implicit_turn_id() {
+        let items = vec![
+            RolloutItem::TurnContext(turn_context_item_with_id("turn-from-context")),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: Some("msg-1".into()),
+                role: "assistant".into(),
+                content: vec![ContentItem::OutputText {
+                    text: "hello from replay".into(),
+                }],
+                phase: Some(CoreMessagePhase::FinalAnswer),
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].id, "turn-from-context");
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::AgentMessage {
+                id: "msg-1".into(),
+                text: "hello from replay".into(),
+                phase: Some(CoreMessagePhase::FinalAnswer),
+                memory_citation: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn rollout_turn_context_restores_following_implicit_user_turn_id() {
+        let items = vec![
+            RolloutItem::TurnContext(turn_context_item_with_id("turn-from-context")),
+            RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+                message: "hello".into(),
+                images: None,
+                text_elements: Vec::new(),
+                local_images: Vec::new(),
+                skills: Vec::new(),
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].id, "turn-from-context");
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::UserMessage {
+                id: "item-1".into(),
+                content: vec![UserInput::Text {
+                    text: "hello".into(),
+                    text_elements: Vec::new(),
+                }],
+            }]
+        );
+    }
+
+    #[test]
+    fn rollout_turn_context_restores_id_after_initial_injected_context() {
+        let items = vec![
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: Some("developer-context".into()),
+                role: "developer".into(),
+                content: vec![ContentItem::InputText {
+                    text: "<permissions instructions>\nSandbox: workspace-write\n</permissions instructions>"
+                        .into(),
+                }],
+                phase: None,
+            }),
+            RolloutItem::TurnContext(turn_context_item_with_id("turn-from-context")),
+            RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+                message: "hello".into(),
+                images: None,
+                text_elements: Vec::new(),
+                local_images: Vec::new(),
+                skills: Vec::new(),
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].id, "turn-from-context");
+        assert_eq!(turns[0].items.len(), 2);
+        assert!(matches!(
+            turns[0].items[0],
+            ThreadItem::InjectedContext { .. }
+        ));
+        assert!(matches!(turns[0].items[1], ThreadItem::UserMessage { .. }));
+    }
+
+    #[test]
+    fn dedupes_response_agent_message_across_intervening_events() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-a".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: Some("msg-1".into()),
+                role: "assistant".into(),
+                content: vec![ContentItem::OutputText {
+                    text: "final answer".into(),
+                }],
+                phase: Some(CoreMessagePhase::FinalAnswer),
+            }),
+            RolloutItem::EventMsg(EventMsg::AgentReasoning(AgentReasoningEvent {
+                text: "reasoning emitted later".into(),
+            })),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "final answer".into(),
+                phase: Some(CoreMessagePhase::FinalAnswer),
+                memory_citation: None,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![
+                ThreadItem::AgentMessage {
+                    id: "msg-1".into(),
+                    text: "final answer".into(),
+                    phase: Some(CoreMessagePhase::FinalAnswer),
+                    memory_citation: None,
+                },
+                ThreadItem::Reasoning {
+                    id: "item-1".into(),
+                    summary: vec!["reasoning emitted later".into()],
+                    content: Vec::new(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn dedupes_legacy_agent_message_when_response_item_arrives_later() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-a".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "final answer".into(),
+                phase: None,
+                memory_citation: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::AgentReasoning(AgentReasoningEvent {
+                text: "reasoning emitted later".into(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: Some("msg-1".into()),
+                role: "assistant".into(),
+                content: vec![ContentItem::OutputText {
+                    text: "final answer".into(),
+                }],
+                phase: Some(CoreMessagePhase::FinalAnswer),
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![
+                ThreadItem::AgentMessage {
+                    id: "msg-1".into(),
+                    text: "final answer".into(),
+                    phase: Some(CoreMessagePhase::FinalAnswer),
+                    memory_citation: None,
+                },
+                ThreadItem::Reasoning {
+                    id: "item-2".into(),
+                    summary: vec!["reasoning emitted later".into()],
+                    content: Vec::new(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn preserves_legitimate_repeated_legacy_agent_messages() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-a".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "repeat me".into(),
+                phase: Some(CoreMessagePhase::Commentary),
+                memory_citation: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "repeat me".into(),
+                phase: Some(CoreMessagePhase::Commentary),
+                memory_citation: None,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![
+                ThreadItem::AgentMessage {
+                    id: "item-1".into(),
+                    text: "repeat me".into(),
+                    phase: Some(CoreMessagePhase::Commentary),
+                    memory_citation: None,
+                },
+                ThreadItem::AgentMessage {
+                    id: "item-2".into(),
+                    text: "repeat me".into(),
+                    phase: Some(CoreMessagePhase::Commentary),
+                    memory_citation: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn legacy_duplicate_candidate_does_not_consume_response_if_item_normalized() {
+        let trigger = EventDrivenToolTrigger {
+            tool: "schedule_subscribe".into(),
+            title: "Schedule triggered".into(),
+            text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
+        };
+        let text = trigger.render_message_text();
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-a".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: text.clone(),
+                phase: None,
+                memory_citation: None,
+            })),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: Some("msg-1".into()),
+                role: "assistant".into(),
+                content: vec![ContentItem::OutputText { text }],
+                phase: None,
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![
+                ThreadItem::EventDrivenTool {
+                    id: "item-1".into(),
+                    tool: "schedule_subscribe".into(),
+                    title: "Schedule triggered".into(),
+                    text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
+                },
+                ThreadItem::EventDrivenTool {
+                    id: "msg-1".into(),
+                    tool: "schedule_subscribe".into(),
+                    title: "Schedule triggered".into(),
+                    text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn dedupes_legacy_collab_agent_message_when_response_item_arrives_later() {
+        let mut communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::try_from("/root").expect("agent path"),
+            Vec::new(),
+            "done".into(),
+            InterAgentOperation::SendMessage,
+        );
+        communication.trigger_turn = false;
+        let text = serde_json::to_string(&communication).expect("serialize communication");
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-a".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: text.clone(),
+                phase: None,
+                memory_citation: None,
+            })),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: Some("msg-1".into()),
+                role: "assistant".into(),
+                content: vec![ContentItem::OutputText { text }],
+                phase: None,
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::CollabAgentMessage {
+                id: "msg-1".into(),
+                operation: InterAgentOperation::SendMessage.into(),
+                sender_thread_id: None,
+                sender_path: "/root/worker".into(),
+                recipient_thread_id: None,
+                recipient_path: "/root".into(),
+                other_recipient_paths: Vec::new(),
+                content: "done".into(),
+                trigger_turn: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn dedupes_legacy_child_completion_when_response_item_arrives_later() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::try_from("/root").expect("agent path"),
+            Vec::new(),
+            "completed".into(),
+            InterAgentOperation::ChildCompletion,
+        )
+        .with_status(AgentStatus::Completed(Some("completed".into())));
+        let text = serde_json::to_string(&communication).expect("serialize communication");
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-a".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: text.clone(),
+                phase: None,
+                memory_citation: None,
+            })),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: Some("msg-1".into()),
+                role: "assistant".into(),
+                content: vec![ContentItem::OutputText { text }],
+                phase: None,
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::CollabAgentStatusUpdate {
+                id: "msg-1".into(),
+                sender_thread_id: None,
+                sender_path: "/root/worker".into(),
+                recipient_thread_id: None,
+                recipient_path: "/root".into(),
+                status: CollabAgentState {
+                    path: Some("/root/worker".into()),
+                    status: CollabAgentStatus::Completed,
+                    message: Some("completed".into()),
+                },
+            }]
         );
     }
 
