@@ -15,10 +15,7 @@ const {
   parseLocalFileTarget,
 } = require("./fileTargets.cjs");
 const { LspManager } = require("./lsp/manager.cjs");
-const {
-  mergeThreadSnapshots,
-  normalizeThreadSnapshot,
-} = require("./threadSnapshots.cjs");
+const { normalizeThreadSnapshot } = require("./threadSnapshots.cjs");
 const { withRealtimeConversationFeature } = require("./threadConfig.cjs");
 const { buildTurnInput } = require("./turnInput.cjs");
 const {
@@ -31,6 +28,7 @@ const isDev = rendererMode === "dev";
 const appServerClient = new AppServerClient();
 const lspManager = new LspManager();
 const windows = new Set();
+const threadRuntimeById = new Map();
 const defaultWorkspace = resolveDefaultWorkspace();
 const devServerUrl = "http://127.0.0.1:5173";
 const builtRendererPath = path.join(__dirname, "../dist/index.html");
@@ -160,41 +158,34 @@ ipcMain.handle("codex:createThread", async (_event, payload) => {
     });
   }
 
-  return readThread(start.thread.id, true, {
+  const runtime = {
     model: start.model ?? null,
     reasoningEffort: start.reasoningEffort ?? null,
-  });
+  };
+  rememberThreadRuntime(start.thread.id, runtime);
+  return readThread(start.thread.id, true, runtime);
 });
 
 ipcMain.handle("codex:archiveThread", async (_event, threadId) => {
   await appServerClient.request("thread/archive", { threadId });
+  threadRuntimeById.delete(threadId);
   return { ok: true };
 });
 
 ipcMain.handle(
   "codex:readThread",
-  async (_event, threadId, subscribe = true) => {
-    let runtime = null;
-    let resumedThread = null;
-    if (subscribe) {
-      const resume = await appServerClient.request(
-        "thread/resume",
-        withRealtimeConversationFeature({ threadId }),
-      );
-      runtime = {
-        model: resume.model ?? null,
-        reasoningEffort: resume.reasoningEffort ?? null,
-      };
-      resumedThread = resume.thread
-        ? normalizeThread(resume.thread, runtime)
-        : null;
-    }
-    const payload = await readThread(threadId, true, runtime);
-    return {
-      thread: mergeThreadSnapshots(resumedThread, payload.thread),
-    };
+  async (_event, threadId, includeTurns = true) => {
+    return readThread(
+      threadId,
+      includeTurns,
+      threadRuntimeById.get(threadId) ?? null,
+    );
   },
 );
+
+ipcMain.handle("codex:subscribeThread", async (_event, threadId) => {
+  return subscribeThread(threadId);
+});
 
 ipcMain.handle("codex:openLink", async (_event, target) => {
   await openLinkTarget(target);
@@ -386,6 +377,27 @@ async function readThread(threadId, includeTurns, runtime = null) {
     includeTurns,
   });
   return { thread: normalizeThread(response.thread, runtime) };
+}
+
+async function subscribeThread(threadId) {
+  const resume = await appServerClient.request(
+    "thread/resume",
+    withRealtimeConversationFeature({ threadId, excludeTurns: true }),
+  );
+  const runtime = {
+    model: resume.model ?? null,
+    reasoningEffort: resume.reasoningEffort ?? null,
+  };
+  rememberThreadRuntime(threadId, runtime);
+  return {
+    thread: resume.thread
+      ? normalizeThread({ ...resume.thread, turns: [] }, runtime)
+      : null,
+  };
+}
+
+function rememberThreadRuntime(threadId, runtime) {
+  threadRuntimeById.set(threadId, runtime);
 }
 
 function normalizeNotification(notification) {

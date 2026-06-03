@@ -31,8 +31,11 @@ declare global {
       archiveThread: (threadId: string) => Promise<{ ok: boolean }>;
       readThread: (
         threadId: string,
-        subscribe?: boolean,
+        includeTurns?: boolean,
       ) => Promise<{ thread: unknown }>;
+      subscribeThread: (
+        threadId: string,
+      ) => Promise<{ thread?: unknown | null }>;
       readLocalImage: (target: string) => Promise<{
         path: string;
         name: string;

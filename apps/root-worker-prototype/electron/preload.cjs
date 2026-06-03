@@ -8,8 +8,10 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   createThread: (payload) => ipcRenderer.invoke("codex:createThread", payload),
   archiveThread: (threadId) =>
     ipcRenderer.invoke("codex:archiveThread", threadId),
-  readThread: (threadId, subscribe = true) =>
-    ipcRenderer.invoke("codex:readThread", threadId, subscribe),
+  readThread: (threadId, includeTurns = true) =>
+    ipcRenderer.invoke("codex:readThread", threadId, includeTurns),
+  subscribeThread: (threadId) =>
+    ipcRenderer.invoke("codex:subscribeThread", threadId),
   readLocalFile: (target) => ipcRenderer.invoke("codex:readLocalFile", target),
   readLocalImage: (target) =>
     ipcRenderer.invoke("codex:readLocalImage", target),
