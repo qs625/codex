@@ -25,6 +25,8 @@ import type {
   RightPanelView,
   TaskFilter,
   Thread,
+  ThreadPlanStep,
+  ThreadPlanUpdate,
   ThreadSkill,
   TodoCardItem,
 } from "../types";
@@ -65,6 +67,7 @@ export function RightPanel({
   onSelectTaskThread,
   onSetActiveView,
   onSetTaskFilter,
+  planUpdate,
   preview,
   previewError,
   previewLoading,
@@ -82,6 +85,7 @@ export function RightPanel({
   onSelectTaskThread: (threadId: string) => void;
   onSetActiveView: (value: RightPanelView) => void;
   onSetTaskFilter: (value: TaskFilter) => void;
+  planUpdate: ThreadPlanUpdate | null;
   preview: FilePreview | null;
   previewError: string | null;
   previewLoading: boolean;
@@ -105,6 +109,7 @@ export function RightPanel({
               onCreateRootThread={onCreateRootThread}
               onSelectTaskThread={onSelectTaskThread}
               onSetTaskFilter={onSetTaskFilter}
+              planUpdate={planUpdate}
               selectedThreadId={selectedThreadId}
               taskFilter={taskFilter}
               todoItems={todoItems}
@@ -363,6 +368,7 @@ function TodoPanel({
   onCreateRootThread,
   onSelectTaskThread,
   onSetTaskFilter,
+  planUpdate,
   selectedThreadId,
   taskFilter,
   todoItems,
@@ -371,6 +377,7 @@ function TodoPanel({
   onCreateRootThread: () => void;
   onSelectTaskThread: (threadId: string) => void;
   onSetTaskFilter: (value: TaskFilter) => void;
+  planUpdate: ThreadPlanUpdate | null;
   selectedThreadId: string | null;
   taskFilter: TaskFilter;
   todoItems: TodoCardItem[];
@@ -381,7 +388,7 @@ function TodoPanel({
         <div className="panel-content-copy">
           <span className="panel-eyebrow">Todo List</span>
           <h2>Execution Queue</h2>
-          <p>Track and manage active threads for this run.</p>
+          <p>Direct child tasks for the selected thread.</p>
         </div>
         <button type="button" className="panel-inline-action" onClick={onCreateRootThread}>
           <PlusIcon />
@@ -394,6 +401,8 @@ function TodoPanel({
         <OverviewMetric label="Running" value={stats.doing} tone="doing" />
         <OverviewMetric label="Blocked" value={stats.blocked} tone="blocked" />
       </div>
+
+      <CurrentPlanCard planUpdate={planUpdate} />
 
       <div className="todo-filters">
         {(
@@ -445,12 +454,68 @@ function TodoPanel({
         ) : (
           <div className="empty-card todo-empty">
             <p>No tasks for this filter.</p>
-            <span>Switch filters or create a new root task to seed the queue.</span>
+            <span>Switch filters or select a thread with direct child tasks.</span>
           </div>
         )}
       </div>
     </div>
   );
+}
+
+function CurrentPlanCard({
+  planUpdate,
+}: {
+  planUpdate: ThreadPlanUpdate | null;
+}) {
+  const plan = planUpdate?.plan ?? [];
+  return (
+    <section className="current-plan-card" aria-label="Current thread plan">
+      <div className="current-plan-header">
+        <div>
+          <span className="current-plan-eyebrow">Current Thread</span>
+          <strong>Plan</strong>
+        </div>
+        {plan.length > 0 ? (
+          <span className="current-plan-count">
+            {plan.length} step{plan.length === 1 ? "" : "s"}
+          </span>
+        ) : null}
+      </div>
+      {planUpdate?.explanation ? (
+        <p className="current-plan-explanation">{planUpdate.explanation}</p>
+      ) : null}
+      {plan.length > 0 ? (
+        <ol className="current-plan-list">
+          {plan.map((step, index) => (
+            <li key={`${step.status}:${index}:${step.step}`}>
+              <span className={`plan-status-dot ${planStatusClass(step)}`} />
+              <span className="current-plan-step">{step.step}</span>
+              <span className={`plan-status-label ${planStatusClass(step)}`}>
+                {formatPlanStatus(step.status)}
+              </span>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <div className="current-plan-empty">No plan published yet.</div>
+      )}
+    </section>
+  );
+}
+
+function planStatusClass(step: ThreadPlanStep) {
+  return step.status;
+}
+
+function formatPlanStatus(status: ThreadPlanStep["status"]) {
+  switch (status) {
+    case "completed":
+      return "Done";
+    case "inProgress":
+      return "In progress";
+    case "pending":
+      return "Pending";
+  }
 }
 
 function FilePreviewPanel({

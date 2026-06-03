@@ -29,7 +29,7 @@ import { isThreadNotFoundError, toErrorMessage } from "./lib/shared";
 import {
   appendAgentDelta,
   buildAgentTree,
-  buildTodoItems,
+  buildCurrentThreadTodoItems,
   getThreadSubtreeIds,
   getTreeRootThreadId,
   getThreadDepth,
@@ -64,6 +64,7 @@ import type {
   Thread,
   ThreadContextUsage,
   ThreadItem,
+  ThreadPlanUpdate,
   ThreadSkill,
   ThreadTokenUsage,
   ThreadUsage,
@@ -102,6 +103,9 @@ function App() {
   const [workspace, setWorkspace] = useState("");
   const [threads, setThreads] = useState<Thread[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [latestPlansByThreadId, setLatestPlansByThreadId] = useState<
+    Record<string, ThreadPlanUpdate>
+  >({});
   const [availableSkills, setAvailableSkills] = useState<ThreadSkill[]>([]);
   const [draft, setDraft] = useState("");
   const [draftSkills, setDraftSkills] = useState<DraftSkill[]>([]);
@@ -202,6 +206,11 @@ function App() {
         : null,
     [selectedThreadId, threads],
   );
+  const selectedThreadPlan = selectedThreadId
+    ? (latestPlansByThreadId[selectedThreadId] ??
+      selectedThread?.latestPlan ??
+      null)
+    : null;
 
   function cleanupVoiceTransport() {
     voiceEventsChannelRef.current = null;
@@ -533,8 +542,8 @@ function App() {
     [selectedTreeRootId, sessionThreads],
   );
   const todoItems = useMemo(
-    () => buildTodoItems(sessionThreads, taskFilter),
-    [sessionThreads, taskFilter],
+    () => buildCurrentThreadTodoItems(sessionThreads, selectedThreadId, taskFilter),
+    [selectedThreadId, sessionThreads, taskFilter],
   );
   const collapsedSet = useMemo(() => new Set(collapsedPaths), [collapsedPaths]);
 
@@ -583,6 +592,13 @@ function App() {
 
   function removeThreadLocally(threadIds: Iterable<string>) {
     const threadIdSet = new Set(threadIds);
+    setLatestPlansByThreadId((current) => {
+      const next = { ...current };
+      for (const threadId of threadIdSet) {
+        delete next[threadId];
+      }
+      return next;
+    });
     setThreads((current) => {
       const next = current.filter((thread) => !threadIdSet.has(thread.id));
       setSelectedThreadId((selected) =>
@@ -609,6 +625,17 @@ function App() {
     updateThreadLocally(threadId, (thread) =>
       updateThreadSkills(thread, skills),
     );
+  }
+
+  function updateThreadPlanLocally(planUpdate: ThreadPlanUpdate) {
+    setLatestPlansByThreadId((current) => ({
+      ...current,
+      [planUpdate.threadId]: planUpdate,
+    }));
+    updateThreadLocally(planUpdate.threadId, (thread) => ({
+      ...thread,
+      latestPlan: planUpdate,
+    }));
   }
 
   function updateThreadUsageLocally(
@@ -1128,6 +1155,10 @@ function App() {
           });
           break;
         }
+        case "turn/plan/updated": {
+          updateThreadPlanLocally(params as ThreadPlanUpdate);
+          break;
+        }
         case "skills/changed": {
           if (!selectedThread?.cwd) {
             break;
@@ -1508,6 +1539,7 @@ function App() {
           preview={filePreview}
           previewError={previewError}
           previewLoading={isLoadingPreview}
+          planUpdate={selectedThreadPlan}
           skills={selectedThread?.skills ?? []}
           selectedThreadId={selectedThreadId}
           thread={selectedThread}

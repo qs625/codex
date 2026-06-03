@@ -103,7 +103,27 @@ export function buildTodoItems(
   threads: Thread[],
   filter: TaskFilter,
 ): TodoCardItem[] {
-  const items = [...threads]
+  return filterTodoItems(buildTodoCardItems(threads), filter);
+}
+
+export function buildCurrentThreadTodoItems(
+  threads: Thread[],
+  selectedThreadId: string | null,
+  filter: TaskFilter,
+): TodoCardItem[] {
+  if (!selectedThreadId) {
+    return [];
+  }
+  return filterTodoItems(
+    buildTodoCardItems(
+      threads.filter((thread) => getParentThreadId(thread) === selectedThreadId),
+    ),
+    filter,
+  );
+}
+
+function buildTodoCardItems(threads: Thread[]): TodoCardItem[] {
+  return [...threads]
     .sort((left, right) => right.updatedAt - left.updatedAt)
     .map((thread) => {
       const status = mapTaskStatus(thread.status);
@@ -118,7 +138,9 @@ export function buildTodoItems(
         threadId: thread.id,
       };
     });
+}
 
+function filterTodoItems(items: TodoCardItem[], filter: TaskFilter) {
   if (filter === "all") {
     return items;
   }

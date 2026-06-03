@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import type { Thread } from "../types";
+import type { RightPanelView, Thread, ThreadPlanUpdate } from "../types";
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 const { RightPanel } = await import("./RightPanel");
@@ -46,10 +46,14 @@ function makeThread(items: Thread["turns"][number]["items"]): Thread {
   };
 }
 
-function renderRightPanel(thread: Thread | null) {
+function renderRightPanel(
+  thread: Thread | null,
+  activeView: RightPanelView = "skills",
+  planUpdate: ThreadPlanUpdate | null = thread?.latestPlan ?? null,
+) {
   return renderToStaticMarkup(
     <RightPanel
-      activeView="skills"
+      activeView={activeView}
       availableSkillCount={0}
       onCreateRootThread={() => {}}
       onNavigateToSymbol={() => {}}
@@ -57,6 +61,7 @@ function renderRightPanel(thread: Thread | null) {
       onSelectTaskThread={() => {}}
       onSetActiveView={() => {}}
       onSetTaskFilter={() => {}}
+      planUpdate={planUpdate}
       preview={null}
       previewError={null}
       previewLoading={false}
@@ -122,4 +127,28 @@ test("renders filesystem, process, and schedule subscriptions", () => {
   assert.match(markup, /Session 42/);
   assert.match(markup, /standup ping/);
   assert.match(markup, /once_after:60/);
+});
+
+test("renders the current thread plan in the todo panel", () => {
+  const planUpdate = {
+    threadId: "thread-1",
+    turnId: "turn-1",
+    explanation: "Keep the change scoped.",
+    plan: [
+      { step: "Filter direct child tasks", status: "completed" },
+      { step: "Render current thread plan", status: "inProgress" },
+      { step: "Run validation", status: "pending" },
+    ],
+  } satisfies ThreadPlanUpdate;
+  const markup = renderRightPanel(
+    makeThread([]),
+    "todo",
+    planUpdate,
+  );
+
+  assert.match(markup, /Keep the change scoped\./);
+  assert.match(markup, /Filter direct child tasks/);
+  assert.match(markup, /Render current thread plan/);
+  assert.match(markup, /Run validation/);
+  assert.match(markup, /In progress/);
 });

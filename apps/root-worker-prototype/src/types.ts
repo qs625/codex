@@ -296,6 +296,7 @@ export type Thread = {
   threadUsage?: ThreadUsage | null;
   tokenUsage?: ThreadTokenUsage | null;
   contextUsage?: ThreadContextUsage | null;
+  latestPlan?: ThreadPlanUpdate | null;
   turns: Turn[];
 };
 
@@ -360,6 +361,20 @@ export type ThreadRealtimeErrorNotification = {
 export type ThreadRealtimeClosedNotification = {
   threadId: string;
   reason: string | null;
+};
+
+export type ThreadPlanStepStatus = "pending" | "inProgress" | "completed";
+
+export type ThreadPlanStep = {
+  step: string;
+  status: ThreadPlanStepStatus;
+};
+
+export type ThreadPlanUpdate = {
+  threadId: string;
+  turnId: string;
+  explanation: string | null;
+  plan: ThreadPlanStep[];
 };
 
 export type TreeNode = {

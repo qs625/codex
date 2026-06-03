@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   appendAgentDelta,
+  buildCurrentThreadTodoItems,
+  formatUpdatedLabel,
   getPresenceLabel,
   getParentThreadId,
   getThreadPath,
@@ -608,6 +610,86 @@ test("thread path helpers read camelCase thread spawn metadata", () => {
 
   assert.equal(getThreadPath(thread), "/root/reviewer");
   assert.equal(getParentThreadId(thread), "parent-2");
+});
+
+test("buildCurrentThreadTodoItems only returns direct child threads", () => {
+  const directChildUpdatedAt = Math.floor(Date.now() / 1000);
+  const parent = {
+    ...makeThread(),
+    id: "parent",
+    updatedAt: 1,
+  } satisfies Thread;
+  const directChild = {
+    ...makeThread(),
+    id: "child",
+    updatedAt: directChildUpdatedAt,
+    name: "Direct Child",
+    source: {
+      subAgent: {
+        thread_spawn: {
+          parent_thread_id: "parent",
+          depth: 1,
+          agent_path: "/root/child",
+          agent_nickname: "child",
+          agent_role: "worker",
+        },
+      },
+    },
+  } satisfies Thread;
+  const sibling = {
+    ...makeThread(),
+    id: "sibling",
+    updatedAt: 5,
+    name: "Sibling",
+    source: {
+      subAgent: {
+        thread_spawn: {
+          parent_thread_id: "other-parent",
+          depth: 1,
+          agent_path: "/root/sibling",
+          agent_nickname: "sibling",
+          agent_role: "worker",
+        },
+      },
+    },
+  } satisfies Thread;
+  const grandchild = {
+    ...makeThread(),
+    id: "grandchild",
+    updatedAt: 6,
+    name: "Grandchild",
+    source: {
+      subAgent: {
+        thread_spawn: {
+          parent_thread_id: "child",
+          depth: 2,
+          agent_path: "/root/child/grandchild",
+          agent_nickname: "grandchild",
+          agent_role: "worker",
+        },
+      },
+    },
+  } satisfies Thread;
+
+  assert.deepEqual(
+    buildCurrentThreadTodoItems(
+      [parent, directChild, sibling, grandchild],
+      "parent",
+      "all",
+    ),
+    [
+      {
+        id: "child",
+        title: "Direct Child",
+        ownerPath: "/root/child",
+        status: "todo",
+        statusLabel: "Todo",
+        updatedLabel: formatUpdatedLabel(directChildUpdatedAt),
+        summary: "",
+        threadId: "child",
+      },
+    ],
+  );
 });
 
 test("getPresenceLabel surfaces active thread flags", () => {
