@@ -121,7 +121,10 @@ function makeThread(): Thread {
   };
 }
 
-function makeTreeNode(thread: Thread | null, children: TreeNode[] = []): TreeNode {
+function makeTreeNode(
+  thread: Thread | null,
+  children: TreeNode[] = [],
+): TreeNode {
   return {
     key: thread?.id ?? "placeholder",
     label: thread?.name ?? thread?.id ?? "placeholder",
@@ -419,6 +422,94 @@ test("mergeThreadSnapshot drops duplicate in-flight items already present in the
   assert.deepEqual(merged.turns, [readTurn]);
 });
 
+test("mergeThreadSnapshot drops duplicate completed live agent turns already present in the read snapshot", () => {
+  const liveDelta = appendAgentDelta(
+    makeThread(),
+    "live-turn",
+    "live-item",
+    "same response",
+  );
+  const completedLive = updateThreadTurn(liveDelta, {
+    id: "live-turn",
+    items: [],
+    itemsView: "notLoaded",
+    status: "completed",
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  });
+  const readTurn = {
+    id: "read-turn",
+    items: [
+      {
+        type: "agentMessage" as const,
+        id: "read-item",
+        text: "same response",
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    itemsView: "full" as const,
+    status: "completed" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+
+  const merged = mergeThreadSnapshot(completedLive, {
+    ...makeThread(),
+    turns: [readTurn],
+  });
+
+  assert.deepEqual(merged.turns, [readTurn]);
+});
+
+test("mergeThreadSnapshot preserves completed full agent turns with matching content", () => {
+  const liveTurn = {
+    id: "live-turn",
+    items: [
+      {
+        type: "agentMessage" as const,
+        id: "live-item",
+        text: "same response",
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    itemsView: "full" as const,
+    status: "completed" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+  const readTurn = {
+    ...liveTurn,
+    id: "read-turn",
+    items: [
+      {
+        ...liveTurn.items[0],
+        id: "read-item",
+      },
+    ],
+  };
+
+  const merged = mergeThreadSnapshot(
+    {
+      ...makeThread(),
+      turns: [liveTurn],
+    },
+    {
+      ...makeThread(),
+      turns: [readTurn],
+    },
+  );
+
+  assert.deepEqual(merged.turns, [readTurn, liveTurn]);
+});
+
 test("mergeThreadSnapshot only matches one existing item per semantic read item", () => {
   const restoredTurn = {
     id: "restored-turn",
@@ -652,6 +743,60 @@ test("updateThreadTurn preserves distinct running items when appending a same-co
   assert.deepEqual(updated.turns, [runningTurn, completedTurn]);
 });
 
+test("appendAgentDelta preserves later same-content assistant turns", () => {
+  const completedTurn = {
+    id: "completed-turn",
+    items: [
+      {
+        type: "agentMessage" as const,
+        id: "completed-item",
+        text: "same response",
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    itemsView: "full" as const,
+    status: "completed" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+  const thread = {
+    ...makeThread(),
+    turns: [completedTurn],
+  };
+
+  const updated = appendAgentDelta(
+    thread,
+    "later-turn",
+    "later-item",
+    "same response",
+  );
+
+  assert.deepEqual(updated.turns, [
+    completedTurn,
+    {
+      id: "later-turn",
+      items: [
+        {
+          type: "agentMessage",
+          id: "later-item",
+          text: "same response",
+          phase: null,
+          memoryCitation: null,
+        },
+      ],
+      itemsView: "full",
+      status: "running",
+      error: null,
+      startedAt: null,
+      completedAt: null,
+      durationMs: null,
+    },
+  ]);
+});
+
 test("mergeThreadSnapshot keeps the more complete in-flight agent message text", () => {
   const existing = {
     ...makeThread(),
@@ -789,12 +934,7 @@ test("updateThreadItem merges same-turn agent delta placeholder with completed i
 });
 
 test("updateThreadItem keeps the more complete same-turn agent text", () => {
-  const thread = appendAgentDelta(
-    makeThread(),
-    "turn-1",
-    "delta-item",
-    "same",
-  );
+  const thread = appendAgentDelta(makeThread(), "turn-1", "delta-item", "same");
 
   const updated = updateThreadItem(
     thread,
@@ -1096,6 +1236,41 @@ test("pending thread updates do not duplicate semantic items already in the snap
   ]);
 });
 
+test("pending agent deltas do not duplicate completed assistant blocks already in the snapshot", () => {
+  const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
+  queuePendingThreadUpdate(pendingUpdates, "thread-1", (thread) =>
+    appendAgentDelta(thread, "pending-turn", "pending-item", "same response"),
+  );
+  const snapshot = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "snapshot-turn",
+        items: [
+          {
+            type: "agentMessage" as const,
+            id: "snapshot-item",
+            text: "same response",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: "full" as const,
+        status: "completed" as const,
+        error: null,
+        startedAt: 10,
+        completedAt: 12,
+        durationMs: 2000,
+      },
+    ],
+  };
+
+  const updated = applyPendingThreadUpdates(snapshot, pendingUpdates);
+
+  assert.equal(pendingUpdates.size, 0);
+  assert.deepEqual(updated.turns, snapshot.turns);
+});
+
 test("threadStatusClass treats active thread status as doing", () => {
   assert.equal(
     threadStatusClass({
@@ -1211,7 +1386,10 @@ test("treeThreadStatusClass shows event tool waiting separately", () => {
     ],
   };
 
-  assert.equal(treeThreadStatusClass(makeTreeNode(thread)), "waiting-eventtool");
+  assert.equal(
+    treeThreadStatusClass(makeTreeNode(thread)),
+    "waiting-eventtool",
+  );
 });
 
 test("treeThreadStatusClass ignores event tool subscriptions after unsubscribe", () => {
