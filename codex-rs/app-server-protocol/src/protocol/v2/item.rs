@@ -13,6 +13,7 @@ use codex_experimental_api_macros::ExperimentalApi;
 use codex_protocol::approvals::GuardianAssessmentAction as CoreGuardianAssessmentAction;
 use codex_protocol::approvals::GuardianAssessmentDecisionSource as CoreGuardianAssessmentDecisionSource;
 use codex_protocol::approvals::GuardianCommandSource as CoreGuardianCommandSource;
+use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::items::AgentMessageContent as CoreAgentMessageContent;
 use codex_protocol::items::McpToolCallStatus as CoreMcpToolCallStatus;
 use codex_protocol::items::TurnItem as CoreTurnItem;
@@ -27,6 +28,7 @@ use codex_protocol::protocol::ExecCommandSource as CoreExecCommandSource;
 use codex_protocol::protocol::ExecCommandStatus as CoreExecCommandStatus;
 use codex_protocol::protocol::GuardianRiskLevel as CoreGuardianRiskLevel;
 use codex_protocol::protocol::GuardianUserAuthorization as CoreGuardianUserAuthorization;
+use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::InterAgentOperation as CoreInterAgentOperation;
 use codex_protocol::protocol::PatchApplyStatus as CorePatchApplyStatus;
 use codex_protocol::protocol::ReviewDecision as CoreReviewDecision;
@@ -483,6 +485,86 @@ impl ThreadItem {
     }
 }
 
+pub(crate) fn normalize_agent_message_item(
+    id: String,
+    text: String,
+    phase: Option<MessagePhase>,
+    memory_citation: Option<MemoryCitation>,
+) -> ThreadItem {
+    if let Some(trigger) = EventDrivenToolTrigger::parse_message_text(&text) {
+        return ThreadItem::EventDrivenTool {
+            id,
+            tool: trigger.tool,
+            title: trigger.title,
+            text: trigger.text,
+        };
+    }
+
+    if let Some(communication) = parse_inter_agent_communication_text(&text) {
+        return thread_item_from_inter_agent_communication(id, communication);
+    }
+
+    ThreadItem::AgentMessage {
+        id,
+        text,
+        phase,
+        memory_citation,
+    }
+}
+
+pub(crate) fn thread_item_from_inter_agent_communication(
+    id: String,
+    communication: InterAgentCommunication,
+) -> ThreadItem {
+    if matches!(
+        communication.operation,
+        CoreInterAgentOperation::ChildCompletion
+    ) && let Some(mut status) = communication.status.map(CollabAgentState::from)
+    {
+        status.path = Some(communication.author.to_string());
+        return ThreadItem::CollabAgentStatusUpdate {
+            id,
+            sender_thread_id: communication
+                .sender_thread_id
+                .map(|value| value.to_string()),
+            sender_path: communication.author.to_string(),
+            recipient_thread_id: communication
+                .recipient_thread_id
+                .map(|value| value.to_string()),
+            recipient_path: communication.recipient.to_string(),
+            status,
+        };
+    }
+
+    ThreadItem::CollabAgentMessage {
+        id,
+        operation: communication.operation.into(),
+        sender_thread_id: communication
+            .sender_thread_id
+            .map(|value| value.to_string()),
+        sender_path: communication.author.to_string(),
+        recipient_thread_id: communication
+            .recipient_thread_id
+            .map(|value| value.to_string()),
+        recipient_path: communication.recipient.to_string(),
+        other_recipient_paths: communication
+            .other_recipients
+            .into_iter()
+            .map(|path| path.to_string())
+            .collect(),
+        content: communication.content,
+        trigger_turn: communication.trigger_turn,
+    }
+}
+
+pub(crate) fn parse_inter_agent_communication_text(text: &str) -> Option<InterAgentCommunication> {
+    serde_json::from_str::<InterAgentCommunication>(text)
+        .ok()
+        .filter(|communication| {
+            !matches!(communication.operation, CoreInterAgentOperation::Unknown)
+        })
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
@@ -884,12 +966,12 @@ impl From<CoreTurnItem> for ThreadItem {
                         CoreAgentMessageContent::Text { text } => text,
                     })
                     .collect::<String>();
-                ThreadItem::AgentMessage {
-                    id: agent.id,
+                normalize_agent_message_item(
+                    agent.id,
                     text,
-                    phase: agent.phase,
-                    memory_citation: agent.memory_citation.map(Into::into),
-                }
+                    agent.phase,
+                    agent.memory_citation.map(Into::into),
+                )
             }
             CoreTurnItem::Plan(plan) => ThreadItem::Plan {
                 id: plan.id,

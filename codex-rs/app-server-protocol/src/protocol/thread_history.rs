@@ -22,6 +22,7 @@ use crate::protocol::v2::TurnItemsView;
 use crate::protocol::v2::TurnStatus;
 use crate::protocol::v2::UserInput;
 use crate::protocol::v2::WebSearchAction;
+use crate::protocol::v2::normalize_agent_message_item;
 use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::items::parse_hook_prompt_message;
 use codex_protocol::models::ContentItem;
@@ -48,7 +49,6 @@ use codex_protocol::protocol::GuardianAssessmentEvent;
 use codex_protocol::protocol::GuardianAssessmentStatus;
 use codex_protocol::protocol::ImageGenerationBeginEvent;
 use codex_protocol::protocol::ImageGenerationEndEvent;
-use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::McpToolCallBeginEvent;
@@ -111,6 +111,7 @@ pub struct ThreadHistoryBuilder {
     next_item_index: i64,
     current_rollout_index: usize,
     next_rollout_index: usize,
+    pending_agent_message_response_text: Option<String>,
 }
 
 impl Default for ThreadHistoryBuilder {
@@ -127,6 +128,7 @@ impl ThreadHistoryBuilder {
             next_item_index: 1,
             current_rollout_index: 0,
             next_rollout_index: 0,
+            pending_agent_message_response_text: None,
         }
     }
 
@@ -261,7 +263,11 @@ impl ThreadHistoryBuilder {
     fn handle_response_item(&mut self, item: &codex_protocol::models::ResponseItem) {
         match item {
             ResponseItem::Message {
-                role, content, id, ..
+                role,
+                content,
+                id,
+                phase,
+                ..
             } => {
                 if self.try_handle_injected_context_message(role, content) {
                     return;
@@ -278,8 +284,18 @@ impl ThreadHistoryBuilder {
                     return;
                 }
 
-                if let Some(communication) = self.parse_inter_agent_message(role, content) {
-                    self.handle_inter_agent_communication(id.as_ref(), communication);
+                if role == "assistant" {
+                    let Some(text) = single_text_message_content(content) else {
+                        return;
+                    };
+                    let id = id.clone().unwrap_or_else(|| self.next_item_id());
+                    self.ensure_turn().items.push(normalize_agent_message_item(
+                        id,
+                        text.to_string(),
+                        phase.clone(),
+                        None,
+                    ));
+                    self.pending_agent_message_response_text = Some(text.to_string());
                     return;
                 }
 
@@ -345,70 +361,6 @@ impl ThreadHistoryBuilder {
             }
             _ => {}
         }
-    }
-
-    fn parse_inter_agent_message(
-        &self,
-        role: &str,
-        content: &[ContentItem],
-    ) -> Option<InterAgentCommunication> {
-        (role == "assistant")
-            .then_some(content)
-            .and_then(InterAgentCommunication::from_message_content)
-    }
-
-    fn handle_inter_agent_communication(
-        &mut self,
-        response_item_id: Option<&String>,
-        communication: InterAgentCommunication,
-    ) {
-        let id = response_item_id
-            .cloned()
-            .unwrap_or_else(|| self.next_item_id());
-        if matches!(
-            communication.operation,
-            codex_protocol::protocol::InterAgentOperation::ChildCompletion
-        ) && let Some(mut status) = communication.status.map(CollabAgentState::from)
-        {
-            status.path = Some(communication.author.to_string());
-            self.ensure_turn()
-                .items
-                .push(ThreadItem::CollabAgentStatusUpdate {
-                    id,
-                    sender_thread_id: communication
-                        .sender_thread_id
-                        .map(|value| value.to_string()),
-                    sender_path: communication.author.to_string(),
-                    recipient_thread_id: communication
-                        .recipient_thread_id
-                        .map(|value| value.to_string()),
-                    recipient_path: communication.recipient.to_string(),
-                    status,
-                });
-            return;
-        }
-
-        self.ensure_turn()
-            .items
-            .push(ThreadItem::CollabAgentMessage {
-                id,
-                operation: communication.operation.into(),
-                sender_thread_id: communication
-                    .sender_thread_id
-                    .map(|value| value.to_string()),
-                sender_path: communication.author.to_string(),
-                recipient_thread_id: communication
-                    .recipient_thread_id
-                    .map(|value| value.to_string()),
-                recipient_path: communication.recipient.to_string(),
-                other_recipient_paths: communication
-                    .other_recipients
-                    .into_iter()
-                    .map(|path| path.to_string())
-                    .collect(),
-                content: communication.content,
-                trigger_turn: communication.trigger_turn,
-            });
     }
 
     fn try_handle_injected_context_message(&mut self, role: &str, content: &[ContentItem]) -> bool {
@@ -488,37 +440,54 @@ impl ThreadHistoryBuilder {
             return;
         }
 
-        if let Some(trigger) = EventDrivenToolTrigger::parse_message_text(&text) {
-            let id = self.next_item_id();
-            self.ensure_turn().items.push(ThreadItem::EventDrivenTool {
-                id,
-                tool: trigger.tool,
-                title: trigger.title,
-                text: trigger.text,
-            });
-            return;
-        }
-
-        let inter_agent_communication = serde_json::from_str::<InterAgentCommunication>(&text)
-            .ok()
-            .filter(|communication| {
-                !matches!(
-                    communication.operation,
-                    codex_protocol::protocol::InterAgentOperation::Unknown
-                )
-            });
-        if let Some(communication) = inter_agent_communication {
-            self.handle_inter_agent_communication(None, communication);
+        if self.consume_duplicate_agent_message_response(
+            &text,
+            phase.clone(),
+            memory_citation.clone(),
+        ) {
             return;
         }
 
         let id = self.next_item_id();
-        self.ensure_turn().items.push(ThreadItem::AgentMessage {
+        self.ensure_turn().items.push(normalize_agent_message_item(
             id,
             text,
             phase,
             memory_citation,
-        });
+        ));
+    }
+
+    fn consume_duplicate_agent_message_response(
+        &mut self,
+        text: &str,
+        phase: Option<MessagePhase>,
+        memory_citation: Option<crate::protocol::v2::MemoryCitation>,
+    ) -> bool {
+        let Some(pending_text) = self.pending_agent_message_response_text.take() else {
+            return false;
+        };
+
+        if pending_text != text {
+            return false;
+        }
+
+        if let Some(ThreadItem::AgentMessage {
+            text: item_text,
+            phase: item_phase,
+            memory_citation: item_memory_citation,
+            ..
+        }) = self.ensure_turn().items.last_mut()
+            && item_text == text
+        {
+            if phase.is_some() {
+                *item_phase = phase;
+            }
+            if memory_citation.is_some() {
+                *item_memory_citation = memory_citation;
+            }
+        }
+
+        true
     }
 
     fn handle_agent_reasoning(&mut self, payload: &AgentReasoningEvent) {
@@ -1252,6 +1221,7 @@ impl ThreadHistoryBuilder {
     }
 
     fn finish_current_turn(&mut self) {
+        self.pending_agent_message_response_text = None;
         if let Some(turn) = self.current_turn.take() {
             if turn.items.is_empty() && !turn.opened_explicitly && !turn.saw_compaction {
                 return;
@@ -1403,6 +1373,13 @@ fn function_call_output_payload_to_json(
     output: &codex_protocol::models::FunctionCallOutputPayload,
 ) -> serde_json::Value {
     serde_json::to_value(output).unwrap_or_else(|_| serde_json::Value::String(output.to_string()))
+}
+
+fn single_text_message_content(content: &[ContentItem]) -> Option<&str> {
+    match content {
+        [ContentItem::InputText { text }] | [ContentItem::OutputText { text }] => Some(text),
+        _ => None,
+    }
 }
 
 fn event_driven_tool_name(namespace: Option<&str>, name: &str) -> Option<String> {
@@ -2927,6 +2904,93 @@ mod tests {
                 title: "Schedule triggered".into(),
                 text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
             }
+        );
+    }
+
+    #[test]
+    fn reconstructs_agent_message_envelopes_from_assistant_response_messages() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::try_from("/root").expect("agent path"),
+            Vec::new(),
+            "done".into(),
+            InterAgentOperation::SendMessage,
+        )
+        .with_trigger_turn(false);
+        let unknown_operation_json = serde_json::json!({
+            "author": "/root/worker",
+            "recipient": "/root",
+            "content": "plain assistant json",
+        })
+        .to_string();
+        let plain_response_text = "final answer".to_string();
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: Some("msg-1".into()),
+                role: "assistant".into(),
+                content: vec![ContentItem::OutputText {
+                    text: serde_json::to_string(&communication).expect("serialize communication"),
+                }],
+                phase: None,
+            }),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: Some("msg-2".into()),
+                role: "assistant".into(),
+                content: vec![ContentItem::OutputText {
+                    text: unknown_operation_json.clone(),
+                }],
+                phase: Some(CoreMessagePhase::Commentary),
+            }),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: Some("msg-3".into()),
+                role: "assistant".into(),
+                content: vec![ContentItem::OutputText {
+                    text: plain_response_text.clone(),
+                }],
+                phase: Some(CoreMessagePhase::FinalAnswer),
+            }),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: plain_response_text.clone(),
+                phase: Some(CoreMessagePhase::FinalAnswer),
+                memory_citation: None,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![
+                ThreadItem::CollabAgentMessage {
+                    id: "msg-1".into(),
+                    operation: InterAgentOperation::SendMessage.into(),
+                    sender_thread_id: None,
+                    sender_path: "/root/worker".into(),
+                    recipient_thread_id: None,
+                    recipient_path: "/root".into(),
+                    other_recipient_paths: Vec::new(),
+                    content: "done".into(),
+                    trigger_turn: false,
+                },
+                ThreadItem::AgentMessage {
+                    id: "msg-2".into(),
+                    text: unknown_operation_json,
+                    phase: Some(CoreMessagePhase::Commentary),
+                    memory_citation: None,
+                },
+                ThreadItem::AgentMessage {
+                    id: "msg-3".into(),
+                    text: plain_response_text,
+                    phase: Some(CoreMessagePhase::FinalAnswer),
+                    memory_citation: None,
+                },
+            ]
         );
     }
 

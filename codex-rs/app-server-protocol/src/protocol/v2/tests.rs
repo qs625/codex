@@ -1,5 +1,7 @@
 use super::*;
+use codex_protocol::AgentPath;
 use codex_protocol::approvals::ElicitationRequest as CoreElicitationRequest;
+use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
 use codex_protocol::items::FileChangeItem;
@@ -26,6 +28,8 @@ use codex_protocol::permissions::FileSystemSpecialPath as CoreFileSystemSpecialP
 use codex_protocol::protocol::AgentStatus as CoreAgentStatus;
 use codex_protocol::protocol::AskForApproval as CoreAskForApproval;
 use codex_protocol::protocol::GranularApprovalConfig as CoreGranularApprovalConfig;
+use codex_protocol::protocol::InterAgentCommunication;
+use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::NetworkAccess as CoreNetworkAccess;
 use codex_protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
 use codex_protocol::user_input::UserInput as CoreUserInput;
@@ -2453,6 +2457,145 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
                 }],
                 thread_ids: vec!["rollout-1".to_string()],
             }),
+        }
+    );
+
+    let trigger = EventDrivenToolTrigger {
+        tool: "process_exit_subscribe".to_string(),
+        title: "Process exited".to_string(),
+        text: "[Process exit subscription] Session 42 exited with code 0".to_string(),
+    };
+    let event_driven_item = TurnItem::AgentMessage(AgentMessageItem {
+        id: "agent-3".to_string(),
+        content: vec![AgentMessageContent::Text {
+            text: trigger.render_message_text(),
+        }],
+        phase: None,
+        memory_citation: None,
+    });
+
+    assert_eq!(
+        ThreadItem::from(event_driven_item),
+        ThreadItem::EventDrivenTool {
+            id: "agent-3".to_string(),
+            tool: "process_exit_subscribe".to_string(),
+            title: "Process exited".to_string(),
+            text: "[Process exit subscription] Session 42 exited with code 0".to_string(),
+        }
+    );
+
+    let communication = InterAgentCommunication::new(
+        AgentPath::try_from("/root/worker").expect("agent path"),
+        AgentPath::try_from("/root").expect("agent path"),
+        Vec::new(),
+        "done".to_string(),
+        InterAgentOperation::SendMessage,
+    )
+    .with_trigger_turn(false);
+    let inter_agent_item = TurnItem::AgentMessage(AgentMessageItem {
+        id: "agent-4".to_string(),
+        content: vec![AgentMessageContent::Text {
+            text: serde_json::to_string(&communication).expect("serialize communication"),
+        }],
+        phase: None,
+        memory_citation: None,
+    });
+
+    assert_eq!(
+        ThreadItem::from(inter_agent_item),
+        ThreadItem::CollabAgentMessage {
+            id: "agent-4".to_string(),
+            operation: InterAgentOperation::SendMessage.into(),
+            sender_thread_id: None,
+            sender_path: "/root/worker".to_string(),
+            recipient_thread_id: None,
+            recipient_path: "/root".to_string(),
+            other_recipient_paths: Vec::new(),
+            content: "done".to_string(),
+            trigger_turn: false,
+        }
+    );
+
+    let child_completion = InterAgentCommunication::new(
+        AgentPath::try_from("/root/worker").expect("agent path"),
+        AgentPath::try_from("/root").expect("agent path"),
+        Vec::new(),
+        "completed".to_string(),
+        InterAgentOperation::ChildCompletion,
+    )
+    .with_status(CoreAgentStatus::Completed(Some("completed".to_string())));
+    let child_completion_item = TurnItem::AgentMessage(AgentMessageItem {
+        id: "agent-5".to_string(),
+        content: vec![AgentMessageContent::Text {
+            text: serde_json::to_string(&child_completion).expect("serialize communication"),
+        }],
+        phase: None,
+        memory_citation: None,
+    });
+
+    assert_eq!(
+        ThreadItem::from(child_completion_item),
+        ThreadItem::CollabAgentStatusUpdate {
+            id: "agent-5".to_string(),
+            sender_thread_id: None,
+            sender_path: "/root/worker".to_string(),
+            recipient_thread_id: None,
+            recipient_path: "/root".to_string(),
+            status: CollabAgentState {
+                path: Some("/root/worker".to_string()),
+                status: CollabAgentStatus::Completed,
+                message: Some("completed".to_string()),
+            },
+        }
+    );
+
+    let event_driven_json = json!({
+        "tool": "process_exit_subscribe",
+        "title": "Process exited",
+        "text": "[Process exit subscription] Session 42 exited with code 0",
+    })
+    .to_string();
+    let event_driven_json_item = TurnItem::AgentMessage(AgentMessageItem {
+        id: "agent-6".to_string(),
+        content: vec![AgentMessageContent::Text {
+            text: event_driven_json.clone(),
+        }],
+        phase: Some(MessagePhase::Commentary),
+        memory_citation: None,
+    });
+
+    assert_eq!(
+        ThreadItem::from(event_driven_json_item),
+        ThreadItem::AgentMessage {
+            id: "agent-6".to_string(),
+            text: event_driven_json,
+            phase: Some(MessagePhase::Commentary),
+            memory_citation: None,
+        }
+    );
+
+    let unknown_operation_json = json!({
+        "author": "/root/worker",
+        "recipient": "/root",
+        "content": "plain assistant json",
+    })
+    .to_string();
+    let unknown_operation_item = TurnItem::AgentMessage(AgentMessageItem {
+        id: "agent-7".to_string(),
+        content: vec![AgentMessageContent::Text {
+            text: unknown_operation_json.clone(),
+        }],
+        phase: Some(MessagePhase::FinalAnswer),
+        memory_citation: None,
+    });
+
+    assert_eq!(
+        ThreadItem::from(unknown_operation_item),
+        ThreadItem::AgentMessage {
+            id: "agent-7".to_string(),
+            text: unknown_operation_json,
+            phase: Some(MessagePhase::FinalAnswer),
+            memory_citation: None,
         }
     );
 
