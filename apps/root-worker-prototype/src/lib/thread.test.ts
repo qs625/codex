@@ -755,6 +755,236 @@ test("updateThreadItem merges same-turn event-driven items with different ids", 
   ]);
 });
 
+test("updateThreadItem merges same-turn agent delta placeholder with completed item", () => {
+  const thread = appendAgentDelta(
+    makeThread(),
+    "turn-1",
+    "delta-item",
+    "same response",
+  );
+
+  const updated = updateThreadItem(
+    thread,
+    "turn-1",
+    {
+      type: "agentMessage",
+      id: "completed-item",
+      text: "same response",
+      phase: null,
+      memoryCitation: null,
+    },
+    { completedAtMs: 2_000 },
+  );
+
+  assert.deepEqual(updated.turns[0]?.items, [
+    {
+      type: "agentMessage",
+      id: "completed-item",
+      text: "same response",
+      phase: null,
+      memoryCitation: null,
+      completedAtMs: 2_000,
+    },
+  ]);
+});
+
+test("updateThreadItem keeps the more complete same-turn agent text", () => {
+  const thread = appendAgentDelta(
+    makeThread(),
+    "turn-1",
+    "delta-item",
+    "same",
+  );
+
+  const updated = updateThreadItem(
+    thread,
+    "turn-1",
+    {
+      type: "agentMessage",
+      id: "completed-item",
+      text: "same response",
+      phase: null,
+      memoryCitation: null,
+    },
+    { completedAtMs: 2_000 },
+  );
+
+  assert.deepEqual(updated.turns[0]?.items, [
+    {
+      type: "agentMessage",
+      id: "completed-item",
+      text: "same response",
+      phase: null,
+      memoryCitation: null,
+      completedAtMs: 2_000,
+    },
+  ]);
+});
+
+test("updateThreadItem preserves distinct completed agent messages with matching text", () => {
+  const thread = updateThreadItem(
+    makeThread(),
+    "turn-1",
+    {
+      type: "agentMessage",
+      id: "first-item",
+      text: "same response",
+      phase: null,
+      memoryCitation: null,
+    },
+    { completedAtMs: 2_000 },
+  );
+
+  const updated = updateThreadItem(
+    thread,
+    "turn-1",
+    {
+      type: "agentMessage",
+      id: "second-item",
+      text: "same response",
+      phase: null,
+      memoryCitation: null,
+    },
+    { completedAtMs: 3_000 },
+  );
+
+  assert.deepEqual(updated.turns[0]?.items, [
+    {
+      type: "agentMessage",
+      id: "first-item",
+      text: "same response",
+      phase: null,
+      memoryCitation: null,
+      completedAtMs: 2_000,
+    },
+    {
+      type: "agentMessage",
+      id: "second-item",
+      text: "same response",
+      phase: null,
+      memoryCitation: null,
+      completedAtMs: 3_000,
+    },
+  ]);
+});
+
+test("updateThreadItem merges same-turn collab agent messages with different ids", () => {
+  const thread = updateThreadItem(makeThread(), "turn-1", {
+    type: "collabAgentMessage",
+    id: "live-item",
+    operation: "send_message",
+    senderThreadId: "thread-2",
+    senderPath: "/root/worker",
+    recipientThreadId: "thread-1",
+    recipientPath: "/root",
+    otherRecipientPaths: [],
+    content: "same backend message",
+    triggerTurn: true,
+  });
+
+  const updated = updateThreadItem(thread, "turn-1", {
+    type: "collabAgentMessage",
+    id: "completed-item",
+    operation: "send_message",
+    senderThreadId: "thread-2",
+    senderPath: "/root/worker",
+    recipientThreadId: "thread-1",
+    recipientPath: "/root",
+    otherRecipientPaths: [],
+    content: "same backend message",
+    triggerTurn: true,
+  });
+
+  assert.deepEqual(updated.turns[0]?.items, [
+    {
+      type: "collabAgentMessage",
+      id: "completed-item",
+      operation: "send_message",
+      senderThreadId: "thread-2",
+      senderPath: "/root/worker",
+      recipientThreadId: "thread-1",
+      recipientPath: "/root",
+      otherRecipientPaths: [],
+      content: "same backend message",
+      triggerTurn: true,
+    },
+  ]);
+});
+
+test("updateThreadItem preserves separate context compaction markers", () => {
+  const thread = updateThreadItem(makeThread(), "turn-1", {
+    type: "contextCompaction",
+    id: "first-item",
+  });
+
+  const updated = updateThreadItem(thread, "turn-1", {
+    type: "contextCompaction",
+    id: "second-item",
+  });
+
+  assert.deepEqual(updated.turns[0]?.items, [
+    {
+      type: "contextCompaction",
+      id: "first-item",
+    },
+    {
+      type: "contextCompaction",
+      id: "second-item",
+    },
+  ]);
+});
+
+test("updateThreadItem preserves repeated dynamic tool calls with matching content", () => {
+  const thread = updateThreadItem(makeThread(), "turn-1", {
+    type: "dynamicToolCall",
+    id: "first-item",
+    namespace: "functions",
+    tool: "read",
+    arguments: { path: "/tmp/file" },
+    status: "completed",
+    contentItems: [{ text: "same output" }],
+    success: true,
+    durationMs: 10,
+  });
+
+  const updated = updateThreadItem(thread, "turn-1", {
+    type: "dynamicToolCall",
+    id: "second-item",
+    namespace: "functions",
+    tool: "read",
+    arguments: { path: "/tmp/file" },
+    status: "completed",
+    contentItems: [{ text: "same output" }],
+    success: true,
+    durationMs: 10,
+  });
+
+  assert.deepEqual(updated.turns[0]?.items, [
+    {
+      type: "dynamicToolCall",
+      id: "first-item",
+      namespace: "functions",
+      tool: "read",
+      arguments: { path: "/tmp/file" },
+      status: "completed",
+      contentItems: [{ text: "same output" }],
+      success: true,
+      durationMs: 10,
+    },
+    {
+      type: "dynamicToolCall",
+      id: "second-item",
+      namespace: "functions",
+      tool: "read",
+      arguments: { path: "/tmp/file" },
+      status: "completed",
+      contentItems: [{ text: "same output" }],
+      success: true,
+      durationMs: 10,
+    },
+  ]);
+});
+
 test("pending thread updates replay when the thread snapshot arrives", () => {
   const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
   queuePendingThreadUpdate(pendingUpdates, "thread-1", (thread) =>
@@ -798,6 +1028,70 @@ test("pending thread updates replay when the thread snapshot arrives", () => {
       startedAt: null,
       completedAt: null,
       durationMs: null,
+    },
+  ]);
+});
+
+test("pending thread updates do not duplicate semantic items already in the snapshot", () => {
+  const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
+  queuePendingThreadUpdate(pendingUpdates, "thread-1", (thread) =>
+    updateThreadItem(thread, "turn-1", {
+      type: "collabAgentMessage",
+      id: "pending-item",
+      operation: "send_message",
+      senderThreadId: "thread-child",
+      senderPath: "/root/worker",
+      recipientThreadId: "thread-1",
+      recipientPath: "/root",
+      otherRecipientPaths: [],
+      content: "same backend message",
+      triggerTurn: true,
+    }),
+  );
+  const snapshot = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "collabAgentMessage" as const,
+            id: "snapshot-item",
+            operation: "send_message",
+            senderThreadId: "thread-child",
+            senderPath: "/root/worker",
+            recipientThreadId: "thread-1",
+            recipientPath: "/root",
+            otherRecipientPaths: [],
+            content: "same backend message",
+            triggerTurn: true,
+          },
+        ],
+        itemsView: "full" as const,
+        status: "running" as const,
+        error: null,
+        startedAt: 1,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  };
+
+  const updated = applyPendingThreadUpdates(snapshot, pendingUpdates);
+
+  assert.equal(pendingUpdates.size, 0);
+  assert.deepEqual(updated.turns[0]?.items, [
+    {
+      type: "collabAgentMessage",
+      id: "pending-item",
+      operation: "send_message",
+      senderThreadId: "thread-child",
+      senderPath: "/root/worker",
+      recipientThreadId: "thread-1",
+      recipientPath: "/root",
+      otherRecipientPaths: [],
+      content: "same backend message",
+      triggerTurn: true,
     },
   ]);
 });

@@ -126,6 +126,9 @@ function consumeMatchingTurnItem(matcher, turn, item) {
   if (matcher.index.ids.has(item.id)) {
     return true;
   }
+  if (!canMatchThreadItemSemantically(item)) {
+    return false;
+  }
 
   const key = getThreadItemSemanticKey(item);
   const matchingTurns = matcher.index.semantic.get(key) ?? [];
@@ -168,6 +171,19 @@ function hasNoTurnTimes(turn) {
     turn.completedAt === null &&
     turn.durationMs === null
   );
+}
+
+function canMatchThreadItemSemantically(item) {
+  switch (item.type) {
+    case "agentMessage":
+    case "collabAgentMessage":
+    case "collabAgentStatusUpdate":
+    case "eventDrivenTool":
+    case "eventDrivenToolCall":
+      return true;
+    default:
+      return false;
+  }
 }
 
 function getThreadItemSemanticKey(item) {
