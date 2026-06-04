@@ -130,6 +130,7 @@ pub struct ToolsConfig {
     pub agent_jobs_tools: bool,
     pub agent_jobs_worker_tools: bool,
     pub agent_type_description: String,
+    pub agent_tool_patterns: Option<Vec<String>>,
 }
 
 pub struct ToolsConfigParams<'a> {
@@ -269,11 +270,17 @@ impl ToolsConfig {
             agent_jobs_tools: include_agent_jobs,
             agent_jobs_worker_tools,
             agent_type_description: String::new(),
+            agent_tool_patterns: None,
         }
     }
 
     pub fn with_agent_type_description(mut self, agent_type_description: String) -> Self {
         self.agent_type_description = agent_type_description;
+        self
+    }
+
+    pub fn with_agent_tool_patterns(mut self, agent_tool_patterns: Option<Vec<String>>) -> Self {
+        self.agent_tool_patterns = agent_tool_patterns;
         self
     }
 

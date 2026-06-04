@@ -248,7 +248,8 @@ impl TurnContext {
         )
         .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
             &config.agent_roles,
-        ));
+        ))
+        .with_agent_tool_patterns(config.agent_tool_patterns.clone());
 
         Self {
             sub_id: self.sub_id.clone(),
@@ -571,7 +572,8 @@ impl Session {
         )
         .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
             &per_turn_config.agent_roles,
-        ));
+        ))
+        .with_agent_tool_patterns(per_turn_config.agent_tool_patterns.clone());
 
         let mut per_turn_config = per_turn_config;
         per_turn_config.service_tier = per_turn_config
@@ -756,7 +758,7 @@ impl Session {
         let cwd = primary_turn_environment
             .map(|turn_environment| turn_environment.cwd.clone())
             .unwrap_or_else(|| session_configuration.cwd.clone());
-        let per_turn_config = Self::build_per_turn_config(&session_configuration, cwd.clone());
+        let mut per_turn_config = Self::build_per_turn_config(&session_configuration, cwd.clone());
         {
             let mcp_connection_manager = self.services.mcp_connection_manager.read().await;
             mcp_connection_manager.set_approval_policy(&session_configuration.approval_policy);
@@ -777,6 +779,7 @@ impl Session {
             .plugins_manager
             .plugins_for_config(&per_turn_config.plugins_config_input())
             .await;
+        merge_plugin_agent_roles(&mut per_turn_config, &plugin_outcome).await;
         let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
         let skills_input = skills_load_input_from_config(&per_turn_config, effective_skill_roots);
         let fs = primary_turn_environment

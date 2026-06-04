@@ -161,6 +161,69 @@ fn extension_tools_do_not_replace_builtin_tools() {
 }
 
 #[test]
+fn agent_tool_allowlist_filters_specs_and_registry_handlers() {
+    let model_info = model_info();
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &Features::with_defaults(),
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    })
+    .with_agent_tool_patterns(Some(vec!["exec_command".to_string()]));
+
+    let (specs, registry) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        /*dynamic_tools*/ &[],
+    );
+
+    let tool_names = specs
+        .iter()
+        .filter_map(|spec| match spec {
+            ToolSpec::Function(tool) => Some(tool.name.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(vec!["exec_command".to_string()], tool_names);
+    assert!(registry.has_handler(&ToolName::plain("exec_command")));
+    assert!(!registry.has_handler(&ToolName::plain("apply_patch")));
+}
+
+#[test]
+fn agent_tool_empty_allowlist_filters_all_optional_specs_and_registry_handlers() {
+    let model_info = model_info();
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &Features::with_defaults(),
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    })
+    .with_agent_tool_patterns(Some(Vec::new()));
+
+    let (specs, registry) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        /*dynamic_tools*/ &[],
+    );
+
+    assert!(specs.is_empty());
+    assert!(!registry.has_handler(&ToolName::plain("exec_command")));
+    assert!(!registry.has_handler(&ToolName::plain("apply_patch")));
+}
+
+#[test]
 fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
     let model_info = model_info();
     let mut features = Features::with_defaults();
@@ -1410,6 +1473,45 @@ fn test_build_specs_mcp_tools_converted() {
             defer_loading: None,
         }
     );
+}
+
+#[test]
+fn agent_tool_allowlist_filters_namespace_children_and_registry_handlers() {
+    let model_info = model_info();
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &Features::with_defaults(),
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Live),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    })
+    .with_agent_tool_patterns(Some(vec!["test_server/do_something_cool".to_string()]));
+    let (tools, registry) = build_specs(
+        &tools_config,
+        Some(HashMap::from([
+            (
+                ToolName::namespaced("test_server/", "do_something_cool"),
+                mcp_tool("do_something_cool", "Do something cool", json!({})),
+            ),
+            (
+                ToolName::namespaced("test_server/", "delete_everything"),
+                mcp_tool("delete_everything", "Delete everything", json!({})),
+            ),
+        ])),
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    assert_eq!(
+        namespace_function_names(&tools, "test_server/"),
+        vec!["do_something_cool".to_string()]
+    );
+    assert!(registry.has_handler(&ToolName::namespaced("test_server/", "do_something_cool")));
+    assert!(!registry.has_handler(&ToolName::namespaced("test_server/", "delete_everything")));
 }
 
 #[test]

@@ -2,6 +2,7 @@ use codex_protocol::items::HookPromptItem;
 use codex_protocol::items::parse_hook_prompt_fragment;
 use codex_protocol::models::ContentItem;
 
+use super::AvailableAgentsInstructions;
 use super::EnvironmentContext;
 use super::FragmentRegistration;
 use super::FragmentRegistrationProxy;
@@ -18,6 +19,9 @@ use super::UserShellCommand;
 
 static USER_INSTRUCTIONS_REGISTRATION: FragmentRegistrationProxy<UserInstructions> =
     FragmentRegistrationProxy::new();
+static AVAILABLE_AGENTS_INSTRUCTIONS_REGISTRATION: FragmentRegistrationProxy<
+    AvailableAgentsInstructions,
+> = FragmentRegistrationProxy::new();
 static ENVIRONMENT_CONTEXT_REGISTRATION: FragmentRegistrationProxy<EnvironmentContext> =
     FragmentRegistrationProxy::new();
 static MULTIAGENT_CONTEXT_REGISTRATION: FragmentRegistrationProxy<MultiagentContext> =
@@ -44,6 +48,7 @@ static LEGACY_MODEL_MISMATCH_WARNING_REGISTRATION: FragmentRegistrationProxy<
 
 static CONTEXTUAL_USER_FRAGMENTS: &[&dyn FragmentRegistration] = &[
     &USER_INSTRUCTIONS_REGISTRATION,
+    &AVAILABLE_AGENTS_INSTRUCTIONS_REGISTRATION,
     &ENVIRONMENT_CONTEXT_REGISTRATION,
     &MULTIAGENT_CONTEXT_REGISTRATION,
     &SKILL_INSTRUCTIONS_REGISTRATION,

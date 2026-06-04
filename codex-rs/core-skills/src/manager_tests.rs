@@ -265,6 +265,55 @@ async fn skills_for_config_disables_plugin_skills_by_name() {
 }
 
 #[tokio::test]
+async fn skills_for_config_applies_allowlist_patterns() {
+    let codex_home = tempfile::tempdir().expect("tempdir");
+    let cwd = tempfile::tempdir().expect("tempdir");
+    let config_layer_stack = config_stack(&codex_home, "");
+    let skills_manager = SkillsManager::new(
+        codex_home.path().abs(),
+        /*bundled_skills_enabled*/ true,
+    );
+
+    write_user_skill(
+        &codex_home,
+        "agent-test-base",
+        "agent-test-base",
+        "test base",
+    );
+    write_user_skill(&codex_home, "code-review", "code-review", "review code");
+    let skills_input = SkillsLoadInput::new(
+        cwd.path().abs(),
+        Vec::new(),
+        config_layer_stack.clone(),
+        bundled_skills_enabled_from_stack(&config_layer_stack),
+    )
+    .with_allowlist_patterns(Some(vec!["agent-test*".to_string()]));
+
+    let outcome = skills_manager
+        .skills_for_config(&skills_input, Some(Arc::clone(&LOCAL_FS)))
+        .await;
+    let allowed_skills = outcome.allowed_skills_for_implicit_invocation();
+    let allowed_skill_names = allowed_skills
+        .iter()
+        .map(|skill| skill.name.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(vec!["agent-test-base"], allowed_skill_names);
+    assert!(
+        outcome
+            .skills
+            .iter()
+            .any(|skill| skill.name == "code-review")
+    );
+    assert!(
+        outcome
+            .disabled_paths
+            .iter()
+            .any(|path| path.ends_with("code-review/SKILL.md"))
+    );
+}
+
+#[tokio::test]
 async fn skills_for_cwd_loads_repo_and_user_roots_with_local_fs() {
     let codex_home = tempfile::tempdir().expect("tempdir");
     let cwd = tempfile::tempdir().expect("tempdir");

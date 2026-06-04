@@ -30,6 +30,7 @@ pub struct SkillsLoadInput {
     pub effective_skill_roots: Vec<PluginSkillRoot>,
     pub config_layer_stack: ConfigLayerStack,
     pub bundled_skills_enabled: bool,
+    pub allowlist_patterns: Option<Vec<String>>,
 }
 
 impl SkillsLoadInput {
@@ -44,7 +45,13 @@ impl SkillsLoadInput {
             effective_skill_roots,
             config_layer_stack,
             bundled_skills_enabled,
+            allowlist_patterns: None,
         }
+    }
+
+    pub fn with_allowlist_patterns(mut self, allowlist_patterns: Option<Vec<String>>) -> Self {
+        self.allowlist_patterns = allowlist_patterns;
+        self
     }
 }
 
@@ -94,12 +101,19 @@ impl SkillsManager {
     ) -> SkillLoadOutcome {
         let roots = self.skill_roots_for_config(input, fs).await;
         let skill_config_rules = skill_config_rules_from_stack(&input.config_layer_stack);
-        let cache_key = config_skills_cache_key(&roots, &skill_config_rules);
+        let cache_key =
+            config_skills_cache_key(&roots, &skill_config_rules, &input.allowlist_patterns);
         if let Some(outcome) = self.cached_outcome_for_config(&cache_key) {
             return outcome;
         }
 
-        let outcome = self.build_skill_outcome(roots, &skill_config_rules).await;
+        let outcome = self
+            .build_skill_outcome(
+                roots,
+                &skill_config_rules,
+                input.allowlist_patterns.as_deref(),
+            )
+            .await;
         let mut cache = self
             .cache_by_config
             .write()
@@ -151,7 +165,13 @@ impl SkillsManager {
             roots.retain(|root| root.scope != SkillScope::System);
         }
         let skill_config_rules = skill_config_rules_from_stack(&input.config_layer_stack);
-        let outcome = self.build_skill_outcome(roots, &skill_config_rules).await;
+        let outcome = self
+            .build_skill_outcome(
+                roots,
+                &skill_config_rules,
+                input.allowlist_patterns.as_deref(),
+            )
+            .await;
         if use_cwd_cache {
             let mut cache = self
                 .cache_by_cwd
@@ -166,12 +186,26 @@ impl SkillsManager {
         &self,
         roots: Vec<SkillRoot>,
         skill_config_rules: &SkillConfigRules,
+        allowlist_patterns: Option<&[String]>,
     ) -> SkillLoadOutcome {
         let outcome = crate::filter_skill_load_outcome_for_product(
             load_skills_from_roots(roots).await,
             self.restriction_product,
         );
-        let disabled_paths = resolve_disabled_skill_paths(&outcome.skills, skill_config_rules);
+        let mut disabled_paths = resolve_disabled_skill_paths(&outcome.skills, skill_config_rules);
+        if let Some(allowlist_patterns) = allowlist_patterns {
+            disabled_paths.extend(
+                outcome
+                    .skills
+                    .iter()
+                    .filter(|skill| {
+                        !allowlist_patterns
+                            .iter()
+                            .any(|pattern| skill_matches_pattern(skill, pattern))
+                    })
+                    .map(|skill| skill.path_to_skills_md.clone()),
+            );
+        }
         finalize_skill_outcome(outcome, disabled_paths)
     }
 
@@ -220,6 +254,7 @@ impl SkillsManager {
 struct ConfigSkillsCacheKey {
     roots: Vec<(AbsolutePathBuf, u8, Option<String>)>,
     skill_config_rules: SkillConfigRules,
+    allowlist_patterns: Option<Vec<String>>,
 }
 
 pub fn bundled_skills_enabled_from_stack(
@@ -247,6 +282,7 @@ pub fn bundled_skills_enabled_from_stack(
 fn config_skills_cache_key(
     roots: &[SkillRoot],
     skill_config_rules: &SkillConfigRules,
+    allowlist_patterns: &Option<Vec<String>>,
 ) -> ConfigSkillsCacheKey {
     ConfigSkillsCacheKey {
         roots: roots
@@ -262,6 +298,26 @@ fn config_skills_cache_key(
             })
             .collect(),
         skill_config_rules: skill_config_rules.clone(),
+        allowlist_patterns: allowlist_patterns.clone(),
+    }
+}
+
+fn skill_matches_pattern(skill: &crate::SkillMetadata, pattern: &str) -> bool {
+    let pattern = pattern.trim();
+    if pattern == "*" {
+        return true;
+    }
+    let namespaced_name = skill
+        .plugin_id
+        .as_ref()
+        .map(|plugin_id| format!("{plugin_id}:{}", skill.name));
+    if let Some(prefix) = pattern.strip_suffix('*') {
+        skill.name.starts_with(prefix)
+            || namespaced_name
+                .as_deref()
+                .is_some_and(|name| name.starts_with(prefix))
+    } else {
+        skill.name == pattern || namespaced_name.as_deref() == Some(pattern)
     }
 }
 

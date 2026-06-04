@@ -1,5 +1,7 @@
 use crate::agents_md::DEFAULT_AGENTS_MD_FILENAME;
 use crate::agents_md::LOCAL_AGENTS_MD_FILENAME;
+use crate::config::AgentCapabilityAllowlist;
+use crate::config::AgentRoleSource;
 use crate::config::ThreadStoreConfig;
 use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
@@ -77,6 +79,7 @@ use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
 use codex_protocol::models::ManagedFileSystemPermissions;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::SandboxEnforcement;
+use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
@@ -7029,6 +7032,294 @@ developer_instructions = "Write carefully"
 }
 
 #[tokio::test]
+async fn discovers_markdown_agent_role_files_from_agents_dir() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let repo_root = TempDir::new()?;
+    std::fs::create_dir_all(repo_root.path().join(".git"))?;
+    std::fs::create_dir_all(repo_root.path().join(".codex").join("agents"))?;
+    let workspace_key = repo_root.path().to_string_lossy().replace('\\', "\\\\");
+    std::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        format!(
+            r#"[projects."{workspace_key}"]
+trust_level = "trusted"
+"#
+        ),
+    )?;
+    std::fs::write(
+        repo_root
+            .path()
+            .join(".codex")
+            .join("agents")
+            .join("anything.agent.md"),
+        r#"---
+name: reviewer
+description: Reviews code changes.
+model: gpt-5.4
+effort: high
+tools:
+  - exec_command
+  - apply_patch
+skills: "*"
+---
+
+Review the code carefully.
+"#,
+    )?;
+    std::fs::create_dir_all(
+        repo_root
+            .path()
+            .join(".codex")
+            .join("agents")
+            .join("nested"),
+    )?;
+    std::fs::write(
+        repo_root
+            .path()
+            .join(".codex")
+            .join("agents")
+            .join("nested")
+            .join("nested.md"),
+        r#"---
+name: nested
+description: Nested markdown should be discovered.
+---
+
+Nested markdown should load.
+"#,
+    )?;
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .harness_overrides(ConfigOverrides {
+            cwd: Some(repo_root.path().to_path_buf()),
+            ..Default::default()
+        })
+        .build()
+        .await?;
+
+    let reviewer = config
+        .agent_roles
+        .get("reviewer")
+        .expect("frontmatter name should define agent_type");
+    assert_eq!(
+        reviewer.description.as_deref(),
+        Some("Reviews code changes.")
+    );
+    assert_eq!(reviewer.model.as_deref(), Some("gpt-5.4"));
+    assert_eq!(reviewer.model_reasoning_effort.as_deref(), Some("high"));
+    assert_eq!(
+        reviewer.tool_allowlist,
+        AgentCapabilityAllowlist::Patterns(vec![
+            "exec_command".to_string(),
+            "apply_patch".to_string()
+        ])
+    );
+    assert_eq!(reviewer.skill_allowlist, AgentCapabilityAllowlist::All);
+    assert_eq!(
+        config
+            .agent_roles
+            .get("nested")
+            .and_then(|role| role.description.as_deref()),
+        Some("Nested markdown should be discovered.")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn declared_markdown_agent_requires_frontmatter_description() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let repo_root = TempDir::new()?;
+    std::fs::create_dir_all(repo_root.path().join(".git"))?;
+    let agent_file = repo_root.path().join("reviewer.md");
+    std::fs::write(
+        &agent_file,
+        r#"---
+name: reviewer
+---
+
+Review the code carefully.
+"#,
+    )?;
+    let workspace_key = repo_root.path().to_string_lossy().replace('\\', "\\\\");
+    let agent_file = agent_file.to_string_lossy().replace('\\', "\\\\");
+    std::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        format!(
+            r#"[projects."{workspace_key}"]
+trust_level = "trusted"
+
+[agents.reviewer]
+description = "Config description must not satisfy Markdown frontmatter"
+config_file = "{agent_file}"
+"#
+        ),
+    )?;
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .harness_overrides(ConfigOverrides {
+            cwd: Some(repo_root.path().to_path_buf()),
+            ..Default::default()
+        })
+        .build()
+        .await?;
+
+    assert!(!config.agent_roles.contains_key("reviewer"));
+    assert!(
+        config
+            .startup_warnings
+            .iter()
+            .any(|warning| warning.contains("agent role `reviewer` must define a description")),
+        "{:?}",
+        config.startup_warnings
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn ignores_non_directory_agents_discovery_paths() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let repo_root = TempDir::new()?;
+    std::fs::create_dir_all(repo_root.path().join(".git"))?;
+    std::fs::create_dir_all(repo_root.path().join(".codex"))?;
+    std::fs::write(codex_home.path().join("agents"), "not a directory")?;
+    std::fs::write(
+        repo_root.path().join(".codex").join("agents"),
+        "not a directory",
+    )?;
+    let workspace_key = repo_root.path().to_string_lossy().replace('\\', "\\\\");
+    std::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        format!(
+            r#"[projects."{workspace_key}"]
+trust_level = "trusted"
+"#
+        ),
+    )?;
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .harness_overrides(ConfigOverrides {
+            cwd: Some(repo_root.path().to_path_buf()),
+            ..Default::default()
+        })
+        .build()
+        .await?;
+
+    assert!(config.agent_roles.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn merging_missing_agent_role_dirs_does_not_override_existing_roles() -> std::io::Result<()> {
+    let temp = TempDir::new()?;
+    let plugin_agents = temp.path().join("plugin").join("agents");
+    let other_plugin_agents = temp.path().join("other-plugin").join("agents");
+    std::fs::create_dir_all(&plugin_agents)?;
+    std::fs::create_dir_all(&other_plugin_agents)?;
+    std::fs::write(
+        plugin_agents.join("reviewer.md"),
+        r#"---
+name: reviewer
+description: From plugin.
+---
+
+Plugin review instructions.
+"#,
+    )?;
+    std::fs::write(
+        plugin_agents.join("writer.md"),
+        r#"---
+name: writer
+description: From plugin writer.
+---
+
+Plugin writing instructions.
+"#,
+    )?;
+    std::fs::write(
+        plugin_agents.join("hidden.md"),
+        r#"---
+name: hidden
+---
+
+Plugin hidden instructions.
+"#,
+    )?;
+    std::fs::write(
+        other_plugin_agents.join("writer.md"),
+        r#"---
+name: writer
+description: From other plugin writer.
+---
+
+Other plugin writing instructions.
+"#,
+    )?;
+
+    let mut roles = BTreeMap::from([(
+        "reviewer".to_string(),
+        AgentRoleConfig {
+            description: Some("From project.".to_string()),
+            ..Default::default()
+        },
+    )]);
+    let mut warnings = Vec::new();
+    crate::config::agent_roles::merge_missing_agent_roles_from_plugin_dirs(
+        LOCAL_FS.as_ref(),
+        &mut roles,
+        &[
+            (
+                "code-review".to_string(),
+                AbsolutePathBuf::try_from(plugin_agents)?,
+            ),
+            (
+                "other-review".to_string(),
+                AbsolutePathBuf::try_from(other_plugin_agents)?,
+            ),
+        ],
+        &mut warnings,
+    )
+    .await?;
+
+    assert_eq!(
+        roles
+            .get("reviewer")
+            .and_then(|role| role.description.as_deref()),
+        Some("From project.")
+    );
+    assert_eq!(
+        roles
+            .get("writer")
+            .and_then(|role| role.description.as_deref()),
+        Some("From plugin writer.")
+    );
+    assert_eq!(
+        roles.get("writer").and_then(|role| role.source.as_ref()),
+        Some(&AgentRoleSource::Plugin {
+            plugin_id: "code-review".to_string()
+        })
+    );
+    assert!(!roles.contains_key("hidden"));
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("agent role `hidden` must define a description"))
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("duplicate plugin agent role name `writer`"))
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn mixed_legacy_and_standalone_agent_role_sources_merge_with_precedence()
 -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
@@ -7661,6 +7952,8 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
             agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
             agent_roles: BTreeMap::new(),
+            agent_tool_patterns: None,
+            agent_skill_patterns: None,
             memories: MemoriesConfig::default(),
             agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
             agent_interrupt_message_enabled: true,
@@ -8111,6 +8404,8 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
         agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
         agent_roles: BTreeMap::new(),
+        agent_tool_patterns: None,
+        agent_skill_patterns: None,
         memories: MemoriesConfig::default(),
         agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
         agent_interrupt_message_enabled: true,
@@ -8275,6 +8570,8 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
         agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
         agent_roles: BTreeMap::new(),
+        agent_tool_patterns: None,
+        agent_skill_patterns: None,
         memories: MemoriesConfig::default(),
         agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
         agent_interrupt_message_enabled: true,
@@ -8424,6 +8721,8 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
         agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
         agent_roles: BTreeMap::new(),
+        agent_tool_patterns: None,
+        agent_skill_patterns: None,
         memories: MemoriesConfig::default(),
         agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
         agent_interrupt_message_enabled: true,
