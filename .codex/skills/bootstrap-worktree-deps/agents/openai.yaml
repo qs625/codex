@@ -1,4 +1,0 @@
-interface:
-  display_name: "Bootstrap Worktree Deps"
-  short_description: "Share target and node_modules in worktrees."
-  default_prompt: "Use -worktree-deps to link the current worktree to the primary checkout's shared target and node_modules."

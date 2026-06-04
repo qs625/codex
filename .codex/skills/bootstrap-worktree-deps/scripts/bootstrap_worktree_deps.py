@@ -49,11 +49,11 @@ def ensure_primary_path(path: Path, is_creatable: bool, dry_run: bool) -> str | 
     if path.exists():
         return None
     if not is_creatable:
-        return f"missing shared source {path}; prepare it in the primary checkout first"
+        return f"缺少共享源目录 {path}；请先在主 checkout 中准备它"
     if dry_run:
-        return f"would create shared source directory {path}"
+        return f"将创建共享源目录 {path}"
     path.mkdir(parents=True, exist_ok=True)
-    return f"created shared source directory {path}"
+    return f"已创建共享源目录 {path}"
 
 
 def replace_path(path: Path, dry_run: bool) -> None:
@@ -81,19 +81,19 @@ def link_path(
         return LinkResult(relative_path, "blocked", primary_status)
 
     if repo_root == primary_root:
-        detail = primary_status or "already using primary checkout"
+        detail = primary_status or "当前已经是主 checkout"
         return LinkResult(relative_path, "primary", detail)
 
     if current_path.is_symlink():
         target = current_path.resolve()
         if target == shared_path.resolve():
-            detail = primary_status or f"already linked to {shared_path}"
+            detail = primary_status or f"已经链接到 {shared_path}"
             return LinkResult(relative_path, "ok", detail)
         if not force:
             return LinkResult(
                 relative_path,
                 "blocked",
-                f"{current_path} points to {target}; rerun with --force to replace it",
+                f"{current_path} 指向 {target}；使用 --force 重新运行以替换它",
             )
         replace_path(current_path, dry_run)
     elif current_path.exists():
@@ -101,40 +101,40 @@ def link_path(
             return LinkResult(
                 relative_path,
                 "blocked",
-                f"{current_path} already exists; rerun with --force to replace it",
+                f"{current_path} 已存在；使用 --force 重新运行以替换它",
             )
         replace_path(current_path, dry_run)
 
     detail = primary_status or ""
     if dry_run:
-        detail = f"{detail}; would link to {shared_path}".strip("; ")
+        detail = f"{detail}；将链接到 {shared_path}".strip("；")
         return LinkResult(relative_path, "dry-run", detail)
 
     current_path.parent.mkdir(parents=True, exist_ok=True)
     current_path.symlink_to(shared_path, target_is_directory=True)
-    detail = f"{detail}; linked to {shared_path}".strip("; ")
+    detail = f"{detail}；已链接到 {shared_path}".strip("；")
     return LinkResult(relative_path, "linked", detail)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Link a git worktree to the primary checkout's shared target and node_modules."
+        description="将 git worktree 链接到主 checkout 共享的 target 和 node_modules。"
     )
     parser.add_argument(
         "--repo",
         type=Path,
         default=Path.cwd(),
-        help="Repo root or any path inside the target checkout. Defaults to the current working directory.",
+        help="目标 checkout 的 repo 根目录或其中任意路径。默认使用当前工作目录。",
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Replace conflicting existing paths in the target checkout.",
+        help="替换目标 checkout 中冲突的已有路径。",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Show planned changes without modifying the filesystem.",
+        help="只显示计划改动，不修改文件系统。",
     )
     return parser.parse_args()
 
@@ -144,8 +144,8 @@ def main() -> int:
     repo_root = resolve_repo_root(args.repo.resolve())
     primary_root = resolve_primary_root(repo_root)
 
-    print(f"primary checkout: {primary_root}")
-    print(f"target checkout: {repo_root}")
+    print(f"主 checkout: {primary_root}")
+    print(f"目标 checkout: {repo_root}")
 
     has_blocker = False
     for relative_path, allow_create_primary in MANAGED_PATHS:

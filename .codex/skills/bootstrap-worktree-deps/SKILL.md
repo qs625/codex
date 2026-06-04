@@ -1,66 +1,67 @@
 ---
 name: bootstrap-worktree-deps
-description: Configure a git worktree to reuse the primary checkout's build artifacts and dependencies. Use when Codex is asked to make worktree development share Rust compilation output or JavaScript dependencies instead of rebuilding per worktree, especially in this repo where `codex-rs/target`, the repo root `node_modules`, and `apps/root-worker-prototype/node_modules` should point at the primary checkout.
+description: 配置 git worktree 复用主 checkout 的构建产物和依赖。适用于 Codex 需要让 worktree 开发共享 Rust 编译输出或 JavaScript 依赖、避免每个 worktree 重新构建的场景；在本仓库中特别用于让 `codex-rs/target`、仓库根目录 `node_modules` 和 `apps/root-worker-prototype/node_modules` 指向主 checkout。
 ---
 
-# Bootstrap Worktree Deps
+# 初始化 Worktree 依赖
 
-## Overview
+## 概览
 
-Wire the current git worktree to the primary checkout so repeated Rust and prototype builds reuse existing artifacts.
+把当前 git worktree 连接到主 checkout，让重复的 Rust 构建和 prototype 构建复用已有产物。
 
-Run the bundled script instead of hand-writing `ln -s` commands. It derives the primary checkout from `git rev-parse --git-common-dir`, so it works from either the main checkout or a linked worktree.
+使用内置脚本，不要手写 `ln -s` 命令。脚本会通过 `git rev-parse --git-common-dir` 推导主 checkout，因此从主 checkout 或任意 linked worktree 运行都可以。
 
-## Workflow
+## 流程
 
-1. Confirm the request is about sharing worktree artifacts, not changing Cargo or pnpm semantics globally.
-2. Run the bootstrap script from the repo root or the target worktree:
+1. 确认请求目标是共享 worktree 构建产物，而不是全局修改 Cargo 或 pnpm 语义。
+2. 从仓库根目录或目标 worktree 运行初始化脚本：
 
 ```bash
 python3 .codex/skills/bootstrap-worktree-deps/scripts/bootstrap_worktree_deps.py
 ```
 
-3. If you want to target a different checkout than the current cwd, pass `--repo <path>`.
-4. If an existing worktree has real directories where symlinks should go, rerun with `--force`.
-5. Report which paths were linked and which were already correct.
+3. 如果要操作的 checkout 不是当前 cwd，传入 `--repo <path>`。
+4. 如果现有 worktree 中符号链接目标位置已经是真实目录，使用 `--force` 重新运行。
+5. 汇报哪些路径已建立链接，哪些路径本来就正确。
 
-## Managed paths
+## 管理路径
 
 - `codex-rs/target`
 - `node_modules`
 - `apps/root-worker-prototype/node_modules`
 
-The script creates `codex-rs/target` in the primary checkout if it does not exist yet. For `node_modules`, the primary checkout must already have the dependency directory from `pnpm install`.
+如果主 checkout 中还没有 `codex-rs/target`，脚本会创建它。对于 `node_modules`，主 checkout 必须已经通过 `pnpm install` 准备好依赖目录。
 
-## Safety rules
+## 安全规则
 
-- Do not rewrite `Cargo.toml` to solve shared-target requests. Cargo target configuration lives in `.cargo/config.toml` or `CARGO_TARGET_DIR`, and that still does not solve shared `node_modules`.
-- Do not delete a populated non-symlink worktree directory unless the user asked for replacement or you are explicitly running with `--force`.
-- Prefer `--dry-run` first if the worktree state looks unusual.
+- 不要通过改写 `Cargo.toml` 来解决共享 target 的请求。Cargo target 配置属于 `.cargo/config.toml` 或 `CARGO_TARGET_DIR`，而且这仍然不能解决共享 `node_modules`。
+- 除非用户要求替换，或你明确使用 `--force` 运行，否则不要删除 worktree 中已有内容的非符号链接目录。
+- 如果 worktree 状态看起来异常，优先先运行 `--dry-run`。
 
-## Useful commands
+## 常用命令
 
-Preview changes:
+预览改动：
 
 ```bash
 python3 .codex/skills/bootstrap-worktree-deps/scripts/bootstrap_worktree_deps.py --dry-run
 ```
 
-Replace conflicting directories in a worktree:
+替换 worktree 中冲突的目录：
 
 ```bash
 python3 .codex/skills/bootstrap-worktree-deps/scripts/bootstrap_worktree_deps.py --force
 ```
 
-Target another checkout explicitly:
+显式指定另一个 checkout：
 
 ```bash
 python3 .codex/skills/bootstrap-worktree-deps/scripts/bootstrap_worktree_deps.py --repo /Users/bytedance/Projects/my-codex/.worktrees/prototype-tool-call-opt
 ```
 
-## Output expectations
+## 输出要求
 
-State:
-- the primary checkout path
-- the target repo/worktree path
-- each managed path and whether it was linked, already correct, created in the primary checkout, or blocked
+说明：
+
+- 主 checkout 路径
+- 目标 repo/worktree 路径
+- 每个管理路径的状态：已建立链接、本来正确、已在主 checkout 创建，或被阻塞
