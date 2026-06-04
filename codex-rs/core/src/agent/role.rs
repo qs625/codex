@@ -6,6 +6,7 @@
 //! explicitly takes ownership of model selection. It does not decide when to spawn a sub-agent or
 //! which role to use; the multi-agent tool handler owns that orchestration.
 
+use crate::config::AgentCapabilityAllowlist;
 use crate::config::AgentRoleConfig;
 use crate::config::Config;
 use crate::config::ConfigOverrides;
@@ -71,6 +72,8 @@ async fn apply_role_to_config_inner(
     {
         return Ok(());
     }
+    let inherited_tool_patterns = config.agent_tool_patterns.clone();
+    let inherited_skill_patterns = config.agent_skill_patterns.clone();
     let (preserve_current_profile, preserve_current_provider) =
         preservation_policy(config, &role_layer_toml);
 
@@ -81,7 +84,22 @@ async fn apply_role_to_config_inner(
         preserve_current_provider,
     )
     .await?;
+    config.agent_tool_patterns =
+        resolve_allowlist_patterns(&role.tool_allowlist, inherited_tool_patterns);
+    config.agent_skill_patterns =
+        resolve_allowlist_patterns(&role.skill_allowlist, inherited_skill_patterns);
     Ok(())
+}
+
+fn resolve_allowlist_patterns(
+    allowlist: &AgentCapabilityAllowlist,
+    inherited_patterns: Option<Vec<String>>,
+) -> Option<Vec<String>> {
+    match allowlist {
+        AgentCapabilityAllowlist::Inherit => inherited_patterns,
+        AgentCapabilityAllowlist::All => None,
+        AgentCapabilityAllowlist::Patterns(patterns) => Some(patterns.clone()),
+    }
 }
 
 async fn load_role_layer_toml(
@@ -275,6 +293,9 @@ mod reload {
 pub(crate) mod spawn_tool_spec {
     use super::*;
 
+    const MAX_SPAWN_TOOL_AGENT_ROLES: usize = 32;
+    const MAX_SPAWN_TOOL_DESCRIPTION_CHARS: usize = 1024;
+
     /// Builds the spawn-agent tool description text from built-in and configured roles.
     pub(crate) fn build(user_defined_agent_roles: &BTreeMap<String, AgentRoleConfig>) -> String {
         let built_in_roles = built_in::configs();
@@ -286,17 +307,33 @@ pub(crate) mod spawn_tool_spec {
         built_in_roles: &BTreeMap<String, AgentRoleConfig>,
         user_defined_roles: &BTreeMap<String, AgentRoleConfig>,
     ) -> String {
+        let total_unique_roles = user_defined_roles
+            .keys()
+            .chain(built_in_roles.keys())
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>()
+            .len();
         let mut seen = BTreeSet::new();
         let mut formatted_roles = Vec::new();
         for (name, declaration) in user_defined_roles {
+            if formatted_roles.len() >= MAX_SPAWN_TOOL_AGENT_ROLES {
+                break;
+            }
             if seen.insert(name.as_str()) {
                 formatted_roles.push(format_role(name, declaration));
             }
         }
         for (name, declaration) in built_in_roles {
+            if formatted_roles.len() >= MAX_SPAWN_TOOL_AGENT_ROLES {
+                break;
+            }
             if seen.insert(name.as_str()) {
                 formatted_roles.push(format_role(name, declaration));
             }
+        }
+        let omitted_roles = total_unique_roles.saturating_sub(formatted_roles.len());
+        if omitted_roles > 0 {
+            formatted_roles.push(format!("{omitted_roles} additional roles omitted."));
         }
 
         format!(
@@ -307,45 +344,66 @@ pub(crate) mod spawn_tool_spec {
 
     fn format_role(name: &str, declaration: &AgentRoleConfig) -> String {
         if let Some(description) = &declaration.description {
-            let locked_settings_note = declaration
-                .config_file
-                .as_ref()
-                .and_then(|config_file| {
-                    built_in::config_file_contents(config_file)
-                        .map(str::to_owned)
-                        .or_else(|| std::fs::read_to_string(config_file).ok())
-                })
-                .and_then(|contents| toml::from_str::<TomlValue>(&contents).ok())
-                .map(|role_toml| {
-                    let model = role_toml
-                        .get("model")
-                        .and_then(TomlValue::as_str);
-                    let reasoning_effort = role_toml
-                        .get("model_reasoning_effort")
-                        .and_then(TomlValue::as_str);
-
-                    match (model, reasoning_effort) {
-                        (Some(model), Some(reasoning_effort)) => format!(
-                            "\n- This role's model is set to `{model}` and its reasoning effort is set to `{reasoning_effort}`. These settings cannot be changed."
-                        ),
-                        (Some(model), None) => {
-                            format!(
-                                "\n- This role's model is set to `{model}` and cannot be changed."
-                            )
-                        }
-                        (None, Some(reasoning_effort)) => {
-                            format!(
-                                "\n- This role's reasoning effort is set to `{reasoning_effort}` and cannot be changed."
-                            )
-                        }
-                        (None, None) => String::new(),
-                    }
-                })
-                .unwrap_or_default();
+            let description = description
+                .chars()
+                .take(MAX_SPAWN_TOOL_DESCRIPTION_CHARS)
+                .collect::<String>();
+            let (model, reasoning_effort) = role_locked_settings(declaration);
+            let locked_settings_note =
+                locked_settings_note(model.as_deref(), reasoning_effort.as_deref());
             format!("{name}: {{\n{description}{locked_settings_note}\n}}")
         } else {
             format!("{name}: no description")
         }
+    }
+}
+
+fn role_locked_settings(declaration: &AgentRoleConfig) -> (Option<String>, Option<String>) {
+    let mut model = declaration.model.clone();
+    let mut reasoning_effort = declaration.model_reasoning_effort.clone();
+    if model.is_some() && reasoning_effort.is_some() {
+        return (model, reasoning_effort);
+    }
+
+    if let Some(role_toml) = declaration
+        .config_file
+        .as_ref()
+        .and_then(|config_file| {
+            built_in::config_file_contents(config_file)
+                .map(str::to_owned)
+                .or_else(|| std::fs::read_to_string(config_file).ok())
+        })
+        .and_then(|contents| toml::from_str::<TomlValue>(&contents).ok())
+    {
+        let role_model = role_toml
+            .get("model")
+            .and_then(TomlValue::as_str)
+            .map(ToOwned::to_owned);
+        let role_reasoning_effort = role_toml
+            .get("model_reasoning_effort")
+            .and_then(TomlValue::as_str)
+            .map(ToOwned::to_owned);
+        model = model.or(role_model);
+        reasoning_effort = reasoning_effort.or(role_reasoning_effort);
+    }
+
+    (model, reasoning_effort)
+}
+
+fn locked_settings_note(model: Option<&str>, reasoning_effort: Option<&str>) -> String {
+    match (model, reasoning_effort) {
+        (Some(model), Some(reasoning_effort)) => format!(
+            "\n- This role's model is set to `{model}` and its reasoning effort is set to `{reasoning_effort}`. These settings cannot be changed."
+        ),
+        (Some(model), None) => {
+            format!("\n- This role's model is set to `{model}` and cannot be changed.")
+        }
+        (None, Some(reasoning_effort)) => {
+            format!(
+                "\n- This role's reasoning effort is set to `{reasoning_effort}` and cannot be changed."
+            )
+        }
+        (None, None) => String::new(),
     }
 }
 
@@ -362,6 +420,7 @@ mod built_in {
                         description: Some("Default agent.".to_string()),
                         config_file: None,
                         nickname_candidates: None,
+                        ..Default::default()
                     }
                 ),
                 (
@@ -376,6 +435,7 @@ Rules:
 - Reuse existing explorers for related questions."#.to_string()),
                         config_file: Some("explorer.toml".to_string().parse().unwrap_or_default()),
                         nickname_candidates: None,
+                        ..Default::default()
                     }
                 ),
                 (
@@ -391,6 +451,7 @@ Rules:
 - Always tell workers they are **not alone in the codebase**, and they should not revert the edits made by others, and they should adjust their implementation to accommodate the changes made by others. This is important because there may be multiple workers making changes in parallel, and they need to be aware of each other's work to avoid conflicts and ensure a cohesive final product."#.to_string()),
                         config_file: None,
                         nickname_candidates: None,
+                        ..Default::default()
                     }
                 ),
                 // Awaiter is temp removed

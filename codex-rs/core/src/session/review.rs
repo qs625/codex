@@ -76,7 +76,8 @@ pub(super) async fn spawn_review_thread(
     )
     .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
         &config.agent_roles,
-    ));
+    ))
+    .with_agent_tool_patterns(config.agent_tool_patterns.clone());
 
     let review_prompt = resolved.prompt.clone();
     let provider = parent_turn_context.provider.clone();

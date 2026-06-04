@@ -1,4 +1,6 @@
+use super::AgentCapabilityAllowlist;
 use super::AgentRoleConfig;
+use super::AgentRoleSource;
 use codex_config::ConfigLayerStack;
 use codex_config::ConfigLayerStackOrdering;
 use codex_config::config_toml::AgentRoleToml;
@@ -15,10 +17,15 @@ use std::path::Path;
 use std::path::PathBuf;
 use toml::Value as TomlValue;
 
+const MAX_AGENT_ROLE_DESCRIPTION_LEN: usize = 1024;
+const MAX_MARKDOWN_AGENT_BODY_LEN: usize = 8 * 1024;
+
 pub(crate) async fn load_agent_roles(
     fs: &dyn ExecutorFileSystem,
     cfg: &ConfigToml,
     config_layer_stack: &ConfigLayerStack,
+    codex_home: &AbsolutePathBuf,
+    cwd: &AbsolutePathBuf,
     startup_warnings: &mut Vec<String>,
 ) -> std::io::Result<BTreeMap<String, AgentRoleConfig>> {
     let layers = config_layer_stack.get_layers(
@@ -26,10 +33,19 @@ pub(crate) async fn load_agent_roles(
         /*include_disabled*/ false,
     );
     if layers.is_empty() {
-        return load_agent_roles_without_layers(fs, cfg).await;
+        let mut roles = load_agent_roles_without_layers(fs, cfg).await?;
+        merge_agent_roles_from_dirs(
+            fs,
+            &mut roles,
+            &[codex_home.join("agents"), cwd.join(".codex").join("agents")],
+            startup_warnings,
+        )
+        .await?;
+        return Ok(roles);
     }
 
     let mut roles: BTreeMap<String, AgentRoleConfig> = BTreeMap::new();
+    let mut scanned_agent_dirs = BTreeSet::new();
     for layer in layers {
         let mut layer_roles: BTreeMap<String, AgentRoleConfig> = BTreeMap::new();
         let mut declared_role_files = BTreeSet::new();
@@ -71,13 +87,11 @@ pub(crate) async fn load_agent_roles(
         }
 
         if let Some(config_folder) = layer.config_folder() {
-            for (role_name, role) in discover_agent_roles_in_dir(
-                fs,
-                &config_folder.join("agents"),
-                &declared_role_files,
-                startup_warnings,
-            )
-            .await?
+            let agents_dir = config_folder.join("agents");
+            scanned_agent_dirs.insert(agents_dir.to_path_buf());
+            for (role_name, role) in
+                discover_agent_roles_in_dir(fs, &agents_dir, &declared_role_files, startup_warnings)
+                    .await?
             {
                 if layer_roles.contains_key(&role_name) {
                     push_agent_role_warning(
@@ -111,7 +125,107 @@ pub(crate) async fn load_agent_roles(
         }
     }
 
+    let extra_agent_dirs = [codex_home.join("agents"), cwd.join(".codex").join("agents")];
+    let extra_agent_dirs = extra_agent_dirs
+        .iter()
+        .filter(|agents_dir| !scanned_agent_dirs.contains(agents_dir.as_path()))
+        .cloned()
+        .collect::<Vec<_>>();
+    merge_agent_roles_from_dirs(fs, &mut roles, &extra_agent_dirs, startup_warnings).await?;
+
     Ok(roles)
+}
+
+pub(crate) async fn merge_agent_roles_from_dirs(
+    fs: &dyn ExecutorFileSystem,
+    roles: &mut BTreeMap<String, AgentRoleConfig>,
+    agent_dirs: &[AbsolutePathBuf],
+    startup_warnings: &mut Vec<String>,
+) -> std::io::Result<()> {
+    merge_agent_roles_from_dirs_with_precedence(
+        fs,
+        roles,
+        agent_dirs,
+        startup_warnings,
+        AgentRoleMergePrecedence::OverrideExisting,
+    )
+    .await
+}
+
+pub(crate) async fn merge_missing_agent_roles_from_plugin_dirs(
+    fs: &dyn ExecutorFileSystem,
+    roles: &mut BTreeMap<String, AgentRoleConfig>,
+    plugin_agent_dirs: &[(String, AbsolutePathBuf)],
+    startup_warnings: &mut Vec<String>,
+) -> std::io::Result<()> {
+    let mut plugin_roles = BTreeMap::new();
+    for (plugin_id, agents_dir) in plugin_agent_dirs {
+        for (role_name, role) in discover_agent_roles_in_dir_with_source(
+            fs,
+            agents_dir,
+            &BTreeSet::new(),
+            startup_warnings,
+            Some(AgentRoleSource::Plugin {
+                plugin_id: plugin_id.clone(),
+            }),
+        )
+        .await?
+        {
+            if plugin_roles.contains_key(&role_name) {
+                push_agent_role_warning(
+                    startup_warnings,
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("duplicate plugin agent role name `{role_name}`"),
+                    ),
+                );
+                continue;
+            }
+            plugin_roles.insert(role_name, role);
+        }
+    }
+
+    for (role_name, role) in plugin_roles {
+        roles.entry(role_name).or_insert(role);
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AgentRoleMergePrecedence {
+    KeepExisting,
+    OverrideExisting,
+}
+
+async fn merge_agent_roles_from_dirs_with_precedence(
+    fs: &dyn ExecutorFileSystem,
+    roles: &mut BTreeMap<String, AgentRoleConfig>,
+    agent_dirs: &[AbsolutePathBuf],
+    startup_warnings: &mut Vec<String>,
+    precedence: AgentRoleMergePrecedence,
+) -> std::io::Result<()> {
+    for agents_dir in agent_dirs {
+        for (role_name, role) in
+            discover_agent_roles_in_dir(fs, agents_dir, &BTreeSet::new(), startup_warnings).await?
+        {
+            if let Err(err) =
+                validate_required_agent_role_description(&role_name, role.description.as_deref())
+            {
+                push_agent_role_warning(startup_warnings, err);
+                continue;
+            }
+            match precedence {
+                AgentRoleMergePrecedence::KeepExisting => {
+                    roles.entry(role_name).or_insert(role);
+                }
+                AgentRoleMergePrecedence::OverrideExisting => {
+                    roles.insert(role_name, role);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn push_agent_role_warning(startup_warnings: &mut Vec<String>, err: std::io::Error) {
@@ -151,11 +265,25 @@ async fn read_declared_role(
     let mut role_name = declared_role_name.to_string();
     if let Some(config_file) = role.config_file.as_deref() {
         let config_file = AbsolutePathBuf::from_absolute_path(config_file)?;
-        let parsed_file =
-            read_resolved_agent_role_file(fs, &config_file, Some(declared_role_name)).await?;
+        let is_markdown = is_markdown_agent_role_file(config_file.as_path());
+        let role_name_hint = if is_markdown {
+            None
+        } else {
+            Some(declared_role_name)
+        };
+        let parsed_file = read_resolved_agent_role_file(fs, &config_file, role_name_hint).await?;
         role_name = parsed_file.role_name;
-        role.description = parsed_file.description.or(role.description);
+        role.description = if is_markdown {
+            parsed_file.description
+        } else {
+            parsed_file.description.or(role.description)
+        };
         role.nickname_candidates = parsed_file.nickname_candidates.or(role.nickname_candidates);
+        role.tool_allowlist = parsed_file.tool_allowlist;
+        role.skill_allowlist = parsed_file.skill_allowlist;
+        role.model = parsed_file.model;
+        role.model_reasoning_effort = parsed_file.model_reasoning_effort;
+        role.source_path = Some(config_file.to_path_buf());
     }
 
     Ok((role_name, role))
@@ -168,6 +296,19 @@ fn merge_missing_role_fields(role: &mut AgentRoleConfig, fallback: &AgentRoleCon
         .nickname_candidates
         .clone()
         .or(fallback.nickname_candidates.clone());
+    if role.tool_allowlist == AgentCapabilityAllowlist::Inherit {
+        role.tool_allowlist = fallback.tool_allowlist.clone();
+    }
+    if role.skill_allowlist == AgentCapabilityAllowlist::Inherit {
+        role.skill_allowlist = fallback.skill_allowlist.clone();
+    }
+    role.model = role.model.clone().or(fallback.model.clone());
+    role.model_reasoning_effort = role
+        .model_reasoning_effort
+        .clone()
+        .or(fallback.model_reasoning_effort.clone());
+    role.source_path = role.source_path.clone().or(fallback.source_path.clone());
+    role.source = role.source.clone().or(fallback.source.clone());
 }
 
 fn agents_toml_from_layer(
@@ -211,6 +352,7 @@ async fn agent_role_config_from_toml(
         description,
         config_file: config_file.map(AbsolutePathBuf::into_path_buf),
         nickname_candidates,
+        ..Default::default()
     })
 }
 
@@ -224,12 +366,35 @@ struct RawAgentRoleFileToml {
     config: ConfigToml,
 }
 
+#[derive(Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct RawAgentRoleFileMarkdown {
+    name: Option<String>,
+    description: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
+    model_reasoning_effort: Option<String>,
+    tools: Option<RawAgentCapabilityAllowlist>,
+    skills: Option<RawAgentCapabilityAllowlist>,
+}
+
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(untagged)]
+enum RawAgentCapabilityAllowlist {
+    All(String),
+    Patterns(Vec<String>),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ResolvedAgentRoleFile {
     pub(crate) role_name: String,
     pub(crate) description: Option<String>,
     pub(crate) nickname_candidates: Option<Vec<String>>,
     pub(crate) config: TomlValue,
+    pub(crate) tool_allowlist: AgentCapabilityAllowlist,
+    pub(crate) skill_allowlist: AgentCapabilityAllowlist,
+    pub(crate) model: Option<String>,
+    pub(crate) model_reasoning_effort: Option<String>,
 }
 
 pub(crate) fn parse_agent_role_file_contents(
@@ -238,6 +403,10 @@ pub(crate) fn parse_agent_role_file_contents(
     config_base_dir: &Path,
     role_name_hint: Option<&str>,
 ) -> std::io::Result<ResolvedAgentRoleFile> {
+    if is_markdown_agent_role_file(role_file_label) {
+        return parse_markdown_agent_role_file_contents(contents, role_file_label);
+    }
+
     let role_file_toml: TomlValue = toml::from_str(contents).map_err(|err| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -257,7 +426,7 @@ pub(crate) fn parse_agent_role_file_contents(
             ),
         )
     })?;
-    let description = normalize_agent_role_description(
+    let description = normalize_markdown_agent_role_description(
         &format!("agent role file {}.description", role_file_label.display()),
         parsed.description.as_deref(),
     )?;
@@ -273,7 +442,7 @@ pub(crate) fn parse_agent_role_file_contents(
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .map(ToOwned::to_owned)
-        .or_else(|| role_name_hint.map(ToOwned::to_owned))
+        .or_else(|| role_name_hint.map(str::to_string))
         .ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -311,6 +480,190 @@ pub(crate) fn parse_agent_role_file_contents(
         description,
         nickname_candidates,
         config,
+        tool_allowlist: AgentCapabilityAllowlist::Inherit,
+        skill_allowlist: AgentCapabilityAllowlist::Inherit,
+        model: None,
+        model_reasoning_effort: None,
+    })
+}
+
+fn parse_markdown_agent_role_file_contents(
+    contents: &str,
+    role_file_label: &Path,
+) -> std::io::Result<ResolvedAgentRoleFile> {
+    let (frontmatter, body) = extract_agent_markdown_frontmatter(contents, role_file_label)?;
+    let parsed: RawAgentRoleFileMarkdown = serde_yaml::from_str(frontmatter).map_err(|err| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "failed to parse agent role file frontmatter at {}: {err}",
+                role_file_label.display()
+            ),
+        )
+    })?;
+    if parsed.effort.is_some() && parsed.model_reasoning_effort.is_some() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "agent role file at {} cannot define both `effort` and `model_reasoning_effort`",
+                role_file_label.display()
+            ),
+        ));
+    }
+
+    let description = normalize_agent_role_description(
+        &format!("agent role file {}.description", role_file_label.display()),
+        parsed.description.as_deref(),
+    )?;
+    validate_agent_role_file_developer_instructions(role_file_label, Some(body), true)?;
+    if body.chars().count() > MAX_MARKDOWN_AGENT_BODY_LEN {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "agent role file at {} body must be {MAX_MARKDOWN_AGENT_BODY_LEN} characters or fewer",
+                role_file_label.display()
+            ),
+        ));
+    }
+    let role_name = parsed
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "agent role file at {} must define a non-empty `name`",
+                    role_file_label.display()
+                ),
+            )
+        })?;
+    let model_reasoning_effort = parsed
+        .model_reasoning_effort
+        .clone()
+        .or_else(|| parsed.effort.clone());
+    let config = markdown_agent_config_toml(
+        body.trim(),
+        parsed.model.as_deref(),
+        model_reasoning_effort.as_deref(),
+    );
+
+    Ok(ResolvedAgentRoleFile {
+        role_name,
+        description,
+        nickname_candidates: None,
+        config,
+        tool_allowlist: normalize_agent_allowlist(
+            parsed.tools,
+            &format!("agent role file {}.tools", role_file_label.display()),
+        )?,
+        skill_allowlist: normalize_agent_allowlist(
+            parsed.skills,
+            &format!("agent role file {}.skills", role_file_label.display()),
+        )?,
+        model: parsed.model.clone(),
+        model_reasoning_effort,
+    })
+}
+
+fn extract_agent_markdown_frontmatter<'a>(
+    contents: &'a str,
+    role_file_label: &Path,
+) -> std::io::Result<(&'a str, &'a str)> {
+    let Some(rest) = contents
+        .strip_prefix("---\n")
+        .or_else(|| contents.strip_prefix("---\r\n"))
+    else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "agent role file at {} must start with YAML frontmatter delimited by ---",
+                role_file_label.display()
+            ),
+        ));
+    };
+    let Some((frontmatter, body)) = rest.split_once("\n---") else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "agent role file at {} must close YAML frontmatter with ---",
+                role_file_label.display()
+            ),
+        ));
+    };
+    let body = body
+        .strip_prefix("\r\n")
+        .or_else(|| body.strip_prefix('\n'))
+        .unwrap_or(body);
+    Ok((frontmatter, body))
+}
+
+fn markdown_agent_config_toml(
+    developer_instructions: &str,
+    model: Option<&str>,
+    model_reasoning_effort: Option<&str>,
+) -> TomlValue {
+    let mut table = toml::map::Map::new();
+    table.insert(
+        "developer_instructions".to_string(),
+        TomlValue::String(developer_instructions.to_string()),
+    );
+    if let Some(model) = model {
+        table.insert("model".to_string(), TomlValue::String(model.to_string()));
+    }
+    if let Some(model_reasoning_effort) = model_reasoning_effort {
+        table.insert(
+            "model_reasoning_effort".to_string(),
+            TomlValue::String(model_reasoning_effort.to_string()),
+        );
+    }
+    TomlValue::Table(table)
+}
+
+fn normalize_agent_allowlist(
+    raw: Option<RawAgentCapabilityAllowlist>,
+    field_label: &str,
+) -> std::io::Result<AgentCapabilityAllowlist> {
+    match raw {
+        None => Ok(AgentCapabilityAllowlist::Inherit),
+        Some(RawAgentCapabilityAllowlist::All(value)) if value.trim() == "*" => {
+            Ok(AgentCapabilityAllowlist::All)
+        }
+        Some(RawAgentCapabilityAllowlist::All(value)) => {
+            normalize_agent_allowlist_patterns(vec![value], field_label)
+        }
+        Some(RawAgentCapabilityAllowlist::Patterns(patterns)) => {
+            normalize_agent_allowlist_patterns(patterns, field_label)
+        }
+    }
+}
+
+fn normalize_agent_allowlist_patterns(
+    patterns: Vec<String>,
+    field_label: &str,
+) -> std::io::Result<AgentCapabilityAllowlist> {
+    let mut normalized = Vec::new();
+    for pattern in patterns {
+        let pattern = pattern.trim();
+        if pattern.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{field_label} cannot contain blank patterns"),
+            ));
+        }
+        if pattern == "*" {
+            return Ok(AgentCapabilityAllowlist::All);
+        }
+        normalized.push(pattern.to_string());
+    }
+    Ok(AgentCapabilityAllowlist::Patterns(normalized))
+}
+
+fn is_markdown_agent_role_file(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        extension.eq_ignore_ascii_case("md") || extension.eq_ignore_ascii_case("markdown")
     })
 }
 
@@ -333,14 +686,34 @@ fn normalize_agent_role_description(
     field_label: &str,
     description: Option<&str>,
 ) -> std::io::Result<Option<String>> {
-    match description.map(str::trim) {
-        Some("") => Err(std::io::Error::new(
+    let Some(description) = description else {
+        return Ok(None);
+    };
+    let description = description.split_whitespace().collect::<Vec<_>>().join(" ");
+    if description.is_empty() {
+        return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             format!("{field_label} cannot be blank"),
-        )),
-        Some(description) => Ok(Some(description.to_string())),
-        None => Ok(None),
+        ));
     }
+    Ok(Some(description))
+}
+
+fn normalize_markdown_agent_role_description(
+    field_label: &str,
+    description: Option<&str>,
+) -> std::io::Result<Option<String>> {
+    let description = normalize_agent_role_description(field_label, description)?;
+    if description
+        .as_deref()
+        .is_some_and(|description| description.chars().count() > MAX_AGENT_ROLE_DESCRIPTION_LEN)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{field_label} must be {MAX_AGENT_ROLE_DESCRIPTION_LEN} characters or fewer"),
+        ));
+    }
+    Ok(description)
 }
 
 fn validate_required_agent_role_description(
@@ -474,6 +847,23 @@ async fn discover_agent_roles_in_dir(
     declared_role_files: &BTreeSet<PathBuf>,
     startup_warnings: &mut Vec<String>,
 ) -> std::io::Result<BTreeMap<String, AgentRoleConfig>> {
+    discover_agent_roles_in_dir_with_source(
+        fs,
+        agents_dir,
+        declared_role_files,
+        startup_warnings,
+        None,
+    )
+    .await
+}
+
+async fn discover_agent_roles_in_dir_with_source(
+    fs: &dyn ExecutorFileSystem,
+    agents_dir: &AbsolutePathBuf,
+    declared_role_files: &BTreeSet<PathBuf>,
+    startup_warnings: &mut Vec<String>,
+    source: Option<AgentRoleSource>,
+) -> std::io::Result<BTreeMap<String, AgentRoleConfig>> {
     let mut roles = BTreeMap::new();
 
     for agent_file in collect_agent_role_files(fs, agents_dir).await? {
@@ -508,6 +898,12 @@ async fn discover_agent_roles_in_dir(
                 description: parsed_file.description,
                 config_file: Some(agent_file.to_path_buf()),
                 nickname_candidates: parsed_file.nickname_candidates,
+                tool_allowlist: parsed_file.tool_allowlist,
+                skill_allowlist: parsed_file.skill_allowlist,
+                model: parsed_file.model,
+                model_reasoning_effort: parsed_file.model_reasoning_effort,
+                source_path: Some(agent_file.to_path_buf()),
+                source: source.clone(),
             },
         );
     }
@@ -521,24 +917,31 @@ async fn collect_agent_role_files(
 ) -> std::io::Result<Vec<AbsolutePathBuf>> {
     let mut files = Vec::new();
     let mut dirs = vec![dir.clone()];
-    while let Some(dir) = dirs.pop() {
-        let entries = match fs.read_directory(&dir, /*sandbox*/ None).await {
+    while let Some(current_dir) = dirs.pop() {
+        let entries = match fs.read_directory(&current_dir, /*sandbox*/ None).await {
             Ok(entries) => entries,
-            Err(err) if err.kind() == ErrorKind::NotFound => continue,
+            Err(err) if matches!(err.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
+                continue;
+            }
             Err(err) => return Err(err),
         };
 
         for entry in entries {
-            let path = dir.join(entry.file_name);
+            let path = current_dir.join(entry.file_name);
             if entry.is_directory {
                 dirs.push(path);
                 continue;
             }
-            if entry.is_file
-                && path
-                    .as_path()
-                    .extension()
-                    .is_some_and(|extension| extension == "toml")
+            if !entry.is_file {
+                continue;
+            }
+
+            let Some(extension) = path.as_path().extension() else {
+                continue;
+            };
+            if extension.eq_ignore_ascii_case("toml")
+                || extension.eq_ignore_ascii_case("md")
+                || extension.eq_ignore_ascii_case("markdown")
             {
                 files.push(path);
             }
@@ -547,4 +950,71 @@ async fn collect_agent_role_files(
 
     files.sort();
     Ok(files)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn markdown_agent_description_has_hard_length_limit() {
+        let description = "x".repeat(MAX_AGENT_ROLE_DESCRIPTION_LEN + 1);
+        let contents =
+            format!("---\nname: reviewer\ndescription: {description}\n---\n\nReview carefully.");
+
+        let err = parse_agent_role_file_contents(
+            &contents,
+            Path::new("reviewer.md"),
+            Path::new("."),
+            /*role_name_hint*/ None,
+        )
+        .expect_err("oversized descriptions should be rejected");
+
+        assert!(err.to_string().contains("1024 characters or fewer"));
+    }
+
+    #[test]
+    fn markdown_agent_frontmatter_name_is_required_even_with_role_name_hint() {
+        let contents = "---\ndescription: Review code.\n---\n\nReview carefully.";
+
+        let err = parse_agent_role_file_contents(
+            contents,
+            Path::new("reviewer.md"),
+            Path::new("."),
+            Some("reviewer"),
+        )
+        .expect_err("markdown name must come from frontmatter");
+
+        assert!(err.to_string().contains("must define a non-empty `name`"));
+    }
+
+    #[test]
+    fn markdown_agent_body_has_hard_length_limit() {
+        let body = "x".repeat(MAX_MARKDOWN_AGENT_BODY_LEN + 1);
+        let contents = format!("---\nname: reviewer\ndescription: Review code.\n---\n\n{body}");
+
+        let err = parse_agent_role_file_contents(
+            &contents,
+            Path::new("reviewer.md"),
+            Path::new("."),
+            /*role_name_hint*/ None,
+        )
+        .expect_err("oversized body should be rejected");
+
+        assert!(err.to_string().contains("8192 characters or fewer"));
+    }
+
+    #[test]
+    fn markdown_agent_frontmatter_accepts_crlf_opening_delimiter() {
+        let parsed = parse_agent_role_file_contents(
+            "---\r\nname: reviewer\r\ndescription: Reviews code.\r\n---\r\n\r\nReview carefully.",
+            Path::new("reviewer.md"),
+            Path::new("."),
+            /*role_name_hint*/ None,
+        )
+        .expect("crlf frontmatter should parse");
+
+        assert_eq!(parsed.role_name, "reviewer");
+        assert_eq!(parsed.description.as_deref(), Some("Reviews code."));
+    }
 }

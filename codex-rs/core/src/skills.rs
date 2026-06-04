@@ -58,6 +58,7 @@ pub(crate) fn skills_load_input_from_config(
         config.config_layer_stack.clone(),
         config.bundled_skills_enabled(),
     )
+    .with_allowlist_patterns(config.agent_skill_patterns.clone())
 }
 
 pub(crate) async fn resolve_skill_dependencies_for_turn(

@@ -1,5 +1,6 @@
 use super::*;
 use crate::SkillsManager;
+use crate::config::AgentCapabilityAllowlist;
 use crate::config::CONFIG_TOML_FILE;
 use crate::config::ConfigBuilder;
 use crate::skills_load_input_from_config;
@@ -113,6 +114,7 @@ async fn apply_role_returns_unavailable_for_missing_user_role_file() {
             description: None,
             config_file: Some(PathBuf::from("/path/does/not/exist.toml")),
             nickname_candidates: None,
+            ..Default::default()
         },
     );
 
@@ -133,6 +135,7 @@ async fn apply_role_returns_unavailable_for_invalid_user_role_toml() {
             description: None,
             config_file: Some(role_path),
             nickname_candidates: None,
+            ..Default::default()
         },
     );
 
@@ -164,6 +167,7 @@ model = "role-model"
             description: None,
             config_file: Some(role_path),
             nickname_candidates: None,
+            ..Default::default()
         },
     );
 
@@ -172,6 +176,96 @@ model = "role-model"
         .expect("custom role should apply");
 
     assert_eq!(config.model.as_deref(), Some("role-model"));
+}
+
+#[tokio::test]
+async fn apply_role_loads_markdown_agent_definition() {
+    let (home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
+    let role_path = write_role_config(
+        &home,
+        "reviewer.md",
+        r#"---
+name: reviewer
+description: Review code.
+model: gpt-5.4
+effort: high
+tools:
+  - exec_command
+skills:
+  - code-review
+---
+
+Review the code carefully.
+"#,
+    )
+    .await;
+    config.agent_roles.insert(
+        "reviewer".to_string(),
+        AgentRoleConfig {
+            description: Some("Review code.".to_string()),
+            config_file: Some(role_path),
+            nickname_candidates: None,
+            tool_allowlist: AgentCapabilityAllowlist::Patterns(vec!["exec_command".to_string()]),
+            skill_allowlist: AgentCapabilityAllowlist::Patterns(vec!["code-review".to_string()]),
+            ..Default::default()
+        },
+    );
+
+    apply_role_to_config(&mut config, Some("reviewer"))
+        .await
+        .expect("markdown role should apply");
+
+    assert_eq!(config.model.as_deref(), Some("gpt-5.4"));
+    assert_eq!(config.model_reasoning_effort, Some(ReasoningEffort::High));
+    assert_eq!(
+        config.developer_instructions.as_deref(),
+        Some("Review the code carefully.")
+    );
+    assert_eq!(
+        config.agent_tool_patterns,
+        Some(vec!["exec_command".to_string()])
+    );
+    assert_eq!(
+        config.agent_skill_patterns,
+        Some(vec!["code-review".to_string()])
+    );
+}
+
+#[tokio::test]
+async fn apply_role_inherits_parent_agent_tool_and_skill_patterns_when_unspecified() {
+    let (home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
+    config.agent_tool_patterns = Some(vec!["exec_command".to_string()]);
+    config.agent_skill_patterns = Some(vec!["lark*".to_string()]);
+    let role_path = write_role_config(
+        &home,
+        "child.md",
+        r#"---
+name: child
+description: Child agent.
+---
+
+Child instructions.
+"#,
+    )
+    .await;
+    config.agent_roles.insert(
+        "child".to_string(),
+        AgentRoleConfig {
+            description: Some("Child agent.".to_string()),
+            config_file: Some(role_path),
+            ..Default::default()
+        },
+    );
+
+    apply_role_to_config(&mut config, Some("child"))
+        .await
+        .expect("child role should apply");
+
+    assert_eq!(
+        config.agent_tool_patterns,
+        Some(vec!["exec_command".to_string()])
+    );
+    assert_eq!(config.agent_skill_patterns, Some(vec!["lark*".to_string()]));
 }
 
 #[tokio::test]
@@ -195,6 +289,7 @@ async fn apply_role_preserves_unspecified_keys() {
             description: None,
             config_file: Some(role_path),
             nickname_candidates: None,
+            ..Default::default()
         },
     );
 
@@ -254,6 +349,7 @@ model_provider = "test-provider"
             description: None,
             config_file: Some(role_path),
             nickname_candidates: None,
+            ..Default::default()
         },
     );
 
@@ -308,6 +404,7 @@ model_verbosity = "high"
             description: None,
             config_file: Some(role_path),
             nickname_candidates: None,
+            ..Default::default()
         },
     );
 
@@ -374,6 +471,7 @@ model_provider = "role-provider"
             description: None,
             config_file: Some(role_path),
             nickname_candidates: None,
+            ..Default::default()
         },
     );
 
@@ -432,6 +530,7 @@ model_provider = "base-provider"
             description: None,
             config_file: Some(role_path),
             nickname_candidates: None,
+            ..Default::default()
         },
     );
 
@@ -496,6 +595,7 @@ model_reasoning_effort = "high"
             description: None,
             config_file: Some(role_path),
             nickname_candidates: None,
+            ..Default::default()
         },
     );
 
@@ -540,6 +640,7 @@ writable_roots = ["./sandbox-root"]
             description: None,
             config_file: Some(role_path),
             nickname_candidates: None,
+            ..Default::default()
         },
     );
 
@@ -602,6 +703,7 @@ async fn apply_role_takes_precedence_over_existing_session_flags_for_same_key() 
             description: None,
             config_file: Some(role_path),
             nickname_candidates: None,
+            ..Default::default()
         },
     );
 
@@ -645,6 +747,7 @@ enabled = false
             description: None,
             config_file: Some(role_path),
             nickname_candidates: None,
+            ..Default::default()
         },
     );
 
@@ -683,6 +786,7 @@ fn spawn_tool_spec_build_deduplicates_user_defined_built_in_roles() {
                 description: Some("user override".to_string()),
                 config_file: None,
                 nickname_candidates: None,
+                ..Default::default()
             },
         ),
         ("researcher".to_string(), AgentRoleConfig::default()),
@@ -704,6 +808,7 @@ fn spawn_tool_spec_lists_user_defined_roles_before_built_ins() {
             description: Some("first".to_string()),
             config_file: None,
             nickname_candidates: None,
+            ..Default::default()
         },
     )]);
 
@@ -714,6 +819,28 @@ fn spawn_tool_spec_lists_user_defined_roles_before_built_ins() {
         .expect("find built-in role");
 
     assert!(user_index < built_in_index);
+}
+
+#[test]
+fn spawn_tool_spec_caps_user_defined_role_guidance() {
+    let long_description = "x".repeat(1200);
+    let user_defined_roles = (0..40)
+        .map(|index| {
+            (
+                format!("role-{index:02}"),
+                AgentRoleConfig {
+                    description: Some(long_description.clone()),
+                    ..Default::default()
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let spec = spawn_tool_spec::build(&user_defined_roles);
+
+    assert!(spec.contains("8 additional roles omitted."));
+    assert!(spec.contains(&"x".repeat(1024)));
+    assert!(!spec.contains(&"x".repeat(1025)));
 }
 
 #[test]
@@ -731,6 +858,7 @@ fn spawn_tool_spec_marks_role_locked_model_and_reasoning_effort() {
             description: Some("Research carefully.".to_string()),
             config_file: Some(role_path),
             nickname_candidates: None,
+            ..Default::default()
         },
     )]);
 
@@ -756,6 +884,7 @@ fn spawn_tool_spec_marks_role_locked_reasoning_effort_only() {
             description: Some("Review carefully.".to_string()),
             config_file: Some(role_path),
             nickname_candidates: None,
+            ..Default::default()
         },
     )]);
 

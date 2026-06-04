@@ -128,6 +128,7 @@ model_reasoning_effort = "minimal"
             description: Some("Role with model overrides".to_string()),
             config_file: Some(role_config_path),
             nickname_candidates: None,
+            ..Default::default()
         },
     );
     turn.config = Arc::new(config);
@@ -660,6 +661,7 @@ service_tier = "priority"
                 description: Some("Role with a child service tier".to_string()),
                 config_file: Some(role_config_path),
                 nickname_candidates: None,
+                ..Default::default()
             },
         );
         turn.config = Arc::new(config);

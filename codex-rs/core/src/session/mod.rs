@@ -23,6 +23,7 @@ use crate::config::resolve_tool_suggest_config_from_layer_stack;
 use crate::connectors;
 use crate::context::ApprovedCommandPrefixSaved;
 use crate::context::AppsInstructions;
+use crate::context::AvailableAgentsInstructions;
 use crate::context::AvailablePluginsInstructions;
 use crate::context::AvailableSkillsInstructions;
 use crate::context::CollaborationModeInstructions;
@@ -55,6 +56,7 @@ use codex_config::types::OAuthCredentialsStoreMode;
 use codex_exec_server::Environment;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::FileSystemSandboxContext;
+use codex_exec_server::LOCAL_FS;
 use codex_extension_api::PromptSlot;
 use codex_features::FEATURES;
 use codex_features::Feature;
@@ -76,6 +78,7 @@ use codex_network_proxy::normalize_host;
 use codex_otel::current_span_trace_id;
 use codex_otel::current_span_w3c_trace_context;
 use codex_otel::set_parent_from_w3c_trace_context;
+use codex_plugin::PluginLoadOutcome;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType as AccountPlanType;
 use codex_protocol::approvals::ElicitationRequestEvent;
@@ -489,6 +492,7 @@ impl Codex {
         let fs = environment_selections.primary_filesystem();
         let plugins_input = config.plugins_config_input();
         let plugin_outcome = plugins_manager.plugins_for_config(&plugins_input).await;
+        merge_plugin_agent_roles(&mut config, &plugin_outcome).await;
         let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
         let skills_input = skills_load_input_from_config(&config, effective_skill_roots);
         let loaded_skills = skills_manager.skills_for_config(&skills_input, fs).await;
@@ -810,6 +814,33 @@ impl Codex {
     pub(crate) fn enabled(&self, feature: Feature) -> bool {
         self.session.enabled(feature)
     }
+}
+
+async fn merge_plugin_agent_roles<M: Clone>(
+    config: &mut Config,
+    plugin_outcome: &PluginLoadOutcome<M>,
+) {
+    let plugin_agent_dirs = plugin_outcome
+        .effective_plugin_agent_dirs()
+        .into_iter()
+        .map(|agent_dir| (agent_dir.plugin_id, agent_dir.path))
+        .collect::<Vec<_>>();
+    if plugin_agent_dirs.is_empty() {
+        return;
+    }
+
+    let mut warnings = Vec::new();
+    if let Err(err) = crate::config::agent_roles::merge_missing_agent_roles_from_plugin_dirs(
+        LOCAL_FS.as_ref(),
+        &mut config.agent_roles,
+        &plugin_agent_dirs,
+        &mut warnings,
+    )
+    .await
+    {
+        warn!("failed to load plugin agent definitions: {err}");
+    }
+    config.startup_warnings.extend(warnings);
 }
 
 fn get_service_tier(
@@ -2838,6 +2869,11 @@ impl Session {
                 }
                 developer_sections.push(skills_instructions.render());
             }
+        }
+        if let Some(agent_instructions) =
+            AvailableAgentsInstructions::from_agent_roles(&turn_context.config.agent_roles)
+        {
+            developer_sections.push(agent_instructions.render());
         }
         let loaded_plugins = self
             .services

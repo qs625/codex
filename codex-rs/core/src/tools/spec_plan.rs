@@ -1,4 +1,5 @@
 use crate::tools::code_mode::execute_spec::create_code_mode_tool;
+use crate::tools::flat_tool_name;
 use crate::tools::handlers::ApplyPatchHandler;
 use crate::tools::handlers::CodeModeExecuteHandler;
 use crate::tools::handlers::CodeModeWaitHandler;
@@ -49,7 +50,6 @@ use crate::tools::spec_plan_types::ToolRegistryBuildParams;
 use crate::tools::spec_plan_types::agent_type_description;
 use codex_extension_api::ExtensionToolExecutor;
 use codex_protocol::openai_models::ConfigShellToolType;
-use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::TOOL_SEARCH_TOOL_NAME;
 use codex_tools::ToolEnvironmentMode;
 use codex_tools::ToolName;
@@ -68,6 +68,8 @@ pub(crate) fn build_tool_registry_builder_from_executors(
     hosted_specs: Vec<ToolSpec>,
 ) -> ToolRegistryBuilder {
     let mut builder = ToolRegistryBuilder::new();
+    let executors = filter_executors_for_agent(config, executors);
+    let hosted_specs = filter_specs_for_agent(config, hosted_specs);
     let deferred_tools_available = executors
         .iter()
         .any(|executor| executor.exposure() == ToolExposure::Deferred);
@@ -130,6 +132,64 @@ pub(crate) fn build_tool_registry_builder_from_executors(
     }
 
     builder
+}
+
+fn filter_executors_for_agent(
+    config: &ToolsConfig,
+    executors: Vec<Arc<dyn RegisteredTool>>,
+) -> Vec<Arc<dyn RegisteredTool>> {
+    let Some(patterns) = config.agent_tool_patterns.as_deref() else {
+        return executors;
+    };
+    executors
+        .into_iter()
+        .filter(|executor| {
+            tool_name_matches_patterns(&flat_tool_name(&executor.tool_name()), patterns)
+        })
+        .collect()
+}
+
+fn filter_specs_for_agent(config: &ToolsConfig, specs: Vec<ToolSpec>) -> Vec<ToolSpec> {
+    let Some(patterns) = config.agent_tool_patterns.as_deref() else {
+        return specs;
+    };
+    specs
+        .into_iter()
+        .filter_map(|spec| filter_spec_for_agent(spec, patterns))
+        .collect()
+}
+
+fn filter_spec_for_agent(mut spec: ToolSpec, patterns: &[String]) -> Option<ToolSpec> {
+    match &mut spec {
+        ToolSpec::Namespace(namespace) => {
+            if tool_name_matches_patterns(&namespace.name, patterns) {
+                return Some(spec);
+            }
+            let namespace_name = namespace.name.clone();
+            namespace.tools.retain(|tool| match tool {
+                codex_tools::ResponsesApiNamespaceTool::Function(tool) => {
+                    let qualified = format!("{namespace_name}{}", tool.name);
+                    tool_name_matches_patterns(&tool.name, patterns)
+                        || tool_name_matches_patterns(&qualified, patterns)
+                }
+            });
+            (!namespace.tools.is_empty()).then_some(spec)
+        }
+        _ => tool_name_matches_patterns(spec.name(), patterns).then_some(spec),
+    }
+}
+
+fn tool_name_matches_patterns(tool_name: &str, patterns: &[String]) -> bool {
+    patterns.iter().any(|pattern| {
+        let pattern = pattern.trim();
+        if pattern == "*" {
+            true
+        } else if let Some(prefix) = pattern.strip_suffix('*') {
+            tool_name.starts_with(prefix)
+        } else {
+            tool_name == pattern
+        }
+    })
 }
 
 pub(crate) fn hosted_model_tool_specs(config: &ToolsConfig) -> Vec<ToolSpec> {
@@ -219,8 +279,8 @@ fn merge_into_namespaces(specs: Vec<ToolSpec>) -> Vec<ToolSpec> {
 
         namespace.tools.sort_by(|left, right| match (left, right) {
             (
-                ResponsesApiNamespaceTool::Function(left),
-                ResponsesApiNamespaceTool::Function(right),
+                codex_tools::ResponsesApiNamespaceTool::Function(left),
+                codex_tools::ResponsesApiNamespaceTool::Function(right),
             ) => left.name.cmp(&right.name),
         });
 

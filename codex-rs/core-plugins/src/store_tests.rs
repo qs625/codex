@@ -12,6 +12,7 @@ fn write_plugin_with_version(
     let plugin_root = root.join(dir_name);
     fs::create_dir_all(plugin_root.join(".codex-plugin")).unwrap();
     fs::create_dir_all(plugin_root.join("skills")).unwrap();
+    fs::create_dir_all(plugin_root.join("agents")).unwrap();
     let version = manifest_version
         .map(|manifest_version| format!(r#","version":"{manifest_version}""#))
         .unwrap_or_default();
@@ -21,6 +22,11 @@ fn write_plugin_with_version(
     )
     .unwrap();
     fs::write(plugin_root.join("skills/SKILL.md"), "skill").unwrap();
+    fs::write(
+        plugin_root.join("agents/reviewer.md"),
+        "---\nname: reviewer\ndescription: Review code.\n---\n\nReview carefully.\n",
+    )
+    .unwrap();
     fs::write(plugin_root.join(".mcp.json"), r#"{"mcpServers":{}}"#).unwrap();
 }
 
@@ -69,6 +75,7 @@ fn install_copies_plugin_into_default_marketplace() {
     );
     assert!(installed_path.join(".codex-plugin/plugin.json").is_file());
     assert!(installed_path.join("skills/SKILL.md").is_file());
+    assert!(installed_path.join("agents/reviewer.md").is_file());
 }
 
 #[test]

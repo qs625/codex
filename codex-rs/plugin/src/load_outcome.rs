@@ -10,6 +10,12 @@ use crate::PluginHookSource;
 
 const MAX_CAPABILITY_SUMMARY_DESCRIPTION_LEN: usize = 1024;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginAgentDir {
+    pub plugin_id: String,
+    pub path: AbsolutePathBuf,
+}
+
 /// A plugin that was loaded from disk, including merged MCP server definitions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoadedPlugin<M> {
@@ -135,6 +141,25 @@ impl<M: Clone> PluginLoadOutcome<M> {
         skill_roots
     }
 
+    pub fn effective_plugin_agent_dirs(&self) -> Vec<PluginAgentDir> {
+        let mut agent_dirs = self
+            .plugins
+            .iter()
+            .filter(|plugin| plugin.is_active())
+            .map(|plugin| PluginAgentDir {
+                plugin_id: plugin.config_name.clone(),
+                path: plugin.root.join("agents"),
+            })
+            .collect::<Vec<_>>();
+        agent_dirs.sort_unstable_by(|left, right| {
+            left.path
+                .cmp(&right.path)
+                .then_with(|| left.plugin_id.cmp(&right.plugin_id))
+        });
+        agent_dirs.dedup_by(|left, right| left.path == right.path);
+        agent_dirs
+    }
+
     pub fn effective_mcp_servers(&self) -> HashMap<String, M> {
         let mut mcp_servers = HashMap::new();
         for plugin in self.plugins.iter().filter(|plugin| plugin.is_active()) {
@@ -246,6 +271,34 @@ mod tests {
                 path: shared_root,
                 plugin_id: "zeta@test".to_string(),
             }]
+        );
+    }
+
+    #[test]
+    fn effective_plugin_agent_dirs_uses_active_plugin_roots() {
+        let mut inactive = loaded_plugin("inactive@test", Vec::new());
+        inactive.enabled = false;
+        let mut failed = loaded_plugin("failed@test", Vec::new());
+        failed.error = Some("boom".to_string());
+        let outcome = PluginLoadOutcome::from_plugins(vec![
+            loaded_plugin("zeta@test", Vec::new()),
+            inactive,
+            loaded_plugin("alpha@test", Vec::new()),
+            failed,
+        ]);
+
+        assert_eq!(
+            vec![
+                PluginAgentDir {
+                    plugin_id: "alpha@test".to_string(),
+                    path: test_path("alpha@test").join("agents"),
+                },
+                PluginAgentDir {
+                    plugin_id: "zeta@test".to_string(),
+                    path: test_path("zeta@test").join("agents"),
+                },
+            ],
+            outcome.effective_plugin_agent_dirs()
         );
     }
 }

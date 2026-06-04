@@ -777,6 +777,10 @@ pub struct Config {
 
     /// User-defined role declarations keyed by role name.
     pub agent_roles: BTreeMap<String, AgentRoleConfig>,
+    /// Tool allowlist patterns inherited from the active Markdown agent role.
+    pub agent_tool_patterns: Option<Vec<String>>,
+    /// Skill allowlist patterns inherited from the active Markdown agent role.
+    pub agent_skill_patterns: Option<Vec<String>>,
 
     /// Memories subsystem settings.
     pub memories: MemoriesConfig,
@@ -1858,6 +1862,31 @@ pub struct AgentRoleConfig {
     pub config_file: Option<PathBuf>,
     /// Candidate nicknames for agents spawned with this role.
     pub nickname_candidates: Option<Vec<String>>,
+    /// Tool allowlist declared by a Markdown agent definition.
+    pub tool_allowlist: AgentCapabilityAllowlist,
+    /// Skill allowlist declared by a Markdown agent definition.
+    pub skill_allowlist: AgentCapabilityAllowlist,
+    /// The model declared by a Markdown agent definition, used for startup context.
+    pub model: Option<String>,
+    /// The reasoning effort declared by a Markdown agent definition, used for startup context.
+    pub model_reasoning_effort: Option<String>,
+    /// Source path for startup context and diagnostics.
+    pub source_path: Option<PathBuf>,
+    /// Source metadata for startup context and diagnostics.
+    pub source: Option<AgentRoleSource>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentRoleSource {
+    Plugin { plugin_id: String },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum AgentCapabilityAllowlist {
+    #[default]
+    Inherit,
+    All,
+    Patterns(Vec<String>),
 }
 
 fn resolve_tool_suggest_config(
@@ -2867,9 +2896,15 @@ impl Config {
         };
         let terminal_resize_reflow = resolve_terminal_resize_reflow_config(&cfg);
 
-        let agent_roles =
-            agent_roles::load_agent_roles(fs, &cfg, &config_layer_stack, &mut startup_warnings)
-                .await?;
+        let agent_roles = agent_roles::load_agent_roles(
+            fs,
+            &cfg,
+            &config_layer_stack,
+            &codex_home,
+            &resolved_cwd,
+            &mut startup_warnings,
+        )
+        .await?;
 
         let openai_base_url = cfg
             .openai_base_url
@@ -3362,6 +3397,8 @@ impl Config {
             agent_max_threads,
             agent_max_depth,
             agent_roles,
+            agent_tool_patterns: None,
+            agent_skill_patterns: None,
             memories: cfg.memories.unwrap_or_default().into(),
             agent_job_max_runtime_seconds,
             agent_interrupt_message_enabled,
