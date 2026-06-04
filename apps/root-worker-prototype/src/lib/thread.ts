@@ -11,6 +11,8 @@ import type {
 } from "../types";
 import { hasActiveMonitors } from "./threadAnalysis";
 
+const STREAMING_AGENT_MESSAGE = Symbol("streamingAgentMessage");
+
 export function pickInitialThread(threads: Thread[]) {
   return (
     [...threads].sort((left, right) => right.updatedAt - left.updatedAt)[0] ??
@@ -391,18 +393,21 @@ export function appendAgentDelta(
         const items = hasItem
           ? turn.items.map((item) =>
               item.id === itemId && item.type === "agentMessage"
-                ? { ...item, text: item.text + delta }
+                ? markStreamingAgentMessage({
+                    ...item,
+                    text: item.text + delta,
+                  })
                 : item,
             )
           : [
               ...turn.items,
-              {
+              markStreamingAgentMessage({
                 type: "agentMessage",
                 id: itemId,
                 text: delta,
                 phase: null,
                 memoryCitation: null,
-              } satisfies ThreadItem,
+              } satisfies ThreadItem),
             ];
         return { ...turn, items };
       })
@@ -411,13 +416,13 @@ export function appendAgentDelta(
         {
           id: turnId,
           items: [
-            {
+            markStreamingAgentMessage({
               type: "agentMessage",
               id: itemId,
               text: delta,
               phase: null,
               memoryCitation: null,
-            } satisfies ThreadItem,
+            } satisfies ThreadItem),
           ],
           itemsView: "full" as const,
           status: "running" as const,
@@ -554,7 +559,7 @@ export function normalizeThreadSnapshot(thread: Thread): Thread {
 
 function normalizeTurnSnapshot(turn: Turn): Turn {
   const items = turn.items.reduce<ThreadItem[]>((normalizedItems, item) => {
-    const existingIndex = findMatchingThreadItemIndex(normalizedItems, item);
+    const existingIndex = findMatchingSnapshotItemIndex(normalizedItems, item);
     if (existingIndex === -1) {
       return [...normalizedItems, item];
     }
@@ -658,6 +663,26 @@ function mergeThreadItem(existing: ThreadItem, next: ThreadItem): ThreadItem {
   };
 }
 
+function markStreamingAgentMessage<
+  T extends Extract<ThreadItem, { type: "agentMessage" }>,
+>(item: T) {
+  Object.defineProperty(item, STREAMING_AGENT_MESSAGE, {
+    value: true,
+    enumerable: false,
+  });
+  return item;
+}
+
+function isStreamingAgentMessage(
+  item: Extract<ThreadItem, { type: "agentMessage" }>,
+) {
+  return Boolean(
+    (item as Extract<ThreadItem, { type: "agentMessage" }> & {
+      [STREAMING_AGENT_MESSAGE]?: true;
+    })[STREAMING_AGENT_MESSAGE],
+  );
+}
+
 function findMatchingThreadItemIndex(
   items: ThreadItem[],
   nextItem: ThreadItem,
@@ -667,7 +692,34 @@ function findMatchingThreadItemIndex(
     return idIndex;
   }
 
+  if (nextItem.type === "agentMessage") {
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index];
+      if (
+        item?.type === "agentMessage" &&
+        canMergeSameTurnThreadItems(item, nextItem)
+      ) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
   return items.findIndex((item) => canMergeSameTurnThreadItems(item, nextItem));
+}
+
+function findMatchingSnapshotItemIndex(
+  items: ThreadItem[],
+  nextItem: ThreadItem,
+) {
+  const idIndex = items.findIndex((item) => item.id === nextItem.id);
+  if (idIndex !== -1) {
+    return idIndex;
+  }
+
+  return items.findIndex((item) =>
+    canMergeSameSnapshotThreadItems(item, nextItem),
+  );
 }
 
 function canMergeSameTurnThreadItems(existing: ThreadItem, next: ThreadItem) {
@@ -680,6 +732,24 @@ function canMergeSameTurnThreadItems(existing: ThreadItem, next: ThreadItem) {
 
   if (existing.type === "agentMessage" && next.type === "agentMessage") {
     return haveCompatibleAgentMessages(existing, next);
+  }
+
+  return getThreadItemSemanticKey(existing) === getThreadItemSemanticKey(next);
+}
+
+function canMergeSameSnapshotThreadItems(
+  existing: ThreadItem,
+  next: ThreadItem,
+) {
+  if (
+    existing.type !== next.type ||
+    !canMatchThreadItemSemantically(existing)
+  ) {
+    return false;
+  }
+
+  if (existing.type === "agentMessage" && next.type === "agentMessage") {
+    return haveCompatibleSnapshotAgentMessages(existing, next);
   }
 
   return getThreadItemSemanticKey(existing) === getThreadItemSemanticKey(next);
@@ -704,9 +774,24 @@ function haveCompatibleAgentMessages(
   ) {
     return false;
   }
+  if (!isStreamingAgentMessage(existing)) {
+    return false;
+  }
 
   return (
     existing.text.startsWith(next.text) || next.text.startsWith(existing.text)
+  );
+}
+
+function haveCompatibleSnapshotAgentMessages(
+  existing: Extract<ThreadItem, { type: "agentMessage" }>,
+  next: Extract<ThreadItem, { type: "agentMessage" }>,
+) {
+  return (
+    existing.phase === next.phase &&
+    stableStringify(existing.memoryCitation) ===
+      stableStringify(next.memoryCitation) &&
+    existing.text === next.text
   );
 }
 
@@ -943,10 +1028,11 @@ function canMatchThreadItemSemantically(item: ThreadItem) {
   switch (item.type) {
     case "agentMessage":
     case "collabAgentMessage":
-    case "collabAgentStatusUpdate":
     case "eventDrivenTool":
     case "eventDrivenToolCall":
       return true;
+    case "collabAgentStatusUpdate":
+      return !isTerminalCollabAgentStatus(item.status.status);
     case "builtinToolCall":
     case "collabAgentToolCall":
     case "commandExecution":
@@ -965,6 +1051,15 @@ function canMatchThreadItemSemantically(item: ThreadItem) {
     case "webSearch":
       return false;
   }
+}
+
+function isTerminalCollabAgentStatus(status: string) {
+  return (
+    status === "completed" ||
+    status === "errored" ||
+    status === "shutdown" ||
+    status === "notFound"
+  );
 }
 
 function haveCompatibleAgentMessageContent(

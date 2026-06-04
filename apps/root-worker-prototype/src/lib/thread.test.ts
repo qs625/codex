@@ -375,6 +375,43 @@ test("mergeThreadSnapshot normalizes duplicate items when existing is null", () 
   ]);
 });
 
+test("mergeThreadSnapshot preserves prefix-compatible agent messages in the same snapshot", () => {
+  const thread = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "agentMessage" as const,
+            id: "item-1",
+            text: "same",
+            phase: null,
+            memoryCitation: null,
+          },
+          {
+            type: "agentMessage" as const,
+            id: "item-2",
+            text: "same response",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: "full" as const,
+        status: "completed" as const,
+        error: null,
+        startedAt: 10,
+        completedAt: 12,
+        durationMs: 2000,
+      },
+    ],
+  };
+
+  const merged = mergeThreadSnapshot(null, thread);
+
+  assert.deepEqual(merged.turns, thread.turns);
+});
+
 test("upsertThread normalizes the first inserted snapshot", () => {
   const thread = {
     ...makeThread(),
@@ -1204,6 +1241,128 @@ test("updateThreadItem keeps the more complete same-turn agent text", () => {
   ]);
 });
 
+test("updateThreadItem does not overwrite an existing agent message with a prefix-compatible item", () => {
+  const thread = updateThreadItem(makeThread(), "turn-1", {
+    type: "agentMessage",
+    id: "first-item",
+    text: "same",
+    phase: null,
+    memoryCitation: null,
+  });
+
+  const updated = updateThreadItem(
+    thread,
+    "turn-1",
+    {
+      type: "agentMessage",
+      id: "second-item",
+      text: "same response",
+      phase: null,
+      memoryCitation: null,
+    },
+    { completedAtMs: 3_000 },
+  );
+
+  assert.deepEqual(updated.turns[0]?.items, [
+    {
+      type: "agentMessage",
+      id: "first-item",
+      text: "same",
+      phase: null,
+      memoryCitation: null,
+    },
+    {
+      type: "agentMessage",
+      id: "second-item",
+      text: "same response",
+      phase: null,
+      memoryCitation: null,
+      completedAtMs: 3_000,
+    },
+  ]);
+});
+
+test("updateThreadItem preserves same-text agent messages unless the existing item is a delta placeholder", () => {
+  const thread = updateThreadItem(makeThread(), "turn-1", {
+    type: "agentMessage",
+    id: "first-item",
+    text: "same response",
+    phase: null,
+    memoryCitation: null,
+  });
+
+  const updated = updateThreadItem(thread, "turn-1", {
+    type: "agentMessage",
+    id: "second-item",
+    text: "same response",
+    phase: null,
+    memoryCitation: null,
+  });
+
+  assert.deepEqual(updated.turns[0]?.items, [
+    {
+      type: "agentMessage",
+      id: "first-item",
+      text: "same response",
+      phase: null,
+      memoryCitation: null,
+    },
+    {
+      type: "agentMessage",
+      id: "second-item",
+      text: "same response",
+      phase: null,
+      memoryCitation: null,
+    },
+  ]);
+});
+
+test("updateThreadItem merges a completed agent message into the latest matching delta placeholder", () => {
+  const threadWithFirst = appendAgentDelta(
+    makeThread(),
+    "turn-1",
+    "first-delta-item",
+    "same response",
+  );
+  const thread = appendAgentDelta(
+    threadWithFirst,
+    "turn-1",
+    "second-delta-item",
+    "same",
+  );
+
+  const updated = updateThreadItem(
+    thread,
+    "turn-1",
+    {
+      type: "agentMessage",
+      id: "completed-item",
+      text: "same response",
+      phase: null,
+      memoryCitation: null,
+    },
+    { completedAtMs: 3_000 },
+  );
+
+  assert.deepEqual(updated.turns[0]?.items, [
+    {
+      type: "agentMessage",
+      id: "first-delta-item",
+      text: "same response",
+      phase: null,
+      memoryCitation: null,
+    },
+    {
+      type: "agentMessage",
+      id: "completed-item",
+      text: "same response",
+      phase: null,
+      memoryCitation: null,
+      completedAtMs: 3_000,
+    },
+  ]);
+});
+
 test("updateThreadItem preserves distinct completed agent messages with matching text", () => {
   const thread = updateThreadItem(
     makeThread(),
@@ -1414,6 +1573,68 @@ test("pending thread updates replay when the thread snapshot arrives", () => {
     },
   ]);
 });
+
+for (const terminalStatus of [
+  "completed",
+  "errored",
+  "shutdown",
+  "notFound",
+]) {
+  test(`updateThreadItem preserves repeated terminal collab status updates for ${terminalStatus}`, () => {
+    const thread = updateThreadItem(makeThread(), "turn-1", {
+      type: "collabAgentStatusUpdate",
+      id: "first-completion",
+      senderThreadId: "thread-child",
+      senderPath: "/root/worker",
+      recipientThreadId: "thread-1",
+      recipientPath: "/root",
+      status: {
+        status: terminalStatus,
+        message: "done",
+      },
+    });
+
+    const updated = updateThreadItem(thread, "turn-1", {
+      type: "collabAgentStatusUpdate",
+      id: "second-completion",
+      senderThreadId: "thread-child",
+      senderPath: "/root/worker",
+      recipientThreadId: "thread-1",
+      recipientPath: "/root",
+      status: {
+        status: terminalStatus,
+        message: "done",
+      },
+    });
+
+    assert.deepEqual(updated.turns[0]?.items, [
+      {
+        type: "collabAgentStatusUpdate",
+        id: "first-completion",
+        senderThreadId: "thread-child",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        status: {
+          status: terminalStatus,
+          message: "done",
+        },
+      },
+      {
+        type: "collabAgentStatusUpdate",
+        id: "second-completion",
+        senderThreadId: "thread-child",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        status: {
+          status: terminalStatus,
+          message: "done",
+        },
+      },
+    ]);
+  });
+}
 
 test("pending thread updates do not duplicate semantic items already in the snapshot", () => {
   const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
