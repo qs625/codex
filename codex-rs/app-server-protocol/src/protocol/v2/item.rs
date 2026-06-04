@@ -973,6 +973,15 @@ impl From<CoreTurnItem> for ThreadItem {
                     agent.memory_citation.map(Into::into),
                 )
             }
+            CoreTurnItem::EventDrivenTool(event_driven_tool) => ThreadItem::EventDrivenTool {
+                id: event_driven_tool.id,
+                tool: event_driven_tool.tool,
+                title: event_driven_tool.title,
+                text: event_driven_tool.text,
+            },
+            CoreTurnItem::CollabAgentMessage(collab) => {
+                thread_item_from_inter_agent_communication(collab.id, collab.communication)
+            }
             CoreTurnItem::Plan(plan) => ThreadItem::Plan {
                 id: plan.id,
                 text: plan.text,

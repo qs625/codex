@@ -498,16 +498,23 @@ pub fn item_event_to_server_notification(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::v2::CollabAgentStatus;
+    use codex_protocol::AgentPath;
     use codex_protocol::ThreadId;
     use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
     use codex_protocol::items::AgentMessageContent;
     use codex_protocol::items::AgentMessageItem;
+    use codex_protocol::items::CollabAgentMessageItem;
+    use codex_protocol::items::EventDrivenToolItem;
     use codex_protocol::items::TurnItem;
+    use codex_protocol::protocol::AgentStatus;
     use codex_protocol::protocol::CollabResumeBeginEvent;
     use codex_protocol::protocol::CollabResumeEndEvent;
     use codex_protocol::protocol::CollabWaitingBeginEvent;
     use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
     use codex_protocol::protocol::ExecOutputStream;
+    use codex_protocol::protocol::InterAgentCommunication;
+    use codex_protocol::protocol::InterAgentOperation;
     use codex_protocol::protocol::ItemCompletedEvent;
     use pretty_assertions::assert_eq;
 
@@ -725,6 +732,90 @@ mod tests {
                     tool: "process_exit_subscribe".to_string(),
                     title: "Process exited".to_string(),
                     text: "[Process exit subscription] Session 42 exited with code 0".to_string(),
+                },
+            },
+        );
+    }
+
+    #[test]
+    fn item_completed_maps_event_driven_tool_turn_item() {
+        let event = ItemCompletedEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-ignored".to_string(),
+            item: TurnItem::EventDrivenTool(EventDrivenToolItem {
+                id: "event-1".to_string(),
+                tool: "process_exit_subscribe".to_string(),
+                title: "Process exited".to_string(),
+                text: "Session 42 exited with code 0".to_string(),
+            }),
+            completed_at_ms: 789,
+        };
+
+        let notification = item_event_to_server_notification(
+            EventMsg::ItemCompleted(event.clone()),
+            "thread-4",
+            "turn-4",
+        );
+
+        assert_item_completed_server_notification(
+            notification,
+            ItemCompletedNotification {
+                thread_id: "thread-4".to_string(),
+                turn_id: "turn-4".to_string(),
+                completed_at_ms: event.completed_at_ms,
+                item: ThreadItem::EventDrivenTool {
+                    id: "event-1".to_string(),
+                    tool: "process_exit_subscribe".to_string(),
+                    title: "Process exited".to_string(),
+                    text: "Session 42 exited with code 0".to_string(),
+                },
+            },
+        );
+    }
+
+    #[test]
+    fn item_completed_maps_collab_status_turn_item() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "completed".to_string(),
+            InterAgentOperation::ChildCompletion,
+        )
+        .with_status(AgentStatus::Completed(Some("done".to_string())));
+        let event = ItemCompletedEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-ignored".to_string(),
+            item: TurnItem::CollabAgentMessage(CollabAgentMessageItem {
+                id: "collab-1".to_string(),
+                communication,
+            }),
+            completed_at_ms: 789,
+        };
+
+        let notification = item_event_to_server_notification(
+            EventMsg::ItemCompleted(event.clone()),
+            "thread-4",
+            "turn-4",
+        );
+
+        assert_item_completed_server_notification(
+            notification,
+            ItemCompletedNotification {
+                thread_id: "thread-4".to_string(),
+                turn_id: "turn-4".to_string(),
+                completed_at_ms: event.completed_at_ms,
+                item: ThreadItem::CollabAgentStatusUpdate {
+                    id: "collab-1".to_string(),
+                    sender_thread_id: None,
+                    sender_path: "/root/worker".to_string(),
+                    recipient_thread_id: None,
+                    recipient_path: "/root".to_string(),
+                    status: CollabAgentState {
+                        path: Some("/root/worker".to_string()),
+                        status: CollabAgentStatus::Completed,
+                        message: Some("done".to_string()),
+                    },
                 },
             },
         );

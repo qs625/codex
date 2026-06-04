@@ -11,6 +11,7 @@ use crate::protocol::ContextCompactedEvent;
 use crate::protocol::EventMsg;
 use crate::protocol::FileChange;
 use crate::protocol::ImageGenerationEndEvent;
+use crate::protocol::InterAgentCommunication;
 use crate::protocol::McpInvocation;
 use crate::protocol::McpToolCallBeginEvent;
 use crate::protocol::McpToolCallEndEvent;
@@ -43,6 +44,8 @@ pub enum TurnItem {
     UserMessage(UserMessageItem),
     HookPrompt(HookPromptItem),
     AgentMessage(AgentMessageItem),
+    EventDrivenTool(EventDrivenToolItem),
+    CollabAgentMessage(CollabAgentMessageItem),
     Plan(PlanItem),
     Reasoning(ReasoningItem),
     WebSearch(WebSearchItem),
@@ -108,6 +111,24 @@ pub struct AgentMessageItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub memory_citation: Option<MemoryCitation>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct EventDrivenToolItem {
+    pub id: String,
+    pub tool: String,
+    pub title: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct CollabAgentMessageItem {
+    pub id: String,
+    pub communication: InterAgentCommunication,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
@@ -539,6 +560,8 @@ impl TurnItem {
             TurnItem::UserMessage(item) => item.id.clone(),
             TurnItem::HookPrompt(item) => item.id.clone(),
             TurnItem::AgentMessage(item) => item.id.clone(),
+            TurnItem::EventDrivenTool(item) => item.id.clone(),
+            TurnItem::CollabAgentMessage(item) => item.id.clone(),
             TurnItem::Plan(item) => item.id.clone(),
             TurnItem::Reasoning(item) => item.id.clone(),
             TurnItem::WebSearch(item) => item.id.clone(),
@@ -555,6 +578,8 @@ impl TurnItem {
             TurnItem::UserMessage(item) => vec![item.as_legacy_event()],
             TurnItem::HookPrompt(_) => Vec::new(),
             TurnItem::AgentMessage(item) => item.as_legacy_events(),
+            TurnItem::EventDrivenTool(_) => Vec::new(),
+            TurnItem::CollabAgentMessage(_) => Vec::new(),
             TurnItem::Plan(_) => Vec::new(),
             TurnItem::WebSearch(item) => vec![item.as_legacy_event()],
             TurnItem::ImageView(item) => {
@@ -609,6 +634,41 @@ mod tests {
                 text: "Retry with tests.".to_string(),
                 hook_run_id: "hook-run-1".to_string(),
             }
+        );
+    }
+
+    #[test]
+    fn event_driven_tool_item_emits_no_legacy_events() {
+        let item = TurnItem::EventDrivenTool(EventDrivenToolItem {
+            id: "event-1".to_string(),
+            tool: "process_exit_subscribe".to_string(),
+            title: "Process exited".to_string(),
+            text: "done".to_string(),
+        });
+
+        assert!(
+            item.as_legacy_events(/*show_raw_agent_reasoning*/ false)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn collab_agent_message_item_emits_no_legacy_events() {
+        let communication = InterAgentCommunication::new(
+            crate::AgentPath::try_from("/root/worker").expect("agent path"),
+            crate::AgentPath::root(),
+            Vec::new(),
+            "done".to_string(),
+            crate::protocol::InterAgentOperation::SendMessage,
+        );
+        let item = TurnItem::CollabAgentMessage(CollabAgentMessageItem {
+            id: "collab-1".to_string(),
+            communication,
+        });
+
+        assert!(
+            item.as_legacy_events(/*show_raw_agent_reasoning*/ false)
+                .is_empty()
         );
     }
 }

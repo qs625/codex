@@ -1,6 +1,8 @@
 use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
+use codex_protocol::items::CollabAgentMessageItem;
+use codex_protocol::items::EventDrivenToolItem;
 use codex_protocol::items::ReasoningItem;
 use codex_protocol::items::TurnItem;
 use codex_protocol::items::UserMessageItem;
@@ -16,6 +18,8 @@ use codex_protocol::models::is_image_open_tag_text;
 use codex_protocol::models::is_local_image_close_tag_text;
 use codex_protocol::models::is_local_image_open_tag_text;
 use codex_protocol::protocol::COLLABORATION_MODE_OPEN_TAG;
+use codex_protocol::protocol::InterAgentCommunication;
+use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::REALTIME_CONVERSATION_OPEN_TAG;
 use codex_protocol::user_input::UserInput;
 use tracing::warn;
@@ -143,19 +147,37 @@ pub fn parse_turn_item(item: &ResponseItem) -> Option<TurnItem> {
             ..
         } => match role.as_str() {
             "user" => {
-                if EventDrivenToolTrigger::parse_message_content(content).is_some() {
-                    None
+                if let Some(trigger) = EventDrivenToolTrigger::parse_message_content(content) {
+                    Some(TurnItem::EventDrivenTool(EventDrivenToolItem {
+                        id: id.clone().unwrap_or_else(|| Uuid::new_v4().to_string()),
+                        tool: trigger.tool,
+                        title: trigger.title,
+                        text: trigger.text,
+                    }))
                 } else {
                     parse_visible_hook_prompt_message(id.as_ref(), content)
                         .map(TurnItem::HookPrompt)
                         .or_else(|| parse_user_message(content).map(TurnItem::UserMessage))
                 }
             }
-            "assistant" => Some(TurnItem::AgentMessage(parse_agent_message(
-                id.as_ref(),
-                content,
-                phase.clone(),
-            ))),
+            "assistant" => {
+                if let Some(communication) = InterAgentCommunication::from_message_content(content)
+                    .filter(|communication| {
+                        !matches!(communication.operation, InterAgentOperation::Unknown)
+                    })
+                {
+                    Some(TurnItem::CollabAgentMessage(CollabAgentMessageItem {
+                        id: id.clone().unwrap_or_else(|| Uuid::new_v4().to_string()),
+                        communication,
+                    }))
+                } else {
+                    Some(TurnItem::AgentMessage(parse_agent_message(
+                        id.as_ref(),
+                        content,
+                        phase.clone(),
+                    )))
+                }
+            }
             "system" => None,
             _ => None,
         },

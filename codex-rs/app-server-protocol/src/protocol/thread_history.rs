@@ -637,6 +637,8 @@ impl ThreadHistoryBuilder {
             codex_protocol::items::TurnItem::UserMessage(_)
             | codex_protocol::items::TurnItem::HookPrompt(_)
             | codex_protocol::items::TurnItem::AgentMessage(_)
+            | codex_protocol::items::TurnItem::EventDrivenTool(_)
+            | codex_protocol::items::TurnItem::CollabAgentMessage(_)
             | codex_protocol::items::TurnItem::Reasoning(_)
             | codex_protocol::items::TurnItem::WebSearch(_)
             | codex_protocol::items::TurnItem::ImageView(_)
@@ -653,6 +655,13 @@ impl ThreadHistoryBuilder {
                 if plan.text.is_empty() {
                     return;
                 }
+                self.upsert_item_in_turn_id(
+                    &payload.turn_id,
+                    ThreadItem::from(payload.item.clone()),
+                );
+            }
+            codex_protocol::items::TurnItem::EventDrivenTool(_)
+            | codex_protocol::items::TurnItem::CollabAgentMessage(_) => {
                 self.upsert_item_in_turn_id(
                     &payload.turn_id,
                     ThreadItem::from(payload.item.clone()),
@@ -1892,6 +1901,8 @@ mod tests {
     use codex_protocol::AgentPath;
     use codex_protocol::ThreadId;
     use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
+    use codex_protocol::items::CollabAgentMessageItem as CoreCollabAgentMessageItem;
+    use codex_protocol::items::EventDrivenToolItem as CoreEventDrivenToolItem;
     use codex_protocol::items::HookPromptFragment as CoreHookPromptFragment;
     use codex_protocol::items::TurnItem as CoreTurnItem;
     use codex_protocol::items::UserMessageItem as CoreUserMessageItem;
@@ -2171,6 +2182,101 @@ mod tests {
                 tool: "process_exit_subscribe".into(),
                 title: "Process exited".into(),
                 text: "[Process exit subscription] Session 42 exited with code 0".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn maps_typed_event_driven_tool_completed_to_event_item() {
+        let thread_id = ThreadId::new();
+        let events = [
+            EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            }),
+            EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id,
+                turn_id: "turn-1".into(),
+                item: CoreTurnItem::EventDrivenTool(CoreEventDrivenToolItem {
+                    id: "event-1".into(),
+                    tool: "process_exit_subscribe".into(),
+                    title: "Process exited".into(),
+                    text: "[Process exit subscription] Session 42 exited with code 0".into(),
+                }),
+                completed_at_ms: 123,
+            }),
+        ];
+
+        let mut builder = ThreadHistoryBuilder::new();
+        for event in &events {
+            builder.handle_event(event);
+        }
+        let turns = builder.finish();
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::EventDrivenTool {
+                id: "event-1".into(),
+                tool: "process_exit_subscribe".into(),
+                title: "Process exited".into(),
+                text: "[Process exit subscription] Session 42 exited with code 0".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn maps_typed_child_completion_completed_to_collab_status_update() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "completed".into(),
+            InterAgentOperation::ChildCompletion,
+        )
+        .with_status(codex_protocol::protocol::AgentStatus::Completed(Some(
+            "completed".into(),
+        )));
+        let events = [
+            EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            }),
+            EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "turn-1".into(),
+                item: CoreTurnItem::CollabAgentMessage(CoreCollabAgentMessageItem {
+                    id: "collab-1".into(),
+                    communication,
+                }),
+                completed_at_ms: 123,
+            }),
+        ];
+
+        let mut builder = ThreadHistoryBuilder::new();
+        for event in &events {
+            builder.handle_event(event);
+        }
+        let turns = builder.finish();
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::CollabAgentStatusUpdate {
+                id: "collab-1".into(),
+                sender_thread_id: None,
+                sender_path: "/root/worker".into(),
+                recipient_thread_id: None,
+                recipient_path: "/root".into(),
+                status: CollabAgentState {
+                    path: Some("/root/worker".into()),
+                    status: CollabAgentStatus::Completed,
+                    message: Some("completed".into()),
+                },
             }]
         );
     }
