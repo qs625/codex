@@ -142,14 +142,7 @@ pub(crate) async fn merge_agent_roles_from_dirs(
     agent_dirs: &[AbsolutePathBuf],
     startup_warnings: &mut Vec<String>,
 ) -> std::io::Result<()> {
-    merge_agent_roles_from_dirs_with_precedence(
-        fs,
-        roles,
-        agent_dirs,
-        startup_warnings,
-        AgentRoleMergePrecedence::OverrideExisting,
-    )
-    .await
+    merge_agent_roles_from_dirs_with_precedence(fs, roles, agent_dirs, startup_warnings).await
 }
 
 pub(crate) async fn merge_missing_agent_roles_from_plugin_dirs(
@@ -192,18 +185,11 @@ pub(crate) async fn merge_missing_agent_roles_from_plugin_dirs(
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy)]
-enum AgentRoleMergePrecedence {
-    KeepExisting,
-    OverrideExisting,
-}
-
 async fn merge_agent_roles_from_dirs_with_precedence(
     fs: &dyn ExecutorFileSystem,
     roles: &mut BTreeMap<String, AgentRoleConfig>,
     agent_dirs: &[AbsolutePathBuf],
     startup_warnings: &mut Vec<String>,
-    precedence: AgentRoleMergePrecedence,
 ) -> std::io::Result<()> {
     for agents_dir in agent_dirs {
         for (role_name, role) in
@@ -215,14 +201,7 @@ async fn merge_agent_roles_from_dirs_with_precedence(
                 push_agent_role_warning(startup_warnings, err);
                 continue;
             }
-            match precedence {
-                AgentRoleMergePrecedence::KeepExisting => {
-                    roles.entry(role_name).or_insert(role);
-                }
-                AgentRoleMergePrecedence::OverrideExisting => {
-                    roles.insert(role_name, role);
-                }
-            }
+            roles.insert(role_name, role);
         }
     }
     Ok(())
@@ -563,7 +542,7 @@ fn parse_markdown_agent_role_file_contents(
             parsed.skills,
             &format!("agent role file {}.skills", role_file_label.display()),
         )?,
-        model: parsed.model.clone(),
+        model: parsed.model,
         model_reasoning_effort,
     })
 }

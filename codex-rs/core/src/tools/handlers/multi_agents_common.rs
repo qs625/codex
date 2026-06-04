@@ -2,13 +2,16 @@ use crate::agent::AgentStatus;
 use crate::config::Config;
 use crate::config::DEFAULT_MULTI_AGENT_V2_MIN_WAIT_TIMEOUT_MS;
 use crate::config::HARD_MAX_MULTI_AGENT_V2_TIMEOUT_MS;
+use crate::config::agent_roles::merge_agent_roles_from_dirs;
 use crate::function_tool::FunctionCallError;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
+use codex_exec_server::LOCAL_FS;
 use codex_features::Feature;
+use codex_git_utils::resolve_root_git_project_for_trust;
 use codex_models_manager::manager::RefreshStrategy;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
@@ -25,7 +28,9 @@ use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::user_input::UserInput;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// Minimum wait timeout to prevent tight polling loops from burning CPU.
 pub(crate) const MIN_WAIT_TIMEOUT_MS: i64 = DEFAULT_MULTI_AGENT_V2_MIN_WAIT_TIMEOUT_MS;
@@ -215,6 +220,46 @@ pub(crate) fn build_agent_spawn_config(
     let mut config = build_agent_shared_config(turn, cwd)?;
     config.base_instructions = Some(base_instructions.text.clone());
     Ok(config)
+}
+
+pub(crate) async fn refresh_spawn_cwd_agent_roles(
+    config: &mut Config,
+) -> Result<(), FunctionCallError> {
+    let mut seen = BTreeSet::<PathBuf>::new();
+    let mut agent_dirs = Vec::new();
+    for agents_dir in [
+        config.codex_home.join("agents"),
+        config.cwd.join(".codex").join("agents"),
+    ] {
+        if seen.insert(agents_dir.to_path_buf()) {
+            agent_dirs.push(agents_dir);
+        }
+    }
+
+    if let Some(repo_root) =
+        resolve_root_git_project_for_trust(LOCAL_FS.as_ref(), &config.cwd).await
+    {
+        let repo_agents_dir = repo_root.join(".codex").join("agents");
+        if seen.insert(repo_agents_dir.to_path_buf()) {
+            agent_dirs.push(repo_agents_dir);
+        }
+    }
+
+    let mut warnings = Vec::new();
+    merge_agent_roles_from_dirs(
+        LOCAL_FS.as_ref(),
+        &mut config.agent_roles,
+        &agent_dirs,
+        &mut warnings,
+    )
+    .await
+    .map_err(|err| {
+        FunctionCallError::RespondToModel(format!(
+            "failed to refresh agent roles for child cwd: {err}"
+        ))
+    })?;
+    config.startup_warnings.extend(warnings);
+    Ok(())
 }
 
 pub(crate) fn build_agent_resume_config(

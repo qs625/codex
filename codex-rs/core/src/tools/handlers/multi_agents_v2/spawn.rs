@@ -107,6 +107,7 @@ async fn handle_spawn_agent(
             args.reasoning_effort,
         )
         .await?;
+        refresh_spawn_cwd_agent_roles(&mut config).await?;
         apply_role_to_config(&mut config, role_name)
             .await
             .map_err(FunctionCallError::RespondToModel)?;

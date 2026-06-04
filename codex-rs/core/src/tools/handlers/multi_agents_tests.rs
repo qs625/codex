@@ -1,5 +1,6 @@
 use super::*;
 use crate::ThreadManager;
+use crate::agent::role::apply_role_to_config;
 use crate::config::AgentRoleConfig;
 use crate::config::DEFAULT_AGENT_MAX_DEPTH;
 use crate::function_tool::FunctionCallError;
@@ -4105,6 +4106,62 @@ async fn build_agent_spawn_config_preserves_base_user_instructions() {
         build_agent_spawn_config(&base_instructions, &turn, /*cwd*/ None).expect("spawn config");
 
     assert_eq!(config.user_instructions, base_config.user_instructions);
+}
+
+#[tokio::test]
+async fn refresh_spawn_cwd_agent_roles_loads_child_repo_agents() {
+    let (_session, turn) = make_session_and_context().await;
+    let repo = tempfile::tempdir().expect("repo dir");
+    let nested_cwd = repo.path().join("packages").join("app");
+    tokio::fs::create_dir_all(repo.path().join(".git"))
+        .await
+        .expect("create git marker");
+    tokio::fs::create_dir_all(&nested_cwd)
+        .await
+        .expect("create nested cwd");
+    let agents_dir = repo.path().join(".codex").join("agents");
+    tokio::fs::create_dir_all(&agents_dir)
+        .await
+        .expect("create agents dir");
+    let role_file = agents_dir.join("child.agent.md");
+    tokio::fs::write(
+        &role_file,
+        r#"---
+name: child-cwd
+description: Child cwd role.
+---
+
+Child developer instructions.
+"#,
+    )
+    .await
+    .expect("write child role");
+    let base_instructions = BaseInstructions {
+        text: "base".to_string(),
+    };
+
+    let mut config = build_agent_spawn_config(&base_instructions, &turn, Some(nested_cwd.abs()))
+        .expect("spawn config");
+    assert!(!config.agent_roles.contains_key("child-cwd"));
+
+    refresh_spawn_cwd_agent_roles(&mut config)
+        .await
+        .expect("refresh child cwd roles");
+
+    assert_eq!(
+        config
+            .agent_roles
+            .get("child-cwd")
+            .and_then(|role| role.description.as_deref()),
+        Some("Child cwd role.")
+    );
+    apply_role_to_config(&mut config, Some("child-cwd"))
+        .await
+        .expect("child cwd role should apply");
+    assert_eq!(
+        config.developer_instructions.as_deref(),
+        Some("Child developer instructions.")
+    );
 }
 
 #[tokio::test]
