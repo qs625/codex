@@ -1466,7 +1466,18 @@ pub(super) fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
         EventMsg::AgentMessage(event) => Some(event.message.clone()),
         EventMsg::ItemCompleted(event) => match &event.item {
             TurnItem::AgentMessage(item) => Some(agent_message_text(item)),
-            _ => None,
+            TurnItem::UserMessage(_)
+            | TurnItem::HookPrompt(_)
+            | TurnItem::EventDrivenTool(_)
+            | TurnItem::CollabAgentMessage(_)
+            | TurnItem::Plan(_)
+            | TurnItem::Reasoning(_)
+            | TurnItem::WebSearch(_)
+            | TurnItem::ImageView(_)
+            | TurnItem::ImageGeneration(_)
+            | TurnItem::FileChange(_)
+            | TurnItem::McpToolCall(_)
+            | TurnItem::ContextCompaction(_) => None,
         },
         EventMsg::Error(_)
         | EventMsg::Warning(_)
@@ -2198,6 +2209,11 @@ async fn try_run_sampling_request(
                             parsed,
                         )
                         .await;
+                    } else if matches!(
+                        active,
+                        TurnItem::EventDrivenTool(_) | TurnItem::CollabAgentMessage(_)
+                    ) {
+                        continue;
                     } else {
                         let event = AgentMessageContentDeltaEvent {
                             thread_id: sess.conversation_id.to_string(),

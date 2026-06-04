@@ -1,6 +1,8 @@
 use super::parse_turn_item;
 use crate::context::ContextualUserFragment;
 use crate::context::GoalContext;
+use codex_protocol::AgentPath;
+use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::HookPromptFragment;
 use codex_protocol::items::TurnItem;
@@ -12,6 +14,9 @@ use codex_protocol::models::ReasoningItemContent;
 use codex_protocol::models::ReasoningItemReasoningSummary;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::models::WebSearchAction;
+use codex_protocol::protocol::AgentStatus;
+use codex_protocol::protocol::InterAgentCommunication;
+use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::user_input::UserInput;
 use pretty_assertions::assert_eq;
 
@@ -130,6 +135,101 @@ fn parses_assistant_message_input_text_for_backward_compatibility() {
                         .to_string()
                 ]
             );
+        }
+        other => panic!("expected TurnItem::AgentMessage, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_event_driven_tool_marker_as_typed_turn_item() {
+    let trigger = EventDrivenToolTrigger {
+        tool: "process_exit_subscribe".to_string(),
+        title: "Process exited".to_string(),
+        text: "Session 42 exited with code 0".to_string(),
+    };
+    let item = ResponseItem::Message {
+        id: Some("event-1".to_string()),
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: trigger.render_message_text(),
+        }],
+        phase: None,
+    };
+
+    let turn_item = parse_turn_item(&item).expect("expected event-driven tool turn item");
+
+    match turn_item {
+        TurnItem::EventDrivenTool(event_driven_tool) => {
+            assert_eq!(event_driven_tool.id, "event-1");
+            assert_eq!(event_driven_tool.tool, "process_exit_subscribe");
+            assert_eq!(event_driven_tool.title, "Process exited");
+            assert_eq!(event_driven_tool.text, "Session 42 exited with code 0");
+        }
+        other => panic!("expected TurnItem::EventDrivenTool, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_inter_agent_envelope_as_typed_turn_item() {
+    let communication = InterAgentCommunication::new(
+        AgentPath::try_from("/root/worker").expect("agent path"),
+        AgentPath::root(),
+        Vec::new(),
+        "completed".to_string(),
+        InterAgentOperation::ChildCompletion,
+    )
+    .with_status(AgentStatus::Completed(Some("done".to_string())));
+    let item = ResponseItem::Message {
+        id: Some("collab-1".to_string()),
+        role: "assistant".to_string(),
+        content: vec![ContentItem::OutputText {
+            text: serde_json::to_string(&communication).expect("serialize communication"),
+        }],
+        phase: None,
+    };
+
+    let turn_item = parse_turn_item(&item).expect("expected collab turn item");
+
+    match turn_item {
+        TurnItem::CollabAgentMessage(collab) => {
+            assert_eq!(collab.id, "collab-1");
+            assert_eq!(collab.communication, communication);
+        }
+        other => panic!("expected TurnItem::CollabAgentMessage, got {other:?}"),
+    }
+}
+
+#[test]
+fn keeps_unknown_inter_agent_envelope_as_agent_message() {
+    let communication = InterAgentCommunication::new(
+        AgentPath::try_from("/root/worker").expect("agent path"),
+        AgentPath::root(),
+        Vec::new(),
+        "unknown".to_string(),
+        InterAgentOperation::Unknown,
+    );
+    let text = serde_json::to_string(&communication).expect("serialize communication");
+    let item = ResponseItem::Message {
+        id: Some("agent-1".to_string()),
+        role: "assistant".to_string(),
+        content: vec![ContentItem::OutputText { text: text.clone() }],
+        phase: None,
+    };
+
+    let turn_item = parse_turn_item(&item).expect("expected agent message turn item");
+
+    match turn_item {
+        TurnItem::AgentMessage(agent) => {
+            assert_eq!(agent.id, "agent-1");
+            let rendered = agent
+                .content
+                .into_iter()
+                .map(|content| {
+                    let AgentMessageContent::Text { text } = content;
+                    text
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(rendered, vec![text]);
         }
         other => panic!("expected TurnItem::AgentMessage, got {other:?}"),
     }
