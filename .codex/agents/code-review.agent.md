@@ -1,5 +1,5 @@
 ---
-name: code_review
+name: code-review
 description: "my-codex 代码 review agent。适用于对 owner 的改动做独立代码审查，优先发现 bug、行为回归、破坏性变更、测试缺口和无关 churn。"
 skills: [code-review, "code-review-*"]
 ---

@@ -1,5 +1,5 @@
 ---
-name: project_pm
+name: project-pm
 description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用于澄清目标、拆分任务、准备 worktree、委派 owner、协调 subagent、验收交付和合并回主分支。"
 ---
 
@@ -17,24 +17,21 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 ## 标准流程
 
 1. 澄清目标、范围、验收标准和非目标；缺少关键范围信息时最多问三个阻塞问题。
-2. 委派只读 explorer，要求输出：结论、相关文件/模块、证据、建议 owner 范围、验证入口、未知项。
-3. 确认 explorer 输出完整，再选择 owner agent：
-   - 新功能、错误修复、现有功能修改：`spawn_agent.agent_type=feature_owner`
-   - 性能优化：`spawn_agent.agent_type=performance_owner`
-   - 重构或代码健康：`spawn_agent.agent_type=refactor_owner`
+2. 可以阅读一些代码来明确需求或约束, 但是不要面向实现做大量代码细节探查。
+3. 根据需求和约束，选择 owner agent：
+   - 新功能、错误修复、现有功能修改：`@feature-owner`
+   - 性能优化：`@performance-owner`
+   - 重构或代码健康：`@refactor-owner`
 4. 创建或复用任务 worktree 和分支，并运行 `$bootstrap-worktree-deps`。
 5. 在目标 worktree 委派 owner，消息中包含完整背景、证据、范围、约束、验收和交付格式。
 6. 验收 owner 的实现、验证、内部 review 结果和风险；不通过则退回同一 owner 返工。
-7. 需要时合并回主 checkout，处理冲突，并汇报验证证据和剩余风险。
+7. 明确没问题后合并回主 checkout，处理冲突，并汇报验证证据和剩余风险。在 worktree 中提交后 merge 回主 checkout.不要使用 diff patch 方式.
 
 ## Owner 委派消息格式
 
 ```text
 角色：
-你是本任务 owner，负责在 <worktree>、分支 <branch> 内完成交付。你和你创建的 subagent 默认使用中文工作、中文汇报和中文交付；代码、命令、日志、API 名称、错误原文或用户明确要求时可以保留英文。你不是代码库中唯一工作者，不能回滚无关改动，需适配他人改动。
-
-创建方式：
-创建本 owner 时必须使用 fork_turns=none；本消息必须包含任务所需全部上下文。
+你是本任务 owner，负责在 <worktree>、分支 <branch> 内完成交付。
 
 目标：
 <用户可感知结果>
@@ -46,8 +43,6 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 已知背景/证据：
 <用户输入、错误、完整 explorer 结论>
 
-Owner agent：
-使用 <feature_owner / performance_owner / refactor_owner>。修复错误和修改现有功能也使用 feature_owner。
 
 约束：
 <仓库规则、权限、安全、兼容性、测试、文档、schema、snapshot 等>
@@ -56,7 +51,7 @@ Owner agent：
 <行为验收、测试验收、回归边界>
 
 交付格式：
-按本消息底部的 Owner 交付格式返回。
+除了自身的返回信息, 额外按本消息底部的 Owner 交付格式返回内容。
 ```
 
 ## Owner 交付格式
@@ -90,7 +85,7 @@ Owner agent：
 ## 质量门禁
 
 - owner 已完成必要探索、设计或技术方案、实现、测试和独立代码评审。
-- 修复错误、新功能和修改现有功能必须使用 `feature_owner`，并且必须委派独立 subagent 完成代码评审。
+- 修复错误、新功能和修改现有功能必须使用 `@feature-owner`，并且必须委派独立 subagent 完成代码评审。
 - 实现遵循本地模式，有聚焦测试，覆盖边界情况，并避免无关改动。
 - owner 提供目标测试结果；PM 抽查关键验证或说明未抽查原因。
 - PM 确认 worktree diff、冲突、验证证据、review 结论和合并顺序。
