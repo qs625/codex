@@ -147,6 +147,52 @@ test("uses event-driven item timestamps instead of the parent turn timestamp", (
   );
 });
 
+test("previews captured process exit output without putting it in the collapsed event text", () => {
+  const capturedOutput = Array.from(
+    { length: 16 },
+    (_, index) => `captured line ${index + 1}`,
+  ).join("\n");
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "eventDrivenTool",
+        id: "event-1",
+        tool: "process_exit_subscribe",
+        title: "Process exit subscription (build)",
+        text: `Session 42 exited with code 0\nCaptured output:\n${capturedOutput}`,
+      },
+    ]),
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.text, "Session 42 exited with code 0");
+  assert.equal(entries[0]?.text.includes("captured line 1"), false);
+  assert.equal(
+    entries[0]?.toolDetails,
+    [
+      "Tool\nprocess_exit_subscribe",
+      "Event\nProcess exit subscription (build)",
+      "Details\nSession 42 exited with code 0",
+      [
+        "Captured output",
+        "captured line 1",
+        "captured line 2",
+        "captured line 3",
+        "captured line 4",
+        "captured line 5",
+        "captured line 6",
+        "captured line 7",
+        "captured line 8",
+        "captured line 9",
+        "captured line 10",
+        "captured line 11",
+        "captured line 12",
+        "… omitted additional captured output",
+      ].join("\n"),
+    ].join("\n\n"),
+  );
+});
+
 test("uses meaningful multi-agent titles for received work and child completion", () => {
   const entries = buildConversationEntries(
     makeThread([

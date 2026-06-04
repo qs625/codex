@@ -753,15 +753,77 @@ function summarizeEventDrivenToolCall(
 function summarizeEventDrivenTool(
   item: Extract<ThreadItem, { type: "eventDrivenTool" }>,
 ) {
-  return stringOrNull(item.text) ?? item.title;
+  const text = stringOrNull(item.text);
+  if (!text) {
+    return item.title;
+  }
+
+  const details = parseEventDrivenToolDetails(text);
+  return details.capturedOutput !== null
+    ? firstNonEmptyLine(details.summary) || item.title
+    : text;
 }
 
 function formatEventDrivenToolDetails(
   item: Extract<ThreadItem, { type: "eventDrivenTool" }>,
 ) {
-  return [`Tool\n${item.tool}`, `Event\n${item.title}`, `Details\n${item.text}`].join(
-    "\n\n",
-  );
+  const details = parseEventDrivenToolDetails(item.text);
+  const sections = [
+    `Tool\n${item.tool}`,
+    `Event\n${item.title}`,
+    `Details\n${details.summary}`,
+  ];
+
+  if (details.capturedOutput !== null && details.capturedOutput.length > 0) {
+    sections.push(
+      `Captured output\n${previewCapturedOutput(details.capturedOutput)}`,
+    );
+  }
+
+  return sections.join("\n\n");
+}
+
+const CAPTURED_OUTPUT_MARKER = "\nCaptured output:\n";
+const CAPTURED_OUTPUT_PREVIEW_MAX_LINES = 12;
+const CAPTURED_OUTPUT_PREVIEW_MAX_CHARS = 2000;
+
+function parseEventDrivenToolDetails(text: string) {
+  const markerIndex = text.indexOf(CAPTURED_OUTPUT_MARKER);
+  if (markerIndex === -1) {
+    return {
+      summary: text,
+      capturedOutput: null,
+    };
+  }
+
+  return {
+    summary: text.slice(0, markerIndex).trim() || "Event completed.",
+    capturedOutput: text
+      .slice(markerIndex + CAPTURED_OUTPUT_MARKER.length)
+      .trim(),
+  };
+}
+
+function firstNonEmptyLine(text: string) {
+  return text
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+}
+
+function previewCapturedOutput(output: string) {
+  const lines = output.split(/\r?\n/u);
+  let preview = lines.slice(0, CAPTURED_OUTPUT_PREVIEW_MAX_LINES).join("\n");
+  let omitted = lines.length > CAPTURED_OUTPUT_PREVIEW_MAX_LINES;
+
+  if (preview.length > CAPTURED_OUTPUT_PREVIEW_MAX_CHARS) {
+    preview = preview.slice(0, CAPTURED_OUTPUT_PREVIEW_MAX_CHARS).trimEnd();
+    omitted = true;
+  }
+
+  return omitted
+    ? `${preview}\n… omitted additional captured output`
+    : preview;
 }
 
 function formatCollabAgentToolName(
