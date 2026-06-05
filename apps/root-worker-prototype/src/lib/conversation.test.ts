@@ -114,6 +114,104 @@ test("separates command, event subscriptions, event notifications, and multi-age
   assert.equal(cells.length, 4);
 });
 
+test("keeps consecutive ordinary tools grouped in one visible cell", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "commandExecution",
+        id: "cmd-1",
+        command: "pwd",
+        cwd: "/tmp/project",
+        status: "completed",
+        aggregatedOutput: null,
+        exitCode: 0,
+        durationMs: 10,
+      },
+      {
+        type: "commandExecution",
+        id: "cmd-2",
+        command: "ls",
+        cwd: "/tmp/project",
+        status: "completed",
+        aggregatedOutput: null,
+        exitCode: 0,
+        durationMs: 10,
+      },
+    ]),
+  );
+
+  const cells = buildConversationCells(entries);
+
+  assert.deepEqual(
+    cells.map((cell) => ({
+      id: cell.id,
+      kind: cell.kind,
+      entries: cell.entries.map((entry) => entry.toolName),
+    })),
+    [
+      {
+        id: "cmd-1",
+        kind: "tool",
+        entries: ["pwd", "ls"],
+      },
+    ],
+  );
+});
+
+test("keeps consecutive multi-agent notifications as visible cells", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "collabAgentMessage",
+        id: "msg-1",
+        operation: "sendMessage",
+        senderThreadId: "thread-2",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        otherRecipientPaths: [],
+        content: "status update",
+        triggerTurn: false,
+      },
+      {
+        type: "collabAgentStatusUpdate",
+        id: "status-1",
+        senderThreadId: "thread-2",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        status: {
+          path: "/root/worker",
+          status: "completed",
+          message: "done",
+        },
+      },
+    ]),
+  );
+
+  const cells = buildConversationCells(entries);
+
+  assert.deepEqual(
+    cells.map((cell) => ({
+      id: cell.id,
+      kind: cell.kind,
+      entries: cell.entries.map((entry) => entry.toolName),
+    })),
+    [
+      {
+        id: "msg-1",
+        kind: "tool",
+        entries: ["received from /root/worker"],
+      },
+      {
+        id: "status-1",
+        kind: "tool",
+        entries: ["/root/worker subagent completion"],
+      },
+    ],
+  );
+});
+
 test("uses event-driven item timestamps instead of the parent turn timestamp", () => {
   const thread = makeThread([
     {

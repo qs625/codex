@@ -656,6 +656,12 @@ function shouldMergeConversationEntry(
   }
 
   if (cell.kind === "tool" && nextEntry.kind === "tool") {
+    if (
+      previousEntry.toolCategory === "multiAgent" ||
+      nextEntry.toolCategory === "multiAgent"
+    ) {
+      return false;
+    }
     return previousEntry.toolCategory === nextEntry.toolCategory;
   }
 
