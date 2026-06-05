@@ -14,15 +14,21 @@ description: 配置 git worktree 复用主 checkout 的构建产物和依赖。�
 ## 流程
 
 1. 确认请求目标是共享 worktree 构建产物，而不是全局修改 Cargo 或 pnpm 语义。
-2. 从仓库根目录或目标 worktree 运行初始化脚本：
+2. 为开发任务创建 worktree 时，目录必须放在当前 cwd 的 `.worktrees/` 下，分支名称必须以 `agent/` 开头：
+
+```bash
+rtk git worktree add -b agent/<task-name> .worktrees/<task-name> HEAD
+```
+
+3. 从仓库根目录或目标 worktree 运行初始化脚本：
 
 ```bash
 python3 .codex/skills/bootstrap-worktree-deps/scripts/bootstrap_worktree_deps.py
 ```
 
-3. 如果要操作的 checkout 不是当前 cwd，传入 `--repo <path>`。
-4. 如果现有 worktree 中符号链接目标位置已经是真实目录，使用 `--force` 重新运行。
-5. 汇报哪些路径已建立链接，哪些路径本来就正确。
+4. 如果要操作的 checkout 不是当前 cwd，传入 `--repo <path>`。
+5. 如果现有 worktree 中符号链接目标位置已经是真实目录，使用 `--force` 重新运行。
+6. 汇报哪些路径已建立链接，哪些路径本来就正确。
 
 ## 管理路径
 
