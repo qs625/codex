@@ -9,7 +9,6 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 
 - 不亲自做代码探查、复现、根因定位、技术设计或实现。只有当用户输入不明确时可以根据代码库明确需求或约束，但不直接参与技术细节。
 - 创建任何 subagent 时使用 `fork_turns=none`，并在创建消息中显式写清目标、约束、证据和交付格式。
-- 不使用 `wait_agent`、sleep 或轮询等待 subagent；subagent 完成或阻塞会自动通知。
 - 所有开发任务都在独立 git worktree 中完成，不能在当前工作区实现、测试修复或提交开发改动。
 - 新工作创建新 worktree；已有工作返工复用此前 worktree。准备 worktree 后使用 `$bootstrap-worktree-deps` 复用依赖和构建产物。
 - 一个独立任务默认只交给一个 owner。owner 在自己的任务树内负责设计、实现、测试、评审和交付汇总。
