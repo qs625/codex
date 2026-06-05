@@ -33,6 +33,11 @@ export type ThreadAnalysis = {
   };
 };
 
+type MonitorEvent = {
+  displayText: string;
+  matchText: string;
+};
+
 const MONITOR_TOOLS = {
   fs_subscribe: "filesystem",
   process_exit_subscribe: "process",
@@ -91,7 +96,7 @@ function buildMonitorSections(
   thread: Thread | null,
 ): ThreadAnalysis["monitors"] {
   const monitors: MonitorSummary[] = [];
-  const eventsByTool = new Map<string, string[]>();
+  const eventsByTool = new Map<string, MonitorEvent[]>();
 
   if (thread) {
     for (const turn of thread.turns) {
@@ -101,14 +106,17 @@ function buildMonitorSections(
           continue;
         }
 
-        if (item.type === "eventDrivenToolCall" && isUnsubscribeTool(item.tool)) {
+        if (
+          item.type === "eventDrivenToolCall" &&
+          isUnsubscribeTool(item.tool)
+        ) {
           removeUnsubscribedMonitor(monitors, item);
           continue;
         }
 
         if (item.type === "eventDrivenTool" && isMonitorTool(item.tool)) {
           const events = eventsByTool.get(item.tool) ?? [];
-          events.push(item.text || item.title);
+          events.push(buildMonitorEvent(item));
           eventsByTool.set(item.tool, events);
         }
       }
@@ -120,7 +128,7 @@ function buildMonitorSections(
     const tool = toolFromMonitorKind(monitor.kind);
     const events = eventsByTool.get(tool) ?? [];
     const matchingEvents = events.filter((event) =>
-      monitorMatchesEvent(monitor, event),
+      monitorMatchesEvent(monitor, event.matchText),
     );
     const fallbackEvents =
       monitors.filter((candidate) => candidate.kind === monitor.kind).length ===
@@ -137,7 +145,7 @@ function buildMonitorSections(
       activeMonitors.push({
         ...monitor,
         eventCount: observedEvents.length,
-        latestEvent: observedEvents.at(-1) ?? null,
+        latestEvent: observedEvents.at(-1)?.displayText ?? null,
       });
       continue;
     }
@@ -188,7 +196,9 @@ function removeUnsubscribedMonitor(
     return;
   }
 
-  const monitorIndex = monitors.findIndex((monitor) => monitor.subscriptionId === subscriptionId);
+  const monitorIndex = monitors.findIndex(
+    (monitor) => monitor.subscriptionId === subscriptionId,
+  );
   if (monitorIndex !== -1) {
     monitors.splice(monitorIndex, 1);
   }
@@ -235,8 +245,36 @@ function monitorDetail(
   );
 }
 
+function buildMonitorEvent(
+  item: Extract<ThreadItem, { type: "eventDrivenTool" }>,
+) {
+  const displayText = item.text || item.title;
+  return {
+    displayText,
+    matchText: [item.title, item.text].filter(Boolean).join("\n"),
+  };
+}
+
 function monitorMatchesEvent(monitor: MonitorSummary, event: string) {
+  if (
+    monitor.kind === "process" &&
+    event.includes("Process exit restore failed")
+  ) {
+    return (
+      subscriptionIdMatchesEvent(monitor.subscriptionId, event) ||
+      event.includes(monitor.detail) ||
+      event.includes(monitor.label)
+    );
+  }
+
   return event.includes(monitor.label) || event.includes(monitor.detail);
+}
+
+function subscriptionIdMatchesEvent(
+  subscriptionId: string | null,
+  event: string,
+) {
+  return subscriptionId !== null && event.includes(subscriptionId);
 }
 
 function statusLabel(status: string) {
@@ -259,7 +297,9 @@ function isMonitorTool(tool: string): tool is keyof typeof MONITOR_TOOLS {
   return Object.prototype.hasOwnProperty.call(MONITOR_TOOLS, tool);
 }
 
-function isUnsubscribeTool(tool: string): tool is keyof typeof UNSUBSCRIBE_TOOLS {
+function isUnsubscribeTool(
+  tool: string,
+): tool is keyof typeof UNSUBSCRIBE_TOOLS {
   return Object.prototype.hasOwnProperty.call(UNSUBSCRIBE_TOOLS, tool);
 }
 

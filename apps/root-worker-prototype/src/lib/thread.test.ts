@@ -1856,6 +1856,46 @@ test("treeThreadStatusClass shows event tool waiting separately", () => {
   );
 });
 
+test("treeThreadStatusClass ignores process exit restore failures", () => {
+  const thread = {
+    ...makeThread(),
+    status: {
+      type: "active" as const,
+      activeFlags: [],
+    },
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "eventDrivenToolCall" as const,
+            id: "item-1",
+            tool: "process_exit_subscribe",
+            arguments: { session_id: 42, label: "build process" },
+            status: "completed",
+            output: { subscription_id: "sub-1" },
+          },
+          {
+            type: "eventDrivenTool" as const,
+            id: "item-2",
+            tool: "process_exit_subscribe",
+            title: "Process exit restore failed",
+            text: "[Process exit subscription restore (build process)] Could not restore session 42 after restart because the original exec session is no longer available.",
+          },
+        ],
+        itemsView: "full" as const,
+        status: "completed" as const,
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1000,
+      },
+    ],
+  };
+
+  assert.equal(treeThreadStatusClass(makeTreeNode(thread)), "doing");
+});
+
 test("treeThreadStatusClass ignores event tool subscriptions after unsubscribe", () => {
   const thread = {
     ...makeThread(),

@@ -169,6 +169,33 @@ test("keeps repeating subscriptions active after events are observed", () => {
   );
 });
 
+test("removes process monitors after restore failed events", () => {
+  const analysis = buildThreadAnalysis(
+    makeThread([
+      {
+        type: "eventDrivenToolCall",
+        id: "process-1",
+        tool: "process_exit_subscribe",
+        arguments: { session_id: 42, label: "build process" },
+        status: "completed",
+        output: { subscription_id: "sub-process" },
+      },
+      {
+        type: "eventDrivenTool",
+        id: "process-event-1",
+        tool: "process_exit_subscribe",
+        title: "Process exit restore failed",
+        text: "[Process exit subscription restore (build process)] Could not restore session 42 after restart because the original exec session is no longer available.",
+      },
+    ]),
+    0,
+  );
+
+  assert.equal(analysis.monitors.totalCount, 0);
+  assert.equal(analysis.monitors.eventCount, 1);
+  assert.deepEqual(analysis.monitors.sections[1]?.monitors, []);
+});
+
 test("keeps subscriptions in listening state before an event is observed", () => {
   const analysis = buildThreadAnalysis(
     makeThread([
