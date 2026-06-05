@@ -38,6 +38,33 @@ python3 .codex/skills/bootstrap-worktree-deps/scripts/bootstrap_worktree_deps.py
 - 除非用户要求替换，或你明确使用 `--force` 运行，否则不要删除 worktree 中已有内容的非符号链接目录。
 - 如果 worktree 状态看起来异常，优先先运行 `--dry-run`。
 
+## 合并与清理规则
+
+开发任务完成后，必须按 git worktree 生命周期收口，不能用 diff patch 把改动搬回主 checkout。
+
+1. 在开发 worktree 内确认改动范围并提交：
+
+```bash
+rtk git status --short
+rtk git add <paths>
+rtk git commit -m "<message>"
+```
+
+2. 回到主 checkout，通过 `git merge` 合并开发分支：
+
+```bash
+rtk git merge <branch>
+```
+
+3. 合并完成并确认主 checkout 状态正确后，删除对应 worktree 目录和分支：
+
+```bash
+rtk git worktree remove <worktree-path>
+rtk git branch -d <branch>
+```
+
+如果合并出现冲突，在主 checkout 解决冲突并完成 merge commit；不要改用 patch diff 迁移改动。
+
 ## 常用命令
 
 预览改动：
