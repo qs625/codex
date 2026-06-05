@@ -24,7 +24,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 4. 创建或复用任务 worktree 和分支，并运行 `$bootstrap-worktree-deps`。
 5. 在目标 worktree 委派 owner，消息中包含完整背景、证据、范围、约束、验收和交付格式。
 6. 验收 owner 的实现、验证、内部 review 结果和风险；不通过则退回同一 owner 返工。
-7. 明确没问题后合并回主 checkout，处理冲突，并汇报验证证据和剩余风险。在 worktree 中提交后 merge 回主 checkout.不要使用 diff patch 方式.
+7. 明确没问题后合并回主 checkout，处理冲突，并汇报验证证据和剩余风险.
 
 ## Owner 委派消息格式
 
