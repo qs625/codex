@@ -301,24 +301,27 @@ export function getThreadReasoningLabel(thread: Thread | null) {
 }
 
 export function updateThreadTurn(thread: Thread, turn: Turn) {
+  const normalizedTurn = normalizeTurnSnapshot(turn);
   const hasExistingTurn = thread.turns.some(
-    (existing) => existing.id === turn.id,
+    (existing) => existing.id === normalizedTurn.id,
   );
   if (hasExistingTurn) {
     const turns = thread.turns.map((existing) =>
-      existing.id === turn.id ? mergeTurn(existing, turn) : existing,
+      existing.id === normalizedTurn.id
+        ? mergeTurn(existing, normalizedTurn)
+        : existing,
     );
     return { ...thread, turns };
   }
 
   const turnMatcher = createTurnItemMatcher(
-    buildTurnItemIndex([{ turn, items: turn.items }]),
+    buildTurnItemIndex([{ turn: normalizedTurn, items: normalizedTurn.items }]),
   );
   const turns = [
     ...thread.turns.flatMap((existing) =>
       getRetainedUnmatchedTurn(existing, turnMatcher),
     ),
-    turn,
+    normalizedTurn,
   ];
   return { ...thread, turns };
 }
@@ -332,7 +335,9 @@ export function updateThreadItem(
     completedAtMs?: number | null;
   },
 ) {
-  const nextItem = applyItemTimestamps(item, timestamps);
+  const nextItem = normalizeThreadItemSnapshot(
+    applyItemTimestamps(item, timestamps),
+  );
   let foundTurn = false;
   const updatedTurns = thread.turns.map((turn) => {
     if (turn.id !== turnId) {
@@ -436,10 +441,12 @@ export function appendAgentDelta(
 }
 
 export function mergeTurn(existing: Turn, next: Turn): Turn {
+  const existingItems = existing.items.map(normalizeThreadItemSnapshot);
+  const nextItems = next.items.map(normalizeThreadItemSnapshot);
   const existingItemsById = new Map(
-    existing.items.map((item) => [item.id, item]),
+    existingItems.map((item) => [item.id, item]),
   );
-  const mergedItems = next.items.map((item) => {
+  const mergedItems = nextItems.map((item) => {
     const existingItem = existingItemsById.get(item.id);
     return existingItem ? mergeThreadItem(existingItem, item) : item;
   });
@@ -448,7 +455,7 @@ export function mergeTurn(existing: Turn, next: Turn): Turn {
     const mergedItemsMatcher = createTurnItemMatcher(
       buildTurnItemIndex([{ turn: next, items: mergedItems }]),
     );
-    for (const item of existing.items) {
+    for (const item of existingItems) {
       if (!consumeMatchingTurnItem(mergedItemsMatcher, existing, item)) {
         mergedItems.push(item);
       }
@@ -559,12 +566,18 @@ export function normalizeThreadSnapshot(thread: Thread): Thread {
 
 function normalizeTurnSnapshot(turn: Turn): Turn {
   const items = turn.items.reduce<ThreadItem[]>((normalizedItems, item) => {
-    const existingIndex = findMatchingSnapshotItemIndex(normalizedItems, item);
+    const normalizedItem = normalizeThreadItemSnapshot(item);
+    const existingIndex = findMatchingSnapshotItemIndex(
+      normalizedItems,
+      normalizedItem,
+    );
     if (existingIndex === -1) {
-      return [...normalizedItems, item];
+      return [...normalizedItems, normalizedItem];
     }
     return normalizedItems.map((existing, index) =>
-      index === existingIndex ? mergeThreadItem(existing, item) : existing,
+      index === existingIndex
+        ? mergeThreadItem(existing, normalizedItem)
+        : existing,
     );
   }, []);
 
@@ -646,6 +659,12 @@ export function isThreadThinking(
 }
 
 function mergeThreadItem(existing: ThreadItem, next: ThreadItem): ThreadItem {
+  const normalizedExisting = normalizeThreadItemSnapshot(existing);
+  const normalizedNext = normalizeThreadItemSnapshot(next);
+  if (normalizedExisting !== existing || normalizedNext !== next) {
+    return mergeThreadItem(normalizedExisting, normalizedNext);
+  }
+
   const timestamps = mergeItemTimestamps(existing, next);
 
   if (existing.type === "agentMessage" && next.type === "agentMessage") {
@@ -661,6 +680,61 @@ function mergeThreadItem(existing: ThreadItem, next: ThreadItem): ThreadItem {
     ...next,
     ...timestamps,
   };
+}
+
+function normalizeThreadItemSnapshot(item: ThreadItem): ThreadItem {
+  if (item.type !== "agentMessage") {
+    return item;
+  }
+
+  const trigger = parseEventDrivenToolTrigger(item.text);
+  if (!trigger) {
+    return item;
+  }
+
+  const normalized: ThreadItem = {
+    type: "eventDrivenTool",
+    id: item.id,
+    tool: trigger.tool,
+    title: trigger.title,
+    text: trigger.text,
+  };
+  if (item.startedAtMs !== null && item.startedAtMs !== undefined) {
+    normalized.startedAtMs = item.startedAtMs;
+  }
+  if (item.completedAtMs !== null && item.completedAtMs !== undefined) {
+    normalized.completedAtMs = item.completedAtMs;
+  }
+  return normalized;
+}
+
+function parseEventDrivenToolTrigger(text: string) {
+  const trimmed = text.trim();
+  const startMarker = "<event_driven_tool>";
+  const endMarker = "</event_driven_tool>";
+  if (!trimmed.startsWith(startMarker) || !trimmed.endsWith(endMarker)) {
+    return null;
+  }
+
+  const body = trimmed
+    .slice(startMarker.length, trimmed.length - endMarker.length)
+    .trim();
+  try {
+    const parsed = JSON.parse(body);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      typeof parsed.tool === "string" &&
+      typeof parsed.title === "string" &&
+      typeof parsed.text === "string"
+    ) {
+      return parsed as { tool: string; title: string; text: string };
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function markStreamingAgentMessage<
@@ -947,40 +1021,61 @@ function getRetainedUnmatchedTurn(
   turn: Turn,
   matcher: TurnItemMatcher,
 ): Turn[] {
+  const normalizedItems = turn.items.map(normalizeThreadItemSnapshot);
+  const normalizedTurn = normalizedItems.every(
+    (item, index) => item === turn.items[index],
+  )
+    ? turn
+    : { ...turn, items: normalizedItems };
+
   if (!isTurnInFlight(turn) && !isLiveDerivedCompletedAgentTurn(turn)) {
-    return [turn];
+    return [normalizedTurn];
   }
 
-  const items = turn.items.filter(
+  const items = normalizedItems.filter(
     (item) => !consumeMatchingTurnItem(matcher, turn, item),
   );
   if (items.length === 0) {
     return [];
   }
-  return [items.length === turn.items.length ? turn : { ...turn, items }];
+  return [
+    items.length === normalizedItems.length ? normalizedTurn : { ...turn, items },
+  ];
 }
 
 function dropDuplicatePendingAgentTurns(snapshot: Thread, updated: Thread) {
-  const snapshotTurnIds = new Set(snapshot.turns.map((turn) => turn.id));
+  const snapshotTurns = snapshot.turns.map(normalizeTurnSnapshot);
+  const snapshotTurnIds = new Set(snapshotTurns.map((turn) => turn.id));
   const matcher = createTurnItemMatcher(
     buildTurnItemIndex(
-      snapshot.turns.map((turn) => ({ turn, items: turn.items })),
+      snapshotTurns.map((turn) => ({ turn, items: turn.items })),
     ),
   );
   const turns = updated.turns.flatMap((turn) => {
+    const isPendingAgentTurn = turn.items.every(
+      (item) => item.type === "agentMessage",
+    );
+    const normalizedItems = turn.items.map(normalizeThreadItemSnapshot);
+    const normalizedTurn = normalizedItems.every(
+      (item, index) => item === turn.items[index],
+    )
+      ? turn
+      : { ...turn, items: normalizedItems };
     if (
       snapshotTurnIds.has(turn.id) ||
-      !turn.items.every((item) => item.type === "agentMessage")
+      !isPendingAgentTurn
     ) {
-      return [turn];
+      return [normalizedTurn];
     }
-    const items = turn.items.filter(
+    const items = normalizedItems.filter(
       (item) => !consumeMatchingTurnItem(matcher, turn, item),
     );
     if (items.length === 0) {
       return [];
     }
-    return [items.length === turn.items.length ? turn : { ...turn, items }];
+    return [
+      items.length === normalizedItems.length ? normalizedTurn : { ...turn, items },
+    ];
   });
   return { ...updated, turns };
 }

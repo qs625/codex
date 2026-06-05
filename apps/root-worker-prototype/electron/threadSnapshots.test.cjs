@@ -61,6 +61,16 @@ function makeThread(overrides = {}) {
   };
 }
 
+function eventDrivenToolMarker(
+  trigger = {
+    tool: "process_exit_subscribe",
+    title: "Process exited",
+    text: "Session 42 exited with code 0",
+  },
+) {
+  return `<event_driven_tool>${JSON.stringify(trigger)}</event_driven_tool>`;
+}
+
 function makeCollabMessageTurn(overrides = {}) {
   return {
     id: "turn-1",
@@ -218,6 +228,85 @@ test("mergeThreadSnapshots normalizes duplicate live-derived turns in each input
   );
 
   assert.deepEqual(merged.turns, [readTurn, resumeReadTurn]);
+});
+
+test("mergeThreadSnapshots normalizes raw process exit marker messages in history", () => {
+  const turn = {
+    id: "turn-1",
+    items: [
+      {
+        type: "agentMessage",
+        id: "raw-item",
+        text: eventDrivenToolMarker(),
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+
+  const merged = mergeThreadSnapshots(null, makeThread({ turns: [turn] }));
+
+  assert.deepEqual(merged.turns[0].items, [
+    {
+      type: "eventDrivenTool",
+      id: "raw-item",
+      tool: "process_exit_subscribe",
+      title: "Process exited",
+      text: "Session 42 exited with code 0",
+    },
+  ]);
+});
+
+test("mergeThreadSnapshots drops restored raw process exit when read has structured event item", () => {
+  const restoredTurn = {
+    id: "restored-turn",
+    items: [
+      {
+        type: "agentMessage",
+        id: "raw-item",
+        text: eventDrivenToolMarker(),
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    itemsView: "notLoaded",
+    status: "completed",
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+  const readTurn = {
+    id: "read-turn",
+    items: [
+      {
+        type: "eventDrivenTool",
+        id: "event-item",
+        tool: "process_exit_subscribe",
+        title: "Process exited",
+        text: "Session 42 exited with code 0",
+      },
+    ],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+
+  const merged = mergeThreadSnapshots(
+    makeThread({ turns: [restoredTurn] }),
+    makeThread({ turns: [readTurn] }),
+  );
+
+  assert.deepEqual(merged.turns, [readTurn]);
 });
 
 test("mergeThreadSnapshots keeps resume-only in-flight items missing from a stale read", () => {
