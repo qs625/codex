@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import React, { memo, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { MarkdownContent } from "../lib/markdown";
@@ -789,6 +789,8 @@ function getToolIcon(category: NonNullable<ConversationEntry["toolCategory"]>) {
     case "eventDrivenEvent":
       return <GearIcon />;
     case "multiAgent":
+    case "childCompletion":
+    case "subagentNotification":
       return <BranchIcon />;
     case "context":
       return <ShareIcon />;

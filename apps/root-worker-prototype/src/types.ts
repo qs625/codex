@@ -428,6 +428,8 @@ export type ConversationEntry = {
     | "eventDrivenSubscription"
     | "eventDrivenEvent"
     | "multiAgent"
+    | "childCompletion"
+    | "subagentNotification"
     | "external"
     | "context";
 };

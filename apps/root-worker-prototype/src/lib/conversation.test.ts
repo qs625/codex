@@ -158,20 +158,78 @@ test("keeps consecutive ordinary tools grouped in one visible cell", () => {
   );
 });
 
-test("keeps consecutive multi-agent notifications as visible cells", () => {
+test("keeps ordinary multi-agent tool entries grouped in one visible cell", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "collabAgentToolCall",
+        id: "spawn-1",
+        tool: "spawnAgent",
+        status: "completed",
+        senderThreadId: "thread-1",
+        senderPath: "/root",
+        receiverThreadIds: ["thread-2"],
+        receiverPaths: ["/root/worker"],
+        prompt: null,
+        model: null,
+        reasoningEffort: null,
+        agentsStates: {},
+      },
+      {
+        type: "collabAgentToolCall",
+        id: "send-1",
+        tool: "sendInput",
+        status: "completed",
+        senderThreadId: "thread-1",
+        senderPath: "/root",
+        receiverThreadIds: ["thread-2"],
+        receiverPaths: ["/root/worker"],
+        prompt: null,
+        model: null,
+        reasoningEffort: null,
+        agentsStates: {},
+      },
+    ]),
+  );
+
+  const cells = buildConversationCells(entries);
+
+  assert.deepEqual(
+    cells.map((cell) => ({
+      id: cell.id,
+      kind: cell.kind,
+      entries: cell.entries.map((entry) => [
+        entry.toolCategory,
+        entry.toolName,
+      ]),
+    })),
+    [
+      {
+        id: "spawn-1",
+        kind: "tool",
+        entries: [
+          ["multiAgent", "spawn agent"],
+          ["multiAgent", "send message"],
+        ],
+      },
+    ],
+  );
+});
+
+test("keeps child completions and subagent notifications as visible cells", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
         type: "collabAgentMessage",
-        id: "msg-1",
-        operation: "sendMessage",
+        id: "child-1",
+        operation: "childCompletion",
         senderThreadId: "thread-2",
         senderPath: "/root/worker",
         recipientThreadId: "thread-1",
         recipientPath: "/root",
         otherRecipientPaths: [],
-        content: "status update",
-        triggerTurn: false,
+        content: "done",
+        triggerTurn: true,
       },
       {
         type: "collabAgentStatusUpdate",
@@ -195,18 +253,23 @@ test("keeps consecutive multi-agent notifications as visible cells", () => {
     cells.map((cell) => ({
       id: cell.id,
       kind: cell.kind,
-      entries: cell.entries.map((entry) => entry.toolName),
+      entries: cell.entries.map((entry) => [
+        entry.toolCategory,
+        entry.toolName,
+      ]),
     })),
     [
       {
-        id: "msg-1",
+        id: "child-1",
         kind: "tool",
-        entries: ["received from /root/worker"],
+        entries: [["childCompletion", "/root/worker subagent completion"]],
       },
       {
         id: "status-1",
         kind: "tool",
-        entries: ["/root/worker subagent completion"],
+        entries: [
+          ["subagentNotification", "/root/worker subagent completion"],
+        ],
       },
     ],
   );
@@ -456,7 +519,7 @@ test("renders child completion envelopes in event-driven tools as multi-agent to
         toolName: "/root/worker subagent completion",
         toolDetails:
           "Operation\nchildCompletion\n\nFrom\n/root/worker\n\nTo\n/root\n\nMessage\ndone\n\nTrigger Turn\ntrue",
-        toolCategory: "multiAgent",
+        toolCategory: "childCompletion",
       },
     ],
   );

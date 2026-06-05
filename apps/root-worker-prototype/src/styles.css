@@ -752,7 +752,9 @@ svg {
   background: linear-gradient(180deg, #eff6ff 0%, #bfdbfe 100%);
 }
 
-.tool-icon-multiAgent {
+.tool-icon-multiAgent,
+.tool-icon-childCompletion,
+.tool-icon-subagentNotification {
   color: #1d4ed8;
   background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%);
 }
@@ -777,7 +779,9 @@ svg {
   background: linear-gradient(180deg, rgba(239, 246, 255, 0.92), rgba(255, 255, 255, 0.74));
 }
 
-.tool-card-multiAgent {
+.tool-card-multiAgent,
+.tool-card-childCompletion,
+.tool-card-subagentNotification {
   border-color: rgba(59, 130, 246, 0.16);
   background: linear-gradient(180deg, rgba(239, 246, 255, 0.92), rgba(255, 255, 255, 0.74));
 }
@@ -798,7 +802,9 @@ svg {
   background: linear-gradient(180deg, rgba(239, 246, 255, 0.97), rgba(255, 255, 255, 0.82));
 }
 
-.tool-card-multiAgent[open] {
+.tool-card-multiAgent[open],
+.tool-card-childCompletion[open],
+.tool-card-subagentNotification[open] {
   background: linear-gradient(180deg, rgba(239, 246, 255, 0.97), rgba(255, 255, 255, 0.82));
 }
 

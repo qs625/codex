@@ -2,32 +2,42 @@
 
 ## 任务 brief
 
-用户反馈客户端中 child completion 和 subagent notification 的 item 不显示。成功标准是这些 multi-agent 事件在客户端消息流中作为独立 item 可见，而不是被连续工具调用分组合并后藏进折叠详情。非目标是不修改 app-server 协议、不重做 multi-agent UI 样式、不影响普通命令和外部工具调用的分组展示。
+用户反馈 root-worker prototype 客户端不显示 child completion 和 subagent notification 的 item。成功标准是：
+
+- `spawn_agent`、`send_message` 等普通 multi-agent tool entry 仍可按既有规则合并展示。
+- child completion 与 subagent notification 不再混用普通 `multiAgent` 展示分类。
+- child completion 与 subagent notification 在 conversation 中作为独立可见 item 展示，不被普通协作工具分组折叠吞掉。
+
+非目标是不修改 app-server 协议、不重做 multi-agent UI、不改变普通命令和外部工具调用分组行为。
 
 ## 现象与根因
 
-app-server 已将 child completion / subagent notification 规范化为客户端可识别的 `collabAgentStatusUpdate`、`collabAgentMessage` 或从 event-driven envelope 派生的 multi-agent tool entry。客户端 `buildConversationItemEntries` 也能生成 `toolCategory: "multiAgent"` 的 entry。
+app-server 已经能把协作事件送到客户端，客户端也已有 `collabAgentMessage` 与 `collabAgentStatusUpdate` 类型。历史中的 child completion envelope 还会从 `agentMessage` 或 `eventDrivenTool` 解析为 `collabAgentMessage`。
 
-实际不可见点在 `buildConversationCells`：连续 `kind: "tool"` 且 `toolCategory` 相同的 entry 会合并到一个 tool cell。child completion 和 subagent notification 都属于 `multiAgent`，因此会被折叠成同一个 card，列表摘要只显示第一条和 `and N more`，用户看不到每个 notification item。
+真实问题发生在客户端 conversation 展示聚合层：这些 item 进入 `buildConversationItemEntries` 后都被标记为 `toolCategory: "multiAgent"`。`buildConversationCells` 会把连续同类 tool entry 合并到一个 tool cell，`ToolRow` 折叠摘要只展示第一条和 “and N more”。因此 child completion / subagent notification 实际进入了客户端 state，但在展示上被普通 multi-agent 分组遮蔽，看起来像“没显示”。
+
+上一版“禁止所有 `multiAgent` 合并”的策略不符合需求，因为普通 `spawn_agent`、`send_message` 等 multi-agent tool entry 本来就可以合并。
 
 ## 技术设计
 
-在客户端会话构建层做最小修复：
+在客户端 conversation 构建层引入更细的展示分类：
 
-- 保留普通工具同类分组合并行为。
-- 对 `toolCategory: "multiAgent"` 禁止合并，保证 spawn / message / child completion / status update 等协作事件各自成为独立 tool cell。
-- 不改变 entry 结构、ThreadItem 类型、Electron normalize 逻辑或 app-server 协议。
+- 普通协作工具调用继续使用 `toolCategory: "multiAgent"`。
+- `collabAgentMessage.operation === "childCompletion"` 使用 `toolCategory: "childCompletion"`。
+- `collabAgentStatusUpdate` 使用 `toolCategory: "subagentNotification"`。
+- `buildConversationCells` 恢复普通同类 tool entry 合并，但对 `childCompletion` 和 `subagentNotification` 保持逐 item 独立 cell。
+- UI 图标与颜色沿用 multi-agent 视觉体系，避免引入新的视觉语言。
 
-这样改动面只在展示聚合规则，避免影响事件进入线程 state、历史读取或协议转换。
+这样修复只改变客户端展示分类与聚合规则，不改变 ThreadItem 类型、Electron normalize 逻辑或 app-server 协议。
 
 ## 测试设计
 
-新增 `conversation.test.ts` 单元测试，构造连续的 `collabAgentMessage` 和 `collabAgentStatusUpdate`，断言：
+`conversation.test.ts` 覆盖三类行为：
 
-- conversation entries 仍是 multi-agent tool entry。
-- `buildConversationCells` 生成两个独立 cell。
-- child completion cell 的 `toolName` 独立可见。
+- 普通 `spawnAgent` / `sendInput` multi-agent tool entry 仍合并到一个可见 tool cell。
+- child completion 与 subagent notification 生成独立 category，并分别成为独立 tool cell。
+- 从 event-driven tool / agent message 解析出的 child completion envelope 使用 `childCompletion` category。
 
 ## 风险
 
-风险是 multi-agent 连续事件数量较多时消息流更长。但这类事件本身是用户需要回溯的协作状态，独立可见优先于折叠密度；普通工具调用仍保持原分组。
+child completion 和 subagent notification 数量较多时消息流会更长；这是为了保证子任务完成和状态回流可追踪。普通 multi-agent 工具 entry 仍保留分组合并，因此不会把所有协作工具都展开。

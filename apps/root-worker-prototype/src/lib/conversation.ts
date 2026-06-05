@@ -156,7 +156,7 @@ function buildConversationItemEntries(
           toolName: formatCollabAgentMessageTitle(collabMessage),
           toolStatus: "completed",
           toolDetails: formatCollabAgentMessageDetails(collabMessage),
-          toolCategory: "multiAgent",
+          toolCategory: formatCollabAgentMessageCategory(collabMessage),
         },
       ];
     }
@@ -258,7 +258,7 @@ function buildConversationItemEntries(
         toolName: formatCollabAgentMessageTitle(item),
         toolStatus: "completed",
         toolDetails: formatCollabAgentMessageDetails(item),
-        toolCategory: "multiAgent",
+        toolCategory: formatCollabAgentMessageCategory(item),
       },
     ];
   }
@@ -276,7 +276,7 @@ function buildConversationItemEntries(
         toolName: formatCollabAgentStatusUpdateTitle(item),
         toolStatus: "completed",
         toolDetails: formatCollabAgentStatusUpdateDetails(item),
-        toolCategory: "multiAgent",
+        toolCategory: "subagentNotification",
       },
     ];
   }
@@ -383,7 +383,7 @@ function buildConversationItemEntries(
           toolName: formatCollabAgentMessageTitle(collabMessage),
           toolStatus: "completed",
           toolDetails: formatCollabAgentMessageDetails(collabMessage),
-          toolCategory: "multiAgent",
+          toolCategory: formatCollabAgentMessageCategory(collabMessage),
         },
       ];
     }
@@ -656,10 +656,7 @@ function shouldMergeConversationEntry(
   }
 
   if (cell.kind === "tool" && nextEntry.kind === "tool") {
-    if (
-      previousEntry.toolCategory === "multiAgent" ||
-      nextEntry.toolCategory === "multiAgent"
-    ) {
+    if (isStandaloneNotificationEntry(previousEntry) || isStandaloneNotificationEntry(nextEntry)) {
       return false;
     }
     return previousEntry.toolCategory === nextEntry.toolCategory;
@@ -675,6 +672,13 @@ function shouldMergeConversationEntry(
   }
 
   return false;
+}
+
+function isStandaloneNotificationEntry(entry: ConversationEntry) {
+  return (
+    entry.toolCategory === "childCompletion" ||
+    entry.toolCategory === "subagentNotification"
+  );
 }
 
 function summarizeFileChanges(
@@ -966,6 +970,12 @@ function formatCollabAgentMessageTitle(
     return `${resolveAgentPath(item.senderPath, item.recipientPath)} subagent completion`;
   }
   return `received from ${resolveAgentPath(item.senderPath, item.recipientPath)}`;
+}
+
+function formatCollabAgentMessageCategory(
+  item: Extract<ThreadItem, { type: "collabAgentMessage" }>,
+): ConversationEntry["toolCategory"] {
+  return item.operation === "childCompletion" ? "childCompletion" : "multiAgent";
 }
 
 function formatCollabAgentMessageDetails(
