@@ -76,12 +76,18 @@ function normalizeThreadSnapshot(thread) {
 
 function normalizeTurnSnapshot(turn) {
   const items = (turn.items ?? []).reduce((normalizedItems, item) => {
-    const existingIndex = findMatchingThreadItemIndex(normalizedItems, item);
+    const normalizedItem = normalizeThreadItemSnapshot(item);
+    const existingIndex = findMatchingThreadItemIndex(
+      normalizedItems,
+      normalizedItem,
+    );
     if (existingIndex === -1) {
-      return [...normalizedItems, item];
+      return [...normalizedItems, normalizedItem];
     }
     return normalizedItems.map((existing, index) =>
-      index === existingIndex ? mergeThreadItem(existing, item) : existing,
+      index === existingIndex
+        ? mergeThreadItem(existing, normalizedItem)
+        : existing,
     );
   }, []);
 
@@ -118,18 +124,27 @@ function mergeTurns(existingTurns, nextTurns) {
 }
 
 function getRetainedUnmatchedTurn(turn, matcher) {
+  const normalizedItems = (turn.items ?? []).map(normalizeThreadItemSnapshot);
+  const normalizedTurn = normalizedItems.every(
+    (item, index) => item === turn.items?.[index],
+  )
+    ? turn
+    : { ...turn, items: normalizedItems };
+
   if (!isTurnInFlight(turn) && !isLiveDerivedCompletedAgentTurn(turn)) {
-    return [turn];
+    return [normalizedTurn];
   }
 
-  const items = (turn.items ?? []).filter(
+  const items = normalizedItems.filter(
     (item) => !consumeMatchingTurnItem(matcher, turn, item),
   );
   if (items.length === 0) {
     return [];
   }
   return [
-    items.length === (turn.items ?? []).length ? turn : { ...turn, items },
+    items.length === normalizedItems.length
+      ? normalizedTurn
+      : { ...turn, items },
   ];
 }
 
@@ -168,10 +183,12 @@ function consumeMatchingAgentMessage(matcher, turn, item) {
 }
 
 function mergeTurn(existing, next) {
+  const existingItems = (existing.items ?? []).map(normalizeThreadItemSnapshot);
+  const nextItems = (next.items ?? []).map(normalizeThreadItemSnapshot);
   const existingItemsById = new Map(
-    (existing.items ?? []).map((item) => [item.id, item]),
+    existingItems.map((item) => [item.id, item]),
   );
-  const mergedItems = (next.items ?? []).map((item) => {
+  const mergedItems = nextItems.map((item) => {
     const existingItem = existingItemsById.get(item.id);
     return existingItem ? mergeThreadItem(existingItem, item) : item;
   });
@@ -180,7 +197,7 @@ function mergeTurn(existing, next) {
     const mergedItemsMatcher = createTurnItemMatcher(
       buildTurnItemIndex([{ turn: next, items: mergedItems }]),
     );
-    for (const item of existing.items ?? []) {
+    for (const item of existingItems) {
       if (!consumeMatchingTurnItem(mergedItemsMatcher, existing, item)) {
         mergedItems.push(item);
       }
@@ -195,6 +212,12 @@ function mergeTurn(existing, next) {
 }
 
 function mergeThreadItem(existing, next) {
+  const normalizedExisting = normalizeThreadItemSnapshot(existing);
+  const normalizedNext = normalizeThreadItemSnapshot(next);
+  if (normalizedExisting !== existing || normalizedNext !== next) {
+    return mergeThreadItem(normalizedExisting, normalizedNext);
+  }
+
   if (existing.type === "agentMessage" && next.type === "agentMessage") {
     return {
       ...existing,
@@ -204,6 +227,61 @@ function mergeThreadItem(existing, next) {
   }
 
   return next;
+}
+
+function normalizeThreadItemSnapshot(item) {
+  if (item.type !== "agentMessage") {
+    return item;
+  }
+
+  const trigger = parseEventDrivenToolTrigger(item.text);
+  if (!trigger) {
+    return item;
+  }
+
+  const normalized = {
+    type: "eventDrivenTool",
+    id: item.id,
+    tool: trigger.tool,
+    title: trigger.title,
+    text: trigger.text,
+  };
+  if (item.startedAtMs !== null && item.startedAtMs !== undefined) {
+    normalized.startedAtMs = item.startedAtMs;
+  }
+  if (item.completedAtMs !== null && item.completedAtMs !== undefined) {
+    normalized.completedAtMs = item.completedAtMs;
+  }
+  return normalized;
+}
+
+function parseEventDrivenToolTrigger(text) {
+  const trimmed = text.trim();
+  const startMarker = "<event_driven_tool>";
+  const endMarker = "</event_driven_tool>";
+  if (!trimmed.startsWith(startMarker) || !trimmed.endsWith(endMarker)) {
+    return null;
+  }
+
+  const body = trimmed
+    .slice(startMarker.length, trimmed.length - endMarker.length)
+    .trim();
+  try {
+    const parsed = JSON.parse(body);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      typeof parsed.tool === "string" &&
+      typeof parsed.title === "string" &&
+      typeof parsed.text === "string"
+    ) {
+      return parsed;
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function findMatchingThreadItemIndex(items, nextItem) {

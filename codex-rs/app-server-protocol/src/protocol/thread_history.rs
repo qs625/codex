@@ -3270,6 +3270,44 @@ mod tests {
     }
 
     #[test]
+    fn reconstructs_process_exit_trigger_from_assistant_output_response_message() {
+        let trigger = EventDrivenToolTrigger {
+            tool: "process_exit_subscribe".into(),
+            title: "Process exited".into(),
+            text: "Session 42 exited with code 0".into(),
+        };
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: Some("process-exit-1".into()),
+                role: "assistant".into(),
+                content: vec![ContentItem::OutputText {
+                    text: trigger.render_message_text(),
+                }],
+                phase: None,
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::EventDrivenTool {
+                id: "process-exit-1".into(),
+                tool: "process_exit_subscribe".into(),
+                title: "Process exited".into(),
+                text: "Session 42 exited with code 0".into(),
+            }]
+        );
+    }
+
+    #[test]
     fn reconstructs_agent_message_envelopes_from_assistant_response_messages() {
         let communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
