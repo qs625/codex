@@ -92,9 +92,14 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
     );
     assert!(!properties.contains_key("items"));
     assert!(!properties.contains_key("fork_context"));
-    assert_eq!(
-        properties.get("agent_type"),
-        Some(&JsonSchema::string(Some("role help".to_string())))
+    let agent_type_description = properties
+        .get("agent_type")
+        .and_then(|schema| schema.description.as_deref())
+        .expect("agent_type description");
+    assert!(agent_type_description.contains("role help"));
+    assert!(
+        agent_type_description
+            .contains("When `cwd` is set, agent types from that cwd or its repository may be used")
     );
     assert_eq!(
         properties
@@ -143,6 +148,15 @@ fn spawn_agent_tool_v1_keeps_legacy_fork_context_field() {
 
     assert!(properties.contains_key("fork_context"));
     assert!(properties.contains_key("cwd"));
+    let agent_type_description = properties
+        .get("agent_type")
+        .and_then(|schema| schema.description.as_deref())
+        .expect("agent_type description");
+    assert!(agent_type_description.contains("role help"));
+    assert!(
+        agent_type_description
+            .contains("When `cwd` is set, agent types from that cwd or its repository may be used")
+    );
     assert_eq!(
         properties
             .get("agent_mode")

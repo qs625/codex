@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 const SPAWN_AGENT_INHERITED_MODEL_GUIDANCE: &str = "Spawned agents inherit your current model by default. Omit `model` to use that preferred default; set `model` only when an explicit override is needed.";
 const SPAWN_AGENT_MODEL_OVERRIDE_DESCRIPTION: &str = "Optional model override for the new agent. Leave unset to inherit the same model as the parent, which is the preferred default. Only set this when the user explicitly asks for a different model or the task clearly requires one.";
 const SPAWN_AGENT_SERVICE_TIER_OVERRIDE_DESCRIPTION: &str = "Optional service tier override for the new agent. Leave unset unless the user explicitly asks for one.";
+const SPAWN_AGENT_CWD_AGENT_TYPE_DESCRIPTION: &str = "When `cwd` is set, agent types from that cwd or its repository may be used even if they are not listed in your current context.";
 
 #[derive(Debug, Clone, Default)]
 pub struct SpawnAgentToolOptions {
@@ -524,7 +525,7 @@ fn spawn_agent_common_properties_v1(agent_type_description: &str) -> BTreeMap<St
         ("items".to_string(), create_collab_input_items_schema()),
         (
             "agent_type".to_string(),
-            JsonSchema::string(Some(agent_type_description.to_string())),
+            JsonSchema::string(Some(spawn_agent_type_description(agent_type_description))),
         ),
         (
             "cwd".to_string(),
@@ -571,7 +572,7 @@ fn spawn_agent_common_properties_v2(agent_type_description: &str) -> BTreeMap<St
         ),
         (
             "agent_type".to_string(),
-            JsonSchema::string(Some(agent_type_description.to_string())),
+            JsonSchema::string(Some(spawn_agent_type_description(agent_type_description))),
         ),
         (
             "cwd".to_string(),
@@ -608,6 +609,10 @@ fn spawn_agent_common_properties_v2(agent_type_description: &str) -> BTreeMap<St
         ),
         ("agent_mode".to_string(), agent_mode_schema()),
     ])
+}
+
+fn spawn_agent_type_description(agent_type_description: &str) -> String {
+    format!("{agent_type_description}\n\n{SPAWN_AGENT_CWD_AGENT_TYPE_DESCRIPTION}")
 }
 
 fn agent_mode_schema() -> JsonSchema {
