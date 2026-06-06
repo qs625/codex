@@ -79,29 +79,22 @@ test("renders thread analysis title and monitor empty states", () => {
 
   assert.match(markup, /Thread Analysis/);
   assert.match(markup, /Context Window Used/);
-  assert.match(markup, /No file watches\./);
-  assert.match(markup, /No process listeners\./);
+  assert.match(markup, /No command monitors\./);
   assert.match(markup, /No scheduled listeners\./);
 });
 
-test("renders filesystem, process, and schedule subscriptions", () => {
+test("renders EventCommand and schedule subscriptions", () => {
   const markup = renderRightPanel(
     makeThread([
       {
-        type: "eventDrivenToolCall",
-        id: "fs-1",
-        tool: "fs_subscribe",
-        arguments: { path: "/tmp/out.log", label: "build log" },
+        type: "eventCommandCall",
+        id: "event-command-1",
+        subscriptionId: "sub-command",
+        command: "tail -f /tmp/out.log",
+        cwd: "/tmp",
+        label: "build log",
         status: "completed",
-        output: null,
-      },
-      {
-        type: "eventDrivenToolCall",
-        id: "process-1",
-        tool: "process_exit_subscribe",
-        arguments: { session_id: 42 },
-        status: "completed",
-        output: null,
+        output: { subscription_id: "sub-command" },
       },
       {
         type: "eventDrivenToolCall",
@@ -112,19 +105,27 @@ test("renders filesystem, process, and schedule subscriptions", () => {
         output: null,
       },
       {
-        type: "eventDrivenTool",
-        id: "fs-event-1",
-        tool: "fs_subscribe",
-        title: "File watch triggered",
-        text: "[File subscription (build log)] File changed: /tmp/out.log",
+        type: "eventCommandEvent",
+        id: "event-command-event-1",
+        subscriptionId: "sub-command",
+        kind: "output",
+        label: "build log",
+        command: "tail -f /tmp/out.log",
+        cwd: "/tmp",
+        line: "changed:/tmp/out.log",
+        sequence: 1,
+        exitCode: null,
+        signal: null,
+        message: null,
+        truncated: false,
+        createdAt: 1,
       },
     ]),
   );
 
   assert.match(markup, /build log/);
-  assert.match(markup, /File changed: \/tmp\/out\.log/);
-  assert.doesNotMatch(markup, /No file watches\./);
-  assert.match(markup, /Session 42/);
+  assert.match(markup, /changed:\/tmp\/out\.log/);
+  assert.doesNotMatch(markup, /No command monitors\./);
   assert.match(markup, /standup ping/);
   assert.match(markup, /once_after:60/);
 });

@@ -51,10 +51,17 @@ pub enum ScheduleSpec {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(tag = "type")]
 pub enum PersistedSubscription {
+    #[serde(skip_serializing)]
     Fs {
         subscription_id: String,
         path: String,
         recursive: bool,
+        label: Option<String>,
+    },
+    EventCommand {
+        subscription_id: String,
+        command: String,
+        cwd: Option<String>,
         label: Option<String>,
     },
     Schedule {
@@ -62,9 +69,54 @@ pub enum PersistedSubscription {
         schedule: ScheduleSpec,
         label: Option<String>,
     },
+    #[serde(skip_serializing)]
     ProcessExit {
         subscription_id: String,
         session_id: i32,
         label: Option<String>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::PersistedSubscription;
+
+    #[test]
+    fn deserializes_legacy_persisted_subscription_variants() {
+        let fs = serde_json::from_value::<PersistedSubscription>(serde_json::json!({
+            "type": "fs",
+            "subscription_id": "sub-fs",
+            "path": "/tmp/out.log",
+            "recursive": false,
+            "label": null
+        }))
+        .unwrap();
+        let process_exit = serde_json::from_value::<PersistedSubscription>(serde_json::json!({
+            "type": "process_exit",
+            "subscription_id": "sub-process",
+            "session_id": 42,
+            "label": "tests"
+        }))
+        .unwrap();
+
+        assert_eq!(
+            fs,
+            PersistedSubscription::Fs {
+                subscription_id: "sub-fs".to_string(),
+                path: "/tmp/out.log".to_string(),
+                recursive: false,
+                label: None,
+            }
+        );
+        assert_eq!(
+            process_exit,
+            PersistedSubscription::ProcessExit {
+                subscription_id: "sub-process".to_string(),
+                session_id: 42,
+                label: Some("tests".to_string()),
+            }
+        );
+    }
 }

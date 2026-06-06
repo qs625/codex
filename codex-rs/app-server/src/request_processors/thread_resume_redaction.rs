@@ -33,7 +33,27 @@ pub(super) fn redact_thread_resume_payloads(thread: &mut Thread) {
                 true
             }
             ThreadItem::ImageGeneration { .. } => false,
-            _ => true,
+            ThreadItem::UserMessage { .. }
+            | ThreadItem::HookPrompt { .. }
+            | ThreadItem::InjectedContext { .. }
+            | ThreadItem::AgentMessage { .. }
+            | ThreadItem::Plan { .. }
+            | ThreadItem::Reasoning { .. }
+            | ThreadItem::CommandExecution { .. }
+            | ThreadItem::FileChange { .. }
+            | ThreadItem::DynamicToolCall { .. }
+            | ThreadItem::EventDrivenToolCall { .. }
+            | ThreadItem::EventDrivenTool { .. }
+            | ThreadItem::EventCommandCall { .. }
+            | ThreadItem::EventCommandEvent { .. }
+            | ThreadItem::CollabAgentMessage { .. }
+            | ThreadItem::CollabAgentToolCall { .. }
+            | ThreadItem::CollabAgentStatusUpdate { .. }
+            | ThreadItem::WebSearch { .. }
+            | ThreadItem::ImageView { .. }
+            | ThreadItem::EnteredReviewMode { .. }
+            | ThreadItem::ExitedReviewMode { .. }
+            | ThreadItem::ContextCompaction { .. } => true,
         });
     }
 }

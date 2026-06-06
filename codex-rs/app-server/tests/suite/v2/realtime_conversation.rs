@@ -44,31 +44,30 @@ use codex_protocol::protocol::RealtimeOutputModality;
 use codex_protocol::protocol::RealtimeVoice;
 use codex_protocol::protocol::RealtimeVoicesList;
 use core_test_support::responses;
+use core_test_support::responses::RealtimeCallRequest;
+use core_test_support::responses::WebRtcCallCreateResponse;
 use core_test_support::responses::WebSocketConnectionConfig;
 use core_test_support::responses::WebSocketRequest;
 use core_test_support::responses::WebSocketTestServer;
 use core_test_support::responses::start_websocket_server;
-use core_test_support::responses::start_websocket_server_with_headers;
+use core_test_support::responses::start_websocket_server_with_headers_and_realtime_calls;
 use core_test_support::skip_if_no_network;
 use pretty_assertions::assert_eq;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use serde_json::json;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::timeout;
-use wiremock::Match;
 use wiremock::Mock;
 use wiremock::MockServer;
 use wiremock::Request as WiremockRequest;
 use wiremock::Respond;
 use wiremock::ResponseTemplate;
 use wiremock::matchers::method;
-use wiremock::matchers::path;
 use wiremock::matchers::path_regex;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -83,38 +82,6 @@ const V2_HANDOFF_COMPLETE_ACKNOWLEDGEMENT: &str =
 enum StartupContextConfig<'a> {
     Generated,
     Override(&'a str),
-}
-
-#[derive(Debug, Clone)]
-struct RealtimeCallRequestCapture {
-    requests: Arc<Mutex<Vec<WiremockRequest>>>,
-}
-
-impl RealtimeCallRequestCapture {
-    fn new() -> Self {
-        Self {
-            requests: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    fn single_request(&self) -> WiremockRequest {
-        let requests = self
-            .requests
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert_eq!(requests.len(), 1, "expected one realtime call request");
-        requests[0].clone()
-    }
-}
-
-impl Match for RealtimeCallRequestCapture {
-    fn matches(&self, request: &WiremockRequest) -> bool {
-        self.requests
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(request.clone());
-        true
-    }
 }
 
 fn normalized_json_string(raw: &str) -> Result<String> {
@@ -195,7 +162,6 @@ struct RealtimeE2eHarness {
     _codex_home: TempDir,
     main_loop_responses_server: MockServer,
     realtime_server: WebSocketTestServer,
-    call_capture: RealtimeCallRequestCapture,
     thread_id: String,
 }
 
@@ -255,25 +221,20 @@ impl RealtimeE2eHarness {
         realtime_sideband: RealtimeSidebandScript,
         sandbox: RealtimeTestSandbox,
     ) -> Result<Self> {
-        let call_capture = RealtimeCallRequestCapture::new();
-        Mock::given(method("POST"))
-            .and(path("/v1/realtime/calls"))
-            .and(call_capture.clone())
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .insert_header("Location", "/v1/realtime/calls/rtc_e2e")
-                    .set_body_string("v=answer\r\n"),
-            )
-            .mount(&main_loop_responses_server)
-            .await;
-
-        let realtime_server =
-            start_websocket_server_with_headers(realtime_sideband.connections).await;
+        let realtime_server = start_websocket_server_with_headers_and_realtime_calls(
+            realtime_sideband.connections,
+            Some(WebRtcCallCreateResponse {
+                location: "/v1/realtime/calls/rtc_e2e".to_string(),
+                body: "v=answer\r\n".to_string(),
+                status: 200,
+            }),
+        )
+        .await;
         let codex_home = TempDir::new()?;
         create_config_toml_with_realtime_version(
             codex_home.path(),
             &main_loop_responses_server.uri(),
-            realtime_server.uri(),
+            realtime_server.http_uri(),
             /*realtime_enabled*/ true,
             StartupContextConfig::Override("startup context"),
             realtime_version,
@@ -299,7 +260,6 @@ impl RealtimeE2eHarness {
             _codex_home: codex_home,
             main_loop_responses_server,
             realtime_server,
-            call_capture,
             thread_id: thread_start.thread.id,
         })
     }
@@ -1027,33 +987,29 @@ async fn realtime_webrtc_start_emits_sdp_notification() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let responses_server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
-    let call_capture = RealtimeCallRequestCapture::new();
-    Mock::given(method("POST"))
-        .and(path("/v1/realtime/calls"))
-        .and(call_capture.clone())
-        .respond_with(
-            ResponseTemplate::new(200)
-                .insert_header("Location", "/v1/realtime/calls/rtc_app_test")
-                .set_body_string("v=answer\r\n"),
-        )
-        .mount(&responses_server)
-        .await;
-    let realtime_server = start_websocket_server_with_headers(vec![WebSocketConnectionConfig {
-        requests: vec![vec![json!({
-            "type": "session.updated",
-            "session": { "id": "sess_webrtc", "instructions": "backend prompt" }
-        })]],
-        response_headers: Vec::new(),
-        accept_delay: None,
-        close_after_requests: false,
-    }])
+    let realtime_server = start_websocket_server_with_headers_and_realtime_calls(
+        vec![WebSocketConnectionConfig {
+            requests: vec![vec![json!({
+                "type": "session.updated",
+                "session": { "id": "sess_webrtc", "instructions": "backend prompt" }
+            })]],
+            response_headers: Vec::new(),
+            accept_delay: None,
+            close_after_requests: false,
+        }],
+        Some(WebRtcCallCreateResponse {
+            location: "/v1/realtime/calls/rtc_app_test".to_string(),
+            body: "v=answer\r\n".to_string(),
+            status: 200,
+        }),
+    )
     .await;
 
     let codex_home = TempDir::new()?;
     create_config_toml(
         codex_home.path(),
         &responses_server.uri(),
-        realtime_server.uri(),
+        realtime_server.http_uri(),
         /*realtime_enabled*/ true,
         StartupContextConfig::Override("startup context"),
     )?;
@@ -1150,17 +1106,15 @@ async fn realtime_webrtc_start_emits_sdp_notification() -> Result<()> {
         "unexpected close reason: {closed_notification:?}"
     );
 
-    let request = call_capture.single_request();
-    assert_eq!(request.url.path(), "/v1/realtime/calls");
-    assert_eq!(request.url.query(), None);
+    let request = realtime_server.single_realtime_call_request();
+    assert!(request.path().ends_with("/realtime/calls"));
+    assert_eq!(request.query(), None);
     assert_eq!(
-        request
-            .headers
-            .get("content-type")
-            .and_then(|value| value.to_str().ok()),
+        request.header("content-type").as_deref(),
         Some("multipart/form-data; boundary=codex-realtime-call-boundary")
     );
-    let body = String::from_utf8(request.body).context("multipart body should be utf-8")?;
+    let body =
+        String::from_utf8(request.body().to_vec()).context("multipart body should be utf-8")?;
     let session = r#"{"tool_choice":"auto","type":"realtime","model":"gpt-realtime-1.5","instructions":"backend prompt\n\nstartup context","output_modalities":["audio"],"audio":{"input":{"format":{"type":"audio/pcm","rate":24000},"noise_reduction":{"type":"near_field"},"transcription":{"model":"gpt-4o-mini-transcribe"},"turn_detection":{"type":"server_vad","interrupt_response":true,"create_response":true,"silence_duration_ms":500}},"output":{"format":{"type":"audio/pcm","rate":24000},"voice":"marin"}},"tools":[{"type":"function","name":"background_agent","description":"Send a user request to the background agent. Use this as the default action. Do not rephrase the user's ask or rewrite it in your own words; pass along the user's own words. If the background agent is idle, this starts a new task and returns the final result to the user. If the background agent is already working on a task, this sends the request as guidance to steer that previous task. If the user asks to do something next, later, after this, or once current work finishes, call this tool so the work is actually queued instead of merely promising to do it later.","parameters":{"type":"object","properties":{"prompt":{"type":"string","description":"The user request to delegate to the background agent."}},"required":["prompt"],"additionalProperties":false}},{"type":"function","name":"remain_silent","description":"Call this when the best response is to say nothing. Use it instead of speaking after hidden system/control messages, after background agent updates in silent modes, or whenever acknowledging aloud would be distracting. This tool has no user-visible effect.","parameters":{"type":"object","properties":{},"additionalProperties":false}}]}"#;
     let session = normalized_json_string(session)?;
     assert_eq!(
@@ -1221,7 +1175,7 @@ async fn webrtc_v1_start_posts_offer_returns_sdp_and_joins_sideband() -> Result<
     // Phase 3: verify the HTTP call-create leg, the direct sideband join, and the normal v1
     // session.update; the WebRTC transport should remain alive instead of closing after SDP.
     assert_call_create_multipart(
-        harness.call_capture.single_request(),
+        harness.realtime_server.single_realtime_call_request(),
         "v=offer\r\n",
         v1_session_create_json(),
     )?;
@@ -1286,7 +1240,7 @@ async fn webrtc_v1_handoff_request_delegates_and_appends_result() -> Result<()> 
     let started = harness.start_webrtc_realtime("v=offer\r\n").await?;
     assert_eq!(started.started.version, RealtimeConversationVersion::V1);
     assert_call_create_multipart(
-        harness.call_capture.single_request(),
+        harness.realtime_server.single_realtime_call_request(),
         "v=offer\r\n",
         v1_session_create_json(),
     )?;
@@ -1957,18 +1911,21 @@ async fn realtime_webrtc_start_surfaces_backend_error() -> Result<()> {
 
     // Phase 1: make call creation fail before any sideband connection can matter.
     let responses_server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
-    Mock::given(method("POST"))
-        .and(path("/v1/realtime/calls"))
-        .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
-        .mount(&responses_server)
-        .await;
-    let realtime_server = start_websocket_server(vec![vec![]]).await;
+    let realtime_server = start_websocket_server_with_headers_and_realtime_calls(
+        Vec::new(),
+        Some(WebRtcCallCreateResponse {
+            location: String::new(),
+            body: "boom".to_string(),
+            status: 500,
+        }),
+    )
+    .await;
 
     let codex_home = TempDir::new()?;
     create_config_toml(
         codex_home.path(),
         &responses_server.uri(),
-        realtime_server.uri(),
+        realtime_server.http_uri(),
         /*realtime_enabled*/ true,
         StartupContextConfig::Override("startup context"),
     )?;
@@ -2278,20 +2235,18 @@ fn assert_v2_session_update(request: &Value) -> Result<()> {
 }
 
 fn assert_call_create_multipart(
-    request: WiremockRequest,
+    request: RealtimeCallRequest,
     offer_sdp: &str,
     session: &str,
 ) -> Result<()> {
-    assert_eq!(request.url.path(), "/v1/realtime/calls");
-    assert_eq!(request.url.query(), None);
+    assert!(request.path().ends_with("/realtime/calls"));
+    assert_eq!(request.query(), None);
     assert_eq!(
-        request
-            .headers
-            .get("content-type")
-            .and_then(|value| value.to_str().ok()),
+        request.header("content-type").as_deref(),
         Some("multipart/form-data; boundary=codex-realtime-call-boundary")
     );
-    let body = String::from_utf8(request.body).context("multipart body should be utf-8")?;
+    let body =
+        String::from_utf8(request.body().to_vec()).context("multipart body should be utf-8")?;
     let session = normalized_json_string(session)?;
     assert_eq!(
         body,

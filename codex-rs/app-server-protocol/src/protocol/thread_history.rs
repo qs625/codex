@@ -23,6 +23,7 @@ use crate::protocol::v2::TurnStatus;
 use crate::protocol::v2::UserInput;
 use crate::protocol::v2::WebSearchAction;
 use crate::protocol::v2::normalize_agent_message_item;
+use codex_protocol::event_command::EventCommandEvent;
 use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::items::parse_hook_prompt_message;
 use codex_protocol::models::ContentItem;
@@ -277,6 +278,14 @@ impl ThreadHistoryBuilder {
                     return;
                 }
 
+                if let Some(event) = EventCommandEvent::parse_message_content(content) {
+                    let id = id.clone().unwrap_or_else(|| self.next_item_id());
+                    self.ensure_turn()
+                        .items
+                        .push(event_command_event_item(id, event));
+                    return;
+                }
+
                 if let Some(trigger) = EventDrivenToolTrigger::parse_message_content(content) {
                     let id = id.clone().unwrap_or_else(|| self.next_item_id());
                     self.ensure_turn().items.push(ThreadItem::EventDrivenTool {
@@ -339,21 +348,55 @@ impl ThreadHistoryBuilder {
                 call_id,
                 ..
             } => {
-                let Some(tool_name) = event_driven_tool_name(namespace.as_deref(), name) else {
+                if is_event_command_subscribe_tool(namespace.as_deref(), name) {
+                    let arguments = parse_raw_function_call_arguments(arguments);
+                    let item = event_command_call_item_from_arguments(
+                        call_id.clone(),
+                        arguments,
+                        DynamicToolCallStatus::InProgress,
+                        None,
+                    );
+                    self.upsert_event_driven_tool_call_in_current_turn(item);
                     return;
-                };
-                let item = ThreadItem::EventDrivenToolCall {
-                    id: call_id.clone(),
-                    tool: tool_name,
-                    arguments: parse_raw_function_call_arguments(arguments),
-                    status: DynamicToolCallStatus::InProgress,
-                    output: None,
-                };
-                self.upsert_event_driven_tool_call_in_current_turn(item);
+                }
+
+                if let Some(tool_name) = event_driven_tool_name(namespace.as_deref(), name) {
+                    let item = ThreadItem::EventDrivenToolCall {
+                        id: call_id.clone(),
+                        tool: tool_name,
+                        arguments: parse_raw_function_call_arguments(arguments),
+                        status: DynamicToolCallStatus::InProgress,
+                        output: None,
+                    };
+                    self.upsert_event_driven_tool_call_in_current_turn(item);
+                }
             }
             ResponseItem::FunctionCallOutput { call_id, output } => {
                 let existing = self.find_event_driven_tool_call_in_current_turn(call_id);
                 if existing.is_none() {
+                    return;
+                }
+                if let Some(ThreadItem::EventCommandCall {
+                    command,
+                    cwd,
+                    label,
+                    ..
+                }) = existing
+                {
+                    let output_json = event_command_output_payload_to_json(output);
+                    let item = ThreadItem::EventCommandCall {
+                        id: call_id.clone(),
+                        subscription_id: string_field(&output_json, "subscription_id")
+                            .or_else(|| string_field(&output_json, "subscriptionId"))
+                            .unwrap_or_default(),
+                        command: string_field(&output_json, "command")
+                            .unwrap_or_else(|| command.clone()),
+                        cwd: string_field(&output_json, "cwd").or_else(|| cwd.clone()),
+                        label: string_field(&output_json, "label").or_else(|| label.clone()),
+                        status: DynamicToolCallStatus::Completed,
+                        output: Some(output_json),
+                    };
+                    self.upsert_event_driven_tool_call_in_current_turn(item);
                     return;
                 }
                 let item = ThreadItem::EventDrivenToolCall {
@@ -638,6 +681,7 @@ impl ThreadHistoryBuilder {
             | codex_protocol::items::TurnItem::HookPrompt(_)
             | codex_protocol::items::TurnItem::AgentMessage(_)
             | codex_protocol::items::TurnItem::EventDrivenTool(_)
+            | codex_protocol::items::TurnItem::EventCommandEvent(_)
             | codex_protocol::items::TurnItem::CollabAgentMessage(_)
             | codex_protocol::items::TurnItem::Reasoning(_)
             | codex_protocol::items::TurnItem::WebSearch(_)
@@ -661,6 +705,7 @@ impl ThreadHistoryBuilder {
                 );
             }
             codex_protocol::items::TurnItem::EventDrivenTool(_)
+            | codex_protocol::items::TurnItem::EventCommandEvent(_)
             | codex_protocol::items::TurnItem::CollabAgentMessage(_) => {
                 self.upsert_item_in_turn_id(
                     &payload.turn_id,
@@ -1613,6 +1658,15 @@ fn function_call_output_payload_to_json(
     serde_json::to_value(output).unwrap_or_else(|_| serde_json::Value::String(output.to_string()))
 }
 
+fn event_command_output_payload_to_json(
+    output: &codex_protocol::models::FunctionCallOutputPayload,
+) -> serde_json::Value {
+    output
+        .text_content()
+        .and_then(|text| serde_json::from_str(text).ok())
+        .unwrap_or_else(|| function_call_output_payload_to_json(output))
+}
+
 fn single_text_message_content(content: &[ContentItem]) -> Option<&str> {
     match content {
         [ContentItem::InputText { text }] | [ContentItem::OutputText { text }] => Some(text),
@@ -1626,14 +1680,63 @@ fn event_driven_tool_name(namespace: Option<&str>, name: &str) -> Option<String>
     }
 
     match name {
-        "fs_subscribe"
-        | "fs_unsubscribe"
-        | "process_exit_subscribe"
-        | "process_exit_unsubscribe"
-        | "schedule_subscribe"
-        | "schedule_unsubscribe" => Some(name.to_string()),
+        "event_command_unsubscribe" | "schedule_subscribe" | "schedule_unsubscribe" => {
+            Some(name.to_string())
+        }
         _ => None,
     }
+}
+
+fn is_event_command_subscribe_tool(namespace: Option<&str>, name: &str) -> bool {
+    namespace.is_none() && name == "event_command_subscribe"
+}
+
+fn event_command_call_item_from_arguments(
+    id: String,
+    arguments: serde_json::Value,
+    status: DynamicToolCallStatus,
+    output: Option<serde_json::Value>,
+) -> ThreadItem {
+    ThreadItem::EventCommandCall {
+        id,
+        subscription_id: output
+            .as_ref()
+            .and_then(|value| {
+                string_field(value, "subscription_id")
+                    .or_else(|| string_field(value, "subscriptionId"))
+            })
+            .unwrap_or_default(),
+        command: string_field(&arguments, "command").unwrap_or_default(),
+        cwd: string_field(&arguments, "cwd"),
+        label: string_field(&arguments, "label"),
+        status,
+        output,
+    }
+}
+
+fn event_command_event_item(id: String, event: EventCommandEvent) -> ThreadItem {
+    ThreadItem::EventCommandEvent {
+        id,
+        subscription_id: event.subscription_id,
+        kind: event.kind.into(),
+        label: event.label,
+        command: event.command,
+        cwd: event.cwd,
+        line: event.line,
+        sequence: event.sequence,
+        exit_code: event.exit_code,
+        signal: event.signal,
+        message: event.message,
+        truncated: event.truncated,
+        created_at: event.created_at,
+    }
+}
+
+fn string_field(value: &serde_json::Value, field: &str) -> Option<String> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
 }
 
 fn parse_injected_context_sections(
@@ -1812,7 +1915,10 @@ fn upsert_event_driven_tool_call(items: &mut Vec<ThreadItem>, item: ThreadItem) 
         .iter_mut()
         .find(|existing_item| existing_item.id() == item.id())
     {
-        if matches!(existing_item, ThreadItem::EventDrivenToolCall { .. }) {
+        if matches!(
+            existing_item,
+            ThreadItem::EventDrivenToolCall { .. } | ThreadItem::EventCommandCall { .. }
+        ) {
             *existing_item = item;
         }
         return;
@@ -3140,7 +3246,7 @@ mod tests {
                 collaboration_mode_kind: Default::default(),
             })),
             RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
-                message: "watch this file".into(),
+                message: "remind me".into(),
                 images: None,
                 text_elements: Vec::new(),
                 local_images: Vec::new(),
@@ -3148,14 +3254,16 @@ mod tests {
             })),
             RolloutItem::ResponseItem(ResponseItem::FunctionCall {
                 id: None,
-                name: "fs_subscribe".into(),
+                name: "schedule_subscribe".into(),
                 namespace: None,
-                arguments: r#"{"path":"/tmp/build.log","label":"build"}"#.into(),
+                arguments: r#"{"schedule":{"once_after":{"seconds":60}},"label":"standup"}"#.into(),
                 call_id: "builtin-1".into(),
             }),
             RolloutItem::ResponseItem(ResponseItem::FunctionCallOutput {
                 call_id: "builtin-1".into(),
-                output: FunctionCallOutputPayload::from_text("subscribed".into()),
+                output: FunctionCallOutputPayload::from_text(
+                    r#"{"schedule_summary":"once after 60s"}"#.into(),
+                ),
             }),
         ];
 
@@ -3166,13 +3274,15 @@ mod tests {
             turns[0].items[1],
             ThreadItem::EventDrivenToolCall {
                 id: "builtin-1".into(),
-                tool: "fs_subscribe".into(),
+                tool: "schedule_subscribe".into(),
                 arguments: serde_json::json!({
-                    "path": "/tmp/build.log",
-                    "label": "build",
+                    "schedule": {"once_after": {"seconds": 60}},
+                    "label": "standup",
                 }),
                 status: DynamicToolCallStatus::Completed,
-                output: Some(serde_json::Value::String("subscribed".into())),
+                output: Some(serde_json::Value::String(
+                    r#"{"schedule_summary":"once after 60s"}"#.into(),
+                )),
             }
         );
     }

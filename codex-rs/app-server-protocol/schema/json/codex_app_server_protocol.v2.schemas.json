@@ -4471,6 +4471,15 @@
       "title": "ErrorNotification",
       "type": "object"
     },
+    "EventCommandEventKind": {
+      "enum": [
+        "output",
+        "exited",
+        "cancelled",
+        "failedToStart"
+      ],
+      "type": "string"
+    },
     "ExperimentalFeature": {
       "properties": {
         "announcement": {
@@ -14229,6 +14238,137 @@
             "type"
           ],
           "title": "EventDrivenToolThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "output": true,
+            "status": {
+              "$ref": "#/definitions/DynamicToolCallStatus"
+            },
+            "subscriptionId": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "eventCommandCall"
+              ],
+              "title": "EventCommandCallThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "command",
+            "id",
+            "status",
+            "subscriptionId",
+            "type"
+          ],
+          "title": "EventCommandCallThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "createdAt": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "exitCode": {
+              "format": "int32",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/EventCommandEventKind"
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "line": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sequence": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "signal": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "subscriptionId": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "type": {
+              "enum": [
+                "eventCommandEvent"
+              ],
+              "title": "EventCommandEventThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "command",
+            "createdAt",
+            "id",
+            "kind",
+            "subscriptionId",
+            "truncated",
+            "type"
+          ],
+          "title": "EventCommandEventThreadItem",
           "type": "object"
         },
         {

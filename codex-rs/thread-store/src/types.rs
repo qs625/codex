@@ -756,19 +756,20 @@ mod tests {
     #[test]
     fn thread_metadata_patch_merge_replaces_subscriptions_by_presence() {
         let mut current = ThreadMetadataPatch {
-            subscriptions: Some(vec![PersistedSubscription::ProcessExit {
+            subscriptions: Some(vec![PersistedSubscription::EventCommand {
                 subscription_id: "sub_old".to_string(),
-                session_id: 42,
+                command: "cargo test".to_string(),
+                cwd: None,
                 label: Some("old".to_string()),
             }]),
             ..Default::default()
         };
 
         current.merge(ThreadMetadataPatch {
-            subscriptions: Some(vec![PersistedSubscription::Fs {
+            subscriptions: Some(vec![PersistedSubscription::EventCommand {
                 subscription_id: "sub_new".to_string(),
-                path: "/tmp/log.txt".to_string(),
-                recursive: false,
+                command: "tail -f /tmp/log.txt".to_string(),
+                cwd: Some("/tmp".to_string()),
                 label: Some("new".to_string()),
             }]),
             ..Default::default()
@@ -776,10 +777,10 @@ mod tests {
 
         assert_eq!(
             current.subscriptions,
-            Some(vec![PersistedSubscription::Fs {
+            Some(vec![PersistedSubscription::EventCommand {
                 subscription_id: "sub_new".to_string(),
-                path: "/tmp/log.txt".to_string(),
-                recursive: false,
+                command: "tail -f /tmp/log.txt".to_string(),
+                cwd: Some("/tmp".to_string()),
                 label: Some("new".to_string()),
             }])
         );

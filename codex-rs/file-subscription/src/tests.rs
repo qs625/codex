@@ -1,17 +1,15 @@
 use std::sync::Arc;
 use std::sync::Weak;
 
+use crate::extension::FsSubscriptionExtension;
+use crate::extension::ThreadSubscriptionState;
+use crate::registry::FsSubscriptionRegistry;
 use codex_core::ThreadManager;
 use codex_core::UnifiedExecManagerHandle;
 use codex_core::UnifiedExecProcessManager;
 use codex_extension_api::ExtensionData;
 use codex_extension_api::ToolContributor;
 use codex_file_watcher::FileWatcher;
-use pretty_assertions::assert_eq;
-
-use crate::extension::FsSubscriptionExtension;
-use crate::extension::ThreadSubscriptionState;
-use crate::registry::FsSubscriptionRegistry;
 
 fn make_thread_store(registry: Arc<FsSubscriptionRegistry>) -> ExtensionData {
     let thread_store = ExtensionData::new("thread");
@@ -45,8 +43,8 @@ fn tools_include_file_and_timer_subscriptions_without_exec_manager() {
     assert_eq!(
         tool_names,
         vec![
-            "fs_subscribe",
-            "fs_unsubscribe",
+            "event_command_subscribe",
+            "event_command_unsubscribe",
             "schedule_subscribe",
             "schedule_unsubscribe",
         ]
@@ -54,7 +52,7 @@ fn tools_include_file_and_timer_subscriptions_without_exec_manager() {
 }
 
 #[test]
-fn process_exit_tools_are_contributed_with_exec_manager_handle() {
+fn old_process_exit_tools_are_not_contributed_with_exec_manager_handle() {
     let extension = FsSubscriptionExtension::new(
         Arc::new(FileWatcher::noop()),
         Weak::<ThreadManager>::new(),
@@ -81,12 +79,10 @@ fn process_exit_tools_are_contributed_with_exec_manager_handle() {
     assert_eq!(
         tool_names,
         vec![
-            "fs_subscribe",
-            "fs_unsubscribe",
+            "event_command_subscribe",
+            "event_command_unsubscribe",
             "schedule_subscribe",
             "schedule_unsubscribe",
-            "process_exit_subscribe",
-            "process_exit_unsubscribe",
         ]
     );
 }

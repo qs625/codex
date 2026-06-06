@@ -13,6 +13,8 @@ use codex_experimental_api_macros::ExperimentalApi;
 use codex_protocol::approvals::GuardianAssessmentAction as CoreGuardianAssessmentAction;
 use codex_protocol::approvals::GuardianAssessmentDecisionSource as CoreGuardianAssessmentDecisionSource;
 use codex_protocol::approvals::GuardianCommandSource as CoreGuardianCommandSource;
+use codex_protocol::event_command::EventCommandEvent as CoreEventCommandEvent;
+use codex_protocol::event_command::EventCommandEventKind as CoreEventCommandEventKind;
 use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::items::AgentMessageContent as CoreAgentMessageContent;
 use codex_protocol::items::McpToolCallStatus as CoreMcpToolCallStatus;
@@ -309,6 +311,7 @@ pub enum ThreadItem {
         id: String,
         namespace: Option<String>,
         tool: String,
+        #[ts(type = "unknown")]
         arguments: JsonValue,
         status: DynamicToolCallStatus,
         content_items: Option<Vec<DynamicToolCallOutputContentItem>>,
@@ -322,8 +325,10 @@ pub enum ThreadItem {
     EventDrivenToolCall {
         id: String,
         tool: String,
+        #[ts(type = "unknown")]
         arguments: JsonValue,
         status: DynamicToolCallStatus,
+        #[ts(type = "unknown | null")]
         output: Option<JsonValue>,
     },
     #[serde(rename_all = "camelCase")]
@@ -333,6 +338,36 @@ pub enum ThreadItem {
         tool: String,
         title: String,
         text: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    EventCommandCall {
+        id: String,
+        subscription_id: String,
+        command: String,
+        cwd: Option<String>,
+        label: Option<String>,
+        status: DynamicToolCallStatus,
+        #[ts(type = "unknown | null")]
+        output: Option<JsonValue>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    EventCommandEvent {
+        id: String,
+        subscription_id: String,
+        kind: EventCommandEventKind,
+        label: Option<String>,
+        command: String,
+        cwd: Option<String>,
+        line: Option<String>,
+        sequence: Option<u32>,
+        exit_code: Option<i32>,
+        signal: Option<String>,
+        message: Option<String>,
+        truncated: bool,
+        #[ts(type = "number")]
+        created_at: i64,
     },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
@@ -472,6 +507,8 @@ impl ThreadItem {
             | ThreadItem::DynamicToolCall { id, .. }
             | ThreadItem::EventDrivenToolCall { id, .. }
             | ThreadItem::EventDrivenTool { id, .. }
+            | ThreadItem::EventCommandCall { id, .. }
+            | ThreadItem::EventCommandEvent { id, .. }
             | ThreadItem::CollabAgentMessage { id, .. }
             | ThreadItem::CollabAgentToolCall { id, .. }
             | ThreadItem::CollabAgentStatusUpdate { id, .. }
@@ -491,6 +528,10 @@ pub(crate) fn normalize_agent_message_item(
     phase: Option<MessagePhase>,
     memory_citation: Option<MemoryCitation>,
 ) -> ThreadItem {
+    if let Some(event) = CoreEventCommandEvent::parse_message_text(&text) {
+        return event_command_event_item(id, event);
+    }
+
     if let Some(trigger) = EventDrivenToolTrigger::parse_message_text(&text) {
         return ThreadItem::EventDrivenTool {
             id,
@@ -509,6 +550,46 @@ pub(crate) fn normalize_agent_message_item(
         text,
         phase,
         memory_citation,
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum EventCommandEventKind {
+    Output,
+    Exited,
+    Cancelled,
+    FailedToStart,
+}
+
+impl From<CoreEventCommandEventKind> for EventCommandEventKind {
+    fn from(value: CoreEventCommandEventKind) -> Self {
+        match value {
+            CoreEventCommandEventKind::Output => Self::Output,
+            CoreEventCommandEventKind::Exited => Self::Exited,
+            CoreEventCommandEventKind::Cancelled => Self::Cancelled,
+            CoreEventCommandEventKind::FailedToStart => Self::FailedToStart,
+        }
+    }
+}
+
+fn event_command_event_item(id: String, event: CoreEventCommandEvent) -> ThreadItem {
+    ThreadItem::EventCommandEvent {
+        id,
+        subscription_id: event.subscription_id,
+        kind: event.kind.into(),
+        label: event.label,
+        command: event.command,
+        cwd: event.cwd,
+        line: event.line,
+        sequence: event.sequence,
+        exit_code: event.exit_code,
+        signal: event.signal,
+        message: event.message,
+        truncated: event.truncated,
+        created_at: event.created_at,
     }
 }
 
@@ -979,6 +1060,9 @@ impl From<CoreTurnItem> for ThreadItem {
                 title: event_driven_tool.title,
                 text: event_driven_tool.text,
             },
+            CoreTurnItem::EventCommandEvent(event_command) => {
+                event_command_event_item(event_command.id, event_command.event)
+            }
             CoreTurnItem::CollabAgentMessage(collab) => {
                 thread_item_from_inter_agent_communication(collab.id, collab.communication)
             }

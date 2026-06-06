@@ -1,3 +1,4 @@
+use codex_protocol::event_command::EventCommandEvent;
 use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
@@ -147,7 +148,15 @@ pub fn parse_turn_item(item: &ResponseItem) -> Option<TurnItem> {
             ..
         } => match role.as_str() {
             "user" => {
-                if let Some(trigger) = EventDrivenToolTrigger::parse_message_content(content) {
+                if let Some(event) = EventCommandEvent::parse_message_content(content) {
+                    Some(TurnItem::EventCommandEvent(
+                        codex_protocol::items::EventCommandEventItem {
+                            id: id.clone().unwrap_or_else(|| Uuid::new_v4().to_string()),
+                            event,
+                        },
+                    ))
+                } else if let Some(trigger) = EventDrivenToolTrigger::parse_message_content(content)
+                {
                     Some(TurnItem::EventDrivenTool(EventDrivenToolItem {
                         id: id.clone().unwrap_or_else(|| Uuid::new_v4().to_string()),
                         tool: trigger.tool,
