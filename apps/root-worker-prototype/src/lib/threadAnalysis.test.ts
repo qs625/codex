@@ -42,7 +42,7 @@ function makeThread(items: Thread["turns"][number]["items"]): Thread {
   };
 }
 
-test("returns empty monitor sections when no thread is selected", () => {
+test("returns EventCommand and schedule monitor sections when no thread is selected", () => {
   const analysis = buildThreadAnalysis(null, 4);
 
   assert.equal(analysis.contextUsage.totalSkills, 4);
@@ -56,25 +56,191 @@ test("returns empty monitor sections when no thread is selected", () => {
       section.monitors,
     ]),
     [
-      ["filesystem", "Filesystem", "No file watches.", []],
-      ["process", "Processes", "No process listeners.", []],
+      ["eventCommand", "Event commands", "No command monitors.", []],
       ["schedule", "Schedules", "No scheduled listeners.", []],
     ],
   );
 });
 
-test("keeps repeating subscriptions active after events are observed", () => {
+test("keeps EventCommand active and records output events", () => {
+  const analysis = buildThreadAnalysis(
+    makeThread([
+      {
+        type: "eventCommandCall",
+        id: "event-command-1",
+        subscriptionId: "sub-command",
+        command: "tail -f /tmp/build.log",
+        cwd: "/repo",
+        label: "build log",
+        status: "completed",
+        output: { subscription_id: "sub-command" },
+      },
+      {
+        type: "eventCommandEvent",
+        id: "event-command-event-1",
+        subscriptionId: "sub-command",
+        kind: "output",
+        label: "build log",
+        command: "tail -f /tmp/build.log",
+        cwd: "/repo",
+        line: "changed:/tmp/build.log",
+        sequence: 1,
+        exitCode: null,
+        signal: null,
+        message: null,
+        truncated: false,
+        createdAt: 1,
+      },
+    ]),
+    0,
+  );
+
+  assert.equal(analysis.monitors.totalCount, 1);
+  assert.equal(analysis.monitors.eventCount, 0);
+  assert.deepEqual(analysis.monitors.sections[0]?.monitors, [
+    {
+      id: "event-command-1",
+      subscriptionId: "sub-command",
+      kind: "eventCommand",
+      label: "build log",
+      detail: "tail -f /tmp/build.log (/repo)",
+      status: "Listening",
+      eventCount: 1,
+      latestEvent: "changed:/tmp/build.log",
+    },
+  ]);
+});
+
+test("attaches early EventCommand output before subscription id is recorded", () => {
+  const analysis = buildThreadAnalysis(
+    makeThread([
+      {
+        type: "eventCommandCall",
+        id: "event-command-1",
+        subscriptionId: "",
+        command: "tail -f /tmp/build.log",
+        cwd: "/repo",
+        label: "build log",
+        status: "inProgress",
+        output: null,
+      },
+      {
+        type: "eventCommandEvent",
+        id: "event-command-event-1",
+        subscriptionId: "sub-command",
+        kind: "output",
+        label: "build log",
+        command: "tail -f /tmp/build.log",
+        cwd: "/repo",
+        line: "changed:/tmp/build.log",
+        sequence: 1,
+        exitCode: null,
+        signal: null,
+        message: null,
+        truncated: false,
+        createdAt: 1,
+      },
+    ]),
+    0,
+  );
+
+  assert.equal(analysis.monitors.totalCount, 1);
+  assert.deepEqual(analysis.monitors.sections[0]?.monitors, [
+    {
+      id: "event-command-1",
+      subscriptionId: "sub-command",
+      kind: "eventCommand",
+      label: "build log",
+      detail: "tail -f /tmp/build.log (/repo)",
+      status: "Subscribing",
+      eventCount: 1,
+      latestEvent: "changed:/tmp/build.log",
+    },
+  ]);
+});
+
+test("removes EventCommand monitor after early terminal event", () => {
+  const analysis = buildThreadAnalysis(
+    makeThread([
+      {
+        type: "eventCommandCall",
+        id: "event-command-1",
+        subscriptionId: "",
+        command: "cargo test -p codex-tui",
+        cwd: "/repo",
+        label: "tui tests",
+        status: "inProgress",
+        output: null,
+      },
+      {
+        type: "eventCommandEvent",
+        id: "event-command-event-1",
+        subscriptionId: "sub-command",
+        kind: "exited",
+        label: "tui tests",
+        command: "cargo test -p codex-tui",
+        cwd: "/repo",
+        line: null,
+        sequence: null,
+        exitCode: 0,
+        signal: null,
+        message: "EventCommand exited with status exit status: 0",
+        truncated: false,
+        createdAt: 1,
+      },
+    ]),
+    0,
+  );
+
+  assert.equal(analysis.monitors.totalCount, 0);
+  assert.deepEqual(analysis.monitors.sections[0]?.monitors, []);
+});
+
+test("removes EventCommand monitor after terminal event", () => {
+  const analysis = buildThreadAnalysis(
+    makeThread([
+      {
+        type: "eventCommandCall",
+        id: "event-command-1",
+        subscriptionId: "sub-command",
+        command: "cargo test -p codex-tui",
+        cwd: "/repo",
+        label: "tui tests",
+        status: "completed",
+        output: { subscription_id: "sub-command" },
+      },
+      {
+        type: "eventCommandEvent",
+        id: "event-command-event-1",
+        subscriptionId: "sub-command",
+        kind: "exited",
+        label: "tui tests",
+        command: "cargo test -p codex-tui",
+        cwd: "/repo",
+        line: null,
+        sequence: null,
+        exitCode: 0,
+        signal: null,
+        message: "EventCommand exited with status exit status: 0",
+        truncated: false,
+        createdAt: 1,
+      },
+    ]),
+    0,
+  );
+
+  assert.equal(analysis.monitors.totalCount, 0);
+  assert.deepEqual(analysis.monitors.sections[0]?.monitors, []);
+});
+
+test("does not restore legacy fs or process monitors as active", () => {
   const analysis = buildThreadAnalysis(
     makeThread([
       {
         type: "eventDrivenToolCall",
         id: "fs-1",
         tool: "fs_subscribe",
-        arguments: {
-          path: "/tmp/out.log",
-          recursive: true,
-          label: "build log",
-        },
+        arguments: { path: "/tmp/out.log" },
         status: "completed",
         output: { subscription_id: "sub-fs" },
       },
@@ -86,6 +252,20 @@ test("keeps repeating subscriptions active after events are observed", () => {
         status: "completed",
         output: { subscription_id: "sub-process" },
       },
+    ]),
+    0,
+  );
+
+  assert.equal(analysis.monitors.totalCount, 0);
+  assert.deepEqual(
+    analysis.monitors.sections.flatMap((section) => section.monitors),
+    [],
+  );
+});
+
+test("keeps schedule subscriptions separate from EventCommand monitors", () => {
+  const analysis = buildThreadAnalysis(
+    makeThread([
       {
         type: "eventDrivenToolCall",
         id: "schedule-1",
@@ -99,20 +279,6 @@ test("keeps repeating subscriptions active after events are observed", () => {
       },
       {
         type: "eventDrivenTool",
-        id: "fs-event-1",
-        tool: "fs_subscribe",
-        title: "File watch triggered",
-        text: "[File subscription (build log)] File changed: /tmp/out.log",
-      },
-      {
-        type: "eventDrivenTool",
-        id: "process-event-1",
-        tool: "process_exit_subscribe",
-        title: "Process exited",
-        text: "session 42 exited with code 0",
-      },
-      {
-        type: "eventDrivenTool",
         id: "schedule-event-1",
         tool: "schedule_subscribe",
         title: "Schedule triggered",
@@ -122,234 +288,18 @@ test("keeps repeating subscriptions active after events are observed", () => {
     0,
   );
 
-  assert.equal(analysis.monitors.totalCount, 2);
-  assert.equal(analysis.monitors.eventCount, 3);
-  assert.deepEqual(
-    analysis.monitors.sections.map((section) => ({
-      kind: section.kind,
-      monitors: section.monitors,
-    })),
-    [
-      {
-        kind: "filesystem",
-        monitors: [
-          {
-            id: "fs-1",
-            subscriptionId: "sub-fs",
-            kind: "filesystem",
-            label: "build log",
-            detail: "/tmp/out.log (recursive)",
-            status: "Listening",
-            eventCount: 1,
-            latestEvent:
-              "[File subscription (build log)] File changed: /tmp/out.log",
-          },
-        ],
-      },
-      {
-        kind: "process",
-        monitors: [],
-      },
-      {
-        kind: "schedule",
-        monitors: [
-          {
-            id: "schedule-1",
-            subscriptionId: null,
-            kind: "schedule",
-            label: "standup ping",
-            detail: "once after 60s",
-            status: "Listening",
-            eventCount: 1,
-            latestEvent: "[Schedule subscription (standup ping)] Trigger fired",
-          },
-        ],
-      },
-    ],
-  );
-});
-
-test("removes process monitors after restore failed events", () => {
-  const analysis = buildThreadAnalysis(
-    makeThread([
-      {
-        type: "eventDrivenToolCall",
-        id: "process-1",
-        tool: "process_exit_subscribe",
-        arguments: { session_id: 42, label: "build process" },
-        status: "completed",
-        output: { subscription_id: "sub-process" },
-      },
-      {
-        type: "eventDrivenTool",
-        id: "process-event-1",
-        tool: "process_exit_subscribe",
-        title: "Process exit restore failed",
-        text: "[Process exit subscription restore (build process)] Could not restore session 42 after restart because the original exec session is no longer available.",
-      },
-    ]),
-    0,
-  );
-
-  assert.equal(analysis.monitors.totalCount, 0);
-  assert.equal(analysis.monitors.eventCount, 1);
-  assert.deepEqual(analysis.monitors.sections[1]?.monitors, []);
-});
-
-test("keeps subscriptions in listening state before an event is observed", () => {
-  const analysis = buildThreadAnalysis(
-    makeThread([
-      {
-        type: "eventDrivenToolCall",
-        id: "fs-1",
-        tool: "fs_subscribe",
-        arguments: { path: "/tmp/out.log" },
-        status: "completed",
-        output: null,
-      },
-    ]),
-    0,
-  );
-
-  assert.deepEqual(analysis.monitors.sections[0]?.monitors, [
-    {
-      id: "fs-1",
-      subscriptionId: null,
-      kind: "filesystem",
-      label: "/tmp/out.log",
-      detail: "/tmp/out.log",
-      status: "Listening",
-      eventCount: 0,
-      latestEvent: null,
-    },
-  ]);
-});
-
-test("attributes same-kind events to matching subscriptions only", () => {
-  const analysis = buildThreadAnalysis(
-    makeThread([
-      {
-        type: "eventDrivenToolCall",
-        id: "fs-1",
-        tool: "fs_subscribe",
-        arguments: { path: "/tmp/build.log", label: "build log" },
-        status: "completed",
-        output: null,
-      },
-      {
-        type: "eventDrivenToolCall",
-        id: "fs-2",
-        tool: "fs_subscribe",
-        arguments: { path: "/tmp/test.log", label: "test log" },
-        status: "completed",
-        output: null,
-      },
-      {
-        type: "eventDrivenTool",
-        id: "fs-event-1",
-        tool: "fs_subscribe",
-        title: "File watch triggered",
-        text: "[File subscription (test log)] File changed: /tmp/test.log",
-      },
-    ]),
-    0,
-  );
-
-  assert.deepEqual(analysis.monitors.sections[0]?.monitors, [
-    {
-      id: "fs-1",
-      subscriptionId: null,
-      kind: "filesystem",
-      label: "build log",
-      detail: "/tmp/build.log",
-      status: "Listening",
-      eventCount: 0,
-      latestEvent: null,
-    },
-    {
-      id: "fs-2",
-      subscriptionId: null,
-      kind: "filesystem",
-      label: "test log",
-      detail: "/tmp/test.log",
-      status: "Listening",
-      eventCount: 1,
-      latestEvent: "[File subscription (test log)] File changed: /tmp/test.log",
-    },
-  ]);
-});
-
-test("removes monitors after matching unsubscribe calls", () => {
-  const analysis = buildThreadAnalysis(
-    makeThread([
-      {
-        type: "eventDrivenToolCall",
-        id: "fs-1",
-        tool: "fs_subscribe",
-        arguments: { path: "/tmp/build.log", label: "build log" },
-        status: "completed",
-        output: { subscription_id: "sub-fs" },
-      },
-      {
-        type: "eventDrivenToolCall",
-        id: "fs-2",
-        tool: "fs_subscribe",
-        arguments: { path: "/tmp/test.log", label: "test log" },
-        status: "completed",
-        output: { subscription_id: "sub-test" },
-      },
-      {
-        type: "eventDrivenToolCall",
-        id: "fs-unsubscribe-1",
-        tool: "fs_unsubscribe",
-        arguments: { subscription_id: "sub-fs" },
-        status: "completed",
-        output: { unsubscribed: true, subscription_id: "sub-fs" },
-      },
-    ]),
-    0,
-  );
-
-  assert.deepEqual(analysis.monitors.sections[0]?.monitors, [
-    {
-      id: "fs-2",
-      subscriptionId: "sub-test",
-      kind: "filesystem",
-      label: "test log",
-      detail: "/tmp/test.log",
-      status: "Listening",
-      eventCount: 0,
-      latestEvent: null,
-    },
-  ]);
   assert.equal(analysis.monitors.totalCount, 1);
-});
-
-test("maps in-progress subscription calls to subscribing status", () => {
-  const analysis = buildThreadAnalysis(
-    makeThread([
-      {
-        type: "eventDrivenToolCall",
-        id: "process-1",
-        tool: "process_exit_subscribe",
-        arguments: { session_id: 42 },
-        status: "inProgress",
-        output: null,
-      },
-    ]),
-    0,
-  );
-
+  assert.equal(analysis.monitors.eventCount, 1);
   assert.deepEqual(analysis.monitors.sections[1]?.monitors, [
     {
-      id: "process-1",
+      id: "schedule-1",
       subscriptionId: null,
-      kind: "process",
-      label: "Session 42",
-      detail: "session 42",
-      status: "Subscribing",
-      eventCount: 0,
-      latestEvent: null,
+      kind: "schedule",
+      label: "standup ping",
+      detail: "once after 60s",
+      status: "Listening",
+      eventCount: 1,
+      latestEvent: "[Schedule subscription (standup ping)] Trigger fired",
     },
   ]);
 });

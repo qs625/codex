@@ -335,11 +335,22 @@ function buildConversationItemEntries(
   if (
     item.type === "dynamicToolCall" ||
     item.type === "mcpToolCall" ||
-    item.type === "eventDrivenToolCall"
+    item.type === "eventDrivenToolCall" ||
+    item.type === "eventCommandCall"
   ) {
     const details =
       item.type === "dynamicToolCall"
         ? formatStructuredToolDetails(item.arguments, item.contentItems)
+        : item.type === "eventCommandCall"
+          ? formatStructuredToolDetails(
+              {
+                subscriptionId: item.subscriptionId,
+                command: item.command,
+                cwd: item.cwd,
+                label: item.label,
+              },
+              item.output,
+            )
         : item.type === "eventDrivenToolCall"
           ? formatStructuredToolDetails(item.arguments, item.output)
           : formatStructuredToolDetails(
@@ -352,18 +363,42 @@ function buildConversationItemEntries(
         kind: "tool" as const,
         author,
         role: "system" as const,
-        text: summarizeToolCall(item),
+        text:
+          item.type === "eventCommandCall"
+            ? summarizeEventCommandCall(item)
+            : summarizeToolCall(item),
         timestamp,
         attachments: [],
-        toolName: item.tool,
+        toolName:
+          item.type === "eventCommandCall" ? "event_command_subscribe" : item.tool,
         toolStatus: item.status,
         toolDetails: details,
         toolCategory:
-          item.type === "eventDrivenToolCall"
+          item.type === "eventCommandCall"
+            ? "eventDrivenSubscription"
+            : item.type === "eventDrivenToolCall"
             ? "eventDrivenSubscription"
             : item.type === "mcpToolCall"
               ? "external"
               : "external",
+      },
+    ];
+  }
+
+  if (item.type === "eventCommandEvent") {
+    return [
+      {
+        id: item.id,
+        kind: "tool" as const,
+        author,
+        role: "system" as const,
+        text: summarizeEventCommandEvent(item),
+        timestamp,
+        attachments: [],
+        toolName: eventCommandEventTitle(item),
+        toolStatus: "completed",
+        toolDetails: formatEventCommandEventDetails(item),
+        toolCategory: "eventDrivenEvent",
       },
     ];
   }
@@ -760,6 +795,12 @@ function summarizeEventDrivenToolCall(
   return details ? `${item.tool} • ${details}` : item.tool;
 }
 
+function summarizeEventCommandCall(
+  item: Extract<ThreadItem, { type: "eventCommandCall" }>,
+) {
+  return item.label ? `${item.label} • ${item.command}` : item.command;
+}
+
 function summarizeEventDrivenTool(
   item: Extract<ThreadItem, { type: "eventDrivenTool" }>,
 ) {
@@ -772,6 +813,67 @@ function summarizeEventDrivenTool(
   return details.capturedOutput !== null
     ? firstNonEmptyLine(details.summary) || item.title
     : text;
+}
+
+function eventCommandEventTitle(
+  item: Extract<ThreadItem, { type: "eventCommandEvent" }>,
+) {
+  switch (item.kind) {
+    case "output":
+      return "EventCommand output";
+    case "exited":
+      return "EventCommand exited";
+    case "cancelled":
+      return "EventCommand cancelled";
+    case "failedToStart":
+      return "EventCommand failed";
+    default:
+      return "EventCommand";
+  }
+}
+
+function summarizeEventCommandEvent(
+  item: Extract<ThreadItem, { type: "eventCommandEvent" }>,
+) {
+  if (item.kind === "output") {
+    return item.line || item.label || item.command;
+  }
+
+  if (item.kind === "exited") {
+    return item.exitCode === null
+      ? `${item.command} exited`
+      : `${item.command} exited with code ${item.exitCode}`;
+  }
+
+  return item.message || `${item.command} ${item.kind}`;
+}
+
+function formatEventCommandEventDetails(
+  item: Extract<ThreadItem, { type: "eventCommandEvent" }>,
+) {
+  const sections = [
+    `Subscription\n${item.subscriptionId}`,
+    `Command\n${item.command}`,
+    `Kind\n${item.kind}`,
+  ];
+
+  if (item.cwd) {
+    sections.push(`Working directory\n${item.cwd}`);
+  }
+  if (item.label) {
+    sections.push(`Label\n${item.label}`);
+  }
+  if (item.line) {
+    sections.push(`Output\n${item.line}`);
+  }
+  if (item.message) {
+    sections.push(`Message\n${item.message}`);
+  }
+  if (item.exitCode !== null) {
+    sections.push(`Exit code\n${item.exitCode}`);
+  }
+
+  return sections.join("\n\n");
 }
 
 function formatEventDrivenToolDetails(

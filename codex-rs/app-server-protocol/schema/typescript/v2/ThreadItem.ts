@@ -14,6 +14,7 @@ import type { CommandExecutionSource } from "./CommandExecutionSource";
 import type { CommandExecutionStatus } from "./CommandExecutionStatus";
 import type { DynamicToolCallOutputContentItem } from "./DynamicToolCallOutputContentItem";
 import type { DynamicToolCallStatus } from "./DynamicToolCallStatus";
+import type { EventCommandEventKind } from "./EventCommandEventKind";
 import type { FileUpdateChange } from "./FileUpdateChange";
 import type { HookPromptFragment } from "./HookPromptFragment";
 import type { InjectedContextSection } from "./InjectedContextSection";
@@ -59,11 +60,11 @@ durationMs: number | null, } | { "type": "fileChange", id: string, changes: Arra
 /**
  * The duration of the MCP tool call in milliseconds.
  */
-durationMs: number | null, } | { "type": "dynamicToolCall", id: string, namespace: string | null, tool: string, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null,
+durationMs: number | null, } | { "type": "dynamicToolCall", id: string, namespace: string | null, tool: string, arguments: unknown, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null,
 /**
  * The duration of the dynamic tool call in milliseconds.
  */
-durationMs: number | null, } | { "type": "eventDrivenToolCall", id: string, tool: string, arguments: JsonValue, status: DynamicToolCallStatus, output: JsonValue | null, } | { "type": "eventDrivenTool", id: string, tool: string, title: string, text: string, } | { "type": "collabAgentMessage", id: string, operation: CollabAgentOperation, senderThreadId: string | null, senderPath: string, recipientThreadId: string | null, recipientPath: string, otherRecipientPaths: Array<string>, content: string, triggerTurn: boolean, } | { "type": "collabAgentToolCall",
+durationMs: number | null, } | { "type": "eventDrivenToolCall", id: string, tool: string, arguments: unknown, status: DynamicToolCallStatus, output: unknown | null, } | { "type": "eventDrivenTool", id: string, tool: string, title: string, text: string, } | { "type": "eventCommandCall", id: string, subscriptionId: string, command: string, cwd: string | null, label: string | null, status: DynamicToolCallStatus, output: unknown | null, } | { "type": "eventCommandEvent", id: string, subscriptionId: string, kind: EventCommandEventKind, label: string | null, command: string, cwd: string | null, line: string | null, sequence: number | null, exitCode: number | null, signal: string | null, message: string | null, truncated: boolean, createdAt: number, } | { "type": "collabAgentMessage", id: string, operation: CollabAgentOperation, senderThreadId: string | null, senderPath: string, recipientThreadId: string | null, recipientPath: string, otherRecipientPaths: Array<string>, content: string, triggerTurn: boolean, } | { "type": "collabAgentToolCall",
 /**
  * Unique identifier for this collab tool call.
  */

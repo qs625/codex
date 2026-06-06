@@ -6,7 +6,7 @@ use serde_json::json;
 use std::collections::BTreeMap;
 
 fn exec_command_description() -> String {
-    "Runs a command in a PTY, returning output or a session ID for ongoing interaction. If the command keeps running and you need a completion notification, use `process_exit_subscribe` with the returned session ID instead of `wait_agent`. If you need ongoing log or file updates while it runs, redirect output to a file and use `fs_subscribe`."
+    "Runs a command in a PTY, returning output or a session ID for ongoing interaction. For background command monitoring, command-exit notifications, or file/log watching, use `event_command_subscribe` to run a quiet monitor command whose stdout lines become events."
         .to_string()
 }
 

@@ -1123,6 +1123,8 @@ function canMatchThreadItemSemantically(item: ThreadItem) {
   switch (item.type) {
     case "agentMessage":
     case "collabAgentMessage":
+    case "eventCommandCall":
+    case "eventCommandEvent":
     case "eventDrivenTool":
     case "eventDrivenToolCall":
       return true;
@@ -1227,8 +1229,7 @@ export type TreeThreadStatusClass =
   | "waiting-eventtool";
 
 const MONITOR_TOOL_NAMES = new Set([
-  "fs_subscribe",
-  "process_exit_subscribe",
+  "event_command_subscribe",
   "schedule_subscribe",
 ]);
 
@@ -1336,6 +1337,9 @@ function hasActiveTurnWork(thread: Thread) {
 function isMonitorToolItem(item: ThreadItem) {
   if (item.type === "eventDrivenTool" || item.type === "eventDrivenToolCall") {
     return isMonitorToolName(item.tool);
+  }
+  if (item.type === "eventCommandCall" || item.type === "eventCommandEvent") {
+    return true;
   }
   return false;
 }

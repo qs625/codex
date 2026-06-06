@@ -1469,6 +1469,7 @@ pub(super) fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
             TurnItem::UserMessage(_)
             | TurnItem::HookPrompt(_)
             | TurnItem::EventDrivenTool(_)
+            | TurnItem::EventCommandEvent(_)
             | TurnItem::CollabAgentMessage(_)
             | TurnItem::Plan(_)
             | TurnItem::Reasoning(_)

@@ -6,6 +6,10 @@ fn windows_shell_guidance_description() -> String {
     format!("\n\n{}", windows_shell_guidance())
 }
 
+fn expected_exec_command_description() -> String {
+    "Runs a command in a PTY, returning output or a session ID for ongoing interaction. For background command monitoring, command-exit notifications, or file/log watching, use `event_command_subscribe` to run a quiet monitor command whose stdout lines become events.".to_string()
+}
+
 #[test]
 fn exec_command_tool_matches_expected_spec() {
     let tool = create_exec_command_tool(CommandToolOptions {
@@ -15,11 +19,12 @@ fn exec_command_tool_matches_expected_spec() {
 
     let description = if cfg!(windows) {
         format!(
-            "Runs a command in a PTY, returning output or a session ID for ongoing interaction. If the command keeps running and you need a completion notification, use `process_exit_subscribe` with the returned session ID instead of `wait_agent`. If you need ongoing log or file updates while it runs, redirect output to a file and use `fs_subscribe`.{}",
+            "{}{}",
+            expected_exec_command_description(),
             windows_shell_guidance_description()
         )
     } else {
-        "Runs a command in a PTY, returning output or a session ID for ongoing interaction. If the command keeps running and you need a completion notification, use `process_exit_subscribe` with the returned session ID instead of `wait_agent`. If you need ongoing log or file updates while it runs, redirect output to a file and use `fs_subscribe`.".to_string()
+        expected_exec_command_description()
     };
 
     let mut properties = BTreeMap::from([

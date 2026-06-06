@@ -13,6 +13,8 @@ use codex_protocol::openai_models::ModelsResponse;
 use futures::SinkExt;
 use futures::StreamExt;
 use serde_json::Value;
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tokio::sync::oneshot;
@@ -443,6 +445,42 @@ impl WebSocketHandshake {
 }
 
 #[derive(Debug, Clone)]
+pub struct WebRtcCallCreateResponse {
+    pub location: String,
+    pub body: String,
+    pub status: u16,
+}
+
+#[derive(Debug, Clone)]
+pub struct RealtimeCallRequest {
+    path: String,
+    query: Option<String>,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+impl RealtimeCallRequest {
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn query(&self) -> Option<&str> {
+        self.query.as_deref()
+    }
+
+    pub fn header(&self, name: &str) -> Option<String> {
+        self.headers
+            .iter()
+            .find(|(header, _)| header.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.clone())
+    }
+
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct WebSocketConnectionConfig {
     pub requests: Vec<Vec<Value>>,
     pub response_headers: Vec<(String, String)>,
@@ -460,8 +498,10 @@ pub struct WebSocketConnectionConfig {
 
 pub struct WebSocketTestServer {
     uri: String,
+    http_uri: String,
     connections: Arc<Mutex<Vec<Vec<WebSocketRequest>>>>,
     handshakes: Arc<Mutex<Vec<WebSocketHandshake>>>,
+    realtime_call_requests: Arc<Mutex<Vec<RealtimeCallRequest>>>,
     request_log_updated: Arc<Notify>,
     shutdown: oneshot::Sender<()>,
     task: tokio::task::JoinHandle<()>,
@@ -470,6 +510,10 @@ pub struct WebSocketTestServer {
 impl WebSocketTestServer {
     pub fn uri(&self) -> &str {
         &self.uri
+    }
+
+    pub fn http_uri(&self) -> &str {
+        &self.http_uri
     }
 
     pub fn connections(&self) -> Vec<Vec<WebSocketRequest>> {
@@ -506,6 +550,14 @@ impl WebSocketTestServer {
 
     pub fn handshakes(&self) -> Vec<WebSocketHandshake> {
         self.handshakes.lock().unwrap().clone()
+    }
+
+    pub fn single_realtime_call_request(&self) -> RealtimeCallRequest {
+        let requests = self.realtime_call_requests.lock().unwrap();
+        if requests.len() != 1 {
+            panic!("expected 1 realtime call request, got {}", requests.len());
+        }
+        requests.first().cloned().expect("request checked above")
     }
 
     /// Waits until at least `expected` websocket handshakes have been observed or timeout elapses.
@@ -1226,19 +1278,30 @@ pub async fn start_websocket_server(connections: Vec<Vec<Vec<Value>>>) -> WebSoc
 pub async fn start_websocket_server_with_headers(
     connections: Vec<WebSocketConnectionConfig>,
 ) -> WebSocketTestServer {
+    start_websocket_server_with_headers_and_realtime_calls(connections, None).await
+}
+
+pub async fn start_websocket_server_with_headers_and_realtime_calls(
+    connections: Vec<WebSocketConnectionConfig>,
+    realtime_call_response: Option<WebRtcCallCreateResponse>,
+) -> WebSocketTestServer {
     let start = std::time::Instant::now();
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind websocket server");
     let addr = listener.local_addr().expect("websocket server address");
     let uri = format!("ws://{addr}");
+    let http_uri = format!("http://{addr}");
     let connections_log = Arc::new(Mutex::new(Vec::new()));
     let handshakes_log = Arc::new(Mutex::new(Vec::new()));
+    let realtime_call_requests_log = Arc::new(Mutex::new(Vec::new()));
     let request_log_updated = Arc::new(Notify::new());
     let requests = Arc::clone(&connections_log);
     let handshakes = Arc::clone(&handshakes_log);
+    let realtime_call_requests = Arc::clone(&realtime_call_requests_log);
     let request_log = Arc::clone(&request_log_updated);
     let connections = Arc::new(Mutex::new(VecDeque::from(connections)));
+    let realtime_call_response = Arc::new(realtime_call_response);
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
 
     let task = tokio::spawn(async move {
@@ -1251,6 +1314,17 @@ pub async fn start_websocket_server_with_headers(
                 Ok(value) => value,
                 Err(_) => return,
             };
+            let mut stream = stream;
+            if let Some(response) = realtime_call_response.as_ref()
+                && let Ok(true) = handle_realtime_call_create(
+                    &mut stream,
+                    response,
+                    Arc::clone(&realtime_call_requests),
+                )
+                .await
+            {
+                continue;
+            }
             let connection = {
                 let mut pending = connections.lock().unwrap();
                 pending.pop_front()
@@ -1390,12 +1464,96 @@ pub async fn start_websocket_server_with_headers(
 
     WebSocketTestServer {
         uri,
+        http_uri,
         connections: connections_log,
         handshakes: handshakes_log,
+        realtime_call_requests: realtime_call_requests_log,
         request_log_updated,
         shutdown: shutdown_tx,
         task,
     }
+}
+
+async fn handle_realtime_call_create(
+    stream: &mut tokio::net::TcpStream,
+    response: &WebRtcCallCreateResponse,
+    requests: Arc<Mutex<Vec<RealtimeCallRequest>>>,
+) -> std::io::Result<bool> {
+    let mut prefix = [0_u8; 4];
+    let read = stream.peek(&mut prefix).await?;
+    if read < prefix.len() || &prefix != b"POST" {
+        return Ok(false);
+    }
+
+    let mut buffer = Vec::new();
+    let header_end = loop {
+        let mut chunk = [0_u8; 1024];
+        let read = stream.read(&mut chunk).await?;
+        if read == 0 {
+            return Ok(true);
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+        if let Some(header_end) = find_header_end(&buffer) {
+            break header_end;
+        }
+    };
+
+    let headers_text = String::from_utf8_lossy(&buffer[..header_end]);
+    let mut lines = headers_text.split("\r\n");
+    let request_line = lines.next().unwrap_or_default();
+    let target = request_line.split_whitespace().nth(1).unwrap_or_default();
+    let (path, query) = match target.split_once('?') {
+        Some((path, query)) => (path.to_string(), Some(query.to_string())),
+        None => (target.to_string(), None),
+    };
+    let headers: Vec<(String, String)> = lines
+        .filter_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            Some((name.trim().to_string(), value.trim().to_string()))
+        })
+        .collect();
+    let content_length = headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, value)| value.parse::<usize>().ok())
+        .unwrap_or(0);
+    let body_start = header_end + 4;
+    while buffer.len().saturating_sub(body_start) < content_length {
+        let mut chunk = [0_u8; 1024];
+        let read = stream.read(&mut chunk).await?;
+        if read == 0 {
+            break;
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+    }
+    let body_end = body_start + content_length.min(buffer.len().saturating_sub(body_start));
+    let body = buffer[body_start..body_end].to_vec();
+    requests.lock().unwrap().push(RealtimeCallRequest {
+        path,
+        query,
+        headers,
+        body,
+    });
+
+    let status_reason = if response.status == 200 {
+        "OK"
+    } else {
+        "Internal Server Error"
+    };
+    let http_response = format!(
+        "HTTP/1.1 {} {}\r\nLocation: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        response.status,
+        status_reason,
+        response.location,
+        response.body.len(),
+        response.body,
+    );
+    stream.write_all(http_response.as_bytes()).await?;
+    Ok(true)
+}
+
+fn find_header_end(buffer: &[u8]) -> Option<usize> {
+    buffer.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
 fn parse_ws_request_body(message: Message) -> Option<Value> {

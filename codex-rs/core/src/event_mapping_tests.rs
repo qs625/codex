@@ -2,6 +2,8 @@ use super::parse_turn_item;
 use crate::context::ContextualUserFragment;
 use crate::context::GoalContext;
 use codex_protocol::AgentPath;
+use codex_protocol::event_command::EventCommandEvent;
+use codex_protocol::event_command::EventCommandEventKind;
 use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::HookPromptFragment;
@@ -274,6 +276,38 @@ fn skips_unnamed_image_label_text() {
             assert_eq!(user.content, expected_content);
         }
         other => panic!("expected TurnItem::UserMessage, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_event_command_event_as_distinct_turn_item() {
+    let event = EventCommandEvent {
+        subscription_id: "sub-command".to_string(),
+        kind: EventCommandEventKind::Output,
+        label: Some("build log".to_string()),
+        command: "tail -f /tmp/build.log".to_string(),
+        cwd: Some("/repo".to_string()),
+        line: Some("changed:/tmp/build.log".to_string()),
+        sequence: Some(1),
+        exit_code: None,
+        signal: None,
+        message: None,
+        truncated: false,
+        created_at: 1,
+    };
+    let mut item = event.to_response_item();
+    if let ResponseItem::Message { id, .. } = &mut item {
+        *id = Some("event-command-event-1".to_string());
+    }
+
+    let turn_item = parse_turn_item(&item).expect("expected event command turn item");
+
+    match turn_item {
+        TurnItem::EventCommandEvent(event_item) => {
+            assert_eq!(event_item.id, "event-command-event-1");
+            assert_eq!(event_item.event, event);
+        }
+        other => panic!("expected TurnItem::EventCommandEvent, got {other:?}"),
     }
 }
 

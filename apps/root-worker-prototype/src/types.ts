@@ -160,6 +160,32 @@ export type ThreadItem = ThreadItemTimestamps &
       text: string;
     }
   | {
+      type: "eventCommandCall";
+      id: string;
+      subscriptionId: string;
+      command: string;
+      cwd: string | null;
+      label: string | null;
+      status: string;
+      output: unknown | null;
+    }
+  | {
+      type: "eventCommandEvent";
+      id: string;
+      subscriptionId: string;
+      kind: "output" | "exited" | "cancelled" | "failedToStart";
+      label: string | null;
+      command: string;
+      cwd: string | null;
+      line: string | null;
+      sequence: number | null;
+      exitCode: number | null;
+      signal: string | null;
+      message: string | null;
+      truncated: boolean;
+      createdAt: number;
+    }
+  | {
       type: "mcpToolCall";
       id: string;
       server: string;

@@ -733,10 +733,10 @@ mod tests {
         .expect("state db should initialize");
         let store = LocalThreadStore::new(config, Some(runtime));
         let subscriptions = vec![
-            PersistedSubscription::Fs {
-                subscription_id: "sub_file".to_string(),
-                path: "/tmp/build.log".to_string(),
-                recursive: false,
+            PersistedSubscription::EventCommand {
+                subscription_id: "sub_command".to_string(),
+                command: "tail -f /tmp/build.log".to_string(),
+                cwd: None,
                 label: Some("build".to_string()),
             },
             PersistedSubscription::Schedule {

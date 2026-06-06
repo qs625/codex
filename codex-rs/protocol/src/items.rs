@@ -1,3 +1,4 @@
+use crate::event_command::EventCommandEvent;
 use crate::mcp::CallToolResult;
 use crate::memory_citation::MemoryCitation;
 use crate::models::ContentItem;
@@ -45,6 +46,7 @@ pub enum TurnItem {
     HookPrompt(HookPromptItem),
     AgentMessage(AgentMessageItem),
     EventDrivenTool(EventDrivenToolItem),
+    EventCommandEvent(EventCommandEventItem),
     CollabAgentMessage(CollabAgentMessageItem),
     Plan(PlanItem),
     Reasoning(ReasoningItem),
@@ -121,6 +123,14 @@ pub struct EventDrivenToolItem {
     pub tool: String,
     pub title: String,
     pub text: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct EventCommandEventItem {
+    pub id: String,
+    pub event: EventCommandEvent,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq, Eq)]
@@ -561,6 +571,7 @@ impl TurnItem {
             TurnItem::HookPrompt(item) => item.id.clone(),
             TurnItem::AgentMessage(item) => item.id.clone(),
             TurnItem::EventDrivenTool(item) => item.id.clone(),
+            TurnItem::EventCommandEvent(item) => item.id.clone(),
             TurnItem::CollabAgentMessage(item) => item.id.clone(),
             TurnItem::Plan(item) => item.id.clone(),
             TurnItem::Reasoning(item) => item.id.clone(),
@@ -579,6 +590,7 @@ impl TurnItem {
             TurnItem::HookPrompt(_) => Vec::new(),
             TurnItem::AgentMessage(item) => item.as_legacy_events(),
             TurnItem::EventDrivenTool(_) => Vec::new(),
+            TurnItem::EventCommandEvent(_) => Vec::new(),
             TurnItem::CollabAgentMessage(_) => Vec::new(),
             TurnItem::Plan(_) => Vec::new(),
             TurnItem::WebSearch(item) => vec![item.as_legacy_event()],

@@ -21,12 +21,14 @@ codex-extension-api = { workspace = true }
 codex-file-watcher = { workspace = true }
 codex-protocol = { workspace = true }
 codex-thread-store = { workspace = true }
+codex-utils-pty = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["rt", "sync"] }
+tokio = { workspace = true, features = ["io-util", "process", "rt", "sync"] }
 tracing = { workspace = true }
 uuid = { workspace = true, features = ["v7"] }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+tempfile = { workspace = true }

@@ -4,7 +4,7 @@ import {
 } from "./contextUsage";
 import type { Thread, ThreadItem } from "../types";
 
-export type MonitorKind = "filesystem" | "process" | "schedule";
+export type MonitorKind = "eventCommand" | "schedule";
 
 export type MonitorSummary = {
   id: string;
@@ -39,14 +39,10 @@ type MonitorEvent = {
 };
 
 const MONITOR_TOOLS = {
-  fs_subscribe: "filesystem",
-  process_exit_subscribe: "process",
   schedule_subscribe: "schedule",
 } as const satisfies Record<string, MonitorKind>;
 
 const UNSUBSCRIBE_TOOLS = {
-  fs_unsubscribe: "filesystem",
-  process_exit_unsubscribe: "process",
   schedule_unsubscribe: "schedule",
 } as const satisfies Record<string, MonitorKind>;
 
@@ -56,14 +52,9 @@ const MONITOR_SECTIONS: Array<{
   emptyLabel: string;
 }> = [
   {
-    kind: "filesystem",
-    title: "Filesystem",
-    emptyLabel: "No file watches.",
-  },
-  {
-    kind: "process",
-    title: "Processes",
-    emptyLabel: "No process listeners.",
+    kind: "eventCommand",
+    title: "Event commands",
+    emptyLabel: "No command monitors.",
   },
   {
     kind: "schedule",
@@ -119,6 +110,15 @@ function buildMonitorSections(
           events.push(buildMonitorEvent(item));
           eventsByTool.set(item.tool, events);
         }
+
+        if (item.type === "eventCommandCall") {
+          monitors.push(buildEventCommandMonitorSummary(item));
+          continue;
+        }
+
+        if (item.type === "eventCommandEvent") {
+          applyEventCommandEvent(monitors, item);
+        }
       }
     }
   }
@@ -139,9 +139,6 @@ function buildMonitorSections(
       matchingEvents.length > 0 ? matchingEvents : fallbackEvents;
 
     if (observedEvents.length > 0) {
-      if (monitor.kind === "process") {
-        continue;
-      }
       activeMonitors.push({
         ...monitor,
         eventCount: observedEvents.length,
@@ -166,6 +163,70 @@ function buildMonitorSections(
     ),
     sections,
   };
+}
+
+function buildEventCommandMonitorSummary(
+  item: Extract<ThreadItem, { type: "eventCommandCall" }>,
+): MonitorSummary {
+  return {
+    id: item.id,
+    subscriptionId: item.subscriptionId || null,
+    kind: "eventCommand",
+    label: item.label || item.command || "Event command",
+    detail: item.cwd ? `${item.command} (${item.cwd})` : item.command,
+    status: statusLabel(item.status),
+    eventCount: 0,
+    latestEvent: null,
+  };
+}
+
+function applyEventCommandEvent(
+  monitors: MonitorSummary[],
+  item: Extract<ThreadItem, { type: "eventCommandEvent" }>,
+) {
+  const monitorIndex = findEventCommandMonitorIndex(monitors, item);
+  if (monitorIndex === -1) {
+    return;
+  }
+
+  if (
+    item.kind === "exited" ||
+    item.kind === "cancelled" ||
+    item.kind === "failedToStart"
+  ) {
+    monitors.splice(monitorIndex, 1);
+    return;
+  }
+
+  const monitor = monitors[monitorIndex];
+  monitors[monitorIndex] = {
+    ...monitor,
+    subscriptionId: item.subscriptionId,
+    eventCount: monitor.eventCount + 1,
+    latestEvent: item.line ?? item.message ?? item.kind,
+  };
+}
+
+function findEventCommandMonitorIndex(
+  monitors: MonitorSummary[],
+  item: Extract<ThreadItem, { type: "eventCommandEvent" }>,
+): number {
+  const exactIndex = monitors.findIndex(
+    (monitor) => monitor.subscriptionId === item.subscriptionId,
+  );
+  if (exactIndex !== -1) {
+    return exactIndex;
+  }
+
+  const label = item.label || item.command || "Event command";
+  const detail = item.cwd ? `${item.command} (${item.cwd})` : item.command;
+  return monitors.findIndex(
+    (monitor) =>
+      monitor.kind === "eventCommand" &&
+      monitor.subscriptionId === null &&
+      monitor.label === label &&
+      monitor.detail === detail,
+  );
 }
 
 function buildMonitorSummary(
@@ -204,39 +265,20 @@ function removeUnsubscribedMonitor(
   }
 }
 
-function monitorLabel(kind: MonitorKind, args: Record<string, unknown>) {
+function monitorLabel(_kind: MonitorKind, args: Record<string, unknown>) {
   const label = stringOrNull(args.label);
   if (label) {
     return label;
-  }
-
-  if (kind === "filesystem") {
-    return stringOrNull(args.path) ?? "File watch";
-  }
-
-  if (kind === "process") {
-    const sessionId = numberOrNull(args.session_id);
-    return sessionId === null ? "Process listener" : `Session ${sessionId}`;
   }
 
   return "Schedule";
 }
 
 function monitorDetail(
-  kind: MonitorKind,
+  _kind: MonitorKind,
   args: Record<string, unknown>,
   output: unknown,
 ) {
-  if (kind === "filesystem") {
-    const path = stringOrNull(args.path) ?? "path unavailable";
-    return args.recursive === true ? `${path} (recursive)` : path;
-  }
-
-  if (kind === "process") {
-    const sessionId = numberOrNull(args.session_id);
-    return sessionId === null ? "session unavailable" : `session ${sessionId}`;
-  }
-
   const outputRecord = objectRecord(output);
   return (
     stringOrNull(outputRecord.schedule_summary) ??
@@ -256,25 +298,7 @@ function buildMonitorEvent(
 }
 
 function monitorMatchesEvent(monitor: MonitorSummary, event: string) {
-  if (
-    monitor.kind === "process" &&
-    event.includes("Process exit restore failed")
-  ) {
-    return (
-      subscriptionIdMatchesEvent(monitor.subscriptionId, event) ||
-      event.includes(monitor.detail) ||
-      event.includes(monitor.label)
-    );
-  }
-
   return event.includes(monitor.label) || event.includes(monitor.detail);
-}
-
-function subscriptionIdMatchesEvent(
-  subscriptionId: string | null,
-  event: string,
-) {
-  return subscriptionId !== null && event.includes(subscriptionId);
 }
 
 function statusLabel(status: string) {
@@ -310,7 +334,7 @@ function toolFromMonitorKind(kind: MonitorKind) {
     }
   }
 
-  return "fs_subscribe";
+  return "event_command_subscribe";
 }
 
 function objectRecord(value: unknown): Record<string, unknown> {
@@ -325,10 +349,6 @@ function stringOrNull(value: unknown) {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : null;
-}
-
-function numberOrNull(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function subscriptionIdFromOutput(output: unknown) {

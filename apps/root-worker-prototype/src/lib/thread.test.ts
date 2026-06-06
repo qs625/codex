@@ -1989,10 +1989,12 @@ test("treeThreadStatusClass shows event tool waiting separately", () => {
         id: "turn-1",
         items: [
           {
-            type: "eventDrivenToolCall" as const,
+            type: "eventCommandCall" as const,
             id: "item-1",
-            tool: "process_exit_subscribe",
-            arguments: { session_id: 42 },
+            subscriptionId: "sub-1",
+            command: "tail -f /tmp/build.log",
+            cwd: "/tmp",
+            label: "build log",
             status: "completed",
             output: { subscription_id: "sub-1" },
           },

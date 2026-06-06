@@ -1465,10 +1465,40 @@ pub(crate) async fn maybe_emit_event_driven_tool_call_notifications(
             call_id,
             ..
         } => {
+            let arguments = parse_raw_function_call_arguments(arguments);
+            if is_event_command_subscribe_tool(namespace.as_deref(), name) {
+                {
+                    let mut state = thread_state.lock().await;
+                    state.turn_summary.event_driven_tool_calls.insert(
+                        call_id.clone(),
+                        EventDrivenToolCallSummary {
+                            tool: name.to_string(),
+                            arguments: arguments.clone(),
+                        },
+                    );
+                }
+                let started = ItemStartedNotification {
+                    thread_id: conversation_id.to_string(),
+                    turn_id: turn_id.to_string(),
+                    started_at_ms: now_unix_timestamp_ms(),
+                    item: ThreadItem::EventCommandCall {
+                        id: call_id.clone(),
+                        subscription_id: String::new(),
+                        command: string_field(&arguments, "command").unwrap_or_default(),
+                        cwd: string_field(&arguments, "cwd"),
+                        label: string_field(&arguments, "label"),
+                        status: DynamicToolCallStatus::InProgress,
+                        output: None,
+                    },
+                };
+                outgoing
+                    .send_server_notification(ServerNotification::ItemStarted(started))
+                    .await;
+                return;
+            }
             let Some(tool) = event_driven_tool_name(namespace.as_deref(), name) else {
                 return;
             };
-            let arguments = parse_raw_function_call_arguments(arguments);
             {
                 let mut state = thread_state.lock().await;
                 state.turn_summary.event_driven_tool_calls.insert(
@@ -1505,17 +1535,41 @@ pub(crate) async fn maybe_emit_event_driven_tool_call_notifications(
             else {
                 return;
             };
-            let completed = ItemCompletedNotification {
-                thread_id: conversation_id.to_string(),
-                turn_id: turn_id.to_string(),
-                completed_at_ms: now_unix_timestamp_ms(),
-                item: ThreadItem::EventDrivenToolCall {
+            let completed_item = if summary.tool == "event_command_subscribe" {
+                let output_json = event_command_output_payload_to_json(output);
+                let subscription_id = optional_string_field(&output_json, "subscription_id")
+                    .or_else(|| optional_string_field(&output_json, "subscriptionId"))
+                    .unwrap_or_default();
+                let command = optional_string_field(&output_json, "command")
+                    .or_else(|| optional_string_field(&summary.arguments, "command"))
+                    .unwrap_or_default();
+                let cwd = optional_string_field(&output_json, "cwd")
+                    .or_else(|| optional_string_field(&summary.arguments, "cwd"));
+                let label = optional_string_field(&output_json, "label")
+                    .or_else(|| optional_string_field(&summary.arguments, "label"));
+                ThreadItem::EventCommandCall {
+                    id: call_id.clone(),
+                    subscription_id,
+                    command,
+                    cwd,
+                    label,
+                    status: DynamicToolCallStatus::Completed,
+                    output: Some(output_json),
+                }
+            } else {
+                ThreadItem::EventDrivenToolCall {
                     id: call_id.clone(),
                     tool: summary.tool,
                     arguments: summary.arguments,
                     status: DynamicToolCallStatus::Completed,
                     output: Some(function_call_output_payload_to_json(output)),
-                },
+                }
+            };
+            let completed = ItemCompletedNotification {
+                thread_id: conversation_id.to_string(),
+                turn_id: turn_id.to_string(),
+                completed_at_ms: now_unix_timestamp_ms(),
+                item: completed_item,
             };
             outgoing
                 .send_server_notification(ServerNotification::ItemCompleted(completed))
@@ -1574,6 +1628,44 @@ pub(crate) async fn maybe_emit_event_driven_tool_trigger_item_completed(
         return;
     };
 
+    if let Some(event) =
+        codex_protocol::event_command::EventCommandEvent::parse_message_content(content)
+    {
+        let item_id = id.clone().unwrap_or_else(|| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(&event.subscription_id, &mut hasher);
+            std::hash::Hash::hash(&event.kind, &mut hasher);
+            std::hash::Hash::hash(&event.sequence, &mut hasher);
+            std::hash::Hash::hash(&event.created_at, &mut hasher);
+            let hash = std::hash::Hasher::finish(&hasher);
+            format!("{turn_id}:event-command:{hash:016x}")
+        });
+        let notification = ItemCompletedNotification {
+            thread_id: conversation_id.to_string(),
+            turn_id: turn_id.to_string(),
+            completed_at_ms: now_unix_timestamp_ms(),
+            item: ThreadItem::EventCommandEvent {
+                id: item_id,
+                subscription_id: event.subscription_id,
+                kind: event.kind.into(),
+                label: event.label,
+                command: event.command,
+                cwd: event.cwd,
+                line: event.line,
+                sequence: event.sequence,
+                exit_code: event.exit_code,
+                signal: event.signal,
+                message: event.message,
+                truncated: event.truncated,
+                created_at: event.created_at,
+            },
+        };
+        outgoing
+            .send_server_notification(ServerNotification::ItemCompleted(notification))
+            .await;
+        return;
+    }
+
     let Some(trigger) =
         codex_protocol::event_driven_tool::EventDrivenToolTrigger::parse_message_content(content)
     else {
@@ -1621,20 +1713,41 @@ fn function_call_output_payload_to_json(
     serde_json::to_value(output).unwrap_or_else(|_| serde_json::Value::String(output.to_string()))
 }
 
+fn event_command_output_payload_to_json(
+    output: &codex_protocol::models::FunctionCallOutputPayload,
+) -> serde_json::Value {
+    output
+        .text_content()
+        .and_then(|text| serde_json::from_str(text).ok())
+        .unwrap_or_else(|| function_call_output_payload_to_json(output))
+}
+
 fn event_driven_tool_name(namespace: Option<&str>, name: &str) -> Option<String> {
     if namespace.is_some() {
         return None;
     }
 
     match name {
-        "fs_subscribe"
-        | "fs_unsubscribe"
-        | "process_exit_subscribe"
-        | "process_exit_unsubscribe"
-        | "schedule_subscribe"
-        | "schedule_unsubscribe" => Some(name.to_string()),
+        "event_command_unsubscribe" | "schedule_subscribe" | "schedule_unsubscribe" => {
+            Some(name.to_string())
+        }
         _ => None,
     }
+}
+
+fn is_event_command_subscribe_tool(namespace: Option<&str>, name: &str) -> bool {
+    namespace.is_none() && name == "event_command_subscribe"
+}
+
+fn string_field(value: &serde_json::Value, field: &str) -> Option<String> {
+    optional_string_field(value, field)
+}
+
+fn optional_string_field(value: &serde_json::Value, field: &str) -> Option<String> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
 }
 
 async fn find_and_remove_turn_summary(
@@ -2802,7 +2915,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn event_driven_tool_call_notifications_emit_started_then_completed() -> Result<()> {
+    async fn event_command_call_notifications_emit_started_then_completed() -> Result<()> {
         let conversation_id = ThreadId::new();
         let thread_state = new_thread_state();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
@@ -2821,9 +2934,10 @@ mod tests {
             "turn-1",
             &codex_protocol::models::ResponseItem::FunctionCall {
                 id: None,
-                name: "fs_subscribe".to_string(),
+                name: "event_command_subscribe".to_string(),
                 namespace: None,
-                arguments: r#"{"path":"/tmp/log","recursive":true}"#.to_string(),
+                arguments: r#"{"command":"tail -f /tmp/log","cwd":"/tmp","label":"build log"}"#
+                    .to_string(),
                 call_id: "call-1".to_string(),
             },
             &outgoing,
@@ -2836,13 +2950,12 @@ mod tests {
             OutgoingMessage::AppServerNotification(ServerNotification::ItemStarted(payload)) => {
                 assert_eq!(
                     payload.item,
-                    ThreadItem::EventDrivenToolCall {
+                    ThreadItem::EventCommandCall {
                         id: "call-1".to_string(),
-                        tool: "fs_subscribe".to_string(),
-                        arguments: json!({
-                            "path": "/tmp/log",
-                            "recursive": true,
-                        }),
+                        subscription_id: String::new(),
+                        command: "tail -f /tmp/log".to_string(),
+                        cwd: Some("/tmp".to_string()),
+                        label: Some("build log".to_string()),
                         status: DynamicToolCallStatus::InProgress,
                         output: None,
                     }
@@ -2856,7 +2969,10 @@ mod tests {
             "turn-1",
             &codex_protocol::models::ResponseItem::FunctionCallOutput {
                 call_id: "call-1".to_string(),
-                output: FunctionCallOutputPayload::from_text("subscribed".into()),
+                output: FunctionCallOutputPayload::from_text(
+                    r#"{"subscription_id":"sub-1","command":"tail -f /tmp/log","cwd":"/tmp","label":"build log"}"#
+                        .into(),
+                ),
             },
             &outgoing,
             &thread_state,
@@ -2868,15 +2984,19 @@ mod tests {
             OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(payload)) => {
                 assert_eq!(
                     payload.item,
-                    ThreadItem::EventDrivenToolCall {
+                    ThreadItem::EventCommandCall {
                         id: "call-1".to_string(),
-                        tool: "fs_subscribe".to_string(),
-                        arguments: json!({
-                            "path": "/tmp/log",
-                            "recursive": true,
-                        }),
+                        subscription_id: "sub-1".to_string(),
+                        command: "tail -f /tmp/log".to_string(),
+                        cwd: Some("/tmp".to_string()),
+                        label: Some("build log".to_string()),
                         status: DynamicToolCallStatus::Completed,
-                        output: Some(json!("subscribed")),
+                        output: Some(json!({
+                            "subscription_id": "sub-1",
+                            "command": "tail -f /tmp/log",
+                            "cwd": "/tmp",
+                            "label": "build log",
+                        })),
                     }
                 );
             }

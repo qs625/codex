@@ -15,26 +15,24 @@ use serde_json::Value;
 use crate::registry::FsSubscriptionRegistry;
 use crate::schema::input_schema_for;
 
-mod process_exit_subscribe;
-mod process_exit_unsubscribe;
+mod event_command_subscribe;
+mod event_command_unsubscribe;
 pub(crate) mod schedule;
 mod schedule_subscribe;
 mod schedule_unsubscribe;
-mod subscribe;
-mod unsubscribe;
 
 pub(crate) fn subscription_tools(
     thread_id: ThreadId,
     registry: Arc<FsSubscriptionRegistry>,
-    unified_exec_manager: Option<Arc<UnifiedExecProcessManager>>,
+    _unified_exec_manager: Option<Arc<UnifiedExecProcessManager>>,
 ) -> Vec<Arc<dyn ExtensionToolExecutor>> {
     let shared_registry = Arc::clone(&registry);
-    let mut tools: Vec<Arc<dyn ExtensionToolExecutor>> = vec![
-        Arc::new(subscribe::FsSubscribeTool {
+    vec![
+        Arc::new(event_command_subscribe::EventCommandSubscribeTool {
             thread_id,
             registry: Arc::clone(&shared_registry),
         }),
-        Arc::new(unsubscribe::FsUnsubscribeTool {
+        Arc::new(event_command_unsubscribe::EventCommandUnsubscribeTool {
             thread_id,
             registry: Arc::clone(&shared_registry),
         }),
@@ -46,21 +44,7 @@ pub(crate) fn subscription_tools(
             thread_id,
             registry: Arc::clone(&shared_registry),
         }),
-    ];
-    if let Some(unified_exec_manager) = unified_exec_manager {
-        tools.push(Arc::new(process_exit_subscribe::ProcessExitSubscribeTool {
-            thread_id,
-            registry: Arc::clone(&shared_registry),
-            unified_exec_manager,
-        }));
-        tools.push(Arc::new(
-            process_exit_unsubscribe::ProcessExitUnsubscribeTool {
-                thread_id,
-                registry: Arc::clone(&shared_registry),
-            },
-        ));
-    }
-    tools
+    ]
 }
 
 pub(super) fn subscription_function_tool<I: JsonSchema>(name: &str, description: &str) -> ToolSpec {
