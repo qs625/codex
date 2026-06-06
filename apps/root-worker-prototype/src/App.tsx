@@ -24,6 +24,7 @@ import {
   type ComposerDraftsByThreadId,
 } from "./lib/composerDraft";
 import { buildConversationState } from "./lib/conversation";
+import { isConversationNearBottom } from "./lib/conversationScroll";
 import {
   readImageBlob,
   readImageFile,
@@ -393,7 +394,7 @@ function App() {
     return unsubscribe;
   }, [selectedThread?.cwd, selectedThreadId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     shouldStickConversationToBottomRef.current = true;
   }, [selectedThreadId]);
 
@@ -1537,9 +1538,11 @@ function App() {
     if (!container) {
       return;
     }
-    const distanceFromBottom =
-      container.scrollHeight - container.clientHeight - container.scrollTop;
-    shouldStickConversationToBottomRef.current = distanceFromBottom <= 24;
+    shouldStickConversationToBottomRef.current = isConversationNearBottom({
+      scrollHeight: container.scrollHeight,
+      clientHeight: container.clientHeight,
+      scrollTop: container.scrollTop,
+    });
   }
 
   async function loadFilePreview(target: string) {

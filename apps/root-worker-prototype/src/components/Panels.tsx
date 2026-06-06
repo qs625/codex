@@ -284,6 +284,7 @@ export function ConversationPanel({
         {selectedThread ? (
           conversationCells.length > 0 ? (
             <ConversationVirtualList
+              key={selectedThreadId}
               cells={conversationCells}
               containerRef={conversationScrollRef}
               onOpenLocalFile={onOpenLocalFile}
