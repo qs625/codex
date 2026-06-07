@@ -267,12 +267,108 @@ test("keeps child completions and subagent notifications as visible cells", () =
       {
         id: "status-1",
         kind: "tool",
-        entries: [
-          ["subagentNotification", "/root/worker subagent completion"],
-        ],
+        entries: [["subagentNotification", "/root/worker subagent completion"]],
       },
     ],
   );
+});
+
+test("keeps child completion order inside the parent turn", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "userMessage",
+        id: "user-1",
+        content: [{ type: "text", text: "wait for worker" }],
+      },
+      {
+        type: "collabAgentStatusUpdate",
+        id: "status-1",
+        senderThreadId: "thread-2",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        status: {
+          path: "/root/worker",
+          status: "completed",
+          message: "worker finished",
+        },
+      },
+      {
+        type: "agentMessage",
+        id: "agent-1",
+        text: "The worker is done.",
+        phase: null,
+        memoryCitation: null,
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.id, entry.kind, entry.text]),
+    [
+      ["user-1", "message", "wait for worker"],
+      ["status-1", "tool", "/root/worker • completed • worker finished"],
+      ["agent-1", "message", "The worker is done."],
+    ],
+  );
+});
+
+test("uses short previews for long child completion details", () => {
+  const longMessage = [
+    "first line",
+    "second line",
+    "third line",
+    "fourth line",
+    "fifth line",
+    "sixth line",
+    "seventh line",
+    "eighth line",
+    "ninth line",
+    "tenth line",
+    "eleventh line",
+    "twelfth line",
+    "thirteenth line",
+    "fourteenth line",
+  ].join("\n");
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "collabAgentMessage",
+        id: "child-1",
+        operation: "childCompletion",
+        senderThreadId: "thread-2",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        otherRecipientPaths: [],
+        content: longMessage,
+        triggerTurn: true,
+      },
+      {
+        type: "collabAgentStatusUpdate",
+        id: "status-1",
+        senderThreadId: "thread-2",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        status: {
+          path: "/root/worker",
+          status: "completed",
+          message: longMessage,
+        },
+      },
+    ]),
+  );
+
+  assert.equal(entries[0]?.text.includes("\n"), false);
+  assert.equal(entries[0]?.text.endsWith("…"), true);
+  assert.equal(entries[0]?.text.includes("fourteenth line"), false);
+  assert.equal(entries[0]?.toolDetails?.includes(longMessage), true);
+  assert.equal(entries[1]?.text.includes("\n"), false);
+  assert.equal(entries[1]?.text.endsWith("…"), true);
+  assert.equal(entries[1]?.text.includes("fourteenth line"), false);
+  assert.equal(entries[1]?.toolDetails?.includes(longMessage), true);
 });
 
 test("uses event-driven item timestamps instead of the parent turn timestamp", () => {
@@ -414,11 +510,13 @@ test("summarizes wait_agent with receiver path and timeout", () => {
 
   assert.deepEqual(
     entries.map((entry) => [entry.toolName, entry.text, entry.toolDetails]),
-    [[
-      "wait for agent",
-      "wait on /root/worker for 30s",
-      "Tool\nwait_agent\n\nSender\n/root\n\nReceivers\n/root/worker\n\nTimeout\n30s",
-    ]],
+    [
+      [
+        "wait for agent",
+        "wait on /root/worker for 30s",
+        "Tool\nwait_agent\n\nSender\n/root\n\nReceivers\n/root/worker\n\nTimeout\n30s",
+      ],
+    ],
   );
 });
 
@@ -515,7 +613,7 @@ test("renders child completion envelopes in event-driven tools as multi-agent to
       {
         kind: "tool",
         role: "system",
-        text: "Received child completion from /root/worker.",
+        text: "Received child completion from /root/worker: done",
         toolName: "/root/worker subagent completion",
         toolDetails:
           "Operation\nchildCompletion\n\nFrom\n/root/worker\n\nTo\n/root\n\nMessage\ndone\n\nTrigger Turn\ntrue",
@@ -552,7 +650,7 @@ test("renders child completion envelopes in agent messages as multi-agent tools"
     [
       [
         "tool",
-        "Received child completion from /root/worker.",
+        "Received child completion from /root/worker: done",
         "/root/worker subagent completion",
       ],
     ],
@@ -675,7 +773,7 @@ test("renders compact replacement history using readable entries", () => {
             type: "function_call",
             namespace: "functions",
             name: "exec_command",
-            arguments: "{\"cmd\":\"pwd\"}",
+            arguments: '{"cmd":"pwd"}',
             call_id: "call-1",
           },
           {
@@ -893,7 +991,7 @@ test("places replacement history into the main conversation after archived histo
           {
             type: "function_call",
             name: "shell",
-            arguments: "{\"cmd\":\"pwd\"}",
+            arguments: '{"cmd":"pwd"}',
             call_id: "call-1",
           },
         ],

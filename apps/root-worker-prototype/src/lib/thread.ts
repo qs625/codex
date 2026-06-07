@@ -345,17 +345,7 @@ export function updateThreadItem(
       return turn;
     }
     foundTurn = true;
-    const existingItemIndex = findMatchingThreadItemIndex(turn.items, nextItem);
-    const items =
-      existingItemIndex === -1
-        ? [...turn.items, nextItem]
-        : turn.items.map((existing, index) =>
-            index === existingItemIndex
-              ? // The server can refine an in-flight item into eventDrivenToolCall
-                // once it recognizes a generic function call as an event-driven tool.
-                mergeThreadItem(existing, nextItem)
-              : existing,
-          );
+    const items = appendOrMergeThreadItem(turn.items, nextItem);
     if (timestamps?.syntheticTurnStatus === "completed") {
       const startedAt =
         turn.startedAt ?? itemNotificationStartTimeSeconds(timestamps);
@@ -379,14 +369,45 @@ export function updateThreadItem(
     }
     return { ...turn, items };
   });
-  const turns = foundTurn
-    ? updatedTurns
-    : [...thread.turns, createSyntheticTurn(turnId, nextItem, timestamps)];
+  if (foundTurn) {
+    return {
+      ...thread,
+      turns: updatedTurns,
+    };
+  }
+
+  const activeTurn = isCollabCompletionNotificationItem(nextItem)
+    ? [...thread.turns].reverse().find(isTurnInFlight)
+    : undefined;
+  if (activeTurn) {
+    const turns = thread.turns.map((turn) =>
+      turn.id === activeTurn.id
+        ? { ...turn, items: appendOrMergeThreadItem(turn.items, nextItem) }
+        : turn,
+    );
+    return {
+      ...thread,
+      turns,
+    };
+  }
 
   return {
     ...thread,
-    turns,
+    turns: [...thread.turns, createSyntheticTurn(turnId, nextItem, timestamps)],
   };
+}
+
+function appendOrMergeThreadItem(items: ThreadItem[], nextItem: ThreadItem) {
+  const existingItemIndex = findMatchingThreadItemIndex(items, nextItem);
+  return existingItemIndex === -1
+    ? [...items, nextItem]
+    : items.map((existing, index) =>
+        index === existingItemIndex
+          ? // The server can refine an in-flight item into eventDrivenToolCall
+            // once it recognizes a generic function call as an event-driven tool.
+            mergeThreadItem(existing, nextItem)
+          : existing,
+      );
 }
 
 export function getThreadItemNotificationTargetThreadIds(

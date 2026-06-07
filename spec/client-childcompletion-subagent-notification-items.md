@@ -30,6 +30,10 @@ renderer 侧 `conversation.ts` 已经能把 `collabAgentStatusUpdate` 构造成 
 
 另一个相关缺口在 Electron 主进程的 snapshot 归一化逻辑。`electron/threadSnapshots.cjs` 会在 thread/read、恢复快照等路径中按语义内容合并 item；它把所有 `collabAgentStatusUpdate` 都当作可语义匹配 item。这样终态 Agent Status，例如两个不同完成事件但内容同为 `/root/worker completed done`，会在进入 renderer 前被合并，和 renderer `thread.ts` 中“终态 status 不做语义合并”的策略不一致。
 
+本次复现的新增缺口在 root-worker prototype 的 live 合并层。后端 v2 live 通知中，携带 status 的 child completion 已经通过协议映射成 `collabAgentStatusUpdate`，不是普通 `CollabAgentMessage`。但该通知的 `turnId` 来自 child/subagent turn，root thread 本地通常没有这个 turn。renderer `updateThreadItem` 找不到 turn 后会创建 synthetic turn 并追加到 `thread.turns` 末尾，而 conversation 又按 `thread.turns` 原顺序渲染，不按 timestamp 重排。因此 child completion 会固定在整个 conversation 底部，后续 root agent message 反而显示在它上方。
+
+另一个展示缺口是折叠列表摘要缺少明确上限。Agent Status 的 `status.message` 可能携带完整 completion 内容；如果直接放进 `ConversationEntry.text`，即使完整内容仍在 details 中，列表 item 也会被长 completion 撑高。
+
 ## 技术设计
 
 最小修复分两层：
@@ -43,6 +47,10 @@ renderer 侧 `conversation.ts` 已经能把 `collabAgentStatusUpdate` 构造成 
 - 终态 `completed`、`errored`、`shutdown`、`notFound` 不参与语义合并，保留为独立 item。
 - 不改 app-server 协议，不新增 item 类型。
 - 不改变现有 conversation UI 结构；收到并保留下来的 status item 继续走已有 tool entry 渲染路径。
+- root-worker live 合并层对 `collabAgentStatusUpdate` 和 legacy `collabAgentMessage.operation === "childCompletion"` 做 unknown-turn fallback：如果通知 `turnId` 在当前 thread 中不存在，但当前 thread 仍有 in-flight parent turn，则把 completion item 追加或合并到最后一个 in-flight turn；只有没有 active parent turn 时，才创建 synthetic completed turn。
+- fallback 插入 active parent turn 时只给 item 写入 started/completed timestamp，不把 parent turn 标记为 completed，避免 child completion 事件错误结束 root 当前 turn。
+- conversation 折叠摘要使用短 inline preview：先 trim 并压缩空白，再按字符上限截断。完整 child completion / status message 仍无损放在 `toolDetails` 的 details 区域。
+- CSS 只对 `childCompletion` 和 `subagentNotification` 的 summary 文本设置两行 line clamp 和高度上限，不压缩普通 command/tool item。
 
 后端最小修复：
 
@@ -72,6 +80,10 @@ renderer 侧 `conversation.ts` 已经能把 `collabAgentStatusUpdate` 构造成 
 新增 fallback 单元测试，覆盖通知线程不是 sender 时不会被 recipient metadata 误投。
 
 新增 direct-to-recipient 单元测试，覆盖 `item/completed` 已经直接以 root/recipient thread 到达时也创建 completed synthetic turn。
+
+新增 live ordering 单元测试，覆盖 child completion / Agent Status 的通知 `turnId` 不存在但 root parent turn 仍 running 时，item 被插入 active parent turn，不再追加到底部 synthetic turn；同时覆盖 legacy `childCompletion` message 的兼容路径。
+
+新增 conversation 单元测试，覆盖同一个 parent turn 中 child completion 出现在后续 agent message 之前；同时覆盖长 completion/status message 在折叠摘要中被压缩截断，完整内容仍保留在 details。
 
 新增 Electron snapshot 单元测试，覆盖同一个 turn 中两个内容相同但 id 不同的终态 `collabAgentStatusUpdate`。期望归一化后两个 item 都保留，证明主进程不会再把 Agent Status completion 合并掉。
 
