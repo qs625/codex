@@ -49,6 +49,25 @@ EventCommand 自身会在进程退出时发送 terminal event，所以模型不�
 
 schedule 是例外：它保留 typed 工具，因为 schedule 需要清晰展示未来触发计划、重复规则和取消入口，这些信息不适合隐藏在长期 shell loop 中。
 
+## 终止态清理和恢复语义
+
+EventCommand 是 active monitor，而不是历史事件回放机制。`exited`、`cancelled`、`failed_to_start`
+都表示对应 `subscription_id` 已进入终止态；终止态事件写入 thread history 后，registry 必须从
+thread metadata 的 active subscriptions 中移除该订阅。
+
+清空最后一个 active subscription 时，metadata 必须写入显式空列表 `subscriptions: []`。这表示“当前
+thread 没有需要恢复的 active subscription”，不同于旧 rollout 中没有 `subscriptions` 字段的未知状态。
+resume 读取历史时应以最新显式空列表为准，不能越过它继续读取更早的 EventCommand subscription，否则一次性
+命令会在恢复后重新运行并再次注入相同的 `output` / `exited` live event。
+
+删除 active subscription 时，registry 的内存状态和 thread metadata 更新必须保持一致。如果持久化删除失败，
+registry 不能先丢弃内存中的 active entry；否则旧 metadata 会继续存在，而当前进程也没有机会再取消或纠正该
+subscription。
+
+EventCommand event 的 ThreadItem id 必须由事件身份稳定生成，live notification 和 history replay 共享同一
+fallback id 规则。`ResponseItem::Message` 旧历史中可能没有 id；这时不能在 live 路径使用一种 id、replay 路径
+使用递增 `item-*`，否则客户端 upsert/dedupe 会把同一条 terminal marker 当成两条不同 live event 展示。
+
 ## 工具/API 形态
 
 保留并推荐的 Monitor 工具只有：

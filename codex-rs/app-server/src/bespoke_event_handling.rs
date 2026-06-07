@@ -1631,15 +1631,7 @@ pub(crate) async fn maybe_emit_event_driven_tool_trigger_item_completed(
     if let Some(event) =
         codex_protocol::event_command::EventCommandEvent::parse_message_content(content)
     {
-        let item_id = id.clone().unwrap_or_else(|| {
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            std::hash::Hash::hash(&event.subscription_id, &mut hasher);
-            std::hash::Hash::hash(&event.kind, &mut hasher);
-            std::hash::Hash::hash(&event.sequence, &mut hasher);
-            std::hash::Hash::hash(&event.created_at, &mut hasher);
-            let hash = std::hash::Hasher::finish(&hasher);
-            format!("{turn_id}:event-command:{hash:016x}")
-        });
+        let item_id = id.clone().unwrap_or_else(|| event.stable_item_id());
         let notification = ItemCompletedNotification {
             thread_id: conversation_id.to_string(),
             turn_id: turn_id.to_string(),

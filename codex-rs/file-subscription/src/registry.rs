@@ -179,18 +179,22 @@ impl FsSubscriptionRegistry {
         thread_id: ThreadId,
         subscription_id: &str,
     ) -> Result<bool, String> {
-        let removed = state
-            .lock()
-            .await
-            .remove(&SubscriptionKey {
-                thread_id,
-                subscription_id: subscription_id.to_string(),
-            })
-            .is_some();
-        if removed {
-            Self::persist_thread_subscriptions(thread_manager, state, thread_id).await?;
+        let key = SubscriptionKey {
+            thread_id,
+            subscription_id: subscription_id.to_string(),
+        };
+        let removed_entry = state.lock().await.remove(&key);
+        let Some(entry) = removed_entry else {
+            return Ok(false);
+        };
+
+        if let Err(err) = Self::persist_thread_subscriptions(thread_manager, state, thread_id).await
+        {
+            state.lock().await.insert(key, entry);
+            return Err(err);
         }
-        Ok(removed)
+
+        Ok(true)
     }
 
     async fn subscription_snapshot_from_history(
@@ -935,6 +939,40 @@ mod tests {
     use super::terminate_event_command_process_tree;
     use super::truncate_event_command_line;
     use crate::tools::schedule::CompiledSchedule;
+
+    #[tokio::test]
+    async fn failed_subscription_removal_keeps_event_command_active() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output_path = temp_dir.path().join("stdin-after-failed-remove.out");
+        let registry = FsSubscriptionRegistry::new(
+            Arc::new(FileWatcher::noop()),
+            Weak::<ThreadManager>::new(),
+            None,
+        );
+        let thread_id = ThreadId::new();
+        let subscription_id = "sub-remove-fails".to_string();
+        registry
+            .subscribe_event_command(
+                thread_id,
+                "IFS= read -r line; printf '%s' \"$line\" > stdin-after-failed-remove.out"
+                    .to_string(),
+                Some(temp_dir.path().to_string_lossy().to_string()),
+                None,
+                subscription_id.clone(),
+            )
+            .await;
+
+        let unsubscribed = registry.unsubscribe(thread_id, &subscription_id).await;
+
+        assert!(!unsubscribed);
+        registry
+            .write_event_command_stdin(thread_id, &subscription_id, "still-active\n")
+            .await
+            .unwrap();
+        let output = read_file_eventually(&output_path).await;
+        assert_eq!(output, "still-active");
+        registry.cancel_all_for_thread(thread_id).await;
+    }
 
     #[tokio::test]
     async fn writes_event_command_stdin_by_subscription_id() {

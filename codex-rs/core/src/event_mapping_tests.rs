@@ -312,6 +312,35 @@ fn parses_event_command_event_as_distinct_turn_item() {
 }
 
 #[test]
+fn parses_event_command_event_without_id_using_stable_event_id() {
+    let event = EventCommandEvent {
+        subscription_id: "sub-command".to_string(),
+        kind: EventCommandEventKind::Exited,
+        label: Some("build log".to_string()),
+        command: "cargo test".to_string(),
+        cwd: Some("/repo".to_string()),
+        line: None,
+        sequence: None,
+        exit_code: Some(0),
+        signal: None,
+        message: Some("done".to_string()),
+        truncated: false,
+        created_at: 1,
+    };
+    let item = event.to_response_item();
+
+    let turn_item = parse_turn_item(&item).expect("expected event command turn item");
+
+    match turn_item {
+        TurnItem::EventCommandEvent(event_item) => {
+            assert_eq!(event_item.id, event.stable_item_id());
+            assert_eq!(event_item.event, event);
+        }
+        other => panic!("expected TurnItem::EventCommandEvent, got {other:?}"),
+    }
+}
+
+#[test]
 fn skips_user_instructions_and_env() {
     let items = vec![
             ResponseItem::Message {

@@ -557,7 +557,7 @@ async fn apply_thread_subscriptions_to_rollout(
         });
     }
 
-    session_meta.meta.subscriptions = (!subscriptions.is_empty()).then(|| subscriptions.to_vec());
+    session_meta.meta.subscriptions = Some(subscriptions.to_vec());
     append_rollout_item_to_path(rollout_path, &RolloutItem::SessionMeta(session_meta))
         .await
         .map_err(|err| ThreadStoreError::Internal {
@@ -768,6 +768,57 @@ mod tests {
             appended["payload"]["subscriptions"],
             serde_json::to_value(subscriptions).expect("serialize subscriptions")
         );
+    }
+
+    #[tokio::test]
+    async fn update_thread_metadata_writes_empty_subscriptions_to_clear_active_rollout() {
+        let home = TempDir::new().expect("temp dir");
+        let config = test_config(home.path());
+        let uuid = Uuid::from_u128(314);
+        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+        let path =
+            write_session_file(home.path(), "2025-01-03T18-50-00", uuid).expect("session file");
+        let runtime = codex_state::StateRuntime::init(
+            home.path().to_path_buf(),
+            config.default_model_provider_id.clone(),
+        )
+        .await
+        .expect("state db should initialize");
+        let store = LocalThreadStore::new(config, Some(runtime));
+
+        store
+            .update_thread_metadata(UpdateThreadMetadataParams {
+                thread_id,
+                patch: ThreadMetadataPatch {
+                    subscriptions: Some(vec![PersistedSubscription::EventCommand {
+                        subscription_id: "sub_command".to_string(),
+                        command: "printf done".to_string(),
+                        cwd: None,
+                        label: None,
+                    }]),
+                    ..Default::default()
+                },
+                include_archived: false,
+            })
+            .await
+            .expect("set thread subscriptions");
+
+        store
+            .update_thread_metadata(UpdateThreadMetadataParams {
+                thread_id,
+                patch: ThreadMetadataPatch {
+                    subscriptions: Some(Vec::new()),
+                    ..Default::default()
+                },
+                include_archived: false,
+            })
+            .await
+            .expect("clear thread subscriptions");
+
+        let appended = last_session_meta_item_with_subscriptions(path.as_path());
+        assert_eq!(appended["type"], "session_meta");
+        assert_eq!(appended["payload"]["id"], thread_id.to_string());
+        assert_eq!(appended["payload"]["subscriptions"], serde_json::json!([]));
     }
 
     #[tokio::test]

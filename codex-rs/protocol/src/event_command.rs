@@ -37,6 +37,20 @@ pub enum EventCommandEventKind {
 }
 
 impl EventCommandEvent {
+    pub fn stable_item_id(&self) -> String {
+        let sequence = self
+            .sequence
+            .map(|sequence| sequence.to_string())
+            .unwrap_or_else(|| "terminal".to_string());
+        format!(
+            "event-command:{}:{}:{}:{}",
+            self.subscription_id,
+            self.kind.stable_item_id_part(),
+            sequence,
+            self.created_at
+        )
+    }
+
     pub fn render_message_text(&self) -> String {
         let body = serde_json::to_string(self).unwrap_or_else(|_| {
             format!(
@@ -71,6 +85,17 @@ impl EventCommandEvent {
                 text: self.render_message_text(),
             }],
             phase: None,
+        }
+    }
+}
+
+impl EventCommandEventKind {
+    fn stable_item_id_part(&self) -> &'static str {
+        match self {
+            Self::Output => "output",
+            Self::Exited => "exited",
+            Self::Cancelled => "cancelled",
+            Self::FailedToStart => "failed_to_start",
         }
     }
 }
@@ -110,5 +135,40 @@ mod tests {
             EventCommandEvent::parse_message_content(&content),
             Some(event)
         );
+    }
+
+    #[test]
+    fn event_command_event_stable_item_id_uses_event_identity() {
+        let event = EventCommandEvent {
+            subscription_id: "sub-1".to_string(),
+            kind: EventCommandEventKind::Exited,
+            label: Some("tests".to_string()),
+            command: "cargo test".to_string(),
+            cwd: None,
+            line: None,
+            sequence: None,
+            exit_code: Some(0),
+            signal: None,
+            message: Some("done".to_string()),
+            truncated: false,
+            created_at: 1_700_000_000,
+        };
+        let same_identity = EventCommandEvent {
+            label: Some("renamed".to_string()),
+            command: "cargo nextest run".to_string(),
+            message: Some("still done".to_string()),
+            ..event.clone()
+        };
+        let different_sequence = EventCommandEvent {
+            sequence: Some(1),
+            ..event.clone()
+        };
+
+        assert_eq!(
+            event.stable_item_id(),
+            "event-command:sub-1:exited:terminal:1700000000"
+        );
+        assert_eq!(same_identity.stable_item_id(), event.stable_item_id());
+        assert_ne!(different_sequence.stable_item_id(), event.stable_item_id());
     }
 }

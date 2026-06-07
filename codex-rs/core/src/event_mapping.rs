@@ -151,7 +151,7 @@ pub fn parse_turn_item(item: &ResponseItem) -> Option<TurnItem> {
                 if let Some(event) = EventCommandEvent::parse_message_content(content) {
                     Some(TurnItem::EventCommandEvent(
                         codex_protocol::items::EventCommandEventItem {
-                            id: id.clone().unwrap_or_else(|| Uuid::new_v4().to_string()),
+                            id: id.clone().unwrap_or_else(|| event.stable_item_id()),
                             event,
                         },
                     ))

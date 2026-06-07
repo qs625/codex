@@ -279,7 +279,7 @@ impl ThreadHistoryBuilder {
                 }
 
                 if let Some(event) = EventCommandEvent::parse_message_content(content) {
-                    let id = id.clone().unwrap_or_else(|| self.next_item_id());
+                    let id = id.clone().unwrap_or_else(|| event.stable_item_id());
                     self.ensure_turn()
                         .items
                         .push(event_command_event_item(id, event));
@@ -3715,6 +3715,43 @@ mod tests {
                 )),
             }
         );
+    }
+
+    #[test]
+    fn event_command_event_history_uses_stable_event_id() {
+        let event = EventCommandEvent {
+            subscription_id: "sub-1".into(),
+            kind: codex_protocol::event_command::EventCommandEventKind::Exited,
+            label: Some("tests".into()),
+            command: "cargo test".into(),
+            cwd: None,
+            line: None,
+            sequence: None,
+            exit_code: Some(0),
+            signal: None,
+            message: Some("done".into()),
+            truncated: false,
+            created_at: 1_700_000_000,
+        };
+        let expected_id = event.stable_item_id();
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(event.to_response_item()),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 1);
+        let ThreadItem::EventCommandEvent { id, .. } = &turns[0].items[0] else {
+            panic!("expected event command event item");
+        };
+        assert_eq!(id, &expected_id);
     }
 
     #[test]
