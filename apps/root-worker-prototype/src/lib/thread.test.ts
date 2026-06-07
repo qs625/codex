@@ -1822,6 +1822,118 @@ test("collab status item notifications target the recipient thread", () => {
   );
 });
 
+test("collab status completion notifications join the active parent turn", () => {
+  const activeThread: Thread = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-parent",
+        items: [
+          {
+            type: "userMessage",
+            id: "user-1",
+            content: [{ type: "text", text: "wait for worker" }],
+          },
+        ],
+        itemsView: "full",
+        status: "running",
+        error: null,
+        startedAt: 2,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  };
+  const item: ThreadItem = {
+    type: "collabAgentStatusUpdate",
+    id: "subagent-complete",
+    senderThreadId: "thread-child",
+    senderPath: "/root/worker",
+    recipientThreadId: "thread-1",
+    recipientPath: "/root",
+    status: {
+      path: "/root/worker",
+      status: "completed",
+      message: "done",
+    },
+  };
+
+  const updatedRoot = updateThreadItem(activeThread, "turn-child", item, {
+    completedAtMs: 3_000,
+    syntheticTurnStatus: "completed",
+  });
+
+  assert.deepEqual(
+    updatedRoot.turns.map((turn) => ({
+      id: turn.id,
+      status: turn.status,
+      startedAt: turn.startedAt,
+      completedAt: turn.completedAt,
+      durationMs: turn.durationMs,
+    })),
+    [
+      {
+        id: "turn-parent",
+        status: "running",
+        startedAt: 2,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  );
+  assert.deepEqual(updatedRoot.turns[0]?.items, [
+    activeThread.turns[0]?.items[0],
+    {
+      ...item,
+      completedAtMs: 3_000,
+    },
+  ]);
+});
+
+test("legacy child completion notifications join the active parent turn", () => {
+  const activeThread: Thread = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-parent",
+        items: [],
+        itemsView: "full",
+        status: "inProgress",
+        error: null,
+        startedAt: 2,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  };
+  const item: ThreadItem = {
+    type: "collabAgentMessage",
+    id: "child-completion",
+    operation: "childCompletion",
+    senderThreadId: "thread-child",
+    senderPath: "/root/worker",
+    recipientThreadId: "thread-1",
+    recipientPath: "/root",
+    otherRecipientPaths: [],
+    content: "done",
+    triggerTurn: true,
+  };
+
+  const updatedRoot = updateThreadItem(activeThread, "turn-child", item, {
+    completedAtMs: 3_000,
+    syntheticTurnStatus: "completed",
+  });
+
+  assert.equal(updatedRoot.turns.length, 1);
+  assert.deepEqual(updatedRoot.turns[0]?.items, [
+    {
+      ...item,
+      completedAtMs: 3_000,
+    },
+  ]);
+  assert.equal(updatedRoot.turns[0]?.status, "inProgress");
+});
+
 test("collab status item completion updates an existing synthetic recipient turn", () => {
   const item: ThreadItem = {
     type: "collabAgentStatusUpdate",

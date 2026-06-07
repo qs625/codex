@@ -27,6 +27,8 @@ type ConversationFlatItemState = {
   entries: ConversationEntry[];
 };
 
+const AGENT_STATUS_PREVIEW_MAX_CHARS = 120;
+
 export function buildConversationEntries(
   thread: Thread | null,
 ): ConversationEntry[] {
@@ -1479,8 +1481,15 @@ function summarizeCollabAgentMessage(
       return `Received message from ${senderPath}.`;
     case "followupTask":
       return `Received follow-up from ${senderPath}.`;
-    case "childCompletion":
-      return `Received child completion from ${senderPath}.`;
+    case "childCompletion": {
+      const preview = previewInlineText(
+        item.content,
+        AGENT_STATUS_PREVIEW_MAX_CHARS,
+      );
+      return preview
+        ? `Received child completion from ${senderPath}: ${preview}`
+        : `Received child completion from ${senderPath}.`;
+    }
     default:
       return `Received agent message from ${senderPath}.`;
   }
@@ -1531,7 +1540,10 @@ function summarizeCollabAgentStatusUpdate(
     stringOrNull(item.status.path) ??
     stringOrNull(item.senderPath) ??
     "unknown";
-  const message = stringOrNull(item.status.message);
+  const message = previewInlineText(
+    item.status.message,
+    AGENT_STATUS_PREVIEW_MAX_CHARS,
+  );
   return [agentPath, item.status.status, message]
     .filter((value) => value && value.length > 0)
     .join(" • ");
@@ -1683,6 +1695,17 @@ function safeJson(value: unknown) {
 
 function resolveAgentPath(...paths: Array<unknown>) {
   return paths.map(stringOrNull).find((path) => path && path.length > 0) ?? "unknown";
+}
+
+function previewInlineText(value: unknown, maxChars: number) {
+  const text = stringOrNull(value)?.replace(/\s+/g, " ") ?? null;
+  if (!text) {
+    return null;
+  }
+  const chars = Array.from(text);
+  return chars.length > maxChars
+    ? `${chars.slice(0, maxChars).join("").trimEnd()}…`
+    : text;
 }
 
 function stringOrNull(value: unknown) {

@@ -859,6 +859,15 @@ svg {
   word-break: break-word;
 }
 
+.tool-card-childCompletion .tool-card-copy span,
+.tool-card-subagentNotification .tool-card-copy span {
+  max-height: 38px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .tool-card-meta {
   display: flex;
   align-items: center;
