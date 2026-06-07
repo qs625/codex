@@ -705,9 +705,14 @@ impl ThreadHistoryBuilder {
                 );
             }
             codex_protocol::items::TurnItem::EventDrivenTool(_)
-            | codex_protocol::items::TurnItem::EventCommandEvent(_)
-            | codex_protocol::items::TurnItem::CollabAgentMessage(_) => {
+            | codex_protocol::items::TurnItem::EventCommandEvent(_) => {
                 self.upsert_item_in_turn_id(
+                    &payload.turn_id,
+                    ThreadItem::from(payload.item.clone()),
+                );
+            }
+            codex_protocol::items::TurnItem::CollabAgentMessage(_) => {
+                self.upsert_item_in_turn_id_or_create(
                     &payload.turn_id,
                     ThreadItem::from(payload.item.clone()),
                 );
@@ -1310,6 +1315,17 @@ impl ThreadHistoryBuilder {
     }
 
     fn handle_turn_started(&mut self, payload: &TurnStartedEvent) {
+        if let Some(turn) = self
+            .current_turn
+            .as_mut()
+            .filter(|turn| turn.id == payload.turn_id && !turn.opened_explicitly)
+        {
+            turn.status = TurnStatus::InProgress;
+            turn.started_at = payload.started_at;
+            turn.opened_explicitly = true;
+            return;
+        }
+
         self.finish_current_turn();
         self.current_turn = Some(
             self.new_turn(Some(payload.turn_id.clone()))
@@ -1499,6 +1515,33 @@ impl ThreadHistoryBuilder {
             item_id = item.id(),
             "dropping turn-scoped item for unknown turn id `{turn_id}`"
         );
+    }
+
+    fn upsert_item_in_turn_id_or_create(&mut self, turn_id: &str, item: ThreadItem) {
+        if let Some(turn) = self.current_turn.as_mut()
+            && turn.id == turn_id
+        {
+            upsert_turn_item(&mut turn.items, item);
+            return;
+        }
+
+        if let Some(turn) = self.turns.iter_mut().find(|turn| turn.id == turn_id) {
+            upsert_turn_item(&mut turn.items, item);
+            return;
+        }
+
+        if let Some(turn) = self.current_turn.as_mut()
+            && turn.opened_explicitly
+            && matches!(turn.status, TurnStatus::InProgress)
+        {
+            upsert_turn_item(&mut turn.items, item);
+            return;
+        }
+
+        self.finish_current_turn();
+        let mut turn = self.new_turn(Some(turn_id.to_string()));
+        upsert_turn_item(&mut turn.items, item);
+        self.current_turn = Some(turn);
     }
 
     fn upsert_item_in_current_turn(&mut self, item: ThreadItem) {
@@ -2413,6 +2456,307 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
+            vec![ThreadItem::CollabAgentStatusUpdate {
+                id: "collab-1".into(),
+                sender_thread_id: None,
+                sender_path: "/root/worker".into(),
+                recipient_thread_id: None,
+                recipient_path: "/root".into(),
+                status: CollabAgentState {
+                    path: Some("/root/worker".into()),
+                    status: CollabAgentStatus::Completed,
+                    message: Some("completed".into()),
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn restores_typed_child_completion_without_turn_lifecycle() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "completed".into(),
+            InterAgentOperation::ChildCompletion,
+        )
+        .with_trigger_turn(false)
+        .with_status(codex_protocol::protocol::AgentStatus::Completed(Some(
+            "completed".into(),
+        )));
+        let items = vec![RolloutItem::EventMsg(EventMsg::ItemCompleted(
+            ItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "turn-1".into(),
+                item: CoreTurnItem::CollabAgentMessage(CoreCollabAgentMessageItem {
+                    id: "collab-1".into(),
+                    communication,
+                }),
+                completed_at_ms: 123,
+            },
+        ))];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].id, "turn-1");
+        assert_eq!(turns[0].status, TurnStatus::Completed);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::CollabAgentStatusUpdate {
+                id: "collab-1".into(),
+                sender_thread_id: None,
+                sender_path: "/root/worker".into(),
+                recipient_thread_id: None,
+                recipient_path: "/root".into(),
+                status: CollabAgentState {
+                    path: Some("/root/worker".into()),
+                    status: CollabAgentStatus::Completed,
+                    message: Some("completed".into()),
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn restores_typed_child_completion_before_turn_started_without_duplicate_turn() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "completed".into(),
+            InterAgentOperation::ChildCompletion,
+        )
+        .with_status(codex_protocol::protocol::AgentStatus::Completed(Some(
+            "completed".into(),
+        )));
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "turn-1".into(),
+                item: CoreTurnItem::CollabAgentMessage(CoreCollabAgentMessageItem {
+                    id: "collab-1".into(),
+                    communication,
+                }),
+                completed_at_ms: 123,
+            })),
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-1".into(),
+                last_agent_message: None,
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].id, "turn-1");
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::CollabAgentStatusUpdate {
+                id: "collab-1".into(),
+                sender_thread_id: None,
+                sender_path: "/root/worker".into(),
+                recipient_thread_id: None,
+                recipient_path: "/root".into(),
+                status: CollabAgentState {
+                    path: Some("/root/worker".into()),
+                    status: CollabAgentStatus::Completed,
+                    message: Some("completed".into()),
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn restores_child_completion_inside_active_parent_turn_without_stealing_followup_items() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "completed".into(),
+            InterAgentOperation::ChildCompletion,
+        )
+        .with_status(codex_protocol::protocol::AgentStatus::Completed(Some(
+            "completed".into(),
+        )));
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "parent-turn".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "child-completion-turn".into(),
+                item: CoreTurnItem::CollabAgentMessage(CoreCollabAgentMessageItem {
+                    id: "collab-1".into(),
+                    communication,
+                }),
+                completed_at_ms: 123,
+            })),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: Some("msg-1".into()),
+                role: "assistant".into(),
+                content: vec![ContentItem::OutputText {
+                    text: "parent continues".into(),
+                }],
+                phase: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "parent-turn".into(),
+                last_agent_message: None,
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].id, "parent-turn");
+        assert_eq!(
+            turns[0].items,
+            vec![
+                ThreadItem::CollabAgentStatusUpdate {
+                    id: "collab-1".into(),
+                    sender_thread_id: None,
+                    sender_path: "/root/worker".into(),
+                    recipient_thread_id: None,
+                    recipient_path: "/root".into(),
+                    status: CollabAgentState {
+                        path: Some("/root/worker".into()),
+                        status: CollabAgentStatus::Completed,
+                        message: Some("completed".into()),
+                    },
+                },
+                ThreadItem::AgentMessage {
+                    id: "msg-1".into(),
+                    text: "parent continues".into(),
+                    phase: None,
+                    memory_citation: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn restores_child_completion_after_aborted_parent_turn_as_separate_turn() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "completed".into(),
+            InterAgentOperation::ChildCompletion,
+        )
+        .with_status(codex_protocol::protocol::AgentStatus::Completed(Some(
+            "completed".into(),
+        )));
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "parent-turn".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::TurnAborted(TurnAbortedEvent {
+                turn_id: Some("parent-turn".into()),
+                reason: TurnAbortReason::Interrupted,
+                completed_at: None,
+                duration_ms: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "child-completion-turn".into(),
+                item: CoreTurnItem::CollabAgentMessage(CoreCollabAgentMessageItem {
+                    id: "collab-1".into(),
+                    communication,
+                }),
+                completed_at_ms: 123,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].id, "parent-turn");
+        assert_eq!(turns[0].status, TurnStatus::Interrupted);
+        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
+        assert_eq!(turns[1].id, "child-completion-turn");
+        assert_eq!(turns[1].status, TurnStatus::Completed);
+        assert_eq!(
+            turns[1].items,
+            vec![ThreadItem::CollabAgentStatusUpdate {
+                id: "collab-1".into(),
+                sender_thread_id: None,
+                sender_path: "/root/worker".into(),
+                recipient_thread_id: None,
+                recipient_path: "/root".into(),
+                status: CollabAgentState {
+                    path: Some("/root/worker".into()),
+                    status: CollabAgentStatus::Completed,
+                    message: Some("completed".into()),
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn restores_child_completion_after_failed_parent_turn_as_separate_turn() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "completed".into(),
+            InterAgentOperation::ChildCompletion,
+        )
+        .with_status(codex_protocol::protocol::AgentStatus::Completed(Some(
+            "completed".into(),
+        )));
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "parent-turn".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::Error(ErrorEvent {
+                message: "stream failure".into(),
+                codex_error_info: Some(CodexErrorInfo::ResponseStreamDisconnected {
+                    http_status_code: Some(502),
+                }),
+            })),
+            RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "child-completion-turn".into(),
+                item: CoreTurnItem::CollabAgentMessage(CoreCollabAgentMessageItem {
+                    id: "collab-1".into(),
+                    communication,
+                }),
+                completed_at_ms: 123,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].id, "parent-turn");
+        assert_eq!(turns[0].status, TurnStatus::Failed);
+        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
+        assert_eq!(turns[1].id, "child-completion-turn");
+        assert_eq!(turns[1].status, TurnStatus::Completed);
+        assert_eq!(
+            turns[1].items,
             vec![ThreadItem::CollabAgentStatusUpdate {
                 id: "collab-1".into(),
                 sender_thread_id: None,

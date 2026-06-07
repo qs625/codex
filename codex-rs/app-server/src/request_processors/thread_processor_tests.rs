@@ -206,6 +206,46 @@ mod thread_processor_behavior_tests {
         assert!(err.contains("my_tool"), "unexpected error: {err}");
     }
 
+    #[tokio::test]
+    async fn sync_active_event_subscriptions_updates_core_tracker() {
+        let active_event_subscriptions = ActiveEventSubscriptionTracker::default();
+        let thread_watch_manager = ThreadWatchManager::new();
+        let thread_id = ThreadId::new();
+
+        sync_active_event_subscriptions(
+            &active_event_subscriptions,
+            &thread_watch_manager,
+            thread_id,
+            /*active_count*/ 2,
+        )
+        .await;
+        assert_eq!(active_event_subscriptions.active_count(thread_id), 2);
+        let status = thread_watch_manager
+            .loaded_status_for_thread(&thread_id.to_string())
+            .await;
+        assert_eq!(
+            status,
+            ThreadStatus::Active {
+                active_flags: Vec::new(),
+            }
+        );
+
+        sync_active_event_subscriptions(
+            &active_event_subscriptions,
+            &thread_watch_manager,
+            thread_id,
+            /*active_count*/ 0,
+        )
+        .await;
+        assert_eq!(active_event_subscriptions.active_count(thread_id), 0);
+        assert_eq!(
+            thread_watch_manager
+                .loaded_status_for_thread(&thread_id.to_string())
+                .await,
+            ThreadStatus::Idle
+        );
+    }
+
     #[test]
     fn merge_persisted_resume_metadata_restores_approval_and_sandbox() {
         let thread_id =

@@ -1595,6 +1595,70 @@ async fn multi_agent_v2_completion_waits_for_active_event_subscription() {
 }
 
 #[tokio::test]
+async fn multi_agent_v2_restored_event_subscription_blocks_completion_until_cleared() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let mut config = harness.config.clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    let worker_path = AgentPath::root()
+        .join("restored_worker")
+        .expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            config,
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("explorer".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+
+    // Simulates app-server startup restoring a persisted event command subscription.
+    harness
+        .manager
+        .active_event_subscriptions()
+        .set_active_count(worker_thread_id, 1);
+    let baseline_op_count = harness.manager.captured_ops().len();
+
+    emit_turn_complete(&worker_thread, "waiting for event command").await;
+    *worker_thread.codex.session.active_turn.lock().await = None;
+    let captured_ops = harness.manager.captured_ops();
+    assert!(!captured_child_completion(
+        &captured_ops[baseline_op_count..],
+        root_thread_id,
+        &worker_path,
+        &AgentPath::root(),
+    ));
+
+    harness
+        .manager
+        .active_event_subscriptions()
+        .set_active_count(worker_thread_id, 0);
+    harness
+        .manager
+        .maybe_notify_parent_of_final_status(worker_thread_id)
+        .await;
+    let captured_ops = harness.manager.captured_ops();
+    assert!(captured_child_completion(
+        &captured_ops[baseline_op_count..],
+        root_thread_id,
+        &worker_path,
+        &AgentPath::root(),
+    ));
+}
+
+#[tokio::test]
 async fn multi_agent_v2_completion_waits_for_unfinished_subagent() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;

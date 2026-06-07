@@ -2202,6 +2202,52 @@ test("treeThreadStatusClass shows subagent waiting separately", () => {
   );
 });
 
+test("treeThreadStatusClass prioritizes self turn work over subagent waits", () => {
+  const thread = {
+    ...makeThread(),
+    status: {
+      type: "active" as const,
+      activeFlags: [],
+    },
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "agentMessage" as const,
+            id: "item-1",
+            text: "working",
+            phase: null,
+            memoryCitation: null,
+          },
+          {
+            type: "collabAgentToolCall" as const,
+            id: "item-2",
+            tool: "Wait",
+            status: "InProgress",
+            senderThreadId: "thread-1",
+            senderPath: "/root",
+            receiverThreadIds: ["thread-2"],
+            receiverPaths: ["/root/worker"],
+            prompt: null,
+            model: null,
+            reasoningEffort: null,
+            agentsStates: {},
+          },
+        ],
+        itemsView: "full" as const,
+        status: "inProgress" as const,
+        error: null,
+        startedAt: 1,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  };
+
+  assert.equal(treeThreadStatusClass(makeTreeNode(thread)), "doing");
+});
+
 test("treeThreadStatusClass shows event tool waiting separately", () => {
   const thread = {
     ...makeThread(),
@@ -2225,11 +2271,63 @@ test("treeThreadStatusClass shows event tool waiting separately", () => {
           },
         ],
         itemsView: "full" as const,
-        status: "completed" as const,
+        status: "inProgress" as const,
         error: null,
         startedAt: 1,
-        completedAt: 2,
-        durationMs: 1000,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  };
+
+  assert.equal(
+    treeThreadStatusClass(makeTreeNode(thread)),
+    "waiting-eventtool",
+  );
+});
+
+test("treeThreadStatusClass prioritizes event tool waits over subagent waits", () => {
+  const thread = {
+    ...makeThread(),
+    status: {
+      type: "active" as const,
+      activeFlags: [],
+    },
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "eventCommandCall" as const,
+            id: "item-1",
+            subscriptionId: "sub-1",
+            command: "tail -f /tmp/build.log",
+            cwd: "/tmp",
+            label: "build log",
+            status: "completed",
+            output: { subscription_id: "sub-1" },
+          },
+          {
+            type: "collabAgentToolCall" as const,
+            id: "item-2",
+            tool: "Wait",
+            status: "InProgress",
+            senderThreadId: "thread-1",
+            senderPath: "/root",
+            receiverThreadIds: ["thread-2"],
+            receiverPaths: ["/root/worker"],
+            prompt: null,
+            model: null,
+            reasoningEffort: null,
+            agentsStates: {},
+          },
+        ],
+        itemsView: "full" as const,
+        status: "inProgress" as const,
+        error: null,
+        startedAt: 1,
+        completedAt: null,
+        durationMs: null,
       },
     ],
   };
@@ -2391,6 +2489,49 @@ test("treeThreadStatusClass prioritizes active descendants over event tool waits
         makeTreeNode(activeChild),
       ]),
     ),
+    "waiting-subagent",
+  );
+});
+
+test("treeThreadStatusClass rolls descendant event tool waits into parent subagent wait", () => {
+  const parent = {
+    ...makeThread(),
+    id: "parent",
+  };
+  const child = {
+    ...makeThread(),
+    id: "child",
+    status: {
+      type: "active" as const,
+      activeFlags: [],
+    },
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "eventCommandCall" as const,
+            id: "item-1",
+            subscriptionId: "sub-1",
+            command: "tail -f /tmp/build.log",
+            cwd: "/tmp",
+            label: "build log",
+            status: "completed",
+            output: { subscription_id: "sub-1" },
+          },
+        ],
+        itemsView: "full" as const,
+        status: "completed" as const,
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1000,
+      },
+    ],
+  };
+
+  assert.equal(
+    treeThreadStatusClass(makeTreeNode(parent, [makeTreeNode(child)])),
     "waiting-subagent",
   );
 });

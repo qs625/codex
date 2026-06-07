@@ -9136,6 +9136,154 @@ async fn queue_only_mailbox_mail_waits_for_next_turn_after_answer_boundary() {
 }
 
 #[tokio::test]
+async fn inter_agent_unknown_communication_does_not_emit_live_collab_item() -> anyhow::Result<()> {
+    let parent_thread_id = ThreadId::new();
+    let (session, rx_event) = make_session_with_history_source_and_agent_control_and_rx(
+        InitialHistory::Resumed(ResumedHistory {
+            conversation_id: parent_thread_id,
+            history: Vec::new(),
+            rollout_path: None,
+        }),
+        SessionSource::Exec,
+        AgentControl::default(),
+    )
+    .await?;
+    let _configured = rx_event.recv().await?;
+    let communication = InterAgentCommunication::new(
+        AgentPath::try_from("/root/worker").expect("worker path should parse"),
+        AgentPath::root(),
+        Vec::new(),
+        "internal update".to_string(),
+        codex_protocol::protocol::InterAgentOperation::Unknown,
+    )
+    .with_trigger_turn(false);
+
+    crate::session::handlers::inter_agent_communication(
+        &session,
+        "unknown-mail".to_string(),
+        communication,
+    )
+    .await;
+    assert!(session.has_pending_mailbox_items().await);
+
+    let result = timeout(Duration::from_millis(200), async {
+        loop {
+            let event = rx_event.recv().await?;
+            if let EventMsg::ItemCompleted(completed) = event.msg {
+                return anyhow::Ok(completed);
+            }
+        }
+    })
+    .await;
+    assert!(result.is_err());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn inter_agent_communication_emits_live_collab_item() -> anyhow::Result<()> {
+    let parent_thread_id = ThreadId::new();
+    let child_thread_id = ThreadId::new();
+    let (session, rx_event) = make_session_with_history_source_and_agent_control_and_rx(
+        InitialHistory::Resumed(ResumedHistory {
+            conversation_id: parent_thread_id,
+            history: Vec::new(),
+            rollout_path: None,
+        }),
+        SessionSource::Exec,
+        AgentControl::default(),
+    )
+    .await?;
+    let _configured = rx_event.recv().await?;
+    let communication = InterAgentCommunication::new(
+        AgentPath::try_from("/root/worker").expect("worker path should parse"),
+        AgentPath::root(),
+        Vec::new(),
+        "done".to_string(),
+        codex_protocol::protocol::InterAgentOperation::ChildCompletion,
+    )
+    .with_trigger_turn(false)
+    .with_thread_ids(child_thread_id, parent_thread_id)
+    .with_status(codex_protocol::protocol::AgentStatus::Completed(Some(
+        "done".to_string(),
+    )));
+
+    crate::session::handlers::inter_agent_communication(
+        &session,
+        "child-completion-turn".to_string(),
+        communication.clone(),
+    )
+    .await;
+    assert!(session.has_pending_mailbox_items().await);
+
+    let completed = timeout(Duration::from_secs(2), async {
+        loop {
+            let event = rx_event.recv().await?;
+            if let EventMsg::ItemCompleted(completed) = event.msg {
+                return anyhow::Ok(completed);
+            }
+        }
+    })
+    .await??;
+    assert_eq!(completed.thread_id, parent_thread_id);
+    assert_eq!(completed.turn_id, "child-completion-turn");
+    assert!(completed.completed_at_ms > 0);
+    let codex_protocol::items::TurnItem::CollabAgentMessage(item) = completed.item else {
+        panic!("expected completed collab agent message item");
+    };
+    assert_eq!(item.id, "child-completion-turn");
+    assert_eq!(item.communication, communication);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn inter_agent_send_message_queue_only_does_not_emit_live_collab_item() -> anyhow::Result<()>
+{
+    let parent_thread_id = ThreadId::new();
+    let (session, rx_event) = make_session_with_history_source_and_agent_control_and_rx(
+        InitialHistory::Resumed(ResumedHistory {
+            conversation_id: parent_thread_id,
+            history: Vec::new(),
+            rollout_path: None,
+        }),
+        SessionSource::Exec,
+        AgentControl::default(),
+    )
+    .await?;
+    let _configured = rx_event.recv().await?;
+    let communication = InterAgentCommunication::new(
+        AgentPath::try_from("/root/worker").expect("worker path should parse"),
+        AgentPath::root(),
+        Vec::new(),
+        "queued message".to_string(),
+        codex_protocol::protocol::InterAgentOperation::SendMessage,
+    )
+    .with_trigger_turn(false);
+
+    crate::session::handlers::inter_agent_communication(
+        &session,
+        "queued-mail".to_string(),
+        communication,
+    )
+    .await;
+    assert!(session.has_pending_mailbox_items().await);
+
+    let result = timeout(Duration::from_millis(200), async {
+        loop {
+            let event = rx_event.recv().await?;
+            if let EventMsg::ItemCompleted(completed) = event.msg {
+                return anyhow::Ok(completed);
+            }
+        }
+    })
+    .await;
+    assert!(result.is_err());
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn trigger_turn_mailbox_mail_waits_for_next_turn_after_answer_boundary() {
     let (sess, tc, _rx) = make_session_and_context_with_rx().await;
     sess.spawn_task(

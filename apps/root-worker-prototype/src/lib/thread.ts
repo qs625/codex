@@ -1344,25 +1344,24 @@ export function treeThreadStatusClass(node: TreeNode): TreeThreadStatusClass {
   }
 
   let hasBlocked = false;
-  let hasWaitingEventTool = false;
   for (const child of node.children) {
     const childClass = treeThreadStatusClass(child);
-    if (childClass === "doing" || childClass === "waiting-subagent") {
+    if (
+      childClass === "doing" ||
+      childClass === "waiting-subagent" ||
+      childClass === "waiting-eventtool"
+    ) {
       return "waiting-subagent";
     }
     if (childClass === "blocked") {
       hasBlocked = true;
-      continue;
-    }
-    if (childClass === "waiting-eventtool") {
-      hasWaitingEventTool = true;
     }
   }
 
   if (hasBlocked) {
     return "blocked";
   }
-  return hasWaitingEventTool ? "waiting-eventtool" : "todo";
+  return "todo";
 }
 
 export function treeThreadStatusLabel(statusClass: TreeThreadStatusClass) {
@@ -1389,14 +1388,14 @@ function selfTreeThreadStatusClass(thread: Thread): TreeThreadStatusClass {
   if (thread.status.type !== "active") {
     return "todo";
   }
-  if (hasInFlightSubagentWait(thread)) {
-    return "waiting-subagent";
-  }
   if (hasActiveTurnWork(thread)) {
     return "doing";
   }
   if (hasActiveMonitorWait(thread)) {
     return "waiting-eventtool";
+  }
+  if (hasInFlightSubagentWait(thread)) {
+    return "waiting-subagent";
   }
   return "doing";
 }
@@ -1405,12 +1404,7 @@ function hasInFlightSubagentWait(thread: Thread) {
   return thread.turns.some(
     (turn) =>
       isTurnInFlight(turn) &&
-      turn.items.some(
-        (item) =>
-          item.type === "collabAgentToolCall" &&
-          item.tool.toLowerCase() === "wait" &&
-          isItemInProgress(item.status),
-      ),
+      turn.items.some((item) => isInFlightSubagentWaitItem(item)),
   );
 }
 
@@ -1430,9 +1424,18 @@ function hasActiveTurnWork(thread: Thread) {
       (item) =>
         item.type !== "userMessage" &&
         item.type !== "injectedContext" &&
+        !isInFlightSubagentWaitItem(item) &&
         !isMonitorToolItem(item),
     );
   });
+}
+
+function isInFlightSubagentWaitItem(item: ThreadItem) {
+  return (
+    item.type === "collabAgentToolCall" &&
+    item.tool.toLowerCase() === "wait" &&
+    isItemInProgress(item.status)
+  );
 }
 
 function isMonitorToolItem(item: ThreadItem) {

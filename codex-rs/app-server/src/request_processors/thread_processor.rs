@@ -1,5 +1,6 @@
 use super::*;
 use crate::error_code::method_not_found;
+use codex_core::ActiveEventSubscriptionTracker;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
 use tokio::sync::OnceCell;
@@ -2512,7 +2513,6 @@ impl ThreadRequestProcessor {
             Ok(NewThread {
                 thread_id, thread, ..
             }) => {
-                let thread_id_str = thread_id.to_string();
                 let config_snapshot = thread.config_snapshot().await;
                 let loaded_thread = build_thread_from_snapshot(
                     thread_id,
@@ -2523,12 +2523,14 @@ impl ThreadRequestProcessor {
                 self.thread_watch_manager
                     .upsert_thread_silently(loaded_thread)
                     .await;
-                self.thread_watch_manager
-                    .note_active_event_subscriptions(
-                        thread_id_str.as_str(),
-                        persisted_subscription_count,
-                    )
-                    .await;
+                let active_event_subscriptions = self.thread_manager.active_event_subscriptions();
+                sync_active_event_subscriptions(
+                    active_event_subscriptions.as_ref(),
+                    &self.thread_watch_manager,
+                    thread_id,
+                    persisted_subscription_count,
+                )
+                .await;
             }
             Err(err) => {
                 warn!("failed to restore persisted active thread {thread_id}: {err}");
@@ -4114,6 +4116,19 @@ pub(crate) fn thread_from_stored_thread(
         apply_thread_usage_from_rollout_items(&mut thread, history.items.as_slice());
     }
     (thread, history)
+}
+
+async fn sync_active_event_subscriptions(
+    active_event_subscriptions: &ActiveEventSubscriptionTracker,
+    thread_watch_manager: &ThreadWatchManager,
+    thread_id: ThreadId,
+    active_count: usize,
+) {
+    active_event_subscriptions.set_active_count(thread_id, active_count);
+    let thread_id_str = thread_id.to_string();
+    thread_watch_manager
+        .note_active_event_subscriptions(thread_id_str.as_str(), active_count)
+        .await;
 }
 
 fn persisted_subscription_count(thread: &StoredThread) -> usize {
