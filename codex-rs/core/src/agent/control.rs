@@ -788,6 +788,38 @@ impl AgentControl {
         thread.agent_status().await
     }
 
+    /// Returns whether `agent_id` is active according to the same runtime facts
+    /// used by thread status: current turn, active event subscriptions, or
+    /// non-final lifecycle status.
+    pub(crate) async fn agent_thread_is_active(&self, agent_id: ThreadId) -> bool {
+        let Ok(state) = self.upgrade() else {
+            return false;
+        };
+        if state.active_event_subscriptions().active_count(agent_id) > 0 {
+            return true;
+        }
+        let Ok(thread) = state.get_thread(agent_id).await else {
+            return false;
+        };
+        if thread.codex.session.active_turn.lock().await.is_some() {
+            return true;
+        }
+        !is_final(&thread.agent_status().await)
+    }
+
+    pub(crate) async fn agent_subtree_is_active(&self, agent_id: ThreadId) -> bool {
+        let Ok(thread_ids) = Box::pin(self.list_live_agent_subtree_thread_ids(agent_id)).await
+        else {
+            return false;
+        };
+        for thread_id in thread_ids {
+            if Box::pin(self.agent_thread_is_active(thread_id)).await {
+                return true;
+            }
+        }
+        false
+    }
+
     pub(crate) fn register_session_root(
         &self,
         current_thread_id: ThreadId,

@@ -805,6 +805,7 @@ impl Session {
             {
                 warn!("failed to apply goal runtime maybe-continue event: {err}");
             }
+            Box::pin(self.maybe_notify_parent_of_final_status(turn_context.as_ref())).await;
         }
     }
 

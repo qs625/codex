@@ -18,6 +18,7 @@ use crate::thread_status::ThreadWatchManager;
 
 struct ThreadSubscriptionActivityObserver {
     thread_watch_manager: ThreadWatchManager,
+    thread_manager: Weak<ThreadManager>,
     active_event_subscriptions: Arc<ActiveEventSubscriptionTracker>,
 }
 
@@ -25,6 +26,15 @@ impl codex_file_subscription::SubscriptionActivityObserver for ThreadSubscriptio
     fn active_subscription_count_changed(&self, thread_id: ThreadId, active_count: usize) {
         self.active_event_subscriptions
             .set_active_count(thread_id, active_count);
+        if active_count == 0
+            && let Some(thread_manager) = self.thread_manager.upgrade()
+        {
+            tokio::spawn(async move {
+                thread_manager
+                    .maybe_notify_parent_of_final_status(thread_id)
+                    .await;
+            });
+        }
         let thread_watch_manager = self.thread_watch_manager.clone();
         let thread_id = thread_id.to_string();
         tokio::spawn(async move {
@@ -53,9 +63,10 @@ where
     codex_file_subscription::install(
         &mut builder,
         file_watcher,
-        thread_manager,
+        thread_manager.clone(),
         Some(Arc::new(ThreadSubscriptionActivityObserver {
             thread_watch_manager,
+            thread_manager,
             active_event_subscriptions,
         })),
     );

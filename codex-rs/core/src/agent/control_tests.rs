@@ -19,6 +19,7 @@ use codex_protocol::models::ContentItem;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::ErrorEvent;
+use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::SessionSource;
@@ -1543,19 +1544,49 @@ async fn multi_agent_v2_completion_waits_for_active_event_subscription() {
         .get_thread(worker_thread_id)
         .await
         .expect("worker thread should exist");
-    worker_thread
-        .codex
-        .session
-        .services
-        .active_event_subscriptions
+    harness
+        .manager
+        .active_event_subscriptions()
         .set_active_count(worker_thread_id, 1);
     let baseline_op_count = harness.manager.captured_ops().len();
 
-    emit_turn_complete(&worker_thread, "done").await;
+    let worker_turn = worker_thread.codex.session.new_default_turn().await;
+    worker_thread
+        .codex
+        .session
+        .send_event(
+            worker_turn.as_ref(),
+            EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: worker_turn.sub_id.clone(),
+                last_agent_message: Some("done".to_string()),
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            }),
+        )
+        .await;
+    *worker_thread.codex.session.active_turn.lock().await = None;
     sleep(Duration::from_millis(100)).await;
     let captured_ops = harness.manager.captured_ops();
 
     assert!(!captured_child_completion(
+        &captured_ops[baseline_op_count..],
+        root_thread_id,
+        &worker_path,
+        &AgentPath::root(),
+    ));
+
+    harness
+        .manager
+        .active_event_subscriptions()
+        .set_active_count(worker_thread_id, 0);
+    harness
+        .manager
+        .maybe_notify_parent_of_final_status(worker_thread_id)
+        .await;
+    let captured_ops = harness.manager.captured_ops();
+
+    assert!(captured_child_completion(
         &captured_ops[baseline_op_count..],
         root_thread_id,
         &worker_path,
@@ -1586,7 +1617,7 @@ async fn multi_agent_v2_completion_waits_for_unfinished_subagent() {
         .await
         .expect("worker spawn should succeed");
     let tester_path = worker_path.join("tester").expect("tester path");
-    let _tester_thread_id = harness
+    let tester_thread_id = harness
         .control
         .spawn_agent(
             config,
@@ -1606,13 +1637,63 @@ async fn multi_agent_v2_completion_waits_for_unfinished_subagent() {
         .get_thread(worker_thread_id)
         .await
         .expect("worker thread should exist");
+    let tester_thread = harness
+        .manager
+        .get_thread(tester_thread_id)
+        .await
+        .expect("tester thread should exist");
     let baseline_op_count = harness.manager.captured_ops().len();
 
-    emit_turn_complete(&worker_thread, "done").await;
+    let worker_turn = worker_thread.codex.session.new_default_turn().await;
+    worker_thread
+        .codex
+        .session
+        .send_event(
+            worker_turn.as_ref(),
+            EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: worker_turn.sub_id.clone(),
+                last_agent_message: Some("done".to_string()),
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            }),
+        )
+        .await;
+    *worker_thread.codex.session.active_turn.lock().await = None;
     sleep(Duration::from_millis(100)).await;
     let captured_ops = harness.manager.captured_ops();
 
     assert!(!captured_child_completion(
+        &captured_ops[baseline_op_count..],
+        root_thread_id,
+        &worker_path,
+        &AgentPath::root(),
+    ));
+
+    let tester_turn = tester_thread.codex.session.new_default_turn().await;
+    tester_thread
+        .codex
+        .session
+        .send_event_raw(Event {
+            id: tester_turn.sub_id.clone(),
+            msg: EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: tester_turn.sub_id.clone(),
+                last_agent_message: Some("tester done".to_string()),
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            }),
+        })
+        .await;
+    *tester_thread.codex.session.active_turn.lock().await = None;
+    worker_thread
+        .codex
+        .session
+        .maybe_notify_parent_of_final_status(worker_turn.as_ref())
+        .await;
+    let captured_ops = harness.manager.captured_ops();
+
+    assert!(captured_child_completion(
         &captured_ops[baseline_op_count..],
         root_thread_id,
         &worker_path,

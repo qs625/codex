@@ -418,6 +418,19 @@ impl ThreadManager {
         Arc::clone(&self.state.active_event_subscriptions)
     }
 
+    pub async fn maybe_notify_parent_of_final_status(&self, thread_id: ThreadId) {
+        let Ok(thread) = self.state.get_thread(thread_id).await else {
+            return;
+        };
+        Box::pin(
+            thread
+                .codex
+                .session
+                .maybe_notify_parent_of_final_status_for_current_source(),
+        )
+        .await;
+    }
+
     pub fn auth_manager(&self) -> Arc<AuthManager> {
         self.state.auth_manager.clone()
     }
@@ -989,6 +1002,10 @@ impl ThreadManagerState {
             Some(thread) if !thread.session_source.is_internal() => Ok(thread.clone()),
             Some(_) | None => Err(CodexErr::ThreadNotFound(thread_id)),
         }
+    }
+
+    pub(crate) fn active_event_subscriptions(&self) -> Arc<ActiveEventSubscriptionTracker> {
+        Arc::clone(&self.active_event_subscriptions)
     }
 
     pub(crate) async fn read_stored_thread(
