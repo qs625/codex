@@ -8,7 +8,13 @@ import {
   type RefObject,
 } from "react";
 
-import { EventRow, MessageRow, ToolRow } from "./Conversation";
+import {
+  ArchivedHistoryRow,
+  CompactRow,
+  EventRow,
+  MessageRow,
+  ToolRow,
+} from "./Conversation";
 import {
   buildConversationVirtualLayout,
   estimateConversationCellHeight,
@@ -289,6 +295,19 @@ function renderConversationCell(
 ) {
   if (cell.kind === "event") {
     return <EventRow entry={cell.entries[0]} />;
+  }
+
+  if (cell.kind === "archive") {
+    return (
+      <ArchivedHistoryRow
+        entry={cell.entries[0]}
+        onOpenLocalFile={onOpenLocalFile}
+      />
+    );
+  }
+
+  if (cell.kind === "compact") {
+    return <CompactRow entry={cell.entries[0]} />;
   }
 
   if (cell.kind === "tool") {

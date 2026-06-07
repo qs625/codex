@@ -93,16 +93,26 @@ async fn auto_compaction_local_emits_started_and_completed_items() -> Result<()>
     let started = wait_for_context_compaction_started(&mut mcp).await?;
     let completed = wait_for_context_compaction_completed(&mut mcp).await?;
 
-    let ThreadItem::ContextCompaction { id: started_id } = started.item else {
+    let ThreadItem::ContextCompaction {
+        id: started_id,
+        replacement_history: started_replacement_history,
+    } = started.item
+    else {
         unreachable!("started item should be context compaction");
     };
-    let ThreadItem::ContextCompaction { id: completed_id } = completed.item else {
+    let ThreadItem::ContextCompaction {
+        id: completed_id,
+        replacement_history: completed_replacement_history,
+    } = completed.item
+    else {
         unreachable!("completed item should be context compaction");
     };
 
     assert_eq!(started.thread_id, thread_id);
     assert_eq!(completed.thread_id, thread_id);
     assert_eq!(started_id, completed_id);
+    assert!(started_replacement_history.is_none());
+    assert!(completed_replacement_history.is_none());
 
     Ok(())
 }
@@ -173,16 +183,26 @@ async fn auto_compaction_remote_emits_started_and_completed_items() -> Result<()
     let started = wait_for_context_compaction_started(&mut mcp).await?;
     let completed = wait_for_context_compaction_completed(&mut mcp).await?;
 
-    let ThreadItem::ContextCompaction { id: started_id } = started.item else {
+    let ThreadItem::ContextCompaction {
+        id: started_id,
+        replacement_history: started_replacement_history,
+    } = started.item
+    else {
         unreachable!("started item should be context compaction");
     };
-    let ThreadItem::ContextCompaction { id: completed_id } = completed.item else {
+    let ThreadItem::ContextCompaction {
+        id: completed_id,
+        replacement_history: completed_replacement_history,
+    } = completed.item
+    else {
         unreachable!("completed item should be context compaction");
     };
 
     assert_eq!(started.thread_id, thread_id);
     assert_eq!(completed.thread_id, thread_id);
     assert_eq!(started_id, completed_id);
+    assert!(started_replacement_history.is_none());
+    assert!(completed_replacement_history.is_none());
 
     let compact_requests = compact_mock.requests();
     assert_eq!(compact_requests.len(), 1);
@@ -236,16 +256,26 @@ async fn thread_compact_start_triggers_compaction_and_returns_empty_response() -
     let started = wait_for_context_compaction_started(&mut mcp).await?;
     let completed = wait_for_context_compaction_completed(&mut mcp).await?;
 
-    let ThreadItem::ContextCompaction { id: started_id } = started.item else {
+    let ThreadItem::ContextCompaction {
+        id: started_id,
+        replacement_history: started_replacement_history,
+    } = started.item
+    else {
         unreachable!("started item should be context compaction");
     };
-    let ThreadItem::ContextCompaction { id: completed_id } = completed.item else {
+    let ThreadItem::ContextCompaction {
+        id: completed_id,
+        replacement_history: completed_replacement_history,
+    } = completed.item
+    else {
         unreachable!("completed item should be context compaction");
     };
 
     assert_eq!(started.thread_id, thread_id);
     assert_eq!(completed.thread_id, thread_id);
     assert_eq!(started_id, completed_id);
+    assert!(started_replacement_history.is_none());
+    assert!(completed_replacement_history.is_none());
 
     Ok(())
 }

@@ -16,10 +16,12 @@ use codex_protocol::mcp::CallToolResult;
 use codex_protocol::memory_citation::MemoryCitation as CoreMemoryCitation;
 use codex_protocol::memory_citation::MemoryCitationEntry as CoreMemoryCitationEntry;
 use codex_protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
+use codex_protocol::models::ContentItem;
 use codex_protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
 use codex_protocol::models::ManagedFileSystemPermissions as CoreManagedFileSystemPermissions;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::NetworkPermissions as CoreNetworkPermissions;
+use codex_protocol::models::ResponseItem;
 use codex_protocol::models::WebSearchAction as CoreWebSearchAction;
 use codex_protocol::permissions::FileSystemAccessMode as CoreFileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath as CoreFileSystemPath;
@@ -153,6 +155,7 @@ fn thread_turns_items_list_round_trips() {
             },
             ThreadItem::ContextCompaction {
                 id: "item_2".to_string(),
+                replacement_history: None,
             },
         ],
         next_cursor: None,
@@ -179,10 +182,45 @@ fn thread_turns_items_list_round_trips() {
                         }
                     ]
                 },
-                {"type": "contextCompaction", "id": "item_2"}
+                {"type": "contextCompaction", "id": "item_2", "replacementHistory": null}
             ],
             "nextCursor": null,
             "backwardsCursor": "cursor_0",
+        })
+    );
+}
+
+#[test]
+fn context_compaction_serializes_replacement_history() {
+    let item = ThreadItem::ContextCompaction {
+        id: "item_3".to_string(),
+        replacement_history: Some(vec![ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "recent request".to_string(),
+            }],
+            phase: None,
+        }]),
+    };
+
+    assert_eq!(
+        serde_json::to_value(&item).expect("serialize context compaction"),
+        json!({
+            "type": "contextCompaction",
+            "id": "item_3",
+            "replacementHistory": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "recent request",
+                        }
+                    ]
+                }
+            ]
         })
     );
 }

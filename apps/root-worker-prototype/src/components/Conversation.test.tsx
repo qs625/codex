@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { ToolRow } from "./Conversation";
+import { ArchivedHistoryRow, CompactRow, ToolRow } from "./Conversation";
 import type { ConversationEntry } from "../types";
 
 const entries: ConversationEntry[] = [
@@ -98,4 +98,132 @@ test("tool rows treat partially completed lists as in progress", () => {
   assert.match(markup, /tool-status-badge doing/);
   assert.match(markup, /tool-status-badge done[^>]*>completed/);
   assert.match(markup, /tool-status-badge doing[^>]*>running/);
+});
+
+test("compact rows point to replacement history in the active chat list", () => {
+  const markup = renderToStaticMarkup(
+    <CompactRow
+      entry={{
+        id: "compact-1",
+        kind: "compact",
+        author: "Root",
+        role: "system",
+        text: "Earlier conversation was replaced with compacted model context.",
+        timestamp: "09:43",
+        attachments: [],
+        replacementHistoryStatus: "available",
+        replacementHistoryCount: 2,
+        replacementHistoryEntries: [],
+      }}
+    />,
+  );
+
+  assert.match(markup, /Context compacted/);
+  assert.match(markup, /2 replacement items/);
+  assert.match(markup, /replacement history is shown below/);
+  assert.doesNotMatch(markup, /recent request/);
+  assert.doesNotMatch(markup, /functions\/exec_command/);
+});
+
+test("compact rows explain unavailable replacement history", () => {
+  const markup = renderToStaticMarkup(
+    <CompactRow
+      entry={{
+        id: "compact-1",
+        kind: "compact",
+        author: "Root",
+        role: "system",
+        text: "Earlier conversation was replaced with compacted model context.",
+        timestamp: "09:43",
+        attachments: [],
+        replacementHistoryStatus: "missing",
+        replacementHistoryCount: null,
+        replacementHistoryEntries: null,
+      }}
+    />,
+  );
+
+  assert.match(markup, /replacement history unavailable/);
+  assert.match(markup, /Replacement history is unavailable/);
+});
+
+test("archived history rows collapse previous conversation by default", () => {
+  const markup = renderToStaticMarkup(
+    <ArchivedHistoryRow
+      entry={{
+        id: "archive-1",
+        kind: "archive",
+        author: "Root",
+        role: "system",
+        text: "Previous conversation is no longer the active model context.",
+        timestamp: "09:43",
+        attachments: [],
+        archivedEntryCount: 1,
+        archivedCells: [
+          {
+            id: "old-message",
+            kind: "message",
+            entries: [
+              {
+                id: "old-message",
+                kind: "message",
+                author: "You",
+                role: "user",
+                text: "old request",
+                timestamp: "09:41",
+                attachments: [],
+              },
+            ],
+          },
+        ],
+      }}
+    />,
+  );
+
+  assert.match(markup, /Previous conversation/);
+  assert.match(markup, /1 archived item/);
+  assert.match(markup, /<details class="archive-card">/);
+  assert.doesNotMatch(markup, /<details class="archive-card" open/);
+  assert.match(markup, /old request/);
+});
+
+test("archived history rows show archived tool details when expanded", () => {
+  const markup = renderToStaticMarkup(
+    <ArchivedHistoryRow
+      entry={{
+        id: "archive-1",
+        kind: "archive",
+        author: "Root",
+        role: "system",
+        text: "Previous conversation is no longer the active model context.",
+        timestamp: "09:43",
+        attachments: [],
+        archivedEntryCount: 1,
+        archivedCells: [
+          {
+            id: "tool-1",
+            kind: "tool",
+            entries: [
+              {
+                id: "tool-1",
+                kind: "tool",
+                author: "Root",
+                role: "system",
+                text: "pwd",
+                timestamp: "09:41",
+                attachments: [],
+                toolName: "shell",
+                toolStatus: "completed",
+                toolDetails: "Command\npwd",
+                toolCategory: "command",
+              },
+            ],
+          },
+        ],
+      }}
+    />,
+  );
+
+  assert.match(markup, /archive-tool-stack/);
+  assert.match(markup, /Command[\s\S]*pwd/);
 });

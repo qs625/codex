@@ -629,12 +629,13 @@ test("keeps ordinary child completion JSON in event-driven tools as event text",
   );
 });
 
-test("renders context compaction as a context tool entry", () => {
+test("renders context compaction as a compact boundary entry", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
         type: "contextCompaction",
         id: "compact-1",
+        replacementHistory: null,
       },
     ]),
   );
@@ -645,17 +646,452 @@ test("renders context compaction as a context tool entry", () => {
       id: entries[0]?.id,
       kind: entries[0]?.kind,
       text: entries[0]?.text,
-      toolName: entries[0]?.toolName,
-      toolStatus: entries[0]?.toolStatus,
-      toolCategory: entries[0]?.toolCategory,
+      replacementHistoryStatus: entries[0]?.replacementHistoryStatus,
+      replacementHistoryEntries: entries[0]?.replacementHistoryEntries,
     },
     {
       id: "compact-1",
-      kind: "tool",
-      text: "Conversation history compacted.",
-      toolName: "compact context",
-      toolStatus: "completed",
-      toolCategory: "context",
+      kind: "compact",
+      text: "Earlier conversation was replaced with compacted model context.",
+      replacementHistoryStatus: "missing",
+      replacementHistoryEntries: null,
+    },
+  );
+});
+
+test("renders compact replacement history using readable entries", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "contextCompaction",
+        id: "compact-1",
+        replacementHistory: [
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "recent request" }],
+          },
+          {
+            type: "function_call",
+            namespace: "functions",
+            name: "exec_command",
+            arguments: "{\"cmd\":\"pwd\"}",
+            call_id: "call-1",
+          },
+          {
+            type: "new_special_item",
+            payload: { ok: true },
+          },
+        ],
+      },
+    ]),
+  );
+
+  const replacementEntries = entries[0]?.replacementHistoryEntries ?? [];
+
+  assert.equal(entries[0]?.replacementHistoryStatus, "available");
+  assert.equal(entries[0]?.replacementHistoryCount, 3);
+  assert.deepEqual(
+    replacementEntries.map((entry) => ({
+      kind: entry.kind,
+      author: entry.author,
+      text: entry.text,
+      toolName: entry.toolName,
+      toolDetails: entry.toolDetails,
+    })),
+    [
+      {
+        kind: "message",
+        author: "You",
+        text: "recent request",
+        toolName: undefined,
+        toolDetails: undefined,
+      },
+      {
+        kind: "tool",
+        author: "root",
+        text: "Function call call-1",
+        toolName: "functions/exec_command",
+        toolDetails:
+          'Type\nfunction_call\n\nCall ID\ncall-1\n\nName\nexec_command\n\nNamespace\nfunctions\n\nArguments\n{\n  "cmd": "pwd"\n}',
+      },
+      {
+        kind: "tool",
+        author: "root",
+        text: "Unsupported replacement history item. Raw data is preserved below.",
+        toolName: "unsupported new special item",
+        toolDetails:
+          'Raw item\n{\n  "type": "new_special_item",\n  "payload": {\n    "ok": true\n  }\n}',
+      },
+    ],
+  );
+});
+
+test("renders common replacement response item variants without dropping them", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "contextCompaction",
+        id: "compact-1",
+        replacementHistory: [
+          { type: "reasoning", summary: [{ text: "reasoned" }] },
+          {
+            type: "function_call_output",
+            call_id: "call-1",
+            output: "done",
+          },
+          {
+            type: "custom_tool_call",
+            call_id: "custom-1",
+            name: "patch",
+            input: "edit",
+          },
+          {
+            type: "custom_tool_call_output",
+            call_id: "custom-1",
+            name: "patch",
+            output: "edited",
+          },
+          {
+            type: "local_shell_call",
+            call_id: "shell-1",
+            status: "completed",
+            action: { type: "exec", command: "pwd" },
+          },
+          {
+            type: "tool_search_call",
+            call_id: "search-1",
+            execution: "search",
+            arguments: { q: "docs" },
+          },
+          {
+            type: "tool_search_output",
+            call_id: "search-1",
+            status: "completed",
+            execution: "search",
+            tools: [],
+          },
+          {
+            type: "web_search_call",
+            action: { type: "search", query: "weather" },
+          },
+          {
+            type: "image_generation_call",
+            id: "image-1",
+            status: "completed",
+            result: "image",
+          },
+          {
+            type: "compaction",
+            encrypted_content: "encrypted",
+          },
+          {
+            type: "context_compaction",
+          },
+        ],
+      },
+    ]),
+  );
+
+  const replacementEntries = entries[0]?.replacementHistoryEntries ?? [];
+
+  assert.deepEqual(
+    replacementEntries.map((entry) => ({
+      kind: entry.kind,
+      text: entry.text,
+      toolName: entry.toolName,
+      isReplacementHistory: entry.isReplacementHistory,
+    })),
+    [
+      {
+        kind: "event",
+        text: "reasoned",
+        toolName: undefined,
+        isReplacementHistory: true,
+      },
+      {
+        kind: "tool",
+        text: "Function output call-1",
+        toolName: "function output",
+        isReplacementHistory: true,
+      },
+      {
+        kind: "tool",
+        text: "Custom tool call custom-1",
+        toolName: "patch",
+        isReplacementHistory: true,
+      },
+      {
+        kind: "tool",
+        text: "Custom tool output custom-1",
+        toolName: "patch",
+        isReplacementHistory: true,
+      },
+      {
+        kind: "tool",
+        text: "Local shell call shell-1",
+        toolName: "local shell",
+        isReplacementHistory: true,
+      },
+      {
+        kind: "tool",
+        text: "Replacement history 6: tool search call",
+        toolName: "tool search call",
+        isReplacementHistory: true,
+      },
+      {
+        kind: "tool",
+        text: "Replacement history 7: tool search output",
+        toolName: "tool search output",
+        isReplacementHistory: true,
+      },
+      {
+        kind: "tool",
+        text: "Web search for weather",
+        toolName: "web search call",
+        isReplacementHistory: true,
+      },
+      {
+        kind: "tool",
+        text: "Replacement history 9: image generation call",
+        toolName: "image generation call",
+        isReplacementHistory: true,
+      },
+      {
+        kind: "event",
+        text: "Compaction summary item included in compacted model context.",
+        toolName: undefined,
+        isReplacementHistory: true,
+      },
+      {
+        kind: "compact",
+        text: "Nested context compaction item included in compacted model context.",
+        toolName: undefined,
+        isReplacementHistory: true,
+      },
+    ],
+  );
+});
+
+test("places replacement history into the main conversation after archived history", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "userMessage",
+        id: "old-user",
+        content: [{ type: "text", text: "old request" }],
+      },
+      {
+        type: "contextCompaction",
+        id: "compact-1",
+        replacementHistory: [
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "recent request" }],
+          },
+          {
+            type: "function_call",
+            name: "shell",
+            arguments: "{\"cmd\":\"pwd\"}",
+            call_id: "call-1",
+          },
+        ],
+      },
+      {
+        type: "agentMessage",
+        id: "after-compact",
+        text: "continued",
+        phase: null,
+        memoryCitation: null,
+      },
+    ]),
+  );
+
+  const cells = buildConversationCells(entries);
+
+  assert.deepEqual(
+    cells.map((cell) => ({
+      id: cell.id,
+      kind: cell.kind,
+      entries: cell.entries.map((entry) => ({
+        id: entry.id,
+        kind: entry.kind,
+        text: entry.text,
+        archivedEntryCount: entry.archivedEntryCount,
+        isReplacementHistory: entry.isReplacementHistory,
+      })),
+    })),
+    [
+      {
+        id: "compact-1:archive",
+        kind: "archive",
+        entries: [
+          {
+            id: "compact-1:archive",
+            kind: "archive",
+            text: "Previous conversation is no longer the active model context.",
+            archivedEntryCount: 1,
+            isReplacementHistory: undefined,
+          },
+        ],
+      },
+      {
+        id: "compact-1",
+        kind: "compact",
+        entries: [
+          {
+            id: "compact-1",
+            kind: "compact",
+            text: "Earlier conversation was replaced with compacted model context.",
+            archivedEntryCount: undefined,
+            isReplacementHistory: undefined,
+          },
+        ],
+      },
+      {
+        id: "compact-1:replacement:0",
+        kind: "message",
+        entries: [
+          {
+            id: "compact-1:replacement:0",
+            kind: "message",
+            text: "recent request",
+            archivedEntryCount: undefined,
+            isReplacementHistory: true,
+          },
+        ],
+      },
+      {
+        id: "compact-1:replacement:1",
+        kind: "tool",
+        entries: [
+          {
+            id: "compact-1:replacement:1",
+            kind: "tool",
+            text: "Function call call-1",
+            archivedEntryCount: undefined,
+            isReplacementHistory: true,
+          },
+        ],
+      },
+      {
+        id: "after-compact",
+        kind: "message",
+        entries: [
+          {
+            id: "after-compact",
+            kind: "message",
+            text: "continued",
+            archivedEntryCount: undefined,
+            isReplacementHistory: undefined,
+          },
+        ],
+      },
+    ],
+  );
+});
+
+test("archives earlier compact boundaries when a later compact replaces context again", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "userMessage",
+        id: "old-user",
+        content: [{ type: "text", text: "old request" }],
+      },
+      {
+        type: "contextCompaction",
+        id: "compact-1",
+        replacementHistory: [
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "first replacement" }],
+          },
+        ],
+      },
+      {
+        type: "agentMessage",
+        id: "after-compact-1",
+        text: "between compacts",
+        phase: null,
+        memoryCitation: null,
+      },
+      {
+        type: "contextCompaction",
+        id: "compact-2",
+        replacementHistory: [
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "second replacement" }],
+          },
+        ],
+      },
+    ]),
+  );
+
+  const cells = buildConversationCells(entries);
+  const archiveEntry = cells[0]?.entries[0];
+
+  assert.deepEqual(
+    cells.map((cell) => ({
+      id: cell.id,
+      kind: cell.kind,
+      text: cell.entries[0]?.text,
+    })),
+    [
+      {
+        id: "compact-2:archive",
+        kind: "archive",
+        text: "Previous conversation is no longer the active model context.",
+      },
+      {
+        id: "compact-2",
+        kind: "compact",
+        text: "Earlier conversation was replaced with compacted model context.",
+      },
+      {
+        id: "compact-2:replacement:0",
+        kind: "message",
+        text: "second replacement",
+      },
+    ],
+  );
+  assert.equal(archiveEntry?.archivedEntryCount, 4);
+  assert.deepEqual(
+    archiveEntry?.archivedCells?.map((cell) => [cell.id, cell.kind]),
+    [
+      ["compact-1:archive", "archive"],
+      ["compact-1", "compact"],
+      ["compact-1:replacement:0", "message"],
+      ["after-compact-1", "message"],
+    ],
+  );
+});
+
+test("distinguishes empty compact replacement history from missing history", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "contextCompaction",
+        id: "compact-1",
+        replacementHistory: [],
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    {
+      status: entries[0]?.replacementHistoryStatus,
+      count: entries[0]?.replacementHistoryCount,
+      replacementEntries: entries[0]?.replacementHistoryEntries,
+    },
+    {
+      status: "empty",
+      count: 0,
+      replacementEntries: [],
     },
   );
 });
