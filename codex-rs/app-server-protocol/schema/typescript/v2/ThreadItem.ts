@@ -4,6 +4,7 @@
 import type { AbsolutePathBuf } from "../AbsolutePathBuf";
 import type { MessagePhase } from "../MessagePhase";
 import type { ReasoningEffort } from "../ReasoningEffort";
+import type { ResponseItem } from "../ResponseItem";
 import type { JsonValue } from "../serde_json/JsonValue";
 import type { CollabAgentOperation } from "./CollabAgentOperation";
 import type { CollabAgentState } from "./CollabAgentState";
@@ -113,4 +114,4 @@ reasoningEffort: ReasoningEffort | null,
 /**
  * Last known status of the target agents, when available.
  */
-agentsStates: { [key in string]?: CollabAgentState }, } | { "type": "collabAgentStatusUpdate", id: string, senderThreadId: string | null, senderPath: string, recipientThreadId: string | null, recipientPath: string, status: CollabAgentState, } | { "type": "webSearch", id: string, query: string, action: WebSearchAction | null, } | { "type": "imageView", id: string, path: AbsolutePathBuf, } | { "type": "imageGeneration", id: string, status: string, revisedPrompt: string | null, result: string, savedPath?: AbsolutePathBuf, } | { "type": "enteredReviewMode", id: string, review: string, } | { "type": "exitedReviewMode", id: string, review: string, } | { "type": "contextCompaction", id: string, };
+agentsStates: { [key in string]?: CollabAgentState }, } | { "type": "collabAgentStatusUpdate", id: string, senderThreadId: string | null, senderPath: string, recipientThreadId: string | null, recipientPath: string, status: CollabAgentState, } | { "type": "webSearch", id: string, query: string, action: WebSearchAction | null, } | { "type": "imageView", id: string, path: AbsolutePathBuf, } | { "type": "imageGeneration", id: string, status: string, revisedPrompt: string | null, result: string, savedPath?: AbsolutePathBuf, } | { "type": "enteredReviewMode", id: string, review: string, } | { "type": "exitedReviewMode", id: string, review: string, } | { "type": "contextCompaction", id: string, replacementHistory: Array<ResponseItem> | null, };

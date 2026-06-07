@@ -223,8 +223,14 @@ export type ThreadItem = ThreadItemTimestamps &
   | {
       type: "contextCompaction";
       id: string;
+      replacementHistory?: ResponseItem[] | null;
     }
   );
+
+export type ResponseItem = {
+  type: string;
+  [key: string]: unknown;
+};
 
 export type Turn = {
   id: string;
@@ -435,7 +441,7 @@ export type TodoCardItem = {
 
 export type ConversationEntry = {
   id: string;
-  kind: "message" | "event" | "tool";
+  kind: "message" | "event" | "tool" | "compact" | "archive";
   author: string;
   role: "user" | "agent" | "system";
   text: string;
@@ -458,11 +464,17 @@ export type ConversationEntry = {
     | "subagentNotification"
     | "external"
     | "context";
+  replacementHistoryEntries?: ConversationEntry[] | null;
+  replacementHistoryStatus?: "missing" | "empty" | "available";
+  replacementHistoryCount?: number | null;
+  archivedCells?: ConversationCell[];
+  archivedEntryCount?: number;
+  isReplacementHistory?: boolean;
 };
 
 export type ConversationCell = {
   id: string;
-  kind: "message" | "event" | "tool";
+  kind: "message" | "event" | "tool" | "compact" | "archive";
   entries: ConversationEntry[];
 };
 

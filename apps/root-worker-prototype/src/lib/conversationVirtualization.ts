@@ -6,6 +6,8 @@ export const CONVERSATION_OVERSCAN_PX = 640;
 const DEFAULT_MESSAGE_ROW_HEIGHT = 104;
 const DEFAULT_EVENT_ROW_HEIGHT = 72;
 const DEFAULT_TOOL_ROW_HEIGHT = 112;
+const DEFAULT_COMPACT_ROW_HEIGHT = 156;
+const DEFAULT_ARCHIVE_ROW_HEIGHT = 112;
 const TEXT_LINE_HEIGHT = 22;
 const TEXT_CHARS_PER_LINE = 72;
 const TOOL_CHARS_PER_LINE = 84;
@@ -24,6 +26,14 @@ export function estimateConversationCellHeight(cell: ConversationCell): number {
 
   if (cell.kind === "tool") {
     return estimateToolCellHeight(cell.entries);
+  }
+
+  if (cell.kind === "archive") {
+    return DEFAULT_ARCHIVE_ROW_HEIGHT;
+  }
+
+  if (cell.kind === "compact") {
+    return DEFAULT_COMPACT_ROW_HEIGHT;
   }
 
   return estimateMessageCellHeight(cell.entries);

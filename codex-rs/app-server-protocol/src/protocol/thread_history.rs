@@ -1220,10 +1220,25 @@ impl ThreadHistoryBuilder {
     }
 
     fn handle_context_compacted(&mut self, _payload: &ContextCompactedEvent) {
+        if self.ensure_turn().items.iter().any(|item| {
+            matches!(
+                item,
+                ThreadItem::ContextCompaction {
+                    replacement_history: _,
+                    ..
+                }
+            )
+        }) {
+            return;
+        }
+
         let id = self.next_item_id();
         self.ensure_turn()
             .items
-            .push(ThreadItem::ContextCompaction { id });
+            .push(ThreadItem::ContextCompaction {
+                id,
+                replacement_history: None,
+            });
     }
 
     fn handle_entered_review_mode(&mut self, payload: &codex_protocol::protocol::ReviewRequest) {
@@ -1379,8 +1394,32 @@ impl ThreadHistoryBuilder {
     /// This keeps compaction-only legacy turns from being dropped by
     /// `finish_current_turn` when they have no renderable items and were not
     /// explicitly opened.
-    fn handle_compacted(&mut self, _payload: &CompactedItem) {
-        self.ensure_turn().saw_compaction = true;
+    fn handle_compacted(&mut self, payload: &CompactedItem) {
+        let replacement_history = payload.replacement_history.clone();
+        {
+            let turn = self.ensure_turn();
+            turn.saw_compaction = true;
+
+            if let Some(ThreadItem::ContextCompaction {
+                replacement_history: existing_replacement_history,
+                ..
+            }) = turn
+                .items
+                .iter_mut()
+                .rev()
+                .find(|item| matches!(item, ThreadItem::ContextCompaction { .. }))
+            {
+                *existing_replacement_history = replacement_history;
+                return;
+            }
+        }
+
+        let id = self.next_item_id();
+        let turn = self.ensure_turn();
+        turn.items.push(ThreadItem::ContextCompaction {
+            id,
+            replacement_history,
+        });
     }
 
     fn handle_thread_rollback(&mut self, payload: &ThreadRolledBackEvent) {
@@ -2014,6 +2053,7 @@ mod tests {
     use codex_protocol::items::UserMessageItem as CoreUserMessageItem;
     use codex_protocol::items::build_hook_prompt_message;
     use codex_protocol::mcp::CallToolResult;
+    use codex_protocol::models::ContentItem;
     use codex_protocol::models::FunctionCallOutputPayload;
     use codex_protocol::models::MessagePhase as CoreMessagePhase;
     use codex_protocol::models::ResponseItem;
@@ -4599,7 +4639,105 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 items_view: TurnItemsView::Full,
-                items: Vec::new(),
+                items: vec![ThreadItem::ContextCompaction {
+                    id: "item-1".into(),
+                    replacement_history: None,
+                }],
+            }]
+        );
+    }
+
+    #[test]
+    fn preserves_compaction_replacement_history() {
+        let replacement_history = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".into(),
+                content: vec![ContentItem::InputText {
+                    text: "recent request".into(),
+                }],
+                phase: None,
+            },
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "shell".into(),
+                namespace: Some("functions".into()),
+                arguments: "{\"cmd\":\"pwd\"}".into(),
+                call_id: "call-1".into(),
+            },
+        ];
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-compact".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::Compacted(CompactedItem {
+                message: "summary".into(),
+                replacement_history: Some(replacement_history.clone()),
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::ContextCompaction {
+                id: "item-1".into(),
+                replacement_history: Some(replacement_history),
+            }]
+        );
+    }
+
+    #[test]
+    fn deduplicates_legacy_context_compacted_after_replacement_history() {
+        let replacement_history = vec![ResponseItem::Message {
+            id: None,
+            role: "user".into(),
+            content: vec![ContentItem::InputText {
+                text: "recent request".into(),
+            }],
+            phase: None,
+        }];
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-compact".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::ContextCompacted(ContextCompactedEvent {})),
+            RolloutItem::Compacted(CompactedItem {
+                message: "summary".into(),
+                replacement_history: Some(replacement_history.clone()),
+            }),
+            RolloutItem::EventMsg(EventMsg::ContextCompacted(ContextCompactedEvent {})),
+            RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-compact".into(),
+                last_agent_message: None,
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(
+            turns,
+            vec![Turn {
+                id: "turn-compact".into(),
+                status: TurnStatus::Completed,
+                error: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                items_view: TurnItemsView::Full,
+                items: vec![ThreadItem::ContextCompaction {
+                    id: "item-1".into(),
+                    replacement_history: Some(replacement_history),
+                }],
             }]
         );
     }

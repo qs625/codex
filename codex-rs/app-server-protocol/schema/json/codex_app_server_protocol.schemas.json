@@ -16911,6 +16911,15 @@
               "id": {
                 "type": "string"
               },
+              "replacementHistory": {
+                "items": {
+                  "$ref": "#/definitions/v2/ResponseItem"
+                },
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
               "type": {
                 "enum": [
                   "contextCompaction"

@@ -1,6 +1,7 @@
 import type {
   ConversationCell,
   ConversationEntry,
+  ResponseItem,
   Thread,
   ThreadItem,
 } from "../types";
@@ -282,20 +283,32 @@ function buildConversationItemEntries(
   }
 
   if (item.type === "contextCompaction") {
+    const replacementHistory = item.replacementHistory;
+    const replacementHistoryEntries = Array.isArray(replacementHistory)
+      ? buildReplacementHistoryEntries(replacementHistory, {
+          author,
+          timestamp,
+          parentId: item.id,
+        })
+      : null;
     return [
       {
         id: item.id,
-        kind: "tool" as const,
+        kind: "compact" as const,
         author,
         role: "system" as const,
-        text: "Conversation history compacted.",
+        text: "Earlier conversation was replaced with compacted model context.",
         timestamp,
         attachments: [],
-        toolName: "compact context",
-        toolStatus: "completed",
-        toolDetails:
-          "Codex compacted the conversation history for this thread to reduce context usage.",
-        toolCategory: "context",
+        replacementHistoryEntries,
+        replacementHistoryStatus: Array.isArray(replacementHistory)
+          ? replacementHistory.length > 0
+            ? "available"
+            : "empty"
+          : "missing",
+        replacementHistoryCount: Array.isArray(replacementHistory)
+          ? replacementHistory.length
+          : null,
       },
     ];
   }
@@ -531,6 +544,321 @@ function formatItemTimestamp(item: ThreadItem) {
     : formatClockTime(timestampMs / 1000);
 }
 
+function buildReplacementHistoryEntries(
+  items: ResponseItem[],
+  {
+    author,
+    timestamp,
+    parentId,
+  }: {
+    author: string;
+    timestamp: string;
+    parentId: string;
+  },
+): ConversationEntry[] {
+  return items.map((item, index) =>
+    ({
+      ...buildReplacementHistoryEntry(item, {
+        author,
+        timestamp,
+        id: `${parentId}:replacement:${index}`,
+        index,
+      }),
+      isReplacementHistory: true,
+    }),
+  );
+}
+
+function buildReplacementHistoryEntry(
+  item: ResponseItem,
+  {
+    author,
+    timestamp,
+    id,
+    index,
+  }: {
+    author: string;
+    timestamp: string;
+    id: string;
+    index: number;
+  },
+): ConversationEntry {
+  switch (item.type) {
+    case "message": {
+      const role = stringOrFallback(item.role, "message");
+      return {
+        id,
+        kind: "message",
+        author: formatReplacementMessageAuthor(role, author),
+        role: role === "user" ? "user" : role === "assistant" ? "agent" : "system",
+        text:
+          extractResponseContentText(item.content) ||
+          `Replacement history ${index + 1}: empty ${role} message.`,
+        timestamp,
+        attachments: [],
+      };
+    }
+    case "reasoning":
+      return {
+        id,
+        kind: "event",
+        author,
+        role: "system",
+        text:
+          extractReasoningText(item.summary) ||
+          extractReasoningText(item.content) ||
+          "Reasoning item included in compacted model context.",
+        timestamp,
+        attachments: [],
+      };
+    case "function_call":
+      return replacementToolEntry({
+        id,
+        author,
+        timestamp,
+        toolName: formatFunctionToolName(item),
+        text: `Function call ${stringOrFallback(item.call_id, `#${index + 1}`)}`,
+        details: formatResponseItemDetails([
+          ["Type", item.type],
+          ["Call ID", item.call_id],
+          ["Name", item.name],
+          ["Namespace", item.namespace],
+          ["Arguments", parseMaybeJsonString(item.arguments)],
+        ]),
+      });
+    case "function_call_output":
+      return replacementToolEntry({
+        id,
+        author,
+        timestamp,
+        toolName: "function output",
+        text: `Function output ${stringOrFallback(item.call_id, `#${index + 1}`)}`,
+        details: formatResponseItemDetails([
+          ["Type", item.type],
+          ["Call ID", item.call_id],
+          ["Output", item.output],
+        ]),
+      });
+    case "custom_tool_call":
+      return replacementToolEntry({
+        id,
+        author,
+        timestamp,
+        toolName: stringOrFallback(item.name, "custom tool"),
+        text: `Custom tool call ${stringOrFallback(item.call_id, `#${index + 1}`)}`,
+        details: formatResponseItemDetails([
+          ["Type", item.type],
+          ["Status", item.status],
+          ["Call ID", item.call_id],
+          ["Input", item.input],
+        ]),
+      });
+    case "custom_tool_call_output":
+      return replacementToolEntry({
+        id,
+        author,
+        timestamp,
+        toolName: stringOrFallback(item.name, "custom tool output"),
+        text: `Custom tool output ${stringOrFallback(item.call_id, `#${index + 1}`)}`,
+        details: formatResponseItemDetails([
+          ["Type", item.type],
+          ["Call ID", item.call_id],
+          ["Output", item.output],
+        ]),
+      });
+    case "local_shell_call":
+      return replacementToolEntry({
+        id,
+        author,
+        timestamp,
+        toolName: "local shell",
+        text: `Local shell call ${stringOrFallback(item.call_id, `#${index + 1}`)}`,
+        details: formatResponseItemDetails([
+          ["Type", item.type],
+          ["Status", item.status],
+          ["Action", item.action],
+        ]),
+      });
+    case "tool_search_call":
+    case "tool_search_output":
+    case "web_search_call":
+    case "image_generation_call":
+      return replacementToolEntry({
+        id,
+        author,
+        timestamp,
+        toolName: formatResponseItemType(item.type),
+        text: summarizeResponseToolItem(item, index),
+        details: formatRawJson(item),
+      });
+    case "compaction":
+      return {
+        id,
+        kind: "event",
+        author,
+        role: "system",
+        text: "Compaction summary item included in compacted model context.",
+        timestamp,
+        attachments: [],
+      };
+    case "context_compaction":
+      return {
+        id,
+        kind: "compact",
+        author,
+        role: "system",
+        text: "Nested context compaction item included in compacted model context.",
+        timestamp,
+        attachments: [],
+        replacementHistoryEntries: null,
+        replacementHistoryStatus: "missing",
+        replacementHistoryCount: null,
+      };
+    default:
+      return replacementToolEntry({
+        id,
+        author,
+        timestamp,
+        toolName: `unsupported ${formatResponseItemType(item.type)}`,
+        text: "Unsupported replacement history item. Raw data is preserved below.",
+        details: formatRawJson(item),
+      });
+  }
+}
+
+function replacementToolEntry({
+  id,
+  author,
+  timestamp,
+  toolName,
+  text,
+  details,
+}: {
+  id: string;
+  author: string;
+  timestamp: string;
+  toolName: string;
+  text: string;
+  details: string;
+}): ConversationEntry {
+  return {
+    id,
+    kind: "tool",
+    author,
+    role: "system",
+    text,
+    timestamp,
+    attachments: [],
+    toolName,
+    toolStatus: "context",
+    toolDetails: details,
+    toolCategory: "context",
+  };
+}
+
+function formatReplacementMessageAuthor(role: string, author: string) {
+  if (role === "user") {
+    return "You";
+  }
+  if (role === "assistant") {
+    return author;
+  }
+  return `${role} context`;
+}
+
+function extractResponseContentText(content: unknown) {
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return "";
+      }
+      const record = item as Record<string, unknown>;
+      return stringOrNull(record.text) ?? stringOrNull(record.content) ?? "";
+    })
+    .filter((text) => text.trim().length > 0)
+    .join("\n")
+    .trim();
+}
+
+function extractReasoningText(value: unknown) {
+  if (!Array.isArray(value)) {
+    return "";
+  }
+  return value
+    .map((item) => {
+      if (typeof item === "string") {
+        return item;
+      }
+      if (!item || typeof item !== "object") {
+        return "";
+      }
+      const record = item as Record<string, unknown>;
+      return stringOrNull(record.text) ?? stringOrNull(record.summary) ?? "";
+    })
+    .filter((text) => text.trim().length > 0)
+    .join("\n")
+    .trim();
+}
+
+function formatFunctionToolName(item: ResponseItem) {
+  const name = stringOrFallback(item.name, "function");
+  const namespace = stringOrNull(item.namespace);
+  return namespace ? `${namespace}/${name}` : name;
+}
+
+function summarizeResponseToolItem(item: ResponseItem, index: number) {
+  if (item.type === "web_search_call") {
+    const action = item.action;
+    if (action && typeof action === "object" && !Array.isArray(action)) {
+      const query = stringOrNull((action as Record<string, unknown>).query);
+      if (query) {
+        return `Web search for ${query}`;
+      }
+    }
+  }
+  return `Replacement history ${index + 1}: ${formatResponseItemType(item.type)}`;
+}
+
+function formatResponseItemType(type: string) {
+  return type.replaceAll("_", " ");
+}
+
+function formatResponseItemDetails(sections: Array<[string, unknown]>) {
+  return sections
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .map(([label, value]) => `${label}\n${formatUnknownValue(value)}`)
+    .join("\n\n");
+}
+
+function parseMaybeJsonString(value: unknown) {
+  if (typeof value !== "string") {
+    return value;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function formatRawJson(value: unknown) {
+  return `Raw item\n${formatUnknownValue(value)}`;
+}
+
+function formatUnknownValue(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
 function parseCollabEnvelopeText(
   text: string,
   item: Pick<ThreadItem, "id" | "startedAtMs" | "completedAtMs">,
@@ -636,8 +964,42 @@ export function buildConversationCells(
   previousCells?: ConversationCell[] | null,
 ): ConversationCell[] {
   const cells: ConversationCell[] = [];
+  let segmentEntries: ConversationEntry[] = [];
+
+  for (const entry of entries) {
+    if (entry.kind !== "compact") {
+      segmentEntries.push(entry);
+      continue;
+    }
+
+    cells.push(...buildConversationCellsForSegment(segmentEntries));
+    segmentEntries = [];
+
+    if (cells.length > 0) {
+      const archivedCell = buildArchivedHistoryCell(entry, [...cells]);
+      cells.length = 0;
+      cells.push(archivedCell);
+    }
+
+    cells.push({
+      id: entry.id,
+      kind: "compact",
+      entries: [entry],
+    });
+
+    segmentEntries = [...(entry.replacementHistoryEntries ?? [])];
+  }
+
+  cells.push(...buildConversationCellsForSegment(segmentEntries));
+
+  return reuseConversationCells(cells, previousCells);
+}
+
+function buildConversationCellsForSegment(
+  entries: ConversationEntry[],
+): ConversationCell[] {
+  const cells: ConversationCell[] = [];
   let entryIndex = 0;
-  let cellIndex = 0;
 
   while (entryIndex < entries.length) {
     const nextCellEntries = [entries[entryIndex]];
@@ -655,30 +1017,83 @@ export function buildConversationCells(
       nextCellEntries.push(entries[entryIndex + nextCellEntries.length]);
     }
 
-    const existingCell = previousCells?.[cellIndex];
-    if (
-      existingCell &&
-      existingCell.id === nextCellEntries[0].id &&
-      existingCell.kind === nextCellEntries[0].kind &&
-      existingCell.entries.length === nextCellEntries.length &&
-      existingCell.entries.every(
-        (entry, index) => entry === nextCellEntries[index],
-      )
-    ) {
-      cells.push(existingCell);
-    } else {
-      cells.push({
-        id: nextCellEntries[0].id,
-        kind: nextCellEntries[0].kind,
-        entries: nextCellEntries,
-      });
-    }
+    cells.push({
+      id: nextCellEntries[0].id,
+      kind: nextCellEntries[0].kind,
+      entries: nextCellEntries,
+    });
 
     entryIndex += nextCellEntries.length;
-    cellIndex += 1;
   }
 
   return cells;
+}
+
+function buildArchivedHistoryCell(
+  compactEntry: ConversationEntry,
+  archivedCells: ConversationCell[],
+): ConversationCell {
+  const archivedEntryCount = archivedCells.reduce(
+    (count, cell) =>
+      count +
+      cell.entries.reduce(
+        (entryCount, entry) =>
+          entryCount +
+          (entry.kind === "archive"
+            ? (entry.archivedEntryCount ?? 0)
+            : 1),
+        0,
+      ),
+    0,
+  );
+  return {
+    id: `${compactEntry.id}:archive`,
+    kind: "archive",
+    entries: [
+      {
+        id: `${compactEntry.id}:archive`,
+        kind: "archive",
+        author: compactEntry.author,
+        role: "system",
+        text: "Previous conversation is no longer the active model context.",
+        timestamp: compactEntry.timestamp,
+        attachments: [],
+        archivedCells,
+        archivedEntryCount,
+      },
+    ],
+  };
+}
+
+function reuseConversationCells(
+  cells: ConversationCell[],
+  previousCells?: ConversationCell[] | null,
+): ConversationCell[] {
+  if (!previousCells) {
+    return cells;
+  }
+
+  const previousCellsByKey = new Map(
+    previousCells.map((cell) => [conversationCellReuseKey(cell), cell]),
+  );
+
+  return cells.map((cell) => {
+    const existingCell = previousCellsByKey.get(conversationCellReuseKey(cell));
+    if (
+      existingCell &&
+      existingCell.entries.length === cell.entries.length &&
+      existingCell.entries.every(
+        (entry, entryIndex) => entry === cell.entries[entryIndex],
+      )
+    ) {
+      return existingCell;
+    }
+    return cell;
+  });
+}
+
+function conversationCellReuseKey(cell: ConversationCell) {
+  return `${cell.kind}:${cell.id}`;
 }
 
 function shouldMergeConversationEntry(
@@ -694,6 +1109,9 @@ function shouldMergeConversationEntry(
     if (isStandaloneNotificationEntry(previousEntry) || isStandaloneNotificationEntry(nextEntry)) {
       return false;
     }
+    if (previousEntry.isReplacementHistory !== nextEntry.isReplacementHistory) {
+      return false;
+    }
     return previousEntry.toolCategory === nextEntry.toolCategory;
   }
 
@@ -703,6 +1121,9 @@ function shouldMergeConversationEntry(
     previousEntry.role === "agent" &&
     nextEntry.role === "agent"
   ) {
+    if (previousEntry.isReplacementHistory !== nextEntry.isReplacementHistory) {
+      return false;
+    }
     return true;
   }
 

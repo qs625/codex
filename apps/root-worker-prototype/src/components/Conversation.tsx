@@ -2,7 +2,7 @@ import React, { memo, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { MarkdownContent } from "../lib/markdown";
-import type { ConversationEntry } from "../types";
+import type { ConversationCell, ConversationEntry } from "../types";
 import {
   BranchIcon,
   CodeIcon,
@@ -29,6 +29,15 @@ type ToolRowProps = {
   onToggleOpen?: (open: boolean) => void;
   selectedEntryId?: string | null;
   onSelectEntry?: (entryId: string | null) => void;
+};
+
+type CompactRowProps = {
+  entry: ConversationEntry;
+};
+
+type ArchivedHistoryRowProps = {
+  entry: ConversationEntry;
+  onOpenLocalFile?: (target: string) => void;
 };
 
 type LocalImageCacheEntry = {
@@ -756,6 +765,110 @@ export const ToolRow = memo(function ToolRow({
   );
 }, areToolRowPropsEqual);
 
+export const CompactRow = memo(function CompactRow({ entry }: CompactRowProps) {
+  const replacementCount = entry.replacementHistoryCount;
+  const replacementLabel =
+    replacementCount === null || replacementCount === undefined
+      ? "replacement history unavailable"
+      : `${replacementCount} replacement item${replacementCount === 1 ? "" : "s"}`;
+  return (
+    <section className="compact-row" aria-label="Context compacted">
+      <div className="event-icon compact-icon">
+        <ShareIcon />
+      </div>
+      <div className="compact-card">
+        <div className="compact-summary">
+          <div className="compact-copy">
+            <strong>Context compacted</strong>
+            <span>{entry.text}</span>
+            {entry.replacementHistoryStatus === "missing" ? (
+              <em>Replacement history is unavailable for this compact event.</em>
+            ) : entry.replacementHistoryStatus === "empty" ? (
+              <em>No replacement history was provided after compacting.</em>
+            ) : (
+              <em>The replacement history is shown below as the active chat list.</em>
+            )}
+          </div>
+          <div className="compact-meta">
+            <span>{replacementLabel}</span>
+            <time>{entry.timestamp}</time>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}, areCompactRowPropsEqual);
+
+export const ArchivedHistoryRow = memo(function ArchivedHistoryRow({
+  entry,
+  onOpenLocalFile,
+}: ArchivedHistoryRowProps) {
+  const archivedCells = entry.archivedCells ?? [];
+  const archivedEntryCount = entry.archivedEntryCount ?? 0;
+
+  return (
+    <section className="archive-row" aria-label="Previous conversation">
+      <div className="event-icon archive-icon">
+        <DocumentIcon />
+      </div>
+      <details className="archive-card">
+        <summary className="archive-summary">
+          <div className="archive-copy">
+            <strong>Previous conversation</strong>
+            <span>{entry.text}</span>
+          </div>
+          <div className="archive-meta">
+            <span>
+              {archivedEntryCount} archived item
+              {archivedEntryCount === 1 ? "" : "s"}
+            </span>
+            <time>{entry.timestamp}</time>
+          </div>
+        </summary>
+        <div className="archive-body">
+          {archivedCells.map((cell) => (
+            <div
+              key={cell.id}
+              className={`archive-cell archive-cell-${cell.kind}`}
+            >
+              {renderArchivedConversationCell(cell, onOpenLocalFile)}
+            </div>
+          ))}
+        </div>
+      </details>
+    </section>
+  );
+}, areArchivedHistoryRowPropsEqual);
+
+function renderArchivedConversationCell(
+  cell: ConversationCell,
+  onOpenLocalFile?: (target: string) => void,
+) {
+  if (cell.kind === "message") {
+    return (
+      <MessageRow entries={cell.entries} onOpenLocalFile={onOpenLocalFile} />
+    );
+  }
+  if (cell.kind === "tool") {
+    return (
+      <div className="archive-tool-stack">
+        {cell.entries.map((entry) => (
+          <ToolRow key={entry.id} entries={[entry]} isOpen />
+        ))}
+      </div>
+    );
+  }
+  if (cell.kind === "event") {
+    return <EventRow entry={cell.entries[0]} />;
+  }
+  return (
+    <div className="compact-nested-item">
+      <strong>Archived item</strong>
+      <span>{cell.entries[0]?.text ?? "Archived conversation item."}</span>
+    </div>
+  );
+}
+
 function areMessageRowPropsEqual(
   previous: Readonly<MessageRowProps>,
   next: Readonly<MessageRowProps>,
@@ -779,6 +892,20 @@ function areToolRowPropsEqual(
     previous.isOpen === next.isOpen &&
     previous.selectedEntryId === next.selectedEntryId
   );
+}
+
+function areCompactRowPropsEqual(
+  previous: Readonly<CompactRowProps>,
+  next: Readonly<CompactRowProps>,
+) {
+  return previous.entry === next.entry;
+}
+
+function areArchivedHistoryRowPropsEqual(
+  previous: Readonly<ArchivedHistoryRowProps>,
+  next: Readonly<ArchivedHistoryRowProps>,
+) {
+  return previous.entry === next.entry;
 }
 
 function getToolIcon(category: NonNullable<ConversationEntry["toolCategory"]>) {

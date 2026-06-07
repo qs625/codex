@@ -67,6 +67,50 @@ test("expands message estimates when attachments are present", () => {
   );
 });
 
+test("estimates archived history rows separately from compact rows", () => {
+  const archiveCell: ConversationCell = {
+    id: "archive",
+    kind: "archive",
+    entries: [
+      {
+        id: "archive",
+        kind: "archive",
+        author: "Root",
+        role: "system",
+        text: "previous conversation",
+        timestamp: "09:41",
+        attachments: [],
+        archivedEntryCount: 2,
+        archivedCells: [
+          makeMessageCell("replacement-1", "one"),
+          makeMessageCell("replacement-2", "two"),
+        ],
+      },
+    ],
+  };
+  const compactCell: ConversationCell = {
+    id: "compact",
+    kind: "compact",
+    entries: [
+      {
+        id: "compact",
+        kind: "compact",
+        author: "Root",
+        role: "system",
+        text: "compacted",
+        timestamp: "09:41",
+        attachments: [],
+        replacementHistoryStatus: "available",
+        replacementHistoryCount: 2,
+        replacementHistoryEntries: [],
+      },
+    ],
+  };
+
+  assert.ok(estimateConversationCellHeight(archiveCell) > 0);
+  assert.ok(estimateConversationCellHeight(compactCell) > 0);
+});
+
 test("finds a stable virtualized window with overscan", () => {
   const cells = Array.from({ length: 6 }, (_, index) =>
     makeMessageCell(`cell-${index}`, `row ${index}`),
