@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { buildConversationEntries } from "./conversation";
 import {
   appendAgentDelta,
   applyPendingThreadUpdates,
@@ -8,6 +9,7 @@ import {
   formatUpdatedLabel,
   getPresenceLabel,
   getParentThreadId,
+  getThreadItemNotificationTargetThreadIds,
   getThreadPath,
   isThreadThinking,
   mergeThreadSnapshot,
@@ -1691,12 +1693,7 @@ test("pending thread updates replay when the thread snapshot arrives", () => {
   ]);
 });
 
-for (const terminalStatus of [
-  "completed",
-  "errored",
-  "shutdown",
-  "notFound",
-]) {
+for (const terminalStatus of ["completed", "errored", "shutdown", "notFound"]) {
   test(`updateThreadItem preserves repeated terminal collab status updates for ${terminalStatus}`, () => {
     const thread = updateThreadItem(makeThread(), "turn-1", {
       type: "collabAgentStatusUpdate",
@@ -1752,6 +1749,62 @@ for (const terminalStatus of [
     ]);
   });
 }
+
+test("collab status item notifications target the recipient thread", () => {
+  const item: ThreadItem = {
+    type: "collabAgentStatusUpdate",
+    id: "subagent-complete",
+    senderThreadId: "thread-child",
+    senderPath: "/root/worker",
+    recipientThreadId: "thread-1",
+    recipientPath: "/root",
+    status: {
+      path: "/root/worker",
+      status: "completed",
+      message: "done",
+    },
+  };
+
+  assert.deepEqual(
+    getThreadItemNotificationTargetThreadIds("thread-child", item),
+    ["thread-1"],
+  );
+
+  const updatedRoot = updateThreadItem(makeThread(), "turn-child", item);
+  const entries = buildConversationEntries(updatedRoot);
+
+  assert.deepEqual(updatedRoot.turns[0]?.items, [item]);
+  assert.deepEqual(
+    entries.map((entry) => [entry.kind, entry.toolName, entry.text]),
+    [
+      [
+        "tool",
+        "/root/worker subagent completion",
+        "/root/worker • completed • done",
+      ],
+    ],
+  );
+});
+
+test("legacy child completion message notifications target the recipient thread", () => {
+  const item: ThreadItem = {
+    type: "collabAgentMessage",
+    id: "child-completion",
+    operation: "childCompletion",
+    senderThreadId: "thread-child",
+    senderPath: "/root/worker",
+    recipientThreadId: "thread-1",
+    recipientPath: "/root",
+    otherRecipientPaths: [],
+    content: "done",
+    triggerTurn: true,
+  };
+
+  assert.deepEqual(
+    getThreadItemNotificationTargetThreadIds("thread-child", item),
+    ["thread-1"],
+  );
+});
 
 test("pending thread updates do not duplicate semantic items already in the snapshot", () => {
   const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();

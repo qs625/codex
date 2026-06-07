@@ -379,6 +379,20 @@ export function updateThreadItem(
   };
 }
 
+export function getThreadItemNotificationTargetThreadIds(
+  notificationThreadId: string,
+  item: ThreadItem,
+) {
+  const recipientThreadId =
+    item.type === "collabAgentStatusUpdate" ||
+    (item.type === "collabAgentMessage" && item.operation === "childCompletion")
+      ? item.recipientThreadId
+      : null;
+  return recipientThreadId && recipientThreadId !== notificationThreadId
+    ? [recipientThreadId]
+    : [notificationThreadId];
+}
+
 export function updateThreadSkills(thread: Thread, skills: ThreadSkill[]) {
   return { ...thread, skills };
 }
@@ -751,9 +765,11 @@ function isStreamingAgentMessage(
   item: Extract<ThreadItem, { type: "agentMessage" }>,
 ) {
   return Boolean(
-    (item as Extract<ThreadItem, { type: "agentMessage" }> & {
-      [STREAMING_AGENT_MESSAGE]?: true;
-    })[STREAMING_AGENT_MESSAGE],
+    (
+      item as Extract<ThreadItem, { type: "agentMessage" }> & {
+        [STREAMING_AGENT_MESSAGE]?: true;
+      }
+    )[STREAMING_AGENT_MESSAGE],
   );
 }
 
@@ -1039,7 +1055,9 @@ function getRetainedUnmatchedTurn(
     return [];
   }
   return [
-    items.length === normalizedItems.length ? normalizedTurn : { ...turn, items },
+    items.length === normalizedItems.length
+      ? normalizedTurn
+      : { ...turn, items },
   ];
 }
 
@@ -1061,10 +1079,7 @@ function dropDuplicatePendingAgentTurns(snapshot: Thread, updated: Thread) {
     )
       ? turn
       : { ...turn, items: normalizedItems };
-    if (
-      snapshotTurnIds.has(turn.id) ||
-      !isPendingAgentTurn
-    ) {
+    if (snapshotTurnIds.has(turn.id) || !isPendingAgentTurn) {
       return [normalizedTurn];
     }
     const items = normalizedItems.filter(
@@ -1074,7 +1089,9 @@ function dropDuplicatePendingAgentTurns(snapshot: Thread, updated: Thread) {
       return [];
     }
     return [
-      items.length === normalizedItems.length ? normalizedTurn : { ...turn, items },
+      items.length === normalizedItems.length
+        ? normalizedTurn
+        : { ...turn, items },
     ];
   });
   return { ...updated, turns };
