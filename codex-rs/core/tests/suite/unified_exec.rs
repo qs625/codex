@@ -575,12 +575,13 @@ async fn unified_exec_emits_exec_command_end_event() -> Result<()> {
 
     let call_id = "uexec-end-event";
     let args = json!({
-        "cmd": "/bin/echo END-EVENT".to_string(),
-        "yield_time_ms": 250,
+        "cmd": "read line; echo END-EVENT".to_string(),
+        "tty": true,
+        "yield_time_ms": 10,
     });
-    let poll_call_id = "uexec-end-event-poll";
-    let poll_args = json!({
-        "chars": "",
+    let input_call_id = "uexec-end-event-input";
+    let input_args = json!({
+        "chars": "\n",
         "session_id": 1000,
         "yield_time_ms": 250,
     });
@@ -594,9 +595,9 @@ async fn unified_exec_emits_exec_command_end_event() -> Result<()> {
         sse(vec![
             ev_response_created("resp-2"),
             ev_function_call(
-                poll_call_id,
+                input_call_id,
                 "write_stdin",
-                &serde_json::to_string(&poll_args)?,
+                &serde_json::to_string(&input_args)?,
             ),
             ev_completed("resp-2"),
         ]),
@@ -1085,8 +1086,8 @@ async fn unified_exec_terminal_interaction_captures_delayed_output() -> Result<(
         "tty": true,
     });
 
-    // Poll stdin three times: first for no output, second after the first marker,
-    // and a final long poll to capture the second marker.
+    // Send stdin three times: first for no output, second after the first marker,
+    // and a final long write window to capture the second marker.
     let first_poll_call_id = "uexec-delayed-poll-1";
     let first_poll_args = json!({
         "chars": "x",
@@ -1215,7 +1216,7 @@ async fn unified_exec_terminal_interaction_captures_delayed_output() -> Result<(
             .map(|ev| ev.stdin.as_str())
             .collect::<Vec<_>>(),
         vec!["x", "x", "x"],
-        "terminal interactions should reflect the three stdin polls"
+        "terminal interactions should reflect the three stdin writes"
     );
 
     assert!(
@@ -1260,13 +1261,14 @@ async fn unified_exec_emits_one_begin_and_one_end_event() -> Result<()> {
     let open_call_id = "uexec-open-session";
     let open_args = json!({
         "shell": "bash".to_string(),
-        "cmd": "sleep 0.1".to_string(),
+        "cmd": "read line; echo done".to_string(),
+        "tty": true,
         "yield_time_ms": 10,
     });
 
-    let poll_call_id = "uexec-poll-empty";
+    let poll_call_id = "uexec-send-input";
     let poll_args = json!({
-        "chars": "",
+        "chars": "\n",
         "session_id": 1000,
         "yield_time_ms": 150,
     });
@@ -1300,7 +1302,7 @@ async fn unified_exec_emits_one_begin_and_one_end_event() -> Result<()> {
 
     submit_unified_exec_turn(
         &test,
-        "check poll event behavior",
+        "check stdin event behavior",
         SandboxPolicy::DangerFullAccess,
     )
     .await?;
@@ -1336,12 +1338,12 @@ async fn unified_exec_emits_one_begin_and_one_end_event() -> Result<()> {
     assert_eq!(
         end_events.len(),
         1,
-        "expected end event for the write_stdin call"
+        "expected end event after write_stdin completes the startup command"
     );
 
     let open_event = &begin_events[0];
 
-    assert_command(&open_event.command, "-lc", "sleep 0.1");
+    assert_command(&open_event.command, "-lc", "read line; echo done");
 
     assert!(
         open_event.interaction_input.is_none(),
@@ -2397,7 +2399,7 @@ PY
 
     let second_call_id = "uexec-lag-poll";
     let second_args = serde_json::json!({
-        "chars": "",
+        "chars": "\n",
         "session_id": 1000,
         "yield_time_ms": 2_000,
     });
@@ -2492,12 +2494,13 @@ async fn unified_exec_timeout_and_followup_poll() -> Result<()> {
     let first_call_id = "uexec-timeout";
     let first_args = serde_json::json!({
         "cmd": "sleep 0.5; echo ready",
+        "tty": true,
         "yield_time_ms": 10,
     });
 
     let second_call_id = "uexec-poll";
     let second_args = serde_json::json!({
-        "chars": "",
+        "chars": "\n",
         "session_id": 1000,
         "yield_time_ms": 800,
     });

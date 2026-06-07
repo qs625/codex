@@ -11,6 +11,7 @@ pub use codex_tools::ResponsesApiTool;
 pub use codex_tools::ToolCall;
 pub use codex_tools::ToolExecutor;
 pub use codex_tools::ToolName;
+pub use codex_tools::ToolOutput;
 pub use codex_tools::ToolPayload;
 pub use codex_tools::ToolSpec;
 pub use codex_tools::parse_tool_input_schema;

@@ -1719,9 +1719,10 @@ fn event_driven_tool_name(namespace: Option<&str>, name: &str) -> Option<String>
     }
 
     match name {
-        "event_command_unsubscribe" | "schedule_subscribe" | "schedule_unsubscribe" => {
-            Some(name.to_string())
-        }
+        "event_command_unsubscribe"
+        | "event_command_write_stdin"
+        | "schedule_subscribe"
+        | "schedule_unsubscribe" => Some(name.to_string()),
         _ => None,
     }
 }
@@ -3322,6 +3323,51 @@ mod tests {
                 status: DynamicToolCallStatus::Completed,
                 output: Some(serde_json::Value::String(
                     r#"{"schedule_summary":"once after 60s"}"#.into(),
+                )),
+            }
+        );
+    }
+
+    #[test]
+    fn event_command_write_stdin_history_replays_as_event_driven_tool() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::FunctionCall {
+                id: None,
+                name: "event_command_write_stdin".into(),
+                namespace: None,
+                arguments: r#"{"subscription_id":"sub-1","chars":"\n"}"#.into(),
+                call_id: "builtin-1".into(),
+            }),
+            RolloutItem::ResponseItem(ResponseItem::FunctionCallOutput {
+                call_id: "builtin-1".into(),
+                output: FunctionCallOutputPayload::from_text(
+                    r#"{"subscription_id":"sub-1","bytes_written":1}"#.into(),
+                ),
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 1);
+        assert_eq!(
+            turns[0].items[0],
+            ThreadItem::EventDrivenToolCall {
+                id: "builtin-1".into(),
+                tool: "event_command_write_stdin".into(),
+                arguments: serde_json::json!({
+                    "subscription_id": "sub-1",
+                    "chars": "\n",
+                }),
+                status: DynamicToolCallStatus::Completed,
+                output: Some(serde_json::Value::String(
+                    r#"{"subscription_id":"sub-1","bytes_written":1}"#.into(),
                 )),
             }
         );

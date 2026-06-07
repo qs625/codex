@@ -7,12 +7,14 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
 
+use crate::function_tool::FunctionCallError;
 use crate::session::tests::make_session_and_context;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::tools::context::ToolCallSource;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::hook_names::HookToolName;
+use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use tokio::sync::Mutex;
@@ -329,11 +331,53 @@ async fn exec_command_post_tool_use_payload_skips_running_sessions() {
 }
 
 #[tokio::test]
+async fn write_stdin_rejects_missing_chars() {
+    let payload = ToolPayload::Function {
+        arguments: serde_json::json!({ "session_id": 45 }).to_string(),
+    };
+    let invocation = invocation_for_payload("write_stdin", "write-stdin-call", payload).await;
+    let handler = WriteStdinHandler;
+
+    let err = handler
+        .handle(invocation)
+        .await
+        .expect_err("expected missing chars to be rejected");
+
+    assert_eq!(
+        err,
+        FunctionCallError::RespondToModel(
+            "write_stdin requires non-empty `chars`; use event_command_subscribe for command completion, log watching, or other background monitoring instead of polling for output.".to_string(),
+        )
+    );
+}
+
+#[tokio::test]
+async fn write_stdin_rejects_empty_chars() {
+    let payload = ToolPayload::Function {
+        arguments: serde_json::json!({ "session_id": 45, "chars": "" }).to_string(),
+    };
+    let invocation = invocation_for_payload("write_stdin", "write-stdin-call", payload).await;
+    let handler = WriteStdinHandler;
+
+    let err = handler
+        .handle(invocation)
+        .await
+        .expect_err("expected empty chars to be rejected");
+
+    assert_eq!(
+        err,
+        FunctionCallError::RespondToModel(
+            "write_stdin requires non-empty `chars`; use event_command_subscribe for command completion, log watching, or other background monitoring instead of polling for output.".to_string(),
+        )
+    );
+}
+
+#[tokio::test]
 async fn write_stdin_post_tool_use_payload_uses_original_exec_call_id_and_command_on_completion() {
     let payload = ToolPayload::Function {
         arguments: serde_json::json!({
             "session_id": 45,
-            "chars": "",
+            "chars": "\n",
         })
         .to_string(),
     };
@@ -365,7 +409,7 @@ async fn write_stdin_post_tool_use_payload_uses_original_exec_call_id_and_comman
 #[tokio::test]
 async fn write_stdin_post_tool_use_payload_keeps_parallel_session_metadata_separate() {
     let payload = ToolPayload::Function {
-        arguments: serde_json::json!({ "session_id": 45, "chars": "" }).to_string(),
+        arguments: serde_json::json!({ "session_id": 45, "chars": "\n" }).to_string(),
     };
     let output_a = ExecCommandToolOutput {
         event_call_id: "exec-call-a".to_string(),

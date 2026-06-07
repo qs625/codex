@@ -60,8 +60,6 @@ pub(crate) use process::SpawnLifecycleHandle;
 pub(crate) use process::UnifiedExecProcess;
 
 pub(crate) const MIN_YIELD_TIME_MS: u64 = 250;
-// Minimum yield time for an empty `write_stdin`.
-pub(crate) const MIN_EMPTY_YIELD_TIME_MS: u64 = 5_000;
 pub(crate) const MAX_YIELD_TIME_MS: u64 = 30_000;
 pub(crate) const DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS: u64 = 300_000;
 pub(crate) const DEFAULT_MAX_OUTPUT_TOKENS: usize = 10_000;
@@ -128,7 +126,6 @@ impl ProcessStore {
 
 pub struct UnifiedExecProcessManager {
     process_store: Mutex<ProcessStore>,
-    max_write_stdin_yield_time_ms: u64,
 }
 
 #[derive(Clone)]
@@ -169,11 +166,9 @@ impl ProcessExitSubscription {
 }
 
 impl UnifiedExecProcessManager {
-    pub(crate) fn new(max_write_stdin_yield_time_ms: u64) -> Self {
+    pub(crate) fn new(_max_write_stdin_yield_time_ms: u64) -> Self {
         Self {
             process_store: Mutex::new(ProcessStore::default()),
-            max_write_stdin_yield_time_ms: max_write_stdin_yield_time_ms
-                .max(MIN_EMPTY_YIELD_TIME_MS),
         }
     }
 }

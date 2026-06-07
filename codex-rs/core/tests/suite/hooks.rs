@@ -3488,17 +3488,17 @@ async fn post_tool_use_blocks_when_exec_session_completes_via_write_stdin() -> R
     let server = start_mock_server().await;
     let start_call_id = "posttooluse-exec-session-start";
     let poll_call_id = "posttooluse-exec-session-poll";
-    let command = "sleep 1; printf session-post-hook-output".to_string();
+    let command = "read line; printf session-post-hook-output".to_string();
     let start_args = serde_json::json!({
         "cmd": command,
         "shell": "/bin/sh",
         "login": false,
-        "tty": false,
+        "tty": true,
         "yield_time_ms": 250,
     });
     let poll_args = serde_json::json!({
         "session_id": 1000,
-        "chars": "",
+        "chars": "\n",
         "yield_time_ms": 5_000,
     });
     let feedback = "blocked by session post hook";

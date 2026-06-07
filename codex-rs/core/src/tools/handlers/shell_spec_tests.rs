@@ -107,7 +107,7 @@ fn write_stdin_tool_matches_expected_spec() {
         (
             "chars".to_string(),
             JsonSchema::string(Some(
-                "Bytes to write to stdin. Use this to answer prompts or control an interactive PTY session.".to_string(),
+                "Non-empty bytes to write to stdin. Use this only to send real input to a running interactive PTY session; do not use it to read output, wait for completion, or refresh command status.".to_string(),
             )),
         ),
         (
@@ -128,12 +128,12 @@ fn write_stdin_tool_matches_expected_spec() {
         tool,
         ToolSpec::Function(ResponsesApiTool {
             name: "write_stdin".to_string(),
-            description: "Writes characters to an existing unified exec session so you can interact with a running PTY-backed command. Use this to answer prompts, send confirmations, or provide interactive input.".to_string(),
+            description: "Writes characters to an existing unified exec session so you can interact with a running PTY-backed command. Use this to answer prompts, send confirmations, or provide interactive input. `chars` is required and must be non-empty; use `event_command_subscribe` for command-completion notifications, log watching, or other background monitoring instead of calling `write_stdin` to poll for output.".to_string(),
             strict: false,
             defer_loading: None,
             parameters: JsonSchema::object(
                 properties,
-                Some(vec!["session_id".to_string()]),
+                Some(vec!["session_id".to_string(), "chars".to_string()]),
                 Some(false.into())
             ),
             output_schema: Some(unified_exec_output_schema()),

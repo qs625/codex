@@ -22,7 +22,7 @@ struct WriteStdinArgs {
     // The model is trained on `session_id`.
     session_id: i32,
     #[serde(default)]
-    chars: String,
+    chars: Option<String>,
     #[serde(default = "super::default_write_stdin_yield_time_ms")]
     yield_time_ms: u64,
     #[serde(default)]
@@ -61,6 +61,16 @@ impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
         };
 
         let args: WriteStdinArgs = parse_arguments(&arguments)?;
+        let Some(chars) = args.chars else {
+            return Err(FunctionCallError::RespondToModel(
+                "write_stdin requires non-empty `chars`; use event_command_subscribe for command completion, log watching, or other background monitoring instead of polling for output.".to_string(),
+            ));
+        };
+        if chars.is_empty() {
+            return Err(FunctionCallError::RespondToModel(
+                "write_stdin requires non-empty `chars`; use event_command_subscribe for command completion, log watching, or other background monitoring instead of polling for output.".to_string(),
+            ));
+        }
         let max_output_tokens =
             effective_max_output_tokens(args.max_output_tokens, turn.truncation_policy);
         let response = session
@@ -68,7 +78,7 @@ impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
             .unified_exec_manager
             .write_stdin(WriteStdinRequest {
                 process_id: args.session_id,
-                input: &args.chars,
+                input: &chars,
                 yield_time_ms: args.yield_time_ms,
                 max_output_tokens: Some(max_output_tokens),
             })
@@ -80,7 +90,7 @@ impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
         let interaction = TerminalInteractionEvent {
             call_id: response.event_call_id.clone(),
             process_id: args.session_id.to_string(),
-            stdin: args.chars.clone(),
+            stdin: chars,
         };
         session
             .send_event(turn.as_ref(), EventMsg::TerminalInteraction(interaction))

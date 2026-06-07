@@ -17,6 +17,7 @@ use crate::schema::input_schema_for;
 
 mod event_command_subscribe;
 mod event_command_unsubscribe;
+mod event_command_write_stdin;
 pub(crate) mod schedule;
 mod schedule_subscribe;
 mod schedule_unsubscribe;
@@ -33,6 +34,10 @@ pub(crate) fn subscription_tools(
             registry: Arc::clone(&shared_registry),
         }),
         Arc::new(event_command_unsubscribe::EventCommandUnsubscribeTool {
+            thread_id,
+            registry: Arc::clone(&shared_registry),
+        }),
+        Arc::new(event_command_write_stdin::EventCommandWriteStdinTool {
             thread_id,
             registry: Arc::clone(&shared_registry),
         }),

@@ -26,6 +26,7 @@ use tokio::sync::oneshot;
 use tracing::warn;
 
 use crate::SubscriptionActivityObserver;
+use crate::event_command_stdin::EventCommandRuntime;
 use crate::tools::schedule::CompiledSchedule;
 
 const MAX_EVENT_COMMAND_OUTPUT_LINE_BYTES: usize = 16 * 1024;
@@ -34,6 +35,18 @@ const EVENT_COMMAND_TERM_GRACE_PERIOD: Duration = Duration::from_millis(250);
 struct SubscriptionEntry {
     _cancel_tx: oneshot::Sender<()>,
     persisted: PersistedSubscription,
+    event_command_runtime: Option<EventCommandRuntime>,
+}
+
+struct EventCommandRun {
+    thread_manager: Weak<ThreadManager>,
+    thread_id: ThreadId,
+    subscription_id: String,
+    command: String,
+    cwd: Option<String>,
+    label: Option<String>,
+    cancel_rx: oneshot::Receiver<()>,
+    runtime: EventCommandRuntime,
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -109,6 +122,19 @@ impl FsSubscriptionRegistry {
         SubscriptionEntry {
             _cancel_tx: cancel_tx,
             persisted,
+            event_command_runtime: None,
+        }
+    }
+
+    fn event_command_subscription_entry(
+        cancel_tx: oneshot::Sender<()>,
+        persisted: PersistedSubscription,
+        event_command_runtime: EventCommandRuntime,
+    ) -> SubscriptionEntry {
+        SubscriptionEntry {
+            _cancel_tx: cancel_tx,
+            persisted,
+            event_command_runtime: Some(event_command_runtime),
         }
     }
 
@@ -231,6 +257,7 @@ impl FsSubscriptionRegistry {
         let sub_id_for_log = subscription_id.clone();
         let state = Arc::clone(&self.state);
         let activity_observer = self.activity_observer.clone();
+        let event_command_runtime = EventCommandRuntime::new();
         let persisted = PersistedSubscription::EventCommand {
             subscription_id: subscription_id.clone(),
             command: command.clone(),
@@ -243,7 +270,11 @@ impl FsSubscriptionRegistry {
                 thread_id,
                 subscription_id: subscription_id.clone(),
             },
-            Self::subscription_entry(cancel_tx, persisted),
+            Self::event_command_subscription_entry(
+                cancel_tx,
+                persisted,
+                event_command_runtime.clone(),
+            ),
         );
         self.notify_active_subscription_count(thread_id).await;
         if persist_after
@@ -255,15 +286,16 @@ impl FsSubscriptionRegistry {
         }
 
         tokio::spawn(async move {
-            if let Err(err) = run_event_command(
-                thread_manager.clone(),
+            if let Err(err) = run_event_command(EventCommandRun {
+                thread_manager: thread_manager.clone(),
                 thread_id,
-                sub_id_for_log.clone(),
-                command.clone(),
-                cwd.clone(),
-                label.clone(),
+                subscription_id: sub_id_for_log.clone(),
+                command: command.clone(),
+                cwd: cwd.clone(),
+                label: label.clone(),
                 cancel_rx,
-            )
+                runtime: event_command_runtime,
+            })
             .await
                 && err != "thread manager unavailable"
             {
@@ -288,6 +320,44 @@ impl FsSubscriptionRegistry {
                 observer.active_subscription_count_changed(thread_id, active_count);
             }
         });
+    }
+
+    pub(crate) async fn write_event_command_stdin(
+        &self,
+        thread_id: ThreadId,
+        subscription_id: &str,
+        chars: &str,
+    ) -> Result<(), String> {
+        if chars.is_empty() {
+            return Err("chars must not be empty".to_string());
+        }
+        let runtime = {
+            let state = self.state.lock().await;
+            let Some(entry) = state.get(&SubscriptionKey {
+                thread_id,
+                subscription_id: subscription_id.to_string(),
+            }) else {
+                return Err(format!(
+                    "event command subscription not found: {subscription_id}"
+                ));
+            };
+            match &entry.persisted {
+                PersistedSubscription::EventCommand { .. } => {}
+                PersistedSubscription::Schedule { .. }
+                | PersistedSubscription::Fs { .. }
+                | PersistedSubscription::ProcessExit { .. } => {
+                    return Err(format!(
+                        "subscription is not an event command: {subscription_id}"
+                    ));
+                }
+            }
+            entry
+                .event_command_runtime
+                .clone()
+                .ok_or_else(|| format!("event command stdin unavailable: {subscription_id}"))?
+        };
+
+        runtime.write_stdin(subscription_id, chars).await
     }
 
     pub(crate) async fn subscribe_schedule(
@@ -553,16 +623,19 @@ fn subscription_id(subscription: &PersistedSubscription) -> &str {
     }
 }
 
-async fn run_event_command(
-    thread_manager: Weak<ThreadManager>,
-    thread_id: ThreadId,
-    subscription_id: String,
-    command: String,
-    cwd: Option<String>,
-    label: Option<String>,
-    cancel_rx: oneshot::Receiver<()>,
-) -> Result<(), String> {
+async fn run_event_command(run: EventCommandRun) -> Result<(), String> {
+    let EventCommandRun {
+        thread_manager,
+        thread_id,
+        subscription_id,
+        command,
+        cwd,
+        label,
+        cancel_rx,
+        runtime,
+    } = run;
     let mut child = match shell_command(&command, cwd.as_deref())
+        .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -592,6 +665,7 @@ async fn run_event_command(
         }
     };
     let process_group_id = child.id();
+    runtime.set_stdin(child.stdin.take()).await;
 
     let Some(stdout) = child.stdout.take() else {
         send_event_command_event(
@@ -841,11 +915,18 @@ async fn send_event_command_event(
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+    use std::sync::Arc;
+    use std::sync::Weak;
     use std::time::Duration;
 
+    use codex_core::ThreadManager;
+    use codex_file_watcher::FileWatcher;
+    use codex_protocol::ThreadId;
+    use codex_protocol::subscriptions::ScheduleSpec;
     use pretty_assertions::assert_eq;
     use tokio::io::BufReader;
 
+    use super::FsSubscriptionRegistry;
     use super::MAX_EVENT_COMMAND_OUTPUT_LINE_BYTES;
     use super::read_event_command_line;
     #[cfg(unix)]
@@ -853,6 +934,100 @@ mod tests {
     #[cfg(unix)]
     use super::terminate_event_command_process_tree;
     use super::truncate_event_command_line;
+    use crate::tools::schedule::CompiledSchedule;
+
+    #[tokio::test]
+    async fn writes_event_command_stdin_by_subscription_id() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output_path = temp_dir.path().join("stdin.out");
+        let registry = FsSubscriptionRegistry::new(
+            Arc::new(FileWatcher::noop()),
+            Weak::<ThreadManager>::new(),
+            None,
+        );
+        let thread_id = ThreadId::new();
+        let subscription_id = "sub-stdin".to_string();
+        registry
+            .subscribe_event_command(
+                thread_id,
+                "IFS= read -r line; printf '%s' \"$line\" > stdin.out".to_string(),
+                Some(temp_dir.path().to_string_lossy().to_string()),
+                None,
+                subscription_id.clone(),
+            )
+            .await;
+
+        registry
+            .write_event_command_stdin(thread_id, &subscription_id, "hello event command\n")
+            .await
+            .unwrap();
+
+        let output = read_file_eventually(&output_path).await;
+        assert_eq!(output, "hello event command");
+    }
+
+    #[tokio::test]
+    async fn rejects_empty_event_command_stdin() {
+        let registry = FsSubscriptionRegistry::new(
+            Arc::new(FileWatcher::noop()),
+            Weak::<ThreadManager>::new(),
+            None,
+        );
+
+        let err = registry
+            .write_event_command_stdin(ThreadId::new(), "sub-stdin", "")
+            .await
+            .expect_err("expected empty stdin to be rejected");
+
+        assert_eq!(err, "chars must not be empty");
+    }
+
+    #[tokio::test]
+    async fn rejects_unknown_event_command_stdin_subscription() {
+        let registry = FsSubscriptionRegistry::new(
+            Arc::new(FileWatcher::noop()),
+            Weak::<ThreadManager>::new(),
+            None,
+        );
+
+        let err = registry
+            .write_event_command_stdin(ThreadId::new(), "missing-sub", "input\n")
+            .await
+            .expect_err("expected missing subscription to be rejected");
+
+        assert_eq!(err, "event command subscription not found: missing-sub");
+    }
+
+    #[tokio::test]
+    async fn rejects_non_event_command_stdin_subscription() {
+        let registry = FsSubscriptionRegistry::new(
+            Arc::new(FileWatcher::noop()),
+            Weak::<ThreadManager>::new(),
+            None,
+        );
+        let thread_id = ThreadId::new();
+        let subscription_id = "schedule-sub".to_string();
+        let schedule_spec = ScheduleSpec::EveryInterval {
+            interval_ms: 60_000,
+        };
+        let schedule = CompiledSchedule::compile(schedule_spec.clone()).unwrap();
+        registry
+            .subscribe_schedule(
+                thread_id,
+                schedule_spec,
+                schedule,
+                None,
+                subscription_id.clone(),
+            )
+            .await;
+
+        let err = registry
+            .write_event_command_stdin(thread_id, &subscription_id, "input\n")
+            .await
+            .expect_err("expected non-event-command subscription to be rejected");
+
+        assert_eq!(err, "subscription is not an event command: schedule-sub");
+    }
 
     #[test]
     fn truncates_event_command_output_lines_on_char_boundaries() {
@@ -946,6 +1121,16 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         panic!("child pid file was not written");
+    }
+
+    async fn read_file_eventually(path: &Path) -> String {
+        for _ in 0..20 {
+            if let Ok(output) = std::fs::read_to_string(path) {
+                return output;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("output file was not written");
     }
 
     #[cfg(unix)]

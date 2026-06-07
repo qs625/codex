@@ -4035,7 +4035,7 @@
       "description": "Optional policy instructions for the guardian auto-reviewer."
     },
     "background_terminal_max_timeout": {
-      "description": "Maximum poll window for background terminal output (`write_stdin`), in milliseconds. Default: `300000` (5 minutes).",
+      "description": "Deprecated compatibility setting for the former background terminal output poll window. `write_stdin` no longer polls output; use `event_command_subscribe` for background command monitoring.",
       "format": "uint64",
       "minimum": 0.0,
       "type": "integer"

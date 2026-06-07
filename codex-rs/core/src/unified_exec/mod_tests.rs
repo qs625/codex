@@ -201,6 +201,18 @@ async fn write_stdin(
         .await
 }
 
+#[tokio::test]
+async fn write_stdin_rejects_empty_input() -> anyhow::Result<()> {
+    let (session, _) = test_session_and_turn().await;
+
+    let err = write_stdin(&session, 123, "", /*yield_time_ms*/ 100)
+        .await
+        .expect_err("expected empty stdin to be rejected");
+
+    assert!(matches!(err, UnifiedExecError::EmptyStdin));
+    Ok(())
+}
+
 #[test]
 fn push_chunk_preserves_prefix_and_suffix() {
     let mut buffer = HeadTailBuffer::default();
@@ -395,11 +407,11 @@ async fn unified_exec_timeouts() -> anyhow::Result<()> {
 
     tokio::time::sleep(Duration::from_secs(7)).await;
 
-    let out_3 = write_stdin(&session, process_id, "", /*yield_time_ms*/ 100).await?;
+    let out_3 = write_stdin(&session, process_id, "\n", /*yield_time_ms*/ 100).await?;
 
     assert!(
         out_3.truncated_output().contains(TEST_VAR_VALUE),
-        "subsequent poll should retrieve output"
+        "subsequent stdin write should retrieve output"
     );
 
     Ok(())
@@ -513,7 +525,7 @@ async fn reusing_completed_process_returns_unknown_process() -> anyhow::Result<(
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let err = write_stdin(&session, process_id, "", /*yield_time_ms*/ 100)
+    let err = write_stdin(&session, process_id, "\n", /*yield_time_ms*/ 100)
         .await
         .expect_err("expected unknown process error");
 

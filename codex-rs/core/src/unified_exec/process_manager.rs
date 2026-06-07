@@ -30,7 +30,6 @@ use crate::tools::sandboxing::ToolError;
 use crate::unified_exec::ExecCommandRequest;
 use crate::unified_exec::MAX_UNIFIED_EXEC_PROCESSES;
 use crate::unified_exec::MAX_YIELD_TIME_MS;
-use crate::unified_exec::MIN_EMPTY_YIELD_TIME_MS;
 use crate::unified_exec::MIN_YIELD_TIME_MS;
 use crate::unified_exec::ProcessEntry;
 use crate::unified_exec::ProcessExitSubscription;
@@ -164,7 +163,7 @@ fn exec_server_params_for_request(
     }
 }
 
-/// Borrowed process state prepared for a `write_stdin` or poll operation.
+/// Borrowed process state prepared for a `write_stdin` operation.
 struct PreparedProcessHandles {
     process: Arc<UnifiedExecProcess>,
     output_buffer: OutputBuffer,
@@ -611,6 +610,10 @@ impl UnifiedExecProcessManager {
         &self,
         request: WriteStdinRequest<'_>,
     ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
+        if request.input.is_empty() {
+            return Err(UnifiedExecError::EmptyStdin);
+        }
+
         let process_id = request.process_id;
 
         let PreparedProcessHandles {
@@ -630,40 +633,33 @@ impl UnifiedExecProcessManager {
         } = self.prepare_process_handles(process_id).await?;
         let mut status_after_write = None;
 
-        if !request.input.is_empty() {
-            if !tty {
-                return Err(UnifiedExecError::StdinClosed);
+        if !tty {
+            return Err(UnifiedExecError::StdinClosed);
+        }
+        match process.write(request.input.as_bytes()).await {
+            Ok(()) => {
+                // Give the remote process a brief window to react so that we are
+                // more likely to capture its output in the collection below.
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
-            match process.write(request.input.as_bytes()).await {
-                Ok(()) => {
-                    // Give the remote process a brief window to react so that we are
-                    // more likely to capture its output in the poll below.
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-                Err(err) => {
-                    let status = self.refresh_process_state(process_id).await;
-                    if matches!(status, ProcessStatus::Exited { .. }) {
-                        status_after_write = Some(status);
-                    } else if matches!(err, UnifiedExecError::ProcessFailed { .. }) {
-                        process.terminate();
-                        self.release_process_id(process_id).await;
-                        return Err(err);
-                    } else {
-                        return Err(err);
-                    }
+            Err(err) => {
+                let status = self.refresh_process_state(process_id).await;
+                if matches!(status, ProcessStatus::Exited { .. }) {
+                    status_after_write = Some(status);
+                } else if matches!(err, UnifiedExecError::ProcessFailed { .. }) {
+                    process.terminate();
+                    self.release_process_id(process_id).await;
+                    return Err(err);
+                } else {
+                    return Err(err);
                 }
             }
         }
 
         let yield_time_ms = {
-            // Empty polls use configurable background timeout bounds. Non-empty
-            // writes keep a fixed max cap so interactive stdin remains responsive.
+            // Writes keep a fixed max cap so interactive stdin remains responsive.
             let time_ms = request.yield_time_ms.max(MIN_YIELD_TIME_MS);
-            if request.input.is_empty() {
-                time_ms.clamp(MIN_EMPTY_YIELD_TIME_MS, self.max_write_stdin_yield_time_ms)
-            } else {
-                time_ms.min(MAX_YIELD_TIME_MS)
-            }
+            time_ms.min(MAX_YIELD_TIME_MS)
         };
         let start = Instant::now();
         let deadline = start + Duration::from_millis(yield_time_ms);
@@ -705,7 +701,7 @@ impl UnifiedExecProcessManager {
             return Err(UnifiedExecError::process_failed(message));
         }
 
-        // After polling, refresh_process_state tells us whether the PTY is
+        // After collecting, refresh_process_state tells us whether the PTY is
         // still alive or has exited and been removed from the store; we thread
         // that through so the handler can tag TerminalInteraction with an
         // appropriate process_id and exit_code.

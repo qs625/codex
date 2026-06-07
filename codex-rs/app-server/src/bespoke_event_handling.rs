@@ -1728,9 +1728,10 @@ fn event_driven_tool_name(namespace: Option<&str>, name: &str) -> Option<String>
     }
 
     match name {
-        "event_command_unsubscribe" | "schedule_subscribe" | "schedule_unsubscribe" => {
-            Some(name.to_string())
-        }
+        "event_command_unsubscribe"
+        | "event_command_write_stdin"
+        | "schedule_subscribe"
+        | "schedule_unsubscribe" => Some(name.to_string()),
         _ => None,
     }
 }
@@ -3040,6 +3041,99 @@ mod tests {
         assert!(
             rx.try_recv().is_err(),
             "orphan builtin output should not emit"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn event_command_write_stdin_emits_event_driven_tool_notifications() -> Result<()> {
+        let conversation_id = ThreadId::new();
+        let thread_state = new_thread_state();
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let outgoing = Arc::new(OutgoingMessageSender::new(
+            tx,
+            codex_analytics::AnalyticsEventsClient::disabled(),
+        ));
+        let outgoing = ThreadScopedOutgoingMessageSender::new(
+            outgoing,
+            vec![ConnectionId(1)],
+            ThreadId::new(),
+        );
+
+        maybe_emit_event_driven_tool_call_notifications(
+            conversation_id,
+            "turn-1",
+            &codex_protocol::models::ResponseItem::FunctionCall {
+                id: None,
+                name: "event_command_write_stdin".to_string(),
+                namespace: None,
+                arguments: r#"{"subscription_id":"sub-1","chars":"\n"}"#.to_string(),
+                call_id: "call-1".to_string(),
+            },
+            &outgoing,
+            &thread_state,
+        )
+        .await;
+
+        let started = recv_broadcast_message(&mut rx).await?;
+        match started {
+            OutgoingMessage::AppServerNotification(ServerNotification::ItemStarted(payload)) => {
+                assert_eq!(
+                    payload.item,
+                    ThreadItem::EventDrivenToolCall {
+                        id: "call-1".to_string(),
+                        tool: "event_command_write_stdin".to_string(),
+                        arguments: json!({
+                            "subscription_id": "sub-1",
+                            "chars": "\n",
+                        }),
+                        status: DynamicToolCallStatus::InProgress,
+                        output: None,
+                    }
+                );
+            }
+            other => bail!("unexpected message: {other:?}"),
+        }
+
+        maybe_emit_event_driven_tool_call_notifications(
+            conversation_id,
+            "turn-1",
+            &codex_protocol::models::ResponseItem::FunctionCallOutput {
+                call_id: "call-1".to_string(),
+                output: FunctionCallOutputPayload::from_text(
+                    r#"{"subscription_id":"sub-1","bytes_written":1}"#.into(),
+                ),
+            },
+            &outgoing,
+            &thread_state,
+        )
+        .await;
+
+        let completed = recv_broadcast_message(&mut rx).await?;
+        match completed {
+            OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(payload)) => {
+                assert_eq!(
+                    payload.item,
+                    ThreadItem::EventDrivenToolCall {
+                        id: "call-1".to_string(),
+                        tool: "event_command_write_stdin".to_string(),
+                        arguments: json!({
+                            "subscription_id": "sub-1",
+                            "chars": "\n",
+                        }),
+                        status: DynamicToolCallStatus::Completed,
+                        output: Some(serde_json::Value::String(
+                            r#"{"subscription_id":"sub-1","bytes_written":1}"#.into(),
+                        )),
+                    }
+                );
+            }
+            other => bail!("unexpected message: {other:?}"),
+        }
+
+        assert!(
+            rx.try_recv().is_err(),
+            "event-driven tool call should emit exactly twice"
         );
         Ok(())
     }

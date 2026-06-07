@@ -3,7 +3,6 @@ use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
 use crate::path_utils::normalize_for_native_workdir;
 use crate::unified_exec::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
-use crate::unified_exec::MIN_EMPTY_YIELD_TIME_MS;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
 use crate::windows_sandbox::resolve_windows_sandbox_mode;
 use crate::windows_sandbox::resolve_windows_sandbox_private_desktop;
@@ -922,8 +921,9 @@ pub struct Config {
     /// If set to `true`, used only the experimental unified exec tool.
     pub use_experimental_unified_exec_tool: bool,
 
-    /// Maximum poll window for background terminal output (`write_stdin`), in milliseconds.
-    /// Default: `300000` (5 minutes).
+    /// Deprecated compatibility setting for the former background terminal
+    /// output poll window. `write_stdin` no longer polls output; use
+    /// `event_command_subscribe` for background command monitoring.
     pub background_terminal_max_timeout: u64,
 
     /// Compatibility-only settings retained for legacy `ghost_snapshot`
@@ -3032,8 +3032,7 @@ impl Config {
             .unwrap_or(true);
         let background_terminal_max_timeout = cfg
             .background_terminal_max_timeout
-            .unwrap_or(DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS)
-            .max(MIN_EMPTY_YIELD_TIME_MS);
+            .unwrap_or(DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS);
 
         let ghost_snapshot = {
             let mut config = GhostSnapshotConfig::default();

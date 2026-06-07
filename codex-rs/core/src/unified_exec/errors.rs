@@ -13,6 +13,10 @@ pub(crate) enum UnifiedExecError {
     #[error("failed to write to stdin")]
     WriteToStdin,
     #[error(
+        "write_stdin requires non-empty chars; use event_command_subscribe for command completion, log watching, or other background monitoring instead of polling for output"
+    )]
+    EmptyStdin,
+    #[error(
         "stdin is closed for this session; rerun exec_command with tty=true to keep stdin open"
     )]
     StdinClosed,

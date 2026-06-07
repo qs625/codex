@@ -1,3 +1,4 @@
+mod event_command_stdin;
 mod extension;
 mod registry;
 mod schema;
