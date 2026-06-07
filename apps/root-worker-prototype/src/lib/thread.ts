@@ -333,6 +333,7 @@ export function updateThreadItem(
   timestamps?: {
     startedAtMs?: number | null;
     completedAtMs?: number | null;
+    syntheticTurnStatus?: "running" | "completed";
   },
 ) {
   const nextItem = normalizeThreadItemSnapshot(
@@ -355,23 +356,32 @@ export function updateThreadItem(
                 mergeThreadItem(existing, nextItem)
               : existing,
           );
+    if (timestamps?.syntheticTurnStatus === "completed") {
+      const startedAt =
+        turn.startedAt ?? itemNotificationStartTimeSeconds(timestamps);
+      const completedAt =
+        itemNotificationCompletedTimeSeconds(timestamps) ??
+        turn.completedAt ??
+        startedAt;
+      const durationMs =
+        syntheticTurnDurationMs(timestamps) ??
+        (startedAt !== null && completedAt !== null
+          ? (completedAt - startedAt) * 1000
+          : turn.durationMs);
+      return {
+        ...turn,
+        items,
+        status: "completed",
+        startedAt,
+        completedAt,
+        durationMs,
+      };
+    }
     return { ...turn, items };
   });
   const turns = foundTurn
     ? updatedTurns
-    : [
-        ...thread.turns,
-        {
-          id: turnId,
-          items: [nextItem],
-          itemsView: "full",
-          status: "running",
-          error: null,
-          startedAt: itemNotificationTimeSeconds(timestamps) ?? null,
-          completedAt: null,
-          durationMs: null,
-        } satisfies Turn,
-      ];
+    : [...thread.turns, createSyntheticTurn(turnId, nextItem, timestamps)];
 
   return {
     ...thread,
@@ -388,9 +398,44 @@ export function getThreadItemNotificationTargetThreadIds(
     (item.type === "collabAgentMessage" && item.operation === "childCompletion")
       ? item.recipientThreadId
       : null;
-  return recipientThreadId && recipientThreadId !== notificationThreadId
+  const senderThreadId =
+    item.type === "collabAgentStatusUpdate" ||
+    (item.type === "collabAgentMessage" && item.operation === "childCompletion")
+      ? item.senderThreadId
+      : null;
+  return recipientThreadId &&
+    recipientThreadId !== notificationThreadId &&
+    senderThreadId === notificationThreadId
     ? [recipientThreadId]
     : [notificationThreadId];
+}
+
+function createSyntheticTurn(
+  turnId: string,
+  item: ThreadItem,
+  timestamps?: {
+    startedAtMs?: number | null;
+    completedAtMs?: number | null;
+    syntheticTurnStatus?: "running" | "completed";
+  },
+): Turn {
+  const status = timestamps?.syntheticTurnStatus ?? "running";
+  const startedAt = itemNotificationStartTimeSeconds(timestamps);
+  const completedAt =
+    status === "completed"
+      ? (itemNotificationCompletedTimeSeconds(timestamps) ?? startedAt)
+      : null;
+  return {
+    id: turnId,
+    items: [item],
+    itemsView: "full",
+    status,
+    error: null,
+    startedAt,
+    completedAt,
+    durationMs:
+      status === "completed" ? syntheticTurnDurationMs(timestamps) : null,
+  };
 }
 
 export function updateThreadSkills(thread: Thread, skills: ThreadSkill[]) {
@@ -930,7 +975,7 @@ function applyItemTimestamps(
   return next;
 }
 
-function itemNotificationTimeSeconds(timestamps?: {
+function itemNotificationStartTimeSeconds(timestamps?: {
   startedAtMs?: number | null;
   completedAtMs?: number | null;
 }) {
@@ -938,6 +983,29 @@ function itemNotificationTimeSeconds(timestamps?: {
   return timestampMs === null || timestampMs === undefined
     ? null
     : timestampMs / 1000;
+}
+
+function itemNotificationCompletedTimeSeconds(timestamps?: {
+  completedAtMs?: number | null;
+}) {
+  const timestampMs = timestamps?.completedAtMs;
+  return timestampMs === null || timestampMs === undefined
+    ? null
+    : timestampMs / 1000;
+}
+
+function syntheticTurnDurationMs(timestamps?: {
+  startedAtMs?: number | null;
+  completedAtMs?: number | null;
+}) {
+  const startedAtMs = timestamps?.startedAtMs;
+  const completedAtMs = timestamps?.completedAtMs;
+  return startedAtMs !== null &&
+    startedAtMs !== undefined &&
+    completedAtMs !== null &&
+    completedAtMs !== undefined
+    ? completedAtMs - startedAtMs
+    : null;
 }
 
 type TurnItemIndex = {

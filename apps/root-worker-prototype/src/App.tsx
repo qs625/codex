@@ -1404,6 +1404,11 @@ function App() {
               updateThreadItem(thread, notification.turnId, notification.item, {
                 startedAtMs: notification.startedAtMs,
                 completedAtMs: notification.completedAtMs,
+                syntheticTurnStatus:
+                  method === "item/completed" &&
+                  threadId !== notification.threadId
+                    ? "completed"
+                    : undefined,
               }),
             );
           }
