@@ -54,8 +54,8 @@ In the codex-rs folder where the rust code lives:
     trivial; prefer new modules/files and keep `chatwidget.rs` focused on orchestration.
 - When running Rust commands (e.g. `just fix` or `cargo test`) be patient with the command and never try to kill them using the PID. Rust lock can make the execution slow, this is expected.
 - 验证 Rust 编译和测试时，不要为当前 worktree 配置独立的 `TARGET_DIR`；使用项目默认的共享 target 目录，避免把验证环境和常规开发/CI 环境分叉。
-- 如果多个 Rust 测试或构建命令出现文件锁竞争，使用 `process_exit_subscribe` 注册完成事件，然后等待通知；不要通过反复轮询、sleep 循环或持续检查进程状态来等待锁释放。
-- Rust/Cargo/`just` 长时间验证命令一旦使用 `process_exit_subscribe` 订阅完成事件，当前验证流程必须进入静默等待：不要查询该命令状态、不要查看日志、不要启动替代测试、不要派发 tester/reviewer 继续验证同一结果。
+- 如果多个 Rust 测试或构建命令出现文件锁竞争，使用 `event_command_subscribe` 注册完成事件，然后等待通知；不要通过反复轮询、sleep 循环或持续检查进程状态来等待锁释放。
+- Rust/Cargo/`just` 长时间验证命令一旦使用 `event_command_subscribe` 订阅完成事件，当前验证流程必须进入静默等待：不要查询该命令状态、不要查看日志、不要启动替代测试、不要派发 tester/reviewer 继续验证同一结果。
 - 同一任务中同一时间只允许一个会竞争 Rust 共享 target 或 Cargo 文件锁的长命令运行；在它完成前，不要连续启动新的 `cargo test`、`cargo check`、`cargo build`、`just fix` 或其他 Rust 验证命令。可以继续处理不依赖该命令结果、且不竞争 Rust/Cargo 资源的前端、文档或只读设计工作。
 
 Run `just fmt` (in `codex-rs` directory) automatically after you have finished making Rust code changes; do not ask for approval to run it. Additionally, run the tests:
