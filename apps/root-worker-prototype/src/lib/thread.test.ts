@@ -9,6 +9,7 @@ import {
   formatUpdatedLabel,
   getPresenceLabel,
   getParentThreadId,
+  getThreadItemNotificationSyntheticTurnStatus,
   getThreadItemNotificationTargetThreadIds,
   getThreadPath,
   isThreadThinking,
@@ -1876,6 +1877,65 @@ test("collab status item completion updates an existing synthetic recipient turn
       completedAtMs: 3_000,
     },
   ]);
+});
+
+test("direct collab status completion notifications create completed synthetic turns", () => {
+  const item: ThreadItem = {
+    type: "collabAgentStatusUpdate",
+    id: "subagent-complete",
+    senderThreadId: "thread-child",
+    senderPath: "/root/worker",
+    recipientThreadId: "thread-1",
+    recipientPath: "/root",
+    status: {
+      path: "/root/worker",
+      status: "completed",
+      message: "done",
+    },
+  };
+
+  assert.equal(
+    getThreadItemNotificationSyntheticTurnStatus("item/started", item),
+    undefined,
+  );
+  assert.equal(
+    getThreadItemNotificationSyntheticTurnStatus("item/completed", item),
+    "completed",
+  );
+
+  const updatedRoot = updateThreadItem(makeThread(), "turn-root", item, {
+    completedAtMs: 3_000,
+    syntheticTurnStatus: getThreadItemNotificationSyntheticTurnStatus(
+      "item/completed",
+      item,
+    ),
+  });
+
+  assert.equal(
+    isThreadThinking(updatedRoot, {
+      isLoadingThread: false,
+      isSending: false,
+    }),
+    false,
+  );
+  assert.deepEqual(
+    updatedRoot.turns.map((turn) => ({
+      id: turn.id,
+      status: turn.status,
+      startedAt: turn.startedAt,
+      completedAt: turn.completedAt,
+      durationMs: turn.durationMs,
+    })),
+    [
+      {
+        id: "turn-root",
+        status: "completed",
+        startedAt: 3,
+        completedAt: 3,
+        durationMs: null,
+      },
+    ],
+  );
 });
 
 test("collab status item notifications stay on the notification thread unless sent by that thread", () => {

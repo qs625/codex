@@ -28,7 +28,7 @@ renderer 侧 `conversation.ts` 已经能把 `collabAgentStatusUpdate` 构造成 
 - 在 renderer 状态层新增 item notification 目标线程解析：`collabAgentStatusUpdate` 和 legacy `collabAgentMessage.operation === "childCompletion"` 优先写入 `recipientThreadId`，普通 item 仍写入通知线程。
 - 目标线程解析只在 child-origin 场景生效，即通知线程等于 item `senderThreadId` 且 `recipientThreadId` 指向另一个线程；否则保留通知线程，避免误投带 recipient 元数据的本线程事件。
 - `App.tsx` 处理 `item/started` / `item/completed` 时使用该解析结果更新 thread state，使发给 root 的完成状态能进入 root conversation。
-- 被重定向的 `item/completed` 如果需要在 recipient thread 新建 synthetic turn，该 turn 直接标记为 completed，并带上 started/completed 时间，避免 root conversation 因 synthetic running turn 长期显示 thinking。
+- `collabAgentStatusUpdate` 和 legacy child completion 的 `item/completed` 如果需要新建或更新 synthetic turn，该 turn 直接标记为 completed，并带上 started/completed 时间；这个判断基于 item 语义而不是是否发生重定向，覆盖 child-origin 与 direct-to-recipient 两种到达路径，避免 root conversation 因 synthetic running turn 长期显示 thinking。
 - Electron snapshot 归一化层对齐 renderer 的合并策略。
 - 运行中的 `collabAgentStatusUpdate` 仍可按语义合并，用于避免同一个非终态状态重复。
 - 终态 `completed`、`errored`、`shutdown`、`notFound` 不参与语义合并，保留为独立 item。
@@ -40,6 +40,8 @@ renderer 侧 `conversation.ts` 已经能把 `collabAgentStatusUpdate` 构造成 
 新增 renderer 状态层单元测试，覆盖通知来自 child thread、item `recipientThreadId` 指向 root 时，目标线程解析为 root，并且写入 root thread 后能生成可见 conversation tool entry、completed synthetic turn，且 `isThreadThinking` 为 false。
 
 新增 fallback 单元测试，覆盖通知线程不是 sender 时不会被 recipient metadata 误投。
+
+新增 direct-to-recipient 单元测试，覆盖 `item/completed` 已经直接以 root/recipient thread 到达时也创建 completed synthetic turn。
 
 新增 Electron snapshot 单元测试，覆盖同一个 turn 中两个内容相同但 id 不同的终态 `collabAgentStatusUpdate`。期望归一化后两个 item 都保留，证明主进程不会再把 Agent Status completion 合并掉。
 

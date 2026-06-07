@@ -41,6 +41,7 @@ import {
   applyPendingThreadUpdates,
   buildAgentTree,
   buildCurrentThreadTodoItems,
+  getThreadItemNotificationSyntheticTurnStatus,
   getThreadSubtreeIds,
   getThreadItemNotificationTargetThreadIds,
   getTreeRootThreadId,
@@ -1405,10 +1406,10 @@ function App() {
                 startedAtMs: notification.startedAtMs,
                 completedAtMs: notification.completedAtMs,
                 syntheticTurnStatus:
-                  method === "item/completed" &&
-                  threadId !== notification.threadId
-                    ? "completed"
-                    : undefined,
+                  getThreadItemNotificationSyntheticTurnStatus(
+                    method,
+                    notification.item,
+                  ),
               }),
             );
           }

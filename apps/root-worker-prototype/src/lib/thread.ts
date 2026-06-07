@@ -410,6 +410,22 @@ export function getThreadItemNotificationTargetThreadIds(
     : [notificationThreadId];
 }
 
+export function getThreadItemNotificationSyntheticTurnStatus(
+  method: "item/started" | "item/completed",
+  item: ThreadItem,
+): "completed" | undefined {
+  return method === "item/completed" && isCollabCompletionNotificationItem(item)
+    ? "completed"
+    : undefined;
+}
+
+function isCollabCompletionNotificationItem(item: ThreadItem) {
+  return (
+    item.type === "collabAgentStatusUpdate" ||
+    (item.type === "collabAgentMessage" && item.operation === "childCompletion")
+  );
+}
+
 function createSyntheticTurn(
   turnId: string,
   item: ThreadItem,
