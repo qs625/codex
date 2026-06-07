@@ -197,6 +197,8 @@ impl ChatWidget {
             ThreadItem::CollabAgentStatusUpdate { .. } => {}
             ThreadItem::EventDrivenToolCall { .. } => {}
             ThreadItem::EventDrivenTool { .. } => {}
+            ThreadItem::EventCommandCall { .. } => {}
+            ThreadItem::EventCommandEvent { .. } => {}
             ThreadItem::DynamicToolCall { .. } => {}
         }
 

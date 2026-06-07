@@ -198,6 +198,57 @@ fn fallback_transcript_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
                 vec!["  ".dim(), text.clone().dim()].into(),
             ]
         }
+        ThreadItem::EventCommandCall {
+            command,
+            label,
+            status,
+            ..
+        } => {
+            let title = label.as_deref().unwrap_or(command);
+            vec![format!("event command: {title} · {status:?}").dim().into()]
+        }
+        ThreadItem::EventCommandEvent {
+            command,
+            kind,
+            label,
+            line,
+            exit_code,
+            signal,
+            message,
+            truncated,
+            ..
+        } => {
+            let title = label.as_deref().unwrap_or(command);
+            let mut lines: Vec<Line<'static>> = vec![
+                format!("event command event: {title} · {kind:?}")
+                    .dim()
+                    .into(),
+            ];
+            if let Some(line) = line.as_deref()
+                && !line.trim().is_empty()
+            {
+                lines.push(vec!["  ".dim(), line.trim_end().to_string().dim()].into());
+            }
+            if let Some(message) = message.as_deref()
+                && !message.trim().is_empty()
+            {
+                lines.push(vec!["  ".dim(), message.trim().to_string().dim()].into());
+            }
+            let mut details = Vec::new();
+            if let Some(exit_code) = exit_code {
+                details.push(format!("exit {exit_code}"));
+            }
+            if let Some(signal) = signal.as_deref() {
+                details.push(format!("signal {signal}"));
+            }
+            if *truncated {
+                details.push("truncated".to_string());
+            }
+            if !details.is_empty() {
+                lines.push(format!("  {}", details.join(" · ")).dim().into());
+            }
+            lines
+        }
         ThreadItem::InjectedContext { title, preview, .. } => vec![
             format!("injected context: {title} · {}", preview.trim())
                 .dim()
