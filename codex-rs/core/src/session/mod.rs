@@ -4,7 +4,9 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -1641,8 +1643,7 @@ impl Session {
             msg,
         };
         self.send_event_raw(event).await;
-        self.maybe_notify_parent_of_terminal_turn(turn_context, &legacy_source)
-            .await;
+        Box::pin(self.maybe_notify_parent_of_final_status(turn_context)).await;
         self.maybe_mirror_event_text_to_realtime(&legacy_source)
             .await;
         self.maybe_clear_realtime_handoff_for_event(&legacy_source)
@@ -1658,17 +1659,31 @@ impl Session {
         }
     }
 
-    /// Forwards terminal turn events from spawned MultiAgentV2 children to their direct parent.
-    async fn maybe_notify_parent_of_terminal_turn(
+    /// Forwards finished spawned MultiAgentV2 children to their direct parent once inactive.
+    pub(crate) async fn maybe_notify_parent_of_final_status(&self, turn_context: &TurnContext) {
+        self.maybe_notify_parent_of_final_status_for_source(
+            turn_context.sub_id.as_str(),
+            &turn_context.session_source,
+        )
+        .await;
+    }
+
+    pub(crate) async fn maybe_notify_parent_of_final_status_for_current_source(&self) {
+        let session_source = {
+            let state = self.state.lock().await;
+            state.session_configuration.session_source.clone()
+        };
+        let sub_id = self.next_internal_sub_id();
+        self.maybe_notify_parent_of_final_status_for_source(&sub_id, &session_source)
+            .await;
+    }
+
+    async fn maybe_notify_parent_of_final_status_for_source(
         &self,
-        turn_context: &TurnContext,
-        msg: &EventMsg,
+        sub_id: &str,
+        session_source: &SessionSource,
     ) {
         if !self.enabled(Feature::MultiAgentV2) {
-            return;
-        }
-
-        if !matches!(msg, EventMsg::TurnComplete(_) | EventMsg::TurnAborted(_)) {
             return;
         }
 
@@ -1676,15 +1691,16 @@ impl Session {
             parent_thread_id,
             agent_path: Some(child_agent_path),
             ..
-        }) = &turn_context.session_source
+        }) = session_source
         else {
             return;
         };
 
-        let Some(status) = agent_status_from_event(msg) else {
-            return;
-        };
+        let status = self.agent_status.borrow().clone();
         if !is_final(&status) {
+            return;
+        }
+        if self.parent_child_completion_sent.load(Ordering::SeqCst) {
             return;
         }
         if self
@@ -1695,33 +1711,45 @@ impl Session {
         {
             return;
         }
-        if self.has_pending_child_completion_work().await {
+        if Box::pin(self.has_active_child_completion_work()).await {
             return;
         }
 
-        self.forward_child_completion_to_parent(
-            turn_context,
+        if self
+            .parent_child_completion_sent
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return;
+        }
+
+        if !Box::pin(self.forward_child_completion_to_parent(
+            sub_id,
             *parent_thread_id,
             child_agent_path,
             status,
-        )
-        .await;
+        ))
+        .await
+        {
+            self.parent_child_completion_sent
+                .store(false, Ordering::SeqCst);
+        }
     }
 
     /// Sends the standard completion envelope from a spawned MultiAgentV2 child to its parent.
     async fn forward_child_completion_to_parent(
         &self,
-        turn_context: &TurnContext,
+        turn_id: &str,
         parent_thread_id: ThreadId,
         child_agent_path: &codex_protocol::AgentPath,
         status: AgentStatus,
-    ) {
+    ) -> bool {
         let Some(parent_agent_path) = child_agent_path
             .as_str()
             .rsplit_once('/')
             .and_then(|(parent, _)| codex_protocol::AgentPath::try_from(parent).ok())
         else {
-            return;
+            return false;
         };
 
         let message = format_subagent_notification_message(child_agent_path.as_str(), &status);
@@ -1749,13 +1777,13 @@ impl Session {
             .await
         {
             debug!("failed to notify parent thread {parent_thread_id}: {err}");
-            return;
+            return false;
         }
         if let Some(message) = trace_message {
             self.services
                 .rollout_thread_trace
                 .record_agent_result_interaction(
-                    turn_context.sub_id.as_str(),
+                    turn_id,
                     parent_thread_id,
                     &AgentResultTracePayload {
                         child_agent_path: child_agent_path.as_str(),
@@ -1764,44 +1792,22 @@ impl Session {
                     },
                 );
         }
+        true
     }
 
-    async fn has_pending_child_completion_work(&self) -> bool {
+    async fn has_active_child_completion_work(&self) -> bool {
         if self.has_queued_response_items_for_next_turn().await
             || self.has_pending_mailbox_items().await
-            || self
-                .services
-                .active_event_subscriptions
-                .active_count(self.conversation_id)
-                > 0
         {
             return true;
         }
 
-        let Ok(descendant_thread_ids) = self
-            .services
-            .agent_control
-            .list_live_agent_subtree_thread_ids(self.conversation_id)
-            .await
-        else {
-            return false;
-        };
-
-        for descendant_thread_id in descendant_thread_ids {
-            if descendant_thread_id == self.conversation_id {
-                continue;
-            }
-            let status = self
-                .services
+        Box::pin(
+            self.services
                 .agent_control
-                .get_status(descendant_thread_id)
-                .await;
-            if !is_final(&status) {
-                return true;
-            }
-        }
-
-        false
+                .agent_subtree_is_active(self.conversation_id),
+        )
+        .await
     }
 
     async fn maybe_mirror_event_text_to_realtime(&self, msg: &EventMsg) {

@@ -41,7 +41,9 @@ import {
   applyPendingThreadUpdates,
   buildAgentTree,
   buildCurrentThreadTodoItems,
+  getThreadItemNotificationSyntheticTurnStatus,
   getThreadSubtreeIds,
+  getThreadItemNotificationTargetThreadIds,
   getTreeRootThreadId,
   getThreadDepth,
   isRootThread,
@@ -1395,12 +1397,22 @@ function App() {
             startedAtMs?: number | null;
             completedAtMs?: number | null;
           };
-          updateThreadLocally(notification.threadId, (thread) =>
-            updateThreadItem(thread, notification.turnId, notification.item, {
-              startedAtMs: notification.startedAtMs,
-              completedAtMs: notification.completedAtMs,
-            }),
-          );
+          for (const threadId of getThreadItemNotificationTargetThreadIds(
+            notification.threadId,
+            notification.item,
+          )) {
+            updateThreadLocally(threadId, (thread) =>
+              updateThreadItem(thread, notification.turnId, notification.item, {
+                startedAtMs: notification.startedAtMs,
+                completedAtMs: notification.completedAtMs,
+                syntheticTurnStatus:
+                  getThreadItemNotificationSyntheticTurnStatus(
+                    method,
+                    notification.item,
+                  ),
+              }),
+            );
+          }
           break;
         }
         case "item/agentMessage/delta": {

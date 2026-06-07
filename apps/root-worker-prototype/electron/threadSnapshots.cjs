@@ -394,13 +394,23 @@ function canMatchThreadItemSemantically(item) {
   switch (item.type) {
     case "agentMessage":
     case "collabAgentMessage":
-    case "collabAgentStatusUpdate":
     case "eventDrivenTool":
     case "eventDrivenToolCall":
       return true;
+    case "collabAgentStatusUpdate":
+      return !isTerminalCollabAgentStatus(item.status?.status);
     default:
       return false;
   }
+}
+
+function isTerminalCollabAgentStatus(status) {
+  return (
+    status === "completed" ||
+    status === "errored" ||
+    status === "shutdown" ||
+    status === "notFound"
+  );
 }
 
 function getThreadItemSemanticKey(item) {

@@ -1741,7 +1741,7 @@ async fn multi_agent_v2_send_message_rejects_interrupt_parameter() {
 }
 
 #[tokio::test]
-async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn() {
+async fn multi_agent_v2_child_completion_notifies_parent_once() {
     let (mut session, mut turn) = make_session_and_context().await;
     let manager = thread_manager();
     let root = manager
@@ -1795,29 +1795,12 @@ async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn()
             }),
         )
         .await;
-
-    FollowupTaskHandlerV2
-        .handle(invocation(
-            session,
-            turn,
-            "followup_task",
-            function_payload(json!({
-                "target": agent_id.to_string(),
-                "message": "continue",
-            })),
-        ))
-        .await
-        .expect("followup_task should succeed");
+    *thread.codex.session.active_turn.lock().await = None;
     thread
         .codex
         .session
-        .abort_all_tasks(TurnAbortReason::Replaced)
+        .maybe_notify_parent_of_final_status(first_turn.as_ref())
         .await;
-    let pending_input = thread.codex.session.get_pending_input().await;
-    assert!(
-        !pending_input.is_empty(),
-        "followup_task should queue input for the worker turn"
-    );
 
     let second_turn = thread.codex.session.new_default_turn().await;
     thread
@@ -1833,6 +1816,12 @@ async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn()
                 time_to_first_token_ms: None,
             }),
         )
+        .await;
+    *thread.codex.session.active_turn.lock().await = None;
+    thread
+        .codex
+        .session
+        .maybe_notify_parent_of_final_status(second_turn.as_ref())
         .await;
 
     let first_notification = format_subagent_notification_message(
@@ -1869,21 +1858,17 @@ async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn()
                 .iter()
                 .filter(|message| **message == first_notification)
                 .count();
-            let second_count = notifications
-                .iter()
-                .filter(|message| **message == second_notification)
-                .count();
-            if first_count == 1 && second_count == 1 {
+            if first_count == 1 {
                 break notifications;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("parent should receive one completion notification per child turn");
+    .expect("parent should receive the child completion notification");
 
     assert!(notifications.contains(&first_notification));
-    assert!(notifications.contains(&second_notification));
+    assert!(!notifications.contains(&second_notification));
 }
 
 #[tokio::test]

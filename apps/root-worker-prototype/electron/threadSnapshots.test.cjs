@@ -186,6 +186,50 @@ test("mergeThreadSnapshots normalizes duplicate items when existing is null", ()
   ]);
 });
 
+test("mergeThreadSnapshots preserves repeated terminal collab status updates", () => {
+  const turn = {
+    id: "turn-1",
+    items: [
+      {
+        type: "collabAgentStatusUpdate",
+        id: "first-completion",
+        senderThreadId: "thread-child",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        status: {
+          path: "/root/worker",
+          status: "completed",
+          message: "done",
+        },
+      },
+      {
+        type: "collabAgentStatusUpdate",
+        id: "second-completion",
+        senderThreadId: "thread-child",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        status: {
+          path: "/root/worker",
+          status: "completed",
+          message: "done",
+        },
+      },
+    ],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+
+  const merged = mergeThreadSnapshots(null, makeThread({ turns: [turn] }));
+
+  assert.deepEqual(merged.turns[0].items, turn.items);
+});
+
 test("mergeThreadSnapshots normalizes duplicate live-derived turns in each input", () => {
   const makeDuplicateTurns = (prefix) => {
     const liveTurn = {
