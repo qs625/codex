@@ -17,10 +17,11 @@ This starts:
 
 Use this only when you specifically want the Vite dev server flow.
 
-You can override the app-server command or Codex home with:
+You can override the app-server command, Codex home, or workspace with:
 
 ```bash
-ROOT_WORKER_CODEX_HOME=/tmp/root-worker-codex-home \
+CODEX_HOME=/tmp/my-codex-root-worker-ui-env/codex-home \
+ROOT_WORKER_WORKSPACE=/tmp/my-codex-root-worker-ui-env/workspace \
 CODEX_APP_SERVER_CMD="codex app-server --listen stdio://" \
 pnpm --filter @my-codex/root-worker-prototype dev
 ```
