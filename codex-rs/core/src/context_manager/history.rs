@@ -213,7 +213,10 @@ impl ContextManager {
                 }
                 replaced
             }
-            ResponseItem::Message { .. } => false,
+            ResponseItem::Message { .. }
+            | ResponseItem::EventCommandEvent { .. }
+            | ResponseItem::EventDrivenTool { .. }
+            | ResponseItem::InterAgentCommunication { .. } => false,
             _ => false,
         }
     }
@@ -391,6 +394,9 @@ impl ContextManager {
                 output: truncate_function_output_payload(output, policy_with_serialization_budget),
             },
             ResponseItem::Message { .. }
+            | ResponseItem::EventCommandEvent { .. }
+            | ResponseItem::EventDrivenTool { .. }
+            | ResponseItem::InterAgentCommunication { .. }
             | ResponseItem::Reasoning { .. }
             | ResponseItem::LocalShellCall { .. }
             | ResponseItem::FunctionCall { .. }
@@ -478,6 +484,9 @@ pub(crate) fn truncate_function_output_payload(
 fn is_api_message(message: &ResponseItem) -> bool {
     match message {
         ResponseItem::Message { role, .. } => role.as_str() != "system",
+        ResponseItem::EventCommandEvent { .. }
+        | ResponseItem::EventDrivenTool { .. }
+        | ResponseItem::InterAgentCommunication { .. } => true,
         ResponseItem::FunctionCallOutput { .. }
         | ResponseItem::FunctionCall { .. }
         | ResponseItem::ToolSearchCall { .. }
@@ -689,6 +698,9 @@ fn is_model_generated_item(item: &ResponseItem) -> bool {
         | ResponseItem::Compaction { .. }
         | ResponseItem::ContextCompaction { .. } => true,
         ResponseItem::FunctionCallOutput { .. }
+        | ResponseItem::EventCommandEvent { .. }
+        | ResponseItem::EventDrivenTool { .. }
+        | ResponseItem::InterAgentCommunication { .. }
         | ResponseItem::ToolSearchOutput { .. }
         | ResponseItem::CustomToolCallOutput { .. }
         | ResponseItem::Other => false,
@@ -705,6 +717,13 @@ pub(crate) fn is_codex_generated_item(item: &ResponseItem) -> bool {
 }
 
 pub(crate) fn is_user_turn_boundary(item: &ResponseItem) -> bool {
+    match item {
+        ResponseItem::EventCommandEvent { .. }
+        | ResponseItem::EventDrivenTool { .. }
+        | ResponseItem::InterAgentCommunication { .. } => return true,
+        _ => {}
+    }
+
     let ResponseItem::Message { role, content, .. } = item else {
         return false;
     };

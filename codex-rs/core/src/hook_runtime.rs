@@ -18,7 +18,6 @@ use codex_hooks::UserPromptSubmitRequest;
 use codex_otel::HOOK_RUN_DURATION_METRIC;
 use codex_otel::HOOK_RUN_METRIC;
 use codex_protocol::items::TurnItem;
-use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
@@ -34,6 +33,7 @@ use serde_json::Value;
 use crate::context::ContextualUserFragment;
 use crate::context::HookAdditionalContext;
 use crate::event_mapping::parse_turn_item;
+use crate::pending_input::PendingInputItem;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::tools::hook_names::HookToolName;
@@ -62,6 +62,9 @@ pub(crate) enum PendingInputRecord {
     },
     ConversationItem {
         response_item: ResponseItem,
+    },
+    InterAgentCommunication {
+        pending_input: PendingInputItem,
     },
 }
 
@@ -365,8 +368,25 @@ pub(crate) async fn run_user_prompt_submit_hooks(
 pub(crate) async fn inspect_pending_input(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
-    pending_input_item: ResponseInputItem,
+    pending_input_item: PendingInputItem,
 ) -> PendingInputHookDisposition {
+    let pending_input_item = match pending_input_item {
+        PendingInputItem::ResponseInput(item) => item,
+        PendingInputItem::ResponseItem(item) => {
+            return PendingInputHookDisposition::Accepted(Box::new(
+                PendingInputRecord::ConversationItem {
+                    response_item: item,
+                },
+            ));
+        }
+        PendingInputItem::InterAgentCommunication(communication) => {
+            return PendingInputHookDisposition::Accepted(Box::new(
+                PendingInputRecord::InterAgentCommunication {
+                    pending_input: PendingInputItem::InterAgentCommunication(communication),
+                },
+            ));
+        }
+    };
     let response_item = ResponseItem::from(pending_input_item);
     if let Some(TurnItem::UserMessage(user_message)) = parse_turn_item(&response_item) {
         let user_prompt_submit_outcome =
@@ -409,6 +429,11 @@ pub(crate) async fn record_pending_input(
             record_additional_contexts(sess, turn_context, additional_contexts).await;
         }
         PendingInputRecord::ConversationItem { response_item } => {
+            sess.record_conversation_items(turn_context, std::slice::from_ref(&response_item))
+                .await;
+        }
+        PendingInputRecord::InterAgentCommunication { pending_input } => {
+            let response_item = pending_input.into_response_item();
             sess.record_conversation_items(turn_context, std::slice::from_ref(&response_item))
                 .await;
         }
@@ -604,6 +629,7 @@ fn compaction_trigger_label(value: CompactionTrigger) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use codex_protocol::AgentPath;
     use codex_protocol::models::ContentItem;
     use codex_protocol::protocol::HookEventName;
     use codex_protocol::protocol::HookExecutionMode;
@@ -611,12 +637,19 @@ mod tests {
     use codex_protocol::protocol::HookRunStatus;
     use codex_protocol::protocol::HookScope;
     use codex_protocol::protocol::HookSource;
+    use codex_protocol::protocol::InterAgentCommunication;
+    use codex_protocol::protocol::InterAgentOperation;
     use pretty_assertions::assert_eq;
 
+    use super::PendingInputHookDisposition;
+    use super::PendingInputRecord;
     use super::additional_context_messages;
     use super::hook_run_analytics_payload;
     use super::hook_run_metric_tags;
+    use super::inspect_pending_input;
+    use crate::pending_input::PendingInputItem;
     use crate::session::tests::make_session_and_context;
+    use crate::session::tests::make_session_and_context_with_rx;
     use codex_protocol::protocol::HookCompletedEvent;
     use codex_protocol::protocol::HookRunSummary;
     use codex_utils_absolute_path::test_support::PathBufExt;
@@ -689,6 +722,34 @@ mod tests {
         assert_eq!(tracking.turn_id, turn_context.sub_id);
         assert_eq!(hook.hook_source, HookSource::Unknown);
         assert_eq!(hook.status, HookRunStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn inter_agent_pending_input_does_not_run_user_prompt_submit_hook() {
+        let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "mailbox content should not hit UserPromptSubmit".to_string(),
+            InterAgentOperation::SendMessage,
+        )
+        .with_trigger_turn(false);
+
+        let disposition = inspect_pending_input(
+            &session,
+            &turn_context,
+            PendingInputItem::from(communication.clone()),
+        )
+        .await;
+
+        let PendingInputHookDisposition::Accepted(record) = disposition else {
+            panic!("inter-agent pending input should be accepted without hook blocking");
+        };
+        let PendingInputRecord::InterAgentCommunication { pending_input } = *record else {
+            panic!("inter-agent pending input should bypass user prompt hook");
+        };
+        assert_eq!(pending_input, PendingInputItem::from(communication));
     }
 
     #[test]

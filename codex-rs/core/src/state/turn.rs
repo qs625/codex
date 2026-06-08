@@ -11,7 +11,6 @@ use tokio_util::task::AbortOnDropHandle;
 
 use codex_extension_api::ExtensionData;
 use codex_protocol::dynamic_tools::DynamicToolResponse;
-use codex_protocol::models::ResponseInputItem;
 use codex_protocol::request_permissions::RequestPermissionProfile;
 use codex_protocol::request_permissions::RequestPermissionsResponse;
 use codex_protocol::request_user_input::RequestUserInputResponse;
@@ -20,6 +19,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use rmcp::model::RequestId;
 use tokio::sync::oneshot;
 
+use crate::pending_input::PendingInputItem;
 use crate::session::turn_context::TurnContext;
 use crate::tasks::AnySessionTask;
 use codex_protocol::models::AdditionalPermissionProfile;
@@ -115,7 +115,7 @@ pub(crate) struct TurnState {
     pending_user_input: HashMap<String, oneshot::Sender<RequestUserInputResponse>>,
     pending_elicitations: HashMap<(String, RequestId), oneshot::Sender<ElicitationResponse>>,
     pending_dynamic_tools: HashMap<String, oneshot::Sender<DynamicToolResponse>>,
-    pending_input: Vec<ResponseInputItem>,
+    pending_input: Vec<PendingInputItem>,
     mailbox_delivery_phase: MailboxDeliveryPhase,
     granted_permissions: Option<AdditionalPermissionProfile>,
     strict_auto_review_enabled: bool,
@@ -220,11 +220,11 @@ impl TurnState {
         self.pending_dynamic_tools.remove(key)
     }
 
-    pub(crate) fn push_pending_input(&mut self, input: ResponseInputItem) {
+    pub(crate) fn push_pending_input(&mut self, input: PendingInputItem) {
         self.pending_input.push(input);
     }
 
-    pub(crate) fn prepend_pending_input(&mut self, mut input: Vec<ResponseInputItem>) {
+    pub(crate) fn prepend_pending_input(&mut self, mut input: Vec<PendingInputItem>) {
         if input.is_empty() {
             return;
         }
@@ -233,7 +233,7 @@ impl TurnState {
         self.pending_input = input;
     }
 
-    pub(crate) fn take_pending_input(&mut self) -> Vec<ResponseInputItem> {
+    pub(crate) fn take_pending_input(&mut self) -> Vec<PendingInputItem> {
         if self.pending_input.is_empty() {
             Vec::with_capacity(0)
         } else {

@@ -1537,7 +1537,6 @@ async fn blocked_queued_prompt_does_not_strand_earlier_accepted_prompt() -> Resu
         ],
     );
 
-    server.shutdown().await;
     Ok(())
 }
 

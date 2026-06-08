@@ -82,6 +82,7 @@ mod config_manager_service;
 mod connection_rpc_gate;
 mod dynamic_tools;
 mod error_code;
+mod event_driven_item_completion;
 mod extensions;
 mod filters;
 mod fs_watch;

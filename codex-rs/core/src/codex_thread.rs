@@ -2,6 +2,7 @@ use crate::agent::AgentStatus;
 use crate::config::ConstraintResult;
 use crate::goals::ExternalGoalSet;
 use crate::goals::GoalRuntimeEvent;
+use crate::pending_input::PendingInputItem;
 use crate::session::Codex;
 use crate::session::SessionSettingsUpdate;
 use crate::session::SteerInputError;
@@ -342,18 +343,17 @@ impl CodexThread {
 
     /// Records a user-role session-prefix message without creating a new user turn boundary.
     pub(crate) async fn inject_user_message_without_turn(&self, message: String) {
+        let content = vec![ContentItem::InputText { text: message }];
         let message = ResponseItem::Message {
             id: None,
             role: "user".to_string(),
-            content: vec![ContentItem::InputText { text: message }],
+            content: content.clone(),
             phase: None,
         };
-        let pending_item = match pending_message_input_item(&message) {
-            Ok(pending_item) => pending_item,
-            Err(err) => {
-                debug_assert!(false, "session-prefix message append should succeed: {err}");
-                return;
-            }
+        let pending_item = ResponseInputItem::Message {
+            role: "user".to_string(),
+            content,
+            phase: None,
         };
         if self
             .codex
@@ -377,19 +377,10 @@ impl CodexThread {
     /// can consume that pending input through the normal turn pipeline.
     pub async fn append_message(&self, message: ResponseItem) -> CodexResult<String> {
         let submission_id = uuid::Uuid::new_v4().to_string();
-        let pending_item = pending_message_input_item(&message)?;
-        if let Err(items) = self
-            .codex
+        self.codex
             .session
-            .inject_response_items(vec![pending_item])
-            .await
-        {
-            self.codex
-                .session
-                .queue_response_items_for_next_turn(items)
-                .await;
-            self.codex.session.maybe_start_turn_for_pending_work().await;
-        }
+            .enqueue_async_input(PendingInputItem::from(message));
+        self.codex.session.maybe_start_turn_for_pending_work().await;
 
         Ok(submission_id)
     }
@@ -576,23 +567,5 @@ impl CodexThread {
         }
 
         Ok(*guard)
-    }
-}
-
-fn pending_message_input_item(message: &ResponseItem) -> CodexResult<ResponseInputItem> {
-    match message {
-        ResponseItem::Message {
-            role,
-            content,
-            phase,
-            ..
-        } => Ok(ResponseInputItem::Message {
-            role: role.clone(),
-            content: content.clone(),
-            phase: phase.clone(),
-        }),
-        _ => Err(CodexErr::InvalidRequest(
-            "append_message only supports ResponseItem::Message".to_string(),
-        )),
     }
 }

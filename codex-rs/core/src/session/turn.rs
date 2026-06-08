@@ -2032,6 +2032,9 @@ async fn try_run_sampling_request(
                     | ResponseItem::ToolSearchOutput { .. }
                     | ResponseItem::WebSearchCall { .. }
                     | ResponseItem::ImageGenerationCall { .. }
+                    | ResponseItem::EventCommandEvent { .. }
+                    | ResponseItem::EventDrivenTool { .. }
+                    | ResponseItem::InterAgentCommunication { .. }
                     | ResponseItem::Compaction { .. }
                     | ResponseItem::ContextCompaction { .. }
                     | ResponseItem::Other => false,

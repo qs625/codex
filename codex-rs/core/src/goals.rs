@@ -7,6 +7,7 @@
 use crate::StateDbHandle;
 use crate::context::ContextualUserFragment;
 use crate::context::GoalContext;
+use crate::pending_input::PendingInputItem;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::state::ActiveTurn;
@@ -1272,7 +1273,7 @@ impl Session {
         {
             let mut turn_state = turn_state.lock().await;
             for item in candidate.items {
-                turn_state.push_pending_input(item);
+                turn_state.push_pending_input(PendingInputItem::from(item));
             }
         }
 
