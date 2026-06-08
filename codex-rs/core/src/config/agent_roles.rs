@@ -346,7 +346,6 @@ struct RawAgentRoleFileToml {
 }
 
 #[derive(Deserialize, Debug, Clone, Default, PartialEq)]
-#[serde(deny_unknown_fields)]
 struct RawAgentRoleFileMarkdown {
     name: Option<String>,
     description: Option<String>,
@@ -504,21 +503,7 @@ fn parse_markdown_agent_role_file_contents(
             ),
         ));
     }
-    let role_name = parsed
-        .name
-        .as_deref()
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!(
-                    "agent role file at {} must define a non-empty `name`",
-                    role_file_label.display()
-                ),
-            )
-        })?;
+    let role_name = markdown_agent_role_name(parsed.name.as_deref(), role_file_label)?;
     let model_reasoning_effort = parsed
         .model_reasoning_effort
         .clone()
@@ -534,17 +519,47 @@ fn parse_markdown_agent_role_file_contents(
         description,
         nickname_candidates: None,
         config,
-        tool_allowlist: normalize_agent_allowlist(
+        tool_allowlist: normalize_markdown_agent_allowlist(
             parsed.tools,
             &format!("agent role file {}.tools", role_file_label.display()),
         )?,
-        skill_allowlist: normalize_agent_allowlist(
+        skill_allowlist: normalize_markdown_agent_allowlist(
             parsed.skills,
             &format!("agent role file {}.skills", role_file_label.display()),
         )?,
         model: parsed.model,
         model_reasoning_effort,
     })
+}
+
+fn markdown_agent_role_name(
+    name: Option<&str>,
+    role_file_label: &Path,
+) -> std::io::Result<String> {
+    if let Some(name) = name.map(str::trim).filter(|name| !name.is_empty()) {
+        return Ok(name.to_string());
+    }
+
+    let Some(file_stem) = role_file_label.file_stem().and_then(|stem| stem.to_str()) else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "agent role file at {} must define a non-empty `name` or have a UTF-8 file name",
+                role_file_label.display()
+            ),
+        ));
+    };
+    let file_stem = file_stem.trim();
+    if file_stem.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "agent role file at {} must define a non-empty `name` or have a non-empty file name",
+                role_file_label.display()
+            ),
+        ));
+    }
+    Ok(file_stem.to_string())
 }
 
 fn extract_agent_markdown_frontmatter<'a>(
@@ -616,6 +631,16 @@ fn normalize_agent_allowlist(
         Some(RawAgentCapabilityAllowlist::Patterns(patterns)) => {
             normalize_agent_allowlist_patterns(patterns, field_label)
         }
+    }
+}
+
+fn normalize_markdown_agent_allowlist(
+    raw: Option<RawAgentCapabilityAllowlist>,
+    field_label: &str,
+) -> std::io::Result<AgentCapabilityAllowlist> {
+    match raw {
+        None => Ok(AgentCapabilityAllowlist::All),
+        Some(raw) => normalize_agent_allowlist(Some(raw), field_label),
     }
 }
 
@@ -953,18 +978,58 @@ mod tests {
     }
 
     #[test]
-    fn markdown_agent_frontmatter_name_is_required_even_with_role_name_hint() {
+    fn markdown_agent_frontmatter_name_defaults_to_file_stem() {
         let contents = "---\ndescription: Review code.\n---\n\nReview carefully.";
 
-        let err = parse_agent_role_file_contents(
+        let parsed = parse_agent_role_file_contents(
             contents,
             Path::new("reviewer.md"),
             Path::new("."),
             Some("reviewer"),
         )
-        .expect_err("markdown name must come from frontmatter");
+        .expect("markdown name should default to the file stem");
 
-        assert!(err.to_string().contains("must define a non-empty `name`"));
+        assert_eq!(parsed.role_name, "reviewer");
+    }
+
+    #[test]
+    fn markdown_agent_frontmatter_ignores_unknown_fields() {
+        let contents = r#"---
+description: Review code.
+level: project
+parallelizable: true
+schema_version: 1
+---
+
+Review carefully.
+"#;
+
+        let parsed = parse_agent_role_file_contents(
+            contents,
+            Path::new("reviewer.md"),
+            Path::new("."),
+            /*role_name_hint*/ None,
+        )
+        .expect("unknown markdown frontmatter fields should be ignored");
+
+        assert_eq!(parsed.role_name, "reviewer");
+        assert_eq!(parsed.description.as_deref(), Some("Review code."));
+    }
+
+    #[test]
+    fn markdown_agent_frontmatter_missing_tools_and_skills_default_to_all() {
+        let contents = "---\ndescription: Review code.\n---\n\nReview carefully.";
+
+        let parsed = parse_agent_role_file_contents(
+            contents,
+            Path::new("reviewer.md"),
+            Path::new("."),
+            /*role_name_hint*/ None,
+        )
+        .expect("missing allowlists should parse");
+
+        assert_eq!(parsed.tool_allowlist, AgentCapabilityAllowlist::All);
+        assert_eq!(parsed.skill_allowlist, AgentCapabilityAllowlist::All);
     }
 
     #[test]

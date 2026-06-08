@@ -7128,6 +7128,83 @@ Nested markdown should load.
 }
 
 #[tokio::test]
+async fn discovered_markdown_agent_defaults_optional_frontmatter_fields() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let repo_root = TempDir::new()?;
+    std::fs::create_dir_all(repo_root.path().join(".git"))?;
+    std::fs::create_dir_all(repo_root.path().join(".codex").join("agents"))?;
+    let workspace_key = repo_root.path().to_string_lossy().replace('\\', "\\\\");
+    std::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        format!(
+            r#"[projects."{workspace_key}"]
+trust_level = "trusted"
+"#
+        ),
+    )?;
+    std::fs::write(
+        repo_root
+            .path()
+            .join(".codex")
+            .join("agents")
+            .join("optimizer.md"),
+        r#"---
+description: Optimizes workflows.
+level: project
+parallelizable: true
+schema_version: 1
+---
+
+Optimize the workflow carefully.
+"#,
+    )?;
+    std::fs::write(
+        repo_root
+            .path()
+            .join(".codex")
+            .join("agents")
+            .join("hidden.md"),
+        r#"---
+level: project
+---
+
+Missing descriptions are still invalid.
+"#,
+    )?;
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .harness_overrides(ConfigOverrides {
+            cwd: Some(repo_root.path().to_path_buf()),
+            ..Default::default()
+        })
+        .build()
+        .await?;
+
+    let optimizer = config
+        .agent_roles
+        .get("optimizer")
+        .expect("file stem should define the agent role name");
+    assert_eq!(
+        optimizer.description.as_deref(),
+        Some("Optimizes workflows.")
+    );
+    assert_eq!(optimizer.tool_allowlist, AgentCapabilityAllowlist::All);
+    assert_eq!(optimizer.skill_allowlist, AgentCapabilityAllowlist::All);
+    assert!(!config.agent_roles.contains_key("hidden"));
+    assert!(
+        config
+            .startup_warnings
+            .iter()
+            .any(|warning| warning.contains("agent role `hidden` must define a description")),
+        "{:?}",
+        config.startup_warnings
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn declared_markdown_agent_requires_frontmatter_description() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let repo_root = TempDir::new()?;
