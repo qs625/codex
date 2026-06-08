@@ -26,14 +26,14 @@ import {
 import {
   getThreadSubtreeIds,
   getAgentRoleLabel,
-  getPresenceLabel,
+  getThreadPresenceLabel,
   getThreadModelLabel,
   getThreadPath,
   getThreadReasoningLabel,
   isThreadThinking,
   isTurnInFlight,
   isRootThread,
-  threadStatusClass,
+  threadDisplayStatusClass,
   trimPath,
 } from "../lib/thread";
 import { isVoiceCaptureToggleDisabled } from "../lib/voiceCaptureState";
@@ -184,9 +184,6 @@ export function ConversationPanel({
   const lastTurn = selectedThread?.turns.at(-1) ?? null;
   const lastTurnInProgress = lastTurn != null && isTurnInFlight(lastTurn);
   const activeTurnId = lastTurnInProgress ? lastTurn.id : null;
-  const threadActive =
-    threadStatusClass(selectedThread?.status ?? { type: "notLoaded" }) ===
-    "doing";
   const isThinking = isThreadThinking(selectedThread, {
     isLoadingThread,
     isSending,
@@ -251,11 +248,11 @@ export function ConversationPanel({
           <div className="conversation-title-row">
             <h1>{selectedThread ? getThreadPath(selectedThread) : "/root"}</h1>
             <span
-              className={`status-dot ${threadStatusClass(selectedThread?.status ?? { type: "notLoaded" })}`}
+              className={`status-dot ${threadDisplayStatusClass(selectedThread)}`}
             />
             <span>{selectedThread ? getAgentRoleLabel(selectedThread) : "Root Agent"}</span>
             <span className="subtitle-separator">•</span>
-            <span>{selectedThread ? getPresenceLabel(selectedThread.status) : "Idle"}</span>
+            <span>{getThreadPresenceLabel(selectedThread)}</span>
             <span className="subtitle-separator">•</span>
             <span className="thread-chip">{getThreadModelLabel(selectedThread)}</span>
             <span className="thread-chip">reasoning: {getThreadReasoningLabel(selectedThread)}</span>

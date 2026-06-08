@@ -2008,7 +2008,7 @@ impl ThreadRequestProcessor {
         include_turns: bool,
     ) -> Result<Thread, ThreadReadViewError> {
         let loaded_thread = self.thread_manager.get_thread(thread_id).await.ok();
-        let mut thread = if include_turns {
+        let (mut thread, has_live_in_progress_turn) = if include_turns {
             if let Some(loaded_thread) = loaded_thread.as_ref() {
                 // Loaded thread with turns: use persisted metadata when it exists,
                 // but reconstruct turns from the live ThreadStore history.
@@ -2028,7 +2028,7 @@ impl ThreadRequestProcessor {
             {
                 // Unloaded thread with turns: load metadata and history together
                 // from the ThreadStore.
-                thread
+                (thread, false)
             } else {
                 return Err(ThreadReadViewError::InvalidRequest(format!(
                     "thread not loaded: {thread_id}"
@@ -2038,8 +2038,17 @@ impl ThreadRequestProcessor {
             .load_persisted_thread_for_read(thread_id, include_turns)
             .await?
         {
-            // Persisted metadata-only read: no live thread state is needed.
-            thread
+            // Persisted metadata-only read: preserve stored fields, but still
+            // consult live state when the thread is loaded so status reflects
+            // an in-progress turn before watch status catches up.
+            let has_live_in_progress_turn = if loaded_thread.is_some() {
+                self.active_in_progress_turn_snapshot(thread_id)
+                    .await
+                    .is_some()
+            } else {
+                false
+            };
+            (thread, has_live_in_progress_turn)
         } else if let Some(loaded_thread) = loaded_thread.as_ref() {
             // Loaded metadata-only read before persistence is materialized: build
             // the response from the live thread snapshot.
@@ -2056,12 +2065,6 @@ impl ThreadRequestProcessor {
             )));
         };
 
-        let has_live_in_progress_turn = if let Some(loaded_thread) = loaded_thread.as_ref() {
-            matches!(loaded_thread.agent_status().await, AgentStatus::Running)
-        } else {
-            false
-        };
-
         let thread_status = self
             .thread_watch_manager
             .loaded_status_for_thread(&thread.id)
@@ -2073,6 +2076,12 @@ impl ThreadRequestProcessor {
             has_live_in_progress_turn,
         );
         Ok(thread)
+    }
+
+    async fn active_in_progress_turn_snapshot(&self, thread_id: ThreadId) -> Option<Turn> {
+        let thread_state = self.thread_state_manager.thread_state(thread_id).await;
+        let state = thread_state.lock().await;
+        state.active_in_progress_turn_snapshot()
     }
 
     async fn load_persisted_thread_for_read(
@@ -2124,7 +2133,7 @@ impl ThreadRequestProcessor {
         include_turns: bool,
         loaded_thread: &CodexThread,
         persisted_thread: Option<Thread>,
-    ) -> Result<Thread, ThreadReadViewError> {
+    ) -> Result<(Thread, bool), ThreadReadViewError> {
         let config_snapshot = loaded_thread.config_snapshot().await;
         if include_turns && config_snapshot.ephemeral {
             return Err(ThreadReadViewError::InvalidRequest(
@@ -2143,9 +2152,10 @@ impl ThreadRequestProcessor {
         } else {
             fallback_thread
         };
-        self.apply_thread_read_store_fields(thread_id, &mut thread, include_turns, loaded_thread)
+        let has_live_in_progress_turn = self
+            .apply_thread_read_store_fields(thread_id, &mut thread, include_turns, loaded_thread)
             .await?;
-        Ok(thread)
+        Ok((thread, has_live_in_progress_turn))
     }
 
     async fn apply_thread_read_store_fields(
@@ -2154,7 +2164,7 @@ impl ThreadRequestProcessor {
         thread: &mut Thread,
         include_turns: bool,
         loaded_thread: &CodexThread,
-    ) -> Result<(), ThreadReadViewError> {
+    ) -> Result<bool, ThreadReadViewError> {
         self.attach_thread_name(thread_id, thread).await;
         let history = loaded_thread
             .load_history(/*include_archived*/ true)
@@ -2174,11 +2184,13 @@ impl ThreadRequestProcessor {
             );
         }
 
+        let active_turn = self.active_in_progress_turn_snapshot(thread_id).await;
+        let has_live_in_progress_turn = active_turn.is_some();
         if include_turns {
-            thread.turns = build_api_turns_from_rollout_items(&history.items);
+            populate_thread_turns_from_history(thread, &history.items, active_turn.as_ref());
         }
 
-        Ok(())
+        Ok(has_live_in_progress_turn)
     }
 
     async fn thread_turns_list_response_inner(
@@ -2527,6 +2539,7 @@ impl ThreadRequestProcessor {
                 sync_active_event_subscriptions(
                     active_event_subscriptions.as_ref(),
                     &self.thread_watch_manager,
+                    Some(self.thread_manager.as_ref()),
                     thread_id,
                     persisted_subscription_count,
                 )
@@ -4121,14 +4134,24 @@ pub(crate) fn thread_from_stored_thread(
 async fn sync_active_event_subscriptions(
     active_event_subscriptions: &ActiveEventSubscriptionTracker,
     thread_watch_manager: &ThreadWatchManager,
+    thread_manager: Option<&ThreadManager>,
     thread_id: ThreadId,
     active_count: usize,
 ) {
+    let previous_count = active_event_subscriptions.active_count(thread_id);
     active_event_subscriptions.set_active_count(thread_id, active_count);
     let thread_id_str = thread_id.to_string();
     thread_watch_manager
         .note_active_event_subscriptions(thread_id_str.as_str(), active_count)
         .await;
+    if previous_count > 0
+        && active_count == 0
+        && let Some(thread_manager) = thread_manager
+    {
+        thread_manager
+            .maybe_notify_parent_of_final_status(thread_id)
+            .await;
+    }
 }
 
 fn persisted_subscription_count(thread: &StoredThread) -> usize {

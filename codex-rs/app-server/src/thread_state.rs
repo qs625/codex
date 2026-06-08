@@ -37,6 +37,49 @@ pub(crate) struct PendingThreadResumeRequest {
     pub(crate) redact_resume_payloads: bool,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_app_server_protocol::TurnStatus;
+    use codex_protocol::config_types::ModeKind;
+    use codex_protocol::protocol::TurnCompleteEvent;
+    use codex_protocol::protocol::TurnStartedEvent;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn active_in_progress_turn_snapshot_ignores_finished_fallback() {
+        let mut state = ThreadState::default();
+
+        state.track_current_turn_event(
+            "turn-1",
+            &EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".to_string(),
+                started_at: Some(1),
+                model_context_window: None,
+                collaboration_mode_kind: ModeKind::default(),
+            }),
+        );
+        let active = state
+            .active_in_progress_turn_snapshot()
+            .expect("turn should be active");
+        assert_eq!(active.id, "turn-1");
+        assert_eq!(active.status, TurnStatus::InProgress);
+
+        state.track_current_turn_event(
+            "turn-1",
+            &EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-1".to_string(),
+                last_agent_message: None,
+                completed_at: Some(2),
+                duration_ms: Some(1_000),
+                time_to_first_token_ms: None,
+            }),
+        );
+
+        assert_eq!(state.active_in_progress_turn_snapshot(), None);
+    }
+}
+
 // ThreadListenerCommand is used to perform operations in the context of the thread listener, for serialization purposes.
 pub(crate) enum ThreadListenerCommand {
     // SendThreadResumeResponse is used to resume an already running thread by sending the thread's history to the client and atomically subscribing for new updates.
@@ -136,6 +179,13 @@ impl ThreadState {
 
     pub(crate) fn active_turn_snapshot(&self) -> Option<Turn> {
         self.current_turn_history.active_turn_snapshot()
+    }
+
+    pub(crate) fn active_in_progress_turn_snapshot(&self) -> Option<Turn> {
+        self.current_turn_history
+            .has_active_turn()
+            .then(|| self.current_turn_history.active_turn_snapshot())
+            .flatten()
     }
 
     pub(crate) fn track_current_turn_event(&mut self, event_turn_id: &str, event: &EventMsg) {

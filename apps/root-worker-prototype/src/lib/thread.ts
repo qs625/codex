@@ -286,6 +286,26 @@ export function getPresenceLabel(status: ThreadStatus) {
   }
 }
 
+export function getThreadPresenceLabel(thread: Thread | null) {
+  if (!thread) {
+    return "Idle";
+  }
+  if (!isEffectivelyActiveThread(thread)) {
+    return getPresenceLabel({ type: "idle" });
+  }
+  return getPresenceLabel(thread.status);
+}
+
+export function threadDisplayStatusClass(thread: Thread | null) {
+  if (!thread) {
+    return threadStatusClass({ type: "notLoaded" });
+  }
+  if (!isEffectivelyActiveThread(thread)) {
+    return threadStatusClass({ type: "idle" });
+  }
+  return threadStatusClass(thread.status);
+}
+
 export function getThreadModelLabel(thread: Thread | null) {
   if (!thread) {
     return "unknown";
@@ -1205,9 +1225,13 @@ function dropDuplicatePendingAgentTurns(snapshot: Thread, updated: Thread) {
 function isLiveDerivedCompletedAgentTurn(turn: Turn) {
   return (
     turn.status === "completed" &&
-    turn.itemsView !== "full" &&
     turn.items.length > 0 &&
-    turn.items.every((item) => item.type === "agentMessage")
+    turn.items.every(
+      (item) =>
+        item.type === "agentMessage" || isCollabCompletionNotificationItem(item),
+    ) &&
+    (turn.itemsView !== "full" ||
+      turn.items.every(isCollabCompletionNotificationItem))
   );
 }
 
@@ -1249,9 +1273,8 @@ function canMatchThreadItemSemantically(item: ThreadItem) {
     case "eventCommandEvent":
     case "eventDrivenTool":
     case "eventDrivenToolCall":
-      return true;
     case "collabAgentStatusUpdate":
-      return !isTerminalCollabAgentStatus(item.status.status);
+      return true;
     case "builtinToolCall":
     case "collabAgentToolCall":
     case "commandExecution":
@@ -1270,15 +1293,6 @@ function canMatchThreadItemSemantically(item: ThreadItem) {
     case "webSearch":
       return false;
   }
-}
-
-function isTerminalCollabAgentStatus(status: string) {
-  return (
-    status === "completed" ||
-    status === "errored" ||
-    status === "shutdown" ||
-    status === "notFound"
-  );
 }
 
 function haveCompatibleAgentMessageContent(
@@ -1406,7 +1420,7 @@ function selfTreeThreadStatusClass(thread: Thread): TreeThreadStatusClass {
   if (thread.status.type === "systemError") {
     return "blocked";
   }
-  if (thread.status.type !== "active") {
+  if (!isEffectivelyActiveThread(thread)) {
     return "todo";
   }
   if (hasActiveTurnWork(thread)) {
@@ -1419,6 +1433,21 @@ function selfTreeThreadStatusClass(thread: Thread): TreeThreadStatusClass {
     return "waiting-subagent";
   }
   return "doing";
+}
+
+function isEffectivelyActiveThread(thread: Thread) {
+  if (thread.status.type === "systemError") {
+    return true;
+  }
+  if (thread.status.type !== "active") {
+    return false;
+  }
+  return (
+    thread.turns.length === 0 ||
+    hasActiveTurnWork(thread) ||
+    hasActiveMonitorWait(thread) ||
+    hasInFlightSubagentWait(thread)
+  );
 }
 
 function hasInFlightSubagentWait(thread: Thread) {

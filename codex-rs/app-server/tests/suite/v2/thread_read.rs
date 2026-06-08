@@ -71,6 +71,8 @@ use codex_thread_store::ThreadPersistenceMetadata;
 use codex_thread_store::ThreadStore;
 use codex_thread_store::UpdateThreadMetadataParams;
 use core_test_support::responses;
+use core_test_support::streaming_sse::StreamingSseChunk;
+use core_test_support::streaming_sse::start_streaming_sse_server;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
@@ -1468,6 +1470,95 @@ async fn thread_read_reports_system_error_idle_flag_after_failed_turn() -> Resul
     let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
 
     assert_eq!(thread.status, ThreadStatus::SystemError,);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_read_without_turns_reports_active_loaded_turn() -> Result<()> {
+    let (complete_turn_tx, complete_turn_rx) = tokio::sync::oneshot::channel();
+    let (server, mut completions) = start_streaming_sse_server(vec![vec![
+        StreamingSseChunk {
+            gate: None,
+            body: responses::sse(vec![responses::ev_response_created("resp-1")]),
+        },
+        StreamingSseChunk {
+            gate: Some(complete_turn_rx),
+            body: responses::sse(vec![responses::ev_completed("resp-1")]),
+        },
+    ]])
+    .await;
+    let response_completed = completions.remove(0);
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), server.uri())?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let start_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            model: Some("mock-model".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
+
+    let turn_start_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "keep this turn running".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let turn_start_response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_start_id)),
+    )
+    .await??;
+    let _: TurnStartResponse = to_response::<TurnStartResponse>(turn_start_response)?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/started"),
+    )
+    .await??;
+
+    let read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread.id,
+            include_turns: false,
+        })
+        .await?;
+    let read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
+    )
+    .await??;
+    let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
+
+    assert_eq!(
+        thread.status,
+        ThreadStatus::Active {
+            active_flags: Vec::new(),
+        }
+    );
+    assert_eq!(thread.turns, Vec::new());
+
+    let _ = complete_turn_tx.send(());
+    timeout(DEFAULT_READ_TIMEOUT, response_completed).await??;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+    server.shutdown().await;
 
     Ok(())
 }
