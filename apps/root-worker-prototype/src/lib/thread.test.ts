@@ -9,12 +9,14 @@ import {
   formatUpdatedLabel,
   getPresenceLabel,
   getParentThreadId,
+  getThreadPresenceLabel,
   getThreadItemNotificationSyntheticTurnStatus,
   getThreadItemNotificationTargetThreadIds,
   getThreadPath,
   isThreadThinking,
   mergeThreadSnapshot,
   queuePendingThreadUpdate,
+  threadDisplayStatusClass,
   threadStatusClass,
   treeThreadStatusClass,
   treeThreadStatusLabel,
@@ -2048,6 +2050,70 @@ test("direct collab status completion notifications create completed synthetic t
       },
     ],
   );
+});
+
+test("terminal child status does not hide restored conversation history or keep loaded thread active", () => {
+  const restoredThread: Thread = {
+    ...makeThread(),
+    status: {
+      type: "active",
+      activeFlags: [],
+    },
+    turns: [
+      {
+        id: "turn-user",
+        items: [
+          {
+            type: "userMessage",
+            id: "user-1",
+            content: [{ type: "text", text: "please fix this" }],
+          },
+          {
+            type: "agentMessage",
+            id: "agent-1",
+            text: "I fixed it.",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1_000,
+      },
+    ],
+  };
+
+  const childStatus: ThreadItem = {
+    type: "collabAgentStatusUpdate",
+    id: "child-shutdown",
+    senderThreadId: "thread-child",
+    senderPath: "/root/worker/tester",
+    recipientThreadId: "thread-1",
+    recipientPath: "/root/worker",
+    status: {
+      path: "/root/worker/tester",
+      status: "shutdown",
+      message: "completed",
+    },
+  };
+  const updated = updateThreadItem(restoredThread, "turn-child", childStatus, {
+    completedAtMs: 3_000,
+    syntheticTurnStatus: "completed",
+  });
+
+  assert.deepEqual(
+    buildConversationEntries(updated).map((entry) => entry.text),
+    [
+      "please fix this",
+      "I fixed it.",
+      "/root/worker/tester • shutdown • completed",
+    ],
+  );
+  assert.equal(getThreadPresenceLabel(updated), "Idle");
+  assert.equal(threadDisplayStatusClass(updated), "todo");
 });
 
 test("collab status item notifications stay on the notification thread unless sent by that thread", () => {
