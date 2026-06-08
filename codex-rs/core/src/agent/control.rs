@@ -106,6 +106,11 @@ fn keep_forked_rollout_item(item: &RolloutItem) -> bool {
             _ => false,
         },
         RolloutItem::ResponseItem(
+            ResponseItem::EventCommandEvent { .. }
+            | ResponseItem::EventDrivenTool { .. }
+            | ResponseItem::InterAgentCommunication { .. },
+        ) => true,
+        RolloutItem::ResponseItem(
             ResponseItem::Reasoning { .. }
             | ResponseItem::LocalShellCall { .. }
             | ResponseItem::FunctionCall { .. }

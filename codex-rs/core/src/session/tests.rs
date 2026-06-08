@@ -59,6 +59,7 @@ use crate::goals::ExternalGoalPreviousStatus;
 use crate::goals::ExternalGoalSet;
 use crate::goals::GoalRuntimeEvent;
 use crate::goals::SetGoalRequest;
+use crate::pending_input::PendingInputItem;
 use crate::rollout::recorder::RolloutRecorder;
 use crate::state::ActiveTurn;
 use crate::state::TaskKind;
@@ -8330,7 +8331,13 @@ async fn prepend_pending_input_keeps_older_tail_ahead_of_newer_input() {
         .expect("inject initial pending input into active turn");
 
     let drained = sess.get_pending_input().await;
-    assert_eq!(drained, vec![blocked, later.clone()]);
+    assert_eq!(
+        drained,
+        vec![
+            PendingInputItem::from(blocked),
+            PendingInputItem::from(later.clone()),
+        ]
+    );
 
     sess.inject_response_items(vec![newer.clone()])
         .await
@@ -8342,7 +8349,10 @@ async fn prepend_pending_input_keeps_older_tail_ahead_of_newer_input() {
         .await
         .expect("requeue later pending input at the front of the queue");
 
-    assert_eq!(sess.get_pending_input().await, vec![later, newer]);
+    assert_eq!(
+        sess.get_pending_input().await,
+        vec![PendingInputItem::from(later), PendingInputItem::from(newer)]
+    );
 }
 
 #[tokio::test]
@@ -8356,7 +8366,7 @@ async fn queued_response_items_for_next_turn_move_into_next_active_turn() {
         phase: None,
     };
 
-    sess.queue_response_items_for_next_turn(vec![queued_item.clone()])
+    sess.queue_response_items_for_next_turn(vec![PendingInputItem::from(queued_item.clone())])
         .await;
 
     sess.spawn_task(
@@ -8369,7 +8379,10 @@ async fn queued_response_items_for_next_turn_move_into_next_active_turn() {
     )
     .await;
 
-    assert_eq!(sess.get_pending_input().await, vec![queued_item]);
+    assert_eq!(
+        sess.get_pending_input().await,
+        vec![PendingInputItem::from(queued_item)]
+    );
 }
 
 #[tokio::test]
@@ -8383,7 +8396,7 @@ async fn idle_interrupt_does_not_wake_queued_next_turn_items() {
         phase: None,
     };
 
-    sess.queue_response_items_for_next_turn(vec![queued_item])
+    sess.queue_response_items_for_next_turn(vec![PendingInputItem::from(queued_item)])
         .await;
 
     sess.abort_all_tasks(TurnAbortReason::Interrupted).await;
@@ -8410,14 +8423,14 @@ async fn abort_empty_active_turn_preserves_pending_input() {
     turn_state
         .lock()
         .await
-        .push_pending_input(pending_item.clone());
+        .push_pending_input(PendingInputItem::from(pending_item.clone()));
 
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
 
     assert!(sess.active_turn.lock().await.is_none());
     assert_eq!(
         turn_state.lock().await.take_pending_input(),
-        vec![pending_item]
+        vec![PendingInputItem::from(pending_item)]
     );
 }
 
@@ -8751,7 +8764,9 @@ async fn budget_limited_accounting_steers_active_turn_without_aborting() -> anyh
     .await?;
 
     let pending_input = sess.get_pending_input().await;
-    let [ResponseInputItem::Message { role, content, .. }] = pending_input.as_slice() else {
+    let [PendingInputItem::ResponseInput(ResponseInputItem::Message { role, content, .. })] =
+        pending_input.as_slice()
+    else {
         panic!("expected one budget-limit steering message, got {pending_input:#?}");
     };
     assert_eq!("user", role);
@@ -8918,7 +8933,7 @@ async fn external_objective_change_steers_active_turn() -> anyhow::Result<()> {
         pending_input.iter().any(|item| {
             matches!(
                 item,
-                ResponseInputItem::Message { role, content, .. }
+                PendingInputItem::ResponseInput(ResponseInputItem::Message { role, content, .. })
                     if role == "user"
                         && content.iter().any(|content| matches!(
                             content,
@@ -9131,7 +9146,36 @@ async fn queue_only_mailbox_mail_waits_for_next_turn_after_answer_boundary() {
 
     assert_eq!(
         sess.get_pending_input().await,
-        vec![communication.to_response_input_item()],
+        vec![PendingInputItem::from(communication)],
+    );
+}
+
+#[tokio::test]
+async fn typed_queue_only_inter_agent_message_does_not_trigger_idle_turn() {
+    let (sess, _tc, _rx) = make_session_and_context_with_rx().await;
+    let communication = InterAgentCommunication::new(
+        AgentPath::try_from("/root/worker").expect("worker path should parse"),
+        AgentPath::root(),
+        Vec::new(),
+        "queue-only typed update".to_string(),
+        codex_protocol::protocol::InterAgentOperation::SendMessage,
+    )
+    .with_trigger_turn(false);
+
+    sess.enqueue_async_input(PendingInputItem::from(
+        ResponseItem::InterAgentCommunication {
+            id: Some("typed-queue-only".to_string()),
+            communication: communication.clone(),
+        },
+    ));
+
+    assert!(
+        !sess.has_trigger_turn_mailbox_items().await,
+        "queue-only typed inter-agent message should not request a new idle turn"
+    );
+    assert_eq!(
+        sess.get_pending_input().await,
+        vec![PendingInputItem::from(communication)],
     );
 }
 
@@ -9352,11 +9396,11 @@ async fn steered_input_reopens_mailbox_delivery_for_current_turn() {
     assert_eq!(
         sess.get_pending_input().await,
         vec![
-            ResponseInputItem::from(vec![UserInput::Text {
+            PendingInputItem::from(ResponseInputItem::from(vec![UserInput::Text {
                 text: "follow up".to_string(),
                 text_elements: Vec::new(),
-            }]),
-            communication.to_response_input_item(),
+            }])),
+            PendingInputItem::from(communication),
         ],
     );
 }
@@ -9400,11 +9444,11 @@ async fn stale_defer_mailbox_delivery_does_not_override_steered_input() {
     assert_eq!(
         sess.get_pending_input().await,
         vec![
-            ResponseInputItem::from(vec![UserInput::Text {
+            PendingInputItem::from(ResponseInputItem::from(vec![UserInput::Text {
                 text: "follow up".to_string(),
                 text_elements: Vec::new(),
-            }]),
-            communication.to_response_input_item(),
+            }])),
+            PendingInputItem::from(communication),
         ],
     );
 }
@@ -9456,7 +9500,7 @@ async fn tool_calls_reopen_mailbox_delivery_for_current_turn() {
     assert!(output.tool_future.is_some());
     assert_eq!(
         sess.get_pending_input().await,
-        vec![communication.to_response_input_item()],
+        vec![PendingInputItem::from(communication)],
     );
 }
 

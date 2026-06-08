@@ -140,6 +140,26 @@ fn parse_agent_message(
 
 pub fn parse_turn_item(item: &ResponseItem) -> Option<TurnItem> {
     match item {
+        ResponseItem::EventCommandEvent { id, event } => Some(TurnItem::EventCommandEvent(
+            codex_protocol::items::EventCommandEventItem {
+                id: id.clone().unwrap_or_else(|| event.stable_item_id()),
+                event: event.clone(),
+            },
+        )),
+        ResponseItem::EventDrivenTool { id, trigger } => {
+            Some(TurnItem::EventDrivenTool(EventDrivenToolItem {
+                id: id.clone().unwrap_or_else(|| Uuid::new_v4().to_string()),
+                tool: trigger.tool.clone(),
+                title: trigger.title.clone(),
+                text: trigger.text.clone(),
+            }))
+        }
+        ResponseItem::InterAgentCommunication { id, communication } => {
+            Some(TurnItem::CollabAgentMessage(CollabAgentMessageItem {
+                id: id.clone().unwrap_or_else(|| Uuid::new_v4().to_string()),
+                communication: communication.clone(),
+            }))
+        }
         ResponseItem::Message {
             role,
             content,

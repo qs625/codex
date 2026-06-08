@@ -24,7 +24,10 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_image::ImageProcessingError;
 use schemars::JsonSchema;
 
+use crate::event_command::EventCommandEvent;
+use crate::event_driven_tool::EventDrivenToolTrigger;
 use crate::mcp::CallToolResult;
+use crate::protocol::InterAgentCommunication;
 
 /// Controls the per-command sandbox override requested by a shell-like tool call.
 #[derive(
@@ -748,6 +751,24 @@ pub enum MessagePhase {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseItem {
+    EventCommandEvent {
+        #[serde(default, skip_serializing)]
+        #[ts(skip)]
+        id: Option<String>,
+        event: EventCommandEvent,
+    },
+    EventDrivenTool {
+        #[serde(default, skip_serializing)]
+        #[ts(skip)]
+        id: Option<String>,
+        trigger: EventDrivenToolTrigger,
+    },
+    InterAgentCommunication {
+        #[serde(default, skip_serializing)]
+        #[ts(skip)]
+        id: Option<String>,
+        communication: InterAgentCommunication,
+    },
     Message {
         #[serde(default, skip_serializing)]
         #[ts(skip)]

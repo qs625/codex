@@ -278,6 +278,16 @@ fn build_thread_context_usage_inner(
                     .tool_calls
                     .saturating_add(estimate_response_item_model_visible_bytes(item));
             }
+            ResponseItem::EventCommandEvent { .. } | ResponseItem::EventDrivenTool { .. } => {
+                categories.tools_metadata = categories
+                    .tools_metadata
+                    .saturating_add(estimate_response_item_model_visible_bytes(item));
+            }
+            ResponseItem::InterAgentCommunication { .. } => {
+                categories.llm_messages = categories
+                    .llm_messages
+                    .saturating_add(estimate_response_item_model_visible_bytes(item));
+            }
             ResponseItem::Other => {}
         }
     }

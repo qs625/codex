@@ -23,6 +23,7 @@ use crate::protocol::v2::TurnStatus;
 use crate::protocol::v2::UserInput;
 use crate::protocol::v2::WebSearchAction;
 use crate::protocol::v2::normalize_agent_message_item;
+use crate::protocol::v2::thread_item_from_inter_agent_communication;
 use codex_protocol::event_command::EventCommandEvent;
 use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::items::parse_hook_prompt_message;
@@ -340,6 +341,36 @@ impl ThreadHistoryBuilder {
                         .map(crate::protocol::v2::HookPromptFragment::from)
                         .collect(),
                 });
+            }
+            ResponseItem::EventCommandEvent { id, event } => {
+                let id = id.clone().unwrap_or_else(|| event.stable_item_id());
+                self.ensure_turn()
+                    .items
+                    .push(event_command_event_item(id, event.clone()));
+            }
+            ResponseItem::EventDrivenTool { id, trigger } => {
+                let id = id.clone().unwrap_or_else(|| self.next_item_id());
+                self.ensure_turn().items.push(ThreadItem::EventDrivenTool {
+                    id,
+                    tool: trigger.tool.clone(),
+                    title: trigger.title.clone(),
+                    text: trigger.text.clone(),
+                });
+            }
+            ResponseItem::InterAgentCommunication { id, communication } => {
+                if matches!(
+                    communication.operation,
+                    codex_protocol::protocol::InterAgentOperation::Unknown
+                ) {
+                    return;
+                }
+                let id = id.clone().unwrap_or_else(|| self.next_item_id());
+                self.ensure_turn()
+                    .items
+                    .push(thread_item_from_inter_agent_communication(
+                        id,
+                        communication.clone(),
+                    ));
             }
             ResponseItem::FunctionCall {
                 name,
@@ -3752,6 +3783,164 @@ mod tests {
             panic!("expected event command event item");
         };
         assert_eq!(id, &expected_id);
+    }
+
+    #[test]
+    fn typed_event_command_event_history_uses_typed_item_id() {
+        let event = EventCommandEvent {
+            subscription_id: "sub-1".into(),
+            kind: codex_protocol::event_command::EventCommandEventKind::Exited,
+            label: Some("tests".into()),
+            command: "cargo test".into(),
+            cwd: None,
+            line: None,
+            sequence: None,
+            exit_code: Some(0),
+            signal: None,
+            message: Some("done".into()),
+            truncated: false,
+            created_at: 1_700_000_000,
+        };
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::EventCommandEvent {
+                id: Some("typed-event-command".into()),
+                event,
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::EventCommandEvent {
+                id: "typed-event-command".into(),
+                subscription_id: "sub-1".into(),
+                kind: crate::protocol::v2::EventCommandEventKind::Exited,
+                label: Some("tests".into()),
+                command: "cargo test".into(),
+                cwd: None,
+                line: None,
+                sequence: None,
+                exit_code: Some(0),
+                signal: None,
+                message: Some("done".into()),
+                truncated: false,
+                created_at: 1_700_000_000,
+            }]
+        );
+    }
+
+    #[test]
+    fn typed_event_driven_tool_history_rebuilds_trigger_item() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::EventDrivenTool {
+                id: Some("typed-trigger".into()),
+                trigger: EventDrivenToolTrigger {
+                    tool: "fs_subscribe".into(),
+                    title: "File watch triggered".into(),
+                    text: "build.log changed".into(),
+                },
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::EventDrivenTool {
+                id: "typed-trigger".into(),
+                tool: "fs_subscribe".into(),
+                title: "File watch triggered".into(),
+                text: "build.log changed".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn typed_inter_agent_history_rebuilds_collab_item_without_agent_message_leak() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "completed".into(),
+            InterAgentOperation::ChildCompletion,
+        )
+        .with_status(codex_protocol::protocol::AgentStatus::Completed(Some(
+            "completed".into(),
+        )));
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::InterAgentCommunication {
+                id: Some("typed-collab".into()),
+                communication,
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::CollabAgentStatusUpdate {
+                id: "typed-collab".into(),
+                sender_thread_id: None,
+                sender_path: "/root/worker".into(),
+                recipient_thread_id: None,
+                recipient_path: "/root".into(),
+                status: CollabAgentState {
+                    path: Some("/root/worker".into()),
+                    status: CollabAgentStatus::Completed,
+                    message: Some("completed".into()),
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn typed_unknown_inter_agent_history_is_ignored() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "raw json should not leak".into(),
+            InterAgentOperation::Unknown,
+        );
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::InterAgentCommunication {
+                id: Some("typed-unknown-collab".into()),
+                communication,
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
     }
 
     #[test]

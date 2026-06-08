@@ -138,7 +138,12 @@ impl FsSubscriptionRegistry {
             .get_thread(thread_id)
             .await
             .map_err(|err| err.to_string())?;
-        let _ = thread.append_message(trigger.to_response_item()).await;
+        let _ = thread
+            .append_message(codex_protocol::models::ResponseItem::EventDrivenTool {
+                id: None,
+                trigger,
+            })
+            .await;
         Ok(())
     }
 
@@ -939,7 +944,9 @@ async fn send_event_command_event(
         .get_thread(thread_id)
         .await
         .map_err(|err| err.to_string())?;
-    let _ = thread.append_message(event.to_response_item()).await;
+    let _ = thread
+        .append_message(codex_protocol::models::ResponseItem::EventCommandEvent { id: None, event })
+        .await;
     Ok(())
 }
 

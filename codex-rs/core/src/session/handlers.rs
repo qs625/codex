@@ -14,6 +14,7 @@ use crate::session::session::Session;
 use crate::session::session::SessionSettingsUpdate;
 
 use crate::config::Config;
+use crate::pending_input::PendingInputItem;
 use crate::realtime_context::REALTIME_TURN_TOKEN_BUDGET;
 use crate::realtime_context::truncate_realtime_text_to_token_budget;
 use crate::realtime_conversation::REALTIME_USER_TEXT_PREFIX;
@@ -983,7 +984,10 @@ Approved action:
     }];
 
     if let Err(items) = sess.inject_response_items(items).await {
-        sess.queue_response_items_for_next_turn(items).await;
+        sess.queue_response_items_for_next_turn(
+            items.into_iter().map(PendingInputItem::from).collect(),
+        )
+        .await;
     }
 }
 

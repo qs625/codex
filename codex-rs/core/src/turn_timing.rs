@@ -161,6 +161,9 @@ fn response_item_records_turn_ttft(item: &ResponseItem) -> bool {
         ResponseItem::Message { .. } => {
             raw_assistant_output_text_from_item(item).is_some_and(|text| !text.is_empty())
         }
+        ResponseItem::EventCommandEvent { .. }
+        | ResponseItem::EventDrivenTool { .. }
+        | ResponseItem::InterAgentCommunication { .. } => false,
         ResponseItem::Reasoning {
             summary, content, ..
         } => {

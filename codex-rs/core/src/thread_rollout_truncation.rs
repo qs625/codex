@@ -156,6 +156,10 @@ fn is_real_user_message_boundary(item: &ResponseItem) -> bool {
 }
 
 fn is_trigger_turn_boundary(item: &ResponseItem) -> bool {
+    if let ResponseItem::InterAgentCommunication { communication, .. } = item {
+        return communication.trigger_turn;
+    }
+
     let ResponseItem::Message { role, content, .. } = item else {
         return false;
     };

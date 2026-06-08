@@ -2,8 +2,14 @@ use codex_api::OpenAiVerbosity;
 use codex_api::ResponsesApiRequest;
 use codex_api::TextControls;
 use codex_api::create_text_param_for_request;
+use codex_protocol::AgentPath;
 use codex_protocol::config_types::ServiceTier;
+use codex_protocol::event_command::EventCommandEvent;
+use codex_protocol::event_command::EventCommandEventKind;
+use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::models::FunctionCallOutputPayload;
+use codex_protocol::protocol::InterAgentCommunication;
+use codex_protocol::protocol::InterAgentOperation;
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -164,6 +170,62 @@ fn serializes_flex_service_tier_when_set() {
     assert_eq!(
         v.get("service_tier").and_then(|tier| tier.as_str()),
         Some("flex")
+    );
+}
+
+#[test]
+fn formats_typed_async_input_items_for_model() {
+    let event = EventCommandEvent {
+        subscription_id: "sub-command".to_string(),
+        kind: EventCommandEventKind::Output,
+        label: Some("build log".to_string()),
+        command: "tail -f /tmp/build.log".to_string(),
+        cwd: Some("/repo".to_string()),
+        line: Some("changed:/tmp/build.log".to_string()),
+        sequence: Some(1),
+        exit_code: None,
+        signal: None,
+        message: None,
+        truncated: false,
+        created_at: 1,
+    };
+    let trigger = EventDrivenToolTrigger {
+        tool: "fs_subscribe".to_string(),
+        title: "File watch triggered".to_string(),
+        text: "build.log changed".to_string(),
+    };
+    let communication = InterAgentCommunication::new(
+        AgentPath::root(),
+        AgentPath::root().join("worker").expect("recipient path"),
+        Vec::new(),
+        "hello".to_string(),
+        InterAgentOperation::SendMessage,
+    );
+    let prompt = Prompt {
+        input: vec![
+            ResponseItem::EventCommandEvent {
+                id: Some("typed-event-command".to_string()),
+                event: event.clone(),
+            },
+            ResponseItem::EventDrivenTool {
+                id: Some("typed-event-driven-tool".to_string()),
+                trigger: trigger.clone(),
+            },
+            ResponseItem::InterAgentCommunication {
+                id: Some("typed-inter-agent".to_string()),
+                communication: communication.clone(),
+            },
+        ],
+        ..Prompt::default()
+    };
+
+    assert_eq!(
+        prompt.get_formatted_input(),
+        vec![
+            event.to_response_item(),
+            trigger.to_response_item(),
+            communication.to_response_input_item().into(),
+        ]
     );
 }
 

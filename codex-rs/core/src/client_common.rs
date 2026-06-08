@@ -64,7 +64,12 @@ impl Default for Prompt {
 
 impl Prompt {
     pub(crate) fn get_formatted_input(&self) -> Vec<ResponseItem> {
-        let mut input = self.input.clone();
+        let mut input = self
+            .input
+            .iter()
+            .cloned()
+            .map(format_typed_response_item_for_model)
+            .collect::<Vec<_>>();
 
         // when using the *Freeform* apply_patch tool specifically, tool outputs
         // should be structured text, not json. Do NOT reserialize when using
@@ -79,6 +84,17 @@ impl Prompt {
         }
 
         input
+    }
+}
+
+fn format_typed_response_item_for_model(item: ResponseItem) -> ResponseItem {
+    match item {
+        ResponseItem::EventCommandEvent { event, .. } => event.to_response_item(),
+        ResponseItem::EventDrivenTool { trigger, .. } => trigger.to_response_item(),
+        ResponseItem::InterAgentCommunication { communication, .. } => {
+            communication.to_response_input_item().into()
+        }
+        item => item,
     }
 }
 

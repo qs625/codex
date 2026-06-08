@@ -40,6 +40,7 @@ use crate::environment_selection::ResolvedTurnEnvironments;
 use crate::exec_policy::ExecPolicyManager;
 use crate::parse_turn_item;
 use crate::path_utils::normalize_for_native_workdir;
+use crate::pending_input::PendingInputItem;
 use crate::realtime_conversation::RealtimeConversationManager;
 use crate::session_prefix::format_subagent_notification_message;
 use crate::skills::SkillRenderSideEffects;
@@ -3303,7 +3304,7 @@ impl Session {
         }
 
         let mut turn_state = active_turn.turn_state.lock().await;
-        turn_state.push_pending_input(input.into());
+        turn_state.push_pending_input(PendingInputItem::from(ResponseInputItem::from(input)));
         turn_state.accept_mailbox_delivery_for_current_turn();
         Ok(active_turn_id.clone())
     }
@@ -3322,7 +3323,7 @@ impl Session {
             Some(at) => {
                 let mut ts = at.turn_state.lock().await;
                 for item in input {
-                    ts.push_pending_input(item);
+                    ts.push_pending_input(PendingInputItem::from(item));
                 }
                 Ok(())
             }
@@ -3379,7 +3380,11 @@ impl Session {
     }
 
     pub(crate) fn enqueue_mailbox_communication(&self, communication: InterAgentCommunication) {
-        self.mailbox.send(communication);
+        self.mailbox.send(PendingInputItem::from(communication));
+    }
+
+    pub(crate) fn enqueue_async_input(&self, input: PendingInputItem) {
+        self.mailbox.send(input);
     }
 
     pub(crate) async fn has_trigger_turn_mailbox_items(&self) -> bool {
@@ -3394,7 +3399,7 @@ impl Session {
         clippy::await_holding_invalid_type,
         reason = "active turn checks and turn state updates must remain atomic"
     )]
-    pub async fn prepend_pending_input(&self, input: Vec<ResponseInputItem>) -> Result<(), ()> {
+    pub async fn prepend_pending_input(&self, input: Vec<PendingInputItem>) -> Result<(), ()> {
         let mut active = self.active_turn.lock().await;
         match active.as_mut() {
             Some(at) => {
@@ -3410,7 +3415,7 @@ impl Session {
         clippy::await_holding_invalid_type,
         reason = "active turn checks and turn state updates must remain atomic"
     )]
-    pub async fn get_pending_input(&self) -> Vec<ResponseInputItem> {
+    pub async fn get_pending_input(&self) -> Vec<PendingInputItem> {
         let (pending_input, accepts_mailbox_delivery) = {
             let mut active = self.active_turn.lock().await;
             match active.as_mut() {
@@ -3429,11 +3434,7 @@ impl Session {
         }
         let mailbox_items = {
             let mut mailbox_rx = self.mailbox_rx.lock().await;
-            mailbox_rx
-                .drain()
-                .into_iter()
-                .map(|mail| mail.to_response_input_item())
-                .collect::<Vec<_>>()
+            mailbox_rx.drain()
         };
         if pending_input.is_empty() {
             mailbox_items
@@ -3447,7 +3448,7 @@ impl Session {
     }
 
     /// Queue response items to be injected into the next active turn created for this session.
-    pub(crate) async fn queue_response_items_for_next_turn(&self, items: Vec<ResponseInputItem>) {
+    pub(crate) async fn queue_response_items_for_next_turn(&self, items: Vec<PendingInputItem>) {
         if items.is_empty() {
             return;
         }
@@ -3456,7 +3457,7 @@ impl Session {
         idle_pending_input.extend(items);
     }
 
-    pub(crate) async fn take_queued_response_items_for_next_turn(&self) -> Vec<ResponseInputItem> {
+    pub(crate) async fn take_queued_response_items_for_next_turn(&self) -> Vec<PendingInputItem> {
         std::mem::take(&mut *self.idle_pending_input.lock().await)
     }
 
