@@ -348,6 +348,26 @@ export type BootstrapResponse = {
   };
 };
 
+export type RunReasoningEffortOption = {
+  reasoningEffort: string;
+  description: string;
+};
+
+export type RunModel = {
+  id: string;
+  model: string;
+  displayName: string;
+  description: string;
+  hidden: boolean;
+  supportedReasoningEfforts: RunReasoningEffortOption[];
+  defaultReasoningEffort: string;
+  isDefault: boolean;
+};
+
+export type RunModelListResponse = {
+  data: RunModel[];
+};
+
 export type NotificationEnvelope = {
   type: "notification" | "status" | "ready";
   notification?: {

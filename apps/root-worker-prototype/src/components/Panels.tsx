@@ -11,6 +11,7 @@ import {
 import { AgentTreeNode } from "./AgentTree";
 import { ThinkingIndicator } from "./Conversation";
 import { ConversationVirtualList } from "./ConversationVirtualList";
+import { RunConfigPicker } from "./RunConfigPicker";
 import {
   CodeIcon,
   GearIcon,
@@ -27,9 +28,7 @@ import {
   getThreadSubtreeIds,
   getAgentRoleLabel,
   getThreadPresenceLabel,
-  getThreadModelLabel,
   getThreadPath,
-  getThreadReasoningLabel,
   isThreadThinking,
   isTurnInFlight,
   isRootThread,
@@ -147,6 +146,7 @@ export function ConversationPanel({
   onOpenLocalFile,
   onRemoveDraftImage,
   onRemoveDraftSkill,
+  onUpdateRunConfig,
   onSendMessage,
   onStopTurn,
   onToggleVoiceCapture,
@@ -173,6 +173,10 @@ export function ConversationPanel({
   onOpenLocalFile: (target: string) => void;
   onRemoveDraftImage: (imageId: string) => void;
   onRemoveDraftSkill: (path: string) => void;
+  onUpdateRunConfig: (selection: {
+    model: string;
+    reasoningEffort: string;
+  }) => void;
   onSendMessage: () => void;
   onStopTurn: () => void;
   onToggleVoiceCapture: () => void;
@@ -254,8 +258,11 @@ export function ConversationPanel({
             <span className="subtitle-separator">•</span>
             <span>{getThreadPresenceLabel(selectedThread)}</span>
             <span className="subtitle-separator">•</span>
-            <span className="thread-chip">{getThreadModelLabel(selectedThread)}</span>
-            <span className="thread-chip">reasoning: {getThreadReasoningLabel(selectedThread)}</span>
+            <RunConfigPicker
+              disabled={isSending || lastTurnInProgress}
+              onApply={onUpdateRunConfig}
+              selectedThread={selectedThread}
+            />
             {selectedThread ? (
               <span className="thread-chip thread-chip-cwd" title={selectedThread.cwd}>
                 cwd: {trimPath(selectedThread.cwd)}

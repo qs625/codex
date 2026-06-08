@@ -19,6 +19,11 @@ const { normalizeThreadSnapshot } = require("./threadSnapshots.cjs");
 const { withRealtimeConversationFeature } = require("./threadConfig.cjs");
 const { buildTurnInput } = require("./turnInput.cjs");
 const {
+  buildTurnStartParams,
+  mergeRuntimeOverride,
+  resolveRuntimeForResume,
+} = require("./turnStart.cjs");
+const {
   ensureDefaultWorkspace,
   resolveDefaultWorkspace,
 } = require("./workspace.cjs");
@@ -136,6 +141,11 @@ ipcMain.handle("codex:listThreads", async (_event, cwd = defaultWorkspace) => {
   return { data: await listThreads(cwd) };
 });
 
+ipcMain.handle("codex:listModels", async () => {
+  await ensureDefaultWorkspace();
+  return appServerClient.request("model/list", { includeHidden: false });
+});
+
 ipcMain.handle("codex:listSkills", async (_event, cwd = defaultWorkspace) => {
   await ensureDefaultWorkspace();
   return listSkills(cwd);
@@ -183,6 +193,15 @@ ipcMain.handle(
   },
 );
 
+ipcMain.handle("codex:setThreadRunConfig", async (_event, payload) => {
+  rememberThreadRuntime(payload.threadId, {
+    model: payload.model ?? null,
+    reasoningEffort: payload.reasoningEffort ?? null,
+    localOverride: true,
+  });
+  return { ok: true };
+});
+
 ipcMain.handle("codex:subscribeThread", async (_event, threadId) => {
   return subscribeThread(threadId);
 });
@@ -223,10 +242,15 @@ ipcMain.handle("codex:sendMessage", async (_event, payload) => {
     });
   }
 
-  return appServerClient.request("turn/start", {
-    threadId: payload.threadId,
-    input,
-  });
+  const response = await appServerClient.request(
+    "turn/start",
+    buildTurnStartParams(payload, input),
+  );
+  rememberThreadRuntime(
+    payload.threadId,
+    mergeRuntimeOverride(threadRuntimeById.get(payload.threadId), payload),
+  );
+  return response;
 });
 
 ipcMain.handle("codex:interruptTurn", async (_event, payload) => {
@@ -384,10 +408,8 @@ async function subscribeThread(threadId) {
     "thread/resume",
     withRealtimeConversationFeature({ threadId, excludeTurns: true }),
   );
-  const runtime = {
-    model: resume.model ?? null,
-    reasoningEffort: resume.reasoningEffort ?? null,
-  };
+  const existingRuntime = threadRuntimeById.get(threadId) ?? null;
+  const runtime = resolveRuntimeForResume(existingRuntime, resume);
   rememberThreadRuntime(threadId, runtime);
   return {
     thread: resume.thread

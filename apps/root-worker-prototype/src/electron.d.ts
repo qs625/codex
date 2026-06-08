@@ -20,6 +20,7 @@ declare global {
         };
       }>;
       listThreads: (cwd?: string) => Promise<{ data: unknown[] }>;
+      listModels: () => Promise<unknown>;
       listSkills: (cwd?: string) => Promise<{
         skills: unknown[];
         errors: string[];
@@ -33,6 +34,11 @@ declare global {
         threadId: string,
         includeTurns?: boolean,
       ) => Promise<{ thread: unknown }>;
+      setThreadRunConfig: (payload: {
+        threadId: string;
+        model: string;
+        reasoningEffort: string;
+      }) => Promise<{ ok: boolean }>;
       subscribeThread: (
         threadId: string,
       ) => Promise<{ thread?: unknown | null }>;
@@ -105,6 +111,8 @@ declare global {
       openLink: (target: string) => Promise<{ ok: boolean }>;
       sendMessage: (payload: {
         threadId: string;
+        model?: string | null;
+        effort?: string | null;
         text: string;
         skills?: Array<{
           name: string;

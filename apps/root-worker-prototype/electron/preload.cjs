@@ -4,12 +4,15 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   health: () => ipcRenderer.invoke("codex:health"),
   bootstrap: () => ipcRenderer.invoke("codex:bootstrap"),
   listThreads: (cwd) => ipcRenderer.invoke("codex:listThreads", cwd),
+  listModels: () => ipcRenderer.invoke("codex:listModels"),
   listSkills: (cwd) => ipcRenderer.invoke("codex:listSkills", cwd),
   createThread: (payload) => ipcRenderer.invoke("codex:createThread", payload),
   archiveThread: (threadId) =>
     ipcRenderer.invoke("codex:archiveThread", threadId),
   readThread: (threadId, includeTurns = true) =>
     ipcRenderer.invoke("codex:readThread", threadId, includeTurns),
+  setThreadRunConfig: (payload) =>
+    ipcRenderer.invoke("codex:setThreadRunConfig", payload),
   subscribeThread: (threadId) =>
     ipcRenderer.invoke("codex:subscribeThread", threadId),
   readLocalFile: (target) => ipcRenderer.invoke("codex:readLocalFile", target),

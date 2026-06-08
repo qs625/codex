@@ -34,6 +34,10 @@ import {
   readStoredRightPanelView,
   storeRightPanelView,
 } from "./lib/rightPanelView";
+import {
+  applyRunConfigOverride,
+  buildSendMessagePayload,
+} from "./lib/sendMessagePayload";
 import { isThreadNotFoundError, toErrorMessage } from "./lib/shared";
 import { decideThreadSelectionAction } from "./lib/threadSelectionPolicy";
 import {
@@ -155,6 +159,9 @@ function App() {
   const symbolBackStackRef = useRef<FileLocation[]>([]);
   const symbolForwardStackRef = useRef<FileLocation[]>([]);
   const selectedThreadIdRef = useRef<string | null>(null);
+  const runConfigOverrideByThreadIdRef = useRef<
+    Map<string, { model: string; reasoningEffort: string }>
+  >(new Map());
   const loadedThreadIdsRef = useRef<Set<string>>(new Set());
   const subscribedThreadIdsRef = useRef<Set<string>>(new Set());
   const subscribeThreadPromisesRef = useRef<Map<string, Promise<boolean>>>(
@@ -733,6 +740,7 @@ function App() {
       subscribedThreadIdsRef.current.delete(threadId);
       subscribeThreadPromisesRef.current.delete(threadId);
       loadingThreadIdsRef.current.delete(threadId);
+      runConfigOverrideByThreadIdRef.current.delete(threadId);
     }
     clearComposerDraftsForThreads(threadIdSet);
     setLatestPlansByThreadId((current) => {
@@ -763,6 +771,68 @@ function App() {
 
   function updateThreadNameLocally(threadId: string, name: Thread["name"]) {
     updateThreadLocally(threadId, (thread) => ({ ...thread, name }));
+  }
+
+  function updateThreadRunConfigLocally(
+    threadId: string,
+    selection: {
+      model: string | null;
+      reasoningEffort: string | null;
+    },
+  ) {
+    const existingThread =
+      threads.find((thread) => thread.id === threadId) ?? null;
+    const previousSelection = existingThread
+      ? {
+          model: existingThread.model,
+          reasoningEffort: existingThread.reasoningEffort,
+        }
+      : null;
+    updateThreadLocally(threadId, (thread) => {
+      return {
+        ...thread,
+        model: selection.model,
+        reasoningEffort: selection.reasoningEffort,
+      };
+    });
+    return previousSelection;
+  }
+
+  async function updateSelectedThreadRunConfig(selection: {
+    model: string;
+    reasoningEffort: string;
+  }) {
+    const threadId = selectedThreadId;
+    if (!threadId) {
+      return;
+    }
+    setError(null);
+    runConfigOverrideByThreadIdRef.current.set(threadId, selection);
+    const previousSelection = updateThreadRunConfigLocally(threadId, selection);
+    try {
+      await window.codexDesktop.setThreadRunConfig({
+        threadId,
+        ...selection,
+      });
+    } catch (runConfigError) {
+      if (previousSelection) {
+        updateThreadRunConfigLocally(threadId, previousSelection);
+        if (
+          previousSelection.model != null &&
+          previousSelection.reasoningEffort != null
+        ) {
+          runConfigOverrideByThreadIdRef.current.set(threadId, {
+            model: previousSelection.model,
+            reasoningEffort: previousSelection.reasoningEffort,
+          });
+        } else {
+          runConfigOverrideByThreadIdRef.current.delete(threadId);
+        }
+      } else {
+        runConfigOverrideByThreadIdRef.current.delete(threadId);
+      }
+      setError(toErrorMessage(runConfigError));
+    }
   }
 
   function updateThreadSkillsLocally(threadId: string, skills: ThreadSkill[]) {
@@ -939,16 +1009,18 @@ function App() {
     }
     setIsSending(true);
     setError(null);
+    const runConfigOverride = runConfigOverrideByThreadIdRef.current.get(threadId);
+    const threadForSend = applyRunConfigOverride(
+      selectedThread,
+      runConfigOverride ?? null,
+    );
     try {
       await window.codexDesktop.sendMessage({
-        threadId,
-        text: draftToSend.text.trim(),
-        skills: draftToSend.skills,
-        images: draftToSend.images.map(({ name, mimeType, bytes }) => ({
-          name,
-          mimeType,
-          bytes,
-        })),
+        ...buildSendMessagePayload({
+          draft: draftToSend,
+          thread: threadForSend,
+          threadId,
+        }),
       });
       for (const image of draftToSend.images) {
         revokeComposerImage(image);
@@ -1701,6 +1773,9 @@ function App() {
           onOpenLocalFile={(target) => void handleOpenLocalFile(target)}
           onRemoveDraftImage={removeDraftImage}
           onRemoveDraftSkill={removeDraftSkill}
+          onUpdateRunConfig={(selection) =>
+            void updateSelectedThreadRunConfig(selection)
+          }
           onSendMessage={() => void sendMessage()}
           onStopTurn={() => void interruptCurrentTurn()}
           onToggleVoiceCapture={toggleVoiceCapture}
