@@ -8,6 +8,8 @@ use bytes::Bytes;
 use codex_api::ApiError;
 use codex_api::AuthError;
 use codex_api::AuthProvider;
+use codex_api::ChatCompletionsClient;
+use codex_api::ChatCompletionsPath;
 use codex_api::Compression;
 use codex_api::Provider;
 use codex_api::ResponsesApiRequest;
@@ -27,6 +29,7 @@ use http::HeaderMap;
 use http::HeaderValue;
 use http::StatusCode;
 use pretty_assertions::assert_eq;
+use serde_json::json;
 
 fn assert_path_ends_with(requests: &[Request], suffix: &str) {
     assert_eq!(requests.len(), 1);
@@ -89,6 +92,52 @@ impl HttpTransport for RecordingTransport {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+struct ExecuteRecordingState {
+    requests: Arc<Mutex<Vec<Request>>>,
+}
+
+impl ExecuteRecordingState {
+    fn record(&self, req: Request) {
+        let mut guard = self
+            .requests
+            .lock()
+            .unwrap_or_else(|err| panic!("mutex poisoned: {err}"));
+        guard.push(req);
+    }
+
+    fn take_requests(&self) -> Vec<Request> {
+        let mut guard = self
+            .requests
+            .lock()
+            .unwrap_or_else(|err| panic!("mutex poisoned: {err}"));
+        std::mem::take(&mut *guard)
+    }
+}
+
+#[derive(Clone)]
+struct ExecuteRecordingTransport {
+    state: ExecuteRecordingState,
+}
+
+#[async_trait]
+impl HttpTransport for ExecuteRecordingTransport {
+    async fn execute(&self, req: Request) -> Result<Response, TransportError> {
+        self.state.record(req);
+        Ok(Response {
+            status: StatusCode::OK,
+            headers: HeaderMap::new(),
+            body: Bytes::from_static(
+                br#"{"id":"chatcmpl_1","choices":[{"message":{"role":"assistant","content":"hi"}}]}"#,
+            ),
+        })
+    }
+
+    async fn stream(&self, _req: Request) -> Result<StreamResponse, TransportError> {
+        Err(TransportError::Build("stream should not run".to_string()))
+    }
+}
+
 #[derive(Clone, Default)]
 struct NoAuth;
 
@@ -137,6 +186,37 @@ fn provider(name: &str) -> Provider {
             retry_transport: true,
         },
         stream_idle_timeout: Duration::from_millis(10),
+    }
+}
+
+fn provider_with_base_url(name: &str, base_url: &str) -> Provider {
+    Provider {
+        base_url: base_url.to_string(),
+        ..provider(name)
+    }
+}
+
+fn chat_request() -> ResponsesApiRequest {
+    ResponsesApiRequest {
+        model: "gpt-test".into(),
+        instructions: String::new(),
+        input: vec![ResponseItem::Message {
+            id: None,
+            role: "user".into(),
+            content: vec![ContentItem::InputText { text: "hi".into() }],
+            phase: None,
+        }],
+        tools: Vec::new(),
+        tool_choice: "auto".into(),
+        parallel_tool_calls: false,
+        reasoning: None,
+        store: false,
+        stream: true,
+        include: Vec::new(),
+        service_tier: None,
+        prompt_cache_key: None,
+        text: None,
+        client_metadata: None,
     }
 }
 
@@ -269,6 +349,79 @@ async fn responses_client_uses_responses_path() -> Result<()> {
 
     let requests = state.take_stream_requests();
     assert_path_ends_with(&requests, "/responses");
+    Ok(())
+}
+
+#[tokio::test]
+async fn chat_completions_client_appends_chat_completions_path() -> Result<()> {
+    let state = ExecuteRecordingState::default();
+    let transport = ExecuteRecordingTransport {
+        state: state.clone(),
+    };
+    let client = ChatCompletionsClient::new(
+        transport,
+        provider("openai-compatible"),
+        Arc::new(NoAuth),
+        ChatCompletionsPath::AppendChatCompletions,
+    );
+
+    let _stream = client
+        .create(chat_request(), HeaderMap::new())
+        .await
+        .expect("chat completions request should succeed");
+
+    let requests = state.take_requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].url, "https://example.com/v1/chat/completions");
+    let body = requests[0]
+        .body
+        .as_ref()
+        .and_then(RequestBody::json)
+        .expect("json body");
+    assert_eq!(
+        body,
+        &json!({
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": false
+        })
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn azure_chat_completions_client_uses_full_endpoint() -> Result<()> {
+    let state = ExecuteRecordingState::default();
+    let transport = ExecuteRecordingTransport {
+        state: state.clone(),
+    };
+    let mut provider = provider_with_base_url(
+        "azure-compatible",
+        "https://example.com/openai/deployments/gpt/chat/completions",
+    );
+    provider.query_params = Some(
+        [("api-version".to_string(), "2024-03-01-preview".to_string())]
+            .into_iter()
+            .collect(),
+    );
+    let client = ChatCompletionsClient::new(
+        transport,
+        provider,
+        Arc::new(NoAuth),
+        ChatCompletionsPath::FullEndpoint,
+    );
+
+    let _stream = client
+        .create(chat_request(), HeaderMap::new())
+        .await
+        .expect("azure chat completions request should succeed");
+
+    let requests = state.take_requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].url,
+        "https://example.com/openai/deployments/gpt/chat/completions?api-version=2024-03-01-preview"
+    );
     Ok(())
 }
 

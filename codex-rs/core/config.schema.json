@@ -3961,6 +3961,20 @@
             "responses"
           ],
           "type": "string"
+        },
+        {
+          "description": "OpenAI-compatible Chat Completions API at `<base_url>/chat/completions`.",
+          "enum": [
+            "chat_completions"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Azure-compatible Chat Completions API where `base_url` is the full endpoint.",
+          "enum": [
+            "azure_chat_completions"
+          ],
+          "type": "string"
         }
       ]
     },

@@ -120,6 +120,33 @@ wire_api = "chat"
 }
 
 #[test]
+fn test_deserialize_chat_completions_wire_api() {
+    let provider_toml = r#"
+name = "OpenAI-compatible Chat Completions"
+base_url = "https://api.example.com/v1"
+env_key = "EXAMPLE_API_KEY"
+wire_api = "chat_completions"
+        "#;
+
+    let provider: ModelProviderInfo = toml::from_str(provider_toml).unwrap();
+    assert_eq!(provider.wire_api, WireApi::ChatCompletions);
+}
+
+#[test]
+fn test_deserialize_azure_chat_completions_wire_api() {
+    let provider_toml = r#"
+name = "Azure-compatible Chat Completions"
+base_url = "https://example.com/openai/deployments/gpt/chat/completions"
+env_key = "EXAMPLE_API_KEY"
+wire_api = "azure_chat_completions"
+query_params = { api-version = "2024-03-01-preview" }
+        "#;
+
+    let provider: ModelProviderInfo = toml::from_str(provider_toml).unwrap();
+    assert_eq!(provider.wire_api, WireApi::AzureChatCompletions);
+}
+
+#[test]
 fn test_deserialize_websocket_connect_timeout() {
     let provider_toml = r#"
 name = "OpenAI"
