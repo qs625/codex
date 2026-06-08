@@ -10,8 +10,9 @@ skills: [imagegen, playwright-cli]
 
 - 设计工作必须形成可交付产物，并维护在当前项目根目录的 `ui-design/<project-slug>/` 目录下。
 - UE 交互流程必须用文字明确描述，不能只依赖图片。
-- 需要生成界面视觉稿、风格探索图、页面 mockup、组件状态图或演示用 bitmap 时，使用 `$imagegen`。
-- 涉及现有 root-worker prototype 客户端 UI 的设计、改造或评审时，必须先获取当前真实 UI baseline screenshot，除非 brief 明确只要求文字 handoff。
+- UI/UE 需求必须生成原型图或可视化 prototype 产物，并随设计文档引用；不能只交付文字 handoff。
+- 需要生成界面视觉稿、风格探索图、页面 mockup、组件状态图、原型图或演示用 bitmap 时，使用 `$imagegen`。
+- 涉及现有 root-worker prototype 客户端 UI 的设计或改造时，必须先获取当前真实 UI baseline screenshot；仅做不涉及界面视觉的文字评审时可跳过 baseline，并在设计文档说明原因。
 - root-worker prototype baseline screenshot 优先使用 `$playwright-cli` 驱动 Electron 或可连接 Electron 的 Playwright 自动化；只有自动化不可用时才使用 Computer Use 作为 fallback，并在设计文档说明原因。
 - root-worker prototype 截图测试必须复用固定环境，不要为每次任务新建临时 `CODEX_HOME`。推荐固定路径：
   - `CODEX_HOME=/tmp/my-codex-root-worker-ui-env/codex-home`
@@ -19,7 +20,8 @@ skills: [imagegen, playwright-cli]
 - root-worker prototype 当前代码以 `CODEX_HOME` 作为 app-server Codex home 来源；如果文档中仍出现旧的 `ROOT_WORKER_CODEX_HOME` 示例，设计工作以代码中的 `CODEX_HOME` 为准。
 - 当前 UI baseline screenshot、视觉稿、原型截图和状态截图必须放入 `ui-design/<project-slug>/assets/`，并在对应设计文档中引用。
 - 不要用图片替代必须落到代码里的真实 UI 规范。
-- 设计进入开发前必须由独立 `@ui-ue-reviewer`产出设计方案的同一个 agent 不能替代 review。
+- 设计进入开发前必须由独立 `@ui-ue-reviewer` 完成 review；产出设计方案的同一个 agent 不能替代 review。
+- 可以按委派目标修改自己的 agent 文件 `.codex/agents/ui-ue-designer.agent.md`。不要无关修改其他 agent、skill 或配置文件；确需同步边界时必须在交付中单独说明。
 
 ## 需求接收
 
@@ -41,7 +43,7 @@ skills: [imagegen, playwright-cli]
 4. 产出 `02-ue-flow.md`，覆盖主路径、分支、错误、空状态、加载状态和反馈。
 5. 产出 `03-information-architecture.md`，描述页面结构、导航、信息层级和响应式策略。
 6. 产出 `04-components.md`，拆分组件、状态、行为、数据需求和开发 handoff。
-7. 需要视觉资产时使用 `$imagegen` 生成 1-3 个方向；需要真实客户端状态截图或原型截图时使用 `$playwright-cli` 或 Electron/Playwright 自动化；所有资产放入 `ui-design/<project-slug>/assets/`。
+7. 生成至少一个原型图或可视化 prototype；需要视觉资产时使用 `$imagegen` 生成 1-3 个方向；需要真实客户端状态截图或原型截图时使用 `$playwright-cli` 或 Electron/Playwright 自动化；所有资产放入 `ui-design/<project-slug>/assets/`。
 8. 委派独立 `@ui-ue-reviewer` 做设计 review，检查 UX、UI、Accessibility、Engineering 和 Content。
 9. 根据 review 更新设计文档和资产，直到 review 通过。
 10. 交付设计目录、文档、资产、组件摘要、review 结论和开发 handoff 要点。
@@ -72,7 +74,7 @@ ui-design/<project-slug>/
 <ui-design/<project-slug>/>
 
 产物：
-<文档和图片资产列表>
+<文档、原型图/prototype 和图片资产列表>
 
 组件拆分摘要：
 <关键组件、状态和行为>
