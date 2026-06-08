@@ -868,6 +868,48 @@ test("mergeThreadSnapshot drops duplicate completed live agent turns already pre
   assert.deepEqual(merged.turns, [readTurn]);
 });
 
+test("mergeThreadSnapshot drops duplicate live child completion already present in the read snapshot", () => {
+  const liveItem: ThreadItem = {
+    type: "collabAgentStatusUpdate",
+    id: "live-completion",
+    senderThreadId: "thread-child",
+    senderPath: "/root/worker",
+    recipientThreadId: "thread-1",
+    recipientPath: "/root",
+    status: {
+      path: "/root/worker",
+      status: "completed",
+      message: "done",
+    },
+  };
+  const liveThread = updateThreadItem(makeThread(), "live-turn", liveItem, {
+    completedAtMs: 3_000,
+    syntheticTurnStatus: "completed",
+  });
+  const readTurn = {
+    id: "read-turn",
+    items: [
+      {
+        ...liveItem,
+        id: "read-completion",
+      },
+    ],
+    itemsView: "full" as const,
+    status: "completed" as const,
+    error: null,
+    startedAt: 3,
+    completedAt: 3,
+    durationMs: null,
+  };
+
+  const merged = mergeThreadSnapshot(liveThread, {
+    ...makeThread(),
+    turns: [readTurn],
+  });
+
+  assert.deepEqual(merged.turns, [readTurn]);
+});
+
 test("mergeThreadSnapshot preserves completed full agent turns with matching content", () => {
   const liveTurn = {
     id: "live-turn",
@@ -1697,7 +1739,7 @@ test("pending thread updates replay when the thread snapshot arrives", () => {
 });
 
 for (const terminalStatus of ["completed", "errored", "shutdown", "notFound"]) {
-  test(`updateThreadItem preserves repeated terminal collab status updates for ${terminalStatus}`, () => {
+  test(`updateThreadItem merges repeated terminal collab status updates for ${terminalStatus}`, () => {
     const thread = updateThreadItem(makeThread(), "turn-1", {
       type: "collabAgentStatusUpdate",
       id: "first-completion",
@@ -1725,18 +1767,6 @@ for (const terminalStatus of ["completed", "errored", "shutdown", "notFound"]) {
     });
 
     assert.deepEqual(updated.turns[0]?.items, [
-      {
-        type: "collabAgentStatusUpdate",
-        id: "first-completion",
-        senderThreadId: "thread-child",
-        senderPath: "/root/worker",
-        recipientThreadId: "thread-1",
-        recipientPath: "/root",
-        status: {
-          status: terminalStatus,
-          message: "done",
-        },
-      },
       {
         type: "collabAgentStatusUpdate",
         id: "second-completion",
@@ -2553,7 +2583,7 @@ test("treeThreadStatusClass ignores process exit restore failures", () => {
     ],
   };
 
-  assert.equal(treeThreadStatusClass(makeTreeNode(thread)), "doing");
+  assert.equal(treeThreadStatusClass(makeTreeNode(thread)), "todo");
 });
 
 test("treeThreadStatusClass ignores event tool subscriptions after unsubscribe", () => {
@@ -2594,7 +2624,7 @@ test("treeThreadStatusClass ignores event tool subscriptions after unsubscribe",
     ],
   };
 
-  assert.equal(treeThreadStatusClass(makeTreeNode(thread)), "doing");
+  assert.equal(treeThreadStatusClass(makeTreeNode(thread)), "todo");
 });
 
 test("treeThreadStatusClass rolls descendant active into parent waiting", () => {

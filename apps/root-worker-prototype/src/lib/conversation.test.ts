@@ -750,7 +750,7 @@ test("renders context compaction as a compact boundary entry", () => {
     {
       id: "compact-1",
       kind: "compact",
-      text: "Earlier conversation was replaced with compacted model context.",
+      text: "Previous conversation was archived; compacted model context continues below.",
       replacementHistoryStatus: "missing",
       replacementHistoryEntries: null,
     },
@@ -1041,7 +1041,7 @@ test("places replacement history into the main conversation after archived histo
           {
             id: "compact-1",
             kind: "compact",
-            text: "Earlier conversation was replaced with compacted model context.",
+            text: "Previous conversation was archived; compacted model context continues below.",
             archivedEntryCount: undefined,
             isReplacementHistory: undefined,
           },
@@ -1086,6 +1086,138 @@ test("places replacement history into the main conversation after archived histo
           },
         ],
       },
+    ],
+  );
+});
+
+test("deduplicates compact replacement child completion against live status update", () => {
+  const childCompletionEnvelope = JSON.stringify({
+    author: "/root/worker",
+    recipient: "/root",
+    other_recipients: [],
+    content: "done",
+    operation: "childCompletion",
+    trigger_turn: true,
+    sender_thread_id: "thread-child",
+    recipient_thread_id: "thread-1",
+  });
+  const state = buildConversationState(
+    makeThread([
+      {
+        type: "userMessage",
+        id: "old-user",
+        content: [{ type: "text", text: "old request" }],
+      },
+      {
+        type: "contextCompaction",
+        id: "compact-1",
+        replacementHistory: [
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: childCompletionEnvelope }],
+          },
+        ],
+      },
+      {
+        type: "collabAgentStatusUpdate",
+        id: "live-completion",
+        senderThreadId: "thread-child",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        status: {
+          path: "/root/worker",
+          status: "completed",
+          message: "done",
+        },
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    state.cells.map((cell) => cell.kind),
+    ["archive", "compact", "tool"],
+  );
+  assert.equal(state.cells[0]?.entries[0]?.archivedEntryCount, 1);
+  assert.deepEqual(
+    state.cells
+      .flatMap((cell) => cell.entries)
+      .filter(
+        (entry) =>
+          entry.toolCategory === "childCompletion" ||
+          entry.toolCategory === "subagentNotification",
+      )
+      .map((entry) => [entry.toolName, entry.text]),
+    [
+      [
+        "/root/worker subagent completion",
+        "Received child completion from /root/worker: done",
+      ],
+    ],
+  );
+});
+
+test("preserves later distinct child completion after compact replacement", () => {
+  const childCompletionEnvelope = JSON.stringify({
+    author: "/root/worker",
+    recipient: "/root",
+    other_recipients: [],
+    content: "first done",
+    operation: "childCompletion",
+    trigger_turn: true,
+    sender_thread_id: "thread-child",
+    recipient_thread_id: "thread-1",
+  });
+  const state = buildConversationState(
+    makeThread([
+      {
+        type: "userMessage",
+        id: "old-user",
+        content: [{ type: "text", text: "old request" }],
+      },
+      {
+        type: "contextCompaction",
+        id: "compact-1",
+        replacementHistory: [
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: childCompletionEnvelope }],
+          },
+        ],
+      },
+      {
+        type: "collabAgentStatusUpdate",
+        id: "later-completion",
+        senderThreadId: "thread-child",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        status: {
+          path: "/root/worker",
+          status: "completed",
+          message: "second done",
+        },
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    state.cells
+      .flatMap((cell) => cell.entries)
+      .filter(
+        (entry) =>
+          entry.toolCategory === "childCompletion" ||
+          entry.toolCategory === "subagentNotification",
+      )
+      .map((entry) => [entry.toolName, entry.text]),
+    [
+      [
+        "/root/worker subagent completion",
+        "Received child completion from /root/worker: first done",
+      ],
+      ["/root/worker subagent completion", "/root/worker • completed • second done"],
     ],
   );
 });
@@ -1148,7 +1280,7 @@ test("archives earlier compact boundaries when a later compact replaces context 
       {
         id: "compact-2",
         kind: "compact",
-        text: "Earlier conversation was replaced with compacted model context.",
+        text: "Previous conversation was archived; compacted model context continues below.",
       },
       {
         id: "compact-2:replacement:0",

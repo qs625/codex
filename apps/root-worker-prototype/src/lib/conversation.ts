@@ -84,7 +84,6 @@ export function buildConversationState(
       flatItemIndex += 1;
     }
   }
-
   return {
     threadId: thread.id,
     author,
@@ -148,19 +147,11 @@ function buildConversationItemEntries(
     const collabMessage = parseCollabEnvelopeText(item.text, item);
     if (collabMessage) {
       return [
-        {
+        buildCollabAgentMessageEntry(collabMessage, {
           id: item.id,
-          kind: "tool" as const,
           author,
-          role: "system" as const,
-          text: summarizeCollabAgentMessage(collabMessage),
           timestamp,
-          attachments: [],
-          toolName: formatCollabAgentMessageTitle(collabMessage),
-          toolStatus: "completed",
-          toolDetails: formatCollabAgentMessageDetails(collabMessage),
-          toolCategory: formatCollabAgentMessageCategory(collabMessage),
-        },
+        }),
       ];
     }
 
@@ -250,19 +241,11 @@ function buildConversationItemEntries(
 
   if (item.type === "collabAgentMessage") {
     return [
-      {
+      buildCollabAgentMessageEntry(item, {
         id: item.id,
-        kind: "tool" as const,
         author,
-        role: "system" as const,
-        text: summarizeCollabAgentMessage(item),
         timestamp,
-        attachments: [],
-        toolName: formatCollabAgentMessageTitle(item),
-        toolStatus: "completed",
-        toolDetails: formatCollabAgentMessageDetails(item),
-        toolCategory: formatCollabAgentMessageCategory(item),
-      },
+      }),
     ];
   }
 
@@ -299,7 +282,7 @@ function buildConversationItemEntries(
         kind: "compact" as const,
         author,
         role: "system" as const,
-        text: "Earlier conversation was replaced with compacted model context.",
+        text: "Previous conversation was archived; compacted model context continues below.",
         timestamp,
         attachments: [],
         replacementHistoryEntries,
@@ -588,14 +571,26 @@ function buildReplacementHistoryEntry(
   switch (item.type) {
     case "message": {
       const role = stringOrFallback(item.role, "message");
+      const text = extractResponseContentText(item.content);
+      if (text) {
+        const collabMessage = parseCollabEnvelopeText(text, {
+          id,
+        });
+        if (collabMessage) {
+          return buildCollabAgentMessageEntry(collabMessage, {
+            id,
+            author,
+            timestamp,
+          });
+        }
+      }
       return {
         id,
         kind: "message",
         author: formatReplacementMessageAuthor(role, author),
         role: role === "user" ? "user" : role === "assistant" ? "agent" : "system",
         text:
-          extractResponseContentText(item.content) ||
-          `Replacement history ${index + 1}: empty ${role} message.`,
+          text || `Replacement history ${index + 1}: empty ${role} message.`,
         timestamp,
         attachments: [],
       };
@@ -726,6 +721,60 @@ function buildReplacementHistoryEntry(
         details: formatRawJson(item),
       });
   }
+}
+
+function buildCollabAgentMessageEntry(
+  item: Extract<ThreadItem, { type: "collabAgentMessage" }>,
+  {
+    id,
+    author,
+    timestamp,
+  }: {
+    id: string;
+    author: string;
+    timestamp: string;
+  },
+): ConversationEntry {
+  return {
+    id,
+    kind: "tool",
+    author,
+    role: "system",
+    text: summarizeCollabAgentMessage(item),
+    timestamp,
+    attachments: [],
+    toolName: formatCollabAgentMessageTitle(item),
+    toolStatus: "completed",
+    toolDetails: formatCollabAgentMessageDetails(item),
+    toolCategory: formatCollabAgentMessageCategory(item),
+  };
+}
+
+function standaloneNotificationEntryKey(entry: ConversationEntry) {
+  if (!isStandaloneNotificationEntry(entry)) {
+    return null;
+  }
+  const details = entry.toolDetails ?? "";
+  const from = detailsSectionValue(details, "From");
+  const to = detailsSectionValue(details, "To");
+  const message = detailsSectionValue(details, "Message");
+  const status =
+    detailsSectionValue(details, "Status") ??
+    (entry.toolCategory === "childCompletion" ? "completed" : null);
+  return [
+    "standaloneNotification",
+    from ?? "",
+    to ?? "",
+    status ?? "",
+    message ?? "",
+  ].join("\u{1f}");
+}
+
+function detailsSectionValue(details: string, label: string) {
+  const section = details
+    .split("\n\n")
+    .find((section) => section.startsWith(`${label}\n`));
+  return section?.slice(label.length + 1).trim() || null;
 }
 
 function replacementToolEntry({
@@ -967,10 +1016,30 @@ export function buildConversationCells(
 ): ConversationCell[] {
   const cells: ConversationCell[] = [];
   let segmentEntries: ConversationEntry[] = [];
+  const notificationKeys = new Set<string>();
+  const replacementNotificationKeys = new Set<string>();
+
+  const appendSegmentEntry = (entry: ConversationEntry) => {
+    const key = standaloneNotificationEntryKey(entry);
+    if (
+      key &&
+      notificationKeys.has(key) &&
+      (entry.isReplacementHistory || replacementNotificationKeys.has(key))
+    ) {
+      return;
+    }
+    segmentEntries.push(entry);
+    if (key) {
+      notificationKeys.add(key);
+      if (entry.isReplacementHistory) {
+        replacementNotificationKeys.add(key);
+      }
+    }
+  };
 
   for (const entry of entries) {
     if (entry.kind !== "compact") {
-      segmentEntries.push(entry);
+      appendSegmentEntry(entry);
       continue;
     }
 
@@ -989,7 +1058,10 @@ export function buildConversationCells(
       entries: [entry],
     });
 
-    segmentEntries = [...(entry.replacementHistoryEntries ?? [])];
+    segmentEntries = [];
+    for (const replacementEntry of entry.replacementHistoryEntries ?? []) {
+      appendSegmentEntry(replacementEntry);
+    }
   }
 
   cells.push(...buildConversationCellsForSegment(segmentEntries));

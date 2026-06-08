@@ -265,17 +265,34 @@ fn captured_child_completion(
     child_agent_path: &AgentPath,
     parent_agent_path: &AgentPath,
 ) -> bool {
-    captured_ops.iter().any(|(thread_id, op)| {
-        *thread_id == parent_thread_id
-            && matches!(
-                op,
-                Op::InterAgentCommunication { communication }
-                    if communication.author == *child_agent_path
-                        && communication.recipient == *parent_agent_path
-                        && communication.operation
-                            == codex_protocol::protocol::InterAgentOperation::ChildCompletion
-            )
-    })
+    count_captured_child_completions(
+        captured_ops,
+        parent_thread_id,
+        child_agent_path,
+        parent_agent_path,
+    ) > 0
+}
+
+fn count_captured_child_completions(
+    captured_ops: &[(ThreadId, Op)],
+    parent_thread_id: ThreadId,
+    child_agent_path: &AgentPath,
+    parent_agent_path: &AgentPath,
+) -> usize {
+    captured_ops
+        .iter()
+        .filter(|(thread_id, op)| {
+            *thread_id == parent_thread_id
+                && matches!(
+                    op,
+                    Op::InterAgentCommunication { communication }
+                        if communication.author == *child_agent_path
+                            && communication.recipient == *parent_agent_path
+                            && communication.operation
+                                == codex_protocol::protocol::InterAgentOperation::ChildCompletion
+                )
+        })
+        .count()
 }
 
 #[tokio::test]
@@ -1544,6 +1561,12 @@ async fn multi_agent_v2_completion_waits_for_active_event_subscription() {
         .get_thread(worker_thread_id)
         .await
         .expect("worker thread should exist");
+    worker_thread
+        .codex
+        .session
+        .abort_all_tasks(TurnAbortReason::Replaced)
+        .await;
+    sleep(Duration::from_millis(100)).await;
     harness
         .manager
         .active_event_subscriptions()
@@ -1649,13 +1672,20 @@ async fn multi_agent_v2_restored_event_subscription_blocks_completion_until_clea
         .manager
         .maybe_notify_parent_of_final_status(worker_thread_id)
         .await;
+    harness
+        .manager
+        .maybe_notify_parent_of_final_status(worker_thread_id)
+        .await;
     let captured_ops = harness.manager.captured_ops();
-    assert!(captured_child_completion(
-        &captured_ops[baseline_op_count..],
-        root_thread_id,
-        &worker_path,
-        &AgentPath::root(),
-    ));
+    assert_eq!(
+        count_captured_child_completions(
+            &captured_ops[baseline_op_count..],
+            root_thread_id,
+            &worker_path,
+            &AgentPath::root(),
+        ),
+        1
+    );
 }
 
 #[tokio::test]

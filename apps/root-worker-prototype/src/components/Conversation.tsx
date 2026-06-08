@@ -786,7 +786,7 @@ export const CompactRow = memo(function CompactRow({ entry }: CompactRowProps) {
             ) : entry.replacementHistoryStatus === "empty" ? (
               <em>No replacement history was provided after compacting.</em>
             ) : (
-              <em>The replacement history is shown below as the active chat list.</em>
+              <em>Open Previous conversation for older messages; compacted context is shown below.</em>
             )}
           </div>
           <div className="compact-meta">

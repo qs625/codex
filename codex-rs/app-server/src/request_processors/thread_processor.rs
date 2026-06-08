@@ -2038,8 +2038,17 @@ impl ThreadRequestProcessor {
             .load_persisted_thread_for_read(thread_id, include_turns)
             .await?
         {
-            // Persisted metadata-only read: no live thread state is needed.
-            (thread, false)
+            // Persisted metadata-only read: preserve stored fields, but still
+            // consult live state when the thread is loaded so status reflects
+            // an in-progress turn before watch status catches up.
+            let has_live_in_progress_turn = if loaded_thread.is_some() {
+                self.active_in_progress_turn_snapshot(thread_id)
+                    .await
+                    .is_some()
+            } else {
+                false
+            };
+            (thread, has_live_in_progress_turn)
         } else if let Some(loaded_thread) = loaded_thread.as_ref() {
             // Loaded metadata-only read before persistence is materialized: build
             // the response from the live thread snapshot.
@@ -2067,6 +2076,12 @@ impl ThreadRequestProcessor {
             has_live_in_progress_turn,
         );
         Ok(thread)
+    }
+
+    async fn active_in_progress_turn_snapshot(&self, thread_id: ThreadId) -> Option<Turn> {
+        let thread_state = self.thread_state_manager.thread_state(thread_id).await;
+        let state = thread_state.lock().await;
+        state.active_in_progress_turn_snapshot()
     }
 
     async fn load_persisted_thread_for_read(
@@ -2169,16 +2184,8 @@ impl ThreadRequestProcessor {
             );
         }
 
-        let active_turn = if include_turns {
-            let thread_state = self.thread_state_manager.thread_state(thread_id).await;
-            let state = thread_state.lock().await;
-            state.active_in_progress_turn_snapshot()
-        } else {
-            None
-        };
-        let has_live_in_progress_turn = active_turn
-            .as_ref()
-            .is_some_and(|turn| matches!(turn.status, TurnStatus::InProgress));
+        let active_turn = self.active_in_progress_turn_snapshot(thread_id).await;
+        let has_live_in_progress_turn = active_turn.is_some();
         if include_turns {
             populate_thread_turns_from_history(thread, &history.items, active_turn.as_ref());
         }
@@ -2532,6 +2539,7 @@ impl ThreadRequestProcessor {
                 sync_active_event_subscriptions(
                     active_event_subscriptions.as_ref(),
                     &self.thread_watch_manager,
+                    Some(self.thread_manager.as_ref()),
                     thread_id,
                     persisted_subscription_count,
                 )
@@ -4126,14 +4134,24 @@ pub(crate) fn thread_from_stored_thread(
 async fn sync_active_event_subscriptions(
     active_event_subscriptions: &ActiveEventSubscriptionTracker,
     thread_watch_manager: &ThreadWatchManager,
+    thread_manager: Option<&ThreadManager>,
     thread_id: ThreadId,
     active_count: usize,
 ) {
+    let previous_count = active_event_subscriptions.active_count(thread_id);
     active_event_subscriptions.set_active_count(thread_id, active_count);
     let thread_id_str = thread_id.to_string();
     thread_watch_manager
         .note_active_event_subscriptions(thread_id_str.as_str(), active_count)
         .await;
+    if previous_count > 0
+        && active_count == 0
+        && let Some(thread_manager) = thread_manager
+    {
+        thread_manager
+            .maybe_notify_parent_of_final_status(thread_id)
+            .await;
+    }
 }
 
 fn persisted_subscription_count(thread: &StoredThread) -> usize {

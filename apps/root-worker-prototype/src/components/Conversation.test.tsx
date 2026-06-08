@@ -108,7 +108,7 @@ test("compact rows point to replacement history in the active chat list", () => 
         kind: "compact",
         author: "Root",
         role: "system",
-        text: "Earlier conversation was replaced with compacted model context.",
+        text: "Previous conversation was archived; compacted model context continues below.",
         timestamp: "09:43",
         attachments: [],
         replacementHistoryStatus: "available",
@@ -120,7 +120,7 @@ test("compact rows point to replacement history in the active chat list", () => 
 
   assert.match(markup, /Context compacted/);
   assert.match(markup, /2 replacement items/);
-  assert.match(markup, /replacement history is shown below/);
+  assert.match(markup, /compacted context is shown below/);
   assert.doesNotMatch(markup, /recent request/);
   assert.doesNotMatch(markup, /functions\/exec_command/);
 });
@@ -133,7 +133,7 @@ test("compact rows explain unavailable replacement history", () => {
         kind: "compact",
         author: "Root",
         role: "system",
-        text: "Earlier conversation was replaced with compacted model context.",
+        text: "Previous conversation was archived; compacted model context continues below.",
         timestamp: "09:43",
         attachments: [],
         replacementHistoryStatus: "missing",

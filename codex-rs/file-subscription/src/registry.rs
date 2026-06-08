@@ -82,8 +82,11 @@ impl FsSubscriptionRegistry {
         }
     }
 
-    async fn active_subscription_count(&self, thread_id: ThreadId) -> usize {
-        self.state
+    async fn active_subscription_count_for_state(
+        state: &AsyncMutex<HashMap<SubscriptionKey, SubscriptionEntry>>,
+        thread_id: ThreadId,
+    ) -> usize {
+        state
             .lock()
             .await
             .keys()
@@ -92,11 +95,35 @@ impl FsSubscriptionRegistry {
     }
 
     async fn notify_active_subscription_count(&self, thread_id: ThreadId) {
-        let Some(observer) = self.activity_observer.as_ref() else {
-            return;
-        };
-        let active_count = self.active_subscription_count(thread_id).await;
-        observer.active_subscription_count_changed(thread_id, active_count);
+        Self::notify_active_subscription_count_for(
+            &self.thread_manager,
+            &self.state,
+            self.activity_observer.as_ref(),
+            thread_id,
+        )
+        .await;
+    }
+
+    async fn notify_active_subscription_count_for(
+        thread_manager: &Weak<ThreadManager>,
+        state: &AsyncMutex<HashMap<SubscriptionKey, SubscriptionEntry>>,
+        activity_observer: Option<&Arc<dyn SubscriptionActivityObserver>>,
+        thread_id: ThreadId,
+    ) {
+        let active_count = Self::active_subscription_count_for_state(state, thread_id).await;
+        if let Some(thread_manager) = thread_manager.upgrade() {
+            let active_event_subscriptions = thread_manager.active_event_subscriptions();
+            let previous_count = active_event_subscriptions.active_count(thread_id);
+            active_event_subscriptions.set_active_count(thread_id, active_count);
+            if previous_count > 0 && active_count == 0 {
+                thread_manager
+                    .maybe_notify_parent_of_final_status(thread_id)
+                    .await;
+            }
+        }
+        if let Some(observer) = activity_observer {
+            observer.active_subscription_count_changed(thread_id, active_count);
+        }
     }
 
     async fn send_trigger_to_thread(
@@ -314,14 +341,14 @@ impl FsSubscriptionRegistry {
             .await
             {
                 warn!("failed to persist completed event command {sub_id_for_log}: {err}");
-            } else if let Some(observer) = activity_observer.as_ref() {
-                let active_count = state
-                    .lock()
-                    .await
-                    .keys()
-                    .filter(|key| key.thread_id == thread_id)
-                    .count();
-                observer.active_subscription_count_changed(thread_id, active_count);
+            } else {
+                Self::notify_active_subscription_count_for(
+                    &thread_manager,
+                    &state,
+                    activity_observer.as_ref(),
+                    thread_id,
+                )
+                .await;
             }
         });
     }
@@ -458,14 +485,14 @@ impl FsSubscriptionRegistry {
                         warn!(
                             "failed to persist completed schedule subscription {sub_id_for_log}: {err}"
                         );
-                    } else if let Some(observer) = activity_observer.as_ref() {
-                        let active_count = state
-                            .lock()
-                            .await
-                            .keys()
-                            .filter(|key| key.thread_id == thread_id)
-                            .count();
-                        observer.active_subscription_count_changed(thread_id, active_count);
+                    } else {
+                        Self::notify_active_subscription_count_for(
+                            &thread_manager,
+                            &state,
+                            activity_observer.as_ref(),
+                            thread_id,
+                        )
+                        .await;
                     }
                     break;
                 }
