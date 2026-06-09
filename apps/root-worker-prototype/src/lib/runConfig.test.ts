@@ -97,6 +97,7 @@ test("ensureCurrentModelVisible keeps an unknown current model selected", () => 
       ],
     }),
     "thread-model",
+    "provider-a",
     "high",
   );
 
@@ -105,8 +106,9 @@ test("ensureCurrentModelVisible keeps an unknown current model selected", () => 
     ["thread-model", "default"],
   );
   assert.deepEqual(models[0], {
-    id: "current:thread-model",
+    id: "current:provider-a:thread-model",
     model: "thread-model",
+    modelProvider: "provider-a",
     displayName: "thread-model",
     description: "当前 thread 的模型，未出现在 model/list",
     hidden: false,
@@ -123,6 +125,7 @@ test("ensureCurrentModelVisible does not duplicate an existing current model", (
       data: [makeModel({ model: "model-a" })],
     }),
     "model-a",
+    null,
     "high",
   );
 
@@ -133,12 +136,13 @@ test("ensureCurrentModelVisible does not duplicate an existing current model", (
 });
 
 test("ensureCurrentModelVisible keeps missing reasoning unselectable", () => {
-  const models = ensureCurrentModelVisible([], "thread-model", null);
+  const models = ensureCurrentModelVisible([], "thread-model", null, null);
 
   assert.deepEqual(models, [
     {
       id: "current:thread-model",
       model: "thread-model",
+      modelProvider: null,
       displayName: "thread-model",
       description: "当前 thread 的模型，未出现在 model/list",
       hidden: false,
@@ -151,15 +155,36 @@ test("ensureCurrentModelVisible keeps missing reasoning unselectable", () => {
 });
 
 test("resolveSelectionForModel keeps supported current effort", () => {
-  assert.deepEqual(resolveSelectionForModel(makeModel({}), "low"), {
-    model: "model-a",
-    reasoningEffort: "low",
-  });
+  assert.deepEqual(
+    resolveSelectionForModel(makeModel({ modelProvider: "provider-a" }), "low"),
+    {
+      model: "model-a",
+      modelProvider: "provider-a",
+      reasoningEffort: "low",
+    },
+  );
 });
 
 test("resolveSelectionForModel falls back to model default effort", () => {
   assert.deepEqual(resolveSelectionForModel(makeModel({}), "high"), {
     model: "model-a",
+    modelProvider: null,
     reasoningEffort: "medium",
   });
+});
+
+test("ensureCurrentModelVisible distinguishes providers for the same model", () => {
+  const models = ensureCurrentModelVisible(
+    normalizeModelListResponse({
+      data: [makeModel({ model: "model-a", modelProvider: "openai" })],
+    }),
+    "model-a",
+    "corp",
+    "high",
+  );
+
+  assert.deepEqual(
+    models.map((model) => model.modelProvider),
+    ["corp", "openai"],
+  );
 });

@@ -356,6 +356,7 @@ export type RunReasoningEffortOption = {
 export type RunModel = {
   id: string;
   model: string;
+  modelProvider?: string | null;
   configured?: boolean;
   current?: boolean;
   displayName: string;

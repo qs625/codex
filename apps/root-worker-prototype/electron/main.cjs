@@ -170,6 +170,7 @@ ipcMain.handle("codex:createThread", async (_event, payload) => {
 
   const runtime = {
     model: start.model ?? null,
+    modelProvider: start.modelProvider ?? null,
     reasoningEffort: start.reasoningEffort ?? null,
   };
   rememberThreadRuntime(start.thread.id, runtime);
@@ -196,6 +197,7 @@ ipcMain.handle(
 ipcMain.handle("codex:setThreadRunConfig", async (_event, payload) => {
   rememberThreadRuntime(payload.threadId, {
     model: payload.model ?? null,
+    modelProvider: payload.modelProvider ?? null,
     reasoningEffort: payload.reasoningEffort ?? null,
     localOverride: true,
   });
@@ -523,6 +525,7 @@ function normalizeThread(thread, runtime = null) {
   return normalizeThreadSnapshot({
     ...thread,
     model: runtime?.model ?? thread.model ?? null,
+    modelProvider: runtime?.modelProvider ?? thread.modelProvider ?? null,
     reasoningEffort: runtime?.reasoningEffort ?? thread.reasoningEffort ?? null,
     status: normalizeThreadStatus(thread.status),
     skills: (thread.skills ?? []).map(normalizeThreadSkill),

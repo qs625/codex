@@ -1,5 +1,7 @@
 use super::*;
+use crate::config::ConstraintError;
 use crate::goals::GoalRuntimeState;
+use codex_config::RequirementSource;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ServiceTier;
@@ -8,6 +10,7 @@ use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::protocol::ThreadSkill;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TurnEnvironmentSelection;
+use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 /// Context for an initialized model agent
@@ -217,6 +220,33 @@ impl SessionConfiguration {
         if let Some(collaboration_mode) = updates.collaboration_mode.clone() {
             next_configuration.collaboration_mode = collaboration_mode;
         }
+        if let Some(model_provider_id) = updates.model_provider.clone() {
+            let Some(model_provider) = next_configuration
+                .original_config_do_not_use
+                .model_providers
+                .get(&model_provider_id)
+                .cloned()
+            else {
+                let allowed = next_configuration
+                    .original_config_do_not_use
+                    .model_providers
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(ConstraintError::InvalidValue {
+                    field_name: "model_provider",
+                    candidate: model_provider_id,
+                    allowed,
+                    requirement_source: RequirementSource::Unknown,
+                });
+            };
+            let mut config = (*next_configuration.original_config_do_not_use).clone();
+            config.model_provider_id = model_provider_id;
+            config.model_provider = model_provider.clone();
+            next_configuration.original_config_do_not_use = Arc::new(config);
+            next_configuration.provider = model_provider;
+        }
         if let Some(summary) = updates.reasoning_summary {
             next_configuration.model_reasoning_summary = Some(summary);
         }
@@ -380,6 +410,7 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) permission_profile: Option<PermissionProfile>,
     pub(crate) active_permission_profile: Option<ActivePermissionProfile>,
     pub(crate) windows_sandbox_level: Option<WindowsSandboxLevel>,
+    pub(crate) model_provider: Option<String>,
     pub(crate) collaboration_mode: Option<CollaborationMode>,
     pub(crate) reasoning_summary: Option<ReasoningSummaryConfig>,
     pub(crate) service_tier: Option<Option<String>>,

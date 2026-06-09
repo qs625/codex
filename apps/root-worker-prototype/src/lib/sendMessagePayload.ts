@@ -3,6 +3,7 @@ import type { Thread } from "../types";
 
 export type RunConfigOverride = {
   model: string;
+  modelProvider: string | null;
   reasoningEffort: string;
 };
 
@@ -16,6 +17,7 @@ export function applyRunConfigOverride(
   return {
     ...thread,
     model: override.model,
+    modelProvider: override.modelProvider ?? thread.modelProvider,
     reasoningEffort: override.reasoningEffort,
   };
 }
@@ -32,6 +34,7 @@ export function buildSendMessagePayload({
   return {
     threadId,
     model: thread?.model ?? null,
+    modelProvider: thread?.modelProvider ?? null,
     effort: thread?.reasoningEffort ?? null,
     text: draft.text.trim(),
     skills: draft.skills,

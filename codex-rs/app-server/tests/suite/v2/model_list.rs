@@ -34,6 +34,7 @@ fn model_from_preset(preset: &ModelPreset) -> Model {
     Model {
         id: preset.id.clone(),
         model: preset.model.clone(),
+        model_provider: None,
         upgrade: preset.upgrade.as_ref().map(|upgrade| upgrade.id.clone()),
         upgrade_info: preset.upgrade.as_ref().map(|upgrade| ModelUpgradeInfo {
             model: upgrade.id.clone(),
@@ -174,6 +175,7 @@ env_key = "CORP_API_KEY"
         &Model {
             id: "configured:corp:corp-model".to_string(),
             model: "corp-model".to_string(),
+            model_provider: Some("corp".to_string()),
             upgrade: None,
             upgrade_info: None,
             availability_nux: None,
@@ -185,6 +187,77 @@ env_key = "CORP_API_KEY"
                 description: "当前配置的默认 reasoning".to_string(),
             }],
             default_reasoning_effort: ReasoningEffort::High,
+            input_modalities: codex_protocol::openai_models::default_input_modalities(),
+            supports_personality: false,
+            additional_speed_tiers: Vec::new(),
+            service_tiers: Vec::new(),
+            is_default: false,
+        }
+    );
+    assert!(next_cursor.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_models_includes_extra_configured_provider_without_defaulting_to_it() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    write_models_cache(codex_home.path())?;
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        r#"
+model = "mock-model"
+model_provider = "openai"
+
+[model_providers.corp]
+name = "Corp Gateway"
+base_url = "https://example.invalid/v1"
+env_key = "CORP_API_KEY"
+"#,
+    )?;
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+
+    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = mcp
+        .send_list_models_request(ModelListParams {
+            limit: Some(100),
+            cursor: None,
+            include_hidden: None,
+        })
+        .await?;
+
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+
+    let ModelListResponse {
+        data: items,
+        next_cursor,
+    } = to_response::<ModelListResponse>(response)?;
+
+    let configured_provider_model = items
+        .iter()
+        .find(|item| item.id == "configured:corp:mock-model")
+        .expect("extra configured provider is present");
+    assert_eq!(
+        configured_provider_model,
+        &Model {
+            id: "configured:corp:mock-model".to_string(),
+            model: "mock-model".to_string(),
+            model_provider: Some("corp".to_string()),
+            upgrade: None,
+            upgrade_info: None,
+            availability_nux: None,
+            display_name: "mock-model".to_string(),
+            description: "已配置 provider · Corp Gateway".to_string(),
+            hidden: false,
+            supported_reasoning_efforts: vec![ReasoningEffortOption {
+                reasoning_effort: ReasoningEffort::Medium,
+                description: "当前配置的默认 reasoning".to_string(),
+            }],
+            default_reasoning_effort: ReasoningEffort::Medium,
             input_modalities: codex_protocol::openai_models::default_input_modalities(),
             supports_personality: false,
             additional_speed_tiers: Vec::new(),
@@ -374,6 +447,7 @@ openai_base_url = "{server_uri}/v1"
         items.push(Model {
             id: "configured:openai:mock-model".to_string(),
             model: "mock-model".to_string(),
+            model_provider: Some("openai".to_string()),
             upgrade: None,
             upgrade_info: None,
             availability_nux: None,

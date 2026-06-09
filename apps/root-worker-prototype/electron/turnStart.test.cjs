@@ -12,6 +12,7 @@ test("buildTurnStartParams sends model and effort overrides", () => {
     {
       threadId: "thread-1",
       model: "gpt-5.5",
+      modelProvider: "modelhub-gpt",
       effort: "high",
     },
     [{ type: "text", text: "hello" }],
@@ -21,6 +22,7 @@ test("buildTurnStartParams sends model and effort overrides", () => {
     threadId: "thread-1",
     input: [{ type: "text", text: "hello" }],
     model: "gpt-5.5",
+    modelProvider: "modelhub-gpt",
     effort: "high",
   });
   assert.equal(Object.hasOwn(params, "reasoningEffort"), false);
@@ -31,6 +33,7 @@ test("mergeRuntimeOverride preserves existing values when payload omits override
     mergeRuntimeOverride(
       {
         model: "gpt-5",
+        modelProvider: "openai",
         reasoningEffort: "medium",
       },
       {
@@ -39,6 +42,7 @@ test("mergeRuntimeOverride preserves existing values when payload omits override
     ),
     {
       model: "gpt-5",
+      modelProvider: "openai",
       reasoningEffort: "medium",
     },
   );
@@ -49,16 +53,19 @@ test("resolveRuntimeForResume preserves local overrides before the next turn sta
     resolveRuntimeForResume(
       {
         model: "gpt-5.5",
+        modelProvider: "modelhub-gpt",
         reasoningEffort: "high",
         localOverride: true,
       },
       {
         model: "gpt-5",
+        modelProvider: "openai",
         reasoningEffort: "medium",
       },
     ),
     {
       model: "gpt-5.5",
+      modelProvider: "modelhub-gpt",
       reasoningEffort: "high",
       localOverride: true,
     },

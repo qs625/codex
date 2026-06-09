@@ -3552,6 +3552,32 @@ async fn session_settings_null_service_tier_update_clears_service_tier() {
 }
 
 #[tokio::test]
+async fn session_settings_model_provider_update_switches_provider() {
+    let mut session_configuration = make_session_configuration_for_tests().await;
+    let mut config = (*session_configuration.original_config_do_not_use).clone();
+    let provider = ModelProviderInfo {
+        name: "Corp".to_string(),
+        base_url: Some("https://corp.example.test/v1".to_string()),
+        ..ModelProviderInfo::default()
+    };
+    config
+        .model_providers
+        .insert("corp".to_string(), provider.clone());
+    session_configuration.original_config_do_not_use = Arc::new(config);
+
+    let updated = session_configuration
+        .apply(&SessionSettingsUpdate {
+            model_provider: Some("corp".to_string()),
+            ..Default::default()
+        })
+        .expect("model provider update should apply");
+
+    assert_eq!(updated.provider, provider);
+    assert_eq!(updated.original_config_do_not_use.model_provider_id, "corp");
+    assert_eq!(updated.original_config_do_not_use.model_provider, provider);
+}
+
+#[tokio::test]
 async fn session_settings_legacy_fast_service_tier_update_uses_priority_request_value() {
     let session_configuration = make_session_configuration_for_tests().await;
 
@@ -5350,6 +5376,7 @@ fn op_kind_distinguishes_turn_ops() {
             active_permission_profile: None,
             windows_sandbox_level: None,
             model: None,
+            model_provider: None,
             effort: None,
             summary: None,
             service_tier: None,

@@ -91,6 +91,9 @@ pub struct TurnStartParams {
     /// Override the model for this turn and subsequent turns.
     #[ts(optional = nullable)]
     pub model: Option<String>,
+    /// Override the model provider for this turn and subsequent turns.
+    #[ts(optional = nullable)]
+    pub model_provider: Option<String>,
     /// Override the service tier for this turn and subsequent turns.
     #[serde(
         default,

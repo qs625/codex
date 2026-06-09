@@ -4,7 +4,9 @@ import { ChevronDownIcon } from "./icons";
 import {
   ensureCurrentModelVisible,
   getRunModelLabel,
+  getRunModelKey,
   getSupportedReasoningEfforts,
+  isSameRunModel,
   normalizeModelListResponse,
   resolveSelectionForModel,
 } from "../lib/runConfig";
@@ -21,7 +23,11 @@ export function RunConfigPicker({
   selectedThread,
 }: {
   disabled: boolean;
-  onApply: (selection: { model: string; reasoningEffort: string }) => void;
+  onApply: (selection: {
+    model: string;
+    modelProvider: string | null;
+    reasoningEffort: string;
+  }) => void;
   selectedThread: Thread | null;
 }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -30,6 +36,9 @@ export function RunConfigPicker({
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draftModel, setDraftModel] = useState<string | null>(null);
+  const [draftModelProvider, setDraftModelProvider] = useState<string | null>(
+    null,
+  );
   const [draftReasoningEffort, setDraftReasoningEffort] = useState<
     string | null
   >(null);
@@ -41,8 +50,11 @@ export function RunConfigPicker({
   const activeModelLabel = getThreadModelLabel(selectedThread);
   const activeReasoningLabel = getThreadReasoningLabel(selectedThread);
   const selectedModel = useMemo(
-    () => models.find((model) => model.model === draftModel) ?? null,
-    [draftModel, models],
+    () =>
+      models.find((model) =>
+        isSameRunModel(model, draftModel, draftModelProvider),
+      ) ?? null,
+    [draftModel, draftModelProvider, models],
   );
   const supportedEfforts = selectedModel
     ? getSupportedReasoningEfforts(selectedModel)
@@ -56,6 +68,7 @@ export function RunConfigPicker({
   const hasChanged =
     selectedThread != null &&
     (draftModel !== selectedThread.model ||
+      draftModelProvider !== selectedThread.modelProvider ||
       draftReasoningEffort !== selectedThread.reasoningEffort);
 
   useEffect(() => {
@@ -65,6 +78,7 @@ export function RunConfigPicker({
     openThreadIdRef.current = selectedThread?.id ?? null;
     setFallbackMessage(null);
     setDraftModel(selectedThread?.model ?? null);
+    setDraftModelProvider(selectedThread?.modelProvider ?? null);
     setDraftReasoningEffort(selectedThread?.reasoningEffort ?? null);
   }, [isOpen]);
 
@@ -155,12 +169,18 @@ export function RunConfigPicker({
       const normalizedModels = ensureCurrentModelVisible(
         normalizeModelListResponse(response),
         selectedThread?.model ?? null,
+        selectedThread?.modelProvider ?? null,
         selectedThread?.reasoningEffort ?? null,
       );
       setModels(normalizedModels);
       const currentModel =
         normalizedModels.find(
-          (model) => model.model === selectedThread?.model,
+          (model) =>
+            isSameRunModel(
+              model,
+              selectedThread?.model ?? null,
+              selectedThread?.modelProvider ?? null,
+            ),
         ) ?? null;
       if (currentModel && !currentModel.current) {
         syncDraftForModel(currentModel, selectedThread?.reasoningEffort ?? null);
@@ -180,6 +200,7 @@ export function RunConfigPicker({
   function syncDraftForModel(model: RunModel, currentEffort: string | null) {
     const selection = resolveSelectionForModel(model, currentEffort);
     setDraftModel(selection.model);
+    setDraftModelProvider(selection.modelProvider);
     setDraftReasoningEffort(selection.reasoningEffort);
     setFallbackMessage(
       currentEffort && currentEffort !== selection.reasoningEffort
@@ -191,6 +212,7 @@ export function RunConfigPicker({
   function selectModel(model: RunModel) {
     if (model.current) {
       setDraftModel(model.model);
+      setDraftModelProvider(model.modelProvider ?? null);
       setDraftReasoningEffort(selectedThread?.reasoningEffort ?? null);
       setFallbackMessage(null);
       return;
@@ -204,6 +226,7 @@ export function RunConfigPicker({
     }
     onApply({
       model: draftModel,
+      modelProvider: draftModelProvider,
       reasoningEffort: draftReasoningEffort,
     });
     closePopover();
@@ -244,6 +267,7 @@ export function RunConfigPicker({
             canApply={canApply}
             disabled={disabled}
             draftModel={draftModel}
+            draftModelProvider={draftModelProvider}
             draftReasoningEffort={draftReasoningEffort}
             fallbackMessage={fallbackMessage}
             hasChanged={hasChanged}
@@ -267,6 +291,7 @@ export function RunConfigPopoverContent({
   canApply,
   disabled,
   draftModel,
+  draftModelProvider,
   draftReasoningEffort,
   fallbackMessage,
   hasChanged,
@@ -283,6 +308,7 @@ export function RunConfigPopoverContent({
   canApply: boolean;
   disabled: boolean;
   draftModel: string | null;
+  draftModelProvider: string | null;
   draftReasoningEffort: string | null;
   fallbackMessage: string | null;
   hasChanged: boolean;
@@ -331,10 +357,14 @@ export function RunConfigPopoverContent({
             </div>
             <div className="run-config-model-list" role="radiogroup">
               {models.map((model) => {
-                const selected = model.model === draftModel;
+                const selected = isSameRunModel(
+                  model,
+                  draftModel,
+                  draftModelProvider,
+                );
                 return (
                   <button
-                    key={model.id}
+                    key={getRunModelKey(model)}
                     type="button"
                     className={selected ? "selected" : ""}
                     role="radio"

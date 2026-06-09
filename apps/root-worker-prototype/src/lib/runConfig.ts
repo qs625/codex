@@ -2,6 +2,7 @@ import type { RunModel, RunModelListResponse } from "../types";
 
 export type RunConfigSelection = {
   model: string;
+  modelProvider: string | null;
   reasoningEffort: string;
 };
 
@@ -20,20 +21,34 @@ export function normalizeModelListResponse(
 export function ensureCurrentModelVisible(
   models: RunModel[],
   currentModel: string | null,
+  currentModelProvider: string | null,
   currentReasoningEffort: string | null,
 ): RunModel[] {
-  if (!currentModel || models.some((model) => model.model === currentModel)) {
+  if (
+    !currentModel ||
+    models.some((model) =>
+      isSameRunModel(model, currentModel, currentModelProvider),
+    )
+  ) {
     return models;
   }
 
   return [
-    makeCurrentModel(currentModel, currentReasoningEffort),
+    makeCurrentModel(
+      currentModel,
+      currentModelProvider,
+      currentReasoningEffort,
+    ),
     ...models,
   ].sort(compareRunModels);
 }
 
 export function getRunModelLabel(model: RunModel) {
   return model.displayName || model.model || model.id;
+}
+
+export function getRunModelKey(model: RunModel) {
+  return `${model.modelProvider ?? ""}:${model.model}`;
 }
 
 function compareRunModels(left: RunModel, right: RunModel) {
@@ -58,12 +73,14 @@ function isConfiguredModel(model: RunModel) {
 
 function makeCurrentModel(
   model: string,
+  currentModelProvider: string | null,
   currentReasoningEffort: string | null,
 ): RunModel {
   const reasoningEffort = currentReasoningEffort ?? "unknown";
   return {
-    id: `current:${model}`,
+    id: `current:${currentModelProvider ?? ""}:${model}`,
     model,
+    modelProvider: currentModelProvider,
     displayName: model,
     description: "当前 thread 的模型，未出现在 model/list",
     hidden: false,
@@ -106,6 +123,18 @@ export function resolveSelectionForModel(
 ): RunConfigSelection {
   return {
     model: model.model,
+    modelProvider: model.modelProvider ?? null,
     reasoningEffort: resolveReasoningEffortForModel(model, currentEffort),
   };
+}
+
+export function isSameRunModel(
+  model: RunModel,
+  currentModel: string | null,
+  currentModelProvider: string | null,
+) {
+  return (
+    model.model === currentModel &&
+    (model.modelProvider ?? null) === currentModelProvider
+  );
 }

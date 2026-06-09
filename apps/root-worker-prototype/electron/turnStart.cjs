@@ -3,6 +3,7 @@ function buildTurnStartParams(payload, input) {
     threadId: payload.threadId,
     input,
     model: payload.model ?? undefined,
+    modelProvider: payload.modelProvider ?? undefined,
     effort: payload.effort ?? undefined,
   };
 }
@@ -10,6 +11,7 @@ function buildTurnStartParams(payload, input) {
 function mergeRuntimeOverride(previousRuntime, payload) {
   return {
     model: payload.model ?? previousRuntime?.model ?? null,
+    modelProvider: payload.modelProvider ?? previousRuntime?.modelProvider ?? null,
     reasoningEffort: payload.effort ?? previousRuntime?.reasoningEffort ?? null,
   };
 }
@@ -20,6 +22,7 @@ function resolveRuntimeForResume(existingRuntime, resume) {
   }
   return {
     model: resume.model ?? null,
+    modelProvider: resume.modelProvider ?? null,
     reasoningEffort: resume.reasoningEffort ?? null,
   };
 }

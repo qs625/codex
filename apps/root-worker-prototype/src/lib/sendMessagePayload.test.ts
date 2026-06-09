@@ -61,6 +61,7 @@ test("buildSendMessagePayload includes the selected thread run config", () => {
     {
       threadId: "thread-1",
       model: "gpt-5.5",
+      modelProvider: "openai",
       effort: "high",
       text: "hello",
       skills: [{ name: "review", path: "/skills/review" }],
@@ -90,6 +91,7 @@ test("applyRunConfigOverride uses pending config for immediate sends", () => {
       },
       thread: applyRunConfigOverride(thread, {
         model: "gpt-5.5",
+        modelProvider: "modelhub",
         reasoningEffort: "high",
       }),
       threadId: "thread-1",
@@ -97,6 +99,7 @@ test("applyRunConfigOverride uses pending config for immediate sends", () => {
     {
       threadId: "thread-1",
       model: "gpt-5.5",
+      modelProvider: "modelhub",
       effort: "high",
       text: "next",
       skills: [],

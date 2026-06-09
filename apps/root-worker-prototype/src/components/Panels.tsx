@@ -175,6 +175,7 @@ export function ConversationPanel({
   onRemoveDraftSkill: (path: string) => void;
   onUpdateRunConfig: (selection: {
     model: string;
+    modelProvider: string | null;
     reasoningEffort: string;
   }) => void;
   onSendMessage: () => void;

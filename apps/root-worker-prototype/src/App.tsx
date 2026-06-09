@@ -161,7 +161,10 @@ function App() {
   const symbolForwardStackRef = useRef<FileLocation[]>([]);
   const selectedThreadIdRef = useRef<string | null>(null);
   const runConfigOverrideByThreadIdRef = useRef<
-    Map<string, { model: string; reasoningEffort: string }>
+    Map<
+      string,
+      { model: string; modelProvider: string | null; reasoningEffort: string }
+    >
   >(new Map());
   const loadedThreadIdsRef = useRef<Set<string>>(new Set());
   const subscribedThreadIdsRef = useRef<Set<string>>(new Set());
@@ -778,6 +781,7 @@ function App() {
     threadId: string,
     selection: {
       model: string | null;
+      modelProvider: string | null;
       reasoningEffort: string | null;
     },
   ) {
@@ -786,6 +790,7 @@ function App() {
     const previousSelection = existingThread
       ? {
           model: existingThread.model,
+          modelProvider: existingThread.modelProvider,
           reasoningEffort: existingThread.reasoningEffort,
         }
       : null;
@@ -793,6 +798,7 @@ function App() {
       return {
         ...thread,
         model: selection.model,
+        modelProvider: selection.modelProvider ?? thread.modelProvider,
         reasoningEffort: selection.reasoningEffort,
       };
     });
@@ -801,6 +807,7 @@ function App() {
 
   async function updateSelectedThreadRunConfig(selection: {
     model: string;
+    modelProvider: string | null;
     reasoningEffort: string;
   }) {
     const threadId = selectedThreadId;
@@ -824,6 +831,7 @@ function App() {
         ) {
           runConfigOverrideByThreadIdRef.current.set(threadId, {
             model: previousSelection.model,
+            modelProvider: previousSelection.modelProvider,
             reasoningEffort: previousSelection.reasoningEffort,
           });
         } else {

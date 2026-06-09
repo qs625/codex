@@ -37,6 +37,7 @@ declare global {
       setThreadRunConfig: (payload: {
         threadId: string;
         model: string;
+        modelProvider: string | null;
         reasoningEffort: string;
       }) => Promise<{ ok: boolean }>;
       subscribeThread: (

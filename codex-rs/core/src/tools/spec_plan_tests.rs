@@ -461,7 +461,7 @@ fn goal_tools_require_goals_feature() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, registry) = build_specs(
+    let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
         /*deferred_mcp_tools*/ None,
@@ -508,7 +508,7 @@ fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
+    let (tools, registry) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
         /*deferred_mcp_tools*/ None,
