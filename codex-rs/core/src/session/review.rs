@@ -59,21 +59,6 @@ pub(super) async fn spawn_review_thread(
     .with_multi_agent_v2_non_code_mode_only(config.multi_agent_v2.non_code_mode_only)
     .with_goal_tools_allowed(goal_tools_supported)
     .with_max_concurrent_threads_per_session(config.agent_max_threads)
-    .with_wait_agent_min_timeout_ms(
-        review_features
-            .enabled(Feature::MultiAgentV2)
-            .then_some(config.multi_agent_v2.min_wait_timeout_ms),
-    )
-    .with_wait_agent_max_timeout_ms(
-        review_features
-            .enabled(Feature::MultiAgentV2)
-            .then_some(config.multi_agent_v2.max_wait_timeout_ms),
-    )
-    .with_wait_agent_default_timeout_ms(
-        review_features
-            .enabled(Feature::MultiAgentV2)
-            .then_some(config.multi_agent_v2.default_wait_timeout_ms),
-    )
     .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
         &config.agent_roles,
     ))

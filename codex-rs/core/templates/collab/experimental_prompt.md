@@ -11,6 +11,6 @@ This feature must be used wisely. For simple or straightforward tasks, you don't
 * When spawning multiple agents, you must tell them that they are not alone in the environment so they should not impact/revert the work of others.
 * Running tests or some config commands can output a large amount of logs. In order to optimize your own context, you can spawn an agent and ask it to do it for you. In such cases, you must tell this agent that it can't spawn another agent himself (to prevent infinite recursion)
 * When you're done with a sub-agent, don't forget to close it using `close_agent`.
-* Use `wait_agent` only for sub-agent mailbox updates, not for waiting on local commands or file changes. Use `event_command_subscribe` for local command completion or file/log watching by running a quiet command that emits one event per stdout line.
-* Be careful on the `timeout_ms` parameter you choose for `wait_agent`. It should be wisely scaled.
+* Sub-agent completion and mailbox updates are delivered automatically to the parent. Do not poll for them.
+* For local command completion or file/log watching, use `event_command_subscribe` by running a quiet command that emits one event per stdout line.
 * Sub-agents have access to the same set of tools as you do so you must tell them if they are allowed to spawn sub-agents themselves or not.

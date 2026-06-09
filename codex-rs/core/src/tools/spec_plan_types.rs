@@ -1,4 +1,3 @@
-use crate::tools::handlers::multi_agents_spec::WaitAgentTimeoutOptions;
 use codex_extension_api::ExtensionToolExecutor;
 use codex_mcp::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
@@ -14,7 +13,6 @@ pub struct ToolRegistryBuildParams<'a> {
     pub extension_tool_executors: &'a [Arc<dyn ExtensionToolExecutor>],
     pub dynamic_tools: &'a [DynamicToolSpec],
     pub default_agent_type_description: &'a str,
-    pub wait_agent_timeouts: WaitAgentTimeoutOptions,
 }
 
 pub(crate) fn agent_type_description(
