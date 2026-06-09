@@ -401,7 +401,6 @@ async fn test_build_specs_gpt5_codex_default() {
             "spawn_agent",
             "send_input",
             "resume_agent",
-            "wait_agent",
             "close_agent",
             "web_search",
             "image_generation",
@@ -426,7 +425,6 @@ async fn test_build_specs_gpt51_codex_default() {
             "spawn_agent",
             "send_input",
             "resume_agent",
-            "wait_agent",
             "close_agent",
             "web_search",
             "image_generation",
@@ -453,7 +451,6 @@ async fn test_build_specs_gpt5_codex_unified_exec_web_search() {
             "spawn_agent",
             "send_input",
             "resume_agent",
-            "wait_agent",
             "close_agent",
             "web_search",
             "image_generation",
@@ -480,7 +477,6 @@ async fn test_build_specs_gpt51_codex_unified_exec_web_search() {
             "spawn_agent",
             "send_input",
             "resume_agent",
-            "wait_agent",
             "close_agent",
             "web_search",
             "image_generation",
@@ -505,7 +501,6 @@ async fn test_gpt_5_1_codex_max_defaults() {
             "spawn_agent",
             "send_input",
             "resume_agent",
-            "wait_agent",
             "close_agent",
             "web_search",
             "image_generation",
@@ -530,7 +525,6 @@ async fn test_codex_5_1_mini_defaults() {
             "spawn_agent",
             "send_input",
             "resume_agent",
-            "wait_agent",
             "close_agent",
             "web_search",
             "image_generation",
@@ -555,7 +549,6 @@ async fn test_gpt_5_defaults() {
             "spawn_agent",
             "send_input",
             "resume_agent",
-            "wait_agent",
             "close_agent",
             "web_search",
             "image_generation",
@@ -580,7 +573,6 @@ async fn test_gpt_5_1_defaults() {
             "spawn_agent",
             "send_input",
             "resume_agent",
-            "wait_agent",
             "close_agent",
             "web_search",
             "image_generation",
@@ -607,7 +599,6 @@ async fn test_gpt_5_1_codex_max_unified_exec_web_search() {
             "spawn_agent",
             "send_input",
             "resume_agent",
-            "wait_agent",
             "close_agent",
             "web_search",
             "image_generation",
@@ -761,38 +752,6 @@ async fn spawn_agent_description_uses_configured_usage_hint_text() {
             \s*$
         "#,
         &description,
-    );
-}
-
-async fn multi_agent_v2_wait_agent_schema_uses_configured_timeouts() {
-    let wait_agent_min_timeout_ms = Some(20_000);
-    let wait_agent_max_timeout_ms = Some(120_000);
-    let wait_agent_default_timeout_ms = Some(60_000);
-    let tools_config = multi_agent_v2_tools_config()
-        .await
-        .with_wait_agent_min_timeout_ms(wait_agent_min_timeout_ms)
-        .with_wait_agent_max_timeout_ms(wait_agent_max_timeout_ms)
-        .with_wait_agent_default_timeout_ms(wait_agent_default_timeout_ms);
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    )
-    .build();
-    let wait_agent = find_tool(&tools, "wait_agent");
-    let ToolSpec::Function(ResponsesApiTool { parameters, .. }) = wait_agent else {
-        panic!("wait_agent should be a function tool");
-    };
-    let timeout_description = parameters
-        .properties
-        .as_ref()
-        .and_then(|properties| properties.get("timeout_ms"))
-        .and_then(|schema| schema.description.as_deref());
-
-    assert_eq!(
-        timeout_description,
-        Some("Optional timeout in milliseconds. Defaults to 60000, min 20000, max 120000.")
     );
 }
 
@@ -1453,7 +1412,6 @@ async fn code_mode_only_can_expose_multi_agent_v2_as_normal_tools() {
             "spawn_agent",
             "send_message",
             "followup_task",
-            "wait_agent",
             "close_agent",
             "list_agents",
         ]

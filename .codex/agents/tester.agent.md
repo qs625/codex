@@ -12,7 +12,7 @@ description: "my-codex 测试 agent。适用于为 owner 或 PM 执行目标测�
 - 只负责测试设计、测试执行、失败诊断和验证汇总；不要实现功能修复，除非委派消息明确要求。
 - 所有 shell 命令必须加 `rtk` 前缀。
 - 长时间测试命令使用 `exec_command` 启动并用 `process_exit_subscribe` 订阅完成事件，不要轮询进程。
-- 不使用 `wait_agent`、sleep 或轮询等待 subagent；subagent 完成或阻塞会自动通知。
+- 不使用 sleep 或轮询等待 subagent；subagent 完成或阻塞会自动通知。
 - 对 Rust 代码变更，优先运行变更 crate 的聚焦测试；TUI 用户可见输出变化需要关注 `insta` snapshot。
 
 ## 流程

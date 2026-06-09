@@ -1,7 +1,4 @@
-use crate::agent::AgentStatus;
 use crate::config::Config;
-use crate::config::DEFAULT_MULTI_AGENT_V2_MIN_WAIT_TIMEOUT_MS;
-use crate::config::HARD_MAX_MULTI_AGENT_V2_TIMEOUT_MS;
 use crate::config::agent_roles::merge_agent_roles_from_dirs;
 use crate::function_tool::FunctionCallError;
 use crate::session::session::Session;
@@ -20,8 +17,6 @@ use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::openai_models::ReasoningEffortPreset;
-use codex_protocol::protocol::CollabAgentRef;
-use codex_protocol::protocol::CollabAgentStatusEntry;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
@@ -29,13 +24,7 @@ use codex_protocol::user_input::UserInput;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use std::collections::BTreeSet;
-use std::collections::HashMap;
 use std::path::PathBuf;
-
-/// Minimum wait timeout to prevent tight polling loops from burning CPU.
-pub(crate) const MIN_WAIT_TIMEOUT_MS: i64 = DEFAULT_MULTI_AGENT_V2_MIN_WAIT_TIMEOUT_MS;
-pub(crate) const DEFAULT_WAIT_TIMEOUT_MS: i64 = 30_000;
-pub(crate) const MAX_WAIT_TIMEOUT_MS: i64 = HARD_MAX_MULTI_AGENT_V2_TIMEOUT_MS;
 
 pub(crate) fn function_arguments(payload: ToolPayload) -> Result<String, FunctionCallError> {
     match payload {
@@ -76,45 +65,6 @@ where
     serde_json::to_value(value).unwrap_or_else(|err| {
         JsonValue::String(format!("failed to serialize {tool_name} result: {err}"))
     })
-}
-
-pub(crate) fn build_wait_agent_statuses(
-    statuses: &HashMap<ThreadId, AgentStatus>,
-    receiver_agents: &[CollabAgentRef],
-) -> Vec<CollabAgentStatusEntry> {
-    if statuses.is_empty() {
-        return Vec::new();
-    }
-
-    let mut entries = Vec::with_capacity(statuses.len());
-    let mut seen = HashMap::with_capacity(receiver_agents.len());
-    for receiver_agent in receiver_agents {
-        seen.insert(receiver_agent.thread_id, ());
-        if let Some(status) = statuses.get(&receiver_agent.thread_id) {
-            entries.push(CollabAgentStatusEntry {
-                thread_id: receiver_agent.thread_id,
-                agent_path: receiver_agent.agent_path.clone(),
-                agent_nickname: receiver_agent.agent_nickname.clone(),
-                agent_role: receiver_agent.agent_role.clone(),
-                status: status.clone(),
-            });
-        }
-    }
-
-    let mut extras = statuses
-        .iter()
-        .filter(|(thread_id, _)| !seen.contains_key(thread_id))
-        .map(|(thread_id, status)| CollabAgentStatusEntry {
-            thread_id: *thread_id,
-            agent_path: None,
-            agent_nickname: None,
-            agent_role: None,
-            status: status.clone(),
-        })
-        .collect::<Vec<_>>();
-    extras.sort_by(|left, right| left.thread_id.to_string().cmp(&right.thread_id.to_string()));
-    entries.extend(extras);
-    entries
 }
 
 pub(crate) fn collab_spawn_error(err: CodexErr) -> FunctionCallError {

@@ -30,14 +30,12 @@ use crate::tools::handlers::multi_agents::CloseAgentHandler;
 use crate::tools::handlers::multi_agents::ResumeAgentHandler;
 use crate::tools::handlers::multi_agents::SendInputHandler;
 use crate::tools::handlers::multi_agents::SpawnAgentHandler;
-use crate::tools::handlers::multi_agents::WaitAgentHandler;
 use crate::tools::handlers::multi_agents_spec::SpawnAgentToolOptions;
 use crate::tools::handlers::multi_agents_v2::CloseAgentHandler as CloseAgentHandlerV2;
 use crate::tools::handlers::multi_agents_v2::FollowupTaskHandler as FollowupTaskHandlerV2;
 use crate::tools::handlers::multi_agents_v2::ListAgentsHandler as ListAgentsHandlerV2;
 use crate::tools::handlers::multi_agents_v2::SendMessageHandler as SendMessageHandlerV2;
 use crate::tools::handlers::multi_agents_v2::SpawnAgentHandler as SpawnAgentHandlerV2;
-use crate::tools::handlers::multi_agents_v2::WaitAgentHandler as WaitAgentHandlerV2;
 use crate::tools::handlers::view_image_spec::ViewImageToolOptions;
 use crate::tools::hosted_spec::WebSearchToolOptions;
 use crate::tools::hosted_spec::create_image_generation_tool;
@@ -441,10 +439,6 @@ pub(crate) fn collect_tool_executors(
             ));
             executors.push(multi_agent_v2_handler(SendMessageHandlerV2, exposure));
             executors.push(multi_agent_v2_handler(FollowupTaskHandlerV2, exposure));
-            executors.push(multi_agent_v2_handler(
-                WaitAgentHandlerV2::new(params.wait_agent_timeouts),
-                exposure,
-            ));
             executors.push(multi_agent_v2_handler(CloseAgentHandlerV2, exposure));
             executors.push(multi_agent_v2_handler(ListAgentsHandlerV2, exposure));
         } else {
@@ -460,7 +454,6 @@ pub(crate) fn collect_tool_executors(
             })));
             executors.push(Arc::new(SendInputHandler));
             executors.push(Arc::new(ResumeAgentHandler));
-            executors.push(Arc::new(WaitAgentHandler::new(params.wait_agent_timeouts)));
             executors.push(Arc::new(CloseAgentHandler));
         }
     }

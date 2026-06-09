@@ -3,16 +3,15 @@ use crate::tools::handlers::apply_patch_spec::create_apply_patch_freeform_tool;
 use crate::tools::handlers::goal_spec::create_create_goal_tool;
 use crate::tools::handlers::goal_spec::create_get_goal_tool;
 use crate::tools::handlers::goal_spec::create_update_goal_tool;
-use crate::tools::handlers::multi_agents_spec::WaitAgentTimeoutOptions;
 use crate::tools::handlers::multi_agents_spec::create_close_agent_tool_v1;
 use crate::tools::handlers::multi_agents_spec::create_close_agent_tool_v2;
+use crate::tools::handlers::multi_agents_spec::create_followup_task_tool;
+use crate::tools::handlers::multi_agents_spec::create_list_agents_tool;
 use crate::tools::handlers::multi_agents_spec::create_resume_agent_tool;
 use crate::tools::handlers::multi_agents_spec::create_send_input_tool_v1;
 use crate::tools::handlers::multi_agents_spec::create_send_message_tool;
 use crate::tools::handlers::multi_agents_spec::create_spawn_agent_tool_v1;
 use crate::tools::handlers::multi_agents_spec::create_spawn_agent_tool_v2;
-use crate::tools::handlers::multi_agents_spec::create_wait_agent_tool_v1;
-use crate::tools::handlers::multi_agents_spec::create_wait_agent_tool_v2;
 use crate::tools::handlers::plan_spec::create_update_plan_tool;
 use crate::tools::handlers::request_user_input_spec::REQUEST_USER_INPUT_TOOL_NAME;
 use crate::tools::handlers::request_user_input_spec::create_request_user_input_tool;
@@ -70,10 +69,6 @@ use std::sync::Arc;
 
 const CODEX_APPS_MCP_SERVER_NAME: &str = "codex_apps";
 const DEFAULT_AGENT_TYPE_DESCRIPTION: &str = "Test agent type description.";
-const DEFAULT_WAIT_TIMEOUT_MS: i64 = 30_000;
-const MIN_WAIT_TIMEOUT_MS: i64 = 10_000;
-const MAX_WAIT_TIMEOUT_MS: i64 = 3_600_000;
-
 fn extension_tool_executor(name: &str, description: &str) -> Arc<dyn ExtensionToolExecutor> {
     struct SpecOnlyExtensionExecutor {
         name: String,
@@ -293,27 +288,29 @@ fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
             expected.insert(spec.name().to_string(), spec);
         }
     }
-    let collab_specs = if config.multi_agent_v2 {
-        vec![
-            create_spawn_agent_tool_v2(spawn_agent_tool_options(&config)),
-            create_send_message_tool(),
-            create_wait_agent_tool_v2(wait_agent_timeout_options()),
-            create_close_agent_tool_v2(),
-        ]
-    } else {
-        vec![
-            create_spawn_agent_tool_v1(spawn_agent_tool_options(&config)),
-            create_send_input_tool_v1(),
-            create_wait_agent_tool_v1(wait_agent_timeout_options()),
-            create_close_agent_tool_v1(),
-        ]
-    };
-    for spec in collab_specs {
-        expected.insert(spec.name().to_string(), spec);
-    }
-    if !config.multi_agent_v2 {
-        let spec = create_resume_agent_tool();
-        expected.insert(spec.name().to_string(), spec);
+    if config.collab_tools {
+        let collab_specs = if config.multi_agent_v2 {
+            vec![
+                create_spawn_agent_tool_v2(spawn_agent_tool_options(&config)),
+                create_send_message_tool(),
+                create_followup_task_tool(),
+                create_close_agent_tool_v2(),
+                create_list_agents_tool(),
+            ]
+        } else {
+            vec![
+                create_spawn_agent_tool_v1(spawn_agent_tool_options(&config)),
+                create_send_input_tool_v1(),
+                create_close_agent_tool_v1(),
+            ]
+        };
+        for spec in collab_specs {
+            expected.insert(spec.name().to_string(), spec);
+        }
+        if !config.multi_agent_v2 {
+            let spec = create_resume_agent_tool();
+            expected.insert(spec.name().to_string(), spec);
+        }
     }
 
     if config.exec_permission_approvals_enabled {
@@ -429,17 +426,16 @@ fn test_build_specs_collab_tools_enabled() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
+    let (tools, registry) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
         /*deferred_mcp_tools*/ None,
         &[],
     );
 
-    assert_contains_tool_names(
-        &tools,
-        &["spawn_agent", "send_input", "wait_agent", "close_agent"],
-    );
+    assert_contains_tool_names(&tools, &["spawn_agent", "send_input", "close_agent"]);
+    assert_lacks_tool_name(&tools, "wait_agent");
+    assert!(!registry.has_handler(&ToolName::plain("wait_agent")));
     assert_lacks_tool_name(&tools, "spawn_agents_on_csv");
     assert_lacks_tool_name(&tools, "list_agents");
 
@@ -467,7 +463,7 @@ fn goal_tools_require_goals_feature() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
+    let (tools, registry) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
         /*deferred_mcp_tools*/ None,
@@ -527,11 +523,12 @@ fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
             "spawn_agent",
             "send_message",
             "followup_task",
-            "wait_agent",
             "close_agent",
             "list_agents",
         ],
     );
+    assert_lacks_tool_name(&tools, "wait_agent");
+    assert!(!registry.has_handler(&ToolName::plain("wait_agent")));
 
     let spawn_agent = find_tool(&tools, "spawn_agent");
     let ToolSpec::Function(ResponsesApiTool {
@@ -596,27 +593,6 @@ fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
         Some(&vec!["target".to_string(), "message".to_string()])
     );
 
-    let wait_agent = find_tool(&tools, "wait_agent");
-    let ToolSpec::Function(ResponsesApiTool {
-        parameters,
-        output_schema,
-        ..
-    }) = wait_agent
-    else {
-        panic!("wait_agent should be a function tool");
-    };
-    let (properties, required) = expect_object_schema(parameters);
-    assert!(!properties.contains_key("targets"));
-    assert!(properties.contains_key("timeout_ms"));
-    assert_eq!(required, None);
-    let output_schema = output_schema
-        .as_ref()
-        .expect("wait_agent should define output schema");
-    assert_eq!(
-        output_schema["properties"]["message"]["description"],
-        json!("Brief wait summary without the agent's final content.")
-    );
-
     let list_agents = find_tool(&tools, "list_agents");
     let ToolSpec::Function(ResponsesApiTool {
         parameters,
@@ -671,11 +647,11 @@ fn test_build_specs_multi_agent_v2_does_not_require_collab_feature() {
             "spawn_agent",
             "send_message",
             "followup_task",
-            "wait_agent",
             "close_agent",
             "list_agents",
         ],
     );
+    assert_lacks_tool_name(&tools, "wait_agent");
     assert_lacks_tool_name(&tools, "send_input");
     assert_lacks_tool_name(&tools, "resume_agent");
 }
@@ -709,11 +685,11 @@ fn test_build_specs_enable_fanout_enables_agent_jobs_and_collab_tools() {
         &[
             "spawn_agent",
             "send_input",
-            "wait_agent",
             "close_agent",
             "spawn_agents_on_csv",
         ],
     );
+    assert_lacks_tool_name(&tools, "wait_agent");
 }
 
 #[test]
@@ -888,13 +864,13 @@ fn test_build_specs_agent_job_worker_tools_enabled() {
             "spawn_agent",
             "send_input",
             "resume_agent",
-            "wait_agent",
             "close_agent",
             "spawn_agents_on_csv",
             "report_agent_job_result",
             REQUEST_USER_INPUT_TOOL_NAME,
         ],
     );
+    assert_lacks_tool_name(&tools, "wait_agent");
 }
 
 #[test]
@@ -2531,7 +2507,6 @@ fn build_specs_with_inputs_for_test(
         extension_tool_executors,
         dynamic_tools,
         default_agent_type_description: DEFAULT_AGENT_TYPE_DESCRIPTION,
-        wait_agent_timeouts: wait_agent_timeout_options(),
     };
     let executors = collect_tool_executors(config, params);
     let builder = build_tool_registry_builder_from_executors(
@@ -2741,14 +2716,6 @@ fn spawn_agent_tool_options(config: &ToolsConfig) -> SpawnAgentToolOptions {
         include_usage_hint: config.spawn_agent_usage_hint,
         usage_hint_text: config.spawn_agent_usage_hint_text.clone(),
         max_concurrent_threads_per_session: config.max_concurrent_threads_per_session,
-    }
-}
-
-fn wait_agent_timeout_options() -> WaitAgentTimeoutOptions {
-    WaitAgentTimeoutOptions {
-        default_timeout_ms: DEFAULT_WAIT_TIMEOUT_MS,
-        min_timeout_ms: MIN_WAIT_TIMEOUT_MS,
-        max_timeout_ms: MAX_WAIT_TIMEOUT_MS,
     }
 }
 

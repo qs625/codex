@@ -267,49 +267,6 @@ fn followup_task_tool_requires_message_and_has_no_output_schema() {
 }
 
 #[test]
-fn wait_agent_tool_v2_uses_timeout_only_summary_output() {
-    let ToolSpec::Function(ResponsesApiTool {
-        description,
-        parameters,
-        output_schema,
-        ..
-    }) = create_wait_agent_tool_v2(WaitAgentTimeoutOptions {
-        default_timeout_ms: 30_000,
-        min_timeout_ms: 10_000,
-        max_timeout_ms: 3_600_000,
-    })
-    else {
-        panic!("wait_agent should be a function tool");
-    };
-    assert_eq!(
-        parameters.schema_type,
-        Some(JsonSchemaType::Single(JsonSchemaPrimitiveType::Object))
-    );
-    let properties = parameters
-        .properties
-        .as_ref()
-        .expect("wait_agent should use object params");
-    assert!(!properties.contains_key("targets"));
-    assert!(properties.contains_key("timeout_ms"));
-    assert!(description.contains(
-        "Does not return the content; returns either a summary of which agents have updates (if any)"
-    ));
-    assert!(description.contains("Use this only for subagent mailbox activity"));
-    assert!(description.contains("event_command_subscribe"));
-    assert_eq!(
-        properties
-            .get("timeout_ms")
-            .and_then(|schema| schema.description.as_deref()),
-        Some("Optional timeout in milliseconds. Defaults to 30000, min 10000, max 3600000.")
-    );
-    assert_eq!(parameters.required.as_ref(), None);
-    assert_eq!(
-        output_schema.expect("wait output schema")["properties"]["message"]["description"],
-        json!("Brief wait summary without the agent's final content.")
-    );
-}
-
-#[test]
 fn list_agents_tool_includes_path_prefix_and_agent_fields() {
     let ToolSpec::Function(ResponsesApiTool {
         parameters,

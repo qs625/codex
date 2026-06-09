@@ -21,23 +21,6 @@ pub struct SpawnAgentToolOptions {
     pub max_concurrent_threads_per_session: Option<usize>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WaitAgentTimeoutOptions {
-    pub default_timeout_ms: i64,
-    pub min_timeout_ms: i64,
-    pub max_timeout_ms: i64,
-}
-
-impl Default for WaitAgentTimeoutOptions {
-    fn default() -> Self {
-        Self {
-            default_timeout_ms: super::multi_agents_common::DEFAULT_WAIT_TIMEOUT_MS,
-            min_timeout_ms: super::multi_agents_common::MIN_WAIT_TIMEOUT_MS,
-            max_timeout_ms: super::multi_agents_common::MAX_WAIT_TIMEOUT_MS,
-        }
-    }
-}
-
 pub fn create_spawn_agent_tool_v1(options: SpawnAgentToolOptions) -> ToolSpec {
     let available_models_description = (!options.hide_agent_type_model_reasoning)
         .then(|| spawn_agent_models_description(&options.available_models));
@@ -199,37 +182,16 @@ pub fn create_resume_agent_tool() -> ToolSpec {
 
     ToolSpec::Function(ResponsesApiTool {
         name: "resume_agent".to_string(),
-        description:
-            "Resume a previously closed agent by id so it can receive send_input and wait_agent calls."
-                .to_string(),
+        description: "Resume a previously closed agent by id so it can receive send_input calls."
+            .to_string(),
         strict: false,
         defer_loading: None,
-        parameters: JsonSchema::object(properties, Some(vec!["id".to_string()]), Some(false.into())),
+        parameters: JsonSchema::object(
+            properties,
+            Some(vec!["id".to_string()]),
+            Some(false.into()),
+        ),
         output_schema: Some(resume_agent_output_schema()),
-    })
-}
-
-pub fn create_wait_agent_tool_v1(options: WaitAgentTimeoutOptions) -> ToolSpec {
-    ToolSpec::Function(ResponsesApiTool {
-        name: "wait_agent".to_string(),
-        description: "Wait for agents to reach a final status. Completed statuses may include the agent's final message. Returns empty status when timed out. Once the agent reaches a final status, a notification message will be received containing the same completed status."
-            .to_string(),
-        strict: false,
-        defer_loading: None,
-        parameters: wait_agent_tool_parameters_v1(options),
-        output_schema: Some(wait_output_schema_v1()),
-    })
-}
-
-pub fn create_wait_agent_tool_v2(options: WaitAgentTimeoutOptions) -> ToolSpec {
-    ToolSpec::Function(ResponsesApiTool {
-        name: "wait_agent".to_string(),
-        description: "Wait for a mailbox update from any live agent, including queued messages and final-status notifications. Use this only for subagent mailbox activity, not for waiting on local exec_command sessions or filesystem changes. For local process completion and file or log watching, use `event_command_subscribe`. Does not return the content; returns either a summary of which agents have updates (if any), or a timeout summary if no mailbox update arrives before the deadline."
-            .to_string(),
-        strict: false,
-        defer_loading: None,
-        parameters: wait_agent_tool_parameters_v2(options),
-        output_schema: Some(wait_output_schema_v2()),
     })
 }
 
@@ -423,43 +385,6 @@ fn resume_agent_output_schema() -> Value {
             "status": agent_status_output_schema()
         },
         "required": ["status"],
-        "additionalProperties": false
-    })
-}
-
-fn wait_output_schema_v1() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "status": {
-                "type": "object",
-                "description": "Final statuses keyed by agent id.",
-                "additionalProperties": agent_status_output_schema()
-            },
-            "timed_out": {
-                "type": "boolean",
-                "description": "Whether the wait call returned due to timeout before any agent reached a final status."
-            }
-        },
-        "required": ["status", "timed_out"],
-        "additionalProperties": false
-    })
-}
-
-fn wait_output_schema_v2() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "message": {
-                "type": "string",
-                "description": "Brief wait summary without the agent's final content."
-            },
-            "timed_out": {
-                "type": "boolean",
-                "description": "Whether the wait call returned because no mailbox update arrived before the timeout."
-            }
-        },
-        "required": ["message", "timed_out"],
         "additionalProperties": false
     })
 }
@@ -687,10 +612,8 @@ Requests for depth, thoroughness, research, investigation, or detailed codebase 
 - For code-edit subtasks, decompose work so each delegated task has a disjoint write set.
 
 ### After you delegate
-- Call wait_agent very sparingly. Only call wait_agent when you need the result immediately for the next critical-path step and you are blocked until it returns.
 - Do not redo delegated subagent tasks yourself; focus on integrating results or tackling non-overlapping work.
 - While the subagent is running in the background, do meaningful non-overlapping work immediately.
-- Do not repeatedly wait by reflex.
 - When a delegated coding task returns, quickly review the uploaded changes, then integrate or refine them.
 
 ### Parallel delegation patterns
@@ -724,6 +647,7 @@ You are then able to refer to this agent as `task_3` or `/root/task1/task_3` int
 The spawned agent will have the same tools as you and the ability to spawn its own subagents.
 {SPAWN_AGENT_INHERITED_MODEL_GUIDANCE}
 It will be able to send you and other running agents messages, and its final answer will be provided to you when it finishes.
+Sub-agent completion is delivered automatically; do not poll or use other tools just to wait for it.
 The new agent's canonical task name will be provided to it along with the message.
 {concurrency_guidance}"#
     );
@@ -782,46 +706,6 @@ fn spawn_agent_models_description(models: &[ModelPreset]) -> String {
     format!(
         "Available model overrides (optional; inherited parent model is preferred):\n{model_descriptions}"
     )
-}
-
-fn wait_agent_tool_parameters_v1(options: WaitAgentTimeoutOptions) -> JsonSchema {
-    let properties = BTreeMap::from([
-        (
-            "targets".to_string(),
-            JsonSchema::array(
-                JsonSchema::string(/*description*/ None),
-                Some(
-                    "Agent ids to wait on. Pass multiple ids to wait for whichever finishes first."
-                        .to_string(),
-                ),
-            ),
-        ),
-        (
-            "timeout_ms".to_string(),
-            JsonSchema::number(Some(format!(
-                "Optional timeout in milliseconds. Defaults to {}, min {}, max {}. Prefer longer waits (minutes) to avoid busy polling.",
-                options.default_timeout_ms, options.min_timeout_ms, options.max_timeout_ms,
-            ))),
-        ),
-    ]);
-
-    JsonSchema::object(
-        properties,
-        Some(vec!["targets".to_string()]),
-        Some(false.into()),
-    )
-}
-
-fn wait_agent_tool_parameters_v2(options: WaitAgentTimeoutOptions) -> JsonSchema {
-    let properties = BTreeMap::from([(
-        "timeout_ms".to_string(),
-        JsonSchema::number(Some(format!(
-            "Optional timeout in milliseconds. Defaults to {}, min {}, max {}.",
-            options.default_timeout_ms, options.min_timeout_ms, options.max_timeout_ms,
-        ))),
-    )]);
-
-    JsonSchema::object(properties, /*required*/ None, Some(false.into()))
 }
 
 #[cfg(test)]

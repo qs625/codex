@@ -22,15 +22,12 @@ use codex_protocol::models::ResponseInputItem;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::CollabAgentInteractionBeginEvent;
 use codex_protocol::protocol::CollabAgentInteractionEndEvent;
-use codex_protocol::protocol::CollabAgentRef;
 use codex_protocol::protocol::CollabAgentSpawnBeginEvent;
 use codex_protocol::protocol::CollabAgentSpawnEndEvent;
 use codex_protocol::protocol::CollabCloseBeginEvent;
 use codex_protocol::protocol::CollabCloseEndEvent;
 use codex_protocol::protocol::CollabResumeBeginEvent;
 use codex_protocol::protocol::CollabResumeEndEvent;
-use codex_protocol::protocol::CollabWaitingBeginEvent;
-use codex_protocol::protocol::CollabWaitingEndEvent;
 use codex_protocol::user_input::UserInput;
 use codex_tools::ToolName;
 use serde::Deserialize;
@@ -62,13 +59,11 @@ pub(crate) use close_agent::Handler as CloseAgentHandler;
 pub(crate) use resume_agent::Handler as ResumeAgentHandler;
 pub(crate) use send_input::Handler as SendInputHandler;
 pub(crate) use spawn::Handler as SpawnAgentHandler;
-pub(crate) use wait::Handler as WaitAgentHandler;
 
 pub(crate) mod close_agent;
 mod resume_agent;
 mod send_input;
 mod spawn;
-pub(crate) mod wait;
 
 #[cfg(test)]
 #[path = "multi_agents_tests.rs"]
