@@ -133,37 +133,6 @@ pub fn create_send_input_tool_v1() -> ToolSpec {
     })
 }
 
-pub fn create_send_message_tool() -> ToolSpec {
-    let properties = BTreeMap::from([
-        (
-            "target".to_string(),
-            JsonSchema::string(Some(
-                "Relative or canonical task name to message (from spawn_agent).".to_string(),
-            )),
-        ),
-        (
-            "message".to_string(),
-            JsonSchema::string(Some(
-                "Message text to queue on the target agent.".to_string(),
-            )),
-        ),
-    ]);
-
-    ToolSpec::Function(ResponsesApiTool {
-        name: "send_message".to_string(),
-        description: "Send a message to an existing agent. The message will be delivered promptly. Does not trigger a new turn."
-            .to_string(),
-        strict: false,
-        defer_loading: None,
-        parameters: JsonSchema::object(
-            properties,
-            Some(vec!["target".to_string(), "message".to_string()]),
-            Some(false.into()),
-        ),
-        output_schema: None,
-    })
-}
-
 pub fn create_followup_task_tool() -> ToolSpec {
     let properties = BTreeMap::from([
         (

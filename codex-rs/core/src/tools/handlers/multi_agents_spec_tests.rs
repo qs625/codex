@@ -204,41 +204,6 @@ fn spawn_agent_tool_hides_service_tier_with_spawn_metadata() {
 }
 
 #[test]
-fn send_message_tool_requires_message_and_has_no_output_schema() {
-    let ToolSpec::Function(ResponsesApiTool {
-        parameters,
-        output_schema,
-        ..
-    }) = create_send_message_tool()
-    else {
-        panic!("send_message should be a function tool");
-    };
-    assert_eq!(
-        parameters.schema_type,
-        Some(JsonSchemaType::Single(JsonSchemaPrimitiveType::Object))
-    );
-    let properties = parameters
-        .properties
-        .as_ref()
-        .expect("send_message should use object params");
-    assert!(properties.contains_key("target"));
-    assert!(properties.contains_key("message"));
-    assert!(!properties.contains_key("interrupt"));
-    assert!(!properties.contains_key("items"));
-    assert_eq!(
-        properties
-            .get("target")
-            .and_then(|schema| schema.description.as_deref()),
-        Some("Relative or canonical task name to message (from spawn_agent).")
-    );
-    assert_eq!(
-        parameters.required.as_ref(),
-        Some(&vec!["target".to_string(), "message".to_string()])
-    );
-    assert_eq!(output_schema, None);
-}
-
-#[test]
 fn followup_task_tool_requires_message_and_has_no_output_schema() {
     let ToolSpec::Function(ResponsesApiTool {
         parameters,

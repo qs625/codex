@@ -35,7 +35,6 @@ use crate::tools::handlers::multi_agents_spec::SpawnAgentToolOptions;
 use crate::tools::handlers::multi_agents_v2::CloseAgentHandler as CloseAgentHandlerV2;
 use crate::tools::handlers::multi_agents_v2::FollowupTaskHandler as FollowupTaskHandlerV2;
 use crate::tools::handlers::multi_agents_v2::ListAgentsHandler as ListAgentsHandlerV2;
-use crate::tools::handlers::multi_agents_v2::SendMessageHandler as SendMessageHandlerV2;
 use crate::tools::handlers::multi_agents_v2::SpawnAgentHandler as SpawnAgentHandlerV2;
 use crate::tools::handlers::multi_agents_v2::WaitAgentHandler as WaitAgentHandlerV2;
 use crate::tools::handlers::view_image_spec::ViewImageToolOptions;
@@ -439,7 +438,6 @@ pub(crate) fn collect_tool_executors(
                 }),
                 exposure,
             ));
-            executors.push(multi_agent_v2_handler(SendMessageHandlerV2, exposure));
             executors.push(multi_agent_v2_handler(FollowupTaskHandlerV2, exposure));
             executors.push(multi_agent_v2_handler(
                 WaitAgentHandlerV2::new(params.wait_agent_timeouts),

@@ -1,6 +1,7 @@
 use super::*;
 use crate::goals::GoalRuntimeState;
 use codex_protocol::SessionId;
+use codex_protocol::ThreadId;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSpecialPath;
@@ -35,7 +36,8 @@ pub(crate) struct Session {
     pub(crate) guardian_review_session: GuardianReviewSessionManager,
     pub(crate) services: SessionServices,
     pub(super) next_internal_sub_id: AtomicU64,
-    pub(super) parent_child_completion_sent: AtomicBool,
+    pub(super) parent_child_completion_active: AtomicBool,
+    pub(super) pending_direct_child_completions: Mutex<std::collections::HashMap<ThreadId, usize>>,
 }
 
 #[derive(Clone)]
@@ -1001,7 +1003,8 @@ impl Session {
                 guardian_review_session: GuardianReviewSessionManager::default(),
                 services,
                 next_internal_sub_id: AtomicU64::new(0),
-                parent_child_completion_sent: AtomicBool::new(false),
+                parent_child_completion_active: AtomicBool::new(true),
+                pending_direct_child_completions: Mutex::new(std::collections::HashMap::new()),
             });
             if let Some(network_policy_decider_session) = network_policy_decider_session {
                 let mut guard = network_policy_decider_session.write().await;

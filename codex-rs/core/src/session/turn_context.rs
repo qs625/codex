@@ -754,6 +754,7 @@ impl Session {
         final_output_json_schema: Option<Option<Value>>,
         turn_environments: ResolvedTurnEnvironments,
     ) -> Arc<TurnContext> {
+        self.mark_child_completion_active();
         let primary_turn_environment = turn_environments.primary();
         let cwd = primary_turn_environment
             .map(|turn_environment| turn_environment.cwd.clone())

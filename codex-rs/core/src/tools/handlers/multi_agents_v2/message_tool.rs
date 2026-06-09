@@ -1,44 +1,12 @@
-//! Shared argument parsing and dispatch for the v2 text-only agent messaging tools.
-//!
-//! `send_message` and `followup_task` share the same submission path and differ only in whether the
-//! resulting `InterAgentCommunication` should wake the target immediately.
+//! Shared argument parsing and dispatch for the v2 text-only follow-up task tool.
 
 use super::*;
+use crate::agent::AgentMode;
 use crate::tools::context::FunctionToolOutput;
 use crate::turn_timing::now_unix_timestamp_ms;
+use codex_features::Feature;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::InterAgentOperation;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MessageDeliveryMode {
-    QueueOnly,
-    TriggerTurn,
-}
-
-impl MessageDeliveryMode {
-    /// Returns whether the produced communication should start a turn immediately.
-    fn apply(self, communication: InterAgentCommunication) -> InterAgentCommunication {
-        match self {
-            Self::QueueOnly => communication.with_trigger_turn(false),
-            Self::TriggerTurn => communication.with_trigger_turn(true),
-        }
-    }
-
-    fn operation(self) -> InterAgentOperation {
-        match self {
-            Self::QueueOnly => InterAgentOperation::SendMessage,
-            Self::TriggerTurn => InterAgentOperation::FollowupTask,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-/// Input for the MultiAgentV2 `send_message` tool.
-pub(crate) struct SendMessageArgs {
-    pub(crate) target: String,
-    pub(crate) message: String,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -57,10 +25,9 @@ fn message_content(message: String) -> Result<String, FunctionCallError> {
     Ok(message)
 }
 
-/// Handles the shared MultiAgentV2 plain-text message flow for both `send_message` and `followup_task`.
+/// Handles the MultiAgentV2 plain-text follow-up task flow.
 pub(crate) async fn handle_message_string_tool(
     invocation: ToolInvocation,
-    mode: MessageDeliveryMode,
     target: String,
     message: String,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
@@ -77,11 +44,10 @@ pub(crate) async fn handle_message_string_tool(
         .agent_control
         .get_agent_metadata(receiver_thread_id)
         .unwrap_or_default();
-    if mode == MessageDeliveryMode::TriggerTurn
-        && receiver_agent
-            .agent_path
-            .as_ref()
-            .is_some_and(AgentPath::is_root)
+    if receiver_agent
+        .agent_path
+        .as_ref()
+        .is_some_and(AgentPath::is_root)
     {
         return Err(FunctionCallError::RespondToModel(
             "Tasks can't be assigned to the root agent".to_string(),
@@ -110,20 +76,40 @@ pub(crate) async fn handle_message_string_tool(
             .into(),
         )
         .await;
+    let sender_agent_path = turn
+        .session_source
+        .get_agent_path()
+        .unwrap_or_else(AgentPath::root);
+    let receiver_is_direct_child = receiver_agent_path
+        .as_str()
+        .rsplit_once('/')
+        .is_some_and(|(parent, _)| parent == sender_agent_path.as_str());
+    let receiver_will_send_completion = receiver_agent.agent_mode != AgentMode::Management
+        && session
+            .services
+            .agent_control
+            .agent_thread_enabled(receiver_thread_id, Feature::MultiAgentV2)
+            .await;
+    if receiver_is_direct_child && receiver_will_send_completion {
+        session
+            .mark_direct_child_completion_pending(receiver_thread_id)
+            .await;
+    }
+
     let communication = InterAgentCommunication::new(
         turn.session_source
             .get_agent_path()
             .unwrap_or_else(AgentPath::root),
-        receiver_agent_path,
+        receiver_agent_path.clone(),
         Vec::new(),
         prompt.clone(),
-        mode.operation(),
+        InterAgentOperation::FollowupTask,
     )
     .with_thread_ids(session.conversation_id, receiver_thread_id);
     let result = session
         .services
         .agent_control
-        .send_inter_agent_communication(receiver_thread_id, mode.apply(communication))
+        .send_inter_agent_communication(receiver_thread_id, communication.with_trigger_turn(true))
         .await
         .map_err(|err| collab_agent_error(receiver_thread_id, err));
     let status = session
@@ -153,7 +139,13 @@ pub(crate) async fn handle_message_string_tool(
             .into(),
         )
         .await;
-    result?;
-
+    if let Err(err) = result {
+        if receiver_is_direct_child && receiver_will_send_completion {
+            session
+                .mark_direct_child_completion_received(receiver_thread_id)
+                .await;
+        }
+        return Err(err);
+    }
     Ok(FunctionToolOutput::from_text(String::new(), Some(true)))
 }

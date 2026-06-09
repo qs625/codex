@@ -29,8 +29,9 @@
 生产路径：
 
 - 保留 core `forward_child_completion_to_parent` 为唯一生产者，输出带 `status` 的 `InterAgentCommunication(ChildCompletion)`。
-- `maybe_notify_parent_of_final_status` 继续用 final status、非 management、未发送、无 active subtree/pending work 做 gate。
-- `parent_child_completion_sent` 继续作为 single-producer guard，多次 final 复检只允许一次发送。
+- `maybe_notify_parent_of_final_status` 继续用 final status、非 management、无 active subtree/pending work 做 gate。
+- completion 发送改为 active 边沿触发：新 turn 或仍 active 时记录 active，首次从 active 变为 inactive 时发送；重复 final 复检不会重复发送。
+- 当前 thread 派发给 direct child 的 work 未收到 child completion 入账前，当前 thread 仍视为 active，避免 parent 在 direct child completion 尚未入账前提前向自己的 parent 发送 completion。
 - active event subscription 是 child 是否 active 的后端事实，不能只靠 app-server watch observer 维护。`file-subscription` registry 在注册、完成、取消 subscription 时直接同步 `ThreadManager.active_event_subscriptions()`；app-server observer 只更新 UI/watch 状态。
 - active event subscription 从非零变为零时，由 registry 通过 `ThreadManager::maybe_notify_parent_of_final_status` 补发一次复检，避免 final 时被 event command gate 挡住后漏发。
 

@@ -40,6 +40,17 @@ async fn handle_close_agent(
         .agent_control
         .get_agent_metadata(agent_id)
         .unwrap_or_default();
+    let receiver_agent_path = receiver_agent.agent_path.clone().ok_or_else(|| {
+        FunctionCallError::RespondToModel("target agent is missing an agent_path".to_string())
+    })?;
+    let sender_agent_path = turn
+        .session_source
+        .get_agent_path()
+        .unwrap_or_else(AgentPath::root);
+    let receiver_is_direct_child = receiver_agent_path
+        .as_str()
+        .rsplit_once('/')
+        .is_some_and(|(parent, _)| parent == sender_agent_path.as_str());
     if receiver_agent
         .agent_path
         .as_ref()
@@ -62,15 +73,7 @@ async fn handle_close_agent(
                     .unwrap_or_else(AgentPath::root)
                     .to_string(),
                 receiver_thread_id: agent_id,
-                receiver_agent_path: receiver_agent
-                    .agent_path
-                    .as_ref()
-                    .ok_or_else(|| {
-                        FunctionCallError::RespondToModel(
-                            "target agent is missing an agent_path".to_string(),
-                        )
-                    })?
-                    .to_string(),
+                receiver_agent_path: receiver_agent_path.to_string(),
             }
             .into(),
         )
@@ -97,15 +100,7 @@ async fn handle_close_agent(
                             .unwrap_or_else(AgentPath::root)
                             .to_string(),
                         receiver_thread_id: agent_id,
-                        receiver_agent_path: receiver_agent
-                            .agent_path
-                            .as_ref()
-                            .ok_or_else(|| {
-                                FunctionCallError::RespondToModel(
-                                    "target agent is missing an agent_path".to_string(),
-                                )
-                            })?
-                            .to_string(),
+                        receiver_agent_path: receiver_agent_path.to_string(),
                         receiver_agent_nickname: receiver_agent.agent_nickname.clone(),
                         receiver_agent_role: receiver_agent.agent_role.clone(),
                         status,
@@ -136,15 +131,7 @@ async fn handle_close_agent(
                     .unwrap_or_else(AgentPath::root)
                     .to_string(),
                 receiver_thread_id: agent_id,
-                receiver_agent_path: receiver_agent
-                    .agent_path
-                    .as_ref()
-                    .ok_or_else(|| {
-                        FunctionCallError::RespondToModel(
-                            "target agent is missing an agent_path".to_string(),
-                        )
-                    })?
-                    .to_string(),
+                receiver_agent_path: receiver_agent_path.to_string(),
                 receiver_agent_nickname: receiver_agent.agent_nickname,
                 receiver_agent_role: receiver_agent.agent_role,
                 status: status.clone(),
@@ -153,6 +140,11 @@ async fn handle_close_agent(
         )
         .await;
     result?;
+    if receiver_is_direct_child {
+        session
+            .clear_direct_child_completion_pending(agent_id)
+            .await;
+    }
 
     Ok(CloseAgentResult {
         previous_status: status,
