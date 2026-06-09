@@ -383,6 +383,16 @@ export type NotificationEnvelope = {
   };
 };
 
+export type AppServerErrorNotification = {
+  threadId: string;
+  turnId: string;
+  willRetry: boolean;
+  error: {
+    message?: string;
+    additionalDetails?: string | null;
+  } | null;
+};
+
 export type VoiceCaptureStatus =
   | "idle"
   | "requesting"

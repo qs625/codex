@@ -74,6 +74,7 @@ import {
 } from "./lib/voiceCaptureState";
 import type {
   BootstrapResponse,
+  AppServerErrorNotification,
   ComposerImage,
   DraftSkill,
   FilePreview,
@@ -1446,9 +1447,23 @@ function App() {
           updateThreadStatusLocally(notification.threadId, notification.status);
           break;
         }
+        case "error": {
+          const notification = params as AppServerErrorNotification;
+          const message =
+            notification.error?.message ?? "App-server reported an error.";
+          const details = notification.error?.additionalDetails;
+          setError(details ? `${message} ${details}` : message);
+          break;
+        }
         case "turn/started":
         case "turn/completed": {
           const notification = params as { threadId: string; turn: Turn };
+          if (
+            method === "turn/started" &&
+            notification.threadId === selectedThreadId
+          ) {
+            setError(null);
+          }
           if (
             method === "turn/completed" &&
             notification.threadId === selectedThreadId
