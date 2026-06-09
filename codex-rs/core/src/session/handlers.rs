@@ -324,6 +324,12 @@ pub async fn inter_agent_communication(
     communication: InterAgentCommunication,
 ) {
     let trigger_turn = communication.trigger_turn;
+    let completion_child_thread_id = matches!(
+        communication.operation,
+        InterAgentOperation::ChildCompletion
+    )
+    .then_some(communication.sender_thread_id)
+    .flatten();
     let live_item_communication = matches!(
         communication.operation,
         InterAgentOperation::ChildCompletion
@@ -344,6 +350,10 @@ pub async fn inter_agent_communication(
             }),
         })
         .await;
+    }
+    if let Some(child_thread_id) = completion_child_thread_id {
+        sess.mark_direct_child_completion_received(child_thread_id)
+            .await;
     }
     if trigger_turn {
         sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id)

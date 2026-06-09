@@ -1410,7 +1410,6 @@ async fn code_mode_only_can_expose_multi_agent_v2_as_normal_tools() {
             "exec",
             "wait",
             "spawn_agent",
-            "send_message",
             "followup_task",
             "close_agent",
             "list_agents",

@@ -323,8 +323,36 @@ impl AgentControl {
         )
         .await;
 
-        self.send_input(new_thread.thread_id, initial_operation)
-            .await?;
+        let parent_thread_for_completion = match notification_source.as_ref() {
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id, ..
+            })) => state.get_thread(*parent_thread_id).await.ok(),
+            _ => None,
+        };
+        let child_will_send_completion = new_thread.thread.enabled(Feature::MultiAgentV2)
+            && agent_metadata.agent_mode != AgentMode::Management;
+        if child_will_send_completion
+            && let Some(parent_thread) = parent_thread_for_completion.as_ref()
+        {
+            parent_thread
+                .codex
+                .session
+                .mark_direct_child_completion_pending(new_thread.thread_id)
+                .await;
+        }
+        if let Err(err) = self
+            .send_input(new_thread.thread_id, initial_operation)
+            .await
+        {
+            if let Some(parent_thread) = parent_thread_for_completion.as_ref() {
+                parent_thread
+                    .codex
+                    .session
+                    .mark_direct_child_completion_received(new_thread.thread_id)
+                    .await;
+            }
+            return Err(err);
+        }
         if !new_thread.thread.enabled(Feature::MultiAgentV2) {
             let child_reference = agent_metadata
                 .agent_path
@@ -793,6 +821,17 @@ impl AgentControl {
         thread.agent_status().await
     }
 
+    /// Returns whether the live agent thread has `feature` enabled.
+    pub(crate) async fn agent_thread_enabled(&self, agent_id: ThreadId, feature: Feature) -> bool {
+        let Ok(state) = self.upgrade() else {
+            return false;
+        };
+        let Ok(thread) = state.get_thread(agent_id).await else {
+            return false;
+        };
+        thread.enabled(feature)
+    }
+
     /// Returns whether `agent_id` is active according to the same runtime facts
     /// used by thread status: current turn, active event subscriptions, or
     /// non-final lifecycle status.
@@ -1060,7 +1099,8 @@ impl AgentControl {
                     message,
                     codex_protocol::protocol::InterAgentOperation::ChildCompletion,
                 )
-                .with_trigger_turn(true);
+                .with_trigger_turn(true)
+                .with_thread_ids(child_thread_id, parent_thread_id);
                 let _ = control
                     .send_inter_agent_communication(parent_thread_id, communication)
                     .await;

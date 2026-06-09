@@ -12,7 +12,6 @@ use crate::tools::context::ToolOutput;
 use crate::tools::handlers::multi_agents_v2::CloseAgentHandler as CloseAgentHandlerV2;
 use crate::tools::handlers::multi_agents_v2::FollowupTaskHandler as FollowupTaskHandlerV2;
 use crate::tools::handlers::multi_agents_v2::ListAgentsHandler as ListAgentsHandlerV2;
-use crate::tools::handlers::multi_agents_v2::SendMessageHandler as SendMessageHandlerV2;
 use crate::tools::handlers::multi_agents_v2::SpawnAgentHandler as SpawnAgentHandlerV2;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_extension_api::empty_extension_registry;
@@ -989,7 +988,7 @@ async fn spawn_agent_errors_when_manager_dropped() {
 }
 
 #[tokio::test]
-async fn multi_agent_v2_spawn_returns_path_and_send_message_accepts_relative_path() {
+async fn multi_agent_v2_spawn_returns_path_and_followup_task_accepts_relative_path() {
     #[derive(Debug, Deserialize)]
     struct SpawnAgentResult {
         task_name: String,
@@ -1064,18 +1063,18 @@ async fn multi_agent_v2_spawn_returns_path_and_send_message_accepts_relative_pat
             )
     }));
 
-    SendMessageHandlerV2
+    FollowupTaskHandlerV2
         .handle(invocation(
             session.clone(),
             turn.clone(),
-            "send_message",
+            "followup_task",
             function_payload(json!({
                 "target": "test_process",
                 "message": "continue"
             })),
         ))
         .await
-        .expect("send_message should accept v2 path");
+        .expect("followup_task should accept v2 path");
 
     assert!(manager.captured_ops().iter().any(|(id, op)| {
         *id == child_thread_id
@@ -1086,9 +1085,77 @@ async fn multi_agent_v2_spawn_returns_path_and_send_message_accepts_relative_pat
                         && communication.recipient.as_str() == "/root/test_process"
                         && communication.other_recipients.is_empty()
                         && communication.content == "continue"
-                        && !communication.trigger_turn
+                        && communication.trigger_turn
+                        && communication.operation
+                            == codex_protocol::protocol::InterAgentOperation::FollowupTask
             )
     }));
+}
+
+#[tokio::test]
+async fn multi_agent_v2_followup_during_pending_child_completion_counts_assignments() {
+    let (mut session, mut turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread((*turn.config).clone())
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.conversation_id = root.thread_id;
+    let mut config = (*turn.config).clone();
+    config
+        .features
+        .enable(Feature::MultiAgentV2)
+        .expect("test config should allow feature update");
+    turn.config = Arc::new(config);
+
+    let session = Arc::new(session);
+    let turn = Arc::new(turn);
+    SpawnAgentHandlerV2::default()
+        .handle(invocation(
+            session.clone(),
+            turn.clone(),
+            "spawn_agent",
+            function_payload(json!({
+                "message": "start",
+                "task_name": "worker"
+            })),
+        ))
+        .await
+        .expect("spawn_agent should succeed");
+    let agent_id = session
+        .services
+        .agent_control
+        .resolve_agent_reference(session.conversation_id, &turn.session_source, "worker")
+        .await
+        .expect("worker should resolve");
+    assert!(session.has_pending_direct_child_completions().await);
+
+    FollowupTaskHandlerV2
+        .handle(invocation(
+            session.clone(),
+            turn.clone(),
+            "followup_task",
+            function_payload(json!({
+                "target": "worker",
+                "message": "continue"
+            })),
+        ))
+        .await
+        .expect("followup_task should succeed");
+
+    session
+        .mark_direct_child_completion_received(agent_id)
+        .await;
+    assert!(
+        session.has_pending_direct_child_completions().await,
+        "the first completion must not clear the follow-up assignment"
+    );
+
+    session
+        .mark_direct_child_completion_received(agent_id)
+        .await;
+    assert!(!session.has_pending_direct_child_completions().await);
 }
 
 #[tokio::test]
@@ -1206,82 +1273,6 @@ async fn multi_agent_v2_spawn_rejects_zero_fork_turns() {
             "fork_turns must be `none`, `all`, or a positive integer string".to_string()
         )
     );
-}
-
-#[tokio::test]
-async fn multi_agent_v2_send_message_accepts_root_target_from_child() {
-    let (mut session, mut turn) = make_session_and_context().await;
-    let manager = thread_manager();
-    let root = manager
-        .start_thread((*turn.config).clone())
-        .await
-        .expect("root thread should start");
-    session.services.agent_control = manager.agent_control();
-    session.conversation_id = root.thread_id;
-    let mut config = (*turn.config).clone();
-    config
-        .features
-        .enable(Feature::MultiAgentV2)
-        .expect("test config should allow feature update");
-    turn.config = Arc::new(config);
-
-    let child_path = AgentPath::try_from("/root/worker").expect("agent path");
-    let child_thread_id = session
-        .services
-        .agent_control
-        .spawn_agent_with_metadata(
-            (*turn.config).clone(),
-            vec![UserInput::Text {
-                text: "inspect this repo".to_string(),
-                text_elements: Vec::new(),
-            }]
-            .into(),
-            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-                parent_thread_id: root.thread_id,
-                depth: 1,
-                agent_path: Some(child_path.clone()),
-                agent_nickname: None,
-                agent_role: None,
-            })),
-            crate::agent::control::SpawnAgentOptions::default(),
-        )
-        .await
-        .expect("worker spawn should succeed")
-        .thread_id;
-    session.conversation_id = child_thread_id;
-    turn.session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-        parent_thread_id: root.thread_id,
-        depth: 1,
-        agent_path: Some(child_path.clone()),
-        agent_nickname: None,
-        agent_role: None,
-    });
-
-    SendMessageHandlerV2
-        .handle(invocation(
-            Arc::new(session),
-            Arc::new(turn),
-            "send_message",
-            function_payload(json!({
-                "target": "/root",
-                "message": "done"
-            })),
-        ))
-        .await
-        .expect("send_message should accept the root agent path");
-
-    assert!(manager.captured_ops().iter().any(|(id, op)| {
-        *id == root.thread_id
-            && matches!(
-                op,
-                Op::InterAgentCommunication { communication }
-                    if communication.author == child_path
-                        && communication.recipient == AgentPath::root()
-                        && communication.other_recipients.is_empty()
-                        && communication.content == "done"
-                        && !communication.trigger_turn
-            )
-    }));
 }
 
 #[tokio::test]
@@ -1611,136 +1602,7 @@ async fn multi_agent_v2_list_agents_omits_closed_agents() {
 }
 
 #[tokio::test]
-async fn multi_agent_v2_send_message_rejects_legacy_items_field() {
-    let (mut session, mut turn) = make_session_and_context().await;
-    let manager = thread_manager();
-    let root = manager
-        .start_thread((*turn.config).clone())
-        .await
-        .expect("root thread should start");
-    session.services.agent_control = manager.agent_control();
-    session.conversation_id = root.thread_id;
-    let mut config = turn.config.as_ref().clone();
-    let _ = config.features.enable(Feature::MultiAgentV2);
-    turn.config = Arc::new(config);
-    let session = Arc::new(session);
-    let turn = Arc::new(turn);
-
-    SpawnAgentHandlerV2::default()
-        .handle(invocation(
-            session.clone(),
-            turn.clone(),
-            "spawn_agent",
-            function_payload(json!({
-                "message": "boot worker",
-                "task_name": "worker"
-            })),
-        ))
-        .await
-        .expect("spawn worker");
-    let agent_id = session
-        .services
-        .agent_control
-        .resolve_agent_reference(session.conversation_id, &turn.session_source, "worker")
-        .await
-        .expect("worker should resolve");
-    let invocation = invocation(
-        session,
-        turn,
-        "send_message",
-        function_payload(json!({
-            "target": agent_id.to_string(),
-            "items": [
-                {"type": "mention", "name": "drive", "path": "app://google_drive"},
-                {"type": "text", "text": "read the folder"}
-            ]
-        })),
-    );
-
-    let Err(err) = SendMessageHandlerV2.handle(invocation).await else {
-        panic!("legacy items field should be rejected in v2");
-    };
-    let FunctionCallError::RespondToModel(message) = err else {
-        panic!("legacy items field should surface as a model-facing error");
-    };
-    assert!(message.contains("unknown field `items`"));
-}
-
-#[tokio::test]
-async fn multi_agent_v2_send_message_rejects_interrupt_parameter() {
-    let (mut session, mut turn) = make_session_and_context().await;
-    let manager = thread_manager();
-    let root = manager
-        .start_thread((*turn.config).clone())
-        .await
-        .expect("root thread should start");
-    session.services.agent_control = manager.agent_control();
-    session.conversation_id = root.thread_id;
-    let mut config = turn.config.as_ref().clone();
-    let _ = config.features.enable(Feature::MultiAgentV2);
-    turn.config = Arc::new(config);
-    let session = Arc::new(session);
-    let turn = Arc::new(turn);
-
-    SpawnAgentHandlerV2::default()
-        .handle(invocation(
-            session.clone(),
-            turn.clone(),
-            "spawn_agent",
-            function_payload(json!({
-                "message": "boot worker",
-                "task_name": "worker"
-            })),
-        ))
-        .await
-        .expect("spawn worker");
-    let agent_id = session
-        .services
-        .agent_control
-        .resolve_agent_reference(session.conversation_id, &turn.session_source, "worker")
-        .await
-        .expect("worker should resolve");
-
-    let invocation = invocation(
-        session,
-        turn,
-        "send_message",
-        function_payload(json!({
-            "target": agent_id.to_string(),
-            "message": "continue",
-            "interrupt": true
-        })),
-    );
-
-    let Err(err) = SendMessageHandlerV2.handle(invocation).await else {
-        panic!("send_message interrupt parameter should be rejected");
-    };
-    let FunctionCallError::RespondToModel(message) = err else {
-        panic!("expected model-facing parse error");
-    };
-    assert!(message.starts_with(
-        "failed to parse function arguments: unknown field `interrupt`, expected `target` or `message`"
-    ));
-
-    let ops = manager.captured_ops();
-    let ops_for_agent: Vec<&Op> = ops
-        .iter()
-        .filter_map(|(id, op)| (*id == agent_id).then_some(op))
-        .collect();
-    assert!(!ops_for_agent.iter().any(|op| matches!(op, Op::Interrupt)));
-    assert!(!ops_for_agent.iter().any(|op| matches!(
-        op,
-        Op::InterAgentCommunication { communication }
-            if communication.author == AgentPath::root()
-                && communication.recipient.as_str() == "/root/worker"
-                && communication.other_recipients.is_empty()
-                && communication.content == "continue"
-                && !communication.trigger_turn
-    )));
-}
-
-#[tokio::test]
-async fn multi_agent_v2_child_completion_notifies_parent_once() {
+async fn multi_agent_v2_child_completion_notifies_parent_once_per_assignment() {
     let (mut session, mut turn) = make_session_and_context().await;
     let manager = thread_manager();
     let root = manager
@@ -1778,8 +1640,14 @@ async fn multi_agent_v2_child_completion_notifies_parent_once() {
         .await
         .expect("worker thread should exist");
     let worker_path = AgentPath::try_from("/root/worker").expect("worker path");
+    let pending_grandchild_id = ThreadId::new();
 
     let first_turn = thread.codex.session.new_default_turn().await;
+    thread
+        .codex
+        .session
+        .mark_direct_child_completion_pending(pending_grandchild_id)
+        .await;
     thread
         .codex
         .session
@@ -1800,6 +1668,99 @@ async fn multi_agent_v2_child_completion_notifies_parent_once() {
         .session
         .maybe_notify_parent_of_final_status(first_turn.as_ref())
         .await;
+    let blocked_notifications = manager
+        .captured_ops()
+        .into_iter()
+        .filter_map(|(id, op)| {
+            (id == root.thread_id)
+                .then_some(op)
+                .and_then(|op| match op {
+                    Op::InterAgentCommunication { communication }
+                        if communication.author == worker_path
+                            && communication.recipient == AgentPath::root()
+                            && communication.other_recipients.is_empty()
+                            && communication.trigger_turn =>
+                    {
+                        Some(communication.content)
+                    }
+                    _ => None,
+                })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(blocked_notifications, Vec::<String>::new());
+
+    thread
+        .codex
+        .session
+        .mark_direct_child_completion_received(pending_grandchild_id)
+        .await;
+    thread
+        .codex
+        .session
+        .maybe_notify_parent_of_final_status(first_turn.as_ref())
+        .await;
+    thread
+        .codex
+        .session
+        .maybe_notify_parent_of_final_status(first_turn.as_ref())
+        .await;
+    let first_notification = format_subagent_notification_message(
+        worker_path.as_str(),
+        &AgentStatus::Completed(Some("first done".to_string())),
+    );
+    let first_notifications = manager
+        .captured_ops()
+        .into_iter()
+        .filter_map(|(id, op)| {
+            (id == root.thread_id)
+                .then_some(op)
+                .and_then(|op| match op {
+                    Op::InterAgentCommunication { communication }
+                        if communication.author == worker_path
+                            && communication.recipient == AgentPath::root()
+                            && communication.other_recipients.is_empty()
+                            && communication.trigger_turn =>
+                    {
+                        Some(communication.content)
+                    }
+                    _ => None,
+                })
+        })
+        .filter(|message| *message == first_notification)
+        .count();
+    assert_eq!(first_notifications, 1);
+
+    let followup_op_count = manager.captured_ops().len();
+    FollowupTaskHandlerV2
+        .handle(invocation(
+            session.clone(),
+            turn.clone(),
+            "followup_task",
+            function_payload(json!({
+                "target": "worker",
+                "message": "continue",
+            })),
+        ))
+        .await
+        .expect("followup_task should wake worker");
+    let followup_sent = manager
+        .captured_ops()
+        .into_iter()
+        .skip(followup_op_count)
+        .any(|(id, op)| {
+            id == agent_id
+                && matches!(
+                    op,
+                    Op::InterAgentCommunication { communication }
+                        if communication.author == AgentPath::root()
+                            && communication.recipient == worker_path
+                            && communication.content == "continue"
+                            && communication.trigger_turn
+                            && communication.operation
+                                == codex_protocol::protocol::InterAgentOperation::FollowupTask
+                )
+        });
+    assert!(followup_sent);
 
     let second_turn = thread.codex.session.new_default_turn().await;
     thread
@@ -1823,10 +1784,6 @@ async fn multi_agent_v2_child_completion_notifies_parent_once() {
         .maybe_notify_parent_of_final_status(second_turn.as_ref())
         .await;
 
-    let first_notification = format_subagent_notification_message(
-        worker_path.as_str(),
-        &AgentStatus::Completed(Some("first done".to_string())),
-    );
     let second_notification = format_subagent_notification_message(
         worker_path.as_str(),
         &AgentStatus::Completed(Some("second done".to_string())),
@@ -1857,7 +1814,11 @@ async fn multi_agent_v2_child_completion_notifies_parent_once() {
                 .iter()
                 .filter(|message| **message == first_notification)
                 .count();
-            if first_count == 1 {
+            let second_count = notifications
+                .iter()
+                .filter(|message| **message == second_notification)
+                .count();
+            if first_count == 1 && second_count == 1 {
                 break notifications;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1866,8 +1827,20 @@ async fn multi_agent_v2_child_completion_notifies_parent_once() {
     .await
     .expect("parent should receive the child completion notification");
 
-    assert!(notifications.contains(&first_notification));
-    assert!(!notifications.contains(&second_notification));
+    assert_eq!(
+        notifications
+            .iter()
+            .filter(|message| **message == first_notification)
+            .count(),
+        1
+    );
+    assert_eq!(
+        notifications
+            .iter()
+            .filter(|message| **message == second_notification)
+            .count(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -2773,11 +2746,12 @@ async fn multi_agent_v2_close_agent_accepts_task_name_target() {
         .resolve_agent_reference(session.conversation_id, &turn.session_source, "worker")
         .await
         .expect("worker path should resolve");
+    assert!(session.has_pending_direct_child_completions().await);
 
     let output = CloseAgentHandlerV2
         .handle(invocation(
-            session,
-            turn,
+            session.clone(),
+            turn.clone(),
             "close_agent",
             function_payload(json!({"target": "worker"})),
         ))
@@ -2792,6 +2766,56 @@ async fn multi_agent_v2_close_agent_accepts_task_name_target() {
         manager.agent_control().get_status(agent_id).await,
         AgentStatus::NotFound
     );
+    assert!(!session.has_pending_direct_child_completions().await);
+}
+
+#[tokio::test]
+async fn multi_agent_v2_management_child_does_not_register_completion_pending() {
+    let (mut session, mut turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread((*turn.config).clone())
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.conversation_id = root.thread_id;
+    let mut config = (*turn.config).clone();
+    config
+        .features
+        .enable(Feature::MultiAgentV2)
+        .expect("test config should allow feature update");
+    turn.config = Arc::new(config);
+
+    let session = Arc::new(session);
+    let turn = Arc::new(turn);
+    SpawnAgentHandlerV2::default()
+        .handle(invocation(
+            session.clone(),
+            turn.clone(),
+            "spawn_agent",
+            function_payload(json!({
+                "message": "coordinate this work",
+                "task_name": "manager",
+                "agent_mode": "management"
+            })),
+        ))
+        .await
+        .expect("management spawn should succeed");
+    assert!(!session.has_pending_direct_child_completions().await);
+
+    FollowupTaskHandlerV2
+        .handle(invocation(
+            session.clone(),
+            turn.clone(),
+            "followup_task",
+            function_payload(json!({
+                "target": "manager",
+                "message": "continue coordinating"
+            })),
+        ))
+        .await
+        .expect("management followup should succeed");
+    assert!(!session.has_pending_direct_child_completions().await);
 }
 
 #[tokio::test]

@@ -257,6 +257,7 @@ async fn emit_turn_complete(thread: &Arc<CodexThread>, last_agent_message: &str)
             }),
         )
         .await;
+    *thread.codex.session.active_turn.lock().await = None;
 }
 
 fn captured_child_completion(
@@ -1428,7 +1429,8 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
                 expected_message.clone(),
                 codex_protocol::protocol::InterAgentOperation::ChildCompletion,
             )
-            .with_trigger_turn(true),
+            .with_trigger_turn(true)
+            .with_thread_ids(tester_thread_id, worker_thread_id),
         },
     );
 
@@ -1532,6 +1534,58 @@ async fn multi_agent_v2_completion_waits_for_pending_mailbox_input() {
         &worker_path,
         &AgentPath::root(),
     ));
+
+    let drained_mailbox = worker_thread.codex.session.get_pending_input().await;
+    assert!(!drained_mailbox.is_empty());
+    harness
+        .manager
+        .maybe_notify_parent_of_final_status(worker_thread_id)
+        .await;
+    harness
+        .manager
+        .maybe_notify_parent_of_final_status(worker_thread_id)
+        .await;
+    let captured_ops = harness.manager.captured_ops();
+    assert_eq!(
+        count_captured_child_completions(
+            &captured_ops[baseline_op_count..],
+            root_thread_id,
+            &worker_path,
+            &AgentPath::root(),
+        ),
+        1
+    );
+}
+
+#[tokio::test]
+async fn legacy_child_spawn_does_not_register_completion_pending() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, root_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+
+    harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello legacy worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path),
+                agent_nickname: None,
+                agent_role: Some("explorer".to_string()),
+            })),
+        )
+        .await
+        .expect("legacy worker spawn should succeed");
+
+    assert!(
+        !root_thread
+            .codex
+            .session
+            .has_pending_direct_child_completions()
+            .await
+    );
 }
 
 #[tokio::test]

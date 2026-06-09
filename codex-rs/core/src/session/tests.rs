@@ -4516,7 +4516,8 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         guardian_review_session: crate::guardian::GuardianReviewSessionManager::default(),
         services,
         next_internal_sub_id: AtomicU64::new(0),
-        parent_child_completion_sent: std::sync::atomic::AtomicBool::new(false),
+        parent_child_completion_active: std::sync::atomic::AtomicBool::new(true),
+        pending_direct_child_completions: Mutex::new(std::collections::HashMap::new()),
     };
 
     (session, turn_context)
@@ -6376,7 +6377,8 @@ where
         guardian_review_session: crate::guardian::GuardianReviewSessionManager::default(),
         services,
         next_internal_sub_id: AtomicU64::new(0),
-        parent_child_completion_sent: std::sync::atomic::AtomicBool::new(false),
+        parent_child_completion_active: std::sync::atomic::AtomicBool::new(true),
+        pending_direct_child_completions: Mutex::new(std::collections::HashMap::new()),
     });
 
     (session, turn_context, rx_event)

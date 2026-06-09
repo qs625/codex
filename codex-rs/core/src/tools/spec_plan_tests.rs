@@ -9,7 +9,6 @@ use crate::tools::handlers::multi_agents_spec::create_followup_task_tool;
 use crate::tools::handlers::multi_agents_spec::create_list_agents_tool;
 use crate::tools::handlers::multi_agents_spec::create_resume_agent_tool;
 use crate::tools::handlers::multi_agents_spec::create_send_input_tool_v1;
-use crate::tools::handlers::multi_agents_spec::create_send_message_tool;
 use crate::tools::handlers::multi_agents_spec::create_spawn_agent_tool_v1;
 use crate::tools::handlers::multi_agents_spec::create_spawn_agent_tool_v2;
 use crate::tools::handlers::plan_spec::create_update_plan_tool;
@@ -292,7 +291,6 @@ fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
         let collab_specs = if config.multi_agent_v2 {
             vec![
                 create_spawn_agent_tool_v2(spawn_agent_tool_options(&config)),
-                create_send_message_tool(),
                 create_followup_task_tool(),
                 create_close_agent_tool_v2(),
                 create_list_agents_tool(),
@@ -521,7 +519,6 @@ fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
         &tools,
         &[
             "spawn_agent",
-            "send_message",
             "followup_task",
             "close_agent",
             "list_agents",
@@ -553,26 +550,6 @@ fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
         .as_ref()
         .expect("spawn_agent should define output schema");
     assert_eq!(output_schema["required"], json!(["task_name", "nickname"]));
-
-    let send_message = find_tool(&tools, "send_message");
-    let ToolSpec::Function(ResponsesApiTool {
-        parameters,
-        output_schema,
-        ..
-    }) = send_message
-    else {
-        panic!("send_message should be a function tool");
-    };
-    assert_eq!(output_schema, &None);
-    let (properties, required) = expect_object_schema(parameters);
-    assert!(properties.contains_key("target"));
-    assert!(!properties.contains_key("interrupt"));
-    assert!(properties.contains_key("message"));
-    assert!(!properties.contains_key("items"));
-    assert_eq!(
-        required,
-        Some(&vec!["target".to_string(), "message".to_string()])
-    );
 
     let followup_task = find_tool(&tools, "followup_task");
     let ToolSpec::Function(ResponsesApiTool {
@@ -645,7 +622,6 @@ fn test_build_specs_multi_agent_v2_does_not_require_collab_feature() {
         &tools,
         &[
             "spawn_agent",
-            "send_message",
             "followup_task",
             "close_agent",
             "list_agents",

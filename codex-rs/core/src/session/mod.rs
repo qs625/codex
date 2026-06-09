@@ -1701,9 +1701,6 @@ impl Session {
         if !is_final(&status) {
             return;
         }
-        if self.parent_child_completion_sent.load(Ordering::SeqCst) {
-            return;
-        }
         if self
             .services
             .agent_control
@@ -1713,12 +1710,14 @@ impl Session {
             return;
         }
         if Box::pin(self.has_active_child_completion_work()).await {
+            self.parent_child_completion_active
+                .store(true, Ordering::SeqCst);
             return;
         }
 
         if self
-            .parent_child_completion_sent
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .parent_child_completion_active
+            .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
             return;
@@ -1732,8 +1731,8 @@ impl Session {
         ))
         .await
         {
-            self.parent_child_completion_sent
-                .store(false, Ordering::SeqCst);
+            self.parent_child_completion_active
+                .store(true, Ordering::SeqCst);
         }
     }
 
@@ -1797,7 +1796,8 @@ impl Session {
     }
 
     async fn has_active_child_completion_work(&self) -> bool {
-        if self.has_queued_response_items_for_next_turn().await
+        if self.has_pending_direct_child_completions().await
+            || self.has_queued_response_items_for_next_turn().await
             || self.has_pending_mailbox_items().await
         {
             return true;
@@ -1809,6 +1809,43 @@ impl Session {
                 .agent_subtree_is_active(self.conversation_id),
         )
         .await
+    }
+
+    pub(crate) async fn mark_direct_child_completion_pending(&self, child_thread_id: ThreadId) {
+        let mut pending = self.pending_direct_child_completions.lock().await;
+        *pending.entry(child_thread_id).or_default() += 1;
+    }
+
+    pub(crate) async fn mark_direct_child_completion_received(&self, child_thread_id: ThreadId) {
+        let mut pending = self.pending_direct_child_completions.lock().await;
+        let Some(count) = pending.get_mut(&child_thread_id) else {
+            return;
+        };
+        if *count > 1 {
+            *count -= 1;
+        } else {
+            pending.remove(&child_thread_id);
+        }
+    }
+
+    pub(crate) async fn clear_direct_child_completion_pending(&self, child_thread_id: ThreadId) {
+        self.pending_direct_child_completions
+            .lock()
+            .await
+            .remove(&child_thread_id);
+    }
+
+    pub(crate) fn mark_child_completion_active(&self) {
+        self.parent_child_completion_active
+            .store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) async fn has_pending_direct_child_completions(&self) -> bool {
+        !self
+            .pending_direct_child_completions
+            .lock()
+            .await
+            .is_empty()
     }
 
     async fn maybe_mirror_event_text_to_realtime(&self, msg: &EventMsg) {
