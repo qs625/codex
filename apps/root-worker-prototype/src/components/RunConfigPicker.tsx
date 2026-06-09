@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ChevronDownIcon } from "./icons";
 import {
+  ensureCurrentModelVisible,
   getRunModelLabel,
   getSupportedReasoningEfforts,
   normalizeModelListResponse,
@@ -49,6 +50,7 @@ export function RunConfigPicker({
   const canApply =
     selectedThread != null &&
     selectedModel != null &&
+    !selectedModel.current &&
     draftReasoningEffort != null &&
     !disabled;
   const hasChanged =
@@ -143,23 +145,6 @@ export function RunConfigPicker({
     };
   }, [isOpen]);
 
-  useEffect(() => {
-    if (!isOpen || models.length === 0 || selectedModel) {
-      return;
-    }
-    const fallbackModel =
-      models.find((model) => model.isDefault) ?? models[0] ?? null;
-    if (!fallbackModel) {
-      return;
-    }
-    syncDraftForModel(fallbackModel, selectedThread?.reasoningEffort ?? null);
-  }, [
-    isOpen,
-    models,
-    selectedModel,
-    selectedThread?.reasoningEffort,
-  ]);
-
   async function loadModels() {
     setHasRequestedModels(true);
     setIsLoading(true);
@@ -167,16 +152,17 @@ export function RunConfigPicker({
     try {
       const response =
         (await window.codexDesktop.listModels()) as RunModelListResponse;
-      const normalizedModels = normalizeModelListResponse(response);
+      const normalizedModels = ensureCurrentModelVisible(
+        normalizeModelListResponse(response),
+        selectedThread?.model ?? null,
+        selectedThread?.reasoningEffort ?? null,
+      );
       setModels(normalizedModels);
       const currentModel =
         normalizedModels.find(
           (model) => model.model === selectedThread?.model,
-        ) ??
-        normalizedModels.find((model) => model.isDefault) ??
-        normalizedModels[0] ??
-        null;
-      if (currentModel) {
+        ) ?? null;
+      if (currentModel && !currentModel.current) {
         syncDraftForModel(currentModel, selectedThread?.reasoningEffort ?? null);
       }
     } catch (error) {
@@ -203,6 +189,12 @@ export function RunConfigPicker({
   }
 
   function selectModel(model: RunModel) {
+    if (model.current) {
+      setDraftModel(model.model);
+      setDraftReasoningEffort(selectedThread?.reasoningEffort ?? null);
+      setFallbackMessage(null);
+      return;
+    }
     syncDraftForModel(model, draftReasoningEffort);
   }
 
@@ -352,7 +344,19 @@ export function RunConfigPopoverContent({
                     <span className="run-config-radio-dot" />
                     <span className="run-config-model-copy">
                       <span className="run-config-model-name">
-                        {getRunModelLabel(model)}
+                        <span className="run-config-model-name-text">
+                          {getRunModelLabel(model)}
+                        </span>
+                        {model.current ? (
+                          <span className="run-config-model-badge current">
+                            Current
+                          </span>
+                        ) : null}
+                        {model.configured ? (
+                          <span className="run-config-model-badge">
+                            Configured
+                          </span>
+                        ) : null}
                       </span>
                       <span className="run-config-model-description">
                         {model.description}
