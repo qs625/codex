@@ -619,12 +619,35 @@ svg {
 }
 
 .run-config-model-name {
-  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   color: #292524;
   font-size: 12px;
   font-weight: 650;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.run-config-model-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.run-config-model-badge {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(4, 120, 87, 0.1);
+  color: #047857;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.run-config-model-badge.current {
+  background: rgba(2, 132, 199, 0.1);
+  color: #0369a1;
 }
 
 .run-config-model-description {

@@ -59,6 +59,70 @@ test("run config popover renders model and reasoning radio groups", () => {
   assert.match(markup, /aria-checked="true"[^>]*>medium/);
 });
 
+test("run config popover marks configured provider models", () => {
+  const markup = renderPopover({
+    models: [
+      makeModel({
+        id: "configured:corp:corp-model",
+        model: "corp-model",
+        displayName: "corp-model",
+        description: "当前配置中的模型 · Corp Gateway",
+        configured: true,
+      }),
+    ],
+    draftModel: "corp-model",
+  });
+
+  assert.match(markup, /corp-model/);
+  assert.match(markup, /Configured/);
+  assert.match(markup, /当前配置中的模型 · Corp Gateway/);
+});
+
+test("run config popover marks current models missing from model list", () => {
+  const markup = renderPopover({
+    models: [
+      makeModel({
+        id: "current:thread-model",
+        model: "thread-model",
+        displayName: "thread-model",
+        description: "当前 thread 的模型，未出现在 model/list",
+        current: true,
+        isDefault: false,
+      }),
+    ],
+    draftModel: "thread-model",
+  });
+
+  assert.match(markup, /thread-model/);
+  assert.match(markup, /Current/);
+  assert.match(markup, /当前 thread 的模型，未出现在 model\/list/);
+});
+
+test("run config popover keeps current-only models from being applied", () => {
+  const markup = renderPopover({
+    canApply: false,
+    hasChanged: false,
+    models: [
+      makeModel({
+        id: "current:thread-model",
+        model: "thread-model",
+        displayName: "thread-model",
+        description: "当前 thread 的模型，未出现在 model/list",
+        current: true,
+        supportedReasoningEfforts: [],
+        defaultReasoningEffort: "unknown",
+        isDefault: false,
+      }),
+    ],
+    draftModel: "thread-model",
+    draftReasoningEffort: null,
+    supportedEfforts: [],
+  });
+
+  assert.match(markup, /Current/);
+  assert.match(markup, /disabled="">应用/);
+});
+
 test("run config popover renders recoverable model list errors", () => {
   const markup = renderPopover({
     canApply: false,

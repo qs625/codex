@@ -141,7 +141,7 @@ impl CatalogRequestProcessor {
         &self,
         params: ModelListParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        Self::list_models(self.thread_manager.clone(), params)
+        self.list_models(params)
             .await
             .map(|response| Some(response.into()))
     }
@@ -221,7 +221,7 @@ impl CatalogRequestProcessor {
     }
 
     async fn list_models(
-        thread_manager: Arc<ThreadManager>,
+        &self,
         params: ModelListParams,
     ) -> Result<ModelListResponse, JSONRPCErrorError> {
         let ModelListParams {
@@ -229,7 +229,10 @@ impl CatalogRequestProcessor {
             cursor,
             include_hidden,
         } = params;
-        let models = supported_models(thread_manager, include_hidden.unwrap_or(false)).await;
+        let mut models =
+            supported_models(self.thread_manager.clone(), include_hidden.unwrap_or(false)).await;
+        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        add_configured_model(&mut models, &config);
         let total = models.len();
 
         if total == 0 {

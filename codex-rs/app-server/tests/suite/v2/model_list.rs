@@ -19,6 +19,7 @@ use codex_config::types::AuthCredentialsStoreMode;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ModelsResponse;
+use codex_protocol::openai_models::ReasoningEffort;
 use core_test_support::responses::mount_models_once;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -121,6 +122,134 @@ async fn list_models_returns_all_models_with_large_limit() -> Result<()> {
 
     assert_eq!(items, expected_models);
     assert!(next_cursor.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_models_includes_configured_custom_model() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    write_models_cache(codex_home.path())?;
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        r#"
+model = "corp-model"
+model_provider = "corp"
+model_reasoning_effort = "high"
+
+[model_providers.corp]
+name = "Corp Gateway"
+base_url = "https://example.invalid/v1"
+env_key = "CORP_API_KEY"
+"#,
+    )?;
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+
+    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = mcp
+        .send_list_models_request(ModelListParams {
+            limit: Some(100),
+            cursor: None,
+            include_hidden: None,
+        })
+        .await?;
+
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+
+    let ModelListResponse {
+        data: items,
+        next_cursor,
+    } = to_response::<ModelListResponse>(response)?;
+
+    let configured_model = items
+        .iter()
+        .find(|item| item.model == "corp-model")
+        .expect("configured model is present");
+    assert_eq!(
+        configured_model,
+        &Model {
+            id: "configured:corp:corp-model".to_string(),
+            model: "corp-model".to_string(),
+            upgrade: None,
+            upgrade_info: None,
+            availability_nux: None,
+            display_name: "corp-model".to_string(),
+            description: "当前配置中的模型 · Corp Gateway".to_string(),
+            hidden: false,
+            supported_reasoning_efforts: vec![ReasoningEffortOption {
+                reasoning_effort: ReasoningEffort::High,
+                description: "当前配置的默认 reasoning".to_string(),
+            }],
+            default_reasoning_effort: ReasoningEffort::High,
+            input_modalities: codex_protocol::openai_models::default_input_modalities(),
+            supports_personality: false,
+            additional_speed_tiers: Vec::new(),
+            service_tiers: Vec::new(),
+            is_default: false,
+        }
+    );
+    assert!(next_cursor.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_models_marks_configured_catalog_model_without_duplication() -> Result<()> {
+    let configured_model = expected_visible_models()
+        .into_iter()
+        .find(|model| !model.is_default)
+        .expect("non-default visible model");
+    let codex_home = TempDir::new()?;
+    write_models_cache(codex_home.path())?;
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        format!(
+            r#"
+model = "{}"
+model_provider = "corp"
+
+[model_providers.corp]
+name = "Corp Gateway"
+base_url = "https://example.invalid/v1"
+env_key = "CORP_API_KEY"
+"#,
+            configured_model.model
+        ),
+    )?;
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+
+    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = mcp
+        .send_list_models_request(ModelListParams {
+            limit: Some(100),
+            cursor: None,
+            include_hidden: None,
+        })
+        .await?;
+
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+
+    let ModelListResponse { data: items, .. } = to_response::<ModelListResponse>(response)?;
+    let matches = items
+        .iter()
+        .filter(|item| item.model == configured_model.model)
+        .collect::<Vec<_>>();
+
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].id, configured_model.id);
+    assert!(
+        matches[0]
+            .description
+            .ends_with(" · 当前配置: Corp Gateway")
+    );
     Ok(())
 }
 
@@ -240,6 +369,30 @@ openai_base_url = "{server_uri}/v1"
         .iter()
         .map(model_from_preset)
         .collect::<Vec<_>>();
+    let expected_items = {
+        let mut items = expected_items;
+        items.push(Model {
+            id: "configured:openai:mock-model".to_string(),
+            model: "mock-model".to_string(),
+            upgrade: None,
+            upgrade_info: None,
+            availability_nux: None,
+            display_name: "mock-model".to_string(),
+            description: "当前配置中的模型 · OpenAI".to_string(),
+            hidden: false,
+            supported_reasoning_efforts: vec![ReasoningEffortOption {
+                reasoning_effort: ReasoningEffort::Medium,
+                description: "当前配置的默认 reasoning".to_string(),
+            }],
+            default_reasoning_effort: ReasoningEffort::Medium,
+            input_modalities: codex_protocol::openai_models::default_input_modalities(),
+            supports_personality: false,
+            additional_speed_tiers: Vec::new(),
+            service_tiers: Vec::new(),
+            is_default: false,
+        });
+        items
+    };
 
     assert_eq!(items, expected_items);
     assert!(next_cursor.is_none());
