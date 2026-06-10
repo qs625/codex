@@ -66,10 +66,12 @@ const MONITOR_SECTIONS: Array<{
 export function buildThreadAnalysis(
   thread: Thread | null,
   totalSkillMetadataCount: number,
+  modelContextWindowOverride?: number | null,
 ): ThreadAnalysis {
   const contextUsage = buildContextUsageAnalysis(
     thread,
     totalSkillMetadataCount,
+    modelContextWindowOverride,
   );
   const monitors = buildMonitorSections(thread);
 

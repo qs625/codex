@@ -37,6 +37,7 @@ use codex_protocol::error::Result as CodexResult;
 #[cfg(test)]
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelPreset;
+use codex_protocol::openai_models::ModelsResponse;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::InitialHistory;
@@ -473,6 +474,21 @@ impl ThreadManager {
     pub async fn list_models(&self, refresh_strategy: RefreshStrategy) -> Vec<ModelPreset> {
         self.state
             .models_manager
+            .list_models(refresh_strategy)
+            .await
+    }
+
+    pub async fn list_models_for_provider(
+        &self,
+        config: &Config,
+        provider_info: ModelProviderInfo,
+        model_catalog: Option<ModelsResponse>,
+        refresh_strategy: RefreshStrategy,
+    ) -> Vec<ModelPreset> {
+        let mut config = config.clone();
+        config.model_provider = provider_info;
+        config.model_catalog = model_catalog;
+        build_models_manager(&config, self.state.auth_manager.clone())
             .list_models(refresh_strategy)
             .await
     }

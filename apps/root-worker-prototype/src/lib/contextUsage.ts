@@ -143,6 +143,7 @@ export function getContextUsageCategoryColor(categoryId: ContextUsageCategoryId)
 export function buildContextUsageAnalysis(
   thread: Thread | null,
   totalSkillMetadataCount: number,
+  modelContextWindowOverride?: number | null,
 ): ContextUsageAnalysis {
   if (!thread) {
     return {
@@ -187,6 +188,7 @@ export function buildContextUsageAnalysis(
       loadedConcreteSkills,
       totalConcreteLoads,
       turnTrend,
+      modelContextWindowOverride,
     );
   }
 
@@ -200,10 +202,16 @@ export function buildContextUsageAnalysis(
   const normalizedTotalSkills = Math.max(totalSkillMetadataCount, loadedConcreteSkills.length);
 
   return {
-    hasBudgetData: hasTokenUsage(tokenUsage),
-    budgetUsedPercent: budgetPercentFromTokenUsage(tokenUsage),
+    hasBudgetData: hasContextWindow(tokenUsage, modelContextWindowOverride),
+    budgetUsedPercent: budgetPercentFromTokenUsage(
+      tokenUsage,
+      modelContextWindowOverride,
+    ),
     usedTokens: usedTokensFromTokenUsage(tokenUsage),
-    contextWindowTokens: contextWindowTokensFromTokenUsage(tokenUsage),
+    contextWindowTokens: contextWindowTokensFromTokenUsage(
+      tokenUsage,
+      modelContextWindowOverride,
+    ),
     loadedSkills: loadedConcreteSkills.length,
     totalSkills: normalizedTotalSkills,
     totalConcreteLoads,
@@ -225,6 +233,7 @@ function buildContextUsageAnalysisFromBackend(
   loadedConcreteSkills: LoadedSkillSummary[],
   totalConcreteLoads: number,
   turnTrend: ContextUsageAnalysis["turnTrend"],
+  modelContextWindowOverride?: number | null,
 ): ContextUsageAnalysis {
   const rawCategoryUnits = initializeCategoryUnits();
   rawCategoryUnits.compact = contextUsage.categories.compact;
@@ -238,7 +247,8 @@ function buildContextUsageAnalysisFromBackend(
 
   const totalUnits = sumCategoryUnits(rawCategoryUnits);
   const totalUsedTokens = usedTokensFromTokenUsage(tokenUsage) ?? 0;
-  const contextWindowTokens = contextWindowTokensFromTokenUsage(tokenUsage) ?? 0;
+  const contextWindowTokens =
+    contextWindowTokensFromTokenUsage(tokenUsage, modelContextWindowOverride) ?? 0;
   const categories = CATEGORY_ORDER.map((category) => {
     const units = rawCategoryUnits[category.id];
     const mixSharePercent = totalUnits > 0 ? roundPercent((units / totalUnits) * 100) : 0;
@@ -258,10 +268,16 @@ function buildContextUsageAnalysisFromBackend(
     contextUsage.loadedSkills.totalCount ?? Math.max(totalSkillMetadataCount, loadedConcreteSkills.length);
 
   return {
-    hasBudgetData: hasTokenUsage(tokenUsage),
-    budgetUsedPercent: budgetPercentFromTokenUsage(tokenUsage),
+    hasBudgetData: hasContextWindow(tokenUsage, modelContextWindowOverride),
+    budgetUsedPercent: budgetPercentFromTokenUsage(
+      tokenUsage,
+      modelContextWindowOverride,
+    ),
     usedTokens: usedTokensFromTokenUsage(tokenUsage),
-    contextWindowTokens: contextWindowTokensFromTokenUsage(tokenUsage),
+    contextWindowTokens: contextWindowTokensFromTokenUsage(
+      tokenUsage,
+      modelContextWindowOverride,
+    ),
     loadedSkills: Math.max(contextUsage.loadedSkills.loadedCount, loadedConcreteSkills.length),
     totalSkills: normalizedTotalSkills,
     totalConcreteLoads,
@@ -558,9 +574,13 @@ function sanitizePercent(value: number | null | undefined) {
   return Math.max(0, Math.min(100, roundPercent(value ?? 0)));
 }
 
-function budgetPercentFromTokenUsage(tokenUsage: ThreadTokenUsage | null | undefined) {
+function budgetPercentFromTokenUsage(
+  tokenUsage: ThreadTokenUsage | null | undefined,
+  modelContextWindowOverride?: number | null,
+) {
   const totalTokens = usedTokensFromTokenUsage(tokenUsage) ?? 0;
-  const modelContextWindow = contextWindowTokensFromTokenUsage(tokenUsage) ?? 0;
+  const modelContextWindow =
+    contextWindowTokensFromTokenUsage(tokenUsage, modelContextWindowOverride) ?? 0;
 
   if (modelContextWindow <= 0 || totalTokens <= 0) {
     return 0;
@@ -569,9 +589,14 @@ function budgetPercentFromTokenUsage(tokenUsage: ThreadTokenUsage | null | undef
   return sanitizePercent((totalTokens / modelContextWindow) * 100);
 }
 
-function hasTokenUsage(tokenUsage: ThreadTokenUsage | null | undefined) {
-  return (contextWindowTokensFromTokenUsage(tokenUsage) ?? 0) > 0
-    && (usedTokensFromTokenUsage(tokenUsage) ?? 0) > 0;
+function hasContextWindow(
+  tokenUsage: ThreadTokenUsage | null | undefined,
+  modelContextWindowOverride?: number | null,
+) {
+  return (
+    contextWindowTokensFromTokenUsage(tokenUsage, modelContextWindowOverride) ??
+    0
+  ) > 0;
 }
 
 function usedTokensFromTokenUsage(tokenUsage: ThreadTokenUsage | null | undefined) {
@@ -579,7 +604,13 @@ function usedTokensFromTokenUsage(tokenUsage: ThreadTokenUsage | null | undefine
   return totalTokens > 0 ? totalTokens : null;
 }
 
-function contextWindowTokensFromTokenUsage(tokenUsage: ThreadTokenUsage | null | undefined) {
+function contextWindowTokensFromTokenUsage(
+  tokenUsage: ThreadTokenUsage | null | undefined,
+  modelContextWindowOverride?: number | null,
+) {
+  if (modelContextWindowOverride && modelContextWindowOverride > 0) {
+    return modelContextWindowOverride;
+  }
   const modelContextWindow = tokenUsage?.modelContextWindow ?? 0;
   return modelContextWindow > 0 ? modelContextWindow : null;
 }

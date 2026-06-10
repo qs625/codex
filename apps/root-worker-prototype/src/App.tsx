@@ -34,6 +34,7 @@ import {
   readStoredRightPanelView,
   storeRightPanelView,
 } from "./lib/rightPanelView";
+import type { RunConfigSelection } from "./lib/runConfig";
 import {
   applyRunConfigOverride,
   buildSendMessagePayload,
@@ -161,10 +162,7 @@ function App() {
   const symbolForwardStackRef = useRef<FileLocation[]>([]);
   const selectedThreadIdRef = useRef<string | null>(null);
   const runConfigOverrideByThreadIdRef = useRef<
-    Map<
-      string,
-      { model: string; modelProvider: string | null; reasoningEffort: string }
-    >
+    Map<string, RunConfigSelection>
   >(new Map());
   const loadedThreadIdsRef = useRef<Set<string>>(new Set());
   const subscribedThreadIdsRef = useRef<Set<string>>(new Set());
@@ -262,6 +260,9 @@ function App() {
     ? (latestPlansByThreadId[selectedThreadId] ??
       selectedThread?.latestPlan ??
       null)
+    : null;
+  const selectedRunConfigOverride = selectedThreadId
+    ? (runConfigOverrideByThreadIdRef.current.get(selectedThreadId) ?? null)
     : null;
 
   function cleanupVoiceTransport() {
@@ -805,11 +806,7 @@ function App() {
     return previousSelection;
   }
 
-  async function updateSelectedThreadRunConfig(selection: {
-    model: string;
-    modelProvider: string | null;
-    reasoningEffort: string;
-  }) {
+  async function updateSelectedThreadRunConfig(selection: RunConfigSelection) {
     const threadId = selectedThreadId;
     if (!threadId) {
       return;
@@ -820,7 +817,9 @@ function App() {
     try {
       await window.codexDesktop.setThreadRunConfig({
         threadId,
-        ...selection,
+        model: selection.model,
+        modelProvider: selection.modelProvider,
+        reasoningEffort: selection.reasoningEffort,
       });
     } catch (runConfigError) {
       if (previousSelection) {
@@ -833,6 +832,9 @@ function App() {
             model: previousSelection.model,
             modelProvider: previousSelection.modelProvider,
             reasoningEffort: previousSelection.reasoningEffort,
+            contextWindow: null,
+            maxContextWindow: null,
+            autoCompactTokenLimit: null,
           });
         } else {
           runConfigOverrideByThreadIdRef.current.delete(threadId);
@@ -1831,6 +1833,9 @@ function App() {
           skills={selectedThread?.skills ?? []}
           selectedThreadId={selectedThreadId}
           thread={selectedThread}
+          modelContextWindowOverride={
+            selectedRunConfigOverride?.contextWindow ?? null
+          }
           taskFilter={taskFilter}
           todoItems={todoItems}
         />

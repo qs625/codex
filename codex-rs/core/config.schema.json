@@ -1308,6 +1308,123 @@
       },
       "type": "object"
     },
+    "ModelOptionToml": {
+      "additionalProperties": false,
+      "properties": {
+        "ak": {
+          "description": "Optional ModelHub-style query parameter key appended as `ak`.",
+          "type": "string"
+        },
+        "auto_compact_token_limit": {
+          "description": "Token usage threshold triggering auto-compaction for this model.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "base_url": {
+          "description": "Optional provider base URL. When present, Codex can synthesize the provider entry.",
+          "type": "string"
+        },
+        "context_window": {
+          "description": "Size of the model context window, in tokens.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "env_http_headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Optional HTTP headers read from environment variables.",
+          "type": "object"
+        },
+        "env_key": {
+          "description": "Optional environment variable containing the provider API key.",
+          "type": "string"
+        },
+        "env_key_instructions": {
+          "description": "Optional help text for configuring `env_key`.",
+          "type": "string"
+        },
+        "experimental_bearer_token": {
+          "description": "Optional bearer token literal.",
+          "type": "string"
+        },
+        "extra_body": {
+          "additionalProperties": true,
+          "description": "Additional Chat Completions request body fields for this model option.",
+          "type": "object"
+        },
+        "http_headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Optional literal HTTP headers sent to the provider.",
+          "type": "object"
+        },
+        "max_context_window": {
+          "description": "Maximum context window supported by the model, in tokens.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "max_tokens": {
+          "description": "Chat Completions `max_tokens` value for this model option.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "model": {
+          "description": "Upstream model identifier sent to the provider.",
+          "type": "string"
+        },
+        "provider": {
+          "description": "Provider ID to use for this model option.",
+          "type": "string"
+        },
+        "query_params": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Optional query parameters appended to the provider URL.",
+          "type": "object"
+        },
+        "request_max_retries": {
+          "description": "Optional provider request retry override.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "stream_idle_timeout_ms": {
+          "description": "Optional stream idle timeout override in milliseconds.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "stream_max_retries": {
+          "description": "Optional provider stream retry override.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "websocket_connect_timeout_ms": {
+          "description": "Optional websocket connect timeout override in milliseconds.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "wire_api": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/WireApi"
+            }
+          ],
+          "description": "Optional wire protocol override for the synthesized provider."
+        }
+      },
+      "required": [
+        "model",
+        "provider"
+      ],
+      "type": "object"
+    },
     "ModelProviderAuthInfo": {
       "additionalProperties": false,
       "description": "Configuration for obtaining a provider bearer token from a command.",
@@ -4568,6 +4685,14 @@
         }
       ],
       "description": "Optional path to a file containing model instructions that will override the built-in instructions for the selected model. Users are STRONGLY DISCOURAGED from using this field, as deviating from the instructions sanctioned by Codex will likely degrade model performance."
+    },
+    "model_options": {
+      "default": [],
+      "description": "User-visible model picker entries backed by configured providers.",
+      "items": {
+        "$ref": "#/definitions/ModelOptionToml"
+      },
+      "type": "array"
     },
     "model_provider": {
       "description": "Provider to use from the model_providers map.",

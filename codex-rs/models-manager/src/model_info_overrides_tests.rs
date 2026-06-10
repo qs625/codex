@@ -1,3 +1,4 @@
+use crate::ModelMetadataOverride;
 use crate::ModelsManagerConfig;
 use crate::manager::ModelsManager;
 use codex_protocol::openai_models::TruncationPolicyConfig;
@@ -42,4 +43,28 @@ async fn offline_model_info_with_tool_output_override() {
         model_info.truncation_policy,
         TruncationPolicyConfig::tokens(/*limit*/ 123)
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn model_metadata_override_updates_context_and_compaction_limits() {
+    let codex_home = TempDir::new().expect("create temp dir");
+    let config = ModelsManagerConfig {
+        model_metadata_overrides: vec![ModelMetadataOverride {
+            model: "custom-model".to_string(),
+            context_window: Some(128_000),
+            max_context_window: Some(256_000),
+            auto_compact_token_limit: Some(90_000),
+        }],
+        ..Default::default()
+    };
+    let manager = openai_manager_for_tests(
+        codex_home.path().to_path_buf(),
+        TestModelsEndpoint::new(Vec::new()),
+    );
+
+    let model_info = manager.get_model_info("custom-model", &config).await;
+
+    assert_eq!(model_info.context_window, Some(128_000));
+    assert_eq!(model_info.max_context_window, Some(256_000));
+    assert_eq!(model_info.auto_compact_token_limit(), Some(90_000));
 }

@@ -92,6 +92,9 @@ pub struct Model {
     pub default_reasoning_effort: ReasoningEffort,
     #[serde(default = "default_input_modalities")]
     pub input_modalities: Vec<InputModality>,
+    pub context_window: Option<i64>,
+    pub max_context_window: Option<i64>,
+    pub auto_compact_token_limit: Option<i64>,
     #[serde(default)]
     pub supports_personality: bool,
     /// Deprecated: use `serviceTiers` instead.

@@ -208,6 +208,37 @@ test("uses last token usage for budget percent and context usage ratios for toke
   assert.equal(analysis.categories.find((row) => row.id === "llmMessages")?.units, 19900);
 });
 
+test("uses selected model context window override for budget display", () => {
+  const thread = makeThread([]);
+  thread.tokenUsage = {
+    total: {
+      totalTokens: 100000,
+      inputTokens: 76000,
+      cachedInputTokens: 12000,
+      outputTokens: 24000,
+      reasoningOutputTokens: 8000,
+    },
+    last: {
+      totalTokens: 18000,
+      inputTokens: 13000,
+      cachedInputTokens: 2000,
+      outputTokens: 5000,
+      reasoningOutputTokens: 1500,
+    },
+    modelContextWindow: 200000,
+  };
+
+  const analysis = buildContextUsageAnalysis(
+    thread,
+    /*totalSkillMetadataCount*/ 0,
+    100000,
+  );
+
+  assert.equal(analysis.hasBudgetData, true);
+  assert.equal(analysis.budgetUsedPercent, 18);
+  assert.equal(analysis.contextWindowTokens, 100000);
+});
+
 test("uses last token usage instead of cumulative token usage for budget percent", () => {
   const thread = makeThread([]);
 

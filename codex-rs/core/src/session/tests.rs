@@ -407,6 +407,7 @@ fn test_model_client_session() -> crate::client::ModelClientSession {
         ModelProviderInfo::create_openai_provider(/* base_url */ /*base_url*/ None),
         codex_protocol::protocol::SessionSource::Exec,
         /*model_verbosity*/ None,
+        /*chat_completions_max_tokens_by_model*/ Default::default(),
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
@@ -3578,6 +3579,47 @@ async fn session_settings_model_provider_update_switches_provider() {
 }
 
 #[tokio::test]
+async fn session_settings_model_update_infers_model_option_provider() {
+    let mut session_configuration = make_session_configuration_for_tests().await;
+    let mut config = (*session_configuration.original_config_do_not_use).clone();
+    let provider = ModelProviderInfo {
+        name: "ModelHub GPT".to_string(),
+        base_url: Some("https://modelhub.example.test/v1".to_string()),
+        ..ModelProviderInfo::default()
+    };
+    config
+        .model_providers
+        .insert("modelhub-gpt".to_string(), provider.clone());
+    config
+        .model_options
+        .push(codex_config::config_toml::ModelOptionToml {
+            model: "gpt-5.5-2026-04-24".to_string(),
+            provider: "modelhub-gpt".to_string(),
+            ..Default::default()
+        });
+    session_configuration.original_config_do_not_use = Arc::new(config);
+
+    let collaboration_mode = session_configuration.collaboration_mode.with_updates(
+        Some("gpt-5.5-2026-04-24".to_string()),
+        None,
+        /*developer_instructions*/ None,
+    );
+    let updated = session_configuration
+        .apply(&SessionSettingsUpdate {
+            collaboration_mode: Some(collaboration_mode),
+            ..Default::default()
+        })
+        .expect("model option provider should be inferred from model update");
+
+    assert_eq!(updated.provider, provider);
+    assert_eq!(
+        updated.original_config_do_not_use.model_provider_id,
+        "modelhub-gpt"
+    );
+    assert_eq!(updated.original_config_do_not_use.model_provider, provider);
+}
+
+#[tokio::test]
 async fn session_settings_legacy_fast_service_tier_update_uses_priority_request_value() {
     let session_configuration = make_session_configuration_for_tests().await;
 
@@ -4477,6 +4519,16 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             session_configuration.provider.clone(),
             session_configuration.session_source.clone(),
             config.model_verbosity,
+            config
+                .model_options
+                .iter()
+                .filter(|model_option| model_option.provider == config.model_provider_id)
+                .filter_map(|model_option| {
+                    model_option
+                        .max_tokens
+                        .map(|max_tokens| (model_option.model.clone(), max_tokens))
+                })
+                .collect(),
             config.features.enabled(Feature::EnableRequestCompression),
             config.features.enabled(Feature::RuntimeMetrics),
             Session::build_model_client_beta_features_header(config.as_ref()),
@@ -6339,6 +6391,16 @@ where
             session_configuration.provider.clone(),
             session_configuration.session_source.clone(),
             config.model_verbosity,
+            config
+                .model_options
+                .iter()
+                .filter(|model_option| model_option.provider == config.model_provider_id)
+                .filter_map(|model_option| {
+                    model_option
+                        .max_tokens
+                        .map(|max_tokens| (model_option.model.clone(), max_tokens))
+                })
+                .collect(),
             config.features.enabled(Feature::EnableRequestCompression),
             config.features.enabled(Feature::RuntimeMetrics),
             Session::build_model_client_beta_features_header(config.as_ref()),

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   ensureCurrentModelVisible,
+  getRunModelLabel,
   normalizeModelListResponse,
   resolveSelectionForModel,
 } from "./runConfig";
@@ -161,6 +162,9 @@ test("resolveSelectionForModel keeps supported current effort", () => {
       model: "model-a",
       modelProvider: "provider-a",
       reasoningEffort: "low",
+      contextWindow: null,
+      maxContextWindow: null,
+      autoCompactTokenLimit: null,
     },
   );
 });
@@ -170,7 +174,40 @@ test("resolveSelectionForModel falls back to model default effort", () => {
     model: "model-a",
     modelProvider: null,
     reasoningEffort: "medium",
+    contextWindow: null,
+    maxContextWindow: null,
+    autoCompactTokenLimit: null,
   });
+});
+
+test("resolveSelectionForModel carries model context metadata", () => {
+  assert.deepEqual(
+    resolveSelectionForModel(
+      makeModel({
+        contextWindow: 128000,
+        maxContextWindow: 256000,
+        autoCompactTokenLimit: 90000,
+      }),
+      "medium",
+    ),
+    {
+      model: "model-a",
+      modelProvider: null,
+      reasoningEffort: "medium",
+      contextWindow: 128000,
+      maxContextWindow: 256000,
+      autoCompactTokenLimit: 90000,
+    },
+  );
+});
+
+test("getRunModelLabel includes provider when present", () => {
+  assert.equal(
+    getRunModelLabel(
+      makeModel({ displayName: "Model A", modelProvider: "modelhub-gpt" }),
+    ),
+    "Model A · modelhub-gpt",
+  );
 });
 
 test("ensureCurrentModelVisible distinguishes providers for the same model", () => {

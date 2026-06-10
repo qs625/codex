@@ -51,6 +51,8 @@ struct ChatCompletionsRequest {
     tool_choice: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     parallel_tool_calls: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u64>,
     stream: bool,
 }
 
@@ -229,6 +231,7 @@ fn chat_request_from_responses(
         tools,
         tool_choice: has_tools.then_some(request.tool_choice),
         parallel_tool_calls: has_tools.then_some(request.parallel_tool_calls),
+        max_tokens: request.chat_completions_max_tokens,
         stream: false,
     })
 }

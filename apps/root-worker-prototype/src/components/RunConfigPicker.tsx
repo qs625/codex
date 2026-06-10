@@ -15,6 +15,7 @@ import {
   getThreadModelLabel,
   getThreadReasoningLabel,
 } from "../lib/thread";
+import type { RunConfigSelection } from "../lib/runConfig";
 import type { RunModel, RunModelListResponse, Thread } from "../types";
 
 export function RunConfigPicker({
@@ -23,11 +24,7 @@ export function RunConfigPicker({
   selectedThread,
 }: {
   disabled: boolean;
-  onApply: (selection: {
-    model: string;
-    modelProvider: string | null;
-    reasoningEffort: string;
-  }) => void;
+  onApply: (selection: RunConfigSelection) => void;
   selectedThread: Thread | null;
 }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -221,13 +218,21 @@ export function RunConfigPicker({
   }
 
   function applySelection() {
-    if (!canApply || draftModel == null || draftReasoningEffort == null) {
+    if (
+      !canApply ||
+      selectedModel == null ||
+      draftModel == null ||
+      draftReasoningEffort == null
+    ) {
       return;
     }
     onApply({
       model: draftModel,
       modelProvider: draftModelProvider,
       reasoningEffort: draftReasoningEffort,
+      contextWindow: selectedModel.contextWindow ?? null,
+      maxContextWindow: selectedModel.maxContextWindow ?? null,
+      autoCompactTokenLimit: selectedModel.autoCompactTokenLimit ?? null,
     });
     closePopover();
   }

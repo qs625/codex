@@ -4,6 +4,9 @@ export type RunConfigSelection = {
   model: string;
   modelProvider: string | null;
   reasoningEffort: string;
+  contextWindow: number | null;
+  maxContextWindow: number | null;
+  autoCompactTokenLimit: number | null;
 };
 
 export function normalizeModelListResponse(
@@ -44,7 +47,8 @@ export function ensureCurrentModelVisible(
 }
 
 export function getRunModelLabel(model: RunModel) {
-  return model.displayName || model.model || model.id;
+  const label = model.displayName || model.model || model.id;
+  return model.modelProvider ? `${label} · ${model.modelProvider}` : label;
 }
 
 export function getRunModelKey(model: RunModel) {
@@ -125,6 +129,9 @@ export function resolveSelectionForModel(
     model: model.model,
     modelProvider: model.modelProvider ?? null,
     reasoningEffort: resolveReasoningEffortForModel(model, currentEffort),
+    contextWindow: model.contextWindow ?? null,
+    maxContextWindow: model.maxContextWindow ?? null,
+    autoCompactTokenLimit: model.autoCompactTokenLimit ?? null,
   };
 }
 

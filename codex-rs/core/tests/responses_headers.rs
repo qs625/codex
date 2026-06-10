@@ -106,6 +106,16 @@ async fn responses_stream_includes_subagent_header_on_review() {
         provider.clone(),
         session_source,
         config.model_verbosity,
+        config
+            .model_options
+            .iter()
+            .filter(|model_option| model_option.provider == config.model_provider_id)
+            .filter_map(|model_option| {
+                model_option
+                    .max_tokens
+                    .map(|max_tokens| (model_option.model.clone(), max_tokens))
+            })
+            .collect(),
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
@@ -234,6 +244,16 @@ async fn responses_stream_includes_subagent_header_on_other() {
         provider.clone(),
         session_source,
         config.model_verbosity,
+        config
+            .model_options
+            .iter()
+            .filter(|model_option| model_option.provider == config.model_provider_id)
+            .filter_map(|model_option| {
+                model_option
+                    .max_tokens
+                    .map(|max_tokens| (model_option.model.clone(), max_tokens))
+            })
+            .collect(),
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
@@ -351,6 +371,16 @@ async fn responses_respects_model_info_overrides_from_config() {
         provider.clone(),
         session_source,
         config.model_verbosity,
+        config
+            .model_options
+            .iter()
+            .filter(|model_option| model_option.provider == config.model_provider_id)
+            .filter_map(|model_option| {
+                model_option
+                    .max_tokens
+                    .map(|max_tokens| (model_option.model.clone(), max_tokens))
+            })
+            .collect(),
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,

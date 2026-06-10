@@ -74,6 +74,7 @@ export function RightPanel({
   skills,
   selectedThreadId,
   thread,
+  modelContextWindowOverride,
   taskFilter,
   todoItems,
 }: {
@@ -92,11 +93,16 @@ export function RightPanel({
   skills: ThreadSkill[];
   selectedThreadId: string | null;
   thread: Thread | null;
+  modelContextWindowOverride?: number | null;
   taskFilter: TaskFilter;
   todoItems: TodoCardItem[];
 }) {
   const todoStats = buildTodoStats(todoItems);
-  const threadAnalysis = buildThreadAnalysis(thread, availableSkillCount);
+  const threadAnalysis = buildThreadAnalysis(
+    thread,
+    availableSkillCount,
+    modelContextWindowOverride,
+  );
   const { contextUsage } = threadAnalysis;
 
   return (

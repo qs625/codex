@@ -31,6 +31,7 @@ function renderPopover(
       canApply
       disabled={false}
       draftModel="gpt-5"
+      draftModelProvider={null}
       draftReasoningEffort="medium"
       fallbackMessage={null}
       hasChanged

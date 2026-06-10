@@ -12,6 +12,7 @@ import { AgentTreeNode } from "./AgentTree";
 import { ThinkingIndicator } from "./Conversation";
 import { ConversationVirtualList } from "./ConversationVirtualList";
 import { RunConfigPicker } from "./RunConfigPicker";
+import type { RunConfigSelection } from "../lib/runConfig";
 import {
   CodeIcon,
   GearIcon,
@@ -173,11 +174,7 @@ export function ConversationPanel({
   onOpenLocalFile: (target: string) => void;
   onRemoveDraftImage: (imageId: string) => void;
   onRemoveDraftSkill: (path: string) => void;
-  onUpdateRunConfig: (selection: {
-    model: string;
-    modelProvider: string | null;
-    reasoningEffort: string;
-  }) => void;
+  onUpdateRunConfig: (selection: RunConfigSelection) => void;
   onSendMessage: () => void;
   onStopTurn: () => void;
   onToggleVoiceCapture: () => void;

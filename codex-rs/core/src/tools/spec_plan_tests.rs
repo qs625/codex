@@ -517,12 +517,7 @@ fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
 
     assert_contains_tool_names(
         &tools,
-        &[
-            "spawn_agent",
-            "followup_task",
-            "close_agent",
-            "list_agents",
-        ],
+        &["spawn_agent", "followup_task", "close_agent", "list_agents"],
     );
     assert_lacks_tool_name(&tools, "wait_agent");
     assert!(!registry.has_handler(&ToolName::plain("wait_agent")));
@@ -620,12 +615,7 @@ fn test_build_specs_multi_agent_v2_does_not_require_collab_feature() {
 
     assert_contains_tool_names(
         &tools,
-        &[
-            "spawn_agent",
-            "followup_task",
-            "close_agent",
-            "list_agents",
-        ],
+        &["spawn_agent", "followup_task", "close_agent", "list_agents"],
     );
     assert_lacks_tool_name(&tools, "wait_agent");
     assert_lacks_tool_name(&tools, "send_input");

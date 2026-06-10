@@ -2041,6 +2041,16 @@ async fn websocket_harness_with_provider_options(
         provider.clone(),
         SessionSource::Exec,
         config.model_verbosity,
+        config
+            .model_options
+            .iter()
+            .filter(|model_option| model_option.provider == config.model_provider_id)
+            .filter_map(|model_option| {
+                model_option
+                    .max_tokens
+                    .map(|max_tokens| (model_option.model.clone(), max_tokens))
+            })
+            .collect(),
         /*enable_request_compression*/ false,
         runtime_metrics_enabled,
         /*beta_features_header*/ None,

@@ -54,6 +54,7 @@ fn maps_responses_request_to_chat_completions_body() {
         prompt_cache_key: None,
         text: None,
         client_metadata: None,
+        chat_completions_max_tokens: Some(500),
     };
 
     let mapped = chat_request_from_responses(request).expect("request maps");
@@ -88,6 +89,7 @@ fn maps_responses_request_to_chat_completions_body() {
             }],
             "tool_choice": "auto",
             "parallel_tool_calls": true,
+            "max_tokens": 500,
             "stream": false
         })
     );
@@ -117,6 +119,7 @@ fn omits_tool_options_when_no_function_tools_are_sent() {
         prompt_cache_key: None,
         text: None,
         client_metadata: None,
+        chat_completions_max_tokens: None,
     };
 
     let mapped = chat_request_from_responses(request).expect("request maps");

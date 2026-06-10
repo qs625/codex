@@ -160,6 +160,12 @@ pub struct ModelPreset {
     /// Input modalities accepted when composing user turns for this preset.
     #[serde(default = "default_input_modalities")]
     pub input_modalities: Vec<InputModality>,
+    /// Size of the model context window, in tokens.
+    pub context_window: Option<i64>,
+    /// Maximum context window supported by the model, in tokens.
+    pub max_context_window: Option<i64>,
+    /// Token usage threshold triggering auto-compaction for this model.
+    pub auto_compact_token_limit: Option<i64>,
 }
 
 /// Visibility of a model in the picker or APIs.
@@ -471,6 +477,9 @@ impl From<ModelInfo> for ModelPreset {
             availability_nux: info.availability_nux,
             supported_in_api: info.supported_in_api,
             input_modalities: info.input_modalities,
+            context_window: info.context_window,
+            max_context_window: info.max_context_window,
+            auto_compact_token_limit: info.auto_compact_token_limit,
         }
     }
 }

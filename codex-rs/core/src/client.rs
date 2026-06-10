@@ -176,6 +176,7 @@ struct ModelClientState {
     auth_env_telemetry: AuthEnvTelemetry,
     session_source: SessionSource,
     model_verbosity: Option<VerbosityConfig>,
+    chat_completions_max_tokens_by_model: HashMap<String, u64>,
     enable_request_compression: bool,
     include_timing_metrics: bool,
     beta_features_header: Option<String>,
@@ -322,6 +323,7 @@ impl ModelClient {
         provider_info: ModelProviderInfo,
         session_source: SessionSource,
         model_verbosity: Option<VerbosityConfig>,
+        chat_completions_max_tokens_by_model: HashMap<String, u64>,
         enable_request_compression: bool,
         include_timing_metrics: bool,
         beta_features_header: Option<String>,
@@ -345,6 +347,7 @@ impl ModelClient {
                 auth_env_telemetry,
                 session_source,
                 model_verbosity,
+                chat_completions_max_tokens_by_model,
                 enable_request_compression,
                 include_timing_metrics,
                 beta_features_header,
@@ -368,8 +371,67 @@ impl ModelClient {
         }
     }
 
+    pub(crate) fn new_session_for_provider(
+        &self,
+        auth_manager: Option<Arc<AuthManager>>,
+        provider_info: ModelProviderInfo,
+    ) -> ModelClientSession {
+        if self.state.provider.info() == &provider_info {
+            return self.new_session();
+        }
+
+        self.clone_with_provider(auth_manager, provider_info)
+            .new_session()
+    }
+
+    fn clone_with_provider(
+        &self,
+        auth_manager: Option<Arc<AuthManager>>,
+        provider_info: ModelProviderInfo,
+    ) -> Self {
+        let model_provider = create_model_provider(provider_info, auth_manager);
+        let codex_api_key_env_enabled = model_provider
+            .auth_manager()
+            .as_ref()
+            .is_some_and(|manager| manager.codex_api_key_env_enabled());
+        let auth_env_telemetry =
+            collect_auth_env_telemetry(model_provider.info(), codex_api_key_env_enabled);
+        let include_attestation = model_provider.supports_attestation();
+        Self {
+            state: Arc::new(ModelClientState {
+                session_id: self.state.session_id,
+                thread_id: self.state.thread_id,
+                window_generation: AtomicU64::new(
+                    self.state.window_generation.load(Ordering::Relaxed),
+                ),
+                installation_id: self.state.installation_id.clone(),
+                provider: model_provider,
+                auth_env_telemetry,
+                session_source: self.state.session_source.clone(),
+                model_verbosity: self.state.model_verbosity,
+                chat_completions_max_tokens_by_model: self
+                    .state
+                    .chat_completions_max_tokens_by_model
+                    .clone(),
+                enable_request_compression: self.state.enable_request_compression,
+                include_timing_metrics: self.state.include_timing_metrics,
+                beta_features_header: self.state.beta_features_header.clone(),
+                include_attestation,
+                attestation_provider: self.state.attestation_provider.clone(),
+                disable_websockets: AtomicBool::new(
+                    self.state.disable_websockets.load(Ordering::Relaxed),
+                ),
+                cached_websocket_session: StdMutex::new(WebsocketSession::default()),
+            }),
+        }
+    }
+
     pub(crate) fn auth_manager(&self) -> Option<Arc<AuthManager>> {
         self.state.provider.auth_manager()
+    }
+
+    pub(crate) fn provider_info(&self) -> &ModelProviderInfo {
+        self.state.provider.info()
     }
 
     pub(crate) fn set_window_generation(&self, window_generation: u64) {
@@ -769,6 +831,11 @@ impl ModelClient {
                 X_CODEX_INSTALLATION_ID_HEADER.to_string(),
                 self.state.installation_id.clone(),
             )])),
+            chat_completions_max_tokens: self
+                .state
+                .chat_completions_max_tokens_by_model
+                .get(&model_info.slug)
+                .copied(),
         };
         Ok(request)
     }

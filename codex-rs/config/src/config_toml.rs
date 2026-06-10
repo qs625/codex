@@ -38,6 +38,7 @@ use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::OLLAMA_CHAT_PROVIDER_REMOVED_ERROR;
 use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use codex_model_provider_info::OPENAI_PROVIDER_ID;
+use codex_model_provider_info::WireApi;
 use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
@@ -149,6 +150,10 @@ pub struct ConfigToml {
 
     /// Provider to use from the model_providers map.
     pub model_provider: Option<String>,
+
+    /// User-visible model picker entries backed by configured providers.
+    #[serde(default)]
+    pub model_options: Vec<ModelOptionToml>,
 
     /// Size of the context window for the model, in tokens.
     pub model_context_window: Option<i64>,
@@ -495,6 +500,86 @@ pub struct ConfigToml {
     pub experimental_use_unified_exec_tool: Option<bool>,
     /// Preferred OSS provider for local models, e.g. "lmstudio" or "ollama".
     pub oss_provider: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ModelOptionToml {
+    /// Upstream model identifier sent to the provider.
+    pub model: String,
+    /// Provider ID to use for this model option.
+    pub provider: String,
+    /// Optional provider base URL. When present, Codex can synthesize the provider entry.
+    pub base_url: Option<String>,
+    /// Optional ModelHub-style query parameter key appended as `ak`.
+    pub ak: Option<String>,
+    /// Optional environment variable containing the provider API key.
+    pub env_key: Option<String>,
+    /// Optional help text for configuring `env_key`.
+    pub env_key_instructions: Option<String>,
+    /// Optional bearer token literal.
+    pub experimental_bearer_token: Option<String>,
+    /// Optional wire protocol override for the synthesized provider.
+    pub wire_api: Option<WireApi>,
+    /// Optional query parameters appended to the provider URL.
+    pub query_params: Option<HashMap<String, String>>,
+    /// Optional literal HTTP headers sent to the provider.
+    pub http_headers: Option<HashMap<String, String>>,
+    /// Optional HTTP headers read from environment variables.
+    pub env_http_headers: Option<HashMap<String, String>>,
+    /// Optional provider request retry override.
+    pub request_max_retries: Option<u64>,
+    /// Optional provider stream retry override.
+    pub stream_max_retries: Option<u64>,
+    /// Optional stream idle timeout override in milliseconds.
+    pub stream_idle_timeout_ms: Option<u64>,
+    /// Optional websocket connect timeout override in milliseconds.
+    pub websocket_connect_timeout_ms: Option<u64>,
+    /// Size of the model context window, in tokens.
+    pub context_window: Option<i64>,
+    /// Maximum context window supported by the model, in tokens.
+    pub max_context_window: Option<i64>,
+    /// Token usage threshold triggering auto-compaction for this model.
+    pub auto_compact_token_limit: Option<i64>,
+    /// Chat Completions `max_tokens` value for this model option.
+    pub max_tokens: Option<u64>,
+    /// Additional Chat Completions request body fields for this model option.
+    pub extra_body: Option<HashMap<String, JsonValue>>,
+}
+
+impl ModelOptionToml {
+    pub fn has_inline_provider_config(&self) -> bool {
+        self.base_url.is_some()
+    }
+
+    pub fn to_provider_info(&self) -> ModelProviderInfo {
+        let query_params = match (self.ak.as_ref(), self.query_params.as_ref()) {
+            (None, None) => None,
+            (ak, query_params) => {
+                let mut merged = query_params.cloned().unwrap_or_default();
+                if let Some(ak) = ak {
+                    merged.insert("ak".to_string(), ak.clone());
+                }
+                Some(merged)
+            }
+        };
+        ModelProviderInfo {
+            name: self.provider.clone(),
+            base_url: self.base_url.clone(),
+            env_key: self.env_key.clone(),
+            env_key_instructions: self.env_key_instructions.clone(),
+            experimental_bearer_token: self.experimental_bearer_token.clone(),
+            wire_api: self.wire_api.unwrap_or(WireApi::AzureChatCompletions),
+            query_params,
+            http_headers: self.http_headers.clone(),
+            env_http_headers: self.env_http_headers.clone(),
+            request_max_retries: self.request_max_retries,
+            stream_max_retries: self.stream_max_retries,
+            stream_idle_timeout_ms: self.stream_idle_timeout_ms,
+            websocket_connect_timeout_ms: self.websocket_connect_timeout_ms,
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema)]

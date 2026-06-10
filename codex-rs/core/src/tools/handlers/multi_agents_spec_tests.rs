@@ -32,6 +32,9 @@ fn model_preset(id: &str, show_in_picker: bool) -> ModelPreset {
         availability_nux: None,
         supported_in_api: true,
         input_modalities: Vec::new(),
+        context_window: None,
+        max_context_window: None,
+        auto_compact_token_limit: None,
     }
 }
 

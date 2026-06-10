@@ -217,10 +217,26 @@ impl SessionConfiguration {
                             }
                         )
                 });
+        let collaboration_mode_updated = updates.collaboration_mode.is_some();
         if let Some(collaboration_mode) = updates.collaboration_mode.clone() {
             next_configuration.collaboration_mode = collaboration_mode;
         }
-        if let Some(model_provider_id) = updates.model_provider.clone() {
+        let model_provider_update = updates.model_provider.clone().or_else(|| {
+            collaboration_mode_updated.then(|| {
+                let model = next_configuration.collaboration_mode.model();
+                let mut providers = next_configuration
+                    .original_config_do_not_use
+                    .model_options
+                    .iter()
+                    .filter(|model_option| model_option.model == model)
+                    .map(|model_option| model_option.provider.as_str());
+                let provider = providers.next()?;
+                providers
+                    .all(|other| other == provider)
+                    .then(|| provider.to_string())
+            })?
+        });
+        if let Some(model_provider_id) = model_provider_update {
             let Some(model_provider) = next_configuration
                 .original_config_do_not_use
                 .model_providers
@@ -1000,6 +1016,15 @@ impl Session {
                     session_configuration.provider.clone(),
                     session_configuration.session_source.clone(),
                     config.model_verbosity,
+                    config
+                        .model_options
+                        .iter()
+                        .filter_map(|model_option| {
+                            model_option
+                                .max_tokens
+                                .map(|max_tokens| (model_option.model.clone(), max_tokens))
+                        })
+                        .collect(),
                     config.features.enabled(Feature::EnableRequestCompression),
                     config.features.enabled(Feature::RuntimeMetrics),
                     Self::build_model_client_beta_features_header(config.as_ref()),

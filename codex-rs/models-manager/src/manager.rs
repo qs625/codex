@@ -55,6 +55,15 @@ pub enum RefreshStrategy {
     OnlineIfUncached,
 }
 
+/// Controls whether a model manager may read and write the shared on-disk model cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelCachePolicy {
+    /// Use the shared on-disk cache.
+    Enabled,
+    /// Ignore the shared on-disk cache.
+    Disabled,
+}
+
 impl RefreshStrategy {
     const fn as_str(self) -> &'static str {
         match self {
@@ -181,8 +190,10 @@ pub type SharedModelsManager = Arc<dyn ModelsManager>;
 #[derive(Debug)]
 pub struct OpenAiModelsManager {
     remote_models: RwLock<Vec<ModelInfo>>,
+    fallback_models: Vec<ModelInfo>,
     etag: RwLock<Option<String>>,
     cache_manager: ModelsCacheManager,
+    cache_policy: ModelCachePolicy,
     endpoint_client: SharedModelsEndpointClient,
     auth_manager: Option<Arc<AuthManager>>,
 }
@@ -201,13 +212,31 @@ impl OpenAiModelsManager {
         endpoint_client: Arc<dyn ModelsEndpointClient>,
         auth_manager: Option<Arc<AuthManager>>,
     ) -> Self {
+        Self::new_with_fallback_models(
+            codex_home,
+            endpoint_client,
+            auth_manager,
+            load_remote_models_from_file().unwrap_or_default(),
+            ModelCachePolicy::Enabled,
+        )
+    }
+
+    /// Construct an OpenAI-compatible remote model manager with explicit fallback models.
+    pub fn new_with_fallback_models(
+        codex_home: PathBuf,
+        endpoint_client: Arc<dyn ModelsEndpointClient>,
+        auth_manager: Option<Arc<AuthManager>>,
+        fallback_models: Vec<ModelInfo>,
+        cache_policy: ModelCachePolicy,
+    ) -> Self {
         let cache_path = codex_home.join(MODEL_CACHE_FILE);
         let cache_manager = ModelsCacheManager::new(cache_path, DEFAULT_MODEL_CACHE_TTL);
-        let remote_models = load_remote_models_from_file().unwrap_or_default();
         Self {
-            remote_models: RwLock::new(remote_models),
+            remote_models: RwLock::new(fallback_models.clone()),
+            fallback_models,
             etag: RwLock::new(None),
             cache_manager,
+            cache_policy,
             endpoint_client,
             auth_manager,
         }
@@ -305,9 +334,11 @@ impl OpenAiModelsManager {
         let (models, etag) = self.endpoint_client.list_models(&client_version).await?;
         self.apply_remote_models(models.clone()).await;
         *self.etag.write().await = etag.clone();
-        self.cache_manager
-            .persist_cache(&models, etag, client_version)
-            .await;
+        if self.cache_policy == ModelCachePolicy::Enabled {
+            self.cache_manager
+                .persist_cache(&models, etag, client_version)
+                .await;
+        }
         Ok(())
     }
 
@@ -338,7 +369,7 @@ impl OpenAiModelsManager {
             return;
         }
 
-        let mut existing_models = load_remote_models_from_file().unwrap_or_default();
+        let mut existing_models = self.fallback_models.clone();
         for model in models {
             if let Some(existing_index) = existing_models
                 .iter()
@@ -354,6 +385,11 @@ impl OpenAiModelsManager {
 
     /// Attempt to satisfy the refresh from the cache when it matches the provider and TTL.
     async fn try_load_cache(&self) -> bool {
+        if self.cache_policy == ModelCachePolicy::Disabled {
+            info!("models cache: disabled for provider");
+            return false;
+        }
+
         let _timer =
             codex_otel::start_global_timer("codex.remote_models.load_cache.duration_ms", &[]);
         let client_version = crate::client_version_to_whole();

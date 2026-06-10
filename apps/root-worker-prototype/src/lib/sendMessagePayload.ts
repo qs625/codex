@@ -1,11 +1,8 @@
 import type { ComposerDraft } from "./composerDraft";
+import type { RunConfigSelection } from "./runConfig";
 import type { Thread } from "../types";
 
-export type RunConfigOverride = {
-  model: string;
-  modelProvider: string | null;
-  reasoningEffort: string;
-};
+export type RunConfigOverride = RunConfigSelection;
 
 export function applyRunConfigOverride(
   thread: Thread | null,

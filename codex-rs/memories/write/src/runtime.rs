@@ -180,6 +180,16 @@ impl MemoryStartupContext {
             config.model_provider.clone(),
             session_source,
             config.model_verbosity,
+            config
+                .model_options
+                .iter()
+                .filter(|model_option| model_option.provider == config.model_provider_id)
+                .filter_map(|model_option| {
+                    model_option
+                        .max_tokens
+                        .map(|max_tokens| (model_option.model.clone(), max_tokens))
+                })
+                .collect(),
             config.features.enabled(Feature::EnableRequestCompression),
             config.features.enabled(Feature::RuntimeMetrics),
             /*beta_features_header*/ None,

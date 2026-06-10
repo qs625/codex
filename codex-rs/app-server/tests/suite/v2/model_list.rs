@@ -30,11 +30,11 @@ use wiremock::MockServer;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const INVALID_REQUEST_ERROR_CODE: i64 = -32600;
 
-fn model_from_preset(preset: &ModelPreset) -> Model {
+fn model_from_preset(preset: &ModelPreset, model_provider_id: &str) -> Model {
     Model {
         id: preset.id.clone(),
         model: preset.model.clone(),
-        model_provider: None,
+        model_provider: Some(model_provider_id.to_string()),
         upgrade: preset.upgrade.as_ref().map(|upgrade| upgrade.id.clone()),
         upgrade_info: preset.upgrade.as_ref().map(|upgrade| ModelUpgradeInfo {
             model: upgrade.id.clone(),
@@ -56,6 +56,9 @@ fn model_from_preset(preset: &ModelPreset) -> Model {
             .collect(),
         default_reasoning_effort: preset.default_reasoning_effort,
         input_modalities: preset.input_modalities.clone(),
+        context_window: preset.context_window,
+        max_context_window: preset.max_context_window,
+        auto_compact_token_limit: preset.auto_compact_token_limit,
         // `write_models_cache()` round-trips through a simplified ModelInfo fixture that does not
         // preserve personality placeholders in base instructions, so app-server list results from
         // cache report `supports_personality = false`.
@@ -75,7 +78,7 @@ fn model_from_preset(preset: &ModelPreset) -> Model {
     }
 }
 
-fn expected_visible_models() -> Vec<Model> {
+fn expected_visible_models(model_provider_id: &str) -> Vec<Model> {
     // Filter by supported_in_api to support testing with both ChatGPT and non-ChatGPT auth modes.
     let mut presets = ModelPreset::filter_by_auth(
         codex_core::test_support::all_model_presets().clone(),
@@ -88,7 +91,11 @@ fn expected_visible_models() -> Vec<Model> {
     presets
         .iter()
         .filter(|preset| preset.show_in_picker)
-        .map(model_from_preset)
+        .map(|preset| {
+            let mut model = model_from_preset(preset, model_provider_id);
+            model.max_context_window = None;
+            model
+        })
         .collect()
 }
 
@@ -119,9 +126,14 @@ async fn list_models_returns_all_models_with_large_limit() -> Result<()> {
         next_cursor,
     } = to_response::<ModelListResponse>(response)?;
 
-    let expected_models = expected_visible_models();
+    let expected_models = expected_visible_models("openai");
 
-    assert_eq!(items, expected_models);
+    assert_eq!(&items[..expected_models.len()], expected_models.as_slice());
+    assert!(
+        items
+            .iter()
+            .all(|item| item.model_provider.as_deref() != Some("amazon-bedrock"))
+    );
     assert!(next_cursor.is_none());
     Ok(())
 }
@@ -188,6 +200,9 @@ env_key = "CORP_API_KEY"
             }],
             default_reasoning_effort: ReasoningEffort::High,
             input_modalities: codex_protocol::openai_models::default_input_modalities(),
+            context_window: None,
+            max_context_window: None,
+            auto_compact_token_limit: None,
             supports_personality: false,
             additional_speed_tiers: Vec::new(),
             service_tiers: Vec::new(),
@@ -199,7 +214,7 @@ env_key = "CORP_API_KEY"
 }
 
 #[tokio::test]
-async fn list_models_includes_extra_configured_provider_without_defaulting_to_it() -> Result<()> {
+async fn list_models_does_not_synthesize_models_for_extra_providers() -> Result<()> {
     let codex_home = TempDir::new()?;
     write_models_cache(codex_home.path())?;
     std::fs::write(
@@ -237,28 +252,81 @@ env_key = "CORP_API_KEY"
         next_cursor,
     } = to_response::<ModelListResponse>(response)?;
 
-    let configured_provider_model = items
+    assert!(
+        items
+            .iter()
+            .all(|item| item.id != "configured:corp:mock-model")
+    );
+    assert!(next_cursor.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_models_includes_inline_model_options() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    write_models_cache(codex_home.path())?;
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        r#"
+[[model_options]]
+model = "gpt-5.5-2026-04-24"
+provider = "modelhub-gpt"
+base_url = "https://example.invalid/api/modelhub/online/v2/crawl"
+wire_api = "azure_chat_completions"
+max_tokens = 500
+context_window = 128000
+max_context_window = 256000
+auto_compact_token_limit = 90000
+
+[model_options.query_params]
+ak = "test-key"
+"#,
+    )?;
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+
+    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = mcp
+        .send_list_models_request(ModelListParams {
+            limit: Some(100),
+            cursor: None,
+            include_hidden: None,
+        })
+        .await?;
+
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+
+    let ModelListResponse {
+        data: items,
+        next_cursor,
+    } = to_response::<ModelListResponse>(response)?;
+
+    let configured_model = items
         .iter()
-        .find(|item| item.id == "configured:corp:mock-model")
-        .expect("extra configured provider is present");
+        .find(|item| item.id == "configured:modelhub-gpt:gpt-5.5-2026-04-24")
+        .expect("inline model option is present");
     assert_eq!(
-        configured_provider_model,
+        configured_model,
         &Model {
-            id: "configured:corp:mock-model".to_string(),
-            model: "mock-model".to_string(),
-            model_provider: Some("corp".to_string()),
+            id: "configured:modelhub-gpt:gpt-5.5-2026-04-24".to_string(),
+            model: "gpt-5.5-2026-04-24".to_string(),
+            model_provider: Some("modelhub-gpt".to_string()),
             upgrade: None,
             upgrade_info: None,
             availability_nux: None,
-            display_name: "mock-model".to_string(),
-            description: "已配置 provider · Corp Gateway".to_string(),
+            display_name: "gpt-5.5-2026-04-24".to_string(),
+            description: "配置文件中的模型 · modelhub-gpt".to_string(),
             hidden: false,
-            supported_reasoning_efforts: vec![ReasoningEffortOption {
-                reasoning_effort: ReasoningEffort::Medium,
-                description: "当前配置的默认 reasoning".to_string(),
-            }],
-            default_reasoning_effort: ReasoningEffort::Medium,
+            supported_reasoning_efforts: Vec::new(),
+            default_reasoning_effort: ReasoningEffort::None,
             input_modalities: codex_protocol::openai_models::default_input_modalities(),
+            context_window: Some(128_000),
+            max_context_window: Some(256_000),
+            auto_compact_token_limit: Some(90_000),
             supports_personality: false,
             additional_speed_tiers: Vec::new(),
             service_tiers: Vec::new(),
@@ -270,8 +338,54 @@ env_key = "CORP_API_KEY"
 }
 
 #[tokio::test]
-async fn list_models_marks_configured_catalog_model_without_duplication() -> Result<()> {
-    let configured_model = expected_visible_models()
+async fn list_models_includes_configured_bedrock_provider() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    write_models_cache(codex_home.path())?;
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        r#"
+[model_providers.amazon-bedrock.aws]
+profile = "codex-bedrock"
+"#,
+    )?;
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+
+    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = mcp
+        .send_list_models_request(ModelListParams {
+            limit: Some(100),
+            cursor: None,
+            include_hidden: None,
+        })
+        .await?;
+
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+
+    let ModelListResponse { data: items, .. } = to_response::<ModelListResponse>(response)?;
+
+    assert!(items.iter().any(|item| {
+        item.model_provider.as_deref() == Some("amazon-bedrock")
+            && item.model == "openai.gpt-5.4"
+            && item.context_window == Some(272_000)
+            && item.max_context_window == Some(1_000_000)
+    }));
+    assert!(items.iter().any(|item| {
+        item.model_provider.as_deref() == Some("amazon-bedrock")
+            && item.model == "openai.gpt-oss-120b"
+            && item.context_window == Some(128_000)
+            && item.max_context_window == Some(128_000)
+    }));
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_models_does_not_label_openai_catalog_as_custom_provider() -> Result<()> {
+    let openai_model = expected_visible_models("openai")
         .into_iter()
         .find(|model| !model.is_default)
         .expect("non-default visible model");
@@ -288,6 +402,88 @@ model_provider = "corp"
 name = "Corp Gateway"
 base_url = "https://example.invalid/v1"
 env_key = "CORP_API_KEY"
+"#,
+            openai_model.model
+        ),
+    )?;
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+
+    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = mcp
+        .send_list_models_request(ModelListParams {
+            limit: Some(100),
+            cursor: None,
+            include_hidden: None,
+        })
+        .await?;
+
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+
+    let ModelListResponse {
+        data: items,
+        next_cursor,
+    } = to_response::<ModelListResponse>(response)?;
+
+    assert!(items.iter().any(|item| item == &openai_model));
+    assert!(!items.iter().any(|item| {
+        item.id == openai_model.id && item.model_provider.as_deref() == Some("corp")
+    }));
+    let matches = items
+        .iter()
+        .filter(|item| {
+            item.model == openai_model.model && item.model_provider.as_deref() == Some("corp")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches,
+        vec![&Model {
+            id: format!("configured:corp:{}", openai_model.model),
+            model: openai_model.model.clone(),
+            model_provider: Some("corp".to_string()),
+            upgrade: None,
+            upgrade_info: None,
+            availability_nux: None,
+            display_name: openai_model.model.clone(),
+            description: "当前配置中的模型 · Corp Gateway".to_string(),
+            hidden: false,
+            supported_reasoning_efforts: vec![ReasoningEffortOption {
+                reasoning_effort: ReasoningEffort::Medium,
+                description: "当前配置的默认 reasoning".to_string(),
+            }],
+            default_reasoning_effort: ReasoningEffort::Medium,
+            input_modalities: codex_protocol::openai_models::default_input_modalities(),
+            context_window: None,
+            max_context_window: None,
+            auto_compact_token_limit: None,
+            supports_personality: false,
+            additional_speed_tiers: Vec::new(),
+            service_tiers: Vec::new(),
+            is_default: false,
+        }]
+    );
+    assert!(next_cursor.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_models_marks_configured_catalog_model_without_duplication() -> Result<()> {
+    let configured_model = expected_visible_models("openai")
+        .into_iter()
+        .find(|model| !model.is_default)
+        .expect("non-default visible model");
+    let codex_home = TempDir::new()?;
+    write_models_cache(codex_home.path())?;
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        format!(
+            r#"
+model = "{}"
+model_provider = "openai"
 "#,
             configured_model.model
         ),
@@ -318,11 +514,7 @@ env_key = "CORP_API_KEY"
 
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].id, configured_model.id);
-    assert!(
-        matches[0]
-            .description
-            .ends_with(" · 当前配置: Corp Gateway")
-    );
+    assert!(matches[0].description.ends_with(" · 当前配置: OpenAI"));
     Ok(())
 }
 
@@ -438,13 +630,22 @@ openai_base_url = "{server_uri}/v1"
     } = to_response::<ModelListResponse>(response)?;
     let mut expected_presets: Vec<ModelPreset> = vec![remote_model.into()];
     ModelPreset::mark_default_by_picker_visibility(&mut expected_presets);
-    let expected_items = expected_presets
+    let expected_openai_items = expected_presets
         .iter()
-        .map(model_from_preset)
+        .map(|preset| model_from_preset(preset, "openai"))
         .collect::<Vec<_>>();
-    let expected_items = {
-        let mut items = expected_items;
-        items.push(Model {
+
+    assert_eq!(
+        &items[..expected_openai_items.len()],
+        expected_openai_items.as_slice()
+    );
+    assert!(
+        items
+            .iter()
+            .all(|item| item.model_provider.as_deref() != Some("amazon-bedrock"))
+    );
+    assert!(items.iter().any(|item| {
+        item == &Model {
             id: "configured:openai:mock-model".to_string(),
             model: "mock-model".to_string(),
             model_provider: Some("openai".to_string()),
@@ -460,15 +661,15 @@ openai_base_url = "{server_uri}/v1"
             }],
             default_reasoning_effort: ReasoningEffort::Medium,
             input_modalities: codex_protocol::openai_models::default_input_modalities(),
+            context_window: None,
+            max_context_window: None,
+            auto_compact_token_limit: None,
             supports_personality: false,
             additional_speed_tiers: Vec::new(),
             service_tiers: Vec::new(),
             is_default: false,
-        });
-        items
-    };
-
-    assert_eq!(items, expected_items);
+        }
+    }));
     assert!(next_cursor.is_none());
     assert_eq!(
         models_mock.requests().len(),
@@ -486,7 +687,23 @@ async fn list_models_pagination_works() -> Result<()> {
 
     timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
 
-    let expected_models = expected_visible_models();
+    let full_request_id = mcp
+        .send_list_models_request(ModelListParams {
+            limit: Some(100),
+            cursor: None,
+            include_hidden: None,
+        })
+        .await?;
+
+    let full_response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(full_request_id)),
+    )
+    .await??;
+    let ModelListResponse {
+        data: expected_models,
+        ..
+    } = to_response::<ModelListResponse>(full_response)?;
     let mut cursor = None;
     let mut items = Vec::new();
 

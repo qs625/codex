@@ -364,6 +364,9 @@ export type RunModel = {
   hidden: boolean;
   supportedReasoningEfforts: RunReasoningEffortOption[];
   defaultReasoningEffort: string;
+  contextWindow?: number | null;
+  maxContextWindow?: number | null;
+  autoCompactTokenLimit?: number | null;
   isDefault: boolean;
 };
 

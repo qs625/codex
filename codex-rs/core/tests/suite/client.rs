@@ -899,6 +899,16 @@ async fn send_provider_auth_request(server: &MockServer, auth: ModelProviderAuth
         provider,
         SessionSource::Exec,
         config.model_verbosity,
+        config
+            .model_options
+            .iter()
+            .filter(|model_option| model_option.provider == config.model_provider_id)
+            .filter_map(|model_option| {
+                model_option
+                    .max_tokens
+                    .map(|max_tokens| (model_option.model.clone(), max_tokens))
+            })
+            .collect(),
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
@@ -2315,6 +2325,16 @@ async fn azure_responses_request_includes_store_and_reasoning_ids() {
         provider.clone(),
         SessionSource::Exec,
         config.model_verbosity,
+        config
+            .model_options
+            .iter()
+            .filter(|model_option| model_option.provider == config.model_provider_id)
+            .filter_map(|model_option| {
+                model_option
+                    .max_tokens
+                    .map(|max_tokens| (model_option.model.clone(), max_tokens))
+            })
+            .collect(),
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,

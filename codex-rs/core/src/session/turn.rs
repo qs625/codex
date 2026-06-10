@@ -154,8 +154,15 @@ pub(crate) async fn run_turn(
 
     let model_info = turn_context.model_info.clone();
     let auto_compact_limit = model_info.auto_compact_token_limit().unwrap_or(i64::MAX);
-    let mut client_session =
-        prewarmed_client_session.unwrap_or_else(|| sess.services.model_client.new_session());
+    let turn_provider = turn_context.provider.info();
+    let prewarmed_client_session = prewarmed_client_session
+        .filter(|_| sess.services.model_client.provider_info() == turn_provider);
+    let mut client_session = prewarmed_client_session.unwrap_or_else(|| {
+        sess.services.model_client.new_session_for_provider(
+            Some(Arc::clone(&sess.services.auth_manager)),
+            turn_provider.clone(),
+        )
+    });
     // TODO(ccunningham): Pre-turn compaction runs before context updates and the
     // new user message are recorded. Estimate pending incoming items (context
     // diffs/full reinjection + user input) and trigger compaction preemptively

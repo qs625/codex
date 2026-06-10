@@ -229,9 +229,13 @@ impl CatalogRequestProcessor {
             cursor,
             include_hidden,
         } = params;
-        let mut models =
-            supported_models(self.thread_manager.clone(), include_hidden.unwrap_or(false)).await;
         let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        let mut models = supported_models(
+            self.thread_manager.clone(),
+            &config,
+            include_hidden.unwrap_or(false),
+        )
+        .await;
         add_configured_model(&mut models, &config);
         let total = models.len();
 

@@ -587,6 +587,7 @@ impl AppServerSession {
                     sandbox_policy,
                     permissions,
                     model: Some(model),
+                    model_provider: None,
                     service_tier,
                     effort,
                     summary,
@@ -1095,6 +1096,9 @@ fn model_preset_from_api_model(model: ApiModel) -> ModelPreset {
         // `model/list` already returns models filtered for the active client/auth context.
         supported_in_api: true,
         input_modalities: model.input_modalities,
+        context_window: model.context_window,
+        max_context_window: model.max_context_window,
+        auto_compact_token_limit: model.auto_compact_token_limit,
     }
 }
 

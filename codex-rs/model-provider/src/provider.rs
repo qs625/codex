@@ -7,6 +7,7 @@ use codex_api::SharedAuthProvider;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_model_provider_info::ModelProviderInfo;
+use codex_models_manager::manager::ModelCachePolicy;
 use codex_models_manager::manager::OpenAiModelsManager;
 use codex_models_manager::manager::SharedModelsManager;
 use codex_models_manager::manager::StaticModelsManager;
@@ -250,11 +251,21 @@ impl ModelProvider for ConfiguredModelProvider {
                     self.info.clone(),
                     self.auth_manager.clone(),
                 ));
-                Arc::new(OpenAiModelsManager::new(
-                    codex_home,
-                    endpoint,
-                    self.auth_manager.clone(),
-                ))
+                if self.info.is_openai() {
+                    Arc::new(OpenAiModelsManager::new(
+                        codex_home,
+                        endpoint,
+                        self.auth_manager.clone(),
+                    ))
+                } else {
+                    Arc::new(OpenAiModelsManager::new_with_fallback_models(
+                        codex_home,
+                        endpoint,
+                        self.auth_manager.clone(),
+                        Vec::new(),
+                        ModelCachePolicy::Disabled,
+                    ))
+                }
             }
         }
     }
@@ -546,6 +557,42 @@ mod tests {
 
         assert_eq!(catalog.models.len(), 1);
         assert_eq!(catalog.models[0].slug, "custom-bedrock-model");
+    }
+
+    #[tokio::test]
+    async fn configured_provider_without_catalog_does_not_use_openai_fallback_models() {
+        let provider = create_model_provider(
+            provider_for("https://example.invalid/v1".to_string()),
+            /*auth_manager*/ None,
+        );
+        let manager =
+            provider.models_manager(test_codex_home(), /*config_model_catalog*/ None);
+
+        let catalog = manager.raw_model_catalog(RefreshStrategy::Offline).await;
+
+        assert_eq!(catalog.models, Vec::new());
+    }
+
+    #[tokio::test]
+    async fn configured_provider_uses_configured_static_catalog_when_present() {
+        let custom_model =
+            codex_models_manager::model_info::model_info_from_slug("custom-provider-model");
+
+        let provider = create_model_provider(
+            provider_for("https://example.invalid/v1".to_string()),
+            /*auth_manager*/ None,
+        );
+        let manager = provider.models_manager(
+            test_codex_home(),
+            Some(ModelsResponse {
+                models: vec![custom_model],
+            }),
+        );
+
+        let catalog = manager.raw_model_catalog(RefreshStrategy::Online).await;
+
+        assert_eq!(catalog.models.len(), 1);
+        assert_eq!(catalog.models[0].slug, "custom-provider-model");
     }
 
     #[tokio::test]

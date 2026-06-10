@@ -25,6 +25,7 @@ use codex_config::ThreadConfigLoader;
 use codex_config::config_toml::ConfigLockfileToml;
 use codex_config::config_toml::ConfigToml;
 use codex_config::config_toml::DEFAULT_PROJECT_DOC_MAX_BYTES;
+use codex_config::config_toml::ModelOptionToml;
 use codex_config::config_toml::ProjectConfig;
 use codex_config::config_toml::RealtimeAudioConfig;
 use codex_config::config_toml::RealtimeConfig;
@@ -74,6 +75,7 @@ use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::OLLAMA_CHAT_PROVIDER_REMOVED_ERROR;
 use codex_model_provider_info::built_in_model_providers;
 use codex_model_provider_info::merge_configured_model_providers;
+use codex_models_manager::ModelMetadataOverride;
 use codex_models_manager::ModelsManagerConfig;
 use codex_protocol::config_types::AltScreenMode;
 use codex_protocol::config_types::ForcedLoginMethod;
@@ -560,6 +562,9 @@ pub struct Config {
 
     /// Info needed to make an API request to the model.
     pub model_provider: ModelProviderInfo,
+
+    /// User-visible model picker entries backed by configured providers.
+    pub model_options: Vec<ModelOptionToml>,
 
     /// Optionally specify the personality of the model
     pub personality: Option<Personality>,
@@ -1251,6 +1256,16 @@ impl Config {
             personality_enabled: self.features.enabled(Feature::Personality),
             model_supports_reasoning_summaries: self.model_supports_reasoning_summaries,
             model_catalog: self.model_catalog.clone(),
+            model_metadata_overrides: self
+                .model_options
+                .iter()
+                .map(|model_option| ModelMetadataOverride {
+                    model: model_option.model.clone(),
+                    context_window: model_option.context_window,
+                    max_context_window: model_option.max_context_window,
+                    auto_compact_token_limit: model_option.auto_compact_token_limit,
+                })
+                .collect(),
         }
     }
 
@@ -2911,9 +2926,25 @@ impl Config {
             .clone()
             .filter(|value| !value.is_empty());
 
-        let model_providers =
-            merge_configured_model_providers(built_in_model_providers(openai_base_url), cfg.model_providers)
-                .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidData, message))?;
+        let model_options = cfg.model_options.clone();
+        validate_model_options(&model_options)
+            .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidData, message))?;
+        let mut configured_model_providers = cfg.model_providers;
+        for model_option in &model_options {
+            if model_option.has_inline_provider_config()
+                && !configured_model_providers.contains_key(&model_option.provider)
+            {
+                configured_model_providers
+                    .insert(model_option.provider.clone(), model_option.to_provider_info());
+            }
+        }
+        validate_model_providers(&configured_model_providers)
+            .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidData, message))?;
+        let model_providers = merge_configured_model_providers(
+            built_in_model_providers(openai_base_url),
+            configured_model_providers,
+        )
+        .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidData, message))?;
 
         let model_provider_id = model_provider
             .or(config_profile.model_provider)
@@ -3335,6 +3366,7 @@ impl Config {
             model_auto_compact_token_limit: cfg.model_auto_compact_token_limit,
             model_provider_id,
             model_provider,
+            model_options,
             cwd: resolved_cwd,
             workspace_roots: workspace_roots.clone(),
             workspace_roots_explicit,
@@ -3640,6 +3672,53 @@ impl Config {
     pub fn bundled_skills_enabled(&self) -> bool {
         crate::manager::bundled_skills_enabled_from_stack(&self.config_layer_stack)
     }
+}
+
+fn validate_model_options(model_options: &[ModelOptionToml]) -> Result<(), String> {
+    let mut seen = HashSet::new();
+    for model_option in model_options {
+        if model_option.provider.trim().is_empty() {
+            return Err("model_options.provider must not be empty".to_string());
+        }
+        if model_option.model.trim().is_empty() {
+            return Err(format!(
+                "model_options.{}: model must not be empty",
+                model_option.provider
+            ));
+        }
+        let key = (&model_option.provider, &model_option.model);
+        if !seen.insert(key) {
+            return Err(format!(
+                "model_options contains duplicate provider/model pair: {}/{}",
+                model_option.provider, model_option.model
+            ));
+        }
+        if model_option.context_window.is_some_and(|value| value <= 0) {
+            return Err(format!(
+                "model_options.{}/{}: context_window must be positive",
+                model_option.provider, model_option.model
+            ));
+        }
+        if model_option
+            .max_context_window
+            .is_some_and(|value| value <= 0)
+        {
+            return Err(format!(
+                "model_options.{}/{}: max_context_window must be positive",
+                model_option.provider, model_option.model
+            ));
+        }
+        if model_option
+            .auto_compact_token_limit
+            .is_some_and(|value| value <= 0)
+        {
+            return Err(format!(
+                "model_options.{}/{}: auto_compact_token_limit must be positive",
+                model_option.provider, model_option.model
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn guardian_policy_config_from_requirements(

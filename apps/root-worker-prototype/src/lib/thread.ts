@@ -310,6 +310,9 @@ export function getThreadModelLabel(thread: Thread | null) {
   if (!thread) {
     return "unknown";
   }
+  if (thread.model && thread.modelProvider) {
+    return `${thread.model} · ${thread.modelProvider}`;
+  }
   return thread.model ?? thread.modelProvider ?? "unknown";
 }
 

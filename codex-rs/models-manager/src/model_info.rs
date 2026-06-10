@@ -38,6 +38,27 @@ pub fn with_config_overrides(mut model: ModelInfo, config: &ModelsManagerConfig)
     if let Some(auto_compact_token_limit) = config.model_auto_compact_token_limit {
         model.auto_compact_token_limit = Some(auto_compact_token_limit);
     }
+    if let Some(model_override) = config
+        .model_metadata_overrides
+        .iter()
+        .find(|model_override| model_override.model == model.slug)
+    {
+        if let Some(max_context_window) = model_override.max_context_window {
+            model.max_context_window = Some(max_context_window);
+        }
+        if let Some(context_window) = model_override.context_window {
+            model.context_window = Some(
+                model
+                    .max_context_window
+                    .map_or(context_window, |max_context_window| {
+                        context_window.min(max_context_window)
+                    }),
+            );
+        }
+        if let Some(auto_compact_token_limit) = model_override.auto_compact_token_limit {
+            model.auto_compact_token_limit = Some(auto_compact_token_limit);
+        }
+    }
     if let Some(token_limit) = config.tool_output_token_limit {
         model.truncation_policy = match model.truncation_policy.mode {
             TruncationMode::Bytes => {

@@ -532,10 +532,7 @@ fn parse_markdown_agent_role_file_contents(
     })
 }
 
-fn markdown_agent_role_name(
-    name: Option<&str>,
-    role_file_label: &Path,
-) -> std::io::Result<String> {
+fn markdown_agent_role_name(name: Option<&str>, role_file_label: &Path) -> std::io::Result<String> {
     if let Some(name) = name.map(str::trim).filter(|name| !name.is_empty()) {
         return Ok(name.to_string());
     }

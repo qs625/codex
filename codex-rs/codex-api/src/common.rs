@@ -187,6 +187,10 @@ pub struct ResponsesApiRequest {
     pub text: Option<TextControls>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_metadata: Option<HashMap<String, String>>,
+    /// Chat Completions-only completion token cap. This is intentionally skipped for
+    /// Responses API serialization and consumed by the chat-completions adapter.
+    #[serde(skip)]
+    pub chat_completions_max_tokens: Option<u64>,
 }
 
 impl From<&ResponsesApiRequest> for ResponseCreateWsRequest {
