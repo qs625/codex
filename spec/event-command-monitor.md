@@ -118,6 +118,23 @@ EventCommandUnsubscribeResponse {
 - 长时间运行命令、命令退出监听、文件监听都应该通过 `event_command_subscribe`。
 - 文件监听由模型生成平台可执行的 watch command 或小脚本。
 
+### tool 描述更新约束
+
+本次 `event_command_subscribe` 描述更新只改变模型可见说明，不改变运行时行为。描述应继续服务于以下目标：
+
+- 把文件监听、长命令退出监听、持续运行 server 日志监听统一收敛到同一个 monitor 原语。
+- 明确要求 monitor command 保持安静，只在需要模型重新接管时打印 stdout 行。
+- 明确推荐先用 bash/pipeline；当 debounce、日志过滤或摘要逻辑在 shell 中表达别扭时，可以内嵌短小的 `python` / `node` 脚本。
+- 如果模型需要确认一个超长命令仍在运行，应让 monitor command 自己周期性输出 heartbeat / progress 行，而不是从外部重复查询状态。
+- 明确反对频繁轮询、`sleep` + 重复查状态、把普通 shell 命令包成伪监控循环这类低质量用法。
+
+描述中的示例至少覆盖：
+
+- 文件监听 + debounce。
+- 长命令完成后输出 exit code 和 stdout 摘要。
+- 超长命令运行期间输出 heartbeat / progress，结束时再输出 exit code 或摘要。
+- 持续运行 server，只在 ready / error / crash 等关键日志出现时唤醒模型。
+
 ## 事件语义
 
 EventCommand 产生两类事件。
