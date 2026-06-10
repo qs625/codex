@@ -19,9 +19,11 @@ use codex_utils_pty::process_group::kill_process_group;
 use codex_utils_pty::process_group::terminate_process_group;
 use tokio::io::AsyncBufRead;
 use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncRead;
 use tokio::io::BufReader;
 use tokio::process::Command;
 use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tracing::warn;
 
@@ -47,6 +49,12 @@ struct EventCommandRun {
     label: Option<String>,
     cancel_rx: oneshot::Receiver<()>,
     runtime: EventCommandRuntime,
+}
+
+enum EventCommandOutputRead {
+    Line { line: String, truncated: bool },
+    Eof,
+    Failed(String),
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -725,14 +733,16 @@ async fn run_event_command(run: EventCommandRun) -> Result<(), String> {
         .await?;
         return Ok(());
     };
-    let mut stdout_reader = BufReader::new(stdout);
+    let (mut output_rx, output_task) = spawn_event_command_stdout_task(BufReader::new(stdout));
     tokio::pin!(cancel_rx);
     let mut sequence = 0_u32;
+    let mut stdout_closed = false;
 
     loop {
         tokio::select! {
             biased;
             _ = &mut cancel_rx => {
+                output_task.abort();
                 terminate_event_command_process_tree(&mut child, process_group_id).await;
                 send_event_command_event(
                     &thread_manager,
@@ -754,9 +764,67 @@ async fn run_event_command(run: EventCommandRun) -> Result<(), String> {
                 ).await?;
                 return Ok(());
             }
-            line = read_event_command_line(&mut stdout_reader) => {
-                match line? {
-                    Some((line, truncated)) => {
+            status = child.wait() => {
+                let status = status.map_err(|err| err.to_string())?;
+                while let Ok(output) = output_rx.try_recv() {
+                    match output {
+                        EventCommandOutputRead::Line { line, truncated } => {
+                            if line.is_empty() {
+                                continue;
+                            }
+                            sequence = sequence.saturating_add(1);
+                            send_event_command_event(
+                                &thread_manager,
+                                thread_id,
+                                EventCommandEvent {
+                                    subscription_id: subscription_id.clone(),
+                                    kind: EventCommandEventKind::Output,
+                                    label: label.clone(),
+                                    command: command.clone(),
+                                    cwd: cwd.clone(),
+                                    line: Some(line),
+                                    sequence: Some(sequence),
+                                    exit_code: None,
+                                    signal: None,
+                                    message: None,
+                                    truncated,
+                                    created_at: chrono::Utc::now().timestamp(),
+                                },
+                            ).await?;
+                        }
+                        EventCommandOutputRead::Eof => {
+                            stdout_closed = true;
+                        }
+                        EventCommandOutputRead::Failed(err) => {
+                            output_task.abort();
+                            return Err(err);
+                        }
+                    }
+                }
+                output_task.abort();
+                send_event_command_event(
+                    &thread_manager,
+                    thread_id,
+                    EventCommandEvent {
+                        subscription_id,
+                        kind: EventCommandEventKind::Exited,
+                        label,
+                        command,
+                        cwd,
+                        line: None,
+                        sequence: None,
+                        exit_code: status.code(),
+                        signal: None,
+                        message: Some(format!("EventCommand exited with status {status}")),
+                        truncated: false,
+                        created_at: chrono::Utc::now().timestamp(),
+                    },
+                ).await?;
+                return Ok(());
+            }
+            output = output_rx.recv(), if !stdout_closed => {
+                match output {
+                    Some(EventCommandOutputRead::Line { line, truncated }) => {
                         if line.is_empty() {
                             continue;
                         }
@@ -780,57 +848,43 @@ async fn run_event_command(run: EventCommandRun) -> Result<(), String> {
                             },
                         ).await?;
                     }
-                    None => break,
+                    Some(EventCommandOutputRead::Eof) | None => {
+                        stdout_closed = true;
+                    }
+                    Some(EventCommandOutputRead::Failed(err)) => {
+                        output_task.abort();
+                        return Err(err);
+                    }
                 }
             }
         }
     }
+}
 
-    let status = tokio::select! {
-        biased;
-        _ = &mut cancel_rx => {
-            terminate_event_command_process_tree(&mut child, process_group_id).await;
-            send_event_command_event(
-                &thread_manager,
-                thread_id,
-                EventCommandEvent {
-                    subscription_id,
-                    kind: EventCommandEventKind::Cancelled,
-                    label,
-                    command,
-                    cwd,
-                    line: None,
-                    sequence: None,
-                    exit_code: None,
-                    signal: None,
-                    message: Some("EventCommand cancelled".to_string()),
-                    truncated: false,
-                    created_at: chrono::Utc::now().timestamp(),
-                },
-            ).await?;
-            return Ok(());
+fn spawn_event_command_stdout_task<R>(
+    mut stdout_reader: BufReader<R>,
+) -> (
+    mpsc::UnboundedReceiver<EventCommandOutputRead>,
+    tokio::task::JoinHandle<()>,
+)
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    let (output_tx, output_rx) = mpsc::unbounded_channel();
+    let output_task = tokio::spawn(async move {
+        loop {
+            let event = match read_event_command_line(&mut stdout_reader).await {
+                Ok(Some((line, truncated))) => EventCommandOutputRead::Line { line, truncated },
+                Ok(None) => EventCommandOutputRead::Eof,
+                Err(err) => EventCommandOutputRead::Failed(err),
+            };
+            let is_terminal = !matches!(event, EventCommandOutputRead::Line { .. });
+            if output_tx.send(event).is_err() || is_terminal {
+                return;
+            }
         }
-        status = child.wait() => status.map_err(|err| err.to_string())?,
-    };
-    send_event_command_event(
-        &thread_manager,
-        thread_id,
-        EventCommandEvent {
-            subscription_id,
-            kind: EventCommandEventKind::Exited,
-            label,
-            command,
-            cwd,
-            line: None,
-            sequence: None,
-            exit_code: status.code(),
-            signal: None,
-            message: Some(format!("EventCommand exited with status {status}")),
-            truncated: false,
-            created_at: chrono::Utc::now().timestamp(),
-        },
-    )
-    .await
+    });
+    (output_rx, output_task)
 }
 
 async fn read_event_command_line<R: AsyncBufRead + Unpin>(
@@ -963,12 +1017,16 @@ mod tests {
     use codex_protocol::subscriptions::ScheduleSpec;
     use pretty_assertions::assert_eq;
     use tokio::io::BufReader;
+    use tokio::time::timeout;
 
+    use super::EventCommandOutputRead;
     use super::FsSubscriptionRegistry;
     use super::MAX_EVENT_COMMAND_OUTPUT_LINE_BYTES;
     use super::read_event_command_line;
     #[cfg(unix)]
     use super::shell_command;
+    #[cfg(unix)]
+    use super::spawn_event_command_stdout_task;
     #[cfg(unix)]
     use super::terminate_event_command_process_tree;
     use super::truncate_event_command_line;
@@ -1155,6 +1213,43 @@ mod tests {
 
         assert_eq!(first, Some(("first".to_string(), false)));
         assert_eq!(second, Some(("second".to_string(), false)));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn waits_for_process_exit_without_waiting_for_stdout_eof() {
+        let mut child = shell_command("printf 'ready\\n'; sleep 60 &", None)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let process_group_id = child.id();
+        let stdout = child.stdout.take().expect("stdout should be piped");
+        let (mut output_rx, output_task) = spawn_event_command_stdout_task(BufReader::new(stdout));
+
+        let first_output = timeout(Duration::from_secs(1), output_rx.recv())
+            .await
+            .expect("expected stdout line before timeout")
+            .expect("expected stdout event");
+        assert!(matches!(
+            first_output,
+            EventCommandOutputRead::Line { ref line, truncated: false } if line == "ready"
+        ));
+
+        let status = timeout(Duration::from_secs(1), child.wait())
+            .await
+            .expect("expected main process exit before timeout")
+            .expect("child wait should succeed");
+        assert!(status.success());
+
+        let pending_output = timeout(Duration::from_millis(100), output_rx.recv()).await;
+        assert!(
+            pending_output.is_err(),
+            "stdout reader should stay blocked because a background child still holds the pipe"
+        );
+
+        output_task.abort();
+        terminate_event_command_process_tree(&mut child, process_group_id).await;
     }
 
     #[cfg(unix)]
