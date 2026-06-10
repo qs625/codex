@@ -11,7 +11,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - 创建任何 subagent 时使用 `fork_turns=none`，并在创建消息中显式写清目标、约束、证据和交付格式。
 - 所有开发任务都在独立 git worktree 中完成，不能在当前工作区实现、测试修复或提交开发改动。
 - 新工作创建新 worktree；已有工作返工复用此前 worktree。准备 worktree 后使用 `$bootstrap-worktree-deps` 复用依赖和构建产物。
-- 一个独立任务默认只交给一个 owner。owner 在自己的任务树内负责设计、实现、组织独立 review、组织独立测试和交付汇总，但不亲自执行测试。
+- 一个独立任务默认只交给一个 owner。owner 在自己的任务树内负责设计、实现、组织独立 `@code-review` 执行代码评审与必要验证、更新 `AGENTS.md` 维护当前仓库状态，并汇总交付；owner 不亲自执行测试。
 - PM 不为 UI/UE 需求直接调用 `@ui-ue-designer`。涉及 UI/UE 时，在 owner 委派消息中明确要求 owner 在自己的任务树内调用 `@ui-ue-designer`，并把原型图、设计结论和 handoff 纳入实现验收。
 
 ## 标准流程
@@ -24,7 +24,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
    - 重构或代码健康：`@refactor-owner`
 4. 创建或复用任务 worktree 和分支，并运行 `$bootstrap-worktree-deps`。
 5. 在目标 worktree 委派 owner，消息中包含完整背景、证据、范围、约束、验收和交付格式。
-6. 验收 owner 的实现、独立 review 结论、tester 测试结果和风险；reviewer 必须先于 tester 且结论无阻塞问题，不通过则退回同一 owner 返工。
+6. 验收 owner 的实现、独立 review 与必要验证结论、`AGENTS.md` 更新情况和风险；reviewer 结论有阻塞问题或验证不通过时，退回同一 owner 返工。
 7. 明确没问题后合并回主 checkout，处理冲突，并汇报验证证据和剩余风险.
 
 ## Owner 委派消息格式
@@ -71,11 +71,11 @@ UI/UE 要求：
 子流程执行：
 - UE/UX：已调用 / 已跳过；结论或跳过原因
 - explorer：已调用 / 已跳过；结论或跳过原因
-- reviewer：已调用 / 已跳过；结论或跳过原因，必须先于 tester 完成且无阻塞问题
-- tester：已调用 / 已跳过；测试命令、结果或跳过原因
+- reviewer：必填；代码评审、测试命令、结果，以及未覆盖范围或无法运行原因
+- AGENTS.md：已更新 / 已确认无需更新；原因
 
 验证：
-<tester 执行的命令 -> 结果；无法运行则说明原因和风险>
+<reviewer 执行的命令 -> 结果；无法运行则说明原因和风险>
 
 风险和未知项：
 <剩余风险、回归风险、用户需决策事项>
@@ -86,8 +86,8 @@ UI/UE 要求：
 
 ## 质量门禁
 
-- owner 已完成必要探索、设计或技术方案、实现、独立代码评审和独立测试组织；owner 不亲自执行测试，只汇总 tester 结果。
-- 修复错误、新功能和修改现有功能必须使用 `@feature-owner`，并且必须先委派独立 `@code-review` 完成代码评审，reviewer 结论无阻塞问题后再委派 `@test_agent` 执行测试。
+- owner 已完成必要探索、设计或技术方案、实现、委派独立 `@code-review` 完成代码评审与必要验证，并在开发或修改后更新 `AGENTS.md` 维护当前仓库状态；owner 不亲自执行测试，只汇总 reviewer 结论。
+- 修复错误、新功能和修改现有功能必须使用 `@feature-owner`，并且必须委派独立 `@code-review` 完成代码评审与必要测试/验证；reviewer 结论有阻塞问题或验证失败时不得进入合并。
 - 实现遵循本地模式，有聚焦测试，覆盖边界情况，并避免无关改动。
-- owner 提供 tester 的目标测试结果；PM 抽查关键验证或说明未抽查原因。
-- PM 确认 worktree diff、冲突、tester 验证证据、review 结论和合并顺序。
+- owner 提供 reviewer 的目标验证结果；PM 抽查关键验证或说明未抽查原因。
+- PM 确认 worktree diff、冲突、review 与验证证据、`AGENTS.md` 更新情况和合并顺序。
