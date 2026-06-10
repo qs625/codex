@@ -141,9 +141,14 @@ pub(crate) async fn handle_message_string_tool(
         .await;
     if let Err(err) = result {
         if receiver_is_direct_child && receiver_will_send_completion {
-            session
+            if session
                 .mark_direct_child_completion_received(receiver_thread_id)
-                .await;
+                .await
+            {
+                session
+                    .maybe_notify_parent_of_final_status_for_current_source()
+                    .await;
+            }
         }
         return Err(err);
     }

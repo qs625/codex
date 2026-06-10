@@ -345,11 +345,18 @@ impl AgentControl {
             .await
         {
             if let Some(parent_thread) = parent_thread_for_completion.as_ref() {
-                parent_thread
+                if parent_thread
                     .codex
                     .session
                     .mark_direct_child_completion_received(new_thread.thread_id)
-                    .await;
+                    .await
+                {
+                    parent_thread
+                        .codex
+                        .session
+                        .maybe_notify_parent_of_final_status_for_current_source()
+                        .await;
+                }
             }
             return Err(err);
         }

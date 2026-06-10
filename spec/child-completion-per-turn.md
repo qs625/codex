@@ -35,6 +35,7 @@ active 判断还包含 direct child completion 屏障：
 - management child 和 legacy 非 MultiAgentV2 child 不会产生 `ChildCompletion`，因此不登记 outstanding。
 - 当前 thread 接收 direct child 的 `ChildCompletion` 时，先完成 mailbox/live item 入账，再递减一个 outstanding 计数；`close_agent` 会清空该 direct child 的所有 outstanding 计数。
 - outstanding direct child 非空时，当前 thread 仍视为 active，不能向自己的 parent 发送 completion。
+- 通过真正的 `ChildCompletion` mailbox 清理 outstanding 时，后续 trigger-turn 会重新走 turn 结束链路，由现有 final-status gate 完成判定；不在 mailbox 链路里的失败/close 清理路径，因为不会自然起后续 turn，需要在清掉最后一个 outstanding blocker 后立即补一次同样的 final-status 判定。
 
 递归场景下，每个 thread 只维护自己的 direct child outstanding 计数表；孙子节点由它自己的 parent 维护。
 
