@@ -792,9 +792,7 @@ async fn run_event_command(run: EventCommandRun) -> Result<(), String> {
                                 },
                             ).await?;
                         }
-                        EventCommandOutputRead::Eof => {
-                            stdout_closed = true;
-                        }
+                        EventCommandOutputRead::Eof => {}
                         EventCommandOutputRead::Failed(err) => {
                             output_task.abort();
                             return Err(err);
