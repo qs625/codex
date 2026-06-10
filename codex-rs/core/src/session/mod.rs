@@ -1816,23 +1816,31 @@ impl Session {
         *pending.entry(child_thread_id).or_default() += 1;
     }
 
-    pub(crate) async fn mark_direct_child_completion_received(&self, child_thread_id: ThreadId) {
+    pub(crate) async fn mark_direct_child_completion_received(
+        &self,
+        child_thread_id: ThreadId,
+    ) -> bool {
         let mut pending = self.pending_direct_child_completions.lock().await;
         let Some(count) = pending.get_mut(&child_thread_id) else {
-            return;
+            return false;
         };
         if *count > 1 {
             *count -= 1;
         } else {
             pending.remove(&child_thread_id);
         }
+        pending.is_empty()
     }
 
-    pub(crate) async fn clear_direct_child_completion_pending(&self, child_thread_id: ThreadId) {
-        self.pending_direct_child_completions
-            .lock()
-            .await
-            .remove(&child_thread_id);
+    pub(crate) async fn clear_direct_child_completion_pending(
+        &self,
+        child_thread_id: ThreadId,
+    ) -> bool {
+        let mut pending = self.pending_direct_child_completions.lock().await;
+        let Some(_) = pending.remove(&child_thread_id) else {
+            return false;
+        };
+        pending.is_empty()
     }
 
     pub(crate) fn mark_child_completion_active(&self) {

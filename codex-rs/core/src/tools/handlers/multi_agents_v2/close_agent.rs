@@ -140,9 +140,13 @@ async fn handle_close_agent(
         )
         .await;
     result?;
-    if receiver_is_direct_child {
-        session
+    if receiver_is_direct_child
+        && session
             .clear_direct_child_completion_pending(agent_id)
+            .await
+    {
+        session
+            .maybe_notify_parent_of_final_status_for_current_source()
             .await;
     }
 

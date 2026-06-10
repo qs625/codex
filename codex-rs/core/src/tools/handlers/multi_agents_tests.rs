@@ -1842,6 +1842,164 @@ async fn multi_agent_v2_child_completion_notifies_parent_once_per_assignment() {
 }
 
 #[tokio::test]
+async fn multi_agent_v2_close_agent_rechecks_final_child_completion_without_followup_turn() {
+    let (mut session, mut turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread((*turn.config).clone())
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.conversation_id = root.thread_id;
+    let mut config = turn.config.as_ref().clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    turn.config = Arc::new(config);
+    let session = Arc::new(session);
+    let turn = Arc::new(turn);
+
+    SpawnAgentHandlerV2::default()
+        .handle(invocation(
+            session.clone(),
+            turn.clone(),
+            "spawn_agent",
+            function_payload(json!({
+                "message": "boot worker",
+                "task_name": "worker"
+            })),
+        ))
+        .await
+        .expect("spawn worker");
+    let worker_id = session
+        .services
+        .agent_control
+        .resolve_agent_reference(session.conversation_id, &turn.session_source, "worker")
+        .await
+        .expect("worker should resolve");
+    let worker_thread = manager
+        .get_thread(worker_id)
+        .await
+        .expect("worker thread should exist");
+    let worker_path = AgentPath::try_from("/root/worker").expect("worker path");
+
+    let worker_turn = worker_thread.codex.session.new_default_turn().await;
+    SpawnAgentHandlerV2::default()
+        .handle(invocation(
+            worker_thread.codex.session.clone(),
+            worker_turn.clone(),
+            "spawn_agent",
+            function_payload(json!({
+                "message": "boot grandchild",
+                "task_name": "grandchild"
+            })),
+        ))
+        .await
+        .expect("spawn grandchild");
+    let grandchild_id = worker_thread
+        .codex
+        .session
+        .services
+        .agent_control
+        .resolve_agent_reference(
+            worker_thread.codex.session.conversation_id,
+            &worker_turn.session_source,
+            "grandchild",
+        )
+        .await
+        .expect("grandchild should resolve");
+
+    let completion_turn = worker_thread.codex.session.new_default_turn().await;
+    worker_thread
+        .codex
+        .session
+        .send_event(
+            completion_turn.as_ref(),
+            EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: completion_turn.sub_id.clone(),
+                last_agent_message: Some("worker done".to_string()),
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            }),
+        )
+        .await;
+    *worker_thread.codex.session.active_turn.lock().await = None;
+    worker_thread
+        .codex
+        .session
+        .maybe_notify_parent_of_final_status(completion_turn.as_ref())
+        .await;
+
+    let blocked_notifications = manager
+        .captured_ops()
+        .into_iter()
+        .filter_map(|(id, op)| {
+            (id == root.thread_id)
+                .then_some(op)
+                .and_then(|op| match op {
+                    Op::InterAgentCommunication { communication }
+                        if communication.author == worker_path
+                            && communication.recipient == AgentPath::root()
+                            && communication.other_recipients.is_empty()
+                            && communication.trigger_turn =>
+                    {
+                        Some(communication.content)
+                    }
+                    _ => None,
+                })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(blocked_notifications, Vec::<String>::new());
+
+    let baseline_op_count = manager.captured_ops().len();
+    CloseAgentHandlerV2
+        .handle(invocation(
+            worker_thread.codex.session.clone(),
+            worker_thread.codex.session.new_default_turn().await,
+            "close_agent",
+            function_payload(json!({"target": "grandchild"})),
+        ))
+        .await
+        .expect("close_agent should succeed");
+
+    let expected_notification = format_subagent_notification_message(
+        worker_path.as_str(),
+        &AgentStatus::Completed(Some("worker done".to_string())),
+    );
+    let completion_notifications = manager
+        .captured_ops()
+        .into_iter()
+        .skip(baseline_op_count)
+        .filter_map(|(id, op)| {
+            (id == root.thread_id)
+                .then_some(op)
+                .and_then(|op| match op {
+                    Op::InterAgentCommunication { communication }
+                        if communication.author == worker_path
+                            && communication.recipient == AgentPath::root()
+                            && communication.other_recipients.is_empty()
+                            && communication.trigger_turn =>
+                    {
+                        Some(communication.content)
+                    }
+                    _ => None,
+                })
+        })
+        .filter(|message| *message == expected_notification)
+        .count();
+    assert_eq!(completion_notifications, 1);
+    assert_eq!(
+        worker_thread
+            .codex
+            .session
+            .services
+            .agent_control
+            .get_status(grandchild_id)
+            .await,
+        AgentStatus::NotFound
+    );
+}
+
+#[tokio::test]
 async fn multi_agent_v2_followup_task_rejects_legacy_items_field() {
     let (mut session, mut turn) = make_session_and_context().await;
     let manager = thread_manager();
