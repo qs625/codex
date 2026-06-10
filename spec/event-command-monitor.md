@@ -126,6 +126,7 @@ EventCommandUnsubscribeResponse {
 - 明确要求 monitor command 保持安静，只在需要模型重新接管时打印 stdout 行。
 - 明确推荐先用 bash/pipeline；当 debounce、日志过滤或摘要逻辑在 shell 中表达别扭时，可以内嵌短小的 `python` / `node` 脚本。
 - 如果模型需要确认一个超长命令仍在运行，应让 monitor command 自己周期性输出 heartbeat / progress 行，而不是从外部重复查询状态。
+- 如果 monitor command 会派生后台子进程，且模型希望 monitor 覆盖这些子进程的完整生命周期，命令本身必须显式 `wait`；否则主进程一旦退出，runtime 就会发送 terminal event 并结束监听。
 - 明确反对频繁轮询、`sleep` + 重复查状态、把普通 shell 命令包成伪监控循环这类低质量用法。
 
 描述中的示例至少覆盖：
@@ -176,6 +177,7 @@ EventCommandEvent {
 - 每读到一条完整 stdout 行，立即生成一条 `kind=output` 的 `EventCommandEvent`。
 - 空行默认忽略，避免无意义事件；如后续需要可增加 `include_empty_lines`。
 - 单行超过 16 KiB 时截断展示文本，并设置 `truncated=true`。
+- runtime 同时监听 stdout 和主进程退出；主进程退出后不再等待 stdout EOF。
 - 命令退出时无论 exit code 是否为 0，都生成 `kind=exited` terminal event。
 - 启动失败生成 `kind=failed_to_start`，并且不进入 active。
 - 取消生成 `kind=cancelled`，并从 active 列表移除。
@@ -421,6 +423,7 @@ schedule 不迁移到 EventCommand：
 - stdout 多行生成多条独立 `EventCommandEvent(kind=output)`，并保持 active。
 - 命令 exit code 0 生成 `kind=exited`，并清理 active。
 - 命令 exit code 非 0 同样生成 `kind=exited`，并记录 exit code。
+- 主进程退出但后台子进程仍持有 stdout 时，仍应尽快生成 `kind=exited`，不等待 stdout EOF。
 - 启动失败生成 `kind=failed_to_start`，不残留 active。
 - unsubscribe 生成 `kind=cancelled`，终止进程并清理 active。
 - 取消与自然退出竞争时只产生一个 terminal event。

@@ -49,6 +49,9 @@ model.\n\
 or `node` script inside the command to express debounce, parsing, or summarization.\n\
 - If you need liveness for a long-running command, print heartbeat or progress lines from inside \
 the monitor command itself.\n\
+- Runtime completion is tied to the main process exiting, not to every inherited `stdout` handle \
+closing. If your command starts child processes and you want the monitor to stay active until they \
+finish, make the script `wait` for them before it exits.\n\
 - Do not fall back to frequent polling, `sleep` loops, or repeated status checks when a monitor \
 command can wait and emit the relevant event.\n\n\
 Example monitor commands:\n\
@@ -183,6 +186,8 @@ mod tests {
         assert!(description.contains("ready or if it crashes"));
         assert!(description.contains("short `python` or `node` script"));
         assert!(description.contains("heartbeat or progress lines"));
+        assert!(description.contains("main process exiting"));
+        assert!(description.contains("make the script `wait` for them"));
         assert!(description.contains("Do not fall back to frequent polling"));
         assert!(description.contains("`stderr` does not emit events"));
         assert!(description.contains("event_command_unsubscribe"));
