@@ -2,6 +2,7 @@ use crate::outgoing_message::ThreadScopedOutgoingMessageSender;
 use codex_app_server_protocol::ItemCompletedNotification;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ThreadItem;
+use codex_app_server_protocol::project_structured_response_item;
 use codex_protocol::ThreadId;
 
 pub(crate) async fn maybe_emit_event_driven_tool_trigger_item_completed(
@@ -10,110 +11,20 @@ pub(crate) async fn maybe_emit_event_driven_tool_trigger_item_completed(
     item: &codex_protocol::models::ResponseItem,
     outgoing: &ThreadScopedOutgoingMessageSender,
 ) {
-    match item {
-        codex_protocol::models::ResponseItem::EventCommandEvent { id, event } => {
-            let item_id = id.clone().unwrap_or_else(|| event.stable_item_id());
-            emit_event_command_event_completed(
-                conversation_id,
-                turn_id,
-                item_id,
-                event.clone(),
-                outgoing,
-            )
-            .await;
-            return;
+    let Some(projected) = project_structured_response_item(item, || match item {
+        codex_protocol::models::ResponseItem::EventDrivenTool { trigger, .. } => {
+            event_driven_tool_trigger_item_id(turn_id, trigger)
         }
-        codex_protocol::models::ResponseItem::EventDrivenTool { id, trigger } => {
-            let item_id = id
-                .clone()
-                .unwrap_or_else(|| event_driven_tool_trigger_item_id(turn_id, trigger));
-            emit_event_driven_tool_completed(
-                conversation_id,
-                turn_id,
-                item_id,
-                trigger.clone(),
-                outgoing,
-            )
-            .await;
-            return;
-        }
-        _ => {}
-    }
-
-    let codex_protocol::models::ResponseItem::Message { content, id, .. } = item else {
+        _ => String::new(),
+    }) else {
         return;
     };
 
-    if let Some(event) =
-        codex_protocol::event_command::EventCommandEvent::parse_message_content(content)
-    {
-        let item_id = id.clone().unwrap_or_else(|| event.stable_item_id());
-        emit_event_command_event_completed(conversation_id, turn_id, item_id, event, outgoing)
-            .await;
-        return;
-    }
-
-    let Some(trigger) =
-        codex_protocol::event_driven_tool::EventDrivenToolTrigger::parse_message_content(content)
-    else {
-        return;
-    };
-    let item_id = id
-        .clone()
-        .unwrap_or_else(|| event_driven_tool_trigger_item_id(turn_id, &trigger));
-
-    emit_event_driven_tool_completed(conversation_id, turn_id, item_id, trigger, outgoing).await;
-}
-
-async fn emit_event_command_event_completed(
-    conversation_id: ThreadId,
-    turn_id: &str,
-    item_id: String,
-    event: codex_protocol::event_command::EventCommandEvent,
-    outgoing: &ThreadScopedOutgoingMessageSender,
-) {
     let notification = ItemCompletedNotification {
         thread_id: conversation_id.to_string(),
         turn_id: turn_id.to_string(),
         completed_at_ms: now_unix_timestamp_ms(),
-        item: ThreadItem::EventCommandEvent {
-            id: item_id,
-            subscription_id: event.subscription_id,
-            kind: event.kind.into(),
-            label: event.label,
-            command: event.command,
-            cwd: event.cwd,
-            line: event.line,
-            sequence: event.sequence,
-            exit_code: event.exit_code,
-            signal: event.signal,
-            message: event.message,
-            truncated: event.truncated,
-            created_at: event.created_at,
-        },
-    };
-    outgoing
-        .send_server_notification(ServerNotification::ItemCompleted(notification))
-        .await;
-}
-
-async fn emit_event_driven_tool_completed(
-    conversation_id: ThreadId,
-    turn_id: &str,
-    item_id: String,
-    trigger: codex_protocol::event_driven_tool::EventDrivenToolTrigger,
-    outgoing: &ThreadScopedOutgoingMessageSender,
-) {
-    let notification = ItemCompletedNotification {
-        thread_id: conversation_id.to_string(),
-        turn_id: turn_id.to_string(),
-        completed_at_ms: now_unix_timestamp_ms(),
-        item: ThreadItem::EventDrivenTool {
-            id: item_id,
-            tool: trigger.tool,
-            title: trigger.title,
-            text: trigger.text,
-        },
+        item: projected,
     };
     outgoing
         .send_server_notification(ServerNotification::ItemCompleted(notification))
@@ -169,7 +80,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn event_driven_tool_trigger_message_emits_item_completed() -> Result<()> {
+    async fn event_driven_tool_trigger_message_does_not_emit_item_completed() -> Result<()> {
         let conversation_id = ThreadId::new();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
         let outgoing = Arc::new(OutgoingMessageSender::new(
@@ -186,8 +97,6 @@ mod tests {
             title: "File watch triggered".to_string(),
             text: "build.log changed".to_string(),
         };
-        let expected_item_id = event_driven_tool_trigger_item_id("turn-1", &trigger);
-
         maybe_emit_event_driven_tool_trigger_item_completed(
             conversation_id,
             "turn-1",
@@ -196,25 +105,9 @@ mod tests {
         )
         .await;
 
-        let completed = recv_broadcast_message(&mut rx).await?;
-        match completed {
-            OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(payload)) => {
-                assert_eq!(
-                    payload.item,
-                    ThreadItem::EventDrivenTool {
-                        id: expected_item_id,
-                        tool: "fs_subscribe".to_string(),
-                        title: "File watch triggered".to_string(),
-                        text: "build.log changed".to_string(),
-                    }
-                );
-            }
-            other => bail!("unexpected message: {other:?}"),
-        }
-
         assert!(
             rx.try_recv().is_err(),
-            "event-driven trigger message should emit exactly once"
+            "legacy marker message should not emit a structured item"
         );
         Ok(())
     }

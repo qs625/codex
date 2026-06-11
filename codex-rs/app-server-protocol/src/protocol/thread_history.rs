@@ -4,6 +4,10 @@ use crate::protocol::item_builders::build_file_change_approval_request_item;
 use crate::protocol::item_builders::build_file_change_begin_item;
 use crate::protocol::item_builders::build_file_change_end_item;
 use crate::protocol::item_builders::build_item_from_guardian_event;
+use crate::protocol::response_item_projection::project_structured_response_item;
+use crate::protocol::response_item_projection::project_tool_call_completion;
+use crate::protocol::response_item_projection::project_tool_call_start;
+use crate::protocol::response_item_projection::thread_item_from_inter_agent_communication;
 use crate::protocol::v2::CollabAgentState;
 use crate::protocol::v2::CollabAgentTool;
 use crate::protocol::v2::CollabAgentToolCallStatus;
@@ -22,10 +26,7 @@ use crate::protocol::v2::TurnItemsView;
 use crate::protocol::v2::TurnStatus;
 use crate::protocol::v2::UserInput;
 use crate::protocol::v2::WebSearchAction;
-use crate::protocol::v2::normalize_agent_message_item;
-use crate::protocol::v2::thread_item_from_inter_agent_communication;
-use codex_protocol::event_command::EventCommandEvent;
-use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
+use crate::protocol::v2::assistant_message_thread_item;
 use codex_protocol::items::parse_hook_prompt_message;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::MessagePhase;
@@ -279,25 +280,6 @@ impl ThreadHistoryBuilder {
                     return;
                 }
 
-                if let Some(event) = EventCommandEvent::parse_message_content(content) {
-                    let id = id.clone().unwrap_or_else(|| event.stable_item_id());
-                    self.ensure_turn()
-                        .items
-                        .push(event_command_event_item(id, event));
-                    return;
-                }
-
-                if let Some(trigger) = EventDrivenToolTrigger::parse_message_content(content) {
-                    let id = id.clone().unwrap_or_else(|| self.next_item_id());
-                    self.ensure_turn().items.push(ThreadItem::EventDrivenTool {
-                        id,
-                        tool: trigger.tool,
-                        title: trigger.title,
-                        text: trigger.text,
-                    });
-                    return;
-                }
-
                 if role == "assistant" {
                     let Some(text) = single_text_message_content(content) else {
                         return;
@@ -310,7 +292,7 @@ impl ThreadHistoryBuilder {
                     ) {
                         return;
                     }
-                    self.ensure_turn().items.push(normalize_agent_message_item(
+                    self.ensure_turn().items.push(assistant_message_thread_item(
                         id.clone(),
                         text.to_string(),
                         phase.clone(),
@@ -342,35 +324,15 @@ impl ThreadHistoryBuilder {
                         .collect(),
                 });
             }
-            ResponseItem::EventCommandEvent { id, event } => {
-                let id = id.clone().unwrap_or_else(|| event.stable_item_id());
-                self.ensure_turn()
-                    .items
-                    .push(event_command_event_item(id, event.clone()));
-            }
-            ResponseItem::EventDrivenTool { id, trigger } => {
-                let id = id.clone().unwrap_or_else(|| self.next_item_id());
-                self.ensure_turn().items.push(ThreadItem::EventDrivenTool {
-                    id,
-                    tool: trigger.tool.clone(),
-                    title: trigger.title.clone(),
-                    text: trigger.text.clone(),
-                });
-            }
-            ResponseItem::InterAgentCommunication { id, communication } => {
-                if matches!(
-                    communication.operation,
-                    codex_protocol::protocol::InterAgentOperation::Unknown
-                ) {
+            ResponseItem::EventCommandEvent { .. }
+            | ResponseItem::EventDrivenTool { .. }
+            | ResponseItem::InterAgentCommunication { .. } => {
+                let Some(projected) =
+                    project_structured_response_item(item, || self.next_item_id())
+                else {
                     return;
-                }
-                let id = id.clone().unwrap_or_else(|| self.next_item_id());
-                self.ensure_turn()
-                    .items
-                    .push(thread_item_from_inter_agent_communication(
-                        id,
-                        communication.clone(),
-                    ));
+                };
+                self.ensure_turn().items.push(projected);
             }
             ResponseItem::FunctionCall {
                 name,
@@ -379,26 +341,9 @@ impl ThreadHistoryBuilder {
                 call_id,
                 ..
             } => {
-                if is_event_command_subscribe_tool(namespace.as_deref(), name) {
-                    let arguments = parse_raw_function_call_arguments(arguments);
-                    let item = event_command_call_item_from_arguments(
-                        call_id.clone(),
-                        arguments,
-                        DynamicToolCallStatus::InProgress,
-                        None,
-                    );
-                    self.upsert_event_driven_tool_call_in_current_turn(item);
-                    return;
-                }
-
-                if let Some(tool_name) = event_driven_tool_name(namespace.as_deref(), name) {
-                    let item = ThreadItem::EventDrivenToolCall {
-                        id: call_id.clone(),
-                        tool: tool_name,
-                        arguments: parse_raw_function_call_arguments(arguments),
-                        status: DynamicToolCallStatus::InProgress,
-                        output: None,
-                    };
+                if let Some(item) =
+                    project_tool_call_start(name, namespace.as_deref(), arguments, call_id)
+                {
                     self.upsert_event_driven_tool_call_in_current_turn(item);
                 }
             }
@@ -407,47 +352,11 @@ impl ThreadHistoryBuilder {
                 if existing.is_none() {
                     return;
                 }
-                if let Some(ThreadItem::EventCommandCall {
-                    command,
-                    cwd,
-                    label,
-                    ..
-                }) = existing
+                if let Some(item) =
+                    existing.and_then(|item| project_tool_call_completion(item, call_id, output))
                 {
-                    let output_json = event_command_output_payload_to_json(output);
-                    let item = ThreadItem::EventCommandCall {
-                        id: call_id.clone(),
-                        subscription_id: string_field(&output_json, "subscription_id")
-                            .or_else(|| string_field(&output_json, "subscriptionId"))
-                            .unwrap_or_default(),
-                        command: string_field(&output_json, "command")
-                            .unwrap_or_else(|| command.clone()),
-                        cwd: string_field(&output_json, "cwd").or_else(|| cwd.clone()),
-                        label: string_field(&output_json, "label").or_else(|| label.clone()),
-                        status: DynamicToolCallStatus::Completed,
-                        output: Some(output_json),
-                    };
                     self.upsert_event_driven_tool_call_in_current_turn(item);
-                    return;
                 }
-                let item = ThreadItem::EventDrivenToolCall {
-                    id: call_id.clone(),
-                    tool: existing
-                        .map(|item| match item {
-                            ThreadItem::EventDrivenToolCall { tool, .. } => tool.clone(),
-                            _ => "tool".to_string(),
-                        })
-                        .unwrap_or_else(|| "tool".to_string()),
-                    arguments: existing
-                        .map(|item| match item {
-                            ThreadItem::EventDrivenToolCall { arguments, .. } => arguments.clone(),
-                            _ => serde_json::Value::Null,
-                        })
-                        .unwrap_or(serde_json::Value::Null),
-                    status: DynamicToolCallStatus::Completed,
-                    output: Some(function_call_output_payload_to_json(output)),
-                };
-                self.upsert_event_driven_tool_call_in_current_turn(item);
             }
             _ => {}
         }
@@ -546,7 +455,7 @@ impl ThreadHistoryBuilder {
                 text: text.clone(),
                 phase: phase.clone(),
             });
-        self.ensure_turn().items.push(normalize_agent_message_item(
+        self.ensure_turn().items.push(assistant_message_thread_item(
             id,
             text,
             phase,
@@ -634,7 +543,7 @@ impl ThreadHistoryBuilder {
                 ThreadItem::CollabAgentMessage { .. } | ThreadItem::CollabAgentStatusUpdate { .. }
             ) =>
             {
-                let response_item = normalize_agent_message_item(
+                let response_item = assistant_message_thread_item(
                     response_id.to_string(),
                     text.to_string(),
                     phase,
@@ -1761,96 +1670,11 @@ fn convert_dynamic_tool_content_items(
         .collect()
 }
 
-fn parse_raw_function_call_arguments(arguments: &str) -> serde_json::Value {
-    serde_json::from_str(arguments).unwrap_or_else(|_| serde_json::Value::String(arguments.into()))
-}
-
-fn function_call_output_payload_to_json(
-    output: &codex_protocol::models::FunctionCallOutputPayload,
-) -> serde_json::Value {
-    serde_json::to_value(output).unwrap_or_else(|_| serde_json::Value::String(output.to_string()))
-}
-
-fn event_command_output_payload_to_json(
-    output: &codex_protocol::models::FunctionCallOutputPayload,
-) -> serde_json::Value {
-    output
-        .text_content()
-        .and_then(|text| serde_json::from_str(text).ok())
-        .unwrap_or_else(|| function_call_output_payload_to_json(output))
-}
-
 fn single_text_message_content(content: &[ContentItem]) -> Option<&str> {
     match content {
         [ContentItem::InputText { text }] | [ContentItem::OutputText { text }] => Some(text),
         _ => None,
     }
-}
-
-fn event_driven_tool_name(namespace: Option<&str>, name: &str) -> Option<String> {
-    if namespace.is_some() {
-        return None;
-    }
-
-    match name {
-        "event_command_unsubscribe"
-        | "event_command_write_stdin"
-        | "schedule_subscribe"
-        | "schedule_unsubscribe" => Some(name.to_string()),
-        _ => None,
-    }
-}
-
-fn is_event_command_subscribe_tool(namespace: Option<&str>, name: &str) -> bool {
-    namespace.is_none() && name == "event_command_subscribe"
-}
-
-fn event_command_call_item_from_arguments(
-    id: String,
-    arguments: serde_json::Value,
-    status: DynamicToolCallStatus,
-    output: Option<serde_json::Value>,
-) -> ThreadItem {
-    ThreadItem::EventCommandCall {
-        id,
-        subscription_id: output
-            .as_ref()
-            .and_then(|value| {
-                string_field(value, "subscription_id")
-                    .or_else(|| string_field(value, "subscriptionId"))
-            })
-            .unwrap_or_default(),
-        command: string_field(&arguments, "command").unwrap_or_default(),
-        cwd: string_field(&arguments, "cwd"),
-        label: string_field(&arguments, "label"),
-        status,
-        output,
-    }
-}
-
-fn event_command_event_item(id: String, event: EventCommandEvent) -> ThreadItem {
-    ThreadItem::EventCommandEvent {
-        id,
-        subscription_id: event.subscription_id,
-        kind: event.kind.into(),
-        label: event.label,
-        command: event.command,
-        cwd: event.cwd,
-        line: event.line,
-        sequence: event.sequence,
-        exit_code: event.exit_code,
-        signal: event.signal,
-        message: event.message,
-        truncated: event.truncated,
-        created_at: event.created_at,
-    }
-}
-
-fn string_field(value: &serde_json::Value, field: &str) -> Option<String> {
-    value
-        .get(field)
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
 }
 
 fn parse_injected_context_sections(
@@ -2378,13 +2202,8 @@ mod tests {
 
     #[test]
     fn maps_live_event_driven_tool_trigger_to_event_item() {
-        let trigger = EventDrivenToolTrigger {
-            tool: "process_exit_subscribe".into(),
-            title: "Process exited".into(),
-            text: "[Process exit subscription] Session 42 exited with code 0".into(),
-        };
         let events = [EventMsg::AgentMessage(AgentMessageEvent {
-            message: trigger.render_message_text(),
+            message: "<event_driven_tool>{\"tool\":\"process_exit_subscribe\",\"title\":\"Process exited\",\"text\":\"[Process exit subscription] Session 42 exited with code 0\"}</event_driven_tool>".into(),
             phase: None,
             memory_citation: None,
         })];
@@ -2398,11 +2217,11 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
-            vec![ThreadItem::EventDrivenTool {
+            vec![ThreadItem::AgentMessage {
                 id: "item-1".into(),
-                tool: "process_exit_subscribe".into(),
-                title: "Process exited".into(),
-                text: "[Process exit subscription] Session 42 exited with code 0".into(),
+                text: "<event_driven_tool>{\"tool\":\"process_exit_subscribe\",\"title\":\"Process exited\",\"text\":\"[Process exit subscription] Session 42 exited with code 0\"}</event_driven_tool>".into(),
+                phase: None,
+                memory_citation: None,
             }]
         );
     }
@@ -3772,7 +3591,10 @@ mod tests {
                 model_context_window: None,
                 collaboration_mode_kind: Default::default(),
             })),
-            RolloutItem::ResponseItem(event.to_response_item()),
+            RolloutItem::ResponseItem(ResponseItem::EventCommandEvent {
+                id: None,
+                event: event.clone(),
+            }),
         ];
 
         let turns = build_turns_from_rollout_items(&items);
@@ -4005,12 +3827,7 @@ mod tests {
     }
 
     #[test]
-    fn reconstructs_event_driven_tool_trigger_items_from_response_messages() {
-        let trigger = EventDrivenToolTrigger {
-            tool: "schedule_subscribe".into(),
-            title: "Schedule triggered".into(),
-            text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
-        };
+    fn reconstructs_typed_event_driven_tool_items_from_response_items() {
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".into(),
@@ -4018,7 +3835,14 @@ mod tests {
                 model_context_window: None,
                 collaboration_mode_kind: Default::default(),
             })),
-            RolloutItem::ResponseItem(trigger.to_response_item()),
+            RolloutItem::ResponseItem(ResponseItem::EventDrivenTool {
+                id: Some("schedule-trigger-1".into()),
+                trigger: EventDrivenToolTrigger {
+                    tool: "schedule_subscribe".into(),
+                    title: "Schedule triggered".into(),
+                    text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
+                },
+            }),
         ];
 
         let turns = build_turns_from_rollout_items(&items);
@@ -4027,7 +3851,7 @@ mod tests {
         assert_eq!(
             turns[0].items[0],
             ThreadItem::EventDrivenTool {
-                id: "item-1".into(),
+                id: "schedule-trigger-1".into(),
                 tool: "schedule_subscribe".into(),
                 title: "Schedule triggered".into(),
                 text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
@@ -4036,12 +3860,7 @@ mod tests {
     }
 
     #[test]
-    fn reconstructs_process_exit_trigger_from_assistant_output_response_message() {
-        let trigger = EventDrivenToolTrigger {
-            tool: "process_exit_subscribe".into(),
-            title: "Process exited".into(),
-            text: "Session 42 exited with code 0".into(),
-        };
+    fn assistant_response_messages_remain_agent_messages() {
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".into(),
@@ -4053,7 +3872,7 @@ mod tests {
                 id: Some("process-exit-1".into()),
                 role: "assistant".into(),
                 content: vec![ContentItem::OutputText {
-                    text: trigger.render_message_text(),
+                    text: "<event_driven_tool>{\"tool\":\"process_exit_subscribe\",\"title\":\"Process exited\",\"text\":\"Session 42 exited with code 0\"}</event_driven_tool>".into(),
                 }],
                 phase: None,
             }),
@@ -4064,11 +3883,11 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
-            vec![ThreadItem::EventDrivenTool {
+            vec![ThreadItem::AgentMessage {
                 id: "process-exit-1".into(),
-                tool: "process_exit_subscribe".into(),
-                title: "Process exited".into(),
-                text: "Session 42 exited with code 0".into(),
+                text: "<event_driven_tool>{\"tool\":\"process_exit_subscribe\",\"title\":\"Process exited\",\"text\":\"Session 42 exited with code 0\"}</event_driven_tool>".into(),
+                phase: None,
+                memory_citation: None,
             }]
         );
     }
@@ -4133,16 +3952,11 @@ mod tests {
         assert_eq!(
             turns[0].items,
             vec![
-                ThreadItem::CollabAgentMessage {
+                ThreadItem::AgentMessage {
                     id: "msg-1".into(),
-                    operation: InterAgentOperation::SendMessage.into(),
-                    sender_thread_id: None,
-                    sender_path: "/root/worker".into(),
-                    recipient_thread_id: None,
-                    recipient_path: "/root".into(),
-                    other_recipient_paths: Vec::new(),
-                    content: "done".into(),
-                    trigger_turn: false,
+                    text: serde_json::to_string(&communication).expect("serialize communication"),
+                    phase: None,
+                    memory_citation: None,
                 },
                 ThreadItem::AgentMessage {
                     id: "msg-2".into(),
@@ -4392,7 +4206,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_duplicate_candidate_does_not_consume_response_if_item_normalized() {
+    fn duplicate_agent_message_response_updates_plain_agent_message() {
         let trigger = EventDrivenToolTrigger {
             tool: "schedule_subscribe".into(),
             title: "Schedule triggered".into(),
@@ -4425,17 +4239,17 @@ mod tests {
         assert_eq!(
             turns[0].items,
             vec![
-                ThreadItem::EventDrivenTool {
+                ThreadItem::AgentMessage {
                     id: "item-1".into(),
-                    tool: "schedule_subscribe".into(),
-                    title: "Schedule triggered".into(),
-                    text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
+                    text: text.clone(),
+                    phase: None,
+                    memory_citation: None,
                 },
-                ThreadItem::EventDrivenTool {
+                ThreadItem::AgentMessage {
                     id: "msg-1".into(),
-                    tool: "schedule_subscribe".into(),
-                    title: "Schedule triggered".into(),
-                    text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
+                    text,
+                    phase: None,
+                    memory_citation: None,
                 },
             ]
         );

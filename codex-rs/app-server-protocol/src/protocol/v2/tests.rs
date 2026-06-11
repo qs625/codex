@@ -1,7 +1,6 @@
 use super::*;
 use codex_protocol::AgentPath;
 use codex_protocol::approvals::ElicitationRequest as CoreElicitationRequest;
-use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
 use codex_protocol::items::FileChangeItem;
@@ -2498,15 +2497,10 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
         }
     );
 
-    let trigger = EventDrivenToolTrigger {
-        tool: "process_exit_subscribe".to_string(),
-        title: "Process exited".to_string(),
-        text: "[Process exit subscription] Session 42 exited with code 0".to_string(),
-    };
     let event_driven_item = TurnItem::AgentMessage(AgentMessageItem {
         id: "agent-3".to_string(),
         content: vec![AgentMessageContent::Text {
-            text: trigger.render_message_text(),
+            text: "[Process exit subscription] Session 42 exited with code 0".to_string(),
         }],
         phase: None,
         memory_citation: None,
@@ -2514,11 +2508,11 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
 
     assert_eq!(
         ThreadItem::from(event_driven_item),
-        ThreadItem::EventDrivenTool {
+        ThreadItem::AgentMessage {
             id: "agent-3".to_string(),
-            tool: "process_exit_subscribe".to_string(),
-            title: "Process exited".to_string(),
             text: "[Process exit subscription] Session 42 exited with code 0".to_string(),
+            phase: None,
+            memory_citation: None,
         }
     );
 
@@ -2541,16 +2535,11 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
 
     assert_eq!(
         ThreadItem::from(inter_agent_item),
-        ThreadItem::CollabAgentMessage {
+        ThreadItem::AgentMessage {
             id: "agent-4".to_string(),
-            operation: InterAgentOperation::SendMessage.into(),
-            sender_thread_id: None,
-            sender_path: "/root/worker".to_string(),
-            recipient_thread_id: None,
-            recipient_path: "/root".to_string(),
-            other_recipient_paths: Vec::new(),
-            content: "done".to_string(),
-            trigger_turn: false,
+            text: serde_json::to_string(&communication).expect("serialize communication"),
+            phase: None,
+            memory_citation: None,
         }
     );
 

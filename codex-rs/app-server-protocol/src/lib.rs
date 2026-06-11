@@ -16,6 +16,8 @@ pub use jsonrpc_lite::*;
 pub use protocol::common::*;
 pub use protocol::event_mapping::*;
 pub use protocol::item_builders::*;
+#[doc(hidden)]
+pub use protocol::response_item_projection::*;
 pub use protocol::thread_history::*;
 pub use protocol::v1::ApplyPatchApprovalParams;
 pub use protocol::v1::ApplyPatchApprovalResponse;

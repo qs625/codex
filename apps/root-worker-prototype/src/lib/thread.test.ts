@@ -142,29 +142,6 @@ function makeTreeNode(
   };
 }
 
-function eventDrivenToolMarker(
-  trigger = {
-    tool: "process_exit_subscribe",
-    title: "Process exited",
-    text: "Session 42 exited with code 0",
-  },
-) {
-  return `<event_driven_tool>${JSON.stringify(trigger)}</event_driven_tool>`;
-}
-
-function makeRawProcessExitItem(
-  overrides: Partial<Extract<ThreadItem, { type: "agentMessage" }>> = {},
-): ThreadItem {
-  return {
-    type: "agentMessage",
-    id: "raw-item",
-    text: eventDrivenToolMarker(),
-    phase: null,
-    memoryCitation: null,
-    ...overrides,
-  };
-}
-
 test("mergeThreadSnapshot preserves usage fields when thread/read omits them", () => {
   const existing = makeThread();
   const next = {
@@ -195,77 +172,6 @@ test("mergeThreadSnapshot preserves usage fields when thread/read omits them", (
   assert.equal(merged.threadUsage?.contextUsage?.budgetUsedPercent, 12);
   assert.equal(merged.tokenUsage?.total.totalTokens, 1200);
   assert.equal(merged.contextUsage?.budgetUsedPercent, 12);
-});
-
-test("mergeThreadSnapshot normalizes raw process exit marker messages in history", () => {
-  const turn: Turn = {
-    id: "turn-1",
-    items: [makeRawProcessExitItem()],
-    itemsView: "full" as const,
-    status: "completed" as const,
-    error: null,
-    startedAt: 1,
-    completedAt: 2,
-    durationMs: 1,
-  };
-
-  const merged = mergeThreadSnapshot(null, {
-    ...makeThread(),
-    turns: [turn],
-  });
-
-  assert.deepEqual(merged.turns[0]?.items, [
-    {
-      type: "eventDrivenTool",
-      id: "raw-item",
-      tool: "process_exit_subscribe",
-      title: "Process exited",
-      text: "Session 42 exited with code 0",
-    },
-  ]);
-});
-
-test("mergeThreadSnapshot drops restored raw process exit when read has structured event item", () => {
-  const existing: Thread = {
-    ...makeThread(),
-    turns: [
-      {
-        id: "raw-turn",
-        items: [makeRawProcessExitItem()],
-        itemsView: "notLoaded" as const,
-        status: "completed" as const,
-        error: null,
-        startedAt: 1,
-        completedAt: 2,
-        durationMs: 1,
-      },
-    ],
-  };
-  const readTurn: Turn = {
-    id: "read-turn",
-    items: [
-      {
-        type: "eventDrivenTool",
-        id: "event-item",
-        tool: "process_exit_subscribe",
-        title: "Process exited",
-        text: "Session 42 exited with code 0",
-      },
-    ],
-    itemsView: "full" as const,
-    status: "completed" as const,
-    error: null,
-    startedAt: 1,
-    completedAt: 2,
-    durationMs: 1,
-  };
-
-  const merged = mergeThreadSnapshot(existing, {
-    ...makeThread(),
-    turns: [readTurn],
-  });
-
-  assert.deepEqual(merged.turns, [readTurn]);
 });
 
 test("updateThreadItem creates a running turn when item notifications arrive first", () => {
@@ -395,29 +301,6 @@ test("updateThreadTurn preserves item timestamps when a completed turn snapshot 
     startedAtMs: 2_000,
     completedAtMs: 3_000,
   });
-});
-
-test("updateThreadTurn normalizes raw process exit marker messages in new turns", () => {
-  const updated = updateThreadTurn(makeThread(), {
-    id: "turn-1",
-    items: [makeRawProcessExitItem()],
-    itemsView: "full",
-    status: "completed",
-    error: null,
-    startedAt: 1,
-    completedAt: 2,
-    durationMs: 1,
-  });
-
-  assert.deepEqual(updated.turns[0]?.items, [
-    {
-      type: "eventDrivenTool",
-      id: "raw-item",
-      tool: "process_exit_subscribe",
-      title: "Process exited",
-      text: "Session 42 exited with code 0",
-    },
-  ]);
 });
 
 test("mergeThreadSnapshot hydrates restored usage fields from thread/read", () => {
@@ -2292,7 +2175,7 @@ test("pending agent deltas do not duplicate structured process exit events alrea
       thread,
       "pending-turn",
       "pending-item",
-      eventDrivenToolMarker(),
+      '<event_driven_tool>{"tool":"process_exit_subscribe","title":"Process exited","text":"Session 42 exited with code 0"}</event_driven_tool>',
     ),
   );
   const snapshot = {
