@@ -31,6 +31,7 @@ In the codex-rs folder where the rust code lives:
 - If you change `ConfigToml` or nested config types, run `just write-config-schema` to update `codex-rs/core/config.schema.json`.
 - When working with MCP tool calls, prefer using `codex-rs/codex-mcp/src/mcp_connection_manager.rs` to handle mutation of tools and tool calls. Aim to minimize the footprint of changes and leverage existing abstractions rather than plumbing code through multiple levels of function calls.
 - 对话/线程展示相关的结构化语义以 typed `ResponseItem` 为 canonical source；`ThreadItem` 应通过共享 projector 统一生成。新增或修改 event-command、schedule、collab 这类展示项时，必须复用 `codex-rs/app-server-protocol/src/protocol/response_item_projection.rs`，不要新增 raw response item 展示分支，也不要从 message marker 文本或 assistant message JSON 解析 typed item。schedule subscribe/unsubscribe 仍属于这套 typed projection，不要作为旧 generic event-driven 兼容路径移除。
+- 工具执行完成后的纯历史记录路径应尽早 canonicalize 为 typed `ResponseItem`；`ResponseInputItem` 只保留在 Responses API request 输入、pending input、hook 可检查输入等 client/request 边界适配层，不要作为工具输出落库前的核心中转类型继续扩散。
 - live `item/started` 和 `item/completed` payload 在 app-server v2 边界以 typed `ThreadItem` 为 canonical display payload；core/rollout legacy `TurnItem` 只能在 app-server protocol 的 lifecycle adapter 中转换为 `ThreadItem`，后续 live notification/reducer 路径不要继续消费 `TurnItem`，也不要新增 raw response item 或 message marker 解析路径。
 - If you change Rust dependencies (`Cargo.toml` or `Cargo.lock`), run `just bazel-lock-update` from the
   repo root to refresh `MODULE.bazel.lock`, and include that lockfile update in the same change.

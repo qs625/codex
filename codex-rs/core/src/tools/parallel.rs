@@ -21,7 +21,7 @@ use crate::tools::router::ToolCall;
 use crate::tools::router::ToolCallSource;
 use crate::tools::router::ToolRouter;
 use codex_protocol::error::CodexErr;
-use codex_protocol::models::ResponseInputItem;
+use codex_protocol::models::ResponseItem;
 
 #[derive(Clone)]
 pub(crate) struct ToolCallRuntime {
@@ -60,13 +60,13 @@ impl ToolCallRuntime {
         self,
         call: ToolCall,
         cancellation_token: CancellationToken,
-    ) -> impl std::future::Future<Output = Result<ResponseInputItem, CodexErr>> {
+    ) -> impl std::future::Future<Output = Result<ResponseItem, CodexErr>> {
         let error_call = call.clone();
         let future =
             self.handle_tool_call_with_source(call, ToolCallSource::Direct, cancellation_token);
         async move {
             match future.await {
-                Ok(response) => Ok(response.into_response()),
+                Ok(response) => Ok(response.into_response().into()),
                 Err(FunctionCallError::Fatal(message)) => Err(CodexErr::Fatal(message)),
                 Err(other) => Ok(Self::failure_response(error_call, other)),
             }
@@ -138,16 +138,16 @@ impl ToolCallRuntime {
 }
 
 impl ToolCallRuntime {
-    fn failure_response(call: ToolCall, err: FunctionCallError) -> ResponseInputItem {
+    fn failure_response(call: ToolCall, err: FunctionCallError) -> ResponseItem {
         let message = err.to_string();
         match call.payload {
-            ToolPayload::ToolSearch { .. } => ResponseInputItem::ToolSearchOutput {
-                call_id: call.call_id,
+            ToolPayload::ToolSearch { .. } => ResponseItem::ToolSearchOutput {
+                call_id: Some(call.call_id),
                 status: "completed".to_string(),
                 execution: "client".to_string(),
                 tools: Vec::new(),
             },
-            ToolPayload::Custom { .. } => ResponseInputItem::CustomToolCallOutput {
+            ToolPayload::Custom { .. } => ResponseItem::CustomToolCallOutput {
                 call_id: call.call_id,
                 name: None,
                 output: codex_protocol::models::FunctionCallOutputPayload {
@@ -155,7 +155,7 @@ impl ToolCallRuntime {
                     success: Some(false),
                 },
             },
-            _ => ResponseInputItem::FunctionCallOutput {
+            _ => ResponseItem::FunctionCallOutput {
                 call_id: call.call_id,
                 output: codex_protocol::models::FunctionCallOutputPayload {
                     body: codex_protocol::models::FunctionCallOutputBody::Text(message),
