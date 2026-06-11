@@ -7257,6 +7257,61 @@ async fn build_initial_context_loads_skills_from_current_cwd_local_roots() {
     );
 }
 
+#[tokio::test]
+async fn build_initial_context_loads_project_workflows() {
+    fn write_workflow(root: &Path, id: &str, description: &str) {
+        let workflow_dir = root.join(id);
+        std::fs::create_dir_all(&workflow_dir).expect("create workflow dir");
+        std::fs::write(workflow_dir.join("workflow.ts"), "export default {};")
+            .expect("write workflow entry");
+        std::fs::write(
+            workflow_dir.join("workflow.json"),
+            format!(
+                r#"{{
+  "id": "{id}",
+  "name": "Feature Development",
+  "description": "{description}",
+  "entry": "workflow.ts",
+  "when_to_use": ["feature work"],
+  "inputs": {{"objective": {{"type": "string", "description": "Goal"}}}}
+}}"#
+            ),
+        )
+        .expect("write workflow manifest");
+    }
+
+    let codex_home = tempfile::tempdir().expect("create codex home");
+    let repo_cwd = codex_home.path().join("repo");
+    std::fs::create_dir_all(&repo_cwd).expect("create repo cwd");
+    write_workflow(
+        &repo_cwd.join(".codex/workflows"),
+        "feature-dev",
+        "structured feature workflow",
+    );
+
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_config_home_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        codex_home.path(),
+        |config| {
+            config.cwd = repo_cwd.abs();
+        },
+    )
+    .await;
+
+    let initial_context = session.build_initial_context(turn_context.as_ref()).await;
+    let developer_texts = developer_input_texts(&initial_context);
+
+    assert!(
+        developer_texts
+            .iter()
+            .any(|text| text.contains("<workflows_instructions>")
+                && text.contains("- feature-dev (project)")
+                && text.contains("structured feature workflow")),
+        "expected project workflow in initial context, got {developer_texts:?}"
+    );
+}
+
 #[test]
 fn emit_thread_start_skill_metrics_records_enabled_kept_and_truncated_values() {
     let session_telemetry = test_session_telemetry_without_metadata();

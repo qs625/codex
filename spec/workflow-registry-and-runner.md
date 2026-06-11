@@ -68,15 +68,15 @@ Session 初始化时只注入 workflow 摘要，不注入完整 `workflow.ts`。
 ```text
 ## Available Workflows
 
-Workflows are scripted, resumable multi-agent procedures. Use `workflow_start`
-when the user asks for a structured workflow and the task matches one of the
-entries below.
+Workflows are scripted, resumable multi-agent procedures. Use `workflow_list`
+or `workflow_describe` when the user asks for a structured workflow and the task
+matches one of the entries below.
 
 - feature-dev (project)
   Description: 按调研、实现、review/fix、验证流程开发功能。
   Use when: 新功能、复杂 bugfix、需要 owner/reviewer 流程。
   Inputs: objective, cwd
-  Start: workflow_start({ workflow: "feature-dev", inputs: {...} })
+  Inspect: workflow_describe({"workflow": "feature-dev"})
 ```
 
 注入规则：
@@ -87,10 +87,15 @@ entries below.
 
 ## Tools
 
-第一版建议暴露：
+当前已实现的 registry 阶段只暴露：
 
 - `workflow_list`
 - `workflow_describe`
+
+runner 阶段再暴露：
+
+第一版建议暴露：
+
 - `workflow_start`
 - `workflow_status`
 - `workflow_resume`
