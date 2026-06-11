@@ -431,18 +431,26 @@ pub fn item_event_to_server_notification(
             })
         }
         EventMsg::ItemStarted(item_started_event) => {
+            // Legacy core/rollout lifecycle events still carry `TurnItem`.
+            // Convert at the app-server protocol edge so the v2 notification
+            // path below consumes only `ThreadItem`.
+            let item = ThreadItem::from(item_started_event.item);
             ServerNotification::ItemStarted(ItemStartedNotification {
                 thread_id,
                 turn_id,
-                item: item_started_event.item.into(),
+                item,
                 started_at_ms: item_started_event.started_at_ms,
             })
         }
         EventMsg::ItemCompleted(item_completed_event) => {
+            // Legacy core/rollout lifecycle events still carry `TurnItem`.
+            // Convert at the app-server protocol edge so the v2 notification
+            // path below consumes only `ThreadItem`.
+            let item = ThreadItem::from(item_completed_event.item);
             ServerNotification::ItemCompleted(ItemCompletedNotification {
                 thread_id,
                 turn_id,
-                item: item_completed_event.item.into(),
+                item,
                 completed_at_ms: item_completed_event.completed_at_ms,
             })
         }
