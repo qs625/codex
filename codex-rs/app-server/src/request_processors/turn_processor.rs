@@ -594,7 +594,7 @@ impl TurnRequestProcessor {
             .map_err(invalid_request)?;
 
         thread
-            .inject_response_items(items)
+            .inject_conversation_items(items)
             .await
             .map_err(|err| match err {
                 CodexErr::InvalidRequest(message) => invalid_request(message),

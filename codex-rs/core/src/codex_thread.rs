@@ -361,7 +361,7 @@ impl CodexThread {
         if self
             .codex
             .session
-            .inject_response_items(vec![pending_item])
+            .inject_hook_inspectable_items(vec![pending_item])
             .await
             .is_err()
         {
@@ -389,7 +389,7 @@ impl CodexThread {
     }
 
     /// Append raw Responses API items to the thread's model-visible history.
-    pub async fn inject_response_items(&self, items: Vec<ResponseItem>) -> CodexResult<()> {
+    pub async fn inject_conversation_items(&self, items: Vec<ResponseItem>) -> CodexResult<()> {
         if items.is_empty() {
             return Err(CodexErr::InvalidRequest(
                 "items must not be empty".to_string(),

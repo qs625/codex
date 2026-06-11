@@ -145,7 +145,7 @@ impl CodeModeTurnHost for CoreTurnHost {
         }
         self.exec
             .session
-            .inject_response_items(vec![ResponseInputItem::CustomToolCallOutput {
+            .inject_hook_inspectable_items(vec![ResponseInputItem::CustomToolCallOutput {
                 call_id,
                 name: Some(PUBLIC_TOOL_NAME.to_string()),
                 output: FunctionCallOutputPayload::from_text(text),

@@ -375,7 +375,7 @@ async fn persist_user_shell_output(
     };
 
     if let Err(items) = session
-        .inject_response_items(vec![response_input_item])
+        .inject_hook_inspectable_items(vec![response_input_item])
         .await
     {
         let response_items = items

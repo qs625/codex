@@ -2024,7 +2024,7 @@ impl Session {
         }
 
         if self
-            .inject_response_items(vec![ResponseInputItem::Message {
+            .inject_hook_inspectable_items(vec![ResponseInputItem::Message {
                 role: "developer".to_string(),
                 content: vec![ContentItem::InputText { text }],
                 phase: None,
@@ -2121,7 +2121,7 @@ impl Session {
         }
 
         if self
-            .inject_response_items(vec![ResponseInputItem::Message {
+            .inject_hook_inspectable_items(vec![ResponseInputItem::Message {
                 role: "developer".to_string(),
                 content: vec![ContentItem::InputText { text }],
                 phase: None,
@@ -3391,7 +3391,7 @@ impl Session {
         clippy::await_holding_invalid_type,
         reason = "active turn checks and turn state updates must remain atomic"
     )]
-    pub async fn inject_response_items(
+    pub async fn inject_hook_inspectable_items(
         &self,
         input: Vec<ResponseInputItem>,
     ) -> Result<(), Vec<ResponseInputItem>> {

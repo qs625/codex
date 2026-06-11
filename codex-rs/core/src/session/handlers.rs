@@ -1000,7 +1000,7 @@ Approved action:
         phase: None,
     }];
 
-    if let Err(items) = sess.inject_response_items(items).await {
+    if let Err(items) = sess.inject_hook_inspectable_items(items).await {
         sess.queue_response_items_for_next_turn(
             items.into_iter().map(PendingInputItem::from).collect(),
         )

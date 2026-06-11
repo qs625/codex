@@ -8148,7 +8148,7 @@ async fn task_finish_emits_turn_item_lifecycle_for_leftover_pending_user_input()
 
     while rx.try_recv().is_ok() {}
 
-    sess.inject_response_items(vec![ResponseInputItem::Message {
+    sess.inject_hook_inspectable_items(vec![ResponseInputItem::Message {
         role: "user".to_string(),
         content: vec![ContentItem::InputText {
             text: "late pending input".to_string(),
@@ -8417,7 +8417,7 @@ async fn prepend_pending_input_keeps_older_tail_ahead_of_newer_input() {
         phase: None,
     };
 
-    sess.inject_response_items(vec![blocked.clone(), later.clone()])
+    sess.inject_hook_inspectable_items(vec![blocked.clone(), later.clone()])
         .await
         .expect("inject initial pending input into active turn");
 
@@ -8430,7 +8430,7 @@ async fn prepend_pending_input_keeps_older_tail_ahead_of_newer_input() {
         ]
     );
 
-    sess.inject_response_items(vec![newer.clone()])
+    sess.inject_hook_inspectable_items(vec![newer.clone()])
         .await
         .expect("inject newer pending input into active turn");
 
