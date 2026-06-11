@@ -14,6 +14,7 @@ skills: [imagegen, playwright-cli]
 - 需要生成界面视觉稿、风格探索图、页面 mockup、组件状态图、原型图或演示用 bitmap 时，使用 `$imagegen`。
 - 涉及现有 root-worker prototype 客户端 UI 的设计或改造时，必须先获取当前真实 UI baseline screenshot；仅做不涉及界面视觉的文字评审时可跳过 baseline，并在设计文档说明原因。
 - root-worker prototype baseline screenshot 优先使用 `$playwright-cli` 驱动 Electron 或可连接 Electron 的 Playwright 自动化；只有自动化不可用时才使用 Computer Use 作为 fallback，并在设计文档说明原因。
+- 如果 `$playwright-cli` 打开本地 renderer 或 Electron 卡住、Computer Use 超时，但 root-worker 窗口已经可见，可以使用 macOS `screencapture` 作为最后 fallback 获取当前屏幕截图；截图仍必须保存到 `ui-design/<project-slug>/assets/baseline-*.png`，并在设计文档记录已尝试的 Playwright/Computer Use 路径和 fallback 原因。
 - root-worker prototype 截图测试必须复用固定环境，不要为每次任务新建临时 `CODEX_HOME`。推荐固定路径：
   - `CODEX_HOME=/tmp/my-codex-root-worker-ui-env/codex-home`
   - `ROOT_WORKER_WORKSPACE=/tmp/my-codex-root-worker-ui-env/workspace`
@@ -39,7 +40,7 @@ skills: [imagegen, playwright-cli]
 
 1. 产出 `00-brief.md`，明确目标、用户、范围、约束和验收。
 2. 判断是否需要相关产品调研；新产品、新页面、大幅 UI 改造、用户要求设计参考或领域模式不明确时默认调研并输出 `01-research.md`。
-3. 涉及现有 root-worker prototype 客户端 UI 时，用固定测试环境启动或连接客户端，获取 baseline screenshot，保存到 `assets/baseline-*.png` 并在 `00-brief.md` 或 `01-research.md` 引用。
+3. 涉及现有 root-worker prototype 客户端 UI 时，用固定测试环境启动或连接客户端，获取 baseline screenshot，保存到 `assets/baseline-*.png` 并在 `00-brief.md` 或 `01-research.md` 引用。优先顺序：`$playwright-cli` 连接 renderer/Electron；失败时尝试 Computer Use；如果窗口已可见但自动化工具卡住，可以使用 `screencapture -x <design-assets-path>/baseline-*.png`，并把 fallback 原因写入 brief。
 4. 产出 `02-ue-flow.md`，覆盖主路径、分支、错误、空状态、加载状态和反馈。
 5. 产出 `03-information-architecture.md`，描述页面结构、导航、信息层级和响应式策略。
 6. 产出 `04-components.md`，拆分组件、状态、行为、数据需求和开发 handoff。

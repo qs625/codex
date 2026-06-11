@@ -1,0 +1,302 @@
+# Dynamic Workflow 设计方案
+
+## 背景
+
+当前 agent 协作主要依赖单轮 ReAct、人工 PM 编排和多 agent primitive。对于工程任务，外层流程通常是稳定的，例如调研、实现、review、验证、合并；真正需要探索的是每个阶段内部。
+
+Dynamic Workflow 的目标是把外层流程变成可脚本化、可展示、可恢复的编排能力，同时保留每个 agent session 内部的 ReAct 自主执行。
+
+## 目标
+
+- 通过 TypeScript workflow 脚本固定 agent session 的执行流程。
+- 让 agent session 成为 workflow 中的长期对象，而不是一次性函数调用。
+- 支持脚本中使用普通 TypeScript 表达分支、循环、并行和反馈。
+- 通过静态流程图展示预期流程，通过运行时图填充实际 agent/thread 节点。
+- 保留 workflow 创建的 subagent 与父 thread 的关系，兼容现有 `list_agents`、`followup_task`、child completion 语义。
+- 支持 resume：重新执行 workflow 脚本，并让 `Agent(id)` 绑定回已有 agent session。
+- 用 typed `ResponseItem -> ThreadItem` 展示 workflow 进展，避免 raw message 和文本解析作为新链路。
+
+## 非目标
+
+- 第一版不实现完整 BPMN 引擎。
+- 第一版不做从 TypeScript AST 自动推断完整流程图。
+- 第一版不做复杂可视化 workflow 编辑器。
+- 第一版不强制所有分支、循环、并行通过 DSL primitive 表达。
+- 第一版不在 Rust 进程内嵌 JavaScript 引擎。
+
+## 核心模型
+
+### Workflow Definition
+
+Workflow 脚本是 TypeScript module，默认导出一个 definition object：
+
+```ts
+export default defineWorkflow({
+  id: "feature-dev",
+  version: "1.0.0",
+  staticGraph: {
+    nodes: [
+      { id: "research", title: "Research", kind: "stage" },
+      { id: "implement", title: "Implement", kind: "stage" },
+      { id: "review_fix", title: "Review/Fix", kind: "loop" },
+      { id: "verify", title: "Verify", kind: "stage" }
+    ],
+    edges: [
+      ["research", "implement"],
+      ["implement", "review_fix"],
+      ["review_fix", "verify"]
+    ]
+  },
+  async run(wf) {
+    // workflow logic
+  }
+});
+```
+
+Node 直接执行的不是用户脚本，而是 Codex 提供的 runner。runner 加载 workflow definition，创建 `wf` runtime object，并调用 `definition.run(wf)`。
+
+### Agent Session Handle
+
+Workflow 中的 agent 是长期 session handle：
+
+```ts
+const owner = await wf.Agent("owner", {
+  parent: "implement",
+  type: "refactor-owner",
+  cwd,
+  message: initialPrompt
+});
+
+await owner.wait();
+await owner.followup("修复 review findings");
+await owner.wait();
+```
+
+`Agent(id)` 是幂等的：
+
+- 首次运行时创建 subagent，并记录 `workflowRunId + agentId -> agentPath`。
+- resume 时返回已有 agent session handle，不重复 spawn。
+- agent 仍然是普通 subagent，保留父子 thread 关系。
+
+重复 followup 不由 workflow runtime 做严格去重。agent session 自身应能根据上下文判断任务已完成，避免重复执行无意义动作。对于 shell、发布、删除、发邮件等非 agent 副作用，仍需要显式 durable step 或 approval。
+
+### Workflow Graph
+
+Workflow 图分两层：
+
+- `staticGraph`：definition 中声明的高层流程骨架，供客户端预先展示。
+- `runtimeGraph`：执行时逐步填充的真实节点，包含实际 agent/thread、shell、gate 等节点。
+
+`staticGraph` 可以使用 BPMN-like 最小子集表达高层语义：
+
+- `stage`
+- `branch`
+- `loop`
+- `parallel`
+- `join`
+
+不引入完整 BPMN 语法和执行引擎，只复用成熟流程图概念。
+
+`runtimeGraph` 节点示例：
+
+```json
+{
+  "id": "owner",
+  "parent": "implement",
+  "kind": "agent",
+  "agentPath": "/root/project_pm/wf_123_owner"
+}
+```
+
+客户端根据 `staticGraph` 画预期流程，根据 `runtimeGraph + thread/agent status` 推断实际进度。
+
+## 执行架构
+
+### 进程模型
+
+app-server 创建 durable `WorkflowRun`，然后启动 Node runner 子进程：
+
+```text
+app-server
+  -> node workflow-runner.mjs --mode run --bundle workflow.bundle.mjs --run-id wf_123
+```
+
+runner 与 app-server 通过父子进程 stdio 管道进行 NDJSON RPC：
+
+```text
+Node stdout -> app-server 读取 RPC request
+Node stdin  <- app-server 写入 RPC response
+Node stderr -> 普通日志
+```
+
+workflow 脚本不能直接调用真实系统能力。`wf.Agent`、`wf.shell`、`wf.emit` 等方法都通过 RPC 回调 app-server，由 app-server 执行已有 agent、tool、shell、permission 逻辑。
+
+### TypeScript 支持
+
+推荐流程：
+
+1. `workflow_start` 找到 `.ts` entry。
+2. 编译或 bundle 成 `workflow.bundle.mjs`。
+3. snapshot workflow source、bundle、manifest、script hash。
+4. runner import bundle 并执行 `definition.run(wf)`。
+5. resume 永远执行该 run 的 snapshot bundle，而不是仓库里的最新脚本。
+
+这样可以避免 workflow 文件更新后破坏已有 run 的 resume 语义。
+
+## Resume 语义
+
+Workflow resume 不恢复 Node 调用栈，而是重新执行 workflow 脚本。
+
+关键规则：
+
+- `Agent(id)` 返回已有 agent session handle。
+- `agent.wait()` 根据已有 agent status 返回结果或继续等待。
+- `staticGraph` 与 snapshot bundle 保证同一 run 的流程定义稳定。
+- runtimeGraph 记录 workflow node 与 agentPath 的绑定。
+- workflow runner 只是执行器，状态 authority 在 app-server。
+
+这与当前 thread resume 的思路一致：恢复的是持久 thread/agent 状态，而不是恢复运行时栈。
+
+## 客户端状态
+
+客户端不直接检测 Node runner 进程。客户端读取 app-server 的 workflow run 状态：
+
+```json
+{
+  "runId": "wf_123",
+  "status": "suspended",
+  "runnerStatus": "waiting_agent",
+  "staticGraph": {},
+  "runtimeGraph": {},
+  "bindings": {
+    "owner": {
+      "kind": "agent",
+      "agentPath": "/root/project_pm/wf_123_owner"
+    }
+  }
+}
+```
+
+agent 节点状态从已有 thread/agent 状态推断：
+
+- `running`
+- `completed`
+- `errored`
+- `interrupted`
+
+workflow state 只保存图、绑定关系、runner 状态和非 agent 节点状态，不重复保存完整 agent 状态。
+
+runner 可以处于：
+
+- `active`：正在执行脚本。
+- `waiting_agent`：挂起等待 agent。
+- `waiting_user`：等待人工确认。
+- `completed`：workflow 完成。
+- `failed`：脚本或 runner 异常。
+- `aborted`：用户终止。
+
+## Tool/API 形态
+
+Workflow 能力通过 agent session 可用的 tools 暴露：
+
+- `workflow_start`
+- `workflow_status`
+- `workflow_resume`
+- `workflow_abort`
+
+第一版可以只实现最小控制面：
+
+- start：创建 run，启动 runner。
+- status：返回 graph、bindings、runner 状态。
+- resume：重新启动 runner 并绑定已有 agent session。
+- abort：终止 runner 并标记 run。
+
+后续可以增加：
+
+- `workflow_approve`
+- `workflow_retry`
+- `workflow_list`
+
+## 展示模型
+
+新增 workflow 相关结构化语义时，应优先扩展 typed `ResponseItem`，再统一投影到 `ThreadItem`：
+
+- workflow run started/completed/failed
+- workflow graph updated
+- workflow agent bound
+- workflow runner suspended/resumed
+
+这些不能通过 raw response item 或 message 文本解析作为新链路。
+
+这与当前 item/message 架构收敛方向保持一致：
+
+```text
+typed ResponseItem -> ThreadItem projector -> client UI
+```
+
+## 设计取舍
+
+### 为什么不用完整 DSL
+
+branch、loop、parallel 使用普通 TypeScript 表达。workflow runtime 不强制使用 `wf.loop`、`wf.branch` 这类 DSL primitive。
+
+这样可以避免把 TS 变成另一套复杂流程语言。需要可视化时，由 `staticGraph` 给出高层骨架，由 `runtimeGraph` 填充真实执行。
+
+### 为什么还需要 staticGraph
+
+动态图无法预先知道完整执行路径。`staticGraph` 用于提前展示预期流程，例如：
+
+```text
+Research -> Implement -> Review/Fix -> Verify
+```
+
+实际执行时再填充：
+
+```text
+research.explorer
+implement.owner
+review_fix.reviewer_0
+review_fix.fix_0
+review_fix.reviewer_1
+```
+
+### 为什么不完全靠 thread 状态
+
+thread 状态能表示 agent 是否 running/completed，但不能表达：
+
+- agent 属于哪个 workflow run。
+- agent 属于哪个 workflow stage。
+- 动态节点挂在哪个 static stage 下。
+- 非 agent 节点的状态。
+- runner 是否正在协调或等待。
+
+因此仍需要薄 workflow state 维护 graph binding。
+
+## 开放问题
+
+- `wf.shell` 是否第一版支持 durable resume，还是仅支持短命令。
+- workflow run state 存储在 thread-store、state DB，还是独立 workflow store。
+- workflow typed `ResponseItem` 的粒度：单一 `WorkflowEvent` 还是多个具体 variant。
+- 客户端是否使用 React Flow + ELK.js 实现 DAG 展示。
+- workflow snapshot bundle 的依赖边界如何限制。
+- workflow run 与当前 thread 的权限、cwd、approval policy 如何继承。
+
+## MVP 范围建议
+
+第一版建议实现：
+
+- TS workflow definition + runner。
+- `workflow_start/status/resume/abort`。
+- `Agent(id)` 幂等绑定已有 subagent。
+- `staticGraph + runtimeGraph`。
+- workflow run state 持久化。
+- typed workflow response item 到 thread item 的展示。
+- 客户端展示高层流程图和实际 agent 节点状态。
+
+暂不实现：
+
+- 完整 BPMN engine。
+- 图形化 workflow editor。
+- 复杂 durable shell step。
+- AST 静态分析。
+- 任意远程 workflow 脚本执行。
