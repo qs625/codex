@@ -22,6 +22,8 @@ use crate::tools::handlers::shell_spec::create_write_stdin_tool;
 use crate::tools::handlers::shell_spec::request_permissions_tool_description;
 use crate::tools::handlers::view_image_spec::ViewImageToolOptions;
 use crate::tools::handlers::view_image_spec::create_view_image_tool;
+use crate::tools::handlers::workflow_spec::create_workflow_describe_tool;
+use crate::tools::handlers::workflow_spec::create_workflow_list_tool;
 use crate::tools::registry::ToolRegistry;
 use codex_app_server_protocol::AppInfo;
 use codex_extension_api::ExtensionToolExecutor;
@@ -262,6 +264,8 @@ fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
         create_write_stdin_tool(),
         create_update_plan_tool(),
         request_user_input_tool_spec(&request_user_input_available_modes(&features)),
+        create_workflow_list_tool(),
+        create_workflow_describe_tool(),
         create_apply_patch_freeform_tool(/*include_environment_id*/ false),
         ToolSpec::WebSearch {
             external_web_access: Some(true),

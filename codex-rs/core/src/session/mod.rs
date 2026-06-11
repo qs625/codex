@@ -28,6 +28,7 @@ use crate::context::AppsInstructions;
 use crate::context::AvailableAgentsInstructions;
 use crate::context::AvailablePluginsInstructions;
 use crate::context::AvailableSkillsInstructions;
+use crate::context::AvailableWorkflowsInstructions;
 use crate::context::CollaborationModeInstructions;
 use crate::context::ContextualUserFragment;
 use crate::context::NetworkRuleSaved;
@@ -47,6 +48,7 @@ use crate::skills::SkillRenderSideEffects;
 use crate::skills_load_input_from_config;
 use crate::turn_metadata::TurnMetadataState;
 use crate::turn_timing::now_unix_timestamp_ms;
+use crate::workflows::load_workflow_registry;
 use async_channel::Receiver;
 use async_channel::Sender;
 use chrono::Local;
@@ -2953,6 +2955,12 @@ impl Session {
                 }
                 developer_sections.push(skills_instructions.render());
             }
+        }
+        let workflow_registry = load_workflow_registry(&turn_context.config);
+        if let Some(workflow_instructions) =
+            AvailableWorkflowsInstructions::from_registry(&workflow_registry)
+        {
+            developer_sections.push(workflow_instructions.render());
         }
         if let Some(agent_instructions) =
             AvailableAgentsInstructions::from_agent_roles(&turn_context.config.agent_roles)
