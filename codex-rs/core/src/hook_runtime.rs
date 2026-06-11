@@ -370,8 +370,8 @@ pub(crate) async fn inspect_pending_input(
     turn_context: &Arc<TurnContext>,
     pending_input_item: PendingInputItem,
 ) -> PendingInputHookDisposition {
-    let pending_input_item = match pending_input_item {
-        PendingInputItem::ResponseInput(item) => item,
+    let response_item = match pending_input_item {
+        PendingInputItem::HookInspectable(item) => item,
         PendingInputItem::ResponseItem(item) => {
             return PendingInputHookDisposition::Accepted(Box::new(
                 PendingInputRecord::ConversationItem {
@@ -387,7 +387,6 @@ pub(crate) async fn inspect_pending_input(
             ));
         }
     };
-    let response_item = ResponseItem::from(pending_input_item);
     if let Some(TurnItem::UserMessage(user_message)) = parse_turn_item(&response_item) {
         let user_prompt_submit_outcome =
             run_user_prompt_submit_hooks(sess, turn_context, user_message.message()).await;
@@ -631,6 +630,7 @@ fn compaction_trigger_label(value: CompactionTrigger) -> &'static str {
 mod tests {
     use codex_protocol::AgentPath;
     use codex_protocol::models::ContentItem;
+    use codex_protocol::models::ResponseItem;
     use codex_protocol::protocol::HookEventName;
     use codex_protocol::protocol::HookExecutionMode;
     use codex_protocol::protocol::HookHandlerType;
@@ -750,6 +750,37 @@ mod tests {
             panic!("inter-agent pending input should bypass user prompt hook");
         };
         assert_eq!(pending_input, PendingInputItem::from(communication));
+    }
+
+    #[tokio::test]
+    async fn plain_response_item_user_message_does_not_run_user_prompt_submit_hook() {
+        let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
+        let response_item = ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "plain conversation item".to_string(),
+            }],
+            phase: None,
+        };
+
+        let disposition = inspect_pending_input(
+            &session,
+            &turn_context,
+            PendingInputItem::ResponseItem(response_item.clone()),
+        )
+        .await;
+
+        let PendingInputHookDisposition::Accepted(record) = disposition else {
+            panic!("plain response item should be accepted");
+        };
+        let PendingInputRecord::ConversationItem {
+            response_item: accepted,
+        } = *record
+        else {
+            panic!("plain response item should bypass user prompt hook");
+        };
+        assert_eq!(accepted, response_item);
     }
 
     #[test]

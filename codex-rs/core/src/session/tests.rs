@@ -8855,7 +8855,7 @@ async fn budget_limited_accounting_steers_active_turn_without_aborting() -> anyh
     .await?;
 
     let pending_input = sess.get_pending_input().await;
-    let [PendingInputItem::ResponseInput(ResponseInputItem::Message { role, content, .. })] =
+    let [PendingInputItem::HookInspectable(ResponseItem::Message { role, content, .. })] =
         pending_input.as_slice()
     else {
         panic!("expected one budget-limit steering message, got {pending_input:#?}");
@@ -9024,7 +9024,7 @@ async fn external_objective_change_steers_active_turn() -> anyhow::Result<()> {
         pending_input.iter().any(|item| {
             matches!(
                 item,
-                PendingInputItem::ResponseInput(ResponseInputItem::Message { role, content, .. })
+                PendingInputItem::HookInspectable(ResponseItem::Message { role, content, .. })
                     if role == "user"
                         && content.iter().any(|content| matches!(
                             content,

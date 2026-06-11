@@ -6,7 +6,7 @@ use codex_protocol::protocol::InterAgentCommunication;
 /// request.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum PendingInputItem {
-    ResponseInput(ResponseInputItem),
+    HookInspectable(ResponseItem),
     ResponseItem(ResponseItem),
     InterAgentCommunication(InterAgentCommunication),
 }
@@ -15,13 +15,13 @@ impl PendingInputItem {
     pub(crate) fn trigger_turn(&self) -> bool {
         match self {
             Self::InterAgentCommunication(communication) => communication.trigger_turn,
-            Self::ResponseInput(_) | Self::ResponseItem(_) => true,
+            Self::HookInspectable(_) | Self::ResponseItem(_) => true,
         }
     }
 
     pub(crate) fn into_response_item(self) -> ResponseItem {
         match self {
-            Self::ResponseInput(item) => item.into(),
+            Self::HookInspectable(item) => item,
             Self::ResponseItem(item) => item,
             Self::InterAgentCommunication(communication) => ResponseItem::InterAgentCommunication {
                 id: None,
@@ -33,7 +33,7 @@ impl PendingInputItem {
 
 impl From<ResponseInputItem> for PendingInputItem {
     fn from(value: ResponseInputItem) -> Self {
-        Self::ResponseInput(value)
+        Self::HookInspectable(value.into())
     }
 }
 
