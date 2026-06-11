@@ -194,7 +194,7 @@ pub enum Feature {
     PreventIdleSleep,
     /// Send `response.processed` over Responses API websockets after a turn response is recorded.
     ResponsesWebsocketResponseProcessed,
-    /// Enable remote compaction v2 over the normal Responses API.
+    /// Retained remote compaction v2 flag; default and user-visible compact paths stay local.
     RemoteCompactionV2,
     /// Enable workspace dependency support.
     WorkspaceDependencies,

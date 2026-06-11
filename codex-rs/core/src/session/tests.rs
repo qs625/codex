@@ -635,6 +635,17 @@ fn assistant_message_stream_parsers_seed_plan_parser_across_added_and_delta_boun
     assert!(tail.plan_segments.is_empty());
 }
 
+#[tokio::test]
+async fn beta_features_header_omits_remote_compaction_v2() -> anyhow::Result<()> {
+    let mut config = ConfigBuilder::default().build().await?;
+    config.features.enable(Feature::RemoteCompactionV2)?;
+
+    let header = Session::build_model_client_beta_features_header(&config);
+
+    assert_eq!(header, None);
+    Ok(())
+}
+
 #[test]
 fn validated_network_policy_amendment_host_allows_normalized_match() {
     let amendment = NetworkPolicyAmendment {

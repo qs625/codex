@@ -130,7 +130,7 @@ fn request_permissions_tool_is_under_development() {
 }
 
 #[test]
-fn remote_compaction_v2_is_under_development() {
+fn remote_compaction_v2_is_retained_and_disabled_by_default() {
     assert_eq!(Feature::RemoteCompactionV2.stage(), Stage::UnderDevelopment);
     assert_eq!(Feature::RemoteCompactionV2.default_enabled(), false);
     assert_eq!(

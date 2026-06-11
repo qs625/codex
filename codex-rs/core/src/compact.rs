@@ -22,6 +22,7 @@ use codex_analytics::CompactionStatus;
 use codex_analytics::CompactionStrategy;
 use codex_analytics::CompactionTrigger;
 use codex_analytics::now_unix_seconds;
+use codex_features::Feature;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::items::ContextCompactionItem;
@@ -62,8 +63,8 @@ pub(crate) enum InitialContextInjection {
     DoNotInject,
 }
 
-pub(crate) fn should_use_remote_compact_task(provider: &ModelProviderInfo) -> bool {
-    provider.supports_remote_compaction()
+pub(crate) fn should_use_remote_compact_task(_provider: &ModelProviderInfo) -> bool {
+    false
 }
 
 pub(crate) async fn run_inline_auto_compact_task(
@@ -191,7 +192,7 @@ async fn run_compact_task_inner_impl(
     // request tracking)
     // survives retries within this compact turn.
 
-    loop {
+    let completed_response_id = loop {
         // Clone is required because of the loop
         let turn_input = history
             .clone()
@@ -214,8 +215,8 @@ async fn run_compact_task_inner_impl(
         .await;
 
         match attempt_result {
-            Ok(()) => {
-                break;
+            Ok(response_id) => {
+                break response_id;
             }
             Err(CodexErr::Interrupted) => {
                 return Err(CodexErr::Interrupted);
@@ -254,7 +255,7 @@ async fn run_compact_task_inner_impl(
                 }
             }
         }
-    }
+    };
 
     let history_snapshot = sess.clone_history().await;
     let history_items = history_snapshot.raw_items();
@@ -282,6 +283,14 @@ async fn run_compact_task_inner_impl(
     };
     sess.replace_compacted_history(new_history, reference_context_item, compacted_item)
         .await;
+    if turn_context
+        .features
+        .enabled(Feature::ResponsesWebsocketResponseProcessed)
+    {
+        client_session
+            .send_response_processed(&completed_response_id)
+            .await;
+    }
     client_session.reset_websocket_session();
     sess.recompute_token_usage(&turn_context).await;
 
@@ -535,7 +544,7 @@ async fn drain_to_completed(
     client_session: &mut ModelClientSession,
     turn_metadata_header: Option<&str>,
     prompt: &Prompt,
-) -> CodexResult<()> {
+) -> CodexResult<String> {
     let mut stream = client_session
         .stream(
             prompt,
@@ -569,10 +578,14 @@ async fn drain_to_completed(
             Ok(ResponseEvent::RateLimits(snapshot)) => {
                 sess.update_rate_limits(turn_context, snapshot).await;
             }
-            Ok(ResponseEvent::Completed { token_usage, .. }) => {
+            Ok(ResponseEvent::Completed {
+                response_id,
+                token_usage,
+                ..
+            }) => {
                 sess.update_token_usage_info(turn_context, token_usage.as_ref())
                     .await;
-                return Ok(());
+                return Ok(response_id);
             }
             Ok(_) => continue,
             Err(e) => return Err(e),

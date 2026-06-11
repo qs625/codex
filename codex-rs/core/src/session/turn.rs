@@ -3,6 +3,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use codex_features::Feature;
+
 use crate::SkillInjections;
 use crate::SkillLoadOutcome;
 use crate::build_skill_injections;
@@ -14,9 +16,6 @@ use crate::collect_explicit_skill_mentions;
 use crate::compact::InitialContextInjection;
 use crate::compact::collect_user_messages;
 use crate::compact::run_inline_auto_compact_task;
-use crate::compact::should_use_remote_compact_task;
-use crate::compact_remote::run_inline_remote_auto_compact_task;
-use crate::compact_remote_v2::run_inline_remote_auto_compact_task as run_inline_remote_auto_compact_task_v2;
 use crate::connectors;
 use crate::context::ContextualUserFragment;
 use crate::emit_thread_skills_update;
@@ -71,7 +70,6 @@ use codex_analytics::SkillInvocation;
 use codex_analytics::TurnResolvedConfigFact;
 use codex_analytics::build_track_events_context;
 use codex_async_utils::OrCancelExt;
-use codex_features::Feature;
 use codex_git_utils::get_git_repo_root;
 use codex_hooks::HookEvent;
 use codex_hooks::HookEventAfterAgent;
@@ -844,37 +842,15 @@ async fn run_auto_compact(
     reason: CompactionReason,
     phase: CompactionPhase,
 ) -> CodexResult<bool> {
-    if should_use_remote_compact_task(turn_context.provider.info()) {
-        if turn_context.features.enabled(Feature::RemoteCompactionV2) {
-            run_inline_remote_auto_compact_task_v2(
-                Arc::clone(sess),
-                Arc::clone(turn_context),
-                client_session,
-                initial_context_injection,
-                reason,
-                phase,
-            )
-            .await?;
-            return Ok(false);
-        }
-        run_inline_remote_auto_compact_task(
-            Arc::clone(sess),
-            Arc::clone(turn_context),
-            initial_context_injection,
-            reason,
-            phase,
-        )
-        .await?;
-    } else {
-        run_inline_auto_compact_task(
-            Arc::clone(sess),
-            Arc::clone(turn_context),
-            initial_context_injection,
-            reason,
-            phase,
-        )
-        .await?;
-    }
+    run_inline_auto_compact_task(
+        Arc::clone(sess),
+        Arc::clone(turn_context),
+        initial_context_injection,
+        reason,
+        phase,
+    )
+    .await?;
+    client_session.reset_websocket_session();
     Ok(true)
 }
 

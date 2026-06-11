@@ -201,7 +201,7 @@ impl EventProcessorWithHumanOutput {
                 eprintln!("{} {}", "web search:".style(self.bold), query);
             }
             ThreadItem::ContextCompaction { .. } => {
-                eprintln!("{}", "context compacted".style(self.dimmed));
+                eprintln!("{}", "context locally compacted".style(self.dimmed));
             }
             _ => {}
         }

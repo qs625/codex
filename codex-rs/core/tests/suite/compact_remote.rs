@@ -1,3 +1,9 @@
+// Historical coverage for the retained-but-unrouted Remote Compact implementations.
+//
+// The default and user-visible compact paths are Local Compact. This module is intentionally not
+// included from `suite/mod.rs`; keep it out of the default suite unless Remote Compact is
+// reintroduced behind an explicit non-default entrypoint.
+
 #![allow(clippy::expect_used)]
 
 use std::fs;

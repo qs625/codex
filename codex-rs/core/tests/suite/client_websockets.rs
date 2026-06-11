@@ -235,7 +235,7 @@ async fn responses_websocket_sends_response_processed_when_feature_enabled() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn responses_websocket_sends_response_processed_after_remote_compaction_v2() {
+async fn responses_websocket_sends_response_processed_after_local_compact() {
     skip_if_no_network!();
 
     let server = start_websocket_server(vec![vec![
@@ -250,13 +250,8 @@ async fn responses_websocket_sends_response_processed_after_remote_compaction_v2
         ],
         vec![],
         vec![
-            json!({
-                "type": "response.output_item.done",
-                "item": {
-                    "type": "context_compaction",
-                    "encrypted_content": "ENCRYPTED_CONTEXT_COMPACTION_SUMMARY",
-                }
-            }),
+            ev_response_created("resp-compact"),
+            ev_assistant_message("msg-compact", "summary"),
             ev_completed("resp-compact"),
         ],
         vec![],
@@ -264,10 +259,6 @@ async fn responses_websocket_sends_response_processed_after_remote_compaction_v2
     .await;
 
     let mut builder = test_codex().with_config(|config| {
-        config
-            .features
-            .enable(Feature::RemoteCompactionV2)
-            .expect("test config should allow feature update");
         config
             .features
             .enable(Feature::ResponsesWebsocketResponseProcessed)
@@ -280,19 +271,18 @@ async fn responses_websocket_sends_response_processed_after_remote_compaction_v2
 
     test.submit_turn("hello")
         .await
-        .expect("submission should send response.processed after processing");
-
+        .expect("initial turn should complete");
     test.codex
         .submit(Op::Compact)
         .await
         .expect("compact submission should succeed");
     wait_for_event(&test.codex, |msg| matches!(msg, EventMsg::TurnComplete(_))).await;
 
-    let compact_processed = server
+    let processed = server
         .wait_for_request(/*connection_index*/ 0, /*request_index*/ 4)
         .await;
     assert_eq!(
-        compact_processed.body_json(),
+        processed.body_json(),
         json!({
             "type": "response.processed",
             "response_id": "resp-compact",

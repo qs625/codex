@@ -39,7 +39,6 @@ use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_completed_with_tokens;
 use core_test_support::responses::ev_function_call;
-use core_test_support::responses::mount_compact_json_once;
 use core_test_support::responses::mount_response_sequence;
 use core_test_support::responses::mount_sse_once;
 use core_test_support::responses::mount_sse_once_match;
@@ -1854,23 +1853,7 @@ async fn auto_compact_runs_after_resume_when_token_usage_is_over_limit() {
 
     let limit = 200_000;
     let over_limit_tokens = 250_000;
-    let remote_summary = "REMOTE_COMPACT_SUMMARY";
-
-    let compacted_history = vec![
-        codex_protocol::models::ResponseItem::Message {
-            id: None,
-            role: "assistant".to_string(),
-            content: vec![codex_protocol::models::ContentItem::OutputText {
-                text: remote_summary.to_string(),
-            }],
-            phase: None,
-        },
-        codex_protocol::models::ResponseItem::Compaction {
-            encrypted_content: "ENCRYPTED_COMPACTION_SUMMARY".to_string(),
-        },
-    ];
-    let compact_mock =
-        mount_compact_json_once(&server, serde_json::json!({ "output": compacted_history })).await;
+    let local_summary = "LOCAL_COMPACT_SUMMARY";
 
     let mut builder = test_codex().with_config(move |config| {
         set_test_compact_prompt(config);
@@ -1895,11 +1878,6 @@ async fn auto_compact_runs_after_resume_when_token_usage_is_over_limit() {
     .await;
     initial.submit_turn("OVER_LIMIT_TURN").await.unwrap();
 
-    assert!(
-        compact_mock.requests().is_empty(),
-        "remote compaction should not run before the next user message"
-    );
-
     let mut resume_builder = test_codex().with_config(move |config| {
         set_test_compact_prompt(config);
         config.model_auto_compact_token_limit = Some(limit);
@@ -1910,14 +1888,24 @@ async fn auto_compact_runs_after_resume_when_token_usage_is_over_limit() {
         .unwrap();
 
     let follow_up_user = "AFTER_RESUME_USER";
+    let compact_turn = sse(vec![
+        ev_assistant_message("m-compact", local_summary),
+        ev_completed("r-compact"),
+    ]);
     let sse_follow_up = sse(vec![
         ev_assistant_message("m2", FINAL_REPLY),
         ev_completed("r2"),
     ]);
 
+    let compact_matcher = |req: &wiremock::Request| {
+        let body = std::str::from_utf8(&req.body).unwrap_or("");
+        body.contains(SUMMARIZATION_PROMPT)
+    };
+    mount_sse_once_match(&server, compact_matcher, compact_turn).await;
+
     let follow_up_matcher = move |req: &wiremock::Request| {
         let body = std::str::from_utf8(&req.body).unwrap_or("");
-        body.contains(follow_up_user) && body.contains(remote_summary)
+        body.contains(follow_up_user) && body.contains(local_summary)
     };
     mount_sse_once_match(&server, follow_up_matcher, sse_follow_up).await;
 
@@ -1939,18 +1927,6 @@ async fn auto_compact_runs_after_resume_when_token_usage_is_over_limit() {
         matches!(event, EventMsg::TurnComplete(_))
     })
     .await;
-
-    let compact_requests = compact_mock.requests();
-    assert_eq!(
-        compact_requests.len(),
-        1,
-        "remote compaction should run once after resume"
-    );
-    assert_eq!(
-        compact_requests[0].path(),
-        "/v1/responses/compact",
-        "remote compaction should hit the compact endpoint"
-    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2990,7 +2966,8 @@ async fn auto_compact_counts_encrypted_reasoning_before_last_user() {
 
     let first_user = "COUNT_PRE_LAST_REASONING";
     let second_user = "TRIGGER_COMPACT_AT_LIMIT";
-    let third_user = "AFTER_REMOTE_COMPACT";
+    let third_user = "AFTER_LOCAL_COMPACT";
+    let local_summary = "LOCAL_COMPACT_SUMMARY";
 
     let pre_last_reasoning_content = "a".repeat(2_400);
     let post_last_reasoning_content = "b".repeat(4_000);
@@ -3002,6 +2979,10 @@ async fn auto_compact_counts_encrypted_reasoning_before_last_user() {
     let second_turn = sse(vec![
         ev_reasoning_item("post-reasoning", &["post"], &[&post_last_reasoning_content]),
         ev_completed_with_tokens("r2", /*total_tokens*/ 80),
+    ]);
+    let compact_turn = sse(vec![
+        ev_assistant_message("m-compact", local_summary),
+        ev_completed("r-compact"),
     ]);
     let third_turn = sse(vec![
         ev_assistant_message("m4", FINAL_REPLY),
@@ -3015,27 +2996,13 @@ async fn auto_compact_counts_encrypted_reasoning_before_last_user() {
             first_turn,
             // Turn 2: reasoning after last user (should be ignored for compaction).
             second_turn,
-            // Turn 3: next user turn after remote compaction.
+            // Local compact before turn 3.
+            compact_turn,
+            // Turn 3: next user turn after local compaction.
             third_turn,
         ],
     )
     .await;
-
-    let compacted_history = vec![
-        codex_protocol::models::ResponseItem::Message {
-            id: None,
-            role: "assistant".to_string(),
-            content: vec![codex_protocol::models::ContentItem::OutputText {
-                text: "REMOTE_COMPACT_SUMMARY".to_string(),
-            }],
-            phase: None,
-        },
-        codex_protocol::models::ResponseItem::Compaction {
-            encrypted_content: "ENCRYPTED_COMPACTION_SUMMARY".to_string(),
-        },
-    ];
-    let compact_mock =
-        mount_compact_json_once(&server, serde_json::json!({ "output": compacted_history })).await;
     let chatgpt_base_url = format!("{}/backend-api", server.uri());
 
     let codex = test_codex()
@@ -3050,10 +3017,7 @@ async fn auto_compact_counts_encrypted_reasoning_before_last_user() {
         .expect("build codex")
         .codex;
 
-    for (idx, user) in [first_user, second_user, third_user]
-        .into_iter()
-        .enumerate()
-    {
+    for user in [first_user, second_user, third_user] {
         codex
             .submit(Op::UserInput {
                 environments: None,
@@ -3067,48 +3031,26 @@ async fn auto_compact_counts_encrypted_reasoning_before_last_user() {
             .await
             .unwrap();
         wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
-
-        if idx < 2 {
-            assert!(
-                compact_mock.requests().is_empty(),
-                "remote compaction should not run before the next user turn"
-            );
-        }
     }
-
-    let compact_requests = compact_mock.requests();
-    assert_eq!(
-        compact_requests.len(),
-        1,
-        "remote compaction should run once after the second turn"
-    );
-    assert_eq!(
-        compact_requests[0].path(),
-        "/v1/responses/compact",
-        "remote compaction should hit the compact endpoint"
-    );
 
     let requests = request_log.requests();
     assert_eq!(
         requests.len(),
-        3,
-        "conversation should include three user turns"
+        4,
+        "conversation should include three user turns and one local compact turn"
     );
     let second_request_body = requests[1].body_json().to_string();
     assert!(
-        !second_request_body.contains("REMOTE_COMPACT_SUMMARY"),
+        !second_request_body.contains(local_summary),
         "second turn should not include compacted history"
     );
-    let third_request_body = requests[2].body_json().to_string();
+    let compact_request_body = requests[2].body_json().to_string();
     assert!(
-        third_request_body.contains("REMOTE_COMPACT_SUMMARY")
-            || third_request_body.contains(FINAL_REPLY),
-        "third turn should include compacted history"
+        body_contains_text(&compact_request_body, SUMMARIZATION_PROMPT),
+        "local compact turn should send the summarization prompt"
     );
-    assert!(
-        third_request_body.contains("ENCRYPTED_COMPACTION_SUMMARY"),
-        "third turn should include compaction summary item"
-    );
+    let third_request_body = requests[3].body_json().to_string();
+    assert!(third_request_body.contains(local_summary));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -3132,6 +3074,10 @@ async fn auto_compact_runs_when_reasoning_header_clears_between_turns() {
         ev_reasoning_item("post-reasoning", &["post"], &[&post_last_reasoning_content]),
         ev_completed_with_tokens("r2", /*total_tokens*/ 80),
     ]);
+    let compact_turn = sse(vec![
+        ev_assistant_message("m-compact", "LOCAL_COMPACT_SUMMARY"),
+        ev_completed("r-compact"),
+    ]);
     let third_turn = sse(vec![
         ev_assistant_message("m4", FINAL_REPLY),
         ev_completed_with_tokens("r4", /*total_tokens*/ 1),
@@ -3140,25 +3086,10 @@ async fn auto_compact_runs_when_reasoning_header_clears_between_turns() {
     let responses = vec![
         sse_response(first_turn).insert_header("X-Reasoning-Included", "true"),
         sse_response(second_turn),
+        sse_response(compact_turn),
         sse_response(third_turn),
     ];
-    mount_response_sequence(&server, responses).await;
-
-    let compacted_history = vec![
-        codex_protocol::models::ResponseItem::Message {
-            id: None,
-            role: "assistant".to_string(),
-            content: vec![codex_protocol::models::ContentItem::OutputText {
-                text: "REMOTE_COMPACT_SUMMARY".to_string(),
-            }],
-            phase: None,
-        },
-        codex_protocol::models::ResponseItem::Compaction {
-            encrypted_content: "ENCRYPTED_COMPACTION_SUMMARY".to_string(),
-        },
-    ];
-    let compact_mock =
-        mount_compact_json_once(&server, serde_json::json!({ "output": compacted_history })).await;
+    let request_log = mount_response_sequence(&server, responses).await;
 
     let codex = test_codex()
         .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
@@ -3187,11 +3118,17 @@ async fn auto_compact_runs_when_reasoning_header_clears_between_turns() {
         wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
     }
 
-    let compact_requests = compact_mock.requests();
+    let requests = request_log.requests();
+    let compact_request_count = requests
+        .iter()
+        .filter(|req| {
+            let body = req.body_json().to_string();
+            body_contains_text(&body, SUMMARIZATION_PROMPT)
+        })
+        .count();
     assert_eq!(
-        compact_requests.len(),
-        1,
-        "remote compaction should run once after the reasoning header clears"
+        compact_request_count, 1,
+        "local compaction should run once after the reasoning header clears"
     );
 }
 

@@ -1,7 +1,7 @@
 //! End-to-end compaction flow tests.
 //!
 //! Phases:
-//! 1) Arrange: mock responses/compact endpoints + config.
+//! 1) Arrange: mock local Responses SSE compact flow + config.
 //! 2) Act: start a thread and submit multiple turns to trigger auto-compaction.
 //! 3) Assert: verify item/started + item/completed notifications for context compaction.
 
@@ -29,8 +29,6 @@ use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::UserInput as V2UserInput;
 use codex_config::types::AuthCredentialsStoreMode;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseItem;
 use core_test_support::responses;
 use core_test_support::skip_if_no_network;
 use pretty_assertions::assert_eq;
@@ -118,9 +116,9 @@ async fn auto_compaction_local_emits_started_and_completed_items() -> Result<()>
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn auto_compaction_remote_emits_started_and_completed_items() -> Result<()> {
+async fn auto_compaction_with_chatgpt_auth_still_uses_local_compact() -> Result<()> {
     skip_if_no_network!(Ok(()));
-    const REMOTE_AUTO_COMPACT_LIMIT: i64 = 200_000;
+    const CHATGPT_AUTO_COMPACT_LIMIT: i64 = 200_000;
 
     let server = responses::start_mock_server().await;
     let sse1 = responses::sse(vec![
@@ -132,36 +130,21 @@ async fn auto_compaction_remote_emits_started_and_completed_items() -> Result<()
         responses::ev_completed_with_tokens("r2", /*total_tokens*/ 330_000),
     ]);
     let sse3 = responses::sse(vec![
-        responses::ev_assistant_message("m3", "FINAL_REPLY"),
-        responses::ev_completed_with_tokens("r3", /*total_tokens*/ 120),
+        responses::ev_assistant_message("m3", "LOCAL_SUMMARY"),
+        responses::ev_completed_with_tokens("r3", /*total_tokens*/ 200),
     ]);
-    let responses_log = responses::mount_sse_sequence(&server, vec![sse1, sse2, sse3]).await;
-
-    let compacted_history = vec![
-        ResponseItem::Message {
-            id: None,
-            role: "assistant".to_string(),
-            content: vec![ContentItem::OutputText {
-                text: "REMOTE_COMPACT_SUMMARY".to_string(),
-            }],
-            phase: None,
-        },
-        ResponseItem::Compaction {
-            encrypted_content: "ENCRYPTED_COMPACTION_SUMMARY".to_string(),
-        },
-    ];
-    let compact_mock = responses::mount_compact_json_once(
-        &server,
-        serde_json::json!({ "output": compacted_history }),
-    )
-    .await;
+    let sse4 = responses::sse(vec![
+        responses::ev_assistant_message("m4", "FINAL_REPLY"),
+        responses::ev_completed_with_tokens("r4", /*total_tokens*/ 120),
+    ]);
+    let responses_log = responses::mount_sse_sequence(&server, vec![sse1, sse2, sse3, sse4]).await;
 
     let codex_home = TempDir::new()?;
     write_mock_responses_config_toml(
         codex_home.path(),
         &server.uri(),
         &BTreeMap::default(),
-        REMOTE_AUTO_COMPACT_LIMIT,
+        CHATGPT_AUTO_COMPACT_LIMIT,
         Some(true),
         "mock_provider",
         COMPACT_PROMPT,
@@ -204,12 +187,20 @@ async fn auto_compaction_remote_emits_started_and_completed_items() -> Result<()
     assert!(started_replacement_history.is_none());
     assert!(completed_replacement_history.is_none());
 
-    let compact_requests = compact_mock.requests();
-    assert_eq!(compact_requests.len(), 1);
-    assert_eq!(compact_requests[0].path(), "/v1/responses/compact");
-
     let response_requests = responses_log.requests();
-    assert_eq!(response_requests.len(), 3);
+    assert_eq!(response_requests.len(), 4);
+    assert!(
+        response_requests[2]
+            .body_json()
+            .to_string()
+            .contains(COMPACT_PROMPT)
+    );
+    assert!(
+        response_requests[3]
+            .body_json()
+            .to_string()
+            .contains("LOCAL_SUMMARY")
+    );
 
     Ok(())
 }

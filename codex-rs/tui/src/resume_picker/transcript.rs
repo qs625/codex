@@ -296,9 +296,7 @@ fn fallback_transcript_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
         ThreadItem::ExitedReviewMode { review, .. } => {
             vec![vec!["review finished: ".dim(), review.clone().into()].into()]
         }
-        ThreadItem::ContextCompaction { .. } => {
-            vec!["context compacted".dim().into()]
-        }
+        ThreadItem::ContextCompaction { .. } => vec!["context locally compacted".dim().into()],
         ThreadItem::UserMessage { .. }
         | ThreadItem::AgentMessage { .. }
         | ThreadItem::Plan { .. }
