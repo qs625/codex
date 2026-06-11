@@ -7,7 +7,6 @@ use crate::protocol::item_builders::build_item_from_guardian_event;
 use crate::protocol::response_item_projection::project_structured_response_item;
 use crate::protocol::response_item_projection::project_tool_call_completion;
 use crate::protocol::response_item_projection::project_tool_call_start;
-use crate::protocol::response_item_projection::thread_item_from_inter_agent_communication;
 use crate::protocol::v2::CollabAgentState;
 use crate::protocol::v2::CollabAgentTool;
 use crate::protocol::v2::CollabAgentToolCallStatus;
@@ -327,8 +326,9 @@ impl ThreadHistoryBuilder {
             ResponseItem::EventCommandEvent { .. }
             | ResponseItem::EventDrivenTool { .. }
             | ResponseItem::InterAgentCommunication { .. } => {
+                let fallback_id = self.next_item_id();
                 let Some(projected) =
-                    project_structured_response_item(item, || self.next_item_id())
+                    project_structured_response_item(item, || fallback_id.clone())
                 else {
                     return;
                 };
@@ -1945,6 +1945,8 @@ mod tests {
     use codex_protocol::AgentPath;
     use codex_protocol::ThreadId;
     use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
+    use codex_protocol::event_command::EventCommandEvent;
+    use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
     use codex_protocol::items::CollabAgentMessageItem as CoreCollabAgentMessageItem;
     use codex_protocol::items::EventDrivenToolItem as CoreEventDrivenToolItem;
     use codex_protocol::items::HookPromptFragment as CoreHookPromptFragment;
@@ -4228,7 +4230,7 @@ mod tests {
             RolloutItem::ResponseItem(ResponseItem::Message {
                 id: Some("msg-1".into()),
                 role: "assistant".into(),
-                content: vec![ContentItem::OutputText { text }],
+                content: vec![ContentItem::OutputText { text: text.clone() }],
                 phase: None,
             }),
         ];

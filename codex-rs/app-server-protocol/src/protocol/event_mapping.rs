@@ -501,7 +501,6 @@ mod tests {
     use crate::protocol::v2::CollabAgentStatus;
     use codex_protocol::AgentPath;
     use codex_protocol::ThreadId;
-    use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
     use codex_protocol::items::AgentMessageContent;
     use codex_protocol::items::AgentMessageItem;
     use codex_protocol::items::CollabAgentMessageItem;
