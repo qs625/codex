@@ -501,9 +501,12 @@ mod tests {
     use crate::protocol::v2::CollabAgentStatus;
     use codex_protocol::AgentPath;
     use codex_protocol::ThreadId;
+    use codex_protocol::event_command::EventCommandEvent;
+    use codex_protocol::event_command::EventCommandEventKind as CoreEventCommandEventKind;
     use codex_protocol::items::AgentMessageContent;
     use codex_protocol::items::AgentMessageItem;
     use codex_protocol::items::CollabAgentMessageItem;
+    use codex_protocol::items::EventCommandEventItem;
     use codex_protocol::items::EventDrivenToolItem;
     use codex_protocol::items::TurnItem;
     use codex_protocol::protocol::AgentStatus;
@@ -515,6 +518,7 @@ mod tests {
     use codex_protocol::protocol::InterAgentCommunication;
     use codex_protocol::protocol::InterAgentOperation;
     use codex_protocol::protocol::ItemCompletedEvent;
+    use codex_protocol::protocol::ItemStartedEvent;
     use pretty_assertions::assert_eq;
 
     fn assert_item_started_server_notification(
@@ -762,6 +766,154 @@ mod tests {
                     tool: "process_exit_subscribe".to_string(),
                     title: "Process exited".to_string(),
                     text: "Session 42 exited with code 0".to_string(),
+                },
+            },
+        );
+    }
+
+    #[test]
+    fn item_started_maps_event_driven_tool_turn_item() {
+        let event = ItemStartedEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-ignored".to_string(),
+            item: TurnItem::EventDrivenTool(EventDrivenToolItem {
+                id: "event-1".to_string(),
+                tool: "process_exit_subscribe".to_string(),
+                title: "Process exited".to_string(),
+                text: "Session 42 exited with code 0".to_string(),
+            }),
+            started_at_ms: 456,
+        };
+
+        let notification = item_event_to_server_notification(
+            EventMsg::ItemStarted(event.clone()),
+            "thread-4",
+            "turn-4",
+        );
+
+        assert_item_started_server_notification(
+            notification,
+            ItemStartedNotification {
+                thread_id: "thread-4".to_string(),
+                turn_id: "turn-4".to_string(),
+                started_at_ms: event.started_at_ms,
+                item: ThreadItem::EventDrivenTool {
+                    id: "event-1".to_string(),
+                    tool: "process_exit_subscribe".to_string(),
+                    title: "Process exited".to_string(),
+                    text: "Session 42 exited with code 0".to_string(),
+                },
+            },
+        );
+    }
+
+    #[test]
+    fn item_started_maps_event_command_turn_item() {
+        let event = ItemStartedEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-ignored".to_string(),
+            item: TurnItem::EventCommandEvent(EventCommandEventItem {
+                id: "event-command-1".to_string(),
+                event: EventCommandEvent {
+                    subscription_id: "sub-1".to_string(),
+                    kind: CoreEventCommandEventKind::Exited,
+                    label: Some("tests".to_string()),
+                    command: "cargo test".to_string(),
+                    cwd: Some("/tmp/project".to_string()),
+                    line: Some("done".to_string()),
+                    sequence: Some(7),
+                    exit_code: Some(0),
+                    signal: None,
+                    message: Some("finished".to_string()),
+                    truncated: false,
+                    created_at: 1_700_000_000,
+                },
+            }),
+            started_at_ms: 456,
+        };
+
+        let notification = item_event_to_server_notification(
+            EventMsg::ItemStarted(event.clone()),
+            "thread-4",
+            "turn-4",
+        );
+
+        assert_item_started_server_notification(
+            notification,
+            ItemStartedNotification {
+                thread_id: "thread-4".to_string(),
+                turn_id: "turn-4".to_string(),
+                started_at_ms: event.started_at_ms,
+                item: ThreadItem::EventCommandEvent {
+                    id: "event-command-1".to_string(),
+                    subscription_id: "sub-1".to_string(),
+                    kind: crate::protocol::v2::EventCommandEventKind::Exited,
+                    label: Some("tests".to_string()),
+                    command: "cargo test".to_string(),
+                    cwd: Some("/tmp/project".to_string()),
+                    line: Some("done".to_string()),
+                    sequence: Some(7),
+                    exit_code: Some(0),
+                    signal: None,
+                    message: Some("finished".to_string()),
+                    truncated: false,
+                    created_at: 1_700_000_000,
+                },
+            },
+        );
+    }
+
+    #[test]
+    fn item_completed_maps_event_command_turn_item() {
+        let event = ItemCompletedEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-ignored".to_string(),
+            item: TurnItem::EventCommandEvent(EventCommandEventItem {
+                id: "event-command-1".to_string(),
+                event: EventCommandEvent {
+                    subscription_id: "sub-1".to_string(),
+                    kind: CoreEventCommandEventKind::Exited,
+                    label: Some("tests".to_string()),
+                    command: "cargo test".to_string(),
+                    cwd: Some("/tmp/project".to_string()),
+                    line: Some("done".to_string()),
+                    sequence: Some(7),
+                    exit_code: Some(0),
+                    signal: None,
+                    message: Some("finished".to_string()),
+                    truncated: false,
+                    created_at: 1_700_000_000,
+                },
+            }),
+            completed_at_ms: 789,
+        };
+
+        let notification = item_event_to_server_notification(
+            EventMsg::ItemCompleted(event.clone()),
+            "thread-4",
+            "turn-4",
+        );
+
+        assert_item_completed_server_notification(
+            notification,
+            ItemCompletedNotification {
+                thread_id: "thread-4".to_string(),
+                turn_id: "turn-4".to_string(),
+                completed_at_ms: event.completed_at_ms,
+                item: ThreadItem::EventCommandEvent {
+                    id: "event-command-1".to_string(),
+                    subscription_id: "sub-1".to_string(),
+                    kind: crate::protocol::v2::EventCommandEventKind::Exited,
+                    label: Some("tests".to_string()),
+                    command: "cargo test".to_string(),
+                    cwd: Some("/tmp/project".to_string()),
+                    line: Some("done".to_string()),
+                    sequence: Some(7),
+                    exit_code: Some(0),
+                    signal: None,
+                    message: Some("finished".to_string()),
+                    truncated: false,
+                    created_at: 1_700_000_000,
                 },
             },
         );

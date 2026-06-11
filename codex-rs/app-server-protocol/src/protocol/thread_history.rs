@@ -1864,6 +1864,7 @@ mod tests {
     use codex_protocol::event_command::EventCommandEvent;
     use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
     use codex_protocol::items::CollabAgentMessageItem as CoreCollabAgentMessageItem;
+    use codex_protocol::items::EventCommandEventItem as CoreEventCommandEventItem;
     use codex_protocol::items::EventDrivenToolItem as CoreEventDrivenToolItem;
     use codex_protocol::items::HookPromptFragment as CoreHookPromptFragment;
     use codex_protocol::items::TurnItem as CoreTurnItem;
@@ -3563,6 +3564,102 @@ mod tests {
                 created_at: 1_700_000_000,
             }]
         );
+    }
+
+    #[test]
+    fn legacy_event_command_completed_history_rebuilds_thread_item() {
+        let event = EventCommandEvent {
+            subscription_id: "sub-1".into(),
+            kind: codex_protocol::event_command::EventCommandEventKind::Exited,
+            label: Some("tests".into()),
+            command: "cargo test".into(),
+            cwd: None,
+            line: None,
+            sequence: Some(3),
+            exit_code: Some(0),
+            signal: None,
+            message: Some("done".into()),
+            truncated: false,
+            created_at: 1_700_000_000,
+        };
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "turn-1".into(),
+                item: CoreTurnItem::EventCommandEvent(CoreEventCommandEventItem {
+                    id: "event-command-1".into(),
+                    event,
+                }),
+                completed_at_ms: 123,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::EventCommandEvent {
+                id: "event-command-1".into(),
+                subscription_id: "sub-1".into(),
+                kind: crate::protocol::v2::EventCommandEventKind::Exited,
+                label: Some("tests".into()),
+                command: "cargo test".into(),
+                cwd: None,
+                line: None,
+                sequence: Some(3),
+                exit_code: Some(0),
+                signal: None,
+                message: Some("done".into()),
+                truncated: false,
+                created_at: 1_700_000_000,
+            }]
+        );
+    }
+
+    #[test]
+    fn legacy_event_command_started_history_does_not_create_completed_item() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::ItemStarted(ItemStartedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "turn-1".into(),
+                item: CoreTurnItem::EventCommandEvent(CoreEventCommandEventItem {
+                    id: "event-command-1".into(),
+                    event: EventCommandEvent {
+                        subscription_id: "sub-1".into(),
+                        kind: codex_protocol::event_command::EventCommandEventKind::Output,
+                        label: Some("tests".into()),
+                        command: "cargo test".into(),
+                        cwd: None,
+                        line: Some("running".into()),
+                        sequence: Some(3),
+                        exit_code: None,
+                        signal: None,
+                        message: None,
+                        truncated: false,
+                        created_at: 1_700_000_000,
+                    },
+                }),
+                started_at_ms: 123,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
     }
 
     #[test]
