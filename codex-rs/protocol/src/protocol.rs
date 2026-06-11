@@ -825,11 +825,14 @@ pub struct InterAgentCommunication {
     pub operation: InterAgentOperation,
     #[serde(default = "default_true")]
     pub trigger_turn: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[ts(optional = false, type = "string | null")]
     pub sender_thread_id: Option<ThreadId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[ts(optional = false, type = "string | null")]
     pub recipient_thread_id: Option<ThreadId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[ts(optional = false, type = "unknown | null")]
     pub status: Option<AgentStatus>,
 }
 
@@ -881,19 +884,6 @@ impl InterAgentCommunication {
                 text: serde_json::to_string(self).unwrap_or_default(),
             }],
             phase: Some(MessagePhase::Commentary),
-        }
-    }
-
-    pub fn is_message_content(content: &[ContentItem]) -> bool {
-        Self::from_message_content(content).is_some()
-    }
-
-    pub fn from_message_content(content: &[ContentItem]) -> Option<Self> {
-        match content {
-            [ContentItem::InputText { text }] | [ContentItem::OutputText { text }] => {
-                serde_json::from_str(text).ok()
-            }
-            _ => None,
         }
     }
 }

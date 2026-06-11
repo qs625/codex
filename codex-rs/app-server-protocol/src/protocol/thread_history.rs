@@ -4,6 +4,9 @@ use crate::protocol::item_builders::build_file_change_approval_request_item;
 use crate::protocol::item_builders::build_file_change_begin_item;
 use crate::protocol::item_builders::build_file_change_end_item;
 use crate::protocol::item_builders::build_item_from_guardian_event;
+use crate::protocol::response_item_projection::project_structured_response_item;
+use crate::protocol::response_item_projection::project_tool_call_completion;
+use crate::protocol::response_item_projection::project_tool_call_start;
 use crate::protocol::v2::CollabAgentState;
 use crate::protocol::v2::CollabAgentTool;
 use crate::protocol::v2::CollabAgentToolCallStatus;
@@ -22,10 +25,7 @@ use crate::protocol::v2::TurnItemsView;
 use crate::protocol::v2::TurnStatus;
 use crate::protocol::v2::UserInput;
 use crate::protocol::v2::WebSearchAction;
-use crate::protocol::v2::normalize_agent_message_item;
-use crate::protocol::v2::thread_item_from_inter_agent_communication;
-use codex_protocol::event_command::EventCommandEvent;
-use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
+use crate::protocol::v2::assistant_message_thread_item;
 use codex_protocol::items::parse_hook_prompt_message;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::MessagePhase;
@@ -51,6 +51,7 @@ use codex_protocol::protocol::GuardianAssessmentEvent;
 use codex_protocol::protocol::GuardianAssessmentStatus;
 use codex_protocol::protocol::ImageGenerationBeginEvent;
 use codex_protocol::protocol::ImageGenerationEndEvent;
+use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::McpToolCallBeginEvent;
@@ -279,25 +280,6 @@ impl ThreadHistoryBuilder {
                     return;
                 }
 
-                if let Some(event) = EventCommandEvent::parse_message_content(content) {
-                    let id = id.clone().unwrap_or_else(|| event.stable_item_id());
-                    self.ensure_turn()
-                        .items
-                        .push(event_command_event_item(id, event));
-                    return;
-                }
-
-                if let Some(trigger) = EventDrivenToolTrigger::parse_message_content(content) {
-                    let id = id.clone().unwrap_or_else(|| self.next_item_id());
-                    self.ensure_turn().items.push(ThreadItem::EventDrivenTool {
-                        id,
-                        tool: trigger.tool,
-                        title: trigger.title,
-                        text: trigger.text,
-                    });
-                    return;
-                }
-
                 if role == "assistant" {
                     let Some(text) = single_text_message_content(content) else {
                         return;
@@ -310,7 +292,7 @@ impl ThreadHistoryBuilder {
                     ) {
                         return;
                     }
-                    self.ensure_turn().items.push(normalize_agent_message_item(
+                    self.ensure_turn().items.push(assistant_message_thread_item(
                         id.clone(),
                         text.to_string(),
                         phase.clone(),
@@ -342,35 +324,29 @@ impl ThreadHistoryBuilder {
                         .collect(),
                 });
             }
-            ResponseItem::EventCommandEvent { id, event } => {
-                let id = id.clone().unwrap_or_else(|| event.stable_item_id());
-                self.ensure_turn()
-                    .items
-                    .push(event_command_event_item(id, event.clone()));
-            }
-            ResponseItem::EventDrivenTool { id, trigger } => {
-                let id = id.clone().unwrap_or_else(|| self.next_item_id());
-                self.ensure_turn().items.push(ThreadItem::EventDrivenTool {
-                    id,
-                    tool: trigger.tool.clone(),
-                    title: trigger.title.clone(),
-                    text: trigger.text.clone(),
-                });
-            }
-            ResponseItem::InterAgentCommunication { id, communication } => {
-                if matches!(
-                    communication.operation,
-                    codex_protocol::protocol::InterAgentOperation::Unknown
-                ) {
+            ResponseItem::EventCommandEvent { .. }
+            | ResponseItem::EventDrivenTool { .. }
+            | ResponseItem::InterAgentCommunication { .. } => {
+                let fallback_id = self.next_item_id();
+                if let Some(projected) =
+                    project_structured_response_item(item, || fallback_id.clone())
+                {
+                    self.ensure_turn().items.push(projected);
                     return;
                 }
-                let id = id.clone().unwrap_or_else(|| self.next_item_id());
-                self.ensure_turn()
-                    .items
-                    .push(thread_item_from_inter_agent_communication(
-                        id,
-                        communication.clone(),
+
+                if let ResponseItem::InterAgentCommunication { id, communication } = item
+                    && matches!(communication.operation, InterAgentOperation::Unknown)
+                {
+                    let text = serde_json::to_string(communication)
+                        .unwrap_or_else(|_| communication.content.clone());
+                    self.ensure_turn().items.push(assistant_message_thread_item(
+                        id.clone().unwrap_or(fallback_id),
+                        text,
+                        None,
+                        None,
                     ));
+                }
             }
             ResponseItem::FunctionCall {
                 name,
@@ -379,26 +355,9 @@ impl ThreadHistoryBuilder {
                 call_id,
                 ..
             } => {
-                if is_event_command_subscribe_tool(namespace.as_deref(), name) {
-                    let arguments = parse_raw_function_call_arguments(arguments);
-                    let item = event_command_call_item_from_arguments(
-                        call_id.clone(),
-                        arguments,
-                        DynamicToolCallStatus::InProgress,
-                        None,
-                    );
-                    self.upsert_event_driven_tool_call_in_current_turn(item);
-                    return;
-                }
-
-                if let Some(tool_name) = event_driven_tool_name(namespace.as_deref(), name) {
-                    let item = ThreadItem::EventDrivenToolCall {
-                        id: call_id.clone(),
-                        tool: tool_name,
-                        arguments: parse_raw_function_call_arguments(arguments),
-                        status: DynamicToolCallStatus::InProgress,
-                        output: None,
-                    };
+                if let Some(item) =
+                    project_tool_call_start(name, namespace.as_deref(), arguments, call_id)
+                {
                     self.upsert_event_driven_tool_call_in_current_turn(item);
                 }
             }
@@ -407,47 +366,11 @@ impl ThreadHistoryBuilder {
                 if existing.is_none() {
                     return;
                 }
-                if let Some(ThreadItem::EventCommandCall {
-                    command,
-                    cwd,
-                    label,
-                    ..
-                }) = existing
+                if let Some(item) =
+                    existing.and_then(|item| project_tool_call_completion(item, call_id, output))
                 {
-                    let output_json = event_command_output_payload_to_json(output);
-                    let item = ThreadItem::EventCommandCall {
-                        id: call_id.clone(),
-                        subscription_id: string_field(&output_json, "subscription_id")
-                            .or_else(|| string_field(&output_json, "subscriptionId"))
-                            .unwrap_or_default(),
-                        command: string_field(&output_json, "command")
-                            .unwrap_or_else(|| command.clone()),
-                        cwd: string_field(&output_json, "cwd").or_else(|| cwd.clone()),
-                        label: string_field(&output_json, "label").or_else(|| label.clone()),
-                        status: DynamicToolCallStatus::Completed,
-                        output: Some(output_json),
-                    };
                     self.upsert_event_driven_tool_call_in_current_turn(item);
-                    return;
                 }
-                let item = ThreadItem::EventDrivenToolCall {
-                    id: call_id.clone(),
-                    tool: existing
-                        .map(|item| match item {
-                            ThreadItem::EventDrivenToolCall { tool, .. } => tool.clone(),
-                            _ => "tool".to_string(),
-                        })
-                        .unwrap_or_else(|| "tool".to_string()),
-                    arguments: existing
-                        .map(|item| match item {
-                            ThreadItem::EventDrivenToolCall { arguments, .. } => arguments.clone(),
-                            _ => serde_json::Value::Null,
-                        })
-                        .unwrap_or(serde_json::Value::Null),
-                    status: DynamicToolCallStatus::Completed,
-                    output: Some(function_call_output_payload_to_json(output)),
-                };
-                self.upsert_event_driven_tool_call_in_current_turn(item);
             }
             _ => {}
         }
@@ -546,7 +469,7 @@ impl ThreadHistoryBuilder {
                 text: text.clone(),
                 phase: phase.clone(),
             });
-        self.ensure_turn().items.push(normalize_agent_message_item(
+        self.ensure_turn().items.push(assistant_message_thread_item(
             id,
             text,
             phase,
@@ -628,30 +551,6 @@ impl ThreadHistoryBuilder {
                     *item_phase = phase;
                 }
                 true
-            }
-            item if matches!(
-                item,
-                ThreadItem::CollabAgentMessage { .. } | ThreadItem::CollabAgentStatusUpdate { .. }
-            ) =>
-            {
-                let response_item = normalize_agent_message_item(
-                    response_id.to_string(),
-                    text.to_string(),
-                    phase,
-                    None,
-                );
-                if collab_items_are_equivalent(item, &response_item) {
-                    match item {
-                        ThreadItem::CollabAgentMessage { id, .. }
-                        | ThreadItem::CollabAgentStatusUpdate { id, .. } => {
-                            *id = response_id.to_string();
-                        }
-                        _ => {}
-                    }
-                    true
-                } else {
-                    false
-                }
             }
             _ => false,
         }
@@ -1659,80 +1558,6 @@ fn phases_are_compatible(
     response_phase.is_none() || event_phase.is_none() || response_phase == event_phase
 }
 
-fn collab_items_are_equivalent(left: &ThreadItem, right: &ThreadItem) -> bool {
-    collab_agent_messages_are_equivalent(left, right)
-        || collab_agent_status_updates_are_equivalent(left, right)
-}
-
-fn collab_agent_messages_are_equivalent(left: &ThreadItem, right: &ThreadItem) -> bool {
-    let (
-        ThreadItem::CollabAgentMessage {
-            operation: left_operation,
-            sender_thread_id: left_sender_thread_id,
-            sender_path: left_sender_path,
-            recipient_thread_id: left_recipient_thread_id,
-            recipient_path: left_recipient_path,
-            other_recipient_paths: left_other_recipient_paths,
-            content: left_content,
-            trigger_turn: left_trigger_turn,
-            ..
-        },
-        ThreadItem::CollabAgentMessage {
-            operation: right_operation,
-            sender_thread_id: right_sender_thread_id,
-            sender_path: right_sender_path,
-            recipient_thread_id: right_recipient_thread_id,
-            recipient_path: right_recipient_path,
-            other_recipient_paths: right_other_recipient_paths,
-            content: right_content,
-            trigger_turn: right_trigger_turn,
-            ..
-        },
-    ) = (left, right)
-    else {
-        return false;
-    };
-
-    left_operation == right_operation
-        && left_sender_thread_id == right_sender_thread_id
-        && left_sender_path == right_sender_path
-        && left_recipient_thread_id == right_recipient_thread_id
-        && left_recipient_path == right_recipient_path
-        && left_other_recipient_paths == right_other_recipient_paths
-        && left_content == right_content
-        && left_trigger_turn == right_trigger_turn
-}
-
-fn collab_agent_status_updates_are_equivalent(left: &ThreadItem, right: &ThreadItem) -> bool {
-    let (
-        ThreadItem::CollabAgentStatusUpdate {
-            sender_thread_id: left_sender_thread_id,
-            sender_path: left_sender_path,
-            recipient_thread_id: left_recipient_thread_id,
-            recipient_path: left_recipient_path,
-            status: left_status,
-            ..
-        },
-        ThreadItem::CollabAgentStatusUpdate {
-            sender_thread_id: right_sender_thread_id,
-            sender_path: right_sender_path,
-            recipient_thread_id: right_recipient_thread_id,
-            recipient_path: right_recipient_path,
-            status: right_status,
-            ..
-        },
-    ) = (left, right)
-    else {
-        return false;
-    };
-
-    left_sender_thread_id == right_sender_thread_id
-        && left_sender_path == right_sender_path
-        && left_recipient_thread_id == right_recipient_thread_id
-        && left_recipient_path == right_recipient_path
-        && left_status == right_status
-}
-
 const REVIEW_FALLBACK_MESSAGE: &str = "Reviewer failed to output a response.";
 
 fn render_review_output_text(output: &ReviewOutputEvent) -> String {
@@ -1761,96 +1586,11 @@ fn convert_dynamic_tool_content_items(
         .collect()
 }
 
-fn parse_raw_function_call_arguments(arguments: &str) -> serde_json::Value {
-    serde_json::from_str(arguments).unwrap_or_else(|_| serde_json::Value::String(arguments.into()))
-}
-
-fn function_call_output_payload_to_json(
-    output: &codex_protocol::models::FunctionCallOutputPayload,
-) -> serde_json::Value {
-    serde_json::to_value(output).unwrap_or_else(|_| serde_json::Value::String(output.to_string()))
-}
-
-fn event_command_output_payload_to_json(
-    output: &codex_protocol::models::FunctionCallOutputPayload,
-) -> serde_json::Value {
-    output
-        .text_content()
-        .and_then(|text| serde_json::from_str(text).ok())
-        .unwrap_or_else(|| function_call_output_payload_to_json(output))
-}
-
 fn single_text_message_content(content: &[ContentItem]) -> Option<&str> {
     match content {
         [ContentItem::InputText { text }] | [ContentItem::OutputText { text }] => Some(text),
         _ => None,
     }
-}
-
-fn event_driven_tool_name(namespace: Option<&str>, name: &str) -> Option<String> {
-    if namespace.is_some() {
-        return None;
-    }
-
-    match name {
-        "event_command_unsubscribe"
-        | "event_command_write_stdin"
-        | "schedule_subscribe"
-        | "schedule_unsubscribe" => Some(name.to_string()),
-        _ => None,
-    }
-}
-
-fn is_event_command_subscribe_tool(namespace: Option<&str>, name: &str) -> bool {
-    namespace.is_none() && name == "event_command_subscribe"
-}
-
-fn event_command_call_item_from_arguments(
-    id: String,
-    arguments: serde_json::Value,
-    status: DynamicToolCallStatus,
-    output: Option<serde_json::Value>,
-) -> ThreadItem {
-    ThreadItem::EventCommandCall {
-        id,
-        subscription_id: output
-            .as_ref()
-            .and_then(|value| {
-                string_field(value, "subscription_id")
-                    .or_else(|| string_field(value, "subscriptionId"))
-            })
-            .unwrap_or_default(),
-        command: string_field(&arguments, "command").unwrap_or_default(),
-        cwd: string_field(&arguments, "cwd"),
-        label: string_field(&arguments, "label"),
-        status,
-        output,
-    }
-}
-
-fn event_command_event_item(id: String, event: EventCommandEvent) -> ThreadItem {
-    ThreadItem::EventCommandEvent {
-        id,
-        subscription_id: event.subscription_id,
-        kind: event.kind.into(),
-        label: event.label,
-        command: event.command,
-        cwd: event.cwd,
-        line: event.line,
-        sequence: event.sequence,
-        exit_code: event.exit_code,
-        signal: event.signal,
-        message: event.message,
-        truncated: event.truncated,
-        created_at: event.created_at,
-    }
-}
-
-fn string_field(value: &serde_json::Value, field: &str) -> Option<String> {
-    value
-        .get(field)
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
 }
 
 fn parse_injected_context_sections(
@@ -2121,6 +1861,8 @@ mod tests {
     use codex_protocol::AgentPath;
     use codex_protocol::ThreadId;
     use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
+    use codex_protocol::event_command::EventCommandEvent;
+    use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
     use codex_protocol::items::CollabAgentMessageItem as CoreCollabAgentMessageItem;
     use codex_protocol::items::EventDrivenToolItem as CoreEventDrivenToolItem;
     use codex_protocol::items::HookPromptFragment as CoreHookPromptFragment;
@@ -2296,7 +2038,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_live_inter_agent_message_to_collab_item() {
+    fn live_inter_agent_json_message_remains_agent_message() {
         let communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
             AgentPath::root(),
@@ -2305,8 +2047,9 @@ mod tests {
             InterAgentOperation::SendMessage,
         )
         .with_trigger_turn(false);
+        let text = serde_json::to_string(&communication).expect("serialize communication");
         let events = [EventMsg::AgentMessage(AgentMessageEvent {
-            message: serde_json::to_string(&communication).expect("serialize communication"),
+            message: text.clone(),
             phase: None,
             memory_citation: None,
         })];
@@ -2320,22 +2063,17 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
-            vec![ThreadItem::CollabAgentMessage {
+            vec![ThreadItem::AgentMessage {
                 id: "item-1".into(),
-                operation: InterAgentOperation::SendMessage.into(),
-                sender_thread_id: None,
-                sender_path: "/root/worker".into(),
-                recipient_thread_id: None,
-                recipient_path: "/root".into(),
-                other_recipient_paths: Vec::new(),
-                content: "done".into(),
-                trigger_turn: false,
+                text,
+                phase: None,
+                memory_citation: None,
             }]
         );
     }
 
     #[test]
-    fn maps_live_child_completion_message_to_collab_status_update() {
+    fn live_child_completion_json_message_remains_agent_message() {
         let communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
             AgentPath::root(),
@@ -2346,8 +2084,9 @@ mod tests {
         .with_status(codex_protocol::protocol::AgentStatus::Completed(Some(
             "completed".into(),
         )));
+        let text = serde_json::to_string(&communication).expect("serialize communication");
         let events = [EventMsg::AgentMessage(AgentMessageEvent {
-            message: serde_json::to_string(&communication).expect("serialize communication"),
+            message: text.clone(),
             phase: None,
             memory_citation: None,
         })];
@@ -2361,30 +2100,19 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
-            vec![ThreadItem::CollabAgentStatusUpdate {
+            vec![ThreadItem::AgentMessage {
                 id: "item-1".into(),
-                sender_thread_id: None,
-                sender_path: "/root/worker".into(),
-                recipient_thread_id: None,
-                recipient_path: "/root".into(),
-                status: CollabAgentState {
-                    path: Some("/root/worker".into()),
-                    status: CollabAgentStatus::Completed,
-                    message: Some("completed".into()),
-                },
+                text,
+                phase: None,
+                memory_citation: None,
             }]
         );
     }
 
     #[test]
     fn maps_live_event_driven_tool_trigger_to_event_item() {
-        let trigger = EventDrivenToolTrigger {
-            tool: "process_exit_subscribe".into(),
-            title: "Process exited".into(),
-            text: "[Process exit subscription] Session 42 exited with code 0".into(),
-        };
         let events = [EventMsg::AgentMessage(AgentMessageEvent {
-            message: trigger.render_message_text(),
+            message: "<event_driven_tool>{\"tool\":\"process_exit_subscribe\",\"title\":\"Process exited\",\"text\":\"[Process exit subscription] Session 42 exited with code 0\"}</event_driven_tool>".into(),
             phase: None,
             memory_citation: None,
         })];
@@ -2398,11 +2126,11 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
-            vec![ThreadItem::EventDrivenTool {
+            vec![ThreadItem::AgentMessage {
                 id: "item-1".into(),
-                tool: "process_exit_subscribe".into(),
-                title: "Process exited".into(),
-                text: "[Process exit subscription] Session 42 exited with code 0".into(),
+                text: "<event_driven_tool>{\"tool\":\"process_exit_subscribe\",\"title\":\"Process exited\",\"text\":\"[Process exit subscription] Session 42 exited with code 0\"}</event_driven_tool>".into(),
+                phase: None,
+                memory_citation: None,
             }]
         );
     }
@@ -3772,7 +3500,7 @@ mod tests {
                 model_context_window: None,
                 collaboration_mode_kind: Default::default(),
             })),
-            RolloutItem::ResponseItem(event.to_response_item()),
+            RolloutItem::ResponseItem(ResponseItem::EventCommandEvent { id: None, event }),
         ];
 
         let turns = build_turns_from_rollout_items(&items);
@@ -3916,7 +3644,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_unknown_inter_agent_history_is_ignored() {
+    fn typed_unknown_inter_agent_history_falls_back_to_agent_message() {
         let communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
             AgentPath::root(),
@@ -3924,6 +3652,7 @@ mod tests {
             "raw json should not leak".into(),
             InterAgentOperation::Unknown,
         );
+        let expected_text = serde_json::to_string(&communication).expect("serialize communication");
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".into(),
@@ -3940,7 +3669,15 @@ mod tests {
         let turns = build_turns_from_rollout_items(&items);
 
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::AgentMessage {
+                id: "typed-unknown-collab".into(),
+                text: expected_text,
+                phase: None,
+                memory_citation: None,
+            }]
+        );
     }
 
     #[test]
@@ -4005,12 +3742,7 @@ mod tests {
     }
 
     #[test]
-    fn reconstructs_event_driven_tool_trigger_items_from_response_messages() {
-        let trigger = EventDrivenToolTrigger {
-            tool: "schedule_subscribe".into(),
-            title: "Schedule triggered".into(),
-            text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
-        };
+    fn reconstructs_typed_event_driven_tool_items_from_response_items() {
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".into(),
@@ -4018,7 +3750,14 @@ mod tests {
                 model_context_window: None,
                 collaboration_mode_kind: Default::default(),
             })),
-            RolloutItem::ResponseItem(trigger.to_response_item()),
+            RolloutItem::ResponseItem(ResponseItem::EventDrivenTool {
+                id: Some("schedule-trigger-1".into()),
+                trigger: EventDrivenToolTrigger {
+                    tool: "schedule_subscribe".into(),
+                    title: "Schedule triggered".into(),
+                    text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
+                },
+            }),
         ];
 
         let turns = build_turns_from_rollout_items(&items);
@@ -4027,7 +3766,7 @@ mod tests {
         assert_eq!(
             turns[0].items[0],
             ThreadItem::EventDrivenTool {
-                id: "item-1".into(),
+                id: "schedule-trigger-1".into(),
                 tool: "schedule_subscribe".into(),
                 title: "Schedule triggered".into(),
                 text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
@@ -4036,12 +3775,7 @@ mod tests {
     }
 
     #[test]
-    fn reconstructs_process_exit_trigger_from_assistant_output_response_message() {
-        let trigger = EventDrivenToolTrigger {
-            tool: "process_exit_subscribe".into(),
-            title: "Process exited".into(),
-            text: "Session 42 exited with code 0".into(),
-        };
+    fn assistant_response_messages_remain_agent_messages() {
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".into(),
@@ -4053,7 +3787,7 @@ mod tests {
                 id: Some("process-exit-1".into()),
                 role: "assistant".into(),
                 content: vec![ContentItem::OutputText {
-                    text: trigger.render_message_text(),
+                    text: "<event_driven_tool>{\"tool\":\"process_exit_subscribe\",\"title\":\"Process exited\",\"text\":\"Session 42 exited with code 0\"}</event_driven_tool>".into(),
                 }],
                 phase: None,
             }),
@@ -4064,11 +3798,11 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
-            vec![ThreadItem::EventDrivenTool {
+            vec![ThreadItem::AgentMessage {
                 id: "process-exit-1".into(),
-                tool: "process_exit_subscribe".into(),
-                title: "Process exited".into(),
-                text: "Session 42 exited with code 0".into(),
+                text: "<event_driven_tool>{\"tool\":\"process_exit_subscribe\",\"title\":\"Process exited\",\"text\":\"Session 42 exited with code 0\"}</event_driven_tool>".into(),
+                phase: None,
+                memory_citation: None,
             }]
         );
     }
@@ -4133,16 +3867,11 @@ mod tests {
         assert_eq!(
             turns[0].items,
             vec![
-                ThreadItem::CollabAgentMessage {
+                ThreadItem::AgentMessage {
                     id: "msg-1".into(),
-                    operation: InterAgentOperation::SendMessage.into(),
-                    sender_thread_id: None,
-                    sender_path: "/root/worker".into(),
-                    recipient_thread_id: None,
-                    recipient_path: "/root".into(),
-                    other_recipient_paths: Vec::new(),
-                    content: "done".into(),
-                    trigger_turn: false,
+                    text: serde_json::to_string(&communication).expect("serialize communication"),
+                    phase: None,
+                    memory_citation: None,
                 },
                 ThreadItem::AgentMessage {
                     id: "msg-2".into(),
@@ -4392,7 +4121,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_duplicate_candidate_does_not_consume_response_if_item_normalized() {
+    fn duplicate_agent_message_response_updates_plain_agent_message() {
         let trigger = EventDrivenToolTrigger {
             tool: "schedule_subscribe".into(),
             title: "Schedule triggered".into(),
@@ -4414,7 +4143,7 @@ mod tests {
             RolloutItem::ResponseItem(ResponseItem::Message {
                 id: Some("msg-1".into()),
                 role: "assistant".into(),
-                content: vec![ContentItem::OutputText { text }],
+                content: vec![ContentItem::OutputText { text: text.clone() }],
                 phase: None,
             }),
         ];
@@ -4424,25 +4153,17 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
-            vec![
-                ThreadItem::EventDrivenTool {
-                    id: "item-1".into(),
-                    tool: "schedule_subscribe".into(),
-                    title: "Schedule triggered".into(),
-                    text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
-                },
-                ThreadItem::EventDrivenTool {
-                    id: "msg-1".into(),
-                    tool: "schedule_subscribe".into(),
-                    title: "Schedule triggered".into(),
-                    text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
-                },
-            ]
+            vec![ThreadItem::AgentMessage {
+                id: "msg-1".into(),
+                text,
+                phase: None,
+                memory_citation: None,
+            }]
         );
     }
 
     #[test]
-    fn dedupes_legacy_collab_agent_message_when_response_item_arrives_later() {
+    fn inter_agent_json_agent_message_remains_plain_message_when_response_item_arrives_later() {
         let mut communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
             AgentPath::try_from("/root").expect("agent path"),
@@ -4467,7 +4188,7 @@ mod tests {
             RolloutItem::ResponseItem(ResponseItem::Message {
                 id: Some("msg-1".into()),
                 role: "assistant".into(),
-                content: vec![ContentItem::OutputText { text }],
+                content: vec![ContentItem::OutputText { text: text.clone() }],
                 phase: None,
             }),
         ];
@@ -4477,22 +4198,18 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
-            vec![ThreadItem::CollabAgentMessage {
+            vec![ThreadItem::AgentMessage {
                 id: "msg-1".into(),
-                operation: InterAgentOperation::SendMessage.into(),
-                sender_thread_id: None,
-                sender_path: "/root/worker".into(),
-                recipient_thread_id: None,
-                recipient_path: "/root".into(),
-                other_recipient_paths: Vec::new(),
-                content: "done".into(),
-                trigger_turn: false,
+                text,
+                phase: None,
+                memory_citation: None,
             }]
         );
     }
 
     #[test]
-    fn dedupes_legacy_child_completion_when_response_item_arrives_later() {
+    fn child_completion_json_agent_message_remains_plain_message_when_response_item_arrives_later()
+    {
         let communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
             AgentPath::try_from("/root").expect("agent path"),
@@ -4517,7 +4234,7 @@ mod tests {
             RolloutItem::ResponseItem(ResponseItem::Message {
                 id: Some("msg-1".into()),
                 role: "assistant".into(),
-                content: vec![ContentItem::OutputText { text }],
+                content: vec![ContentItem::OutputText { text: text.clone() }],
                 phase: None,
             }),
         ];
@@ -4527,17 +4244,11 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
-            vec![ThreadItem::CollabAgentStatusUpdate {
+            vec![ThreadItem::AgentMessage {
                 id: "msg-1".into(),
-                sender_thread_id: None,
-                sender_path: "/root/worker".into(),
-                recipient_thread_id: None,
-                recipient_path: "/root".into(),
-                status: CollabAgentState {
-                    path: Some("/root/worker".into()),
-                    status: CollabAgentStatus::Completed,
-                    message: Some("completed".into()),
-                },
+                text,
+                phase: None,
+                memory_citation: None,
             }]
         );
     }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::bespoke_event_handling::maybe_emit_event_driven_tool_call_notifications;
+use crate::bespoke_event_handling::maybe_emit_projected_tool_call_notifications;
 use crate::event_driven_item_completion::maybe_emit_event_driven_tool_trigger_item_completed;
 
 pub(super) const THREAD_UNLOADING_DELAY: Duration = Duration::from_secs(30 * 60);
@@ -319,7 +319,7 @@ pub(super) async fn ensure_listener_task_running(
                             &thread_outgoing,
                         )
                         .await;
-                        maybe_emit_event_driven_tool_call_notifications(
+                        maybe_emit_projected_tool_call_notifications(
                             conversation_id,
                             &event.id,
                             &raw_response_item_event.item,

@@ -9,13 +9,12 @@ use super::RequestPermissionProfile;
 use super::UserInput;
 use super::shared::v2_enum_from_core;
 use crate::protocol::item_builders::convert_patch_changes;
+use crate::protocol::response_item_projection::thread_item_from_inter_agent_communication;
 use codex_experimental_api_macros::ExperimentalApi;
 use codex_protocol::approvals::GuardianAssessmentAction as CoreGuardianAssessmentAction;
 use codex_protocol::approvals::GuardianAssessmentDecisionSource as CoreGuardianAssessmentDecisionSource;
 use codex_protocol::approvals::GuardianCommandSource as CoreGuardianCommandSource;
-use codex_protocol::event_command::EventCommandEvent as CoreEventCommandEvent;
 use codex_protocol::event_command::EventCommandEventKind as CoreEventCommandEventKind;
-use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::items::AgentMessageContent as CoreAgentMessageContent;
 use codex_protocol::items::McpToolCallStatus as CoreMcpToolCallStatus;
 use codex_protocol::items::TurnItem as CoreTurnItem;
@@ -30,7 +29,6 @@ use codex_protocol::protocol::ExecCommandSource as CoreExecCommandSource;
 use codex_protocol::protocol::ExecCommandStatus as CoreExecCommandStatus;
 use codex_protocol::protocol::GuardianRiskLevel as CoreGuardianRiskLevel;
 use codex_protocol::protocol::GuardianUserAuthorization as CoreGuardianUserAuthorization;
-use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::InterAgentOperation as CoreInterAgentOperation;
 use codex_protocol::protocol::PatchApplyStatus as CorePatchApplyStatus;
 use codex_protocol::protocol::ReviewDecision as CoreReviewDecision;
@@ -525,29 +523,12 @@ impl ThreadItem {
     }
 }
 
-pub(crate) fn normalize_agent_message_item(
+pub(crate) fn assistant_message_thread_item(
     id: String,
     text: String,
     phase: Option<MessagePhase>,
     memory_citation: Option<MemoryCitation>,
 ) -> ThreadItem {
-    if let Some(event) = CoreEventCommandEvent::parse_message_text(&text) {
-        return event_command_event_item(id, event);
-    }
-
-    if let Some(trigger) = EventDrivenToolTrigger::parse_message_text(&text) {
-        return ThreadItem::EventDrivenTool {
-            id,
-            tool: trigger.tool,
-            title: trigger.title,
-            text: trigger.text,
-        };
-    }
-
-    if let Some(communication) = parse_inter_agent_communication_text(&text) {
-        return thread_item_from_inter_agent_communication(id, communication);
-    }
-
     ThreadItem::AgentMessage {
         id,
         text,
@@ -558,6 +539,8 @@ pub(crate) fn normalize_agent_message_item(
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
+#[schemars(rename = "ThreadEventCommandEventKind")]
+#[ts(rename = "ThreadEventCommandEventKind")]
 #[ts(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub enum EventCommandEventKind {
@@ -576,77 +559,6 @@ impl From<CoreEventCommandEventKind> for EventCommandEventKind {
             CoreEventCommandEventKind::FailedToStart => Self::FailedToStart,
         }
     }
-}
-
-fn event_command_event_item(id: String, event: CoreEventCommandEvent) -> ThreadItem {
-    ThreadItem::EventCommandEvent {
-        id,
-        subscription_id: event.subscription_id,
-        kind: event.kind.into(),
-        label: event.label,
-        command: event.command,
-        cwd: event.cwd,
-        line: event.line,
-        sequence: event.sequence,
-        exit_code: event.exit_code,
-        signal: event.signal,
-        message: event.message,
-        truncated: event.truncated,
-        created_at: event.created_at,
-    }
-}
-
-pub(crate) fn thread_item_from_inter_agent_communication(
-    id: String,
-    communication: InterAgentCommunication,
-) -> ThreadItem {
-    if matches!(
-        communication.operation,
-        CoreInterAgentOperation::ChildCompletion
-    ) && let Some(mut status) = communication.status.map(CollabAgentState::from)
-    {
-        status.path = Some(communication.author.to_string());
-        return ThreadItem::CollabAgentStatusUpdate {
-            id,
-            sender_thread_id: communication
-                .sender_thread_id
-                .map(|value| value.to_string()),
-            sender_path: communication.author.to_string(),
-            recipient_thread_id: communication
-                .recipient_thread_id
-                .map(|value| value.to_string()),
-            recipient_path: communication.recipient.to_string(),
-            status,
-        };
-    }
-
-    ThreadItem::CollabAgentMessage {
-        id,
-        operation: communication.operation.into(),
-        sender_thread_id: communication
-            .sender_thread_id
-            .map(|value| value.to_string()),
-        sender_path: communication.author.to_string(),
-        recipient_thread_id: communication
-            .recipient_thread_id
-            .map(|value| value.to_string()),
-        recipient_path: communication.recipient.to_string(),
-        other_recipient_paths: communication
-            .other_recipients
-            .into_iter()
-            .map(|path| path.to_string())
-            .collect(),
-        content: communication.content,
-        trigger_turn: communication.trigger_turn,
-    }
-}
-
-pub(crate) fn parse_inter_agent_communication_text(text: &str) -> Option<InterAgentCommunication> {
-    serde_json::from_str::<InterAgentCommunication>(text)
-        .ok()
-        .filter(|communication| {
-            !matches!(communication.operation, CoreInterAgentOperation::Unknown)
-        })
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
@@ -1050,7 +962,7 @@ impl From<CoreTurnItem> for ThreadItem {
                         CoreAgentMessageContent::Text { text } => text,
                     })
                     .collect::<String>();
-                normalize_agent_message_item(
+                assistant_message_thread_item(
                     agent.id,
                     text,
                     agent.phase,
@@ -1063,9 +975,21 @@ impl From<CoreTurnItem> for ThreadItem {
                 title: event_driven_tool.title,
                 text: event_driven_tool.text,
             },
-            CoreTurnItem::EventCommandEvent(event_command) => {
-                event_command_event_item(event_command.id, event_command.event)
-            }
+            CoreTurnItem::EventCommandEvent(event_command) => ThreadItem::EventCommandEvent {
+                id: event_command.id,
+                subscription_id: event_command.event.subscription_id,
+                kind: event_command.event.kind.into(),
+                label: event_command.event.label,
+                command: event_command.event.command,
+                cwd: event_command.event.cwd,
+                line: event_command.event.line,
+                sequence: event_command.event.sequence,
+                exit_code: event_command.event.exit_code,
+                signal: event_command.event.signal,
+                message: event_command.event.message,
+                truncated: event_command.event.truncated,
+                created_at: event_command.event.created_at,
+            },
             CoreTurnItem::CollabAgentMessage(collab) => {
                 thread_item_from_inter_agent_communication(collab.id, collab.communication)
             }

@@ -30,6 +30,7 @@ In the codex-rs folder where the rust code lives:
 - Prefer private modules and explicitly exported public crate API.
 - If you change `ConfigToml` or nested config types, run `just write-config-schema` to update `codex-rs/core/config.schema.json`.
 - When working with MCP tool calls, prefer using `codex-rs/codex-mcp/src/mcp_connection_manager.rs` to handle mutation of tools and tool calls. Aim to minimize the footprint of changes and leverage existing abstractions rather than plumbing code through multiple levels of function calls.
+- 对话/线程展示相关的结构化语义以 typed `ResponseItem` 为 canonical source；`ThreadItem` 应通过共享 projector 统一生成。新增或修改 event-command、schedule、collab 这类展示项时，必须复用 `codex-rs/app-server-protocol/src/protocol/response_item_projection.rs`，不要新增 raw response item 展示分支，也不要从 message marker 文本或 assistant message JSON 解析 typed item。schedule subscribe/unsubscribe 仍属于这套 typed projection，不要作为旧 generic event-driven 兼容路径移除。
 - If you change Rust dependencies (`Cargo.toml` or `Cargo.lock`), run `just bazel-lock-update` from the
   repo root to refresh `MODULE.bazel.lock`, and include that lockfile update in the same change.
 - After dependency changes, run `just bazel-lock-check` from the repo root so lockfile drift is caught

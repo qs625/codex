@@ -778,12 +778,6 @@ export function isThreadThinking(
 }
 
 function mergeThreadItem(existing: ThreadItem, next: ThreadItem): ThreadItem {
-  const normalizedExisting = normalizeThreadItemSnapshot(existing);
-  const normalizedNext = normalizeThreadItemSnapshot(next);
-  if (normalizedExisting !== existing || normalizedNext !== next) {
-    return mergeThreadItem(normalizedExisting, normalizedNext);
-  }
-
   const timestamps = mergeItemTimestamps(existing, next);
 
   if (existing.type === "agentMessage" && next.type === "agentMessage") {
@@ -799,61 +793,6 @@ function mergeThreadItem(existing: ThreadItem, next: ThreadItem): ThreadItem {
     ...next,
     ...timestamps,
   };
-}
-
-function normalizeThreadItemSnapshot(item: ThreadItem): ThreadItem {
-  if (item.type !== "agentMessage") {
-    return item;
-  }
-
-  const trigger = parseEventDrivenToolTrigger(item.text);
-  if (!trigger) {
-    return item;
-  }
-
-  const normalized: ThreadItem = {
-    type: "eventDrivenTool",
-    id: item.id,
-    tool: trigger.tool,
-    title: trigger.title,
-    text: trigger.text,
-  };
-  if (item.startedAtMs !== null && item.startedAtMs !== undefined) {
-    normalized.startedAtMs = item.startedAtMs;
-  }
-  if (item.completedAtMs !== null && item.completedAtMs !== undefined) {
-    normalized.completedAtMs = item.completedAtMs;
-  }
-  return normalized;
-}
-
-function parseEventDrivenToolTrigger(text: string) {
-  const trimmed = text.trim();
-  const startMarker = "<event_driven_tool>";
-  const endMarker = "</event_driven_tool>";
-  if (!trimmed.startsWith(startMarker) || !trimmed.endsWith(endMarker)) {
-    return null;
-  }
-
-  const body = trimmed
-    .slice(startMarker.length, trimmed.length - endMarker.length)
-    .trim();
-  try {
-    const parsed = JSON.parse(body);
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      !Array.isArray(parsed) &&
-      typeof parsed.tool === "string" &&
-      typeof parsed.title === "string" &&
-      typeof parsed.text === "string"
-    ) {
-      return parsed as { tool: string; title: string; text: string };
-    }
-  } catch {
-    return null;
-  }
-  return null;
 }
 
 function markStreamingAgentMessage<

@@ -501,7 +501,6 @@ mod tests {
     use crate::protocol::v2::CollabAgentStatus;
     use codex_protocol::AgentPath;
     use codex_protocol::ThreadId;
-    use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
     use codex_protocol::items::AgentMessageContent;
     use codex_protocol::items::AgentMessageItem;
     use codex_protocol::items::CollabAgentMessageItem;
@@ -696,18 +695,13 @@ mod tests {
 
     #[test]
     fn item_completed_normalizes_agent_message_payloads() {
-        let trigger = EventDrivenToolTrigger {
-            tool: "process_exit_subscribe".to_string(),
-            title: "Process exited".to_string(),
-            text: "[Process exit subscription] Session 42 exited with code 0".to_string(),
-        };
         let event = ItemCompletedEvent {
             thread_id: ThreadId::new(),
             turn_id: "turn-ignored".to_string(),
             item: TurnItem::AgentMessage(AgentMessageItem {
                 id: "agent-1".to_string(),
                 content: vec![AgentMessageContent::Text {
-                    text: trigger.render_message_text(),
+                    text: "[Process exit subscription] Session 42 exited with code 0".to_string(),
                 }],
                 phase: None,
                 memory_citation: None,
@@ -727,11 +721,11 @@ mod tests {
                 thread_id: "thread-4".to_string(),
                 turn_id: "turn-4".to_string(),
                 completed_at_ms: event.completed_at_ms,
-                item: ThreadItem::EventDrivenTool {
+                item: ThreadItem::AgentMessage {
                     id: "agent-1".to_string(),
-                    tool: "process_exit_subscribe".to_string(),
-                    title: "Process exited".to_string(),
                     text: "[Process exit subscription] Session 42 exited with code 0".to_string(),
+                    phase: None,
+                    memory_citation: None,
                 },
             },
         );

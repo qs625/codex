@@ -6,7 +6,6 @@ use crate::outgoing_message::ThreadScopedOutgoingMessageSender;
 use crate::request_processors::populate_thread_turns_from_history;
 use crate::request_processors::thread_from_stored_thread;
 use crate::server_request_error::is_turn_transition_server_request_error;
-use crate::thread_state::EventDrivenToolCallSummary;
 use crate::thread_state::ThreadState;
 use crate::thread_state::TurnSummary;
 use crate::thread_state::resolve_server_request_on_thread_listener;
@@ -84,7 +83,10 @@ use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::WarningNotification;
 use codex_app_server_protocol::build_item_from_guardian_event;
 use codex_app_server_protocol::guardian_auto_approval_review_notification;
+use codex_app_server_protocol::is_structured_response_item_completion;
 use codex_app_server_protocol::item_event_to_server_notification;
+use codex_app_server_protocol::project_tool_call_completion;
+use codex_app_server_protocol::project_tool_call_start;
 use codex_core::CodexThread;
 use codex_core::ThreadManager;
 use codex_core::review_format::format_review_findings_block;
@@ -1039,7 +1041,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 &outgoing,
             )
             .await;
-            maybe_emit_event_driven_tool_call_notifications(
+            maybe_emit_projected_tool_call_notifications(
                 conversation_id,
                 &event_turn_id,
                 &raw_response_item_event.item,
@@ -1441,7 +1443,7 @@ async fn maybe_emit_raw_response_item_completed(
     item: codex_protocol::models::ResponseItem,
     outgoing: &ThreadScopedOutgoingMessageSender,
 ) {
-    if is_represented_by_structured_item_completion(&item) {
+    if is_structured_response_item_completion(&item) {
         return;
     }
 
@@ -1455,25 +1457,7 @@ async fn maybe_emit_raw_response_item_completed(
         .await;
 }
 
-fn is_represented_by_structured_item_completion(
-    item: &codex_protocol::models::ResponseItem,
-) -> bool {
-    match item {
-        codex_protocol::models::ResponseItem::EventCommandEvent { .. }
-        | codex_protocol::models::ResponseItem::EventDrivenTool { .. } => true,
-        codex_protocol::models::ResponseItem::Message { content, .. } => {
-            codex_protocol::event_command::EventCommandEvent::parse_message_content(content)
-                .is_some()
-                || codex_protocol::event_driven_tool::EventDrivenToolTrigger::parse_message_content(
-                    content,
-                )
-                .is_some()
-        }
-        _ => false,
-    }
-}
-
-pub(crate) async fn maybe_emit_event_driven_tool_call_notifications(
+pub(crate) async fn maybe_emit_projected_tool_call_notifications(
     conversation_id: ThreadId,
     turn_id: &str,
     item: &codex_protocol::models::ResponseItem,
@@ -1488,105 +1472,41 @@ pub(crate) async fn maybe_emit_event_driven_tool_call_notifications(
             call_id,
             ..
         } => {
-            let arguments = parse_raw_function_call_arguments(arguments);
-            if is_event_command_subscribe_tool(namespace.as_deref(), name) {
-                {
-                    let mut state = thread_state.lock().await;
-                    state.turn_summary.event_driven_tool_calls.insert(
-                        call_id.clone(),
-                        EventDrivenToolCallSummary {
-                            tool: name.to_string(),
-                            arguments: arguments.clone(),
-                        },
-                    );
-                }
-                let started = ItemStartedNotification {
-                    thread_id: conversation_id.to_string(),
-                    turn_id: turn_id.to_string(),
-                    started_at_ms: now_unix_timestamp_ms(),
-                    item: ThreadItem::EventCommandCall {
-                        id: call_id.clone(),
-                        subscription_id: String::new(),
-                        command: string_field(&arguments, "command").unwrap_or_default(),
-                        cwd: string_field(&arguments, "cwd"),
-                        label: string_field(&arguments, "label"),
-                        status: DynamicToolCallStatus::InProgress,
-                        output: None,
-                    },
-                };
-                outgoing
-                    .send_server_notification(ServerNotification::ItemStarted(started))
-                    .await;
-                return;
-            }
-            let Some(tool) = event_driven_tool_name(namespace.as_deref(), name) else {
+            let Some(started_item) =
+                project_tool_call_start(name, namespace.as_deref(), arguments, call_id)
+            else {
                 return;
             };
             {
                 let mut state = thread_state.lock().await;
-                state.turn_summary.event_driven_tool_calls.insert(
-                    call_id.clone(),
-                    EventDrivenToolCallSummary {
-                        tool: tool.clone(),
-                        arguments: arguments.clone(),
-                    },
-                );
+                state
+                    .turn_summary
+                    .projected_tool_calls
+                    .insert(call_id.clone(), started_item.clone());
             }
             let started = ItemStartedNotification {
                 thread_id: conversation_id.to_string(),
                 turn_id: turn_id.to_string(),
                 started_at_ms: now_unix_timestamp_ms(),
-                item: ThreadItem::EventDrivenToolCall {
-                    id: call_id.clone(),
-                    tool,
-                    arguments,
-                    status: DynamicToolCallStatus::InProgress,
-                    output: None,
-                },
+                item: started_item,
             };
             outgoing
                 .send_server_notification(ServerNotification::ItemStarted(started))
                 .await;
         }
         codex_protocol::models::ResponseItem::FunctionCallOutput { call_id, output } => {
-            let Some(summary) = thread_state
+            let Some(started_item) = thread_state
                 .lock()
                 .await
                 .turn_summary
-                .event_driven_tool_calls
+                .projected_tool_calls
                 .remove(call_id)
             else {
                 return;
             };
-            let completed_item = if summary.tool == "event_command_subscribe" {
-                let output_json = event_command_output_payload_to_json(output);
-                let subscription_id = optional_string_field(&output_json, "subscription_id")
-                    .or_else(|| optional_string_field(&output_json, "subscriptionId"))
-                    .unwrap_or_default();
-                let command = optional_string_field(&output_json, "command")
-                    .or_else(|| optional_string_field(&summary.arguments, "command"))
-                    .unwrap_or_default();
-                let cwd = optional_string_field(&output_json, "cwd")
-                    .or_else(|| optional_string_field(&summary.arguments, "cwd"));
-                let label = optional_string_field(&output_json, "label")
-                    .or_else(|| optional_string_field(&summary.arguments, "label"));
-                ThreadItem::EventCommandCall {
-                    id: call_id.clone(),
-                    subscription_id,
-                    command,
-                    cwd,
-                    label,
-                    status: DynamicToolCallStatus::Completed,
-                    output: Some(output_json),
-                }
-            } else {
-                ThreadItem::EventDrivenToolCall {
-                    id: call_id.clone(),
-                    tool: summary.tool,
-                    arguments: summary.arguments,
-                    status: DynamicToolCallStatus::Completed,
-                    output: Some(function_call_output_payload_to_json(output)),
-                }
+            let Some(completed_item) = project_tool_call_completion(&started_item, call_id, output)
+            else {
+                return;
             };
             let completed = ItemCompletedNotification {
                 thread_id: conversation_id.to_string(),
@@ -1639,54 +1559,6 @@ pub(crate) async fn maybe_emit_hook_prompt_item_completed(
     outgoing
         .send_server_notification(ServerNotification::ItemCompleted(notification))
         .await;
-}
-
-fn parse_raw_function_call_arguments(arguments: &str) -> serde_json::Value {
-    serde_json::from_str(arguments).unwrap_or_else(|_| serde_json::Value::String(arguments.into()))
-}
-
-fn function_call_output_payload_to_json(
-    output: &codex_protocol::models::FunctionCallOutputPayload,
-) -> serde_json::Value {
-    serde_json::to_value(output).unwrap_or_else(|_| serde_json::Value::String(output.to_string()))
-}
-
-fn event_command_output_payload_to_json(
-    output: &codex_protocol::models::FunctionCallOutputPayload,
-) -> serde_json::Value {
-    output
-        .text_content()
-        .and_then(|text| serde_json::from_str(text).ok())
-        .unwrap_or_else(|| function_call_output_payload_to_json(output))
-}
-
-fn event_driven_tool_name(namespace: Option<&str>, name: &str) -> Option<String> {
-    if namespace.is_some() {
-        return None;
-    }
-
-    match name {
-        "event_command_unsubscribe"
-        | "event_command_write_stdin"
-        | "schedule_subscribe"
-        | "schedule_unsubscribe" => Some(name.to_string()),
-        _ => None,
-    }
-}
-
-fn is_event_command_subscribe_tool(namespace: Option<&str>, name: &str) -> bool {
-    namespace.is_none() && name == "event_command_subscribe"
-}
-
-fn string_field(value: &serde_json::Value, field: &str) -> Option<String> {
-    optional_string_field(value, field)
-}
-
-fn optional_string_field(value: &serde_json::Value, field: &str) -> Option<String> {
-    value
-        .get(field)
-        .and_then(serde_json::Value::as_str)
-        .map(ToOwned::to_owned)
 }
 
 async fn find_and_remove_turn_summary(
@@ -2322,6 +2194,7 @@ mod tests {
     use codex_app_server_protocol::JSONRPCErrorError;
     use codex_app_server_protocol::TurnPlanStepStatus;
     use codex_login::CodexAuth;
+    use codex_protocol::AgentPath;
     use codex_protocol::items::HookPromptFragment;
     use codex_protocol::items::build_hook_prompt_message;
     use codex_protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
@@ -2339,6 +2212,8 @@ mod tests {
     use codex_protocol::protocol::EventMsg;
     use codex_protocol::protocol::GuardianAssessmentEvent;
     use codex_protocol::protocol::GuardianAssessmentStatus;
+    use codex_protocol::protocol::InterAgentCommunication;
+    use codex_protocol::protocol::InterAgentOperation;
     use codex_protocol::protocol::RateLimitSnapshot;
     use codex_protocol::protocol::RateLimitWindow;
     use codex_protocol::protocol::RolloutItem;
@@ -2414,6 +2289,17 @@ mod tests {
             title: "File watch triggered".to_string(),
             text: "build.log changed".to_string(),
         }
+    }
+
+    fn test_inter_agent_communication() -> InterAgentCommunication {
+        InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "done".to_string(),
+            InterAgentOperation::SendMessage,
+        )
+        .with_trigger_turn(false)
     }
 
     struct RawResponseItemHandlerTestContext {
@@ -2529,24 +2415,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn raw_response_item_completed_suppresses_event_command_marker_messages() {
+    async fn raw_response_item_completed_keeps_event_command_marker_messages() -> Result<()> {
         let conversation_id = ThreadId::new();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
         let outgoing = test_outgoing(tx);
         let event = test_event_command_event();
+        let item = event.to_response_item();
 
-        maybe_emit_raw_response_item_completed(
-            conversation_id,
-            "turn-1",
-            event.to_response_item(),
-            &outgoing,
-        )
-        .await;
+        maybe_emit_raw_response_item_completed(conversation_id, "turn-1", item.clone(), &outgoing)
+            .await;
 
-        assert!(
-            rx.try_recv().is_err(),
-            "event command marker should not emit a raw response item"
-        );
+        match recv_broadcast_message(&mut rx).await? {
+            OutgoingMessage::AppServerNotification(
+                ServerNotification::RawResponseItemCompleted(payload),
+            ) => assert_eq!(payload.item, item),
+            other => bail!("unexpected message: {other:?}"),
+        }
+        Ok(())
     }
 
     #[tokio::test]
@@ -2574,37 +2459,56 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn raw_response_item_completed_suppresses_event_driven_tool_marker_messages() {
+    async fn raw_response_item_completed_suppresses_inter_agent_items() {
         let conversation_id = ThreadId::new();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
         let outgoing = test_outgoing(tx);
-        let trigger = test_event_driven_tool_trigger();
 
         maybe_emit_raw_response_item_completed(
             conversation_id,
             "turn-1",
-            trigger.to_response_item(),
+            codex_protocol::models::ResponseItem::InterAgentCommunication {
+                id: Some("typed-collab".to_string()),
+                communication: test_inter_agent_communication(),
+            },
             &outgoing,
         )
         .await;
 
         assert!(
             rx.try_recv().is_err(),
-            "event-driven tool marker should not emit a raw response item"
+            "typed inter-agent communication should not emit a raw response item"
         );
+    }
+
+    #[tokio::test]
+    async fn raw_response_item_completed_keeps_event_driven_tool_marker_messages() -> Result<()> {
+        let conversation_id = ThreadId::new();
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let outgoing = test_outgoing(tx);
+        let trigger = test_event_driven_tool_trigger();
+        let item = trigger.to_response_item();
+
+        maybe_emit_raw_response_item_completed(conversation_id, "turn-1", item.clone(), &outgoing)
+            .await;
+
+        match recv_broadcast_message(&mut rx).await? {
+            OutgoingMessage::AppServerNotification(
+                ServerNotification::RawResponseItemCompleted(payload),
+            ) => assert_eq!(payload.item, item),
+            other => bail!("unexpected message: {other:?}"),
+        }
+        Ok(())
     }
 
     #[tokio::test]
     async fn raw_response_item_handler_emits_structured_item_without_raw_copy() -> Result<()> {
         let mut context = RawResponseItemHandlerTestContext::new().await?;
         let event = test_event_command_event();
-        let event_command_cases = [
-            codex_protocol::models::ResponseItem::EventCommandEvent {
-                id: Some("typed-event-command".to_string()),
-                event: event.clone(),
-            },
-            event.to_response_item(),
-        ];
+        let event_command_cases = [codex_protocol::models::ResponseItem::EventCommandEvent {
+            id: Some("typed-event-command".to_string()),
+            event: event.clone(),
+        }];
 
         for (index, item) in event_command_cases.into_iter().enumerate() {
             let messages = context
@@ -2641,13 +2545,10 @@ mod tests {
         }
 
         let trigger = test_event_driven_tool_trigger();
-        let event_driven_tool_cases = [
-            codex_protocol::models::ResponseItem::EventDrivenTool {
-                id: Some("typed-event-driven-tool".to_string()),
-                trigger: trigger.clone(),
-            },
-            trigger.to_response_item(),
-        ];
+        let event_driven_tool_cases = [codex_protocol::models::ResponseItem::EventDrivenTool {
+            id: Some("typed-event-driven-tool".to_string()),
+            trigger: trigger.clone(),
+        }];
 
         for (index, item) in event_driven_tool_cases.into_iter().enumerate() {
             let messages = context
@@ -2675,6 +2576,36 @@ mod tests {
                 },
                 other => bail!("unexpected message: {other:?}"),
             }
+        }
+
+        let messages = context
+            .apply_raw_response_item(
+                "turn-inter-agent",
+                codex_protocol::models::ResponseItem::InterAgentCommunication {
+                    id: Some("typed-collab".to_string()),
+                    communication: test_inter_agent_communication(),
+                },
+            )
+            .await;
+        assert_eq!(messages.len(), 1);
+        match &messages[0] {
+            OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(payload)) => {
+                assert_eq!(
+                    payload.item,
+                    ThreadItem::CollabAgentMessage {
+                        id: "typed-collab".to_string(),
+                        operation: codex_app_server_protocol::CollabAgentOperation::SendMessage,
+                        sender_thread_id: None,
+                        sender_path: "/root/worker".to_string(),
+                        recipient_thread_id: None,
+                        recipient_path: "/root".to_string(),
+                        other_recipient_paths: Vec::new(),
+                        content: "done".to_string(),
+                        trigger_turn: false,
+                    }
+                );
+            }
+            other => bail!("unexpected message: {other:?}"),
         }
 
         Ok(())
@@ -3242,7 +3173,7 @@ mod tests {
             ThreadId::new(),
         );
 
-        maybe_emit_event_driven_tool_call_notifications(
+        maybe_emit_projected_tool_call_notifications(
             conversation_id,
             "turn-1",
             &codex_protocol::models::ResponseItem::FunctionCall {
@@ -3277,7 +3208,7 @@ mod tests {
             other => bail!("unexpected message: {other:?}"),
         }
 
-        maybe_emit_event_driven_tool_call_notifications(
+        maybe_emit_projected_tool_call_notifications(
             conversation_id,
             "turn-1",
             &codex_protocol::models::ResponseItem::FunctionCallOutput {
@@ -3338,7 +3269,7 @@ mod tests {
             ThreadId::new(),
         );
 
-        maybe_emit_event_driven_tool_call_notifications(
+        maybe_emit_projected_tool_call_notifications(
             conversation_id,
             "turn-1",
             &codex_protocol::models::ResponseItem::FunctionCallOutput {
@@ -3372,7 +3303,7 @@ mod tests {
             ThreadId::new(),
         );
 
-        maybe_emit_event_driven_tool_call_notifications(
+        maybe_emit_projected_tool_call_notifications(
             conversation_id,
             "turn-1",
             &codex_protocol::models::ResponseItem::FunctionCall {
@@ -3407,7 +3338,7 @@ mod tests {
             other => bail!("unexpected message: {other:?}"),
         }
 
-        maybe_emit_event_driven_tool_call_notifications(
+        maybe_emit_projected_tool_call_notifications(
             conversation_id,
             "turn-1",
             &codex_protocol::models::ResponseItem::FunctionCallOutput {
@@ -3446,6 +3377,100 @@ mod tests {
         assert!(
             rx.try_recv().is_err(),
             "event-driven tool call should emit exactly twice"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn schedule_subscribe_emits_projected_tool_call_notifications() -> Result<()> {
+        let conversation_id = ThreadId::new();
+        let thread_state = new_thread_state();
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let outgoing = Arc::new(OutgoingMessageSender::new(
+            tx,
+            codex_analytics::AnalyticsEventsClient::disabled(),
+        ));
+        let outgoing = ThreadScopedOutgoingMessageSender::new(
+            outgoing,
+            vec![ConnectionId(1)],
+            ThreadId::new(),
+        );
+
+        maybe_emit_projected_tool_call_notifications(
+            conversation_id,
+            "turn-1",
+            &codex_protocol::models::ResponseItem::FunctionCall {
+                id: None,
+                name: "schedule_subscribe".to_string(),
+                namespace: None,
+                arguments: r#"{"schedule":"every_day_at:09:00 Asia/Shanghai","label":"daily"}"#
+                    .to_string(),
+                call_id: "call-schedule".to_string(),
+            },
+            &outgoing,
+            &thread_state,
+        )
+        .await;
+
+        let started = recv_broadcast_message(&mut rx).await?;
+        match started {
+            OutgoingMessage::AppServerNotification(ServerNotification::ItemStarted(payload)) => {
+                assert_eq!(
+                    payload.item,
+                    ThreadItem::EventDrivenToolCall {
+                        id: "call-schedule".to_string(),
+                        tool: "schedule_subscribe".to_string(),
+                        arguments: json!({
+                            "schedule": "every_day_at:09:00 Asia/Shanghai",
+                            "label": "daily",
+                        }),
+                        status: DynamicToolCallStatus::InProgress,
+                        output: None,
+                    }
+                );
+            }
+            other => bail!("unexpected message: {other:?}"),
+        }
+
+        maybe_emit_projected_tool_call_notifications(
+            conversation_id,
+            "turn-1",
+            &codex_protocol::models::ResponseItem::FunctionCallOutput {
+                call_id: "call-schedule".to_string(),
+                output: FunctionCallOutputPayload::from_text(
+                    r#"{"subscription_id":"schedule-1"}"#.into(),
+                ),
+            },
+            &outgoing,
+            &thread_state,
+        )
+        .await;
+
+        let completed = recv_broadcast_message(&mut rx).await?;
+        match completed {
+            OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(payload)) => {
+                assert_eq!(
+                    payload.item,
+                    ThreadItem::EventDrivenToolCall {
+                        id: "call-schedule".to_string(),
+                        tool: "schedule_subscribe".to_string(),
+                        arguments: json!({
+                            "schedule": "every_day_at:09:00 Asia/Shanghai",
+                            "label": "daily",
+                        }),
+                        status: DynamicToolCallStatus::Completed,
+                        output: Some(serde_json::Value::String(
+                            r#"{"subscription_id":"schedule-1"}"#.into(),
+                        )),
+                    }
+                );
+            }
+            other => bail!("unexpected message: {other:?}"),
+        }
+
+        assert!(
+            rx.try_recv().is_err(),
+            "schedule tool call should emit exactly twice"
         );
         Ok(())
     }

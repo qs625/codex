@@ -19,8 +19,6 @@ use codex_protocol::models::is_image_open_tag_text;
 use codex_protocol::models::is_local_image_close_tag_text;
 use codex_protocol::models::is_local_image_open_tag_text;
 use codex_protocol::protocol::COLLABORATION_MODE_OPEN_TAG;
-use codex_protocol::protocol::InterAgentCommunication;
-use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::REALTIME_CONVERSATION_OPEN_TAG;
 use codex_protocol::user_input::UserInput;
 use tracing::warn;
@@ -189,24 +187,11 @@ pub fn parse_turn_item(item: &ResponseItem) -> Option<TurnItem> {
                         .or_else(|| parse_user_message(content).map(TurnItem::UserMessage))
                 }
             }
-            "assistant" => {
-                if let Some(communication) = InterAgentCommunication::from_message_content(content)
-                    .filter(|communication| {
-                        !matches!(communication.operation, InterAgentOperation::Unknown)
-                    })
-                {
-                    Some(TurnItem::CollabAgentMessage(CollabAgentMessageItem {
-                        id: id.clone().unwrap_or_else(|| Uuid::new_v4().to_string()),
-                        communication,
-                    }))
-                } else {
-                    Some(TurnItem::AgentMessage(parse_agent_message(
-                        id.as_ref(),
-                        content,
-                        phase.clone(),
-                    )))
-                }
-            }
+            "assistant" => Some(TurnItem::AgentMessage(parse_agent_message(
+                id.as_ref(),
+                content,
+                phase.clone(),
+            ))),
             "system" => None,
             _ => None,
         },

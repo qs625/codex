@@ -1,7 +1,8 @@
 //! Helpers for truncating rollouts based on "user turn" boundaries.
 //!
-//! In core, "user turns" are detected by scanning `ResponseItem::Message` items and
-//! interpreting them via `event_mapping::parse_turn_item(...)`.
+//! In core, real user turns are detected by interpreting message response items via
+//! `event_mapping::parse_turn_item(...)`. Typed inter-agent response items with
+//! `trigger_turn` set are handled separately as fork-turn boundaries.
 
 use crate::context_manager::is_user_turn_boundary;
 use crate::event_mapping;
@@ -9,7 +10,6 @@ use codex_protocol::items::TurnItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::InitialHistory;
-use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::RolloutItem;
 
 pub(crate) fn initial_history_has_prior_user_turns(conversation_history: &InitialHistory) -> bool {
@@ -58,7 +58,7 @@ pub(crate) fn user_message_positions_in_rollout(items: &[RolloutItem]) -> Vec<us
 ///
 /// A fork-turn boundary is either:
 /// - a real user message boundary, or
-/// - an assistant inter-agent envelope whose parsed `trigger_turn` is `true`.
+/// - a typed inter-agent response item whose `trigger_turn` is `true`.
 ///
 /// Like `user_message_positions_in_rollout`, this applies `ThreadRolledBack` markers so indexing
 /// reflects the effective post-rollback history. Rollback counts instruction turns, so a rollback
@@ -160,13 +160,7 @@ fn is_trigger_turn_boundary(item: &ResponseItem) -> bool {
         return communication.trigger_turn;
     }
 
-    let ResponseItem::Message { role, content, .. } = item else {
-        return false;
-    };
-
-    role == "assistant"
-        && InterAgentCommunication::from_message_content(content)
-            .is_some_and(|communication| communication.trigger_turn)
+    false
 }
 
 #[cfg(test)]

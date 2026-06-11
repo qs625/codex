@@ -354,8 +354,12 @@ pub async fn inter_agent_communication(
         })
         .await;
     }
-    if let Some(child_thread_id) = completion_child_thread_id {
-        sess.mark_direct_child_completion_received(child_thread_id)
+    if let Some(child_thread_id) = completion_child_thread_id
+        && sess
+            .mark_direct_child_completion_received(child_thread_id)
+            .await
+    {
+        sess.maybe_notify_parent_of_final_status_for_current_source()
             .await;
     }
     if trigger_turn {
