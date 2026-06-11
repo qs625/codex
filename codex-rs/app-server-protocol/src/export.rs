@@ -1326,6 +1326,7 @@ where
             strip_v1_server_notification_variants_from_json_schema(&mut schema_value);
         }
         enforce_numbered_definition_collision_overrides(file_stem, &mut schema_value);
+        normalize_inter_agent_communication_schema(&mut schema_value);
         annotate_schema(&mut schema_value, Some(file_stem));
     }
     // If the name looks like a namespaced path (e.g., "v2::Type"), mirror
@@ -1363,6 +1364,66 @@ fn enforce_numbered_definition_collision_overrides(schema_name: &str, schema: &m
         };
         detect_numbered_definition_collisions(schema_name, defs_key, defs);
     }
+}
+
+fn normalize_inter_agent_communication_schema(schema: &mut Value) {
+    add_required_fields_to_named_definitions(
+        schema,
+        "InterAgentCommunication",
+        &[
+            "author",
+            "recipient",
+            "other_recipients",
+            "content",
+            "operation",
+            "trigger_turn",
+            "sender_thread_id",
+            "recipient_thread_id",
+            "status",
+        ],
+    );
+}
+
+fn add_required_fields_to_named_definitions(
+    value: &mut Value,
+    definition_name: &str,
+    required_fields: &[&str],
+) {
+    match value {
+        Value::Object(map) => {
+            if let Some(definition) = map.get_mut(definition_name) {
+                add_required_fields(definition, required_fields);
+            }
+            for child in map.values_mut() {
+                add_required_fields_to_named_definitions(child, definition_name, required_fields);
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                add_required_fields_to_named_definitions(child, definition_name, required_fields);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+fn add_required_fields(schema: &mut Value, required_fields: &[&str]) {
+    let Some(schema_obj) = schema.as_object_mut() else {
+        return;
+    };
+    let required = schema_obj
+        .entry("required".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let Some(required) = required.as_array_mut() else {
+        return;
+    };
+    for field in required_fields {
+        let field = Value::String((*field).to_string());
+        if !required.contains(&field) {
+            required.push(field);
+        }
+    }
+    required.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
 }
 
 fn strip_v1_client_request_variants_from_json_schema(schema: &mut Value) {

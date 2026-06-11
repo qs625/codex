@@ -344,19 +344,18 @@ impl AgentControl {
             .send_input(new_thread.thread_id, initial_operation)
             .await
         {
-            if let Some(parent_thread) = parent_thread_for_completion.as_ref() {
-                if parent_thread
+            if let Some(parent_thread) = parent_thread_for_completion.as_ref()
+                && parent_thread
                     .codex
                     .session
                     .mark_direct_child_completion_received(new_thread.thread_id)
                     .await
-                {
-                    parent_thread
-                        .codex
-                        .session
-                        .maybe_notify_parent_of_final_status_for_current_source()
-                        .await;
-                }
+            {
+                parent_thread
+                    .codex
+                    .session
+                    .maybe_notify_parent_of_final_status_for_current_source()
+                    .await;
             }
             return Err(err);
         }

@@ -2562,17 +2562,11 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
 
     assert_eq!(
         ThreadItem::from(child_completion_item),
-        ThreadItem::CollabAgentStatusUpdate {
+        ThreadItem::AgentMessage {
             id: "agent-5".to_string(),
-            sender_thread_id: None,
-            sender_path: "/root/worker".to_string(),
-            recipient_thread_id: None,
-            recipient_path: "/root".to_string(),
-            status: CollabAgentState {
-                path: Some("/root/worker".to_string()),
-                status: CollabAgentStatus::Completed,
-                message: Some("completed".to_string()),
-            },
+            text: serde_json::to_string(&child_completion).expect("serialize communication"),
+            phase: None,
+            memory_citation: None,
         }
     );
 

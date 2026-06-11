@@ -1796,6 +1796,7 @@ impl Session {
     }
 
     async fn has_active_child_completion_work(&self) -> bool {
+        self.prune_final_direct_child_completion_pending().await;
         if self.has_pending_direct_child_completions().await
             || self.has_queued_response_items_for_next_turn().await
             || self.has_pending_mailbox_items().await
@@ -1809,6 +1810,37 @@ impl Session {
                 .agent_subtree_is_active(self.conversation_id),
         )
         .await
+    }
+
+    async fn prune_final_direct_child_completion_pending(&self) {
+        let child_thread_ids = {
+            let pending = self.pending_direct_child_completions.lock().await;
+            pending.keys().copied().collect::<Vec<_>>()
+        };
+        if child_thread_ids.is_empty() {
+            return;
+        }
+
+        let mut final_child_thread_ids = Vec::new();
+        for child_thread_id in child_thread_ids {
+            if is_final(
+                &self
+                    .services
+                    .agent_control
+                    .get_status(child_thread_id)
+                    .await,
+            ) {
+                final_child_thread_ids.push(child_thread_id);
+            }
+        }
+        if final_child_thread_ids.is_empty() {
+            return;
+        }
+
+        let mut pending = self.pending_direct_child_completions.lock().await;
+        for child_thread_id in final_child_thread_ids {
+            pending.remove(&child_thread_id);
+        }
     }
 
     pub(crate) async fn mark_direct_child_completion_pending(&self, child_thread_id: ThreadId) {

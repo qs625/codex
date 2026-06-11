@@ -38,7 +38,10 @@ fn inter_agent_msg(text: &str, trigger_turn: bool) -> ResponseItem {
         codex_protocol::protocol::InterAgentOperation::Unknown,
     )
     .with_trigger_turn(trigger_turn);
-    communication.to_response_input_item().into()
+    ResponseItem::InterAgentCommunication {
+        id: None,
+        communication,
+    }
 }
 
 #[test]

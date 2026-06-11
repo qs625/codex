@@ -172,7 +172,7 @@ fn parses_event_driven_tool_marker_as_typed_turn_item() {
 }
 
 #[test]
-fn parses_inter_agent_envelope_as_typed_turn_item() {
+fn parses_typed_inter_agent_item_as_typed_turn_item() {
     let communication = InterAgentCommunication::new(
         AgentPath::try_from("/root/worker").expect("agent path"),
         AgentPath::root(),
@@ -181,13 +181,9 @@ fn parses_inter_agent_envelope_as_typed_turn_item() {
         InterAgentOperation::ChildCompletion,
     )
     .with_status(AgentStatus::Completed(Some("done".to_string())));
-    let item = ResponseItem::Message {
+    let item = ResponseItem::InterAgentCommunication {
         id: Some("collab-1".to_string()),
-        role: "assistant".to_string(),
-        content: vec![ContentItem::OutputText {
-            text: serde_json::to_string(&communication).expect("serialize communication"),
-        }],
-        phase: None,
+        communication: communication.clone(),
     };
 
     let turn_item = parse_turn_item(&item).expect("expected collab turn item");
@@ -202,13 +198,13 @@ fn parses_inter_agent_envelope_as_typed_turn_item() {
 }
 
 #[test]
-fn keeps_unknown_inter_agent_envelope_as_agent_message() {
+fn keeps_inter_agent_json_assistant_message_as_agent_message() {
     let communication = InterAgentCommunication::new(
         AgentPath::try_from("/root/worker").expect("agent path"),
         AgentPath::root(),
         Vec::new(),
-        "unknown".to_string(),
-        InterAgentOperation::Unknown,
+        "completed".to_string(),
+        InterAgentOperation::ChildCompletion,
     );
     let text = serde_json::to_string(&communication).expect("serialize communication");
     let item = ResponseItem::Message {

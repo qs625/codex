@@ -539,6 +539,8 @@ pub(crate) fn assistant_message_thread_item(
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
+#[schemars(rename = "ThreadEventCommandEventKind")]
+#[ts(rename = "ThreadEventCommandEventKind")]
 #[ts(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub enum EventCommandEventKind {

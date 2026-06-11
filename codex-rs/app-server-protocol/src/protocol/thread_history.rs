@@ -51,6 +51,7 @@ use codex_protocol::protocol::GuardianAssessmentEvent;
 use codex_protocol::protocol::GuardianAssessmentStatus;
 use codex_protocol::protocol::ImageGenerationBeginEvent;
 use codex_protocol::protocol::ImageGenerationEndEvent;
+use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::McpToolCallBeginEvent;
@@ -327,12 +328,25 @@ impl ThreadHistoryBuilder {
             | ResponseItem::EventDrivenTool { .. }
             | ResponseItem::InterAgentCommunication { .. } => {
                 let fallback_id = self.next_item_id();
-                let Some(projected) =
+                if let Some(projected) =
                     project_structured_response_item(item, || fallback_id.clone())
-                else {
+                {
+                    self.ensure_turn().items.push(projected);
                     return;
-                };
-                self.ensure_turn().items.push(projected);
+                }
+
+                if let ResponseItem::InterAgentCommunication { id, communication } = item
+                    && matches!(communication.operation, InterAgentOperation::Unknown)
+                {
+                    let text = serde_json::to_string(communication)
+                        .unwrap_or_else(|_| communication.content.clone());
+                    self.ensure_turn().items.push(assistant_message_thread_item(
+                        id.clone().unwrap_or(fallback_id),
+                        text,
+                        None,
+                        None,
+                    ));
+                }
             }
             ResponseItem::FunctionCall {
                 name,
@@ -537,30 +551,6 @@ impl ThreadHistoryBuilder {
                     *item_phase = phase;
                 }
                 true
-            }
-            item if matches!(
-                item,
-                ThreadItem::CollabAgentMessage { .. } | ThreadItem::CollabAgentStatusUpdate { .. }
-            ) =>
-            {
-                let response_item = assistant_message_thread_item(
-                    response_id.to_string(),
-                    text.to_string(),
-                    phase,
-                    None,
-                );
-                if collab_items_are_equivalent(item, &response_item) {
-                    match item {
-                        ThreadItem::CollabAgentMessage { id, .. }
-                        | ThreadItem::CollabAgentStatusUpdate { id, .. } => {
-                            *id = response_id.to_string();
-                        }
-                        _ => {}
-                    }
-                    true
-                } else {
-                    false
-                }
             }
             _ => false,
         }
@@ -1568,80 +1558,6 @@ fn phases_are_compatible(
     response_phase.is_none() || event_phase.is_none() || response_phase == event_phase
 }
 
-fn collab_items_are_equivalent(left: &ThreadItem, right: &ThreadItem) -> bool {
-    collab_agent_messages_are_equivalent(left, right)
-        || collab_agent_status_updates_are_equivalent(left, right)
-}
-
-fn collab_agent_messages_are_equivalent(left: &ThreadItem, right: &ThreadItem) -> bool {
-    let (
-        ThreadItem::CollabAgentMessage {
-            operation: left_operation,
-            sender_thread_id: left_sender_thread_id,
-            sender_path: left_sender_path,
-            recipient_thread_id: left_recipient_thread_id,
-            recipient_path: left_recipient_path,
-            other_recipient_paths: left_other_recipient_paths,
-            content: left_content,
-            trigger_turn: left_trigger_turn,
-            ..
-        },
-        ThreadItem::CollabAgentMessage {
-            operation: right_operation,
-            sender_thread_id: right_sender_thread_id,
-            sender_path: right_sender_path,
-            recipient_thread_id: right_recipient_thread_id,
-            recipient_path: right_recipient_path,
-            other_recipient_paths: right_other_recipient_paths,
-            content: right_content,
-            trigger_turn: right_trigger_turn,
-            ..
-        },
-    ) = (left, right)
-    else {
-        return false;
-    };
-
-    left_operation == right_operation
-        && left_sender_thread_id == right_sender_thread_id
-        && left_sender_path == right_sender_path
-        && left_recipient_thread_id == right_recipient_thread_id
-        && left_recipient_path == right_recipient_path
-        && left_other_recipient_paths == right_other_recipient_paths
-        && left_content == right_content
-        && left_trigger_turn == right_trigger_turn
-}
-
-fn collab_agent_status_updates_are_equivalent(left: &ThreadItem, right: &ThreadItem) -> bool {
-    let (
-        ThreadItem::CollabAgentStatusUpdate {
-            sender_thread_id: left_sender_thread_id,
-            sender_path: left_sender_path,
-            recipient_thread_id: left_recipient_thread_id,
-            recipient_path: left_recipient_path,
-            status: left_status,
-            ..
-        },
-        ThreadItem::CollabAgentStatusUpdate {
-            sender_thread_id: right_sender_thread_id,
-            sender_path: right_sender_path,
-            recipient_thread_id: right_recipient_thread_id,
-            recipient_path: right_recipient_path,
-            status: right_status,
-            ..
-        },
-    ) = (left, right)
-    else {
-        return false;
-    };
-
-    left_sender_thread_id == right_sender_thread_id
-        && left_sender_path == right_sender_path
-        && left_recipient_thread_id == right_recipient_thread_id
-        && left_recipient_path == right_recipient_path
-        && left_status == right_status
-}
-
 const REVIEW_FALLBACK_MESSAGE: &str = "Reviewer failed to output a response.";
 
 fn render_review_output_text(output: &ReviewOutputEvent) -> String {
@@ -2122,7 +2038,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_live_inter_agent_message_to_collab_item() {
+    fn live_inter_agent_json_message_remains_agent_message() {
         let communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
             AgentPath::root(),
@@ -2131,8 +2047,9 @@ mod tests {
             InterAgentOperation::SendMessage,
         )
         .with_trigger_turn(false);
+        let text = serde_json::to_string(&communication).expect("serialize communication");
         let events = [EventMsg::AgentMessage(AgentMessageEvent {
-            message: serde_json::to_string(&communication).expect("serialize communication"),
+            message: text.clone(),
             phase: None,
             memory_citation: None,
         })];
@@ -2146,22 +2063,17 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
-            vec![ThreadItem::CollabAgentMessage {
+            vec![ThreadItem::AgentMessage {
                 id: "item-1".into(),
-                operation: InterAgentOperation::SendMessage.into(),
-                sender_thread_id: None,
-                sender_path: "/root/worker".into(),
-                recipient_thread_id: None,
-                recipient_path: "/root".into(),
-                other_recipient_paths: Vec::new(),
-                content: "done".into(),
-                trigger_turn: false,
+                text,
+                phase: None,
+                memory_citation: None,
             }]
         );
     }
 
     #[test]
-    fn maps_live_child_completion_message_to_collab_status_update() {
+    fn live_child_completion_json_message_remains_agent_message() {
         let communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
             AgentPath::root(),
@@ -2172,8 +2084,9 @@ mod tests {
         .with_status(codex_protocol::protocol::AgentStatus::Completed(Some(
             "completed".into(),
         )));
+        let text = serde_json::to_string(&communication).expect("serialize communication");
         let events = [EventMsg::AgentMessage(AgentMessageEvent {
-            message: serde_json::to_string(&communication).expect("serialize communication"),
+            message: text.clone(),
             phase: None,
             memory_citation: None,
         })];
@@ -2187,17 +2100,11 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
-            vec![ThreadItem::CollabAgentStatusUpdate {
+            vec![ThreadItem::AgentMessage {
                 id: "item-1".into(),
-                sender_thread_id: None,
-                sender_path: "/root/worker".into(),
-                recipient_thread_id: None,
-                recipient_path: "/root".into(),
-                status: CollabAgentState {
-                    path: Some("/root/worker".into()),
-                    status: CollabAgentStatus::Completed,
-                    message: Some("completed".into()),
-                },
+                text,
+                phase: None,
+                memory_citation: None,
             }]
         );
     }
@@ -3593,10 +3500,7 @@ mod tests {
                 model_context_window: None,
                 collaboration_mode_kind: Default::default(),
             })),
-            RolloutItem::ResponseItem(ResponseItem::EventCommandEvent {
-                id: None,
-                event: event.clone(),
-            }),
+            RolloutItem::ResponseItem(ResponseItem::EventCommandEvent { id: None, event }),
         ];
 
         let turns = build_turns_from_rollout_items(&items);
@@ -3740,7 +3644,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_unknown_inter_agent_history_is_ignored() {
+    fn typed_unknown_inter_agent_history_falls_back_to_agent_message() {
         let communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
             AgentPath::root(),
@@ -3748,6 +3652,7 @@ mod tests {
             "raw json should not leak".into(),
             InterAgentOperation::Unknown,
         );
+        let expected_text = serde_json::to_string(&communication).expect("serialize communication");
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".into(),
@@ -3764,7 +3669,15 @@ mod tests {
         let turns = build_turns_from_rollout_items(&items);
 
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::AgentMessage {
+                id: "typed-unknown-collab".into(),
+                text: expected_text,
+                phase: None,
+                memory_citation: None,
+            }]
+        );
     }
 
     #[test]
@@ -4240,25 +4153,17 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
-            vec![
-                ThreadItem::AgentMessage {
-                    id: "item-1".into(),
-                    text: text.clone(),
-                    phase: None,
-                    memory_citation: None,
-                },
-                ThreadItem::AgentMessage {
-                    id: "msg-1".into(),
-                    text,
-                    phase: None,
-                    memory_citation: None,
-                },
-            ]
+            vec![ThreadItem::AgentMessage {
+                id: "msg-1".into(),
+                text,
+                phase: None,
+                memory_citation: None,
+            }]
         );
     }
 
     #[test]
-    fn dedupes_legacy_collab_agent_message_when_response_item_arrives_later() {
+    fn inter_agent_json_agent_message_remains_plain_message_when_response_item_arrives_later() {
         let mut communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
             AgentPath::try_from("/root").expect("agent path"),
@@ -4283,7 +4188,7 @@ mod tests {
             RolloutItem::ResponseItem(ResponseItem::Message {
                 id: Some("msg-1".into()),
                 role: "assistant".into(),
-                content: vec![ContentItem::OutputText { text }],
+                content: vec![ContentItem::OutputText { text: text.clone() }],
                 phase: None,
             }),
         ];
@@ -4293,22 +4198,18 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
-            vec![ThreadItem::CollabAgentMessage {
+            vec![ThreadItem::AgentMessage {
                 id: "msg-1".into(),
-                operation: InterAgentOperation::SendMessage.into(),
-                sender_thread_id: None,
-                sender_path: "/root/worker".into(),
-                recipient_thread_id: None,
-                recipient_path: "/root".into(),
-                other_recipient_paths: Vec::new(),
-                content: "done".into(),
-                trigger_turn: false,
+                text,
+                phase: None,
+                memory_citation: None,
             }]
         );
     }
 
     #[test]
-    fn dedupes_legacy_child_completion_when_response_item_arrives_later() {
+    fn child_completion_json_agent_message_remains_plain_message_when_response_item_arrives_later()
+    {
         let communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
             AgentPath::try_from("/root").expect("agent path"),
@@ -4333,7 +4234,7 @@ mod tests {
             RolloutItem::ResponseItem(ResponseItem::Message {
                 id: Some("msg-1".into()),
                 role: "assistant".into(),
-                content: vec![ContentItem::OutputText { text }],
+                content: vec![ContentItem::OutputText { text: text.clone() }],
                 phase: None,
             }),
         ];
@@ -4343,17 +4244,11 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
-            vec![ThreadItem::CollabAgentStatusUpdate {
+            vec![ThreadItem::AgentMessage {
                 id: "msg-1".into(),
-                sender_thread_id: None,
-                sender_path: "/root/worker".into(),
-                recipient_thread_id: None,
-                recipient_path: "/root".into(),
-                status: CollabAgentState {
-                    path: Some("/root/worker".into()),
-                    status: CollabAgentStatus::Completed,
-                    message: Some("completed".into()),
-                },
+                text,
+                phase: None,
+                memory_citation: None,
             }]
         );
     }

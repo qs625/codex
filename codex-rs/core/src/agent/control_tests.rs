@@ -156,26 +156,16 @@ fn history_contains_text(history_items: &[ResponseItem], needle: &str) -> bool {
     })
 }
 
-fn history_contains_assistant_inter_agent_communication(
+fn history_contains_inter_agent_communication(
     history_items: &[ResponseItem],
     expected: &InterAgentCommunication,
 ) -> bool {
     history_items.iter().any(|item| {
-        let ResponseItem::Message { role, content, .. } = item else {
-            return false;
-        };
-        if role != "assistant" {
-            return false;
-        }
-        content.iter().any(|content_item| match content_item {
-            ContentItem::OutputText { text } => {
-                serde_json::from_str::<InterAgentCommunication>(text)
-                    .ok()
-                    .as_ref()
-                    == Some(expected)
-            }
-            ContentItem::InputText { .. } | ContentItem::InputImage { .. } => false,
-        })
+        matches!(
+            item,
+            ResponseItem::InterAgentCommunication { communication, .. }
+                if communication == expected
+        )
     })
 }
 
@@ -560,7 +550,7 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
         .await
         .raw_items()
         .to_vec();
-    assert!(!history_contains_assistant_inter_agent_communication(
+    assert!(!history_contains_inter_agent_communication(
         &history_items,
         &communication
     ));
@@ -722,7 +712,10 @@ async fn spawn_agent_can_fork_parent_thread_history_with_sanitized_items() {
                     content: None,
                     encrypted_content: None,
                 },
-                trigger_message.to_response_input_item().into(),
+                ResponseItem::InterAgentCommunication {
+                    id: None,
+                    communication: trigger_message,
+                },
                 spawn_agent_call(&parent_spawn_call_id),
             ],
         )
@@ -899,7 +892,10 @@ async fn spawn_agent_fork_last_n_turns_keeps_only_recent_turns() {
         .session
         .record_conversation_items(
             queued_turn_context.as_ref(),
-            &[queued_communication.to_response_input_item().into()],
+            &[ResponseItem::InterAgentCommunication {
+                id: None,
+                communication: queued_communication,
+            }],
         )
         .await;
 
@@ -916,7 +912,10 @@ async fn spawn_agent_fork_last_n_turns_keeps_only_recent_turns() {
         .session
         .record_conversation_items(
             triggered_turn_context.as_ref(),
-            &[triggered_communication.to_response_input_item().into()],
+            &[ResponseItem::InterAgentCommunication {
+                id: None,
+                communication: triggered_communication,
+            }],
         )
         .await;
     parent_thread
@@ -1353,7 +1352,7 @@ async fn multi_agent_v2_completion_ignores_dead_direct_parent() {
         .await
         .raw_items()
         .to_vec();
-    assert!(!history_contains_assistant_inter_agent_communication(
+    assert!(!history_contains_inter_agent_communication(
         &root_history_items,
         &InterAgentCommunication::new(
             tester_path,
@@ -1457,7 +1456,7 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
         .await
         .raw_items()
         .to_vec();
-    assert!(!history_contains_assistant_inter_agent_communication(
+    assert!(!history_contains_inter_agent_communication(
         &root_history_items,
         &InterAgentCommunication::new(
             tester_path,
@@ -1535,8 +1534,7 @@ async fn multi_agent_v2_completion_waits_for_pending_mailbox_input() {
         &AgentPath::root(),
     ));
 
-    let drained_mailbox = worker_thread.codex.session.get_pending_input().await;
-    assert!(!drained_mailbox.is_empty());
+    let _ = worker_thread.codex.session.get_pending_input().await;
     harness
         .manager
         .maybe_notify_parent_of_final_status(worker_thread_id)

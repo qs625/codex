@@ -87,7 +87,6 @@ export type { DynamicToolCallResponse } from "./DynamicToolCallResponse";
 export type { DynamicToolCallStatus } from "./DynamicToolCallStatus";
 export type { DynamicToolSpec } from "./DynamicToolSpec";
 export type { ErrorNotification } from "./ErrorNotification";
-export type { EventCommandEventKind } from "./EventCommandEventKind";
 export type { ExecPolicyAmendment } from "./ExecPolicyAmendment";
 export type { ExperimentalFeature } from "./ExperimentalFeature";
 export type { ExperimentalFeatureEnablementSetParams } from "./ExperimentalFeatureEnablementSetParams";
@@ -367,6 +366,7 @@ export type { ThreadContextUsageCategoryBreakdown } from "./ThreadContextUsageCa
 export type { ThreadContextUsageLoadedSkills } from "./ThreadContextUsageLoadedSkills";
 export type { ThreadContextUsageSkill } from "./ThreadContextUsageSkill";
 export type { ThreadContextUsageUpdatedNotification } from "./ThreadContextUsageUpdatedNotification";
+export type { ThreadEventCommandEventKind } from "./ThreadEventCommandEventKind";
 export type { ThreadForkParams } from "./ThreadForkParams";
 export type { ThreadForkResponse } from "./ThreadForkResponse";
 export type { ThreadGoal } from "./ThreadGoal";

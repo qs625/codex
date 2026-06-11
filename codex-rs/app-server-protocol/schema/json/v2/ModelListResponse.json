@@ -30,6 +30,13 @@
           },
           "type": "array"
         },
+        "autoCompactTokenLimit": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "availabilityNux": {
           "anyOf": [
             {
@@ -38,6 +45,13 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "contextWindow": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
           ]
         },
         "defaultReasoningEffort": {
@@ -68,8 +82,21 @@
         "isDefault": {
           "type": "boolean"
         },
+        "maxContextWindow": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "model": {
           "type": "string"
+        },
+        "modelProvider": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "serviceTiers": {
           "default": [],

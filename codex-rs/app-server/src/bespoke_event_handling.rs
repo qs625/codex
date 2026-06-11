@@ -2194,6 +2194,7 @@ mod tests {
     use codex_app_server_protocol::JSONRPCErrorError;
     use codex_app_server_protocol::TurnPlanStepStatus;
     use codex_login::CodexAuth;
+    use codex_protocol::AgentPath;
     use codex_protocol::items::HookPromptFragment;
     use codex_protocol::items::build_hook_prompt_message;
     use codex_protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
@@ -2211,6 +2212,8 @@ mod tests {
     use codex_protocol::protocol::EventMsg;
     use codex_protocol::protocol::GuardianAssessmentEvent;
     use codex_protocol::protocol::GuardianAssessmentStatus;
+    use codex_protocol::protocol::InterAgentCommunication;
+    use codex_protocol::protocol::InterAgentOperation;
     use codex_protocol::protocol::RateLimitSnapshot;
     use codex_protocol::protocol::RateLimitWindow;
     use codex_protocol::protocol::RolloutItem;
@@ -2286,6 +2289,17 @@ mod tests {
             title: "File watch triggered".to_string(),
             text: "build.log changed".to_string(),
         }
+    }
+
+    fn test_inter_agent_communication() -> InterAgentCommunication {
+        InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "done".to_string(),
+            InterAgentOperation::SendMessage,
+        )
+        .with_trigger_turn(false)
     }
 
     struct RawResponseItemHandlerTestContext {
@@ -2445,6 +2459,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn raw_response_item_completed_suppresses_inter_agent_items() {
+        let conversation_id = ThreadId::new();
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let outgoing = test_outgoing(tx);
+
+        maybe_emit_raw_response_item_completed(
+            conversation_id,
+            "turn-1",
+            codex_protocol::models::ResponseItem::InterAgentCommunication {
+                id: Some("typed-collab".to_string()),
+                communication: test_inter_agent_communication(),
+            },
+            &outgoing,
+        )
+        .await;
+
+        assert!(
+            rx.try_recv().is_err(),
+            "typed inter-agent communication should not emit a raw response item"
+        );
+    }
+
+    #[tokio::test]
     async fn raw_response_item_completed_keeps_event_driven_tool_marker_messages() -> Result<()> {
         let conversation_id = ThreadId::new();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
@@ -2539,6 +2576,36 @@ mod tests {
                 },
                 other => bail!("unexpected message: {other:?}"),
             }
+        }
+
+        let messages = context
+            .apply_raw_response_item(
+                "turn-inter-agent",
+                codex_protocol::models::ResponseItem::InterAgentCommunication {
+                    id: Some("typed-collab".to_string()),
+                    communication: test_inter_agent_communication(),
+                },
+            )
+            .await;
+        assert_eq!(messages.len(), 1);
+        match &messages[0] {
+            OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(payload)) => {
+                assert_eq!(
+                    payload.item,
+                    ThreadItem::CollabAgentMessage {
+                        id: "typed-collab".to_string(),
+                        operation: codex_app_server_protocol::CollabAgentOperation::SendMessage,
+                        sender_thread_id: None,
+                        sender_path: "/root/worker".to_string(),
+                        recipient_thread_id: None,
+                        recipient_path: "/root".to_string(),
+                        other_recipient_paths: Vec::new(),
+                        content: "done".to_string(),
+                        trigger_turn: false,
+                    }
+                );
+            }
+            other => bail!("unexpected message: {other:?}"),
         }
 
         Ok(())

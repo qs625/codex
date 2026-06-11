@@ -1,7 +1,6 @@
 use crate::outgoing_message::ThreadScopedOutgoingMessageSender;
 use codex_app_server_protocol::ItemCompletedNotification;
 use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::project_structured_response_item;
 use codex_protocol::ThreadId;
 
@@ -11,12 +10,9 @@ pub(crate) async fn maybe_emit_event_driven_tool_trigger_item_completed(
     item: &codex_protocol::models::ResponseItem,
     outgoing: &ThreadScopedOutgoingMessageSender,
 ) {
-    let Some(projected) = project_structured_response_item(item, || match item {
-        codex_protocol::models::ResponseItem::EventDrivenTool { trigger, .. } => {
-            event_driven_tool_trigger_item_id(turn_id, trigger)
-        }
-        _ => String::new(),
-    }) else {
+    let Some(projected) =
+        project_structured_response_item(item, || event_driven_tool_trigger_item_id(turn_id, item))
+    else {
         return;
     };
 
@@ -33,14 +29,13 @@ pub(crate) async fn maybe_emit_event_driven_tool_trigger_item_completed(
 
 fn event_driven_tool_trigger_item_id(
     turn_id: &str,
-    trigger: &codex_protocol::event_driven_tool::EventDrivenToolTrigger,
+    item: &codex_protocol::models::ResponseItem,
 ) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    std::hash::Hash::hash(&trigger.tool, &mut hasher);
-    std::hash::Hash::hash(&trigger.title, &mut hasher);
-    std::hash::Hash::hash(&trigger.text, &mut hasher);
+    let item_json = serde_json::to_string(item).unwrap_or_else(|_| format!("{item:?}"));
+    std::hash::Hash::hash(&item_json, &mut hasher);
     let hash = std::hash::Hasher::finish(&hasher);
-    format!("{turn_id}:event-driven-tool:{hash:016x}")
+    format!("{turn_id}:structured-response-item:{hash:016x}")
 }
 
 fn now_unix_timestamp_ms() -> i64 {
@@ -62,6 +57,7 @@ mod tests {
     use anyhow::anyhow;
     use anyhow::bail;
     use codex_app_server_protocol::ServerNotification;
+    use codex_app_server_protocol::ThreadItem;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
     use tokio::sync::mpsc;

@@ -5,6 +5,80 @@
       "description": "A path that is guaranteed to be absolute and normalized (though it is not guaranteed to be canonicalized or exist on the filesystem).\n\nIMPORTANT: When deserializing an `AbsolutePathBuf`, a base path must be set using [AbsolutePathBufGuard::new]. If no base path is set, the deserialization will fail unless the path being deserialized is already absolute.",
       "type": "string"
     },
+    "AgentPath": {
+      "type": "string"
+    },
+    "AgentStatus": {
+      "description": "Agent lifecycle status, derived from emitted events.",
+      "oneOf": [
+        {
+          "description": "Agent is waiting for initialization.",
+          "enum": [
+            "pending_init"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Agent is currently running.",
+          "enum": [
+            "running"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Agent's current turn was interrupted and it may receive more input.",
+          "enum": [
+            "interrupted"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Agent is done. Contains the final assistant message.",
+          "properties": {
+            "completed": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "completed"
+          ],
+          "title": "CompletedAgentStatus",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Agent encountered an error.",
+          "properties": {
+            "errored": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "errored"
+          ],
+          "title": "ErroredAgentStatus",
+          "type": "object"
+        },
+        {
+          "description": "Agent has been shutdown.",
+          "enum": [
+            "shutdown"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Agent is not found.",
+          "enum": [
+            "not_found"
+          ],
+          "type": "string"
+        }
+      ]
+    },
     "ByteRange": {
       "properties": {
         "end": {
@@ -478,14 +552,106 @@
       ],
       "type": "string"
     },
+    "EventCommandEvent": {
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "createdAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exitCode": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/definitions/EventCommandEventKind"
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "line": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sequence": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "signal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subscriptionId": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "command",
+        "createdAt",
+        "kind",
+        "subscriptionId",
+        "truncated"
+      ],
+      "type": "object"
+    },
     "EventCommandEventKind": {
       "enum": [
         "output",
         "exited",
         "cancelled",
-        "failedToStart"
+        "failed_to_start"
       ],
       "type": "string"
+    },
+    "EventDrivenToolTrigger": {
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "title",
+        "tool"
+      ],
+      "type": "object"
     },
     "FileUpdateChange": {
       "properties": {
@@ -612,6 +778,93 @@
         "text"
       ],
       "type": "object"
+    },
+    "InterAgentCommunication": {
+      "properties": {
+        "author": {
+          "$ref": "#/definitions/AgentPath"
+        },
+        "content": {
+          "type": "string"
+        },
+        "operation": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/InterAgentOperation"
+            }
+          ],
+          "default": "unknown"
+        },
+        "other_recipients": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/AgentPath"
+          },
+          "type": "array"
+        },
+        "recipient": {
+          "$ref": "#/definitions/AgentPath"
+        },
+        "recipient_thread_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sender_thread_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AgentStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "trigger_turn": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "author",
+        "content",
+        "operation",
+        "other_recipients",
+        "recipient",
+        "recipient_thread_id",
+        "sender_thread_id",
+        "status",
+        "trigger_turn"
+      ],
+      "type": "object"
+    },
+    "InterAgentOperation": {
+      "enum": [
+        "unknown",
+        "spawnAgent",
+        "sendMessage",
+        "followupTask",
+        "childCompletion"
+      ],
+      "type": "string"
     },
     "LocalShellAction": {
       "oneOf": [
@@ -933,6 +1186,87 @@
     },
     "ResponseItem": {
       "oneOf": [
+        {
+          "properties": {
+            "event": {
+              "$ref": "#/definitions/EventCommandEvent"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "writeOnly": true
+            },
+            "type": {
+              "enum": [
+                "event_command_event"
+              ],
+              "title": "EventCommandEventResponseItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "type"
+          ],
+          "title": "EventCommandEventResponseItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "writeOnly": true
+            },
+            "trigger": {
+              "$ref": "#/definitions/EventDrivenToolTrigger"
+            },
+            "type": {
+              "enum": [
+                "event_driven_tool"
+              ],
+              "title": "EventDrivenToolResponseItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "trigger",
+            "type"
+          ],
+          "title": "EventDrivenToolResponseItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "communication": {
+              "$ref": "#/definitions/InterAgentCommunication"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "writeOnly": true
+            },
+            "type": {
+              "enum": [
+                "inter_agent_communication"
+              ],
+              "title": "InterAgentCommunicationResponseItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "communication",
+            "type"
+          ],
+          "title": "InterAgentCommunicationResponseItem",
+          "type": "object"
+        },
         {
           "properties": {
             "content": {
@@ -1524,6 +1858,18 @@
       ],
       "type": "object"
     },
+    "ThreadEventCommandEventKind": {
+      "enum": [
+        "output",
+        "exited",
+        "cancelled",
+        "failedToStart"
+      ],
+      "type": "string"
+    },
+    "ThreadId": {
+      "type": "string"
+    },
     "ThreadItem": {
       "oneOf": [
         {
@@ -2096,7 +2442,7 @@
               "type": "string"
             },
             "kind": {
-              "$ref": "#/definitions/EventCommandEventKind"
+              "$ref": "#/definitions/ThreadEventCommandEventKind"
             },
             "label": {
               "type": [

@@ -13,7 +13,6 @@ use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ImageDetail;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::InputModality;
-use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::TokenUsageInfo;
 use codex_protocol::protocol::TurnContextItem;
@@ -718,9 +717,12 @@ pub(crate) fn is_codex_generated_item(item: &ResponseItem) -> bool {
 
 pub(crate) fn is_user_turn_boundary(item: &ResponseItem) -> bool {
     match item {
-        ResponseItem::EventCommandEvent { .. }
-        | ResponseItem::EventDrivenTool { .. }
-        | ResponseItem::InterAgentCommunication { .. } => return true,
+        ResponseItem::EventCommandEvent { .. } | ResponseItem::EventDrivenTool { .. } => {
+            return true;
+        }
+        ResponseItem::InterAgentCommunication { communication, .. } => {
+            return communication.trigger_turn;
+        }
         _ => {}
     }
 
@@ -728,12 +730,7 @@ pub(crate) fn is_user_turn_boundary(item: &ResponseItem) -> bool {
         return false;
     };
 
-    (role == "user" && !is_contextual_user_message_content(content))
-        || (role == "assistant" && is_inter_agent_instruction_content(content))
-}
-
-fn is_inter_agent_instruction_content(content: &[ContentItem]) -> bool {
-    InterAgentCommunication::is_message_content(content)
+    role == "user" && !is_contextual_user_message_content(content)
 }
 
 fn user_message_positions(items: &[ResponseItem]) -> Vec<usize> {

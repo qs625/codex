@@ -8,6 +8,7 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::CompactedItem;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::InterAgentCommunication;
+use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::ResumedHistory;
 use pretty_assertions::assert_eq;
 use std::path::PathBuf;
@@ -34,21 +35,17 @@ fn assistant_message(text: &str) -> ResponseItem {
     }
 }
 
-fn inter_agent_assistant_message(text: &str) -> ResponseItem {
+fn inter_agent_response_item(text: &str) -> ResponseItem {
     let communication = InterAgentCommunication::new(
         AgentPath::root(),
         AgentPath::root().join("worker").unwrap(),
         Vec::new(),
         text.to_string(),
-        codex_protocol::protocol::InterAgentOperation::Unknown,
+        InterAgentOperation::SendMessage,
     );
-    ResponseItem::Message {
+    ResponseItem::InterAgentCommunication {
         id: None,
-        role: "assistant".to_string(),
-        content: vec![ContentItem::OutputText {
-            text: serde_json::to_string(&communication).unwrap(),
-        }],
-        phase: None,
+        communication,
     }
 }
 
@@ -492,7 +489,7 @@ async fn reconstruct_history_rollback_skips_non_user_turns_for_history_and_metad
 }
 
 #[tokio::test]
-async fn reconstruct_history_rollback_counts_inter_agent_assistant_turns() {
+async fn reconstruct_history_rollback_counts_inter_agent_response_item_turns() {
     let (session, turn_context) = make_session_and_context().await;
     let first_context_item = turn_context.to_turn_context_item();
     let first_turn_id = first_context_item
@@ -504,7 +501,7 @@ async fn reconstruct_history_rollback_counts_inter_agent_assistant_turns() {
         turn_id: Some(assistant_turn_id.clone()),
         ..first_context_item.clone()
     };
-    let assistant_instruction = inter_agent_assistant_message("continue");
+    let assistant_instruction = inter_agent_response_item("continue");
     let assistant_reply = assistant_message("worker reply");
 
     let rollout_items = vec![

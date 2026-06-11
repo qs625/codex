@@ -19,6 +19,7 @@ use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::default_input_modalities;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::InterAgentCommunication;
+use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::TurnContextItem;
 use codex_utils_output_truncation::TruncationPolicy;
@@ -45,13 +46,28 @@ fn assistant_msg(text: &str) -> ResponseItem {
     }
 }
 
-fn inter_agent_assistant_msg(text: &str) -> ResponseItem {
+fn inter_agent_response_item(text: &str, trigger_turn: bool) -> ResponseItem {
     let communication = InterAgentCommunication::new(
         AgentPath::root(),
         AgentPath::root().join("worker").unwrap(),
         Vec::new(),
         text.to_string(),
-        codex_protocol::protocol::InterAgentOperation::Unknown,
+        InterAgentOperation::Unknown,
+    )
+    .with_trigger_turn(trigger_turn);
+    ResponseItem::InterAgentCommunication {
+        id: None,
+        communication,
+    }
+}
+
+fn legacy_inter_agent_assistant_json_msg(text: &str) -> ResponseItem {
+    let communication = InterAgentCommunication::new(
+        AgentPath::root(),
+        AgentPath::root().join("worker").unwrap(),
+        Vec::new(),
+        text.to_string(),
+        InterAgentOperation::Unknown,
     );
     ResponseItem::Message {
         id: None,
@@ -297,15 +313,22 @@ fn items_after_last_model_generated_tokens_are_zero_without_model_generated_item
 }
 
 #[test]
-fn inter_agent_assistant_messages_are_turn_boundaries() {
-    let item = inter_agent_assistant_msg("continue");
+fn typed_inter_agent_items_are_turn_boundaries() {
+    let item = inter_agent_response_item("continue", true);
 
     assert!(is_user_turn_boundary(&item));
 }
 
 #[test]
-fn for_prompt_preserves_inter_agent_assistant_messages() {
-    let item = inter_agent_assistant_msg("continue");
+fn queued_inter_agent_items_are_not_turn_boundaries() {
+    let item = inter_agent_response_item("continue", false);
+
+    assert!(!is_user_turn_boundary(&item));
+}
+
+#[test]
+fn for_prompt_preserves_inter_agent_response_items() {
+    let item = inter_agent_response_item("continue", true);
     let history = create_history_with_items(vec![item.clone()]);
 
     assert_eq!(history.raw_items(), std::slice::from_ref(&item));
@@ -313,10 +336,10 @@ fn for_prompt_preserves_inter_agent_assistant_messages() {
 }
 
 #[test]
-fn drop_last_n_user_turns_treats_inter_agent_assistant_messages_as_instruction_turns() {
+fn drop_last_n_user_turns_treats_inter_agent_items_as_instruction_turns() {
     let first_turn = user_input_text_msg("first");
     let first_reply = assistant_msg("done");
-    let inter_agent_turn = inter_agent_assistant_msg("continue");
+    let inter_agent_turn = inter_agent_response_item("continue", true);
     let inter_agent_reply = assistant_msg("worker reply");
     let mut history = create_history_with_items(vec![
         first_turn.clone(),
@@ -332,9 +355,7 @@ fn drop_last_n_user_turns_treats_inter_agent_assistant_messages_as_instruction_t
 
 #[test]
 fn legacy_inter_agent_assistant_messages_are_not_turn_boundaries() {
-    let item = assistant_msg(
-        "author: /root\nrecipient: /root/worker\nother_recipients: []\nContent: continue",
-    );
+    let item = legacy_inter_agent_assistant_json_msg("continue");
 
     assert!(!is_user_turn_boundary(&item));
 }
