@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { ArchivedHistoryRow, CompactRow, ToolRow } from "./Conversation";
+import {
+  ArchivedHistoryRow,
+  CompactRow,
+  MessageRow,
+  ToolRow,
+} from "./Conversation";
 import type { ConversationEntry } from "../types";
 
 const entries: ConversationEntry[] = [
@@ -54,6 +59,37 @@ test("tool rows show compact lists first and only reveal the selected detail bod
   assert.doesNotMatch(detailMarkup, /first details/);
   assert.match(detailMarkup, /second summary[\s\S]*second details/);
   assert.match(detailMarkup, /tool-card-item-head selected/);
+});
+
+test("message rows expose role classes for chat alignment", () => {
+  const userEntry: ConversationEntry = {
+    id: "user-1",
+    kind: "message",
+    author: "You",
+    role: "user",
+    text: "please update the layout",
+    timestamp: "09:40",
+    attachments: [],
+  };
+  const agentEntry: ConversationEntry = {
+    id: "agent-1",
+    kind: "message",
+    author: "Codex",
+    role: "agent",
+    text: "layout updated",
+    timestamp: "09:41",
+    attachments: [],
+  };
+
+  const userMarkup = renderToStaticMarkup(<MessageRow entries={[userEntry]} />);
+  const agentMarkup = renderToStaticMarkup(
+    <MessageRow entries={[agentEntry]} />,
+  );
+
+  assert.match(userMarkup, /class="message-row message-row-user"/);
+  assert.match(userMarkup, /class="message-avatar user"/);
+  assert.match(agentMarkup, /class="message-row message-row-agent"/);
+  assert.match(agentMarkup, /class="message-avatar agent"/);
 });
 
 test("single tool rows render a single inline item and auto-expand details with the card", () => {

@@ -821,6 +821,29 @@ svg {
   min-width: 0;
 }
 
+.message-row-user {
+  flex-direction: row-reverse;
+}
+
+.message-row-user .message-main {
+  flex: 0 1 70%;
+}
+
+.message-row-user .message-head,
+.message-row-user .message-stack {
+  align-items: flex-end;
+}
+
+.message-row-user .message-head {
+  justify-content: flex-end;
+}
+
+.message-row-user .message-bubble {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  background: rgba(250, 250, 249, 0.88);
+}
+
 .message-head {
   display: flex;
   align-items: baseline;
@@ -853,6 +876,12 @@ svg {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+@media (max-width: 720px) {
+  .message-row-user .message-main {
+    flex-basis: min(90%, calc(100% - 56px));
+  }
 }
 
 .todo-card p {

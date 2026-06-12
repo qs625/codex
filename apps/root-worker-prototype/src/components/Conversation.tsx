@@ -592,7 +592,7 @@ export const MessageRow = memo(function MessageRow({
   const firstEntry = entries[0];
 
   return (
-    <article className="message-row">
+    <article className={`message-row message-row-${firstEntry.role}`}>
       <div className={`message-avatar ${firstEntry.role}`}>
         {firstEntry.role === "user" ? <UserIcon /> : <RobotIcon />}
       </div>

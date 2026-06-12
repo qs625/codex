@@ -158,6 +158,122 @@ test("keeps consecutive ordinary tools grouped in one visible cell", () => {
   );
 });
 
+test("groups consecutive agent messages without crossing semantic boundaries", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "agentMessage",
+        id: "agent-1",
+        text: "first agent message",
+        phase: null,
+        memoryCitation: null,
+      },
+      {
+        type: "agentMessage",
+        id: "agent-2",
+        text: "second agent message",
+        phase: null,
+        memoryCitation: null,
+      },
+      {
+        type: "userMessage",
+        id: "user-1",
+        content: [{ type: "text", text: "user boundary" }],
+      },
+      {
+        type: "agentMessage",
+        id: "agent-3",
+        text: "agent after user",
+        phase: null,
+        memoryCitation: null,
+      },
+      {
+        type: "commandExecution",
+        id: "cmd-1",
+        command: "pwd",
+        cwd: "/tmp/project",
+        status: "completed",
+        aggregatedOutput: null,
+        exitCode: 0,
+        durationMs: 10,
+      },
+      {
+        type: "agentMessage",
+        id: "agent-4",
+        text: "agent after tool",
+        phase: null,
+        memoryCitation: null,
+      },
+      {
+        type: "collabAgentMessage",
+        id: "child-1",
+        operation: "childCompletion",
+        senderThreadId: "thread-2",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        otherRecipientPaths: [],
+        content: "child done",
+        triggerTurn: true,
+      },
+      {
+        type: "agentMessage",
+        id: "agent-5",
+        text: "agent after child completion",
+        phase: null,
+        memoryCitation: null,
+      },
+    ]),
+  );
+
+  const cells = buildConversationCells(entries);
+
+  assert.deepEqual(
+    cells.map((cell) => ({
+      id: cell.id,
+      kind: cell.kind,
+      entries: cell.entries.map((entry) => entry.id),
+    })),
+    [
+      {
+        id: "agent-1",
+        kind: "message",
+        entries: ["agent-1", "agent-2"],
+      },
+      {
+        id: "user-1",
+        kind: "message",
+        entries: ["user-1"],
+      },
+      {
+        id: "agent-3",
+        kind: "message",
+        entries: ["agent-3"],
+      },
+      {
+        id: "cmd-1",
+        kind: "tool",
+        entries: ["cmd-1"],
+      },
+      {
+        id: "agent-4",
+        kind: "message",
+        entries: ["agent-4"],
+      },
+      {
+        id: "child-1",
+        kind: "tool",
+        entries: ["child-1"],
+      },
+      {
+        id: "agent-5",
+        kind: "message",
+        entries: ["agent-5"],
+      },
+    ],
+  );
+});
+
 test("keeps ordinary multi-agent tool entries grouped in one visible cell", () => {
   const entries = buildConversationEntries(
     makeThread([
