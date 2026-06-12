@@ -49,6 +49,7 @@ pub(super) fn redact_thread_resume_payloads(thread: &mut Thread) {
             | ThreadItem::CollabAgentMessage { .. }
             | ThreadItem::CollabAgentToolCall { .. }
             | ThreadItem::CollabAgentStatusUpdate { .. }
+            | ThreadItem::WorkflowRunProgress { .. }
             | ThreadItem::WebSearch { .. }
             | ThreadItem::ImageView { .. }
             | ThreadItem::EnteredReviewMode { .. }

@@ -195,6 +195,7 @@ impl ChatWidget {
                 agents_states,
             }),
             ThreadItem::CollabAgentStatusUpdate { .. } => {}
+            ThreadItem::WorkflowRunProgress { .. } => {}
             ThreadItem::EventDrivenToolCall { .. } => {}
             ThreadItem::EventDrivenTool { .. } => {}
             ThreadItem::EventCommandCall { .. } => {}

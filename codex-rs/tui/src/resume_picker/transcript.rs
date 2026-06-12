@@ -275,6 +275,14 @@ fn fallback_transcript_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
                 .dim()
                 .into(),
         ],
+        ThreadItem::WorkflowRunProgress { event, .. } => vec![
+            format!(
+                "workflow: {} · {} · {:?}",
+                event.workflow_id, event.runner_status, event.kind
+            )
+            .dim()
+            .into(),
+        ],
         ThreadItem::WebSearch { query, .. } => {
             vec![vec!["web search: ".dim(), query.clone().into()].into()]
         }
