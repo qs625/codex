@@ -4,6 +4,7 @@ use crate::protocol::item_builders::build_file_change_approval_request_item;
 use crate::protocol::item_builders::build_file_change_begin_item;
 use crate::protocol::item_builders::build_file_change_end_item;
 use crate::protocol::item_builders::build_item_from_guardian_event;
+use crate::protocol::response_item_projection::is_legacy_structured_assistant_message_text;
 use crate::protocol::response_item_projection::project_structured_response_item;
 use crate::protocol::response_item_projection::project_tool_call_completion;
 use crate::protocol::response_item_projection::project_tool_call_start;
@@ -244,6 +245,7 @@ impl ThreadHistoryBuilder {
             EventMsg::ExitedReviewMode(payload) => self.handle_exited_review_mode(payload),
             EventMsg::ItemStarted(payload) => self.handle_item_started(payload),
             EventMsg::ItemCompleted(payload) => self.handle_item_completed(payload),
+            EventMsg::RawResponseItem(payload) => self.handle_response_item(&payload.item),
             EventMsg::HookStarted(_) | EventMsg::HookCompleted(_) => {}
             EventMsg::Error(payload) => self.handle_error(payload),
             EventMsg::TokenCount(_) => {}
@@ -284,7 +286,13 @@ impl ThreadHistoryBuilder {
                     let Some(text) = single_text_message_content(content) else {
                         return;
                     };
+                    if is_legacy_structured_assistant_message_text(text) {
+                        return;
+                    }
                     let id = id.clone().unwrap_or_else(|| self.next_item_id());
+                    if self.consume_duplicate_agent_message_response(text, phase.clone(), None) {
+                        return;
+                    }
                     if self.consume_duplicate_legacy_agent_message_response(
                         &id,
                         text,
@@ -452,6 +460,9 @@ impl ThreadHistoryBuilder {
         memory_citation: Option<crate::protocol::v2::MemoryCitation>,
     ) {
         if text.is_empty() {
+            return;
+        }
+        if is_legacy_structured_assistant_message_text(&text) {
             return;
         }
 
@@ -642,6 +653,21 @@ impl ThreadHistoryBuilder {
                     ThreadItem::from(payload.item.clone()),
                 );
             }
+            codex_protocol::items::TurnItem::AgentMessage(_) => {
+                let item = ThreadItem::from(payload.item.clone());
+                if let ThreadItem::AgentMessage {
+                    id, text, phase, ..
+                } = &item
+                {
+                    self.pending_agent_message_responses
+                        .push(PendingAgentMessageResponse {
+                            id: id.clone(),
+                            text: text.clone(),
+                            phase: phase.clone(),
+                        });
+                }
+                self.upsert_item_in_turn_id(&payload.turn_id, item);
+            }
             codex_protocol::items::TurnItem::CollabAgentMessage(_) => {
                 self.upsert_item_in_turn_id_or_create(
                     &payload.turn_id,
@@ -650,7 +676,6 @@ impl ThreadHistoryBuilder {
             }
             codex_protocol::items::TurnItem::UserMessage(_)
             | codex_protocol::items::TurnItem::HookPrompt(_)
-            | codex_protocol::items::TurnItem::AgentMessage(_)
             | codex_protocol::items::TurnItem::Reasoning(_)
             | codex_protocol::items::TurnItem::WebSearch(_)
             | codex_protocol::items::TurnItem::ImageView(_)
@@ -1864,6 +1889,8 @@ mod tests {
     use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
     use codex_protocol::event_command::EventCommandEvent;
     use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
+    use codex_protocol::items::AgentMessageContent as CoreAgentMessageContent;
+    use codex_protocol::items::AgentMessageItem as CoreAgentMessageItem;
     use codex_protocol::items::CollabAgentMessageItem as CoreCollabAgentMessageItem;
     use codex_protocol::items::EventCommandEventItem as CoreEventCommandEventItem;
     use codex_protocol::items::EventDrivenToolItem as CoreEventDrivenToolItem;
@@ -2040,7 +2067,7 @@ mod tests {
     }
 
     #[test]
-    fn live_inter_agent_json_message_remains_agent_message() {
+    fn live_inter_agent_json_message_is_not_displayed_as_agent_message() {
         let communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
             AgentPath::root(),
@@ -2062,20 +2089,11 @@ mod tests {
         }
         let turns = builder.finish();
 
-        assert_eq!(turns.len(), 1);
-        assert_eq!(
-            turns[0].items,
-            vec![ThreadItem::AgentMessage {
-                id: "item-1".into(),
-                text,
-                phase: None,
-                memory_citation: None,
-            }]
-        );
+        assert_eq!(turns, Vec::new());
     }
 
     #[test]
-    fn live_child_completion_json_message_remains_agent_message() {
+    fn live_child_completion_json_message_is_not_displayed_as_agent_message() {
         let communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
             AgentPath::root(),
@@ -2099,20 +2117,11 @@ mod tests {
         }
         let turns = builder.finish();
 
-        assert_eq!(turns.len(), 1);
-        assert_eq!(
-            turns[0].items,
-            vec![ThreadItem::AgentMessage {
-                id: "item-1".into(),
-                text,
-                phase: None,
-                memory_citation: None,
-            }]
-        );
+        assert_eq!(turns, Vec::new());
     }
 
     #[test]
-    fn keeps_live_event_driven_tool_marker_as_agent_message() {
+    fn live_event_driven_tool_marker_is_not_displayed_as_agent_message() {
         let events = [EventMsg::AgentMessage(AgentMessageEvent {
             message: "<event_driven_tool>{\"tool\":\"process_exit_subscribe\",\"title\":\"Process exited\",\"text\":\"[Process exit subscription] Session 42 exited with code 0\"}</event_driven_tool>".into(),
             phase: None,
@@ -2125,16 +2134,7 @@ mod tests {
         }
         let turns = builder.finish();
 
-        assert_eq!(turns.len(), 1);
-        assert_eq!(
-            turns[0].items,
-            vec![ThreadItem::AgentMessage {
-                id: "item-1".into(),
-                text: "<event_driven_tool>{\"tool\":\"process_exit_subscribe\",\"title\":\"Process exited\",\"text\":\"[Process exit subscription] Session 42 exited with code 0\"}</event_driven_tool>".into(),
-                phase: None,
-                memory_citation: None,
-            }]
-        );
+        assert_eq!(turns, Vec::new());
     }
 
     #[test]
@@ -2174,6 +2174,100 @@ mod tests {
                 tool: "process_exit_subscribe".into(),
                 title: "Process exited".into(),
                 text: "[Process exit subscription] Session 42 exited with code 0".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn maps_typed_agent_message_completed_to_agent_message() {
+        let events = [
+            EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            }),
+            EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "turn-1".into(),
+                item: CoreTurnItem::AgentMessage(CoreAgentMessageItem {
+                    id: "agent-1".into(),
+                    content: vec![CoreAgentMessageContent::Text {
+                        text: "final answer".into(),
+                    }],
+                    phase: Some(CoreMessagePhase::FinalAnswer),
+                    memory_citation: None,
+                }),
+                completed_at_ms: 123,
+            }),
+        ];
+
+        let mut builder = ThreadHistoryBuilder::new();
+        for event in &events {
+            builder.handle_event(event);
+        }
+        let turns = builder.finish();
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::AgentMessage {
+                id: "agent-1".into(),
+                text: "final answer".into(),
+                phase: Some(CoreMessagePhase::FinalAnswer),
+                memory_citation: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn dedupes_typed_agent_message_completed_before_raw_response_item() {
+        let events = [
+            EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            }),
+            EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "turn-1".into(),
+                item: CoreTurnItem::AgentMessage(CoreAgentMessageItem {
+                    id: "msg-1".into(),
+                    content: vec![CoreAgentMessageContent::Text {
+                        text: "final answer".into(),
+                    }],
+                    phase: Some(CoreMessagePhase::FinalAnswer),
+                    memory_citation: None,
+                }),
+                completed_at_ms: 123,
+            }),
+            EventMsg::RawResponseItem(codex_protocol::protocol::RawResponseItemEvent {
+                item: ResponseItem::Message {
+                    id: Some("msg-1".into()),
+                    role: "assistant".into(),
+                    content: vec![ContentItem::OutputText {
+                        text: "final answer".into(),
+                    }],
+                    phase: Some(CoreMessagePhase::FinalAnswer),
+                },
+            }),
+        ];
+
+        let mut builder = ThreadHistoryBuilder::new();
+        for event in &events {
+            builder.handle_event(event);
+        }
+        let turns = builder.finish();
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::AgentMessage {
+                id: "msg-1".into(),
+                text: "final answer".into(),
+                phase: Some(CoreMessagePhase::FinalAnswer),
+                memory_citation: None,
             }]
         );
     }
@@ -2566,7 +2660,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_malformed_event_driven_tool_marker_as_agent_message() {
+    fn filters_malformed_event_driven_tool_marker_as_agent_message() {
         let message = concat!(
             "<event_driven_tool>",
             r#"{"tool":"process_exit_subscribe","title":"Process exited""#,
@@ -2585,16 +2679,7 @@ mod tests {
         }
         let turns = builder.finish();
 
-        assert_eq!(turns.len(), 1);
-        assert_eq!(
-            turns[0].items,
-            vec![ThreadItem::AgentMessage {
-                id: "item-1".into(),
-                text: message,
-                phase: None,
-                memory_citation: None,
-            }]
-        );
+        assert!(turns.is_empty());
     }
 
     #[test]
@@ -2627,6 +2712,32 @@ mod tests {
                 memory_citation: None,
             }]
         );
+    }
+
+    #[test]
+    fn filters_raw_send_message_envelope_as_agent_message() {
+        for operation in ["sendMessage", "send_message"] {
+            let message = serde_json::json!({
+                "author": "/root/worker",
+                "recipient": "/root",
+                "content": "legacy message",
+                "operation": operation,
+            })
+            .to_string();
+            let events = [EventMsg::AgentMessage(AgentMessageEvent {
+                message,
+                phase: None,
+                memory_citation: None,
+            })];
+
+            let mut builder = ThreadHistoryBuilder::new();
+            for event in &events {
+                builder.handle_event(event);
+            }
+            let turns = builder.finish();
+
+            assert!(turns.is_empty());
+        }
     }
 
     #[test]
@@ -3916,7 +4027,7 @@ mod tests {
     }
 
     #[test]
-    fn assistant_response_messages_remain_agent_messages() {
+    fn legacy_event_driven_tool_response_message_is_not_displayed_as_agent_message() {
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".into(),
@@ -3937,12 +4048,43 @@ mod tests {
         let turns = build_turns_from_rollout_items(&items);
 
         assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
+    }
+
+    #[test]
+    fn raw_assistant_response_item_updates_current_turn_history() {
+        let events = [
+            EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            }),
+            EventMsg::RawResponseItem(codex_protocol::protocol::RawResponseItemEvent {
+                item: ResponseItem::Message {
+                    id: Some("msg-1".into()),
+                    role: "assistant".into(),
+                    content: vec![ContentItem::OutputText {
+                        text: "final answer".into(),
+                    }],
+                    phase: Some(CoreMessagePhase::FinalAnswer),
+                },
+            }),
+        ];
+
+        let mut builder = ThreadHistoryBuilder::new();
+        for event in &events {
+            builder.handle_event(event);
+        }
+        let turns = builder.finish();
+
+        assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
             vec![ThreadItem::AgentMessage {
-                id: "process-exit-1".into(),
-                text: "<event_driven_tool>{\"tool\":\"process_exit_subscribe\",\"title\":\"Process exited\",\"text\":\"Session 42 exited with code 0\"}</event_driven_tool>".into(),
-                phase: None,
+                id: "msg-1".into(),
+                text: "final answer".into(),
+                phase: Some(CoreMessagePhase::FinalAnswer),
                 memory_citation: None,
             }]
         );
@@ -4008,12 +4150,6 @@ mod tests {
         assert_eq!(
             turns[0].items,
             vec![
-                ThreadItem::AgentMessage {
-                    id: "msg-1".into(),
-                    text: serde_json::to_string(&communication).expect("serialize communication"),
-                    phase: None,
-                    memory_citation: None,
-                },
                 ThreadItem::AgentMessage {
                     id: "msg-2".into(),
                     text: unknown_operation_json,
@@ -4292,19 +4428,11 @@ mod tests {
         let turns = build_turns_from_rollout_items(&items);
 
         assert_eq!(turns.len(), 1);
-        assert_eq!(
-            turns[0].items,
-            vec![ThreadItem::AgentMessage {
-                id: "msg-1".into(),
-                text,
-                phase: None,
-                memory_citation: None,
-            }]
-        );
+        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
     }
 
     #[test]
-    fn inter_agent_json_agent_message_remains_plain_message_when_response_item_arrives_later() {
+    fn inter_agent_json_agent_message_does_not_leak_when_response_item_arrives_later() {
         let mut communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
             AgentPath::try_from("/root").expect("agent path"),
@@ -4337,20 +4465,11 @@ mod tests {
         let turns = build_turns_from_rollout_items(&items);
 
         assert_eq!(turns.len(), 1);
-        assert_eq!(
-            turns[0].items,
-            vec![ThreadItem::AgentMessage {
-                id: "msg-1".into(),
-                text,
-                phase: None,
-                memory_citation: None,
-            }]
-        );
+        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
     }
 
     #[test]
-    fn child_completion_json_agent_message_remains_plain_message_when_response_item_arrives_later()
-    {
+    fn child_completion_json_agent_message_does_not_leak_when_response_item_arrives_later() {
         let communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
             AgentPath::try_from("/root").expect("agent path"),
@@ -4383,15 +4502,7 @@ mod tests {
         let turns = build_turns_from_rollout_items(&items);
 
         assert_eq!(turns.len(), 1);
-        assert_eq!(
-            turns[0].items,
-            vec![ThreadItem::AgentMessage {
-                id: "msg-1".into(),
-                text,
-                phase: None,
-                memory_citation: None,
-            }]
-        );
+        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
     }
 
     #[test]

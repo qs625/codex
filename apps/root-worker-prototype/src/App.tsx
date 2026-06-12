@@ -161,6 +161,7 @@ function App() {
   const symbolBackStackRef = useRef<FileLocation[]>([]);
   const symbolForwardStackRef = useRef<FileLocation[]>([]);
   const selectedThreadIdRef = useRef<string | null>(null);
+  const liveThreadIdsRef = useRef<Set<string>>(new Set());
   const runConfigOverrideByThreadIdRef = useRef<
     Map<string, RunConfigSelection>
   >(new Map());
@@ -226,6 +227,7 @@ function App() {
       isLoaded: loadedThreadIdsRef.current.has(selectedThreadId),
       isSubscribed: subscribedThreadIdsRef.current.has(selectedThreadId),
       isLoading: loadingThreadIdsRef.current.has(selectedThreadId),
+      hasLiveCache: liveThreadIdsRef.current.has(selectedThreadId),
     });
     if (action === "readAndSubscribe") {
       void loadThread(selectedThreadId);
@@ -691,8 +693,15 @@ function App() {
     });
   }
 
-  function upsertThreadWithPending(current: Thread[], thread: Thread) {
+  function upsertThreadWithPending(
+    current: Thread[],
+    thread: Thread,
+  ) {
     return upsertThread(current, applyQueuedThreadUpdates(thread));
+  }
+
+  function markThreadLive(threadId: string) {
+    liveThreadIdsRef.current.add(threadId);
   }
 
   function applyQueuedThreadUpdates(thread: Thread) {
@@ -743,6 +752,7 @@ function App() {
     for (const threadId of threadIdSet) {
       loadedThreadIdsRef.current.delete(threadId);
       subscribedThreadIdsRef.current.delete(threadId);
+      liveThreadIdsRef.current.delete(threadId);
       subscribeThreadPromisesRef.current.delete(threadId);
       loadingThreadIdsRef.current.delete(threadId);
       runConfigOverrideByThreadIdRef.current.delete(threadId);
@@ -1351,6 +1361,7 @@ function App() {
           isLoaded: loadedThreadIdsRef.current.has(selectedThreadId),
           isSubscribed: subscribedThreadIdsRef.current.has(selectedThreadId),
           isLoading: loadingThreadIdsRef.current.has(selectedThreadId),
+          hasLiveCache: liveThreadIdsRef.current.has(selectedThreadId),
         });
         if (action === "readAndSubscribe") {
           void loadThread(selectedThreadId);
@@ -1369,6 +1380,7 @@ function App() {
       switch (method) {
         case "thread/started": {
           const thread = (params as { thread: Thread }).thread;
+          markThreadLive(thread.id);
           setThreads((current) => upsertThreadWithPending(current, thread));
           if (isSubagentThread(thread)) {
             void ensureThreadSubscribed(thread.id);
@@ -1468,6 +1480,7 @@ function App() {
         case "turn/started":
         case "turn/completed": {
           const notification = params as { threadId: string; turn: Turn };
+          markThreadLive(notification.threadId);
           if (
             method === "turn/started" &&
             notification.threadId === selectedThreadId
@@ -1498,6 +1511,7 @@ function App() {
             notification.threadId,
             notification.item,
           )) {
+            markThreadLive(threadId);
             updateThreadLocally(threadId, (thread) =>
               updateThreadItem(thread, notification.turnId, notification.item, {
                 startedAtMs: notification.startedAtMs,
@@ -1519,6 +1533,7 @@ function App() {
             itemId: string;
             delta: string;
           };
+          markThreadLive(notification.threadId);
           updateThreadLocally(notification.threadId, (thread) =>
             appendAgentDelta(
               thread,

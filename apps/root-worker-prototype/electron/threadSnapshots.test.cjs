@@ -78,7 +78,7 @@ function makeCollabMessageTurn(overrides = {}) {
       {
         type: "collabAgentMessage",
         id: "item-1",
-        operation: "send_message",
+        operation: "sendMessage",
         senderThreadId: "thread-2",
         senderPath: "/root/worker",
         recipientThreadId: "thread-1",
@@ -274,7 +274,7 @@ test("mergeThreadSnapshots normalizes duplicate live-derived turns in each input
   assert.deepEqual(merged.turns, [readTurn, resumeReadTurn]);
 });
 
-test("mergeThreadSnapshots normalizes raw process exit marker messages in history", () => {
+test("mergeThreadSnapshots filters raw process exit marker messages in history", () => {
   const turn = {
     id: "turn-1",
     items: [
@@ -296,16 +296,40 @@ test("mergeThreadSnapshots normalizes raw process exit marker messages in histor
 
   const merged = mergeThreadSnapshots(null, makeThread({ turns: [turn] }));
 
-  assert.deepEqual(merged.turns[0].items, [
-    {
-      type: "eventDrivenTool",
-      id: "raw-item",
-      tool: "process_exit_subscribe",
-      title: "Process exited",
-      text: "Session 42 exited with code 0",
-    },
-  ]);
+  assert.deepEqual(merged.turns[0].items, []);
 });
+
+for (const operation of ["sendMessage", "send_message"]) {
+  test(`mergeThreadSnapshots filters raw ${operation} assistant envelope`, () => {
+    const turn = {
+      id: "turn-1",
+      items: [
+        {
+          type: "agentMessage",
+          id: `raw-${operation}`,
+          text: JSON.stringify({
+            author: "/root/worker",
+            recipient: "/root",
+            content: "legacy message",
+            operation,
+          }),
+          phase: null,
+          memoryCitation: null,
+        },
+      ],
+      itemsView: "full",
+      status: "completed",
+      error: null,
+      startedAt: 10,
+      completedAt: 12,
+      durationMs: 2000,
+    };
+
+    const merged = mergeThreadSnapshots(null, makeThread({ turns: [turn] }));
+
+    assert.deepEqual(merged.turns[0].items, []);
+  });
+}
 
 test("mergeThreadSnapshots drops restored raw process exit when read has structured event item", () => {
   const restoredTurn = {
@@ -423,6 +447,49 @@ test("mergeThreadSnapshots drops duplicate completed live agent turns already pr
       },
     ],
     itemsView: "full",
+  };
+
+  const merged = mergeThreadSnapshots(
+    makeThread({ turns: [restoredTurn] }),
+    makeThread({ turns: [readTurn] }),
+  );
+
+  assert.deepEqual(merged.turns, [readTurn]);
+});
+
+test("mergeThreadSnapshots drops duplicate completed child completion turns already present in the read snapshot", () => {
+  const restoredTurn = {
+    id: "restored-turn",
+    items: [
+      {
+        type: "collabAgentMessage",
+        id: "restored-child-completion",
+        operation: "childCompletion",
+        senderThreadId: "thread-child",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-root",
+        recipientPath: "/root",
+        otherRecipientPaths: [],
+        content: "done",
+        triggerTurn: true,
+      },
+    ],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+  const readTurn = {
+    ...restoredTurn,
+    id: "read-turn",
+    items: [
+      {
+        ...restoredTurn.items[0],
+        id: "read-child-completion",
+      },
+    ],
   };
 
   const merged = mergeThreadSnapshots(
