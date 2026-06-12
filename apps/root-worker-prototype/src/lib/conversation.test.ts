@@ -216,6 +216,36 @@ test("keeps ordinary multi-agent tool entries grouped in one visible cell", () =
   );
 });
 
+test("keeps typed sendMessage collab messages visible", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "collabAgentMessage",
+        id: "send-1",
+        operation: "sendMessage",
+        senderThreadId: "thread-2",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        otherRecipientPaths: [],
+        content: "same backend message",
+        triggerTurn: true,
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.toolCategory, entry.toolName, entry.text]),
+    [
+      [
+        "multiAgent",
+        "received from /root/worker",
+        "Received message from /root/worker.",
+      ],
+    ],
+  );
+});
+
 test("keeps child completions and subagent notifications as visible cells", () => {
   const entries = buildConversationEntries(
     makeThread([
@@ -573,7 +603,7 @@ test("tolerates non-string multi-agent history fields without crashing", () => {
   );
 });
 
-test("renders child completion envelopes in event-driven tools as multi-agent tools", () => {
+test("does not render child completion envelopes in event-driven tools as multi-agent tools", () => {
   const content =
     '<subagent_notification>\n{"agent_path":"/root/worker","status":{"completed":"done"}}\n</subagent_notification>';
   const entries = buildConversationEntries(
@@ -600,45 +630,30 @@ test("renders child completion envelopes in event-driven tools as multi-agent to
     ]),
   );
 
-  assert.deepEqual(
-    entries.map((entry) => ({
-      kind: entry.kind,
-      role: entry.role,
-      text: entry.text,
-      toolName: entry.toolName,
-      toolDetails: entry.toolDetails,
-      toolCategory: entry.toolCategory,
-    })),
-    [
-      {
-        kind: "tool",
-        role: "system",
-        text: "Received child completion from /root/worker: done",
-        toolName: "/root/worker subagent completion",
-        toolDetails:
-          "Operation\nchildCompletion\n\nFrom\n/root/worker\n\nTo\n/root\n\nMessage\ndone\n\nTrigger Turn\ntrue",
-        toolCategory: "childCompletion",
-      },
-    ],
-  );
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.kind, "tool");
+  assert.equal(entries[0]?.toolCategory, "eventDrivenEvent");
+  assert.notEqual(entries[0]?.toolName, "/root/worker subagent completion");
+  assert.ok(!entries[0]?.text.startsWith("Received child completion"));
 });
 
-test("renders child completion envelopes in agent messages as multi-agent tools", () => {
+test("does not render child completion envelopes in agent messages as multi-agent tools", () => {
+  const text = JSON.stringify({
+    author: "/root/worker",
+    recipient: "/root",
+    other_recipients: [],
+    content: "done",
+    operation: "childCompletion",
+    trigger_turn: true,
+    sender_thread_id: "thread-2",
+    recipient_thread_id: "thread-1",
+  });
   const entries = buildConversationEntries(
     makeThread([
       {
         type: "agentMessage",
         id: "msg-1",
-        text: JSON.stringify({
-          author: "/root/worker",
-          recipient: "/root",
-          other_recipients: [],
-          content: "done",
-          operation: "childCompletion",
-          trigger_turn: true,
-          sender_thread_id: "thread-2",
-          recipient_thread_id: "thread-1",
-        }),
+        text,
         phase: null,
         memoryCitation: null,
       },
@@ -647,13 +662,7 @@ test("renders child completion envelopes in agent messages as multi-agent tools"
 
   assert.deepEqual(
     entries.map((entry) => [entry.kind, entry.text, entry.toolName]),
-    [
-      [
-        "tool",
-        "Received child completion from /root/worker: done",
-        "/root/worker subagent completion",
-      ],
-    ],
+    [["message", text, undefined]],
   );
 });
 
@@ -1090,7 +1099,7 @@ test("places replacement history into the main conversation after archived histo
   );
 });
 
-test("deduplicates compact replacement child completion against live status update", () => {
+test("ignores compact replacement raw child completion when live status update exists", () => {
   const childCompletionEnvelope = JSON.stringify({
     author: "/root/worker",
     recipient: "/root",
@@ -1152,13 +1161,13 @@ test("deduplicates compact replacement child completion against live status upda
     [
       [
         "/root/worker subagent completion",
-        "Received child completion from /root/worker: done",
+        "/root/worker • completed • done",
       ],
     ],
   );
 });
 
-test("preserves later distinct child completion after compact replacement", () => {
+test("does not render compact replacement raw child completion before typed status", () => {
   const childCompletionEnvelope = JSON.stringify({
     author: "/root/worker",
     recipient: "/root",
@@ -1213,10 +1222,6 @@ test("preserves later distinct child completion after compact replacement", () =
       )
       .map((entry) => [entry.toolName, entry.text]),
     [
-      [
-        "/root/worker subagent completion",
-        "Received child completion from /root/worker: first done",
-      ],
       ["/root/worker subagent completion", "/root/worker • completed • second done"],
     ],
   );

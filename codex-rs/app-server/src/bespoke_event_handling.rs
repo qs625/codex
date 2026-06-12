@@ -1030,9 +1030,19 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .send_server_notification(ServerNotification::ItemCompleted(completed))
                 .await;
         }
-        EventMsg::PatchApplyBegin(_)
-        | EventMsg::PatchApplyEnd(_)
-        | EventMsg::RawResponseItem(_) => {
+        EventMsg::RawResponseItem(event) => {
+            // Display items arrive through the semantic lifecycle events above.
+            // Raw response items are still consumed by history rebuild, but using
+            // them for live display here would duplicate completed items.
+            maybe_emit_hook_prompt_item_completed(
+                conversation_id,
+                &event_turn_id,
+                &event.item,
+                &outgoing,
+            )
+            .await;
+        }
+        EventMsg::PatchApplyBegin(_) | EventMsg::PatchApplyEnd(_) => {
             // Core still fans out these deprecated events for legacy clients;
             // v2 clients receive canonical item lifecycle notifications instead.
         }

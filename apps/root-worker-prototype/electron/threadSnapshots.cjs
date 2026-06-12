@@ -77,6 +77,9 @@ function normalizeThreadSnapshot(thread) {
 function normalizeTurnSnapshot(turn) {
   const items = (turn.items ?? []).reduce((normalizedItems, item) => {
     const normalizedItem = normalizeThreadItemSnapshot(item);
+    if (!normalizedItem) {
+      return normalizedItems;
+    }
     const existingIndex = findMatchingThreadItemIndex(
       normalizedItems,
       normalizedItem,
@@ -124,10 +127,12 @@ function mergeTurns(existingTurns, nextTurns) {
 }
 
 function getRetainedUnmatchedTurn(turn, matcher) {
-  const normalizedItems = (turn.items ?? []).map(normalizeThreadItemSnapshot);
-  const normalizedTurn = normalizedItems.every(
-    (item, index) => item === turn.items?.[index],
-  )
+  const normalizedItems = (turn.items ?? [])
+    .map(normalizeThreadItemSnapshot)
+    .filter(Boolean);
+  const normalizedTurn =
+    normalizedItems.length === (turn.items ?? []).length &&
+    normalizedItems.every((item, index) => item === turn.items?.[index])
     ? turn
     : { ...turn, items: normalizedItems };
 
@@ -151,9 +156,13 @@ function getRetainedUnmatchedTurn(turn, matcher) {
 function isLiveDerivedCompletedAgentTurn(turn) {
   return (
     turn.status === "completed" &&
-    turn.itemsView !== "full" &&
     (turn.items ?? []).length > 0 &&
-    (turn.items ?? []).every((item) => item.type === "agentMessage")
+    (turn.items ?? []).every(
+      (item) =>
+        item.type === "agentMessage" || isCollabCompletionNotificationItem(item),
+    ) &&
+    (turn.itemsView !== "full" ||
+      (turn.items ?? []).every(isCollabCompletionNotificationItem))
   );
 }
 
@@ -183,8 +192,12 @@ function consumeMatchingAgentMessage(matcher, turn, item) {
 }
 
 function mergeTurn(existing, next) {
-  const existingItems = (existing.items ?? []).map(normalizeThreadItemSnapshot);
-  const nextItems = (next.items ?? []).map(normalizeThreadItemSnapshot);
+  const existingItems = (existing.items ?? [])
+    .map(normalizeThreadItemSnapshot)
+    .filter(Boolean);
+  const nextItems = (next.items ?? [])
+    .map(normalizeThreadItemSnapshot)
+    .filter(Boolean);
   const existingItemsById = new Map(
     existingItems.map((item) => [item.id, item]),
   );
@@ -214,6 +227,12 @@ function mergeTurn(existing, next) {
 function mergeThreadItem(existing, next) {
   const normalizedExisting = normalizeThreadItemSnapshot(existing);
   const normalizedNext = normalizeThreadItemSnapshot(next);
+  if (!normalizedExisting) {
+    return normalizedNext ?? next;
+  }
+  if (!normalizedNext) {
+    return normalizedExisting;
+  }
   if (normalizedExisting !== existing || normalizedNext !== next) {
     return mergeThreadItem(normalizedExisting, normalizedNext);
   }
@@ -230,58 +249,50 @@ function mergeThreadItem(existing, next) {
 }
 
 function normalizeThreadItemSnapshot(item) {
-  if (item.type !== "agentMessage") {
-    return item;
-  }
-
-  const trigger = parseEventDrivenToolTrigger(item.text);
-  if (!trigger) {
-    return item;
-  }
-
-  const normalized = {
-    type: "eventDrivenTool",
-    id: item.id,
-    tool: trigger.tool,
-    title: trigger.title,
-    text: trigger.text,
-  };
-  if (item.startedAtMs !== null && item.startedAtMs !== undefined) {
-    normalized.startedAtMs = item.startedAtMs;
-  }
-  if (item.completedAtMs !== null && item.completedAtMs !== undefined) {
-    normalized.completedAtMs = item.completedAtMs;
-  }
-  return normalized;
-}
-
-function parseEventDrivenToolTrigger(text) {
-  const trimmed = text.trim();
-  const startMarker = "<event_driven_tool>";
-  const endMarker = "</event_driven_tool>";
-  if (!trimmed.startsWith(startMarker) || !trimmed.endsWith(endMarker)) {
+  if (item?.type === "agentMessage" && isLegacyStructuredAgentText(item.text)) {
     return null;
   }
+  return item;
+}
 
-  const body = trimmed
-    .slice(startMarker.length, trimmed.length - endMarker.length)
-    .trim();
+function isLegacyStructuredAgentText(text) {
+  const trimmed = typeof text === "string" ? text.trim() : "";
+  if (
+    isWrappedMarker(trimmed, "<event_driven_tool>", "</event_driven_tool>") ||
+    isWrappedMarker(trimmed, "<event_command>", "</event_command>") ||
+    isWrappedMarker(
+      trimmed,
+      "<subagent_notification>",
+      "</subagent_notification>",
+    )
+  ) {
+    return true;
+  }
+
   try {
-    const parsed = JSON.parse(body);
-    if (
+    const parsed = JSON.parse(trimmed);
+    return (
       parsed &&
       typeof parsed === "object" &&
       !Array.isArray(parsed) &&
-      typeof parsed.tool === "string" &&
-      typeof parsed.title === "string" &&
-      typeof parsed.text === "string"
-    ) {
-      return parsed;
-    }
+      typeof parsed.author === "string" &&
+      typeof parsed.recipient === "string" &&
+      typeof parsed.operation === "string" &&
+      [
+        "spawnAgent",
+        "sendMessage",
+        "send_message",
+        "followupTask",
+        "childCompletion",
+      ].includes(parsed.operation)
+    );
   } catch {
-    return null;
+    return false;
   }
-  return null;
+}
+
+function isWrappedMarker(trimmed, startMarker, endMarker) {
+  return trimmed.startsWith(startMarker) && trimmed.endsWith(endMarker);
 }
 
 function findMatchingThreadItemIndex(items, nextItem) {
@@ -315,6 +326,9 @@ function buildTurnItemIndex(entries) {
 
   for (const { turn, items } of entries) {
     for (const item of items) {
+      if (!item) {
+        continue;
+      }
       ids.add(item.id);
       if (item.type === "agentMessage") {
         agentMessages.push({ turn, item });
@@ -402,6 +416,13 @@ function canMatchThreadItemSemantically(item) {
     default:
       return false;
   }
+}
+
+function isCollabCompletionNotificationItem(item) {
+  return (
+    item.type === "collabAgentStatusUpdate" ||
+    (item.type === "collabAgentMessage" && item.operation === "childCompletion")
+  );
 }
 
 function isTerminalCollabAgentStatus(status) {

@@ -8,6 +8,7 @@ import type {
 import {
   formatClockTime,
   getThreadLabel,
+  isLegacyStructuredAgentText,
   trimPath,
   trimThreadId,
 } from "./thread";
@@ -144,17 +145,6 @@ function buildConversationItemEntries(
   }
 
   if (item.type === "agentMessage") {
-    const collabMessage = parseCollabEnvelopeText(item.text, item);
-    if (collabMessage) {
-      return [
-        buildCollabAgentMessageEntry(collabMessage, {
-          id: item.id,
-          author,
-          timestamp,
-        }),
-      ];
-    }
-
     return [
       {
         id: item.id,
@@ -402,25 +392,6 @@ function buildConversationItemEntries(
   }
 
   if (item.type === "eventDrivenTool") {
-    const collabMessage = parseCollabEnvelopeText(item.text, item);
-    if (collabMessage) {
-      return [
-        {
-          id: item.id,
-          kind: "tool" as const,
-          author,
-          role: "system" as const,
-          text: summarizeCollabAgentMessage(collabMessage),
-          timestamp,
-          attachments: [],
-          toolName: formatCollabAgentMessageTitle(collabMessage),
-          toolStatus: "completed",
-          toolDetails: formatCollabAgentMessageDetails(collabMessage),
-          toolCategory: formatCollabAgentMessageCategory(collabMessage),
-        },
-      ];
-    }
-
     return [
       {
         id: item.id,
@@ -541,17 +512,22 @@ function buildReplacementHistoryEntries(
     parentId: string;
   },
 ): ConversationEntry[] {
-  return items.map((item, index) =>
-    ({
-      ...buildReplacementHistoryEntry(item, {
-        author,
-        timestamp,
-        id: `${parentId}:replacement:${index}`,
-        index,
-      }),
-      isReplacementHistory: true,
-    }),
-  );
+  return items.flatMap((item, index) => {
+    const entry = buildReplacementHistoryEntry(item, {
+      author,
+      timestamp,
+      id: `${parentId}:replacement:${index}`,
+      index,
+    });
+    return entry
+      ? [
+          {
+            ...entry,
+            isReplacementHistory: true,
+          },
+        ]
+      : [];
+  });
 }
 
 function buildReplacementHistoryEntry(
@@ -567,22 +543,13 @@ function buildReplacementHistoryEntry(
     id: string;
     index: number;
   },
-): ConversationEntry {
+): ConversationEntry | null {
   switch (item.type) {
     case "message": {
       const role = stringOrFallback(item.role, "message");
       const text = extractResponseContentText(item.content);
-      if (text) {
-        const collabMessage = parseCollabEnvelopeText(text, {
-          id,
-        });
-        if (collabMessage) {
-          return buildCollabAgentMessageEntry(collabMessage, {
-            id,
-            author,
-            timestamp,
-          });
-        }
+      if (role === "assistant" && isLegacyStructuredAgentText(text)) {
+        return null;
       }
       return {
         id,
@@ -907,100 +874,6 @@ function formatUnknownValue(value: unknown) {
     return JSON.stringify(value, null, 2);
   } catch {
     return String(value);
-  }
-}
-
-function parseCollabEnvelopeText(
-  text: string,
-  item: Pick<ThreadItem, "id" | "startedAtMs" | "completedAtMs">,
-): Extract<ThreadItem, { type: "collabAgentMessage" }> | null {
-  const envelope = parseRecord(text);
-  if (!isChildCompletionEnvelope(envelope)) {
-    return null;
-  }
-
-  return {
-    type: "collabAgentMessage",
-    id: item.id,
-    operation: "childCompletion",
-    senderThreadId: stringOrNull(envelope.sender_thread_id),
-    senderPath: stringOrFallback(envelope.author, "unknown"),
-    recipientThreadId: stringOrNull(envelope.recipient_thread_id),
-    recipientPath: stringOrFallback(envelope.recipient, "unknown"),
-    otherRecipientPaths: arrayOfStrings(envelope.other_recipients),
-    content: extractCollabEnvelopeContent(envelope),
-    triggerTurn: envelope.trigger_turn === true,
-    startedAtMs: item.startedAtMs,
-    completedAtMs: item.completedAtMs,
-  };
-}
-
-function isChildCompletionEnvelope(
-  envelope: Record<string, unknown> | null,
-): envelope is Record<string, unknown> & {
-  author: string;
-  recipient: string;
-  operation: "childCompletion";
-  sender_thread_id: string;
-  recipient_thread_id: string;
-} {
-  return (
-    envelope?.operation === "childCompletion" &&
-    typeof envelope.author === "string" &&
-    typeof envelope.recipient === "string" &&
-    typeof envelope.sender_thread_id === "string" &&
-    typeof envelope.recipient_thread_id === "string"
-  );
-}
-
-function extractCollabEnvelopeContent(envelope: Record<string, unknown>) {
-  const statusMessage = extractCollabEnvelopeStatusMessage(envelope.status);
-  if (statusMessage) {
-    return statusMessage;
-  }
-
-  const taggedContent = extractSubagentNotificationContent(envelope.content);
-  return taggedContent ?? stringOrFallback(envelope.content, "…");
-}
-
-function extractCollabEnvelopeStatusMessage(status: unknown) {
-  if (!status || typeof status !== "object" || Array.isArray(status)) {
-    return null;
-  }
-  const statusRecord = status as Record<string, unknown>;
-  return stringOrNull(statusRecord.completed);
-}
-
-function extractSubagentNotificationContent(content: unknown) {
-  const text = stringOrNull(content);
-  if (!text) {
-    return null;
-  }
-
-  const match = text.match(
-    /<subagent_notification>\s*([\s\S]*?)\s*<\/subagent_notification>/u,
-  );
-  const notification = match ? parseRecord(match[1]) : null;
-  if (!notification) {
-    return null;
-  }
-
-  return extractCollabEnvelopeStatusMessage(notification.status);
-}
-
-function parseRecord(text: unknown): Record<string, unknown> | null {
-  const json = stringOrNull(text);
-  if (!json) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(json);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
   }
 }
 

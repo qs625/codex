@@ -213,6 +213,39 @@ fn parse_raw_function_call_arguments(arguments: &str) -> serde_json::Value {
     serde_json::from_str(arguments).unwrap_or_else(|_| serde_json::Value::String(arguments.into()))
 }
 
+#[doc(hidden)]
+pub fn is_legacy_structured_assistant_message_text(text: &str) -> bool {
+    let trimmed = text.trim();
+    if is_wrapped_marker(trimmed, "<event_driven_tool>", "</event_driven_tool>")
+        || is_wrapped_marker(trimmed, "<event_command>", "</event_command>")
+        || is_wrapped_marker(
+            trimmed,
+            "<subagent_notification>",
+            "</subagent_notification>",
+        )
+    {
+        return true;
+    }
+
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        return false;
+    };
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    if !object.contains_key("author") || !object.contains_key("recipient") {
+        return false;
+    }
+    matches!(
+        object.get("operation").and_then(serde_json::Value::as_str),
+        Some("spawnAgent" | "sendMessage" | "send_message" | "followupTask" | "childCompletion")
+    )
+}
+
+fn is_wrapped_marker(trimmed: &str, start_marker: &str, end_marker: &str) -> bool {
+    trimmed.starts_with(start_marker) && trimmed.ends_with(end_marker)
+}
+
 fn function_call_output_payload_to_json(output: &FunctionCallOutputPayload) -> serde_json::Value {
     serde_json::to_value(output).unwrap_or_else(|_| serde_json::Value::String(output.to_string()))
 }
