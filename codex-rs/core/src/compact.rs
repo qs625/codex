@@ -174,8 +174,9 @@ async fn run_compact_task_inner_impl(
     input: Vec<UserInput>,
     initial_context_injection: InitialContextInjection,
 ) -> CodexResult<String> {
-    let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
-    sess.emit_turn_item_started(&turn_context, &compaction_item)
+    let mut compaction_item = ContextCompactionItem::new();
+    let started_compaction_item = TurnItem::ContextCompaction(compaction_item.clone());
+    sess.emit_turn_item_started(&turn_context, &started_compaction_item)
         .await;
     let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
 
@@ -277,9 +278,10 @@ async fn run_compact_task_inner_impl(
         InitialContextInjection::DoNotInject => None,
         InitialContextInjection::BeforeLastUserMessage => Some(turn_context.to_turn_context_item()),
     };
+    let replacement_history = Some(new_history.clone());
     let compacted_item = CompactedItem {
         message: summary_text.clone(),
-        replacement_history: Some(new_history.clone()),
+        replacement_history: replacement_history.clone(),
     };
     sess.replace_compacted_history(new_history, reference_context_item, compacted_item)
         .await;
@@ -294,7 +296,8 @@ async fn run_compact_task_inner_impl(
     client_session.reset_websocket_session();
     sess.recompute_token_usage(&turn_context).await;
 
-    sess.emit_turn_item_completed(&turn_context, compaction_item)
+    compaction_item.replacement_history = replacement_history;
+    sess.emit_turn_item_completed(&turn_context, TurnItem::ContextCompaction(compaction_item))
         .await;
     let warning = EventMsg::Warning(WarningEvent {
         message: "Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.".to_string(),

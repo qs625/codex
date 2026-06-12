@@ -1243,7 +1243,7 @@ Today both notifications carry an empty `items` array even when item events were
 - `imageView` — `{id, path}` emitted when the agent invokes the image viewer tool.
 - `enteredReviewMode` — `{id, review}` sent when the reviewer starts; `review` is a short user-facing label such as `"current changes"` or the requested target description.
 - `exitedReviewMode` — `{id, review}` emitted when the reviewer finishes; `review` is the full plain-text review (usually, overall notes plus bullet point findings).
-- `contextCompaction` — `{id, replacementHistory}` emitted when codex compacts the conversation history. This can happen automatically. Realtime lifecycle notifications use `replacementHistory: null`; historical reads and resumed turns may include the replacement response item list used after compaction.
+- `contextCompaction` — `{id, replacementHistory}` emitted when codex compacts the conversation history. This can happen automatically. Realtime `item/started` uses `replacementHistory: null`; realtime `item/completed`, historical reads, and resumed turns include the replacement response item list used after compaction when it is available.
 - `compacted` - `{threadId, turnId}` when codex compacts the conversation history. This can happen automatically. **Deprecated:** Use `contextCompaction` instead.
 
 All items emit shared lifecycle events:

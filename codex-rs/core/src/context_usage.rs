@@ -172,6 +172,13 @@ fn build_thread_context_usage_inner(
                         } else if is_contextual_user_message_content(content) {
                             categories.tools_metadata =
                                 categories.tools_metadata.saturating_add(item_bytes);
+                        } else if content.iter().any(|item| match item {
+                            ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+                                crate::compact::is_summary_message(text)
+                            }
+                            ContentItem::InputImage { .. } => false,
+                        }) {
+                            categories.compact = categories.compact.saturating_add(item_bytes);
                         } else {
                             categories.user_messages =
                                 categories.user_messages.saturating_add(item_bytes);

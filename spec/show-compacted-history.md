@@ -29,7 +29,9 @@ ContextCompaction {
 }
 ```
 
-wire 上为 `replacementHistory`，没有 replacement history 时为 `null`。实时 `ContextCompactedEvent` 没有 replacement history，继续生成 `replacementHistory: null`；从 rollout read/resume 重建时，`CompactedItem.replacement_history` 原样进入 thread item。
+wire 上为 `replacementHistory`，没有 replacement history 时为 `null`。实时 `item/started` 还没有 compact 后模型上下文，继续生成 `replacementHistory: null`；实时 `item/completed` 必须携带 Local Compact 刚生成的 replacement history。从 rollout read/resume 重建时，`CompactedItem.replacement_history` 原样进入 thread item。
+
+compact 完成后的 context usage 也必须把 Local Compact summary 计入 `compact` 类别。Local Compact 的 active history 中，summary 以带 `SUMMARY_PREFIX` 的 `user` message 形式存在；usage 分类层需要识别这个前缀并归入 compact，而不是普通 `user_messages`，这样 root-worker 的 context usage ratio 不依赖前端从 replacement history 文本反推。
 
 ## UI/UE 方案
 

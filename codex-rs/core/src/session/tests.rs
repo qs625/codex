@@ -1904,6 +1904,24 @@ async fn thread_context_usage_recomputes_after_resume_without_persisted_snapshot
 }
 
 #[tokio::test]
+async fn thread_context_usage_counts_compaction_summary_as_compact() {
+    let (session, turn_context) = make_session_and_context().await;
+    let summary = format!(
+        "{}\nThe earlier conversation was compacted into this summary.",
+        crate::compact::SUMMARY_PREFIX
+    );
+    let item = user_message(&summary);
+    session
+        .record_into_history(std::slice::from_ref(&item), &turn_context)
+        .await;
+
+    let usage = session.thread_context_usage().await;
+
+    assert!(usage.categories.compact > 0);
+    assert_eq!(usage.categories.user_messages, 0);
+}
+
+#[tokio::test]
 async fn recompute_token_usage_uses_session_base_instructions() {
     let (session, turn_context) = make_session_and_context().await;
 

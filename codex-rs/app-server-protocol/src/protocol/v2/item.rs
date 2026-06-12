@@ -1103,7 +1103,7 @@ impl From<CoreTurnItem> for ThreadItem {
             }
             CoreTurnItem::ContextCompaction(compaction) => ThreadItem::ContextCompaction {
                 id: compaction.id,
-                replacement_history: None,
+                replacement_history: compaction.replacement_history,
             },
         }
     }

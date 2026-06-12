@@ -21,6 +21,7 @@ use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadCompactStartParams;
 use codex_app_server_protocol::ThreadCompactStartResponse;
+use codex_app_server_protocol::ThreadContextUsageUpdatedNotification;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
@@ -89,28 +90,10 @@ async fn auto_compaction_local_emits_started_and_completed_items() -> Result<()>
     }
 
     let started = wait_for_context_compaction_started(&mut mcp).await?;
+    wait_for_compact_context_usage_updated(&mut mcp, &thread_id).await?;
     let completed = wait_for_context_compaction_completed(&mut mcp).await?;
 
-    let ThreadItem::ContextCompaction {
-        id: started_id,
-        replacement_history: started_replacement_history,
-    } = started.item
-    else {
-        unreachable!("started item should be context compaction");
-    };
-    let ThreadItem::ContextCompaction {
-        id: completed_id,
-        replacement_history: completed_replacement_history,
-    } = completed.item
-    else {
-        unreachable!("completed item should be context compaction");
-    };
-
-    assert_eq!(started.thread_id, thread_id);
-    assert_eq!(completed.thread_id, thread_id);
-    assert_eq!(started_id, completed_id);
-    assert!(started_replacement_history.is_none());
-    assert!(completed_replacement_history.is_none());
+    assert_context_compaction_lifecycle(started, completed, &thread_id, "SECOND_REPLY")?;
 
     Ok(())
 }
@@ -166,26 +149,7 @@ async fn auto_compaction_with_chatgpt_auth_still_uses_local_compact() -> Result<
     let started = wait_for_context_compaction_started(&mut mcp).await?;
     let completed = wait_for_context_compaction_completed(&mut mcp).await?;
 
-    let ThreadItem::ContextCompaction {
-        id: started_id,
-        replacement_history: started_replacement_history,
-    } = started.item
-    else {
-        unreachable!("started item should be context compaction");
-    };
-    let ThreadItem::ContextCompaction {
-        id: completed_id,
-        replacement_history: completed_replacement_history,
-    } = completed.item
-    else {
-        unreachable!("completed item should be context compaction");
-    };
-
-    assert_eq!(started.thread_id, thread_id);
-    assert_eq!(completed.thread_id, thread_id);
-    assert_eq!(started_id, completed_id);
-    assert!(started_replacement_history.is_none());
-    assert!(completed_replacement_history.is_none());
+    assert_context_compaction_lifecycle(started, completed, &thread_id, "SECOND_REPLY")?;
 
     let response_requests = responses_log.requests();
     assert_eq!(response_requests.len(), 4);
@@ -247,26 +211,7 @@ async fn thread_compact_start_triggers_compaction_and_returns_empty_response() -
     let started = wait_for_context_compaction_started(&mut mcp).await?;
     let completed = wait_for_context_compaction_completed(&mut mcp).await?;
 
-    let ThreadItem::ContextCompaction {
-        id: started_id,
-        replacement_history: started_replacement_history,
-    } = started.item
-    else {
-        unreachable!("started item should be context compaction");
-    };
-    let ThreadItem::ContextCompaction {
-        id: completed_id,
-        replacement_history: completed_replacement_history,
-    } = completed.item
-    else {
-        unreachable!("completed item should be context compaction");
-    };
-
-    assert_eq!(started.thread_id, thread_id);
-    assert_eq!(completed.thread_id, thread_id);
-    assert_eq!(started_id, completed_id);
-    assert!(started_replacement_history.is_none());
-    assert!(completed_replacement_history.is_none());
+    assert_context_compaction_lifecycle(started, completed, &thread_id, "MANUAL_COMPACT_SUMMARY")?;
 
     Ok(())
 }
@@ -393,6 +338,65 @@ async fn wait_for_turn_completed(mcp: &mut McpProcess, turn_id: &str) -> Result<
             return Ok(());
         }
     }
+}
+
+async fn wait_for_compact_context_usage_updated(
+    mcp: &mut McpProcess,
+    thread_id: &str,
+) -> Result<()> {
+    loop {
+        let notification: JSONRPCNotification = timeout(
+            DEFAULT_READ_TIMEOUT,
+            mcp.read_stream_until_notification_message("thread/contextUsage/updated"),
+        )
+        .await??;
+        let updated: ThreadContextUsageUpdatedNotification = serde_json::from_value(
+            notification
+                .params
+                .clone()
+                .expect("thread/contextUsage/updated params"),
+        )?;
+        if updated.thread_id == thread_id && updated.context_usage.categories.compact > 0 {
+            return Ok(());
+        }
+    }
+}
+
+fn assert_context_compaction_lifecycle(
+    started: ItemStartedNotification,
+    completed: ItemCompletedNotification,
+    thread_id: &str,
+    expected_summary: &str,
+) -> Result<()> {
+    let ThreadItem::ContextCompaction {
+        id: started_id,
+        replacement_history: started_replacement_history,
+    } = started.item
+    else {
+        unreachable!("started item should be context compaction");
+    };
+    let ThreadItem::ContextCompaction {
+        id: completed_id,
+        replacement_history: completed_replacement_history,
+    } = completed.item
+    else {
+        unreachable!("completed item should be context compaction");
+    };
+
+    assert_eq!(started.thread_id, thread_id);
+    assert_eq!(completed.thread_id, thread_id);
+    assert_eq!(started_id, completed_id);
+    assert!(started_replacement_history.is_none());
+
+    let completed_replacement_history = completed_replacement_history
+        .expect("completed compact item should include replacement history");
+    let completed_replacement_history_json = serde_json::to_string(&completed_replacement_history)?;
+    assert!(
+        completed_replacement_history_json.contains(expected_summary),
+        "replacement history should contain compact summary {expected_summary:?}: {completed_replacement_history_json}"
+    );
+
+    Ok(())
 }
 
 async fn wait_for_context_compaction_started(

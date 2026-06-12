@@ -241,12 +241,16 @@ pub struct McpToolCallError {
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
 pub struct ContextCompactionItem {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub replacement_history: Option<Vec<ResponseItem>>,
 }
 
 impl ContextCompactionItem {
     pub fn new() -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
+            replacement_history: None,
         }
     }
 

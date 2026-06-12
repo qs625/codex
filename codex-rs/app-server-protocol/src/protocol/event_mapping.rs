@@ -514,9 +514,12 @@ mod tests {
     use codex_protocol::items::AgentMessageContent;
     use codex_protocol::items::AgentMessageItem;
     use codex_protocol::items::CollabAgentMessageItem;
+    use codex_protocol::items::ContextCompactionItem;
     use codex_protocol::items::EventCommandEventItem;
     use codex_protocol::items::EventDrivenToolItem;
     use codex_protocol::items::TurnItem;
+    use codex_protocol::models::ContentItem;
+    use codex_protocol::models::ResponseItem;
     use codex_protocol::protocol::AgentStatus;
     use codex_protocol::protocol::CollabResumeBeginEvent;
     use codex_protocol::protocol::CollabResumeEndEvent;
@@ -738,6 +741,46 @@ mod tests {
                     text: "[Process exit subscription] Session 42 exited with code 0".to_string(),
                     phase: None,
                     memory_citation: None,
+                },
+            },
+        );
+    }
+
+    #[test]
+    fn item_completed_preserves_context_compaction_replacement_history() {
+        let replacement_history = vec![ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "LOCAL_SUMMARY".to_string(),
+            }],
+            phase: None,
+        }];
+        let event = ItemCompletedEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-ignored".to_string(),
+            item: TurnItem::ContextCompaction(ContextCompactionItem {
+                id: "compact-1".to_string(),
+                replacement_history: Some(replacement_history.clone()),
+            }),
+            completed_at_ms: 789,
+        };
+
+        let notification = item_event_to_server_notification(
+            EventMsg::ItemCompleted(event.clone()),
+            "thread-4",
+            "turn-4",
+        );
+
+        assert_item_completed_server_notification(
+            notification,
+            ItemCompletedNotification {
+                thread_id: "thread-4".to_string(),
+                turn_id: "turn-4".to_string(),
+                completed_at_ms: event.completed_at_ms,
+                item: ThreadItem::ContextCompaction {
+                    id: "compact-1".to_string(),
+                    replacement_history: Some(replacement_history),
                 },
             },
         );
