@@ -7,6 +7,7 @@
 - live `item/started` / `item/completed` 和 `thread/history` 重建都以 typed `ThreadItem` 为展示 payload。
 - 最终 assistant message 在 live 流中可见，不需要等重启后从 rollout history 重建。
 - `function_call`、`event_command_subscribe`、schedule subscribe/unsubscribe、event-command event、collab / inter-agent / child-completion 继续复用 shared `ResponseItem -> ThreadItem` projector。
+- `event_command_subscribe` 工具调用本身在 live/app-server/root-worker 中产生 typed `ThreadItem::EventCommandCall` started/completed；后续 event output/completion 产生 typed `ThreadItem::EventCommandEvent`，两者都不能只以 raw JSON/message 出现。
 - 非 TUI 展示/history 路径不新增 raw response item 展示分支，不从 assistant marker JSON 或 message marker 文本反解展示项。
 
 非目标是不修改 TUI，不新增 app-server v1 API surface，不改变 provider wire/model input 的 marker formatting 边界。
@@ -19,7 +20,7 @@ history 重建路径由 `ThreadHistoryBuilder` 回放 rollout。它会把 persis
 
 live/history 路径有两个相关缺口：
 
-- `EventMsg::RawResponseItem` 在 app-server live apply 层只保留 hook prompt 辅助路径，不作为普通 display item 发射。最终 assistant message 的 live 展示应来自 semantic lifecycle `ItemCompleted(TurnItem::AgentMessage)`，history/recovery 则由 typed `ResponseItem::Message` canonicalize。
+- `EventMsg::RawResponseItem` 在 app-server live apply 层只保留旧事件兼容处理，不作为普通 display item 发射。最终 assistant message 的 live 展示应来自 semantic lifecycle `ItemCompleted(TurnItem::AgentMessage)`，history/recovery 则由 typed `ResponseItem::Message` canonicalize。
 - running-thread resume / live read 使用的 in-memory `ThreadHistoryBuilder` 会消费 core lifecycle event，但 `handle_item_completed` 原来忽略 `TurnItem::AgentMessage`。因此运行中重连或 `thread/read includeTurns` 合并 active turn 时，也可能缺少最后 assistant message；重启后从 rollout `ResponseItem::Message` 重建则能显示。
 
 ## 技术设计
@@ -27,10 +28,13 @@ live/history 路径有两个相关缺口：
 最小修复是在 `codex-rs/app-server-protocol/src/protocol/response_item_projection.rs` 收敛 structured item projector 和 legacy raw structured message 过滤：
 
 - `EventCommandEvent`、`EventDrivenTool`、已知 `InterAgentCommunication` 继续复用既有 `project_structured_response_item`。
+- `event_command_subscribe` 的 `FunctionCall` / `FunctionCallOutput` 继续通过 `project_tool_response_item` 投影为 `ThreadItem::EventCommandCall`，表示订阅工具调用本身的 started/completed lifecycle。
 - `FunctionCall` / `FunctionCallOutput` 保持既有 live helper：start 时发 `item/started`，output 时发 completed tool item。
-- user hook prompt 仍保留当前 `RawResponseItem` hook prompt helper。
+- user hook prompt 由 `record_response_item_and_emit_turn_item` 这类显式 lifecycle 记录函数发出 typed `item/completed`，不再依赖 `record_conversation_items` 的 raw live fanout。
 
-app-server live apply 层不把普通 `RawResponseItem` 直接投影为 display `ThreadItem`，避免和 semantic lifecycle 双发；history builder 在 recovery/read 路径把 typed `ResponseItem::Message` canonicalize 为 `ThreadItem::AgentMessage`。root-worker renderer 不再解析或过滤 legacy marker / inter-agent JSON envelope，避免展示层根据文本内容丢 typed item。
+core 的 `record_conversation_items` 只负责写入 in-memory history、persist `RolloutItem::ResponseItem` 并刷新 context usage；需要 live 展示的路径必须显式发 typed lifecycle。app-server live apply 层不把普通 `RawResponseItem` 直接投影为 display `ThreadItem`，避免和 semantic lifecycle 双发；history builder 在 recovery/read 路径把 typed `ResponseItem::Message` canonicalize 为 `ThreadItem::AgentMessage`。root-worker renderer 不再解析或过滤 legacy marker / inter-agent JSON envelope，避免展示层根据文本内容丢 typed item。
+
+`RawResponseItem` 协议分支暂时保留为旧 rollout / 旧 client 兼容输入，但新的 runtime 不再通过 `record_conversation_items` 广播 raw response item。provider 请求侧仍可在最后一步把 typed `ResponseItem` formatting 成 provider-visible marker message；该 formatting 产物不得写回 history、rollout 或 display。
 
 `ThreadHistoryBuilder::handle_item_completed` 对 typed `TurnItem::AgentMessage` 做 `ThreadItem::from` 并按 `turn_id` upsert，使 active/current reducer 与 persisted history reducer 使用同一 typed display item。若同一 assistant message 随后又以 `RawResponseItem(Message)` 进入 history builder，按同文本/phase 消费 pending response，避免 final answer 重复展示。
 
@@ -55,7 +59,8 @@ legacy raw inter-agent 文本不作为结构化展示来源：
 
 新增 app-server 单元测试覆盖：
 
-- `RawResponseItem` 普通 assistant display 在 live apply 层不直接发 completed display item，hook prompt 仍通过专门 helper 发 completed item。
+- `event_command_subscribe` 工具调用发出 typed `EventCommandCall` started/completed，completed payload 保留 `subscription_id`、`command`、`cwd`、`label` 和 output。
+- `RawResponseItem` 普通 assistant display 在 live apply 层不直接发 completed display item，hook prompt 通过显式 response item helper 发 completed item。
 - structured typed response item 在 history/recovery 中通过 shared projector 重建 `ThreadItem`，确保 event-command / collab 类 item 不走 raw 展示分支。
 
 新增 app-server-protocol 单元测试覆盖：

@@ -428,7 +428,7 @@ pub(crate) async fn record_pending_input(
             record_additional_contexts(sess, turn_context, additional_contexts).await;
         }
         PendingInputRecord::ConversationItem { response_item } => {
-            sess.record_conversation_items_and_emit_structured_item_completed(
+            sess.record_conversation_items_and_emit_item_completed(
                 turn_context,
                 std::slice::from_ref(&response_item),
             )
@@ -436,7 +436,7 @@ pub(crate) async fn record_pending_input(
         }
         PendingInputRecord::InterAgentCommunication { pending_input } => {
             let response_item = pending_input.into_response_item();
-            sess.record_conversation_items_and_emit_structured_item_completed(
+            sess.record_conversation_items_and_emit_item_completed(
                 turn_context,
                 std::slice::from_ref(&response_item),
             )

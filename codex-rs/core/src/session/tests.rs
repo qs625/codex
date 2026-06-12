@@ -8173,6 +8173,23 @@ async fn abort_gracefully_emits_turn_aborted_only() {
     assert!(rx.try_recv().is_err());
 }
 
+async fn recv_pending_input_lifecycle_event(rx: &async_channel::Receiver<Event>) -> Event {
+    loop {
+        let event = timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("expected pending input lifecycle event")
+            .expect("channel open");
+        if matches!(&event.msg, EventMsg::ThreadContextUsageUpdated(_)) {
+            continue;
+        }
+        assert!(
+            !matches!(&event.msg, EventMsg::RawResponseItem(_)),
+            "pending input lifecycle should not emit raw response items"
+        );
+        return event;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn task_finish_emits_turn_item_lifecycle_for_leftover_pending_user_input() {
     let (sess, tc, rx) = make_session_and_context_with_rx().await;
@@ -8219,18 +8236,9 @@ async fn task_finish_emits_turn_item_lifecycle_for_leftover_pending_user_input()
         "expected pending input to be persisted into history on turn completion"
     );
 
-    let first = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
-        .await
-        .expect("expected raw response item event")
-        .expect("channel open");
-    assert!(matches!(first.msg, EventMsg::RawResponseItem(_)));
-
-    let second = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
-        .await
-        .expect("expected item started event")
-        .expect("channel open");
+    let first = recv_pending_input_lifecycle_event(&rx).await;
     assert!(matches!(
-        second.msg,
+        first.msg,
         EventMsg::ItemStarted(ItemStartedEvent {
             item: TurnItem::UserMessage(UserMessageItem { content, .. }),
             ..
@@ -8240,12 +8248,9 @@ async fn task_finish_emits_turn_item_lifecycle_for_leftover_pending_user_input()
         }]
     ));
 
-    let third = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
-        .await
-        .expect("expected item completed event")
-        .expect("channel open");
+    let second = recv_pending_input_lifecycle_event(&rx).await;
     assert!(matches!(
-        third.msg,
+        second.msg,
         EventMsg::ItemCompleted(ItemCompletedEvent {
             item: TurnItem::UserMessage(UserMessageItem { content, .. }),
             ..
@@ -8255,12 +8260,9 @@ async fn task_finish_emits_turn_item_lifecycle_for_leftover_pending_user_input()
         }]
     ));
 
-    let fourth = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
-        .await
-        .expect("expected legacy user message event")
-        .expect("channel open");
+    let third = recv_pending_input_lifecycle_event(&rx).await;
     assert!(matches!(
-        fourth.msg,
+        third.msg,
         EventMsg::UserMessage(UserMessageEvent {
             message,
             images,
@@ -8273,12 +8275,9 @@ async fn task_finish_emits_turn_item_lifecycle_for_leftover_pending_user_input()
             && local_images.is_empty()
     ));
 
-    let fifth = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
-        .await
-        .expect("expected turn complete event")
-        .expect("channel open");
+    let fourth = recv_pending_input_lifecycle_event(&rx).await;
     assert!(matches!(
-        fifth.msg,
+        fourth.msg,
         EventMsg::TurnComplete(TurnCompleteEvent {
             turn_id,
             last_agent_message: None,
@@ -8297,7 +8296,7 @@ async fn explicit_record_conversation_items_emits_item_completed_for_structured_
         text: "build.log changed".to_string(),
     };
 
-    sess.record_conversation_items_and_emit_structured_item_completed(
+    sess.record_conversation_items_and_emit_item_completed(
         &tc,
         &[ResponseItem::EventDrivenTool {
             id: Some("typed-event-driven-tool".to_string()),
@@ -8421,7 +8420,7 @@ async fn explicit_record_conversation_items_emits_item_completed_for_event_comma
         created_at: 1,
     };
 
-    sess.record_conversation_items_and_emit_structured_item_completed(
+    sess.record_conversation_items_and_emit_item_completed(
         &tc,
         &[ResponseItem::EventCommandEvent {
             id: Some("typed-event-command".to_string()),
@@ -8465,7 +8464,7 @@ async fn explicit_record_conversation_items_emits_item_completed_for_collab_mess
     )
     .with_trigger_turn(false);
 
-    sess.record_conversation_items_and_emit_structured_item_completed(
+    sess.record_conversation_items_and_emit_item_completed(
         &tc,
         &[ResponseItem::InterAgentCommunication {
             id: Some("typed-collab".to_string()),
@@ -8509,7 +8508,7 @@ async fn explicit_record_conversation_items_ignores_unknown_collab_message() {
     )
     .with_trigger_turn(false);
 
-    sess.record_conversation_items_and_emit_structured_item_completed(
+    sess.record_conversation_items_and_emit_item_completed(
         &tc,
         &[ResponseItem::InterAgentCommunication {
             id: Some("typed-unknown-collab".to_string()),

@@ -114,7 +114,6 @@ use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ItemStartedEvent;
-use codex_protocol::protocol::RawResponseItemEvent;
 use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionSource;
@@ -2676,17 +2675,16 @@ impl Session {
     ) {
         self.record_into_history(items, turn_context).await;
         self.persist_rollout_response_items(items).await;
-        self.send_raw_response_items(turn_context, items).await;
         self.send_thread_context_usage_event(turn_context).await;
     }
 
-    pub(crate) async fn record_conversation_items_and_emit_structured_item_completed(
+    pub(crate) async fn record_conversation_items_and_emit_item_completed(
         &self,
         turn_context: &TurnContext,
         items: &[ResponseItem],
     ) {
         self.record_conversation_items(turn_context, items).await;
-        self.emit_completed_structured_response_items(turn_context, items)
+        self.emit_completed_display_response_items(turn_context, items)
             .await;
     }
 
@@ -2800,17 +2798,7 @@ impl Session {
         state.session_configuration.collaboration_mode.clone()
     }
 
-    async fn send_raw_response_items(&self, turn_context: &TurnContext, items: &[ResponseItem]) {
-        for item in items {
-            self.send_event(
-                turn_context,
-                EventMsg::RawResponseItem(RawResponseItemEvent { item: item.clone() }),
-            )
-            .await;
-        }
-    }
-
-    async fn emit_completed_structured_response_items(
+    async fn emit_completed_display_response_items(
         &self,
         turn_context: &TurnContext,
         items: &[ResponseItem],

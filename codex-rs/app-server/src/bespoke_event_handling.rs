@@ -4239,7 +4239,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_hook_prompt_raw_response_emits_item_completed() -> Result<()> {
+    async fn test_hook_prompt_response_item_emits_item_completed() -> Result<()> {
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
         let outgoing = Arc::new(OutgoingMessageSender::new(
             tx,
