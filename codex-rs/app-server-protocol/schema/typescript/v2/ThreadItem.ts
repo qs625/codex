@@ -24,6 +24,7 @@ import type { McpToolCallStatus } from "./McpToolCallStatus";
 import type { MemoryCitation } from "./MemoryCitation";
 import type { PatchApplyStatus } from "./PatchApplyStatus";
 import type { ThreadEventCommandEventKind } from "./ThreadEventCommandEventKind";
+import type { ThreadWorkflowRunProgressEvent } from "./ThreadWorkflowRunProgressEvent";
 import type { UserInput } from "./UserInput";
 import type { WebSearchAction } from "./WebSearchAction";
 
@@ -65,7 +66,7 @@ durationMs: number | null, } | { "type": "dynamicToolCall", id: string, namespac
 /**
  * The duration of the dynamic tool call in milliseconds.
  */
-durationMs: number | null, } | { "type": "eventDrivenToolCall", id: string, tool: string, arguments: unknown, status: DynamicToolCallStatus, output: unknown | null, } | { "type": "eventDrivenTool", id: string, tool: string, title: string, text: string, } | { "type": "eventCommandCall", id: string, subscriptionId: string, command: string, cwd: string | null, label: string | null, status: DynamicToolCallStatus, output: unknown | null, } | { "type": "eventCommandEvent", id: string, subscriptionId: string, kind: ThreadEventCommandEventKind, label: string | null, command: string, cwd: string | null, line: string | null, sequence: number | null, exitCode: number | null, signal: string | null, message: string | null, truncated: boolean, createdAt: number, } | { "type": "collabAgentMessage", id: string, operation: CollabAgentOperation, senderThreadId: string | null, senderPath: string, recipientThreadId: string | null, recipientPath: string, otherRecipientPaths: Array<string>, content: string, triggerTurn: boolean, } | { "type": "collabAgentToolCall",
+durationMs: number | null, } | { "type": "eventDrivenToolCall", id: string, tool: string, arguments: unknown, status: DynamicToolCallStatus, output: unknown | null, } | { "type": "eventDrivenTool", id: string, tool: string, title: string, text: string, } | { "type": "eventCommandCall", id: string, subscriptionId: string, command: string, cwd: string | null, label: string | null, status: DynamicToolCallStatus, output: unknown | null, } | { "type": "eventCommandEvent", id: string, subscriptionId: string, kind: ThreadEventCommandEventKind, label: string | null, command: string, cwd: string | null, line: string | null, sequence: number | null, exitCode: number | null, signal: string | null, message: string | null, truncated: boolean, createdAt: number, } | { "type": "workflowRunProgress", id: string, event: ThreadWorkflowRunProgressEvent, } | { "type": "collabAgentMessage", id: string, operation: CollabAgentOperation, senderThreadId: string | null, senderPath: string, recipientThreadId: string | null, recipientPath: string, otherRecipientPaths: Array<string>, content: string, triggerTurn: boolean, } | { "type": "collabAgentToolCall",
 /**
  * Unique identifier for this collab tool call.
  */

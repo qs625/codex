@@ -324,7 +324,8 @@ impl ThreadHistoryBuilder {
                         .collect(),
                 });
             }
-            ResponseItem::EventCommandEvent { .. }
+            ResponseItem::WorkflowRunProgress { .. }
+            | ResponseItem::EventCommandEvent { .. }
             | ResponseItem::EventDrivenTool { .. }
             | ResponseItem::InterAgentCommunication { .. } => {
                 let fallback_id = self.next_item_id();
@@ -3691,6 +3692,49 @@ mod tests {
                 tool: "fs_subscribe".into(),
                 title: "File watch triggered".into(),
                 text: "build.log changed".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn typed_workflow_progress_history_rebuilds_thread_item() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::WorkflowRunProgress {
+                id: None,
+                event: codex_protocol::models::WorkflowRunProgressEvent {
+                    run_id: "wf_1".into(),
+                    workflow_id: "feature-dev".into(),
+                    status: serde_json::json!("running"),
+                    runner_status: "control_plane_started".into(),
+                    kind: codex_protocol::models::WorkflowRunProgressKind::Started,
+                    message: "workflow control run started".into(),
+                    updated_at: 1_700_000_000,
+                },
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::WorkflowRunProgress {
+                id: "item-1".into(),
+                event: crate::protocol::v2::ThreadWorkflowRunProgressEvent {
+                    run_id: "wf_1".into(),
+                    workflow_id: "feature-dev".into(),
+                    status: serde_json::json!("running"),
+                    runner_status: "control_plane_started".into(),
+                    kind: crate::protocol::v2::ThreadWorkflowRunProgressKind::Started,
+                    message: "workflow control run started".into(),
+                    updated_at: 1_700_000_000,
+                },
             }]
         );
     }

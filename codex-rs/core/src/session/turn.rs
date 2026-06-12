@@ -2038,6 +2038,7 @@ async fn try_run_sampling_request(
                     | ResponseItem::ToolSearchOutput { .. }
                     | ResponseItem::WebSearchCall { .. }
                     | ResponseItem::ImageGenerationCall { .. }
+                    | ResponseItem::WorkflowRunProgress { .. }
                     | ResponseItem::EventCommandEvent { .. }
                     | ResponseItem::EventDrivenTool { .. }
                     | ResponseItem::InterAgentCommunication { .. }

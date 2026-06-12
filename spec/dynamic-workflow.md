@@ -204,12 +204,14 @@ Workflow 能力通过 agent session 可用的 tools 暴露：
 - `workflow_resume`
 - `workflow_abort`
 
-第一版可以只实现最小控制面：
+当前实现了最小控制面：
 
-- start：创建 run，启动 runner。
-- status：返回 graph、bindings、runner 状态。
-- resume：重新启动 runner 并绑定已有 agent session。
-- abort：终止 runner 并标记 run。
+- start：校验 registry 中的 workflow，创建 session 内存态 `WorkflowRun`。
+- status：按 `runId` 返回当前 run 状态。
+- resume：对未 abort 的 run 更新 inputs、revision 和 runnerStatus。
+- abort：标记 run 为 aborted，并保存可选 reason。
+
+当前控制面不会执行 TypeScript entry，不启动 Node runner，也不创建 agent binding；这些能力仍属于后续 TS runner/snapshot 阶段。为避免误导，当前 `runnerStatus` 使用 `control_plane_started`、`control_plane_resumed`、`aborted` 表达真实执行层级。
 
 后续可以增加：
 
@@ -219,12 +221,17 @@ Workflow 能力通过 agent session 可用的 tools 暴露：
 
 ## 展示模型
 
-新增 workflow 相关结构化语义时，应优先扩展 typed `ResponseItem`，再统一投影到 `ThreadItem`：
+新增 workflow 相关结构化语义时，应优先扩展 typed `ResponseItem`，再统一投影到 `ThreadItem`。当前已实现的最小展示项是：
 
-- workflow run started/completed/failed
+- `ResponseItem::WorkflowRunProgress`
+- `ThreadItem::WorkflowRunProgress`
+- `WorkflowRunProgressKind::{Started, Resumed, Aborted}`
+
+后续完整 runner 可能继续扩展：
+
 - workflow graph updated
 - workflow agent bound
-- workflow runner suspended/resumed
+- workflow runner suspended/completed/failed
 
 这些不能通过 raw response item 或 message 文本解析作为新链路。
 

@@ -213,6 +213,7 @@ impl ContextManager {
                 replaced
             }
             ResponseItem::Message { .. }
+            | ResponseItem::WorkflowRunProgress { .. }
             | ResponseItem::EventCommandEvent { .. }
             | ResponseItem::EventDrivenTool { .. }
             | ResponseItem::InterAgentCommunication { .. } => false,
@@ -393,6 +394,7 @@ impl ContextManager {
                 output: truncate_function_output_payload(output, policy_with_serialization_budget),
             },
             ResponseItem::Message { .. }
+            | ResponseItem::WorkflowRunProgress { .. }
             | ResponseItem::EventCommandEvent { .. }
             | ResponseItem::EventDrivenTool { .. }
             | ResponseItem::InterAgentCommunication { .. }
@@ -498,7 +500,7 @@ fn is_api_message(message: &ResponseItem) -> bool {
         | ResponseItem::ImageGenerationCall { .. }
         | ResponseItem::Compaction { .. }
         | ResponseItem::ContextCompaction { .. } => true,
-        ResponseItem::Other => false,
+        ResponseItem::WorkflowRunProgress { .. } | ResponseItem::Other => false,
     }
 }
 
@@ -697,6 +699,7 @@ fn is_model_generated_item(item: &ResponseItem) -> bool {
         | ResponseItem::Compaction { .. }
         | ResponseItem::ContextCompaction { .. } => true,
         ResponseItem::FunctionCallOutput { .. }
+        | ResponseItem::WorkflowRunProgress { .. }
         | ResponseItem::EventCommandEvent { .. }
         | ResponseItem::EventDrivenTool { .. }
         | ResponseItem::InterAgentCommunication { .. }

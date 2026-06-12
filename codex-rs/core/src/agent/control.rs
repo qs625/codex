@@ -106,7 +106,8 @@ fn keep_forked_rollout_item(item: &RolloutItem) -> bool {
             _ => false,
         },
         RolloutItem::ResponseItem(
-            ResponseItem::EventCommandEvent { .. }
+            ResponseItem::WorkflowRunProgress { .. }
+            | ResponseItem::EventCommandEvent { .. }
             | ResponseItem::EventDrivenTool { .. }
             | ResponseItem::InterAgentCommunication { .. },
         ) => true,
