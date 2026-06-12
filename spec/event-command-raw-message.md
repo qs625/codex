@@ -3,7 +3,7 @@
 ## 任务 brief
 
 用户在订阅 `event_command_subscribe` 后，客户端偶尔看到后台事件的 raw JSON 或
-`<event_command>{json}</event_command>` marker 被当成普通消息展示，例如 stdout 行的
+`<event_command>{json}</event_command>` marker 被当成普通消息展示，例如 stdout chunk 的
 `subscription_id` / `line` JSON 直接出现在消息流里。
 
 成功标准：

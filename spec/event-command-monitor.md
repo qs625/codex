@@ -2,7 +2,7 @@
 
 ## 任务 brief
 
-目标是把“监听文件”和“监听命令退出”统一收敛到一个 EventCommand 工具。EventCommand 在后台运行一条命令，命令 stdout 的每一条输出行都会作为一条事件发送回 thread/model；命令退出、启动失败或取消时生成明确 terminal event，并清理 active 状态。
+目标是把“监听文件”和“监听命令退出”统一收敛到一个 EventCommand 工具。EventCommand 在后台运行一条命令，runtime 每次从命令 stdout 读取到一段非空数据都会作为一条事件发送回 thread/model；命令退出、启动失败或取消时生成明确 terminal event，并清理 active 状态。
 
 成功标准：
 
@@ -28,7 +28,7 @@ EventCommand 是文件监听和命令监听的唯一 Monitor 原语：
 
 ```text
 后台运行 command
-stdout 每一行 -> EventCommandEvent(kind=output) -> thread item -> model event
+stdout read chunk -> EventCommandEvent(kind=output) -> thread item -> model event
 进程结束/失败/取消 -> EventCommandEvent(kind=terminal) -> active monitor 清理
 thread resume -> 使用持久化 command/cwd/label/subscription_id 重新执行 command
 ```
@@ -90,7 +90,7 @@ process_exit_unsubscribe
 
 `event_command_subscribe` 请求字段：
 
-- `command: String`：要后台运行的 shell 命令。stdout 每一行都是一条事件。
+- `command: String`：要后台运行的 shell 命令。每次 stdout read chunk 都是一条事件，一个 chunk 可以包含多行。
 - `cwd: Option<String>`：命令工作目录。未提供时继承 app-server 进程当前工作目录。
 - `label: Option<String>`：客户端和事件中展示的 monitor 标签。未提供时使用命令摘要。
 
@@ -112,7 +112,7 @@ EventCommandUnsubscribeResponse {
 
 工具描述必须明确：
 
-- stdout 行就是事件边界。
+- stdout read chunk 就是 output 事件边界，一个事件可以包含多行或空白行。
 - noisy command 应由模型自行降噪，只 `echo` 想让模型重新接管的内容。
 - stderr 默认不产生事件；需要时由模型在命令中自行 `2>&1` 或重定向。
 - 长时间运行命令、命令退出监听、文件监听都应该通过 `event_command_subscribe`。
@@ -123,7 +123,7 @@ EventCommandUnsubscribeResponse {
 本次 `event_command_subscribe` 描述更新只改变模型可见说明，不改变运行时行为。描述应继续服务于以下目标：
 
 - 把文件监听、长命令退出监听、持续运行 server 日志监听统一收敛到同一个 monitor 原语。
-- 明确要求 monitor command 保持安静，只在需要模型重新接管时打印 stdout 行。
+- 明确要求 monitor command 保持安静，只在需要模型重新接管时打印 stdout 内容。
 - 明确推荐先用 bash/pipeline；当 debounce、日志过滤或摘要逻辑在 shell 中表达别扭时，可以内嵌短小的 `python` / `node` 脚本。
 - 如果模型需要确认一个超长命令仍在运行，应让 monitor command 自己周期性输出 heartbeat / progress 行，而不是从外部重复查询状态。
 - 如果 monitor command 会派生后台子进程，且模型希望 monitor 覆盖这些子进程的完整生命周期，命令本身必须显式 `wait`；否则主进程一旦退出，runtime 就会发送 terminal event 并结束监听。
@@ -174,10 +174,10 @@ EventCommandEvent {
 
 行为规则：
 
-- 每读到一条完整 stdout 行，立即生成一条 `kind=output` 的 `EventCommandEvent`。
-- 空行默认忽略，避免无意义事件；如后续需要可增加 `include_empty_lines`。
-- 单行超过 16 KiB 时截断展示文本，并设置 `truncated=true`。
-- runtime 同时监听 stdout 和主进程退出；主进程退出后不再等待 stdout EOF。
+- 每次 stdout reader 读取到一段非空 stdout 数据，立即生成一条 `kind=output` 的 `EventCommandEvent`；该 chunk 可以包含多行。
+- chunk 中的换行和空白会按读取结果保留，不再按空行过滤。
+- 单个 chunk 超过 16 KiB 时截断展示文本，并设置 `truncated=true`。
+- runtime 同时监听 stdout 和主进程退出；主进程退出后会短暂 drain 已可读的 stdout chunk，随后不再等待 stdout EOF。
 - 命令退出时无论 exit code 是否为 0，都生成 `kind=exited` terminal event。
 - 启动失败生成 `kind=failed_to_start`，并且不进入 active。
 - 取消生成 `kind=cancelled`，并从 active 列表移除。
@@ -199,7 +199,7 @@ EventCommand 后端应复用现有 event-driven subscription 基础设施，但�
 2. tool handler 校验 `command/cwd/label`，生成 `subscription_id`。
 3. registry 持久化 EventCommand monitor：`subscription_id`、`command`、`cwd`、`label`。
 4. registry 启动后台 shell 命令。
-5. stdout reader 按行生成 `EventCommandEvent(kind=output)`。
+5. stdout reader 按 read chunk 生成 `EventCommandEvent(kind=output)`。
 6. 进程 wait task 观察退出状态，生成 terminal `EventCommandEvent`。
 7. registry 在 terminal event 后移除 active/persisted subscription。
 8. app-server 把 EventCommand item 推送给客户端，并写入 thread history。
@@ -294,7 +294,7 @@ EventCommandEventKind =
 app-server v2 需要同步新增结构化 notification / schema：
 
 - subscribe 成功时发送并持久化 `eventCommandCall`。
-- stdout 行、退出、取消、启动失败时发送并持久化 `eventCommandEvent`。
+- stdout chunk、退出、取消、启动失败时发送并持久化 `eventCommandEvent`。
 - thread read/history replay 返回同样的一等 item。
 - thread status 或 thread summary 中暴露 active EventCommand 列表。
 
@@ -328,7 +328,7 @@ root-worker 需要展示两类信息。
 
 EventCommand 事件流：
 
-- 每条 stdout 行显示为独立 EventCommand event。
+- 每个 stdout read chunk 显示为独立 EventCommand event；单个 chunk 可能包含多行文本。
 - terminal event 显示为独立事件，状态包括 exited、cancelled、failed_to_start。
 - 事件应能折叠/展开查看 command、cwd、subscription id 等详情。
 - 事件不能被普通 tool grouping 吞掉；同一 monitor 的多条事件可以视觉关联，但仍应作为独立 item 可见。
@@ -420,7 +420,7 @@ schedule 不迁移到 EventCommand：
 后端测试：
 
 - `event_command_subscribe` 创建 active monitor，返回 subscription id。
-- stdout 多行生成多条独立 `EventCommandEvent(kind=output)`，并保持 active。
+- 单次 stdout read 中包含多行时生成一条 `EventCommandEvent(kind=output)`，并保持 active。
 - 命令 exit code 0 生成 `kind=exited`，并清理 active。
 - 命令 exit code 非 0 同样生成 `kind=exited`，并记录 exit code。
 - 主进程退出但后台子进程仍持有 stdout 时，仍应尽快生成 `kind=exited`，不等待 stdout EOF。

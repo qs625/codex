@@ -22,12 +22,13 @@ use super::subscription_function_tool;
 
 const TOOL_NAME: &str = "event_command_subscribe";
 const TOOL_DESCRIPTION: &str = "Run a shell command in the background and inject an event \
-whenever the command writes a line to stdout. Each stdout line becomes a separate event. Use this \
+whenever stdout data is read from the command. Each stdout read chunk becomes a separate event and \
+may contain multiple lines. Use this \
 for file monitors, long-running command monitors, command-exit notifications, or server log \
 watchers. The command is restarted automatically when the thread resumes from persisted monitor \
 metadata.\n\n\
 Parameters:\n\
-- `command`: shell command to run. Each stdout line becomes an event.\n\
+- `command`: shell command to run. Each stdout read chunk becomes an event.\n\
 - `cwd`: optional working directory for the command. When omitted, the command inherits the \
 server process working directory.\n\
 - `label`: optional short name included in active monitor lists and emitted events.\n\n\
@@ -41,8 +42,8 @@ emit heartbeat or progress lines instead of repeatedly checking status from outs
 - You need to keep a server or watcher running and only wake the model on readiness, errors, \
 crashes, or other important log lines.\n\n\
 Command-writing guidance:\n\
-- Keep monitored commands quiet: redirect noisy output and only print lines that should wake the \
-model.\n\
+- Keep monitored commands quiet: redirect noisy output and only print data that should wake the \
+model. A single output event can contain multiple stdout lines.\n\
 - `stderr` does not emit events unless the command redirects it to `stdout`, for example with \
 `2>&1`.\n\
 - Prefer a small shell pipeline first; if the logic is awkward in shell, embed a short `python` \
@@ -86,7 +87,7 @@ Use `event_command_unsubscribe` to cancel a running monitor.";
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct EventCommandSubscribeArgs {
-    /// Shell command to run in the background. Each stdout line becomes an event.
+    /// Shell command to run in the background. Each stdout read chunk becomes an event.
     command: String,
     /// Optional working directory for the command.
     cwd: Option<String>,
