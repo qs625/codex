@@ -9,6 +9,7 @@ use codex_app_server_protocol::JSONRPCMessage;
 use codex_app_server_protocol::JSONRPCNotification;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
+use codex_app_server_protocol::ThreadActiveFlag;
 use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadListResponse;
 use codex_app_server_protocol::ThreadLoadedListParams;
@@ -299,7 +300,7 @@ async fn thread_read_stays_active_while_event_subscription_is_pending() -> Resul
     assert_eq!(
         thread.status,
         ThreadStatus::Active {
-            active_flags: vec![],
+            active_flags: vec![ThreadActiveFlag::WaitingOnEventTool],
         },
     );
 
@@ -416,7 +417,7 @@ async fn startup_restores_threads_with_persisted_event_subscriptions() -> Result
     assert_eq!(
         restored_thread.status,
         ThreadStatus::Active {
-            active_flags: vec![],
+            active_flags: vec![ThreadActiveFlag::WaitingOnEventTool],
         },
     );
 

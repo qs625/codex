@@ -299,7 +299,12 @@ export type ThreadUsage = {
   contextUsage: ThreadContextUsage | null;
 };
 
-export type ThreadActiveFlag = "waitingOnApproval" | "waitingOnUserInput";
+export type ThreadActiveFlag =
+  | "running"
+  | "waitingOnApproval"
+  | "waitingOnUserInput"
+  | "waitingOnSubagent"
+  | "waitingOnEventTool";
 
 export type ThreadStatus =
   | { type: "notLoaded" }

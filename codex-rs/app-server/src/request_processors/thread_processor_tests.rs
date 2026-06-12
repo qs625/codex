@@ -52,6 +52,7 @@ mod thread_processor_behavior_tests {
     use chrono::DateTime;
     use chrono::Utc;
     use codex_app_server_protocol::ServerRequestPayload;
+    use codex_app_server_protocol::ThreadActiveFlag;
     use codex_app_server_protocol::ThreadItem;
     use codex_app_server_protocol::ToolRequestUserInputParams;
     use codex_config::CloudRequirementsLoader;
@@ -227,7 +228,7 @@ mod thread_processor_behavior_tests {
         assert_eq!(
             status,
             ThreadStatus::Active {
-                active_flags: Vec::new(),
+                active_flags: vec![ThreadActiveFlag::WaitingOnEventTool],
             }
         );
 

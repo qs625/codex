@@ -13570,8 +13570,11 @@
     },
     "ThreadActiveFlag": {
       "enum": [
+        "running",
         "waitingOnApproval",
-        "waitingOnUserInput"
+        "waitingOnUserInput",
+        "waitingOnSubagent",
+        "waitingOnEventTool"
       ],
       "type": "string"
     },

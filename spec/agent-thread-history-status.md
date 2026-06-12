@@ -64,8 +64,10 @@ thread/read 状态恢复：
 前端最小改动：
 
 - 保留 `decideThreadSelectionAction` 的懒加载语义，不在切换时强制 read。
-- 新增 thread-level presence/status class 派生：当 thread 已有 turn 数据但没有 active work、active monitor、in-flight subagent wait 时，`status.type === "active"` 不再直接显示为 Active。
-- tree 和 selected header 共享有效 active 语义；无 turns 的 active placeholder 仍显示 active，避免未加载 live child 在树上丢失运行态。
+- 后端 `ThreadStatus::Active { activeFlags }` 是 root-worker Agent Tree 的 canonical 状态来源。`running`、`waitingOnSubagent`、`waitingOnEventTool`、`waitingOnApproval`、`waitingOnUserInput` 由 app-server runtime facts 生成；root-worker 只做 flag 到现有视觉 class/label 的映射。
+- app-server 在 turn start/complete、event subscription count、subagent wait begin/end、approval/user input guard 变化时统一重算 status 并发送 `thread/status/changed`。event command 等待输出 `waitingOnEventTool`，subagent wait 输出 `waitingOnSubagent`。
+- parent 等待 subagent 的 turn 已完成后，`CollabWaitingEnd` 若携带 completed agent status，会进入短暂 grace window 并继续保持 `waitingOnSubagent`；matching child completion 的 live `ItemCompleted` 到达后，按其 `trigger_turn` 精确切换为 `running` 或 `idle`。若 child completion item 先到，则先标记 `running`，后续 wait-end 清除 `waitingOnSubagent`；若 child completion item 缺失，grace 过期后清除等待，避免事件顺序差异造成 idle gap、stale running 或 stale waiting。
+- root-worker 不再从 turn/items/raw markers 推导 `doing`、`waiting-subagent`、`waiting-eventtool` 或 idle；旧 item 只用于 conversation/monitor 内容展示，不作为 Agent Tree 主状态事实。
 
 ## 风险
 

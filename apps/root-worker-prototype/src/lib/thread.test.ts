@@ -2861,36 +2861,9 @@ test("treeThreadStatusClass shows subagent waiting separately", () => {
     ...makeThread(),
     status: {
       type: "active" as const,
-      activeFlags: [],
+      activeFlags: ["waitingOnSubagent"],
     },
-    turns: [
-      {
-        id: "turn-1",
-        items: [
-          {
-            type: "collabAgentToolCall" as const,
-            id: "item-1",
-            tool: "Wait",
-            status: "InProgress",
-            senderThreadId: "thread-1",
-            senderPath: "/root",
-            receiverThreadIds: ["thread-2"],
-            receiverPaths: ["/root/worker"],
-            prompt: null,
-            model: null,
-            reasoningEffort: null,
-            agentsStates: {},
-          },
-        ],
-        itemsView: "full" as const,
-        status: "inProgress" as const,
-        error: null,
-        startedAt: 1,
-        completedAt: null,
-        durationMs: null,
-      },
-    ],
-  };
+  } satisfies Thread;
 
   assert.equal(treeThreadStatusClass(makeTreeNode(thread)), "waiting-subagent");
   assert.equal(
@@ -2899,7 +2872,7 @@ test("treeThreadStatusClass shows subagent waiting separately", () => {
   );
 });
 
-test("treeThreadStatusClass prioritizes self turn work over subagent waits", () => {
+test("treeThreadStatusClass ignores item-derived subagent waits", () => {
   const thread = {
     ...makeThread(),
     status: {
@@ -2950,32 +2923,9 @@ test("treeThreadStatusClass shows event tool waiting separately", () => {
     ...makeThread(),
     status: {
       type: "active" as const,
-      activeFlags: [],
+      activeFlags: ["waitingOnEventTool"],
     },
-    turns: [
-      {
-        id: "turn-1",
-        items: [
-          {
-            type: "eventCommandCall" as const,
-            id: "item-1",
-            subscriptionId: "sub-1",
-            command: "tail -f /tmp/build.log",
-            cwd: "/tmp",
-            label: "build log",
-            status: "completed",
-            output: { subscription_id: "sub-1" },
-          },
-        ],
-        itemsView: "full" as const,
-        status: "inProgress" as const,
-        error: null,
-        startedAt: 1,
-        completedAt: null,
-        durationMs: null,
-      },
-    ],
-  };
+  } satisfies Thread;
 
   assert.equal(
     treeThreadStatusClass(makeTreeNode(thread)),
@@ -2983,51 +2933,14 @@ test("treeThreadStatusClass shows event tool waiting separately", () => {
   );
 });
 
-test("treeThreadStatusClass prioritizes event tool waits over subagent waits", () => {
+test("treeThreadStatusClass prioritizes backend event tool flags over subagent flags", () => {
   const thread = {
     ...makeThread(),
     status: {
       type: "active" as const,
-      activeFlags: [],
+      activeFlags: ["waitingOnSubagent", "waitingOnEventTool"],
     },
-    turns: [
-      {
-        id: "turn-1",
-        items: [
-          {
-            type: "eventCommandCall" as const,
-            id: "item-1",
-            subscriptionId: "sub-1",
-            command: "tail -f /tmp/build.log",
-            cwd: "/tmp",
-            label: "build log",
-            status: "completed",
-            output: { subscription_id: "sub-1" },
-          },
-          {
-            type: "collabAgentToolCall" as const,
-            id: "item-2",
-            tool: "Wait",
-            status: "InProgress",
-            senderThreadId: "thread-1",
-            senderPath: "/root",
-            receiverThreadIds: ["thread-2"],
-            receiverPaths: ["/root/worker"],
-            prompt: null,
-            model: null,
-            reasoningEffort: null,
-            agentsStates: {},
-          },
-        ],
-        itemsView: "full" as const,
-        status: "inProgress" as const,
-        error: null,
-        startedAt: 1,
-        completedAt: null,
-        durationMs: null,
-      },
-    ],
-  };
+  } satisfies Thread;
 
   assert.equal(
     treeThreadStatusClass(makeTreeNode(thread)),
@@ -3035,12 +2948,11 @@ test("treeThreadStatusClass prioritizes event tool waits over subagent waits", (
   );
 });
 
-test("treeThreadStatusClass ignores process exit restore failures", () => {
+test("treeThreadStatusClass ignores process exit restore failures when backend status is idle", () => {
   const thread = {
     ...makeThread(),
     status: {
-      type: "active" as const,
-      activeFlags: [],
+      type: "idle" as const,
     },
     turns: [
       {
@@ -3075,12 +2987,11 @@ test("treeThreadStatusClass ignores process exit restore failures", () => {
   assert.equal(treeThreadStatusClass(makeTreeNode(thread)), "todo");
 });
 
-test("treeThreadStatusClass ignores event tool subscriptions after unsubscribe", () => {
+test("treeThreadStatusClass ignores event tool subscriptions after unsubscribe when backend status is idle", () => {
   const thread = {
     ...makeThread(),
     status: {
-      type: "active" as const,
-      activeFlags: [],
+      type: "idle" as const,
     },
     turns: [
       {
@@ -3146,30 +3057,9 @@ test("treeThreadStatusClass prioritizes active descendants over event tool waits
     id: "event-tool-child",
     status: {
       type: "active" as const,
-      activeFlags: [],
+      activeFlags: ["waitingOnEventTool"],
     },
-    turns: [
-      {
-        id: "turn-1",
-        items: [
-          {
-            type: "eventDrivenToolCall" as const,
-            id: "item-1",
-            tool: "process_exit_subscribe",
-            arguments: { session_id: 42 },
-            status: "completed",
-            output: { subscription_id: "sub-1" },
-          },
-        ],
-        itemsView: "full" as const,
-        status: "completed" as const,
-        error: null,
-        startedAt: 1,
-        completedAt: 2,
-        durationMs: 1000,
-      },
-    ],
-  };
+  } satisfies Thread;
   const activeChild = {
     ...makeThread(),
     id: "active-child",
@@ -3200,32 +3090,9 @@ test("treeThreadStatusClass rolls descendant event tool waits into parent subage
     id: "child",
     status: {
       type: "active" as const,
-      activeFlags: [],
+      activeFlags: ["waitingOnEventTool"],
     },
-    turns: [
-      {
-        id: "turn-1",
-        items: [
-          {
-            type: "eventCommandCall" as const,
-            id: "item-1",
-            subscriptionId: "sub-1",
-            command: "tail -f /tmp/build.log",
-            cwd: "/tmp",
-            label: "build log",
-            status: "completed",
-            output: { subscription_id: "sub-1" },
-          },
-        ],
-        itemsView: "full" as const,
-        status: "completed" as const,
-        error: null,
-        startedAt: 1,
-        completedAt: 2,
-        durationMs: 1000,
-      },
-    ],
-  };
+  } satisfies Thread;
 
   assert.equal(
     treeThreadStatusClass(makeTreeNode(parent, [makeTreeNode(child)])),
@@ -3392,6 +3259,20 @@ test("getPresenceLabel surfaces active thread flags", () => {
   assert.equal(
     getPresenceLabel({
       type: "active",
+      activeFlags: ["waitingOnEventTool"],
+    }),
+    "Waiting on Event Tool",
+  );
+  assert.equal(
+    getPresenceLabel({
+      type: "active",
+      activeFlags: ["waitingOnSubagent"],
+    }),
+    "Waiting on Subagent",
+  );
+  assert.equal(
+    getPresenceLabel({
+      type: "active",
       activeFlags: ["waitingOnApproval"],
     }),
     "Waiting on Approval",
@@ -3409,6 +3290,13 @@ test("getPresenceLabel surfaces active thread flags", () => {
       activeFlags: [],
     }),
     "Active",
+  );
+  assert.equal(
+    getPresenceLabel({
+      type: "active",
+      activeFlags: ["running"],
+    }),
+    "Running",
   );
 });
 

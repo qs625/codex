@@ -17,6 +17,7 @@ use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SessionSource;
 use codex_app_server_protocol::SortDirection;
+use codex_app_server_protocol::ThreadActiveFlag;
 use codex_app_server_protocol::ThreadForkParams;
 use codex_app_server_protocol::ThreadForkResponse;
 use codex_app_server_protocol::ThreadItem;
@@ -1546,7 +1547,7 @@ async fn thread_read_without_turns_reports_active_loaded_turn() -> Result<()> {
     assert_eq!(
         thread.status,
         ThreadStatus::Active {
-            active_flags: Vec::new(),
+            active_flags: vec![ThreadActiveFlag::Running],
         }
     );
     assert_eq!(thread.turns, Vec::new());
