@@ -17,9 +17,8 @@ use codex_thread_store::ThreadMetadataPatch;
 use codex_utils_pty::process_group::kill_process_group;
 #[cfg(unix)]
 use codex_utils_pty::process_group::terminate_process_group;
-use tokio::io::AsyncBufRead;
-use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncRead;
+use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 use tokio::process::Command;
 use tokio::sync::Mutex as AsyncMutex;
@@ -31,7 +30,8 @@ use crate::SubscriptionActivityObserver;
 use crate::event_command_stdin::EventCommandRuntime;
 use crate::tools::schedule::CompiledSchedule;
 
-const MAX_EVENT_COMMAND_OUTPUT_LINE_BYTES: usize = 16 * 1024;
+const MAX_EVENT_COMMAND_OUTPUT_CHUNK_BYTES: usize = 16 * 1024;
+const EVENT_COMMAND_EXIT_STDOUT_DRAIN_TIMEOUT: Duration = Duration::from_millis(50);
 const EVENT_COMMAND_TERM_GRACE_PERIOD: Duration = Duration::from_millis(250);
 
 struct SubscriptionEntry {
@@ -52,7 +52,7 @@ struct EventCommandRun {
 }
 
 enum EventCommandOutputRead {
-    Line { line: String, truncated: bool },
+    Chunk { chunk: String, truncated: bool },
     Eof,
     Failed(String),
 }
@@ -766,33 +766,35 @@ async fn run_event_command(run: EventCommandRun) -> Result<(), String> {
             }
             status = child.wait() => {
                 let status = status.map_err(|err| err.to_string())?;
-                while let Ok(output) = output_rx.try_recv() {
+                let stdout_drain_deadline =
+                    tokio::time::Instant::now() + EVENT_COMMAND_EXIT_STDOUT_DRAIN_TIMEOUT;
+                while let Some(drain_timeout) =
+                    stdout_drain_deadline.checked_duration_since(tokio::time::Instant::now())
+                {
+                    if drain_timeout.is_zero() {
+                        break;
+                    }
+                    let Some(output) =
+                        recv_event_command_output_after_exit(&mut output_rx, drain_timeout).await
+                    else {
+                        break;
+                    };
                     match output {
-                        EventCommandOutputRead::Line { line, truncated } => {
-                            if line.is_empty() {
-                                continue;
-                            }
+                        EventCommandOutputRead::Chunk { chunk, truncated } => {
                             sequence = sequence.saturating_add(1);
-                            send_event_command_event(
+                            send_event_command_output_event(
                                 &thread_manager,
                                 thread_id,
-                                EventCommandEvent {
-                                    subscription_id: subscription_id.clone(),
-                                    kind: EventCommandEventKind::Output,
-                                    label: label.clone(),
-                                    command: command.clone(),
-                                    cwd: cwd.clone(),
-                                    line: Some(line),
-                                    sequence: Some(sequence),
-                                    exit_code: None,
-                                    signal: None,
-                                    message: None,
-                                    truncated,
-                                    created_at: chrono::Utc::now().timestamp(),
-                                },
+                                &subscription_id,
+                                &label,
+                                &command,
+                                &cwd,
+                                sequence,
+                                chunk,
+                                truncated,
                             ).await?;
                         }
-                        EventCommandOutputRead::Eof => {}
+                        EventCommandOutputRead::Eof => break,
                         EventCommandOutputRead::Failed(err) => {
                             output_task.abort();
                             return Err(err);
@@ -822,28 +824,18 @@ async fn run_event_command(run: EventCommandRun) -> Result<(), String> {
             }
             output = output_rx.recv(), if !stdout_closed => {
                 match output {
-                    Some(EventCommandOutputRead::Line { line, truncated }) => {
-                        if line.is_empty() {
-                            continue;
-                        }
+                    Some(EventCommandOutputRead::Chunk { chunk, truncated }) => {
                         sequence = sequence.saturating_add(1);
-                        send_event_command_event(
+                        send_event_command_output_event(
                             &thread_manager,
                             thread_id,
-                            EventCommandEvent {
-                                subscription_id: subscription_id.clone(),
-                                kind: EventCommandEventKind::Output,
-                                label: label.clone(),
-                                command: command.clone(),
-                                cwd: cwd.clone(),
-                                line: Some(line),
-                                sequence: Some(sequence),
-                                exit_code: None,
-                                signal: None,
-                                message: None,
-                                truncated,
-                                created_at: chrono::Utc::now().timestamp(),
-                            },
+                            &subscription_id,
+                            &label,
+                            &command,
+                            &cwd,
+                            sequence,
+                            chunk,
+                            truncated,
                         ).await?;
                     }
                     Some(EventCommandOutputRead::Eof) | None => {
@@ -859,6 +851,16 @@ async fn run_event_command(run: EventCommandRun) -> Result<(), String> {
     }
 }
 
+async fn recv_event_command_output_after_exit(
+    output_rx: &mut mpsc::UnboundedReceiver<EventCommandOutputRead>,
+    timeout: Duration,
+) -> Option<EventCommandOutputRead> {
+    tokio::time::timeout(timeout, output_rx.recv())
+        .await
+        .ok()
+        .flatten()
+}
+
 fn spawn_event_command_stdout_task<R>(
     mut stdout_reader: BufReader<R>,
 ) -> (
@@ -871,12 +873,12 @@ where
     let (output_tx, output_rx) = mpsc::unbounded_channel();
     let output_task = tokio::spawn(async move {
         loop {
-            let event = match read_event_command_line(&mut stdout_reader).await {
-                Ok(Some((line, truncated))) => EventCommandOutputRead::Line { line, truncated },
+            let event = match read_event_command_chunk(&mut stdout_reader).await {
+                Ok(Some((chunk, truncated))) => EventCommandOutputRead::Chunk { chunk, truncated },
                 Ok(None) => EventCommandOutputRead::Eof,
                 Err(err) => EventCommandOutputRead::Failed(err),
             };
-            let is_terminal = !matches!(event, EventCommandOutputRead::Line { .. });
+            let is_terminal = !matches!(event, EventCommandOutputRead::Chunk { .. });
             if output_tx.send(event).is_err() || is_terminal {
                 return;
             }
@@ -885,60 +887,33 @@ where
     (output_rx, output_task)
 }
 
-async fn read_event_command_line<R: AsyncBufRead + Unpin>(
+async fn read_event_command_chunk<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<Option<(String, bool)>, String> {
-    let mut bytes = Vec::new();
-    let mut truncated = false;
-
-    loop {
-        let buffer = reader.fill_buf().await.map_err(|err| err.to_string())?;
-        if buffer.is_empty() {
-            if bytes.is_empty() && !truncated {
-                return Ok(None);
-            }
-            return Ok(Some(event_command_line_from_bytes(bytes, truncated)));
-        }
-
-        let newline_index = buffer.iter().position(|byte| *byte == b'\n');
-        let take_len = newline_index.map_or(buffer.len(), |index| index + 1);
-        let mut content = newline_index.map_or(buffer, |index| &buffer[..index]);
-        if let Some(stripped) = content.strip_suffix(b"\r") {
-            content = stripped;
-        }
-
-        let remaining = MAX_EVENT_COMMAND_OUTPUT_LINE_BYTES.saturating_sub(bytes.len());
-        if remaining > 0 {
-            let append_len = content.len().min(remaining);
-            bytes.extend_from_slice(&content[..append_len]);
-        }
-        if content.len() > remaining {
-            truncated = true;
-        }
-
-        reader.consume(take_len);
-        if newline_index.is_some() {
-            return Ok(Some(event_command_line_from_bytes(bytes, truncated)));
-        }
+    let mut bytes = vec![0_u8; MAX_EVENT_COMMAND_OUTPUT_CHUNK_BYTES];
+    let read_len = reader
+        .read(&mut bytes)
+        .await
+        .map_err(|err| err.to_string())?;
+    if read_len == 0 {
+        return Ok(None);
     }
+    bytes.truncate(read_len);
+    Ok(Some(truncate_event_command_chunk(
+        String::from_utf8_lossy(&bytes).to_string(),
+    )))
 }
 
-fn event_command_line_from_bytes(bytes: Vec<u8>, truncated: bool) -> (String, bool) {
-    let line = String::from_utf8_lossy(&bytes).to_string();
-    let (line, truncated_by_utf8) = truncate_event_command_line(line);
-    (line, truncated || truncated_by_utf8)
-}
-
-fn truncate_event_command_line(line: String) -> (String, bool) {
-    if line.len() <= MAX_EVENT_COMMAND_OUTPUT_LINE_BYTES {
-        return (line, false);
+fn truncate_event_command_chunk(chunk: String) -> (String, bool) {
+    if chunk.len() <= MAX_EVENT_COMMAND_OUTPUT_CHUNK_BYTES {
+        return (chunk, false);
     }
 
-    let mut end = MAX_EVENT_COMMAND_OUTPUT_LINE_BYTES;
-    while !line.is_char_boundary(end) {
+    let mut end = MAX_EVENT_COMMAND_OUTPUT_CHUNK_BYTES;
+    while !chunk.is_char_boundary(end) {
         end -= 1;
     }
-    (line[..end].to_string(), true)
+    (chunk[..end].to_string(), true)
 }
 
 fn shell_command(command: &str, cwd: Option<&str>) -> Command {
@@ -984,6 +959,38 @@ async fn terminate_event_command_process_tree(
     }
 }
 
+async fn send_event_command_output_event(
+    thread_manager: &Weak<ThreadManager>,
+    thread_id: ThreadId,
+    subscription_id: &str,
+    label: &Option<String>,
+    command: &str,
+    cwd: &Option<String>,
+    sequence: u32,
+    chunk: String,
+    truncated: bool,
+) -> Result<(), String> {
+    send_event_command_event(
+        thread_manager,
+        thread_id,
+        EventCommandEvent {
+            subscription_id: subscription_id.to_string(),
+            kind: EventCommandEventKind::Output,
+            label: label.clone(),
+            command: command.to_string(),
+            cwd: cwd.clone(),
+            line: Some(chunk),
+            sequence: Some(sequence),
+            exit_code: None,
+            signal: None,
+            message: None,
+            truncated,
+            created_at: chrono::Utc::now().timestamp(),
+        },
+    )
+    .await
+}
+
 async fn send_event_command_event(
     thread_manager: &Weak<ThreadManager>,
     thread_id: ThreadId,
@@ -1015,19 +1022,22 @@ mod tests {
     use codex_protocol::subscriptions::ScheduleSpec;
     use pretty_assertions::assert_eq;
     use tokio::io::BufReader;
+    use tokio::sync::mpsc;
     use tokio::time::timeout;
 
+    use super::EVENT_COMMAND_EXIT_STDOUT_DRAIN_TIMEOUT;
     use super::EventCommandOutputRead;
     use super::FsSubscriptionRegistry;
-    use super::MAX_EVENT_COMMAND_OUTPUT_LINE_BYTES;
-    use super::read_event_command_line;
+    use super::MAX_EVENT_COMMAND_OUTPUT_CHUNK_BYTES;
+    use super::read_event_command_chunk;
+    use super::recv_event_command_output_after_exit;
     #[cfg(unix)]
     use super::shell_command;
     #[cfg(unix)]
     use super::spawn_event_command_stdout_task;
     #[cfg(unix)]
     use super::terminate_event_command_process_tree;
-    use super::truncate_event_command_line;
+    use super::truncate_event_command_chunk;
     use crate::tools::schedule::CompiledSchedule;
 
     #[tokio::test]
@@ -1158,59 +1168,128 @@ mod tests {
     }
 
     #[test]
-    fn truncates_event_command_output_lines_on_char_boundaries() {
-        let line = format!(
+    fn truncates_event_command_output_chunks_on_char_boundaries() {
+        let chunk = format!(
             "{}中",
-            "a".repeat(MAX_EVENT_COMMAND_OUTPUT_LINE_BYTES - "中".len() + 1)
+            "a".repeat(MAX_EVENT_COMMAND_OUTPUT_CHUNK_BYTES - "中".len() + 1)
         );
 
-        let (truncated, was_truncated) = truncate_event_command_line(line);
+        let (truncated, was_truncated) = truncate_event_command_chunk(chunk);
 
         assert!(was_truncated);
-        assert!(truncated.len() <= MAX_EVENT_COMMAND_OUTPUT_LINE_BYTES);
+        assert!(truncated.len() <= MAX_EVENT_COMMAND_OUTPUT_CHUNK_BYTES);
         assert_eq!(
             truncated,
-            "a".repeat(MAX_EVENT_COMMAND_OUTPUT_LINE_BYTES - "中".len() + 1)
+            "a".repeat(MAX_EVENT_COMMAND_OUTPUT_CHUNK_BYTES - "中".len() + 1)
         );
     }
 
     #[tokio::test]
-    async fn reads_event_command_lines_without_buffering_unbounded_output() {
-        let input = "a".repeat(MAX_EVENT_COMMAND_OUTPUT_LINE_BYTES * 2);
+    async fn reads_event_command_chunks_without_buffering_unbounded_output() {
+        let input = "a".repeat(MAX_EVENT_COMMAND_OUTPUT_CHUNK_BYTES * 2);
         let mut reader = BufReader::new(input.as_bytes());
 
-        let line = read_event_command_line(&mut reader).await.unwrap();
-        let next_line = read_event_command_line(&mut reader).await.unwrap();
+        let chunk = read_event_command_chunk(&mut reader).await.unwrap();
+        let next_chunk = read_event_command_chunk(&mut reader).await.unwrap();
+        let end = read_event_command_chunk(&mut reader).await.unwrap();
 
         assert_eq!(
-            line,
-            Some(("a".repeat(MAX_EVENT_COMMAND_OUTPUT_LINE_BYTES), true))
+            chunk,
+            Some(("a".repeat(MAX_EVENT_COMMAND_OUTPUT_CHUNK_BYTES), false))
         );
-        assert_eq!(next_line, None);
-    }
-
-    #[tokio::test]
-    async fn reads_event_command_lines_one_line_at_a_time() {
-        let mut reader = BufReader::new("first\nsecond\n".as_bytes());
-
-        let first = read_event_command_line(&mut reader).await.unwrap();
-        let second = read_event_command_line(&mut reader).await.unwrap();
-        let end = read_event_command_line(&mut reader).await.unwrap();
-
-        assert_eq!(first, Some(("first".to_string(), false)));
-        assert_eq!(second, Some(("second".to_string(), false)));
+        assert_eq!(
+            next_chunk,
+            Some(("a".repeat(MAX_EVENT_COMMAND_OUTPUT_CHUNK_BYTES), false))
+        );
         assert_eq!(end, None);
     }
 
     #[tokio::test]
-    async fn reads_event_command_lines_without_crlf_suffix() {
-        let mut reader = BufReader::new("first\r\nsecond\r\n".as_bytes());
+    async fn reads_event_command_chunk_with_multiple_lines() {
+        let mut reader = BufReader::new("first\nsecond\n".as_bytes());
 
-        let first = read_event_command_line(&mut reader).await.unwrap();
-        let second = read_event_command_line(&mut reader).await.unwrap();
+        let chunk = read_event_command_chunk(&mut reader).await.unwrap();
+        let end = read_event_command_chunk(&mut reader).await.unwrap();
 
-        assert_eq!(first, Some(("first".to_string(), false)));
-        assert_eq!(second, Some(("second".to_string(), false)));
+        assert_eq!(chunk, Some(("first\nsecond\n".to_string(), false)));
+        assert_eq!(end, None);
+    }
+
+    #[tokio::test]
+    async fn reads_event_command_chunk_with_blank_lines_and_crlf_unmodified() {
+        let mut reader = BufReader::new("\r\nfirst\r\n\r\nsecond\r\n".as_bytes());
+
+        let chunk = read_event_command_chunk(&mut reader).await.unwrap();
+        let end = read_event_command_chunk(&mut reader).await.unwrap();
+
+        assert_eq!(
+            chunk,
+            Some(("\r\nfirst\r\n\r\nsecond\r\n".to_string(), false))
+        );
+        assert_eq!(end, None);
+    }
+
+    #[tokio::test]
+    async fn receives_event_command_output_that_arrives_after_process_exit() {
+        let (output_tx, mut output_rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            output_tx
+                .send(EventCommandOutputRead::Chunk {
+                    chunk: "tail".to_string(),
+                    truncated: false,
+                })
+                .unwrap();
+        });
+
+        let output = timeout(
+            EVENT_COMMAND_EXIT_STDOUT_DRAIN_TIMEOUT * 2,
+            recv_event_command_output_after_exit(
+                &mut output_rx,
+                EVENT_COMMAND_EXIT_STDOUT_DRAIN_TIMEOUT,
+            ),
+        )
+        .await
+        .expect("expected delayed output before timeout");
+
+        assert!(matches!(
+            output,
+            Some(EventCommandOutputRead::Chunk { ref chunk, truncated: false }) if chunk == "tail"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stdout_reader_preserves_fast_command_tail_without_newline_after_exit() {
+        let mut child = shell_command("printf 'tail'", None)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdout = child.stdout.take().expect("stdout should be piped");
+        let (mut output_rx, output_task) = spawn_event_command_stdout_task(BufReader::new(stdout));
+
+        let status = timeout(Duration::from_secs(1), child.wait())
+            .await
+            .expect("expected main process exit before timeout")
+            .expect("child wait should succeed");
+        assert!(status.success());
+
+        let output = timeout(
+            EVENT_COMMAND_EXIT_STDOUT_DRAIN_TIMEOUT * 2,
+            recv_event_command_output_after_exit(
+                &mut output_rx,
+                EVENT_COMMAND_EXIT_STDOUT_DRAIN_TIMEOUT,
+            ),
+        )
+        .await
+        .expect("expected stdout drain before timeout");
+        assert!(matches!(
+            output,
+            Some(EventCommandOutputRead::Chunk { ref chunk, truncated: false }) if chunk == "tail"
+        ));
+
+        output_task.abort();
     }
 
     #[cfg(unix)]
@@ -1227,11 +1306,11 @@ mod tests {
 
         let first_output = timeout(Duration::from_secs(1), output_rx.recv())
             .await
-            .expect("expected stdout line before timeout")
+            .expect("expected stdout chunk before timeout")
             .expect("expected stdout event");
         assert!(matches!(
             first_output,
-            EventCommandOutputRead::Line { ref line, truncated: false } if line == "ready"
+            EventCommandOutputRead::Chunk { ref chunk, truncated: false } if chunk == "ready\n"
         ));
 
         let status = timeout(Duration::from_secs(1), child.wait())
