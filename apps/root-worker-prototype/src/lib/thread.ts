@@ -9,7 +9,6 @@ import type {
   TreeNode,
   Turn,
 } from "../types";
-import { hasActiveMonitors } from "./threadAnalysis";
 
 export function pickInitialThread(threads: Thread[]) {
   return (
@@ -288,18 +287,12 @@ export function getThreadPresenceLabel(thread: Thread | null) {
   if (!thread) {
     return "Idle";
   }
-  if (!isEffectivelyActiveThread(thread)) {
-    return getPresenceLabel({ type: "idle" });
-  }
   return getPresenceLabel(thread.status);
 }
 
 export function threadDisplayStatusClass(thread: Thread | null) {
   if (!thread) {
     return threadStatusClass({ type: "notLoaded" });
-  }
-  if (!isEffectivelyActiveThread(thread)) {
-    return threadStatusClass({ type: "idle" });
   }
   return threadStatusClass(thread.status);
 }
@@ -1127,11 +1120,6 @@ export type TreeThreadStatusClass =
   | "waiting-subagent"
   | "waiting-eventtool";
 
-const MONITOR_TOOL_NAMES = new Set([
-  "event_command_subscribe",
-  "schedule_subscribe",
-]);
-
 export function treeThreadStatusClass(node: TreeNode): TreeThreadStatusClass {
   const selfClass = node.thread
     ? selfTreeThreadStatusClass(node.thread)
@@ -1183,91 +1171,18 @@ function selfTreeThreadStatusClass(thread: Thread): TreeThreadStatusClass {
   if (thread.status.type === "systemError") {
     return "blocked";
   }
-  if (!isEffectivelyActiveThread(thread)) {
+  if (thread.status.type !== "active") {
     return "todo";
   }
-  if (hasActiveTurnWork(thread)) {
-    return "doing";
-  }
-  if (hasActiveMonitorWait(thread)) {
+
+  const flags = thread.status.activeFlags;
+  if (flags.includes("waitingOnEventTool")) {
     return "waiting-eventtool";
   }
-  if (hasInFlightSubagentWait(thread)) {
+  if (flags.includes("waitingOnSubagent")) {
     return "waiting-subagent";
   }
   return "doing";
-}
-
-function isEffectivelyActiveThread(thread: Thread) {
-  if (thread.status.type === "systemError") {
-    return true;
-  }
-  if (thread.status.type !== "active") {
-    return false;
-  }
-  return (
-    thread.turns.length === 0 ||
-    hasActiveTurnWork(thread) ||
-    hasActiveMonitorWait(thread) ||
-    hasInFlightSubagentWait(thread)
-  );
-}
-
-function hasInFlightSubagentWait(thread: Thread) {
-  return thread.turns.some(
-    (turn) =>
-      isTurnInFlight(turn) &&
-      turn.items.some((item) => isInFlightSubagentWaitItem(item)),
-  );
-}
-
-function hasActiveMonitorWait(thread: Thread) {
-  return hasActiveMonitors(thread);
-}
-
-function hasActiveTurnWork(thread: Thread) {
-  return thread.turns.some((turn) => {
-    if (!isTurnInFlight(turn)) {
-      return false;
-    }
-    if (turn.items.length === 0) {
-      return true;
-    }
-    return turn.items.some(
-      (item) =>
-        item.type !== "userMessage" &&
-        item.type !== "injectedContext" &&
-        !isInFlightSubagentWaitItem(item) &&
-        !isMonitorToolItem(item),
-    );
-  });
-}
-
-function isInFlightSubagentWaitItem(item: ThreadItem) {
-  return (
-    item.type === "collabAgentToolCall" &&
-    item.tool.toLowerCase() === "wait" &&
-    isItemInProgress(item.status)
-  );
-}
-
-function isMonitorToolItem(item: ThreadItem) {
-  if (item.type === "eventDrivenTool" || item.type === "eventDrivenToolCall") {
-    return isMonitorToolName(item.tool);
-  }
-  if (item.type === "eventCommandCall" || item.type === "eventCommandEvent") {
-    return true;
-  }
-  return false;
-}
-
-function isMonitorToolName(tool: string) {
-  return MONITOR_TOOL_NAMES.has(tool);
-}
-
-function isItemInProgress(status: string) {
-  const normalized = status.toLowerCase();
-  return normalized === "inprogress" || normalized === "in_progress";
 }
 
 export function countDescendants(node: TreeNode): number {
@@ -1321,11 +1236,20 @@ function mapTaskStatus(status: ThreadStatus): Exclude<TaskFilter, "all"> {
 }
 
 function getActivePresenceLabel(activeFlags: ThreadActiveFlag[]) {
+  if (activeFlags.includes("waitingOnEventTool")) {
+    return "Waiting on Event Tool";
+  }
+  if (activeFlags.includes("waitingOnSubagent")) {
+    return "Waiting on Subagent";
+  }
   if (activeFlags.includes("waitingOnApproval")) {
     return "Waiting on Approval";
   }
   if (activeFlags.includes("waitingOnUserInput")) {
     return "Waiting on Input";
+  }
+  if (activeFlags.includes("running")) {
+    return "Running";
   }
   return "Active";
 }

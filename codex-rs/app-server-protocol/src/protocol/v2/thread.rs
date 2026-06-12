@@ -987,8 +987,11 @@ pub enum ThreadStatus {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub enum ThreadActiveFlag {
+    Running,
     WaitingOnApproval,
     WaitingOnUserInput,
+    WaitingOnSubagent,
+    WaitingOnEventTool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
