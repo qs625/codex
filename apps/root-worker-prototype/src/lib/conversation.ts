@@ -8,7 +8,6 @@ import type {
 import {
   formatClockTime,
   getThreadLabel,
-  isLegacyStructuredAgentText,
   trimPath,
   trimThreadId,
 } from "./thread";
@@ -305,19 +304,17 @@ function buildConversationItemEntries(
   if (item.type === "reasoning") {
     const text =
       item.summary.join("\n").trim() || item.content.join("\n").trim();
-    return text
-      ? [
-          {
-            id: item.id,
-            kind: "event" as const,
-            author,
-            role: "system" as const,
-            text,
-            timestamp,
-            attachments: [],
-          },
-        ]
-      : [];
+    return [
+      {
+        id: item.id,
+        kind: "event" as const,
+        author,
+        role: "system" as const,
+        text: text || "Reasoning item received.",
+        timestamp,
+        attachments: [],
+      },
+    ];
   }
 
   if (
@@ -490,7 +487,17 @@ function buildConversationItemEntries(
     ];
   }
 
-  return [];
+  return [
+    {
+      id: item.id,
+      kind: "event" as const,
+      author,
+      role: "system" as const,
+      text: `Unsupported thread item: ${item.type}`,
+      timestamp,
+      attachments: [],
+    },
+  ];
 }
 
 function formatItemTimestamp(item: ThreadItem) {
@@ -548,9 +555,6 @@ function buildReplacementHistoryEntry(
     case "message": {
       const role = stringOrFallback(item.role, "message");
       const text = extractResponseContentText(item.content);
-      if (role === "assistant" && isLegacyStructuredAgentText(text)) {
-        return null;
-      }
       return {
         id,
         kind: "message",
@@ -717,33 +721,6 @@ function buildCollabAgentMessageEntry(
   };
 }
 
-function standaloneNotificationEntryKey(entry: ConversationEntry) {
-  if (!isStandaloneNotificationEntry(entry)) {
-    return null;
-  }
-  const details = entry.toolDetails ?? "";
-  const from = detailsSectionValue(details, "From");
-  const to = detailsSectionValue(details, "To");
-  const message = detailsSectionValue(details, "Message");
-  const status =
-    detailsSectionValue(details, "Status") ??
-    (entry.toolCategory === "childCompletion" ? "completed" : null);
-  return [
-    "standaloneNotification",
-    from ?? "",
-    to ?? "",
-    status ?? "",
-    message ?? "",
-  ].join("\u{1f}");
-}
-
-function detailsSectionValue(details: string, label: string) {
-  const section = details
-    .split("\n\n")
-    .find((section) => section.startsWith(`${label}\n`));
-  return section?.slice(label.length + 1).trim() || null;
-}
-
 function replacementToolEntry({
   id,
   author,
@@ -889,25 +866,9 @@ export function buildConversationCells(
 ): ConversationCell[] {
   const cells: ConversationCell[] = [];
   let segmentEntries: ConversationEntry[] = [];
-  const notificationKeys = new Set<string>();
-  const replacementNotificationKeys = new Set<string>();
 
   const appendSegmentEntry = (entry: ConversationEntry) => {
-    const key = standaloneNotificationEntryKey(entry);
-    if (
-      key &&
-      notificationKeys.has(key) &&
-      (entry.isReplacementHistory || replacementNotificationKeys.has(key))
-    ) {
-      return;
-    }
     segmentEntries.push(entry);
-    if (key) {
-      notificationKeys.add(key);
-      if (entry.isReplacementHistory) {
-        replacementNotificationKeys.add(key);
-      }
-    }
   };
 
   for (const entry of entries) {

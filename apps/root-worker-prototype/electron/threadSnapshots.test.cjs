@@ -149,7 +149,7 @@ test("mergeThreadSnapshots prefers newer usage snapshots when thread/read has th
   assert.equal(merged.contextUsage?.budgetUsedPercent, 24);
 });
 
-test("mergeThreadSnapshots normalizes duplicate items when existing is null", () => {
+test("mergeThreadSnapshots preserves same-content items with different ids", () => {
   const turn = {
     id: "turn-1",
     items: [
@@ -178,12 +178,7 @@ test("mergeThreadSnapshots normalizes duplicate items when existing is null", ()
 
   const merged = mergeThreadSnapshots(null, makeThread({ turns: [turn] }));
 
-  assert.deepEqual(merged.turns, [
-    {
-      ...turn,
-      items: [turn.items[1]],
-    },
-  ]);
+  assert.deepEqual(merged.turns, [turn]);
 });
 
 test("mergeThreadSnapshots preserves repeated terminal collab status updates", () => {
@@ -230,7 +225,7 @@ test("mergeThreadSnapshots preserves repeated terminal collab status updates", (
   assert.deepEqual(merged.turns[0].items, turn.items);
 });
 
-test("mergeThreadSnapshots normalizes duplicate live-derived turns in each input", () => {
+test("mergeThreadSnapshots preserves live-derived turns with different item ids in each input", () => {
   const makeDuplicateTurns = (prefix) => {
     const liveTurn = {
       id: `${prefix}-live-turn`,
@@ -263,18 +258,18 @@ test("mergeThreadSnapshots normalizes duplicate live-derived turns in each input
     };
     return [liveTurn, readTurn];
   };
-  const resumeReadTurn = makeDuplicateTurns("resume")[1];
-  const readTurn = makeDuplicateTurns("read")[1];
+  const resumeTurns = makeDuplicateTurns("resume");
+  const readTurns = makeDuplicateTurns("read");
 
   const merged = mergeThreadSnapshots(
-    makeThread({ turns: makeDuplicateTurns("resume") }),
-    makeThread({ turns: makeDuplicateTurns("read") }),
+    makeThread({ turns: resumeTurns }),
+    makeThread({ turns: readTurns }),
   );
 
-  assert.deepEqual(merged.turns, [readTurn, resumeReadTurn]);
+  assert.deepEqual(merged.turns, [...readTurns, ...resumeTurns]);
 });
 
-test("mergeThreadSnapshots filters raw process exit marker messages in history", () => {
+test("mergeThreadSnapshots preserves raw process exit marker messages in history", () => {
   const turn = {
     id: "turn-1",
     items: [
@@ -296,11 +291,11 @@ test("mergeThreadSnapshots filters raw process exit marker messages in history",
 
   const merged = mergeThreadSnapshots(null, makeThread({ turns: [turn] }));
 
-  assert.deepEqual(merged.turns[0].items, []);
+  assert.deepEqual(merged.turns[0].items, turn.items);
 });
 
 for (const operation of ["sendMessage", "send_message"]) {
-  test(`mergeThreadSnapshots filters raw ${operation} assistant envelope`, () => {
+  test(`mergeThreadSnapshots preserves raw ${operation} assistant envelope`, () => {
     const turn = {
       id: "turn-1",
       items: [
@@ -327,11 +322,11 @@ for (const operation of ["sendMessage", "send_message"]) {
 
     const merged = mergeThreadSnapshots(null, makeThread({ turns: [turn] }));
 
-    assert.deepEqual(merged.turns[0].items, []);
+    assert.deepEqual(merged.turns[0].items, turn.items);
   });
 }
 
-test("mergeThreadSnapshots drops restored raw process exit when read has structured event item", () => {
+test("mergeThreadSnapshots preserves restored raw process exit when read has structured event item", () => {
   const restoredTurn = {
     id: "restored-turn",
     items: [
@@ -374,7 +369,7 @@ test("mergeThreadSnapshots drops restored raw process exit when read has structu
     makeThread({ turns: [readTurn] }),
   );
 
-  assert.deepEqual(merged.turns, [readTurn]);
+  assert.deepEqual(merged.turns, [readTurn, restoredTurn]);
 });
 
 test("mergeThreadSnapshots keeps resume-only in-flight items missing from a stale read", () => {
@@ -387,7 +382,7 @@ test("mergeThreadSnapshots keeps resume-only in-flight items missing from a stal
   assert.deepEqual(merged.turns, [restoredTurn]);
 });
 
-test("mergeThreadSnapshots drops duplicate in-flight items already present in the read snapshot", () => {
+test("mergeThreadSnapshots preserves same-content in-flight items with different ids", () => {
   const restoredTurn = makeCollabMessageTurn({
     id: "restored-turn",
     items: [
@@ -415,10 +410,10 @@ test("mergeThreadSnapshots drops duplicate in-flight items already present in th
     makeThread({ turns: [readTurn] }),
   );
 
-  assert.deepEqual(merged.turns, [readTurn]);
+  assert.deepEqual(merged.turns, [readTurn, restoredTurn]);
 });
 
-test("mergeThreadSnapshots drops duplicate completed live agent turns already present in the read snapshot", () => {
+test("mergeThreadSnapshots preserves same-content completed live agent turns with different ids", () => {
   const restoredTurn = {
     id: "restored-turn",
     items: [
@@ -454,10 +449,10 @@ test("mergeThreadSnapshots drops duplicate completed live agent turns already pr
     makeThread({ turns: [readTurn] }),
   );
 
-  assert.deepEqual(merged.turns, [readTurn]);
+  assert.deepEqual(merged.turns, [readTurn, restoredTurn]);
 });
 
-test("mergeThreadSnapshots drops duplicate completed child completion turns already present in the read snapshot", () => {
+test("mergeThreadSnapshots preserves same-content completed child completion turns with different ids", () => {
   const restoredTurn = {
     id: "restored-turn",
     items: [
@@ -497,7 +492,7 @@ test("mergeThreadSnapshots drops duplicate completed child completion turns alre
     makeThread({ turns: [readTurn] }),
   );
 
-  assert.deepEqual(merged.turns, [readTurn]);
+  assert.deepEqual(merged.turns, [readTurn, restoredTurn]);
 });
 
 test("mergeThreadSnapshots preserves completed full agent turns with matching content", () => {
@@ -538,7 +533,7 @@ test("mergeThreadSnapshots preserves completed full agent turns with matching co
   assert.deepEqual(merged.turns, [readTurn, restoredTurn]);
 });
 
-test("mergeThreadSnapshots only matches one existing item per semantic read item", () => {
+test("mergeThreadSnapshots preserves every same-content item with a distinct id", () => {
   const restoredTurn = makeCollabMessageTurn({
     id: "restored-turn",
     items: [
@@ -572,14 +567,11 @@ test("mergeThreadSnapshots only matches one existing item per semantic read item
 
   assert.deepEqual(merged.turns, [
     readTurn,
-    {
-      ...restoredTurn,
-      items: [restoredTurn.items[1]],
-    },
+    restoredTurn,
   ]);
 });
 
-test("mergeThreadSnapshots drops duplicate placeholder turns with no timing metadata", () => {
+test("mergeThreadSnapshots preserves placeholder turns with no timing metadata when ids differ", () => {
   const restoredTurn = makeCollabMessageTurn({
     id: "restored-turn",
     startedAt: null,
@@ -611,7 +603,7 @@ test("mergeThreadSnapshots drops duplicate placeholder turns with no timing meta
     makeThread({ turns: [readTurn] }),
   );
 
-  assert.deepEqual(merged.turns, [readTurn]);
+  assert.deepEqual(merged.turns, [readTurn, restoredTurn]);
 });
 
 test("mergeThreadSnapshots preserves distinct in-flight items with matching content", () => {

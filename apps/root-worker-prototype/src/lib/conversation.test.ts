@@ -1215,7 +1215,7 @@ test("places replacement history into the main conversation after archived histo
   );
 });
 
-test("ignores compact replacement raw child completion when live status update exists", () => {
+test("preserves compact replacement raw child completion when live status update exists", () => {
   const childCompletionEnvelope = JSON.stringify({
     author: "/root/worker",
     recipient: "/root",
@@ -1262,9 +1262,16 @@ test("ignores compact replacement raw child completion when live status update e
 
   assert.deepEqual(
     state.cells.map((cell) => cell.kind),
-    ["archive", "compact", "tool"],
+    ["archive", "compact", "message", "tool"],
   );
   assert.equal(state.cells[0]?.entries[0]?.archivedEntryCount, 1);
+  assert.deepEqual(
+    state.cells
+      .flatMap((cell) => cell.entries)
+      .filter((entry) => entry.kind === "message" && entry.role === "agent")
+      .map((entry) => entry.text),
+    [childCompletionEnvelope],
+  );
   assert.deepEqual(
     state.cells
       .flatMap((cell) => cell.entries)
@@ -1445,6 +1452,105 @@ test("distinguishes empty compact replacement history from missing history", () 
       replacementEntries: [],
     },
   );
+});
+
+test("builds visible entries for empty reasoning and unsupported typed items", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "reasoning",
+        id: "reasoning-empty",
+        summary: [],
+        content: [],
+      },
+      {
+        type: "builtinToolCall",
+        id: "builtin-unsupported",
+        tool: "todo_write",
+        arguments: { items: [] },
+        status: "completed",
+        output: null,
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      text: entry.text,
+    })),
+    [
+      {
+        id: "reasoning-empty",
+        kind: "event",
+        text: "Reasoning item received.",
+      },
+      {
+        id: "builtin-unsupported",
+        kind: "event",
+        text: "Unsupported thread item: builtinToolCall",
+      },
+    ],
+  );
+});
+
+test("preserves marker-like agent messages as visible message entries", () => {
+  const markerText =
+    '<event_driven_tool>{"tool":"process_exit_subscribe","title":"Process exited","text":"done"}</event_driven_tool>';
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "agentMessage",
+        id: "marker-like-agent-message",
+        text: markerText,
+        phase: null,
+        memoryCitation: null,
+      },
+    ]),
+  );
+
+  assert.equal(entries[0]?.id, "marker-like-agent-message");
+  assert.equal(entries[0]?.text, markerText);
+});
+
+test("keeps repeated standalone notifications as distinct cell entries", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "collabAgentStatusUpdate",
+        id: "status-1",
+        senderThreadId: "thread-child",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        status: {
+          path: "/root/worker",
+          status: "completed",
+          message: "done",
+        },
+      },
+      {
+        type: "collabAgentStatusUpdate",
+        id: "status-2",
+        senderThreadId: "thread-child",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        status: {
+          path: "/root/worker",
+          status: "completed",
+          message: "done",
+        },
+      },
+    ]),
+  );
+  const cells = buildConversationCells(entries);
+
+  assert.deepEqual(cells.map((cell) => cell.entries.map((entry) => entry.id)), [
+    ["status-1"],
+    ["status-2"],
+  ]);
 });
 
 test("reuses unchanged conversation cells when only the tail item updates", () => {

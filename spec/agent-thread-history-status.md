@@ -43,10 +43,10 @@
 历史和展示：
 
 - parent mailbox 保留，用于模型输入和历史兼容；live visible item 通过 app-server 归一为 `collabAgentStatusUpdate`。
-- root-worker 对 `collabAgentStatusUpdate` 使用稳定 semantic key，忽略 item id/timestamp，把 live synthetic completion 与 thread/read/resume 还原出的同一 completion 合并。
-- root-worker 对 compact `replacementHistory` 中的 legacy serialized `childCompletion` 复用 childCompletion 解析，并在 `ConversationEntry` 层对 standalone subagent notification 去重，覆盖 replacement/live/read 多路径双显。
+- root-worker 不再用 stable semantic key、raw marker 或 legacy JSON envelope 去重 typed `ThreadItem`；live synthetic completion 与 thread/read/resume 还原出的 item 只有在 `ThreadItem.id` 相同时才视为同一 item。
+- root-worker 对 compact `replacementHistory` 中的 legacy serialized `childCompletion` 不再作为展示层去重依据；重复展示应回到 projector 或后端事件源修复，客户端只保证 typed entry 保真。
 - compact 前 cells 继续进入 archive row，不改写为完整主列表；compact row 文案明确旧消息在 `Previous conversation`，replacement/current context 在下方继续。
-- 同一 turn 内重复 terminal `collabAgentStatusUpdate` 也按语义合并，不再重复显示。
+- 同一 turn 内重复 terminal `collabAgentStatusUpdate` 如有不同 id，会作为不同 typed item 保留并生成 entry。
 - legacy `collabAgentMessage(childCompletion)` 仍可加入 active parent turn，但不作为新的 canonical visible shape。
 
 测试覆盖：
@@ -69,6 +69,6 @@ thread/read 状态恢复：
 
 ## 风险
 
-- semantic key 依赖 sender/recipient/path/status/message 稳定；如果历史兼容路径缺少 thread id，仍可通过 path/status/message 去重，但极端同路径多次相同 completion 可能被合并。
+- 如果后端或 projector 继续用不同 id 发送内容相同的 completion，root-worker 会如实显示重复 entry；这符合 typed item 保真约束，重复源头需要在上游修复。
 - 如果后端持续错误报告 event subscription active，child completion 会继续被 gate 挡住，直到 active count 归零。
 - 未加载 thread 仍依赖服务端 status，避免 list/tree 中尚未加载的 active child 被误降级。

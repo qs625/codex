@@ -42,9 +42,8 @@ renderer 侧 `conversation.ts` 已经能把 `collabAgentStatusUpdate` 构造成 
 - 目标线程解析只在 child-origin 场景生效，即通知线程等于 item `senderThreadId` 且 `recipientThreadId` 指向另一个线程；否则保留通知线程，避免误投带 recipient 元数据的本线程事件。
 - `App.tsx` 处理 `item/started` / `item/completed` 时使用该解析结果更新 thread state，使发给 root 的完成状态能进入 root conversation。
 - `collabAgentStatusUpdate` 和 legacy child completion 的 `item/completed` 如果需要新建或更新 synthetic turn，该 turn 直接标记为 completed，并带上 started/completed 时间；这个判断基于 item 语义而不是是否发生重定向，覆盖 child-origin 与 direct-to-recipient 两种到达路径，避免 root conversation 因 synthetic running turn 长期显示 thinking。
-- Electron snapshot 归一化层对齐 renderer 的合并策略。
-- 运行中的 `collabAgentStatusUpdate` 仍可按语义合并，用于避免同一个非终态状态重复。
-- 终态 `completed`、`errored`、`shutdown`、`notFound` 不参与语义合并，保留为独立 item。
+- Electron snapshot 归一化层对齐 renderer 的合并策略：同 id item 可合并，任何不同 id 的 `collabAgentStatusUpdate` 都作为独立 item 保留。
+- root-worker 不再区分运行中或终态 status 做语义合并；如需避免重复 status，应在 projector 或后端事件源保证同一 item id。
 - 不改 app-server 协议，不新增 item 类型。
 - 不改变现有 conversation UI 结构；收到并保留下来的 status item 继续走已有 tool entry 渲染路径。
 - root-worker live 合并层对 `collabAgentStatusUpdate` 和 legacy `collabAgentMessage.operation === "childCompletion"` 做 unknown-turn fallback：如果通知 `turnId` 在当前 thread 中不存在，但当前 thread 仍有 in-flight parent turn，则把 completion item 追加或合并到最后一个 in-flight turn；只有没有 active parent turn 时，才创建 synthetic completed turn。

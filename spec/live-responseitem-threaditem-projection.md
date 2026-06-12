@@ -30,7 +30,7 @@ live/history 路径有两个相关缺口：
 - `FunctionCall` / `FunctionCallOutput` 保持既有 live helper：start 时发 `item/started`，output 时发 completed tool item。
 - user hook prompt 仍保留当前 `RawResponseItem` hook prompt helper。
 
-app-server live apply 层不把普通 `RawResponseItem` 直接投影为 display `ThreadItem`，避免和 semantic lifecycle 双发；history builder 在 recovery/read 路径把 typed `ResponseItem::Message` canonicalize 为 `ThreadItem::AgentMessage`，并过滤 legacy marker / inter-agent JSON envelope。
+app-server live apply 层不把普通 `RawResponseItem` 直接投影为 display `ThreadItem`，避免和 semantic lifecycle 双发；history builder 在 recovery/read 路径把 typed `ResponseItem::Message` canonicalize 为 `ThreadItem::AgentMessage`。root-worker renderer 不再解析或过滤 legacy marker / inter-agent JSON envelope，避免展示层根据文本内容丢 typed item。
 
 `ThreadHistoryBuilder::handle_item_completed` 对 typed `TurnItem::AgentMessage` 做 `ThreadItem::from` 并按 `turn_id` upsert，使 active/current reducer 与 persisted history reducer 使用同一 typed display item。若同一 assistant message 随后又以 `RawResponseItem(Message)` 进入 history builder，按同文本/phase 消费 pending response，避免 final answer 重复展示。
 
@@ -46,10 +46,10 @@ app-server live apply 层不把普通 `RawResponseItem` 直接投影为 display 
 - `thread/read` 只保留给 cold start、本地缺失线程、或显式恢复路径；这些路径进入本地状态前必须继续 canonicalize 为 typed `ThreadItem`，不得从 raw marker/message envelope 反解展示项。
 - 连续普通 agent message 在 `ConversationCell` 层合并后，`MessageRow` 必须渲染为单个 agent bubble；cell 内每个 entry 作为 bubble 内的 message segment 保留文本和附件，避免视觉上仍像多个 assistant cell。
 
-legacy raw inter-agent 文本只作为旧兼容输入过滤，不作为展示来源：
+legacy raw inter-agent 文本不作为结构化展示来源：
 
-- canonical typed collab message 使用 `operation: "sendMessage"`；`send_message` 仅作为 legacy raw assistant JSON envelope 的旧拼写被过滤。
-- 完整 raw JSON envelope、XML marker 以及它们的流式分片都应在 root-worker `appendAgentDelta` 层吞掉，避免短暂显示 marker 或 JSON。普通 assistant 文本和普通 JSON 分片必须继续显示。
+- canonical typed collab message 使用 `operation: "sendMessage"`；`send_message` 作为 legacy raw assistant JSON envelope 的旧拼写出现在历史文本时保留为 literal message，不在 renderer 反解或过滤。
+- 完整 raw JSON envelope、XML marker 以及它们的流式分片如果到达 root-worker `appendAgentDelta`，按普通 assistant 文本保留；结构化 child-completion/subagent/event-command 展示只能来自 typed `ThreadItem`。
 
 ## 测试设计
 
@@ -74,5 +74,5 @@ legacy raw inter-agent 文本只作为旧兼容输入过滤，不作为展示来
 - 连续 agent entries 在同一个 message cell 内只生成一个 `.message-bubble`，内部按 segment 呈现。
 - uninitialized thread 收到 child completion/live item 不创建可展示 mixed turn cache，首次查看仍由 `thread/read` 建立基线。
 - cold/missing thread 仍保留 `thread/read`，用于首次加载或恢复。
-- snapshot、compact replacement history、conversation reducer 过滤 legacy raw `sendMessage` / `send_message` envelope，但保留 typed `CollabAgentMessage(sendMessage)`。
-- `appendAgentDelta` 过滤 XML marker 分片、legacy raw JSON envelope 分片，并验证普通 JSON 分片不会被误吞。
+- snapshot、compact replacement history、conversation reducer 不从 legacy raw `sendMessage` / `send_message` envelope 反解展示项；typed `CollabAgentMessage(sendMessage)` 保持为 canonical display item。
+- `appendAgentDelta` 保留 XML marker 分片、legacy raw JSON envelope 分片和普通 JSON 分片的 literal text，验证 renderer 不按 raw 文本丢 item。

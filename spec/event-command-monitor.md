@@ -458,7 +458,7 @@ root-worker 测试：
 - 工具列表不再包含 `fs_subscribe` / `fs_unsubscribe`。
 - 工具列表不再包含 `process_exit_subscribe` / `process_exit_unsubscribe`。
 - app-server 连接级 `fs/watch` notification 不被误识别为 EventCommand。
-- 旧 event-driven raw marker 不回退为普通 agent message；只能通过 legacy reader 进入历史展示。
+- 旧 event-driven raw marker 不再由 root-worker renderer 解析为结构化展示项；如果 raw marker text 到达客户端，会作为普通 agent message literal text 保留。结构化 event-command 展示只能来自 typed `ThreadItem`。
 
 ## 风险与开放问题
 

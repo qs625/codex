@@ -11,9 +11,6 @@ import type {
 } from "../types";
 import { hasActiveMonitors } from "./threadAnalysis";
 
-const STREAMING_AGENT_MESSAGE = Symbol("streamingAgentMessage");
-const SUPPRESSED_LEGACY_AGENT_MESSAGE_STREAMS = new Map<string, string>();
-
 export function pickInitialThread(threads: Thread[]) {
   return (
     [...threads].sort((left, right) => right.updatedAt - left.updatedAt)[0] ??
@@ -326,11 +323,6 @@ export function getThreadReasoningLabel(thread: Thread | null) {
 
 export function updateThreadTurn(thread: Thread, turn: Turn) {
   const normalizedTurn = normalizeTurnSnapshot(turn);
-  clearLegacyStructuredAgentMessageStreamsForTurn(
-    thread.id,
-    normalizedTurn.id,
-    normalizedTurn.items,
-  );
   const hasExistingTurn = thread.turns.some(
     (existing) => existing.id === normalizedTurn.id,
   );
@@ -396,10 +388,6 @@ export function updateThreadItem(
   const nextItem = normalizeThreadItemSnapshot(
     applyItemTimestamps(item, timestamps),
   );
-  clearLegacyStructuredAgentMessageStream(thread.id, turnId, nextItem.id);
-  if (!isDisplayableThreadItem(nextItem)) {
-    return thread;
-  }
   const completedCollabSyntheticTurns = thread.turns.filter(
     (turn) =>
       turn.id !== turnId &&
@@ -477,7 +465,7 @@ export function updateThreadItem(
 }
 
 function appendOrMergeThreadItem(items: ThreadItem[], nextItem: ThreadItem) {
-  const existingItemIndex = findMatchingThreadItemIndex(items, nextItem);
+  const existingItemIndex = items.findIndex((item) => item.id === nextItem.id);
   return existingItemIndex === -1
     ? [...items, nextItem]
     : items.map((existing, index) =>
@@ -564,52 +552,11 @@ export function appendAgentDelta(
   itemId: string,
   delta: string,
 ) {
-  const streamKey = legacyStructuredAgentMessageStreamKey(
-    thread.id,
-    turnId,
-    itemId,
-  );
-  const bufferedDelta = SUPPRESSED_LEGACY_AGENT_MESSAGE_STREAMS.get(streamKey);
-  if (bufferedDelta !== undefined) {
-    const combinedDelta = bufferedDelta + delta;
-    if (
-      isLegacyStructuredAgentText(combinedDelta) ||
-      endsWithLegacyStructuredAgentMarker(combinedDelta)
-    ) {
-      SUPPRESSED_LEGACY_AGENT_MESSAGE_STREAMS.delete(streamKey);
-      return thread;
-    }
-    if (
-      startsWithLegacyStructuredAgentMarker(combinedDelta) ||
-      isLegacyStructuredAgentMarkerPrefix(combinedDelta) ||
-      isLegacyStructuredAgentJsonEnvelopePrefix(combinedDelta)
-    ) {
-      SUPPRESSED_LEGACY_AGENT_MESSAGE_STREAMS.set(streamKey, combinedDelta);
-      return thread;
-    }
-    SUPPRESSED_LEGACY_AGENT_MESSAGE_STREAMS.delete(streamKey);
-    delta = combinedDelta;
-  }
-  if (
-    isLegacyStructuredAgentMarkerPrefix(delta) ||
-    isLegacyStructuredAgentJsonEnvelopePrefix(delta)
-  ) {
-    SUPPRESSED_LEGACY_AGENT_MESSAGE_STREAMS.set(streamKey, delta);
-    return thread;
-  }
-  if (isLegacyStructuredAgentText(delta)) {
-    return thread;
-  }
-  if (startsWithLegacyStructuredAgentMarker(delta)) {
-    SUPPRESSED_LEGACY_AGENT_MESSAGE_STREAMS.set(streamKey, delta);
-    return thread;
-  }
   const appendDelta = (item: Extract<ThreadItem, { type: "agentMessage" }>) => {
-    const nextItem = markStreamingAgentMessage({
+    return markStreamingAgentMessage({
       ...item,
       text: item.text + delta,
     });
-    return isLegacyStructuredAgentText(nextItem.text) ? null : nextItem;
   };
   const turns = thread.turns.some((turn) => turn.id === turnId)
     ? thread.turns.map((turn) => {
@@ -622,8 +569,7 @@ export function appendAgentDelta(
               if (item.id !== itemId || item.type !== "agentMessage") {
                 return [item];
               }
-              const nextItem = appendDelta(item);
-              return nextItem ? [nextItem] : [];
+              return [appendDelta(item)];
             })
           : [
               ...turn.items,
@@ -662,12 +608,8 @@ export function appendAgentDelta(
 }
 
 export function mergeTurn(existing: Turn, next: Turn): Turn {
-  const existingItems = existing.items
-    .map(normalizeThreadItemSnapshot)
-    .filter(isDisplayableThreadItem);
-  const nextItems = next.items
-    .map(normalizeThreadItemSnapshot)
-    .filter(isDisplayableThreadItem);
+  const existingItems = existing.items.map(normalizeThreadItemSnapshot);
+  const nextItems = next.items.map(normalizeThreadItemSnapshot);
   const mergedItems = mergeTurnItemsFromSnapshot(
     existing,
     next,
@@ -811,12 +753,8 @@ export function normalizeThreadSnapshot(thread: Thread): Thread {
 function normalizeTurnSnapshot(turn: Turn): Turn {
   const items = turn.items.reduce<ThreadItem[]>((normalizedItems, item) => {
     const normalizedItem = normalizeThreadItemSnapshot(item);
-    if (!isDisplayableThreadItem(normalizedItem)) {
-      return normalizedItems;
-    }
-    const existingIndex = findMatchingSnapshotItemIndex(
-      normalizedItems,
-      normalizedItem,
+    const existingIndex = normalizedItems.findIndex(
+      (item) => item.id === normalizedItem.id,
     );
     if (existingIndex === -1) {
       return [...normalizedItems, normalizedItem];
@@ -962,295 +900,10 @@ function normalizeThreadItemSnapshot(item: ThreadItem): ThreadItem {
   return item;
 }
 
-function isDisplayableThreadItem(item: ThreadItem): boolean {
-  return !(
-    item.type === "agentMessage" && isLegacyStructuredAgentText(item.text)
-  );
-}
-
-export function isLegacyStructuredAgentText(text: string): boolean {
-  const trimmed = text.trim();
-  if (
-    isWrappedMarker(trimmed, "<event_driven_tool>", "</event_driven_tool>") ||
-    isWrappedMarker(trimmed, "<event_command>", "</event_command>") ||
-    isWrappedMarker(
-      trimmed,
-      "<subagent_notification>",
-      "</subagent_notification>",
-    )
-  ) {
-    return true;
-  }
-
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return false;
-    }
-    const record = parsed as Record<string, unknown>;
-    return (
-      typeof record.author === "string" &&
-      typeof record.recipient === "string" &&
-      typeof record.operation === "string" &&
-      legacyStructuredAgentJsonOperations().includes(record.operation)
-    );
-  } catch {
-    return false;
-  }
-}
-
-function startsWithLegacyStructuredAgentMarker(text: string): boolean {
-  const trimmed = text.trim();
-  return legacyStructuredAgentStartMarkers().some((marker) =>
-    trimmed.startsWith(marker),
-  );
-}
-
-function endsWithLegacyStructuredAgentMarker(text: string): boolean {
-  const trimmed = text.trim();
-  return legacyStructuredAgentEndMarkers().some((marker) =>
-    trimmed.endsWith(marker),
-  );
-}
-
-function isLegacyStructuredAgentMarkerPrefix(text: string): boolean {
-  const trimmed = text.trim();
-  return legacyStructuredAgentStartMarkers().some(
-    (marker) => trimmed.length > 0 && marker.startsWith(trimmed),
-  );
-}
-
-function isLegacyStructuredAgentJsonEnvelopePrefix(text: string): boolean {
-  const trimmed = text.trimStart();
-  if (trimmed.length === 0 || !trimmed.startsWith("{")) {
-    return false;
-  }
-
-  try {
-    JSON.parse(trimmed);
-    return false;
-  } catch {
-    // Incomplete JSON is handled below only when it still matches the legacy
-    // inter-agent envelope shape from the beginning of the stream.
-  }
-
-  const compactPrefix = trimmed.replace(/\s+/g, "");
-  if ('{"author"'.startsWith(compactPrefix)) {
-    return true;
-  }
-  if (!compactPrefix.startsWith('{"author"')) {
-    return false;
-  }
-
-  const operationMatch = trimmed.match(/"operation"\s*:\s*"([^"]*)"?/);
-  if (operationMatch) {
-    const operationPrefix = operationMatch[1] ?? "";
-    return legacyStructuredAgentJsonOperations().some((operation) =>
-      operation.startsWith(operationPrefix),
-    );
-  }
-
-  return true;
-}
-
-function legacyStructuredAgentMessageStreamKey(
-  threadId: string,
-  turnId: string,
-  itemId: string,
-) {
-  return `${threadId}:${turnId}:${itemId}`;
-}
-
-function clearLegacyStructuredAgentMessageStream(
-  threadId: string,
-  turnId: string,
-  itemId: string,
-) {
-  SUPPRESSED_LEGACY_AGENT_MESSAGE_STREAMS.delete(
-    legacyStructuredAgentMessageStreamKey(threadId, turnId, itemId),
-  );
-}
-
-function clearLegacyStructuredAgentMessageStreamsForTurn(
-  threadId: string,
-  turnId: string,
-  items: ThreadItem[],
-) {
-  for (const item of items) {
-    clearLegacyStructuredAgentMessageStream(threadId, turnId, item.id);
-  }
-}
-
-function legacyStructuredAgentStartMarkers() {
-  return [
-    "<event_driven_tool>",
-    "<event_command>",
-    "<subagent_notification>",
-  ];
-}
-
-function legacyStructuredAgentEndMarkers() {
-  return [
-    "</event_driven_tool>",
-    "</event_command>",
-    "</subagent_notification>",
-  ];
-}
-
-function legacyStructuredAgentJsonOperations() {
-  return [
-    "spawnAgent",
-    "sendMessage",
-    "send_message",
-    "followupTask",
-    "childCompletion",
-  ];
-}
-
-function isWrappedMarker(
-  trimmed: string,
-  startMarker: string,
-  endMarker: string,
-) {
-  return trimmed.startsWith(startMarker) && trimmed.endsWith(endMarker);
-}
-
 function markStreamingAgentMessage<
   T extends Extract<ThreadItem, { type: "agentMessage" }>,
 >(item: T) {
-  Object.defineProperty(item, STREAMING_AGENT_MESSAGE, {
-    value: true,
-    enumerable: false,
-  });
   return item;
-}
-
-function isStreamingAgentMessage(
-  item: Extract<ThreadItem, { type: "agentMessage" }>,
-) {
-  return Boolean(
-    (
-      item as Extract<ThreadItem, { type: "agentMessage" }> & {
-        [STREAMING_AGENT_MESSAGE]?: true;
-      }
-    )[STREAMING_AGENT_MESSAGE],
-  );
-}
-
-function findMatchingThreadItemIndex(
-  items: ThreadItem[],
-  nextItem: ThreadItem,
-) {
-  const idIndex = items.findIndex((item) => item.id === nextItem.id);
-  if (idIndex !== -1) {
-    return idIndex;
-  }
-
-  if (nextItem.type === "agentMessage") {
-    for (let index = items.length - 1; index >= 0; index -= 1) {
-      const item = items[index];
-      if (
-        item?.type === "agentMessage" &&
-        canMergeSameTurnThreadItems(item, nextItem)
-      ) {
-        return index;
-      }
-    }
-    return -1;
-  }
-
-  if (isTerminalCollabAgentStatusItem(nextItem)) {
-    return -1;
-  }
-
-  return items.findIndex((item) => canMergeSameTurnThreadItems(item, nextItem));
-}
-
-function findMatchingSnapshotItemIndex(
-  items: ThreadItem[],
-  nextItem: ThreadItem,
-) {
-  const idIndex = items.findIndex((item) => item.id === nextItem.id);
-  if (idIndex !== -1) {
-    return idIndex;
-  }
-
-  return items.findIndex((item) =>
-    canMergeSameSnapshotThreadItems(item, nextItem),
-  );
-}
-
-function canMergeSameTurnThreadItems(existing: ThreadItem, next: ThreadItem) {
-  if (
-    existing.type !== next.type ||
-    !canMatchThreadItemSemantically(existing)
-  ) {
-    return false;
-  }
-
-  if (existing.type === "agentMessage" && next.type === "agentMessage") {
-    return haveCompatibleAgentMessages(existing, next);
-  }
-
-  return getThreadItemSemanticKey(existing) === getThreadItemSemanticKey(next);
-}
-
-function canMergeSameSnapshotThreadItems(
-  existing: ThreadItem,
-  next: ThreadItem,
-) {
-  if (
-    existing.type !== next.type ||
-    !canMatchThreadItemSemantically(existing)
-  ) {
-    return false;
-  }
-
-  if (existing.type === "agentMessage" && next.type === "agentMessage") {
-    return haveCompatibleSnapshotAgentMessages(existing, next);
-  }
-
-  return getThreadItemSemanticKey(existing) === getThreadItemSemanticKey(next);
-}
-
-function haveCompatibleAgentMessages(
-  existing: Extract<ThreadItem, { type: "agentMessage" }>,
-  next: Extract<ThreadItem, { type: "agentMessage" }>,
-) {
-  if (
-    existing.phase !== next.phase ||
-    stableStringify(existing.memoryCitation) !==
-      stableStringify(next.memoryCitation)
-  ) {
-    return false;
-  }
-  if (
-    existing.completedAtMs !== null &&
-    existing.completedAtMs !== undefined &&
-    next.completedAtMs !== null &&
-    next.completedAtMs !== undefined
-  ) {
-    return false;
-  }
-  if (!isStreamingAgentMessage(existing)) {
-    return false;
-  }
-
-  return (
-    existing.text.startsWith(next.text) || next.text.startsWith(existing.text)
-  );
-}
-
-function haveCompatibleSnapshotAgentMessages(
-  existing: Extract<ThreadItem, { type: "agentMessage" }>,
-  next: Extract<ThreadItem, { type: "agentMessage" }>,
-) {
-  return (
-    existing.phase === next.phase &&
-    stableStringify(existing.memoryCitation) ===
-      stableStringify(next.memoryCitation) &&
-    existing.text === next.text
-  );
 }
 
 function mergeItemTimestamps(
@@ -1333,22 +986,15 @@ function syntheticTurnDurationMs(timestamps?: {
 
 type TurnItemIndex = {
   ids: Set<string>;
-  semantic: Map<string, Turn[]>;
-  agentMessages: Array<{
-    turn: Turn;
-    item: Extract<ThreadItem, { type: "agentMessage" }>;
-  }>;
 };
 
 type TurnItemMatcher = {
   index: TurnItemIndex;
-  consumedSemantic: Map<string, Set<number>>;
 };
 
 function createTurnItemMatcher(index: TurnItemIndex): TurnItemMatcher {
   return {
     index,
-    consumedSemantic: new Map(),
   };
 }
 
@@ -1356,23 +1002,14 @@ function buildTurnItemIndex(
   entries: Array<{ turn: Turn; items: ThreadItem[] }>,
 ): TurnItemIndex {
   const ids = new Set<string>();
-  const semantic = new Map<string, Turn[]>();
-  const agentMessages: TurnItemIndex["agentMessages"] = [];
 
-  for (const { turn, items } of entries) {
+  for (const { items } of entries) {
     for (const item of items) {
       ids.add(item.id);
-      if (item.type === "agentMessage") {
-        agentMessages.push({ turn, item });
-      }
-      const key = getThreadItemSemanticKey(item);
-      const matchingTurns = semantic.get(key) ?? [];
-      matchingTurns.push(turn);
-      semantic.set(key, matchingTurns);
     }
   }
 
-  return { ids, semantic, agentMessages };
+  return { ids };
 }
 
 function consumeMatchingTurnItem(
@@ -1380,48 +1017,8 @@ function consumeMatchingTurnItem(
   turn: Turn,
   item: ThreadItem,
 ) {
-  if (matcher.index.ids.has(item.id)) {
-    return true;
-  }
-  if (!canMatchThreadItemSemantically(item)) {
-    return false;
-  }
-  if (item.type === "agentMessage") {
-    return consumeMatchingAgentMessage(matcher, turn, item);
-  }
-
-  const key = getThreadItemSemanticKey(item);
-  const matchingTurns = matcher.index.semantic.get(key) ?? [];
-  const consumed = matcher.consumedSemantic.get(key) ?? new Set<number>();
-  for (const [index, candidate] of matchingTurns.entries()) {
-    if (!consumed.has(index) && haveCompatibleTurnTimes(candidate, turn)) {
-      consumed.add(index);
-      matcher.consumedSemantic.set(key, consumed);
-      return true;
-    }
-  }
-  return false;
-}
-
-function consumeMatchingAgentMessage(
-  matcher: TurnItemMatcher,
-  turn: Turn,
-  item: Extract<ThreadItem, { type: "agentMessage" }>,
-) {
-  const consumed =
-    matcher.consumedSemantic.get("agentMessage") ?? new Set<number>();
-  for (const [index, candidate] of matcher.index.agentMessages.entries()) {
-    if (
-      !consumed.has(index) &&
-      haveCompatibleTurnTimes(candidate.turn, turn) &&
-      haveCompatibleAgentMessageContent(candidate.item, item)
-    ) {
-      consumed.add(index);
-      matcher.consumedSemantic.set("agentMessage", consumed);
-      return true;
-    }
-  }
-  return false;
+  void turn;
+  return matcher.index.ids.has(item.id);
 }
 
 function getRetainedUnmatchedTurn(
@@ -1499,122 +1096,6 @@ function isLiveDerivedCompletedAgentTurn(turn: Turn) {
     (turn.itemsView !== "full" ||
       turn.items.every(isCollabCompletionNotificationItem))
   );
-}
-
-function haveCompatibleTurnTimes(left: Turn, right: Turn) {
-  if (hasNoTurnTimes(left) || hasNoTurnTimes(right)) {
-    return true;
-  }
-  if (
-    left.startedAt !== null &&
-    left.startedAt !== undefined &&
-    right.startedAt !== null &&
-    right.startedAt !== undefined &&
-    left.startedAt === right.startedAt
-  ) {
-    return true;
-  }
-  return (
-    left.completedAt !== null &&
-    left.completedAt !== undefined &&
-    right.completedAt !== null &&
-    right.completedAt !== undefined &&
-    left.completedAt === right.completedAt
-  );
-}
-
-function hasNoTurnTimes(turn: Turn) {
-  return (
-    turn.startedAt === null &&
-    turn.completedAt === null &&
-    turn.durationMs === null
-  );
-}
-
-function canMatchThreadItemSemantically(item: ThreadItem) {
-  switch (item.type) {
-    case "agentMessage":
-    case "collabAgentMessage":
-    case "eventCommandCall":
-    case "eventCommandEvent":
-    case "eventDrivenTool":
-    case "eventDrivenToolCall":
-    case "collabAgentStatusUpdate":
-      return true;
-    case "builtinToolCall":
-    case "collabAgentToolCall":
-    case "commandExecution":
-    case "contextCompaction":
-    case "dynamicToolCall":
-    case "enteredReviewMode":
-    case "exitedReviewMode":
-    case "fileChange":
-    case "imageGeneration":
-    case "imageView":
-    case "injectedContext":
-    case "mcpToolCall":
-    case "plan":
-    case "reasoning":
-    case "userMessage":
-    case "webSearch":
-      return false;
-  }
-}
-
-function isTerminalCollabAgentStatusItem(item: ThreadItem) {
-  return (
-    item.type === "collabAgentStatusUpdate" &&
-    isTerminalCollabAgentStatus(item.status.status)
-  );
-}
-
-function isTerminalCollabAgentStatus(status: string) {
-  return (
-    status === "completed" ||
-    status === "errored" ||
-    status === "shutdown" ||
-    status === "notFound"
-  );
-}
-
-function haveCompatibleAgentMessageContent(
-  left: Extract<ThreadItem, { type: "agentMessage" }>,
-  right: Extract<ThreadItem, { type: "agentMessage" }>,
-) {
-  return (
-    left.phase === right.phase &&
-    stableStringify(left.memoryCitation) ===
-      stableStringify(right.memoryCitation) &&
-    (left.text.startsWith(right.text) || right.text.startsWith(left.text))
-  );
-}
-
-function getThreadItemSemanticKey(item: ThreadItem) {
-  const {
-    id: _id,
-    startedAtMs: _startedAtMs,
-    completedAtMs: _completedAtMs,
-    ...content
-  } = item;
-  return `${item.type}:${stableStringify(content)}`;
-}
-
-function stableStringify(value: unknown): string {
-  if (value === undefined) {
-    return "undefined";
-  }
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value) ?? "undefined";
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(stableStringify).join(",")}]`;
-  }
-
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
-    .join(",")}}`;
 }
 
 function preferMoreCompleteText(existing: string, next: string) {

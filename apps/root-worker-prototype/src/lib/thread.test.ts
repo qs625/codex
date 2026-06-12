@@ -341,7 +341,7 @@ test("mergeThreadSnapshot preserves restored usage when a later snapshot sends n
   assert.equal(merged.contextUsage?.budgetUsedPercent, 12);
 });
 
-test("mergeThreadSnapshot normalizes duplicate items when existing is null", () => {
+test("mergeThreadSnapshot preserves same-content items with different ids", () => {
   const thread = {
     ...makeThread(),
     turns: [
@@ -375,12 +375,7 @@ test("mergeThreadSnapshot normalizes duplicate items when existing is null", () 
 
   const merged = mergeThreadSnapshot(null, thread);
 
-  assert.deepEqual(merged.turns, [
-    {
-      ...thread.turns[0],
-      items: [thread.turns[0].items[1]],
-    },
-  ]);
+  assert.deepEqual(merged.turns, thread.turns);
 });
 
 test("mergeThreadSnapshot preserves prefix-compatible agent messages in the same snapshot", () => {
@@ -454,20 +449,10 @@ test("upsertThread normalizes the first inserted snapshot", () => {
 
   const threads = upsertThread([], thread);
 
-  assert.deepEqual(threads, [
-    {
-      ...thread,
-      turns: [
-        {
-          ...thread.turns[0],
-          items: [thread.turns[0].items[1]],
-        },
-      ],
-    },
-  ]);
+  assert.deepEqual(threads, [thread]);
 });
 
-test("mergeThreadSnapshot normalizes duplicate live-derived turns within next snapshot", () => {
+test("mergeThreadSnapshot preserves live-derived turns with different item ids within next snapshot", () => {
   const liveTurn = {
     id: "live-turn",
     items: [
@@ -503,7 +488,7 @@ test("mergeThreadSnapshot normalizes duplicate live-derived turns within next sn
     turns: [liveTurn, readTurn],
   });
 
-  assert.deepEqual(merged.turns, [readTurn]);
+  assert.deepEqual(merged.turns, [liveTurn, readTurn]);
 });
 
 test("mergeThreadSnapshot preserves completed full agent turns with matching content in one snapshot", () => {
@@ -658,7 +643,7 @@ test("mergeThreadSnapshot preserves an in-flight turn missing from a stale snaps
   assert.deepEqual(merged.turns, existing.turns);
 });
 
-test("mergeThreadSnapshot drops duplicate in-flight items already present in the read snapshot", () => {
+test("mergeThreadSnapshot preserves same-content in-flight items with different ids", () => {
   const restoredTurn = {
     id: "restored-turn",
     items: [
@@ -707,10 +692,10 @@ test("mergeThreadSnapshot drops duplicate in-flight items already present in the
     },
   );
 
-  assert.deepEqual(merged.turns, [readTurn]);
+  assert.deepEqual(merged.turns, [readTurn, restoredTurn]);
 });
 
-test("mergeThreadSnapshot drops duplicate completed live agent turns already present in the read snapshot", () => {
+test("mergeThreadSnapshot preserves same-content completed live agent turns with different ids", () => {
   const liveDelta = appendAgentDelta(
     makeThread(),
     "live-turn",
@@ -751,10 +736,10 @@ test("mergeThreadSnapshot drops duplicate completed live agent turns already pre
     turns: [readTurn],
   });
 
-  assert.deepEqual(merged.turns, [readTurn]);
+  assert.deepEqual(merged.turns, [readTurn, completedLive.turns[0]]);
 });
 
-test("mergeThreadSnapshot drops duplicate live child completion already present in the read snapshot", () => {
+test("mergeThreadSnapshot preserves same-content live child completion with different ids", () => {
   const liveItem: ThreadItem = {
     type: "collabAgentStatusUpdate",
     id: "live-completion",
@@ -793,7 +778,7 @@ test("mergeThreadSnapshot drops duplicate live child completion already present 
     turns: [readTurn],
   });
 
-  assert.deepEqual(merged.turns, [readTurn]);
+  assert.deepEqual(merged.turns, [readTurn, liveThread.turns[0]]);
 });
 
 test("mergeThreadSnapshot preserves completed full agent turns with matching content", () => {
@@ -840,7 +825,7 @@ test("mergeThreadSnapshot preserves completed full agent turns with matching con
   assert.deepEqual(merged.turns, [readTurn, liveTurn]);
 });
 
-test("mergeThreadSnapshot only matches one existing item per semantic read item", () => {
+test("mergeThreadSnapshot preserves every same-content item with a distinct id", () => {
   const restoredTurn = {
     id: "restored-turn",
     items: [
@@ -893,10 +878,7 @@ test("mergeThreadSnapshot only matches one existing item per semantic read item"
 
   assert.deepEqual(merged.turns, [
     readTurn,
-    {
-      ...restoredTurn,
-      items: [restoredTurn.items[1]],
-    },
+    restoredTurn,
   ]);
 });
 
@@ -953,7 +935,7 @@ test("mergeThreadSnapshot preserves distinct in-flight items with matching conte
   assert.deepEqual(merged.turns, [readTurn, liveTurn]);
 });
 
-test("updateThreadTurn drops duplicate in-flight items when a completed turn arrives with new ids", () => {
+test("updateThreadTurn preserves in-flight items when a completed turn arrives with new ids", () => {
   const runningTurn = {
     id: "running-turn",
     items: [
@@ -994,10 +976,10 @@ test("updateThreadTurn drops duplicate in-flight items when a completed turn arr
     completedTurn,
   );
 
-  assert.deepEqual(updated.turns, [completedTurn]);
+  assert.deepEqual(updated.turns, [runningTurn, completedTurn]);
 });
 
-test("updateThreadTurn drops duplicate placeholder delta turns when a completed turn arrives with new ids", () => {
+test("updateThreadTurn preserves placeholder delta turns when a completed turn arrives with new ids", () => {
   const placeholderThread = appendAgentDelta(
     makeThread(),
     "placeholder-turn",
@@ -1025,7 +1007,7 @@ test("updateThreadTurn drops duplicate placeholder delta turns when a completed 
 
   const updated = updateThreadTurn(placeholderThread, completedTurn);
 
-  assert.deepEqual(updated.turns, [completedTurn]);
+  assert.deepEqual(updated.turns, [placeholderThread.turns[0], completedTurn]);
 });
 
 test("updateThreadTurn preserves distinct running items when appending a same-content turn from another time", () => {
@@ -1128,62 +1110,49 @@ test("appendAgentDelta preserves later same-content assistant turns", () => {
 });
 
 test("mergeThreadSnapshot keeps the more complete in-flight agent message text", () => {
-  const existing = {
-    ...makeThread(),
-    turns: [
+  const existingTurn = {
+    id: "turn-1",
+    items: [
       {
-        id: "turn-1",
-        items: [
-          {
-            type: "agentMessage" as const,
-            id: "item-1",
-            text: "hello world",
-            phase: null,
-            memoryCitation: null,
-          },
-        ],
-        itemsView: "full" as const,
-        status: "running" as const,
-        error: null,
-        startedAt: 1,
-        completedAt: null,
-        durationMs: null,
+        type: "agentMessage" as const,
+        id: "item-1",
+        text: "hello world",
+        phase: null,
+        memoryCitation: null,
       },
     ],
+    itemsView: "full" as const,
+    status: "running" as const,
+    error: null,
+    startedAt: 1,
+    completedAt: null,
+    durationMs: null,
+  };
+  const readTurn = {
+    ...existingTurn,
+    items: [
+      {
+        ...existingTurn.items[0],
+        text: "hello",
+      },
+    ],
+  };
+  const existing = {
+    ...makeThread(),
+    turns: [existingTurn],
   };
 
   const merged = mergeThreadSnapshot(existing, {
     ...makeThread(),
-    turns: [
-      {
-        id: "turn-1",
-        items: [
-          {
-            type: "agentMessage" as const,
-            id: "item-1",
-            text: "hello",
-            phase: null,
-            memoryCitation: null,
-          },
-        ],
-        itemsView: "full" as const,
-        status: "running" as const,
-        error: null,
-        startedAt: 1,
-        completedAt: null,
-        durationMs: null,
-      },
-    ],
+    turns: [readTurn],
   });
 
-  assert.equal(merged.turns[0]?.items[0]?.type, "agentMessage");
-  if (merged.turns[0]?.items[0]?.type !== "agentMessage") {
-    assert.fail("expected an agent message item");
-  }
-  assert.equal(merged.turns[0].items[0].text, "hello world");
+  assert.equal(merged.turns.length, 1);
+  assert.equal(merged.turns[0]?.id, "turn-1");
+  assert.deepEqual(merged.turns[0]?.items, existingTurn.items);
 });
 
-test("updateThreadItem merges same-turn event-driven items with different ids", () => {
+test("updateThreadItem preserves same-turn event-driven items with different ids", () => {
   const thread = {
     ...makeThread(),
     turns: [
@@ -1221,6 +1190,14 @@ test("updateThreadItem merges same-turn event-driven items with different ids", 
   assert.deepEqual(updated.turns[0]?.items, [
     {
       type: "eventDrivenTool",
+      id: "snapshot-item",
+      tool: "fs_subscribe",
+      title: "File watch triggered",
+      text: "build.log changed",
+      completedAtMs: 100,
+    },
+    {
+      type: "eventDrivenTool",
       id: "live-item",
       tool: "fs_subscribe",
       title: "File watch triggered",
@@ -1230,7 +1207,7 @@ test("updateThreadItem merges same-turn event-driven items with different ids", 
   ]);
 });
 
-test("updateThreadItem merges same-turn agent delta placeholder with completed item", () => {
+test("updateThreadItem preserves same-turn agent delta placeholder with completed item", () => {
   const thread = appendAgentDelta(
     makeThread(),
     "turn-1",
@@ -1254,6 +1231,13 @@ test("updateThreadItem merges same-turn agent delta placeholder with completed i
   assert.deepEqual(updated.turns[0]?.items, [
     {
       type: "agentMessage",
+      id: "delta-item",
+      text: "same response",
+      phase: null,
+      memoryCitation: null,
+    },
+    {
+      type: "agentMessage",
       id: "completed-item",
       text: "same response",
       phase: null,
@@ -1263,7 +1247,7 @@ test("updateThreadItem merges same-turn agent delta placeholder with completed i
   ]);
 });
 
-test("updateThreadItem keeps the more complete same-turn agent text", () => {
+test("updateThreadItem preserves same-turn agent delta text when completed item has a new id", () => {
   const thread = appendAgentDelta(makeThread(), "turn-1", "delta-item", "same");
 
   const updated = updateThreadItem(
@@ -1280,6 +1264,13 @@ test("updateThreadItem keeps the more complete same-turn agent text", () => {
   );
 
   assert.deepEqual(updated.turns[0]?.items, [
+    {
+      type: "agentMessage",
+      id: "delta-item",
+      text: "same",
+      phase: null,
+      memoryCitation: null,
+    },
     {
       type: "agentMessage",
       id: "completed-item",
@@ -1367,7 +1358,7 @@ test("updateThreadItem preserves same-text agent messages unless the existing it
   ]);
 });
 
-test("updateThreadItem merges a completed agent message into the latest matching delta placeholder", () => {
+test("updateThreadItem preserves completed agent messages and matching delta placeholders", () => {
   const threadWithFirst = appendAgentDelta(
     makeThread(),
     "turn-1",
@@ -1399,6 +1390,13 @@ test("updateThreadItem merges a completed agent message into the latest matching
       type: "agentMessage",
       id: "first-delta-item",
       text: "same response",
+      phase: null,
+      memoryCitation: null,
+    },
+    {
+      type: "agentMessage",
+      id: "second-delta-item",
+      text: "same",
       phase: null,
       memoryCitation: null,
     },
@@ -1460,7 +1458,7 @@ test("updateThreadItem preserves distinct completed agent messages with matching
   ]);
 });
 
-test("updateThreadItem merges same-turn collab agent messages with different ids", () => {
+test("updateThreadItem preserves same-turn collab agent messages with different ids", () => {
   const thread = updateThreadItem(makeThread(), "turn-1", {
     type: "collabAgentMessage",
     id: "live-item",
@@ -1488,6 +1486,18 @@ test("updateThreadItem merges same-turn collab agent messages with different ids
   });
 
   assert.deepEqual(updated.turns[0]?.items, [
+    {
+      type: "collabAgentMessage",
+      id: "live-item",
+      operation: "sendMessage",
+      senderThreadId: "thread-2",
+      senderPath: "/root/worker",
+      recipientThreadId: "thread-1",
+      recipientPath: "/root",
+      otherRecipientPaths: [],
+      content: "same backend message",
+      triggerTurn: true,
+    },
     {
       type: "collabAgentMessage",
       id: "completed-item",
@@ -2398,7 +2408,7 @@ test("legacy child completion message notifications target the recipient thread"
   );
 });
 
-test("pending thread updates do not duplicate semantic items already in the snapshot", () => {
+test("pending thread updates preserve same-content items with different ids", () => {
   const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
   queuePendingThreadUpdate(pendingUpdates, "thread-1", (thread) =>
     updateThreadItem(thread, "turn-1", {
@@ -2449,6 +2459,18 @@ test("pending thread updates do not duplicate semantic items already in the snap
   assert.deepEqual(updated.turns[0]?.items, [
     {
       type: "collabAgentMessage",
+      id: "snapshot-item",
+      operation: "sendMessage",
+      senderThreadId: "thread-child",
+      senderPath: "/root/worker",
+      recipientThreadId: "thread-1",
+      recipientPath: "/root",
+      otherRecipientPaths: [],
+      content: "same backend message",
+      triggerTurn: true,
+    },
+    {
+      type: "collabAgentMessage",
       id: "pending-item",
       operation: "sendMessage",
       senderThreadId: "thread-child",
@@ -2462,7 +2484,7 @@ test("pending thread updates do not duplicate semantic items already in the snap
   ]);
 });
 
-test("pending agent deltas do not duplicate completed assistant blocks already in the snapshot", () => {
+test("pending agent deltas preserve same-content completed assistant blocks with different ids", () => {
   const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
   queuePendingThreadUpdate(pendingUpdates, "thread-1", (thread) =>
     appendAgentDelta(thread, "pending-turn", "pending-item", "same response"),
@@ -2494,11 +2516,31 @@ test("pending agent deltas do not duplicate completed assistant blocks already i
   const updated = applyPendingThreadUpdates(snapshot, pendingUpdates);
 
   assert.equal(pendingUpdates.size, 0);
-  assert.deepEqual(updated.turns, snapshot.turns);
+  assert.deepEqual(updated.turns, [
+    ...snapshot.turns,
+    {
+      id: "pending-turn",
+      items: [
+        {
+          type: "agentMessage",
+          id: "pending-item",
+          text: "same response",
+          phase: null,
+          memoryCitation: null,
+        },
+      ],
+      itemsView: "full",
+      status: "running",
+      error: null,
+      startedAt: null,
+      completedAt: null,
+      durationMs: null,
+    },
+  ]);
 });
 
 for (const operation of ["sendMessage", "send_message"]) {
-  test(`mergeThreadSnapshot filters raw ${operation} assistant envelope`, () => {
+  test(`mergeThreadSnapshot preserves raw ${operation} assistant envelope text`, () => {
     const turn: Turn = {
       id: "turn-1",
       items: [
@@ -2528,11 +2570,11 @@ for (const operation of ["sendMessage", "send_message"]) {
       turns: [turn],
     });
 
-    assert.deepEqual(merged.turns[0]?.items, []);
+    assert.deepEqual(merged.turns[0]?.items, turn.items);
   });
 }
 
-test("pending agent deltas do not duplicate structured process exit events already in the snapshot", () => {
+test("pending agent deltas preserve structured process exit marker text with a distinct id", () => {
   const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
   queuePendingThreadUpdate(pendingUpdates, "thread-1", (thread) =>
     appendAgentDelta(
@@ -2569,10 +2611,30 @@ test("pending agent deltas do not duplicate structured process exit events alrea
   const updated = applyPendingThreadUpdates(snapshot, pendingUpdates);
 
   assert.equal(pendingUpdates.size, 0);
-  assert.deepEqual(updated.turns, snapshot.turns);
+  assert.deepEqual(updated.turns, [
+    ...snapshot.turns,
+    {
+      id: "pending-turn",
+      items: [
+        {
+          type: "agentMessage",
+          id: "pending-item",
+          text: '<event_driven_tool>{"tool":"process_exit_subscribe","title":"Process exited","text":"Session 42 exited with code 0"}</event_driven_tool>',
+          phase: null,
+          memoryCitation: null,
+        },
+      ],
+      itemsView: "full",
+      status: "running",
+      error: null,
+      startedAt: null,
+      completedAt: null,
+      durationMs: null,
+    },
+  ]);
 });
 
-test("appendAgentDelta filters split structured process exit marker", () => {
+test("appendAgentDelta preserves split structured process exit marker text", () => {
   const partial = appendAgentDelta(
     makeThread(),
     "turn-1",
@@ -2599,11 +2661,17 @@ test("appendAgentDelta filters split structured process exit marker", () => {
     '"text":"Session 42 exited with code 0"}</event_driven_tool>',
   );
 
-  assert.deepEqual(updated.turns, []);
+  assert.equal(updated.turns[0]?.items[0]?.type, "agentMessage");
+  assert.equal(
+    updated.turns[0]?.items[0]?.type === "agentMessage"
+      ? updated.turns[0].items[0].text
+      : "",
+    '<event_driven_tool>{"tool":"process_exit_subscribe","title":"Process exited","text":"Session 42 exited with code 0"}</event_driven_tool>',
+  );
 });
 
 for (const operation of ["sendMessage", "send_message", "childCompletion"]) {
-  test(`appendAgentDelta filters split raw ${operation} assistant envelope`, () => {
+  test(`appendAgentDelta preserves split raw ${operation} assistant envelope`, () => {
     const envelope = JSON.stringify({
       author: "/root/worker",
       recipient: "/root",
@@ -2620,8 +2688,14 @@ for (const operation of ["sendMessage", "send_message", "childCompletion"]) {
     let thread = makeThread();
     for (const chunk of chunks) {
       thread = appendAgentDelta(thread, "turn-1", "item-1", chunk);
-      assert.deepEqual(thread.turns, []);
     }
+    assert.equal(thread.turns[0]?.items[0]?.type, "agentMessage");
+    assert.equal(
+      thread.turns[0]?.items[0]?.type === "agentMessage"
+        ? thread.turns[0].items[0].text
+        : "",
+      envelope,
+    );
   });
 }
 

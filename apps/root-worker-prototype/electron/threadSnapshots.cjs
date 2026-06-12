@@ -128,8 +128,7 @@ function mergeTurns(existingTurns, nextTurns) {
 
 function getRetainedUnmatchedTurn(turn, matcher) {
   const normalizedItems = (turn.items ?? [])
-    .map(normalizeThreadItemSnapshot)
-    .filter(Boolean);
+    .map(normalizeThreadItemSnapshot);
   const normalizedTurn =
     normalizedItems.length === (turn.items ?? []).length &&
     normalizedItems.every((item, index) => item === turn.items?.[index])
@@ -166,38 +165,9 @@ function isLiveDerivedCompletedAgentTurn(turn) {
   );
 }
 
-function haveCompatibleAgentMessageContent(left, right) {
-  return (
-    left.phase === right.phase &&
-    stableStringify(left.memoryCitation) ===
-      stableStringify(right.memoryCitation) &&
-    (left.text.startsWith(right.text) || right.text.startsWith(left.text))
-  );
-}
-
-function consumeMatchingAgentMessage(matcher, turn, item) {
-  const consumed = matcher.consumedSemantic.get("agentMessage") ?? new Set();
-  for (const [index, candidate] of matcher.index.agentMessages.entries()) {
-    if (
-      !consumed.has(index) &&
-      haveCompatibleTurnTimes(candidate.turn, turn) &&
-      haveCompatibleAgentMessageContent(candidate.item, item)
-    ) {
-      consumed.add(index);
-      matcher.consumedSemantic.set("agentMessage", consumed);
-      return true;
-    }
-  }
-  return false;
-}
-
 function mergeTurn(existing, next) {
-  const existingItems = (existing.items ?? [])
-    .map(normalizeThreadItemSnapshot)
-    .filter(Boolean);
-  const nextItems = (next.items ?? [])
-    .map(normalizeThreadItemSnapshot)
-    .filter(Boolean);
+  const existingItems = (existing.items ?? []).map(normalizeThreadItemSnapshot);
+  const nextItems = (next.items ?? []).map(normalizeThreadItemSnapshot);
   const existingItemsById = new Map(
     existingItems.map((item) => [item.id, item]),
   );
@@ -249,173 +219,37 @@ function mergeThreadItem(existing, next) {
 }
 
 function normalizeThreadItemSnapshot(item) {
-  if (item?.type === "agentMessage" && isLegacyStructuredAgentText(item.text)) {
-    return null;
-  }
   return item;
 }
 
-function isLegacyStructuredAgentText(text) {
-  const trimmed = typeof text === "string" ? text.trim() : "";
-  if (
-    isWrappedMarker(trimmed, "<event_driven_tool>", "</event_driven_tool>") ||
-    isWrappedMarker(trimmed, "<event_command>", "</event_command>") ||
-    isWrappedMarker(
-      trimmed,
-      "<subagent_notification>",
-      "</subagent_notification>",
-    )
-  ) {
-    return true;
-  }
-
-  try {
-    const parsed = JSON.parse(trimmed);
-    return (
-      parsed &&
-      typeof parsed === "object" &&
-      !Array.isArray(parsed) &&
-      typeof parsed.author === "string" &&
-      typeof parsed.recipient === "string" &&
-      typeof parsed.operation === "string" &&
-      [
-        "spawnAgent",
-        "sendMessage",
-        "send_message",
-        "followupTask",
-        "childCompletion",
-      ].includes(parsed.operation)
-    );
-  } catch {
-    return false;
-  }
-}
-
-function isWrappedMarker(trimmed, startMarker, endMarker) {
-  return trimmed.startsWith(startMarker) && trimmed.endsWith(endMarker);
-}
-
 function findMatchingThreadItemIndex(items, nextItem) {
-  const idIndex = items.findIndex((item) => item.id === nextItem.id);
-  if (idIndex !== -1) {
-    return idIndex;
-  }
-
-  return items.findIndex((item) => canMergeSameTurnThreadItems(item, nextItem));
-}
-
-function canMergeSameTurnThreadItems(existing, next) {
-  if (
-    existing.type !== next.type ||
-    !canMatchThreadItemSemantically(existing)
-  ) {
-    return false;
-  }
-
-  if (existing.type === "agentMessage" && next.type === "agentMessage") {
-    return haveCompatibleAgentMessageContent(existing, next);
-  }
-
-  return getThreadItemSemanticKey(existing) === getThreadItemSemanticKey(next);
+  return items.findIndex((item) => item.id === nextItem.id);
 }
 
 function buildTurnItemIndex(entries) {
   const ids = new Set();
-  const semantic = new Map();
-  const agentMessages = [];
 
-  for (const { turn, items } of entries) {
+  for (const { items } of entries) {
     for (const item of items) {
       if (!item) {
         continue;
       }
       ids.add(item.id);
-      if (item.type === "agentMessage") {
-        agentMessages.push({ turn, item });
-      }
-      const key = getThreadItemSemanticKey(item);
-      const matchingTurns = semantic.get(key) ?? [];
-      matchingTurns.push(turn);
-      semantic.set(key, matchingTurns);
     }
   }
 
-  return { ids, semantic, agentMessages };
+  return { ids };
 }
 
 function createTurnItemMatcher(index) {
   return {
     index,
-    consumedSemantic: new Map(),
   };
 }
 
 function consumeMatchingTurnItem(matcher, turn, item) {
-  if (matcher.index.ids.has(item.id)) {
-    return true;
-  }
-  if (!canMatchThreadItemSemantically(item)) {
-    return false;
-  }
-  if (item.type === "agentMessage") {
-    return consumeMatchingAgentMessage(matcher, turn, item);
-  }
-
-  const key = getThreadItemSemanticKey(item);
-  const matchingTurns = matcher.index.semantic.get(key) ?? [];
-  const consumed = matcher.consumedSemantic.get(key) ?? new Set();
-  for (const [index, candidate] of matchingTurns.entries()) {
-    if (!consumed.has(index) && haveCompatibleTurnTimes(candidate, turn)) {
-      consumed.add(index);
-      matcher.consumedSemantic.set(key, consumed);
-      return true;
-    }
-  }
-  return false;
-}
-
-function haveCompatibleTurnTimes(left, right) {
-  if (hasNoTurnTimes(left) || hasNoTurnTimes(right)) {
-    return true;
-  }
-  if (
-    left.startedAt !== null &&
-    left.startedAt !== undefined &&
-    right.startedAt !== null &&
-    right.startedAt !== undefined &&
-    left.startedAt === right.startedAt
-  ) {
-    return true;
-  }
-  return (
-    left.completedAt !== null &&
-    left.completedAt !== undefined &&
-    right.completedAt !== null &&
-    right.completedAt !== undefined &&
-    left.completedAt === right.completedAt
-  );
-}
-
-function hasNoTurnTimes(turn) {
-  return (
-    turn.startedAt === null &&
-    turn.completedAt === null &&
-    turn.durationMs === null
-  );
-}
-
-function canMatchThreadItemSemantically(item) {
-  switch (item.type) {
-    case "agentMessage":
-    case "collabAgentMessage":
-    case "eventDrivenTool":
-    case "eventDrivenToolCall":
-      return true;
-    case "collabAgentStatusUpdate":
-      return !isTerminalCollabAgentStatus(item.status?.status);
-    default:
-      return false;
-  }
+  void turn;
+  return matcher.index.ids.has(item.id);
 }
 
 function isCollabCompletionNotificationItem(item) {
@@ -423,42 +257,6 @@ function isCollabCompletionNotificationItem(item) {
     item.type === "collabAgentStatusUpdate" ||
     (item.type === "collabAgentMessage" && item.operation === "childCompletion")
   );
-}
-
-function isTerminalCollabAgentStatus(status) {
-  return (
-    status === "completed" ||
-    status === "errored" ||
-    status === "shutdown" ||
-    status === "notFound"
-  );
-}
-
-function getThreadItemSemanticKey(item) {
-  const {
-    id: _id,
-    startedAtMs: _startedAtMs,
-    completedAtMs: _completedAtMs,
-    ...content
-  } = item;
-  return `${item.type}:${stableStringify(content)}`;
-}
-
-function stableStringify(value) {
-  if (value === undefined) {
-    return "undefined";
-  }
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value) ?? "undefined";
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(stableStringify).join(",")}]`;
-  }
-
-  return `{${Object.keys(value)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
-    .join(",")}}`;
 }
 
 function isTurnInFlight(turn) {
