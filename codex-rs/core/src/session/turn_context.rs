@@ -222,12 +222,9 @@ impl TurnContext {
         .with_hide_spawn_agent_metadata(config.multi_agent_v2.hide_spawn_agent_metadata)
         .with_multi_agent_v2_non_code_mode_only(config.multi_agent_v2.non_code_mode_only)
         .with_goal_tools_allowed(self.tools_config.goal_tools)
-        .with_max_concurrent_threads_per_session(
-            config
-                .features
-                .enabled(Feature::MultiAgentV2)
-                .then_some(config.multi_agent_v2.max_concurrent_threads_per_session),
-        )
+        .with_max_concurrent_threads_per_session(Some(
+            config.multi_agent_v2.max_concurrent_threads_per_session,
+        ))
         .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
             &config.agent_roles,
         ))
@@ -524,16 +521,11 @@ impl Session {
         .with_hide_spawn_agent_metadata(per_turn_config.multi_agent_v2.hide_spawn_agent_metadata)
         .with_multi_agent_v2_non_code_mode_only(per_turn_config.multi_agent_v2.non_code_mode_only)
         .with_goal_tools_allowed(goal_tools_supported)
-        .with_max_concurrent_threads_per_session(
+        .with_max_concurrent_threads_per_session(Some(
             per_turn_config
-                .features
-                .enabled(Feature::MultiAgentV2)
-                .then_some(
-                    per_turn_config
-                        .multi_agent_v2
-                        .max_concurrent_threads_per_session,
-                ),
-        )
+                .multi_agent_v2
+                .max_concurrent_threads_per_session,
+        ))
         .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
             &per_turn_config.agent_roles,
         ))

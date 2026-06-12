@@ -18,6 +18,7 @@ use crate::tools::handlers::RequestPluginInstallHandler;
 use crate::tools::handlers::RequestUserInputHandler;
 use crate::tools::handlers::ShellCommandHandler;
 use crate::tools::handlers::ShellCommandHandlerOptions;
+use crate::tools::handlers::SpawnAgentHandler as SpawnAgentHandlerV2;
 use crate::tools::handlers::TestSyncHandler;
 use crate::tools::handlers::ToolSearchHandler;
 use crate::tools::handlers::UpdateGoalHandler;
@@ -32,15 +33,10 @@ use crate::tools::handlers::WriteStdinHandler;
 use crate::tools::handlers::agent_jobs::ReportAgentJobResultHandler;
 use crate::tools::handlers::agent_jobs::SpawnAgentsOnCsvHandler;
 use crate::tools::handlers::extension_tools::ExtensionToolHandler;
-use crate::tools::handlers::multi_agents::CloseAgentHandler;
-use crate::tools::handlers::multi_agents::ResumeAgentHandler;
-use crate::tools::handlers::multi_agents::SendInputHandler;
-use crate::tools::handlers::multi_agents::SpawnAgentHandler;
 use crate::tools::handlers::multi_agents_spec::SpawnAgentToolOptions;
 use crate::tools::handlers::multi_agents_v2::CloseAgentHandler as CloseAgentHandlerV2;
 use crate::tools::handlers::multi_agents_v2::FollowupTaskHandler as FollowupTaskHandlerV2;
 use crate::tools::handlers::multi_agents_v2::ListAgentsHandler as ListAgentsHandlerV2;
-use crate::tools::handlers::multi_agents_v2::SpawnAgentHandler as SpawnAgentHandlerV2;
 use crate::tools::handlers::view_image_spec::ViewImageToolOptions;
 use crate::tools::hosted_spec::WebSearchToolOptions;
 use crate::tools::hosted_spec::create_image_generation_tool;
@@ -429,43 +425,27 @@ pub(crate) fn collect_tool_executors(
     }
 
     if config.collab_tools {
-        if config.multi_agent_v2 {
-            let exposure = if config.multi_agent_v2_non_code_mode_only {
-                ToolExposure::DirectModelOnly
-            } else {
-                ToolExposure::Direct
-            };
-            let agent_type_description =
-                agent_type_description(config, params.default_agent_type_description);
-            executors.push(multi_agent_v2_handler(
-                SpawnAgentHandlerV2::new(SpawnAgentToolOptions {
-                    available_models: config.available_models.clone(),
-                    agent_type_description,
-                    hide_agent_type_model_reasoning: config.hide_spawn_agent_metadata,
-                    include_usage_hint: config.spawn_agent_usage_hint,
-                    usage_hint_text: config.spawn_agent_usage_hint_text.clone(),
-                    max_concurrent_threads_per_session: config.max_concurrent_threads_per_session,
-                }),
-                exposure,
-            ));
-            executors.push(multi_agent_v2_handler(FollowupTaskHandlerV2, exposure));
-            executors.push(multi_agent_v2_handler(CloseAgentHandlerV2, exposure));
-            executors.push(multi_agent_v2_handler(ListAgentsHandlerV2, exposure));
+        let exposure = if config.multi_agent_v2_non_code_mode_only {
+            ToolExposure::DirectModelOnly
         } else {
-            let agent_type_description =
-                agent_type_description(config, params.default_agent_type_description);
-            executors.push(Arc::new(SpawnAgentHandler::new(SpawnAgentToolOptions {
+            ToolExposure::Direct
+        };
+        let agent_type_description =
+            agent_type_description(config, params.default_agent_type_description);
+        executors.push(multi_agent_v2_handler(
+            SpawnAgentHandlerV2::new(SpawnAgentToolOptions {
                 available_models: config.available_models.clone(),
                 agent_type_description,
                 hide_agent_type_model_reasoning: config.hide_spawn_agent_metadata,
                 include_usage_hint: config.spawn_agent_usage_hint,
                 usage_hint_text: config.spawn_agent_usage_hint_text.clone(),
                 max_concurrent_threads_per_session: config.max_concurrent_threads_per_session,
-            })));
-            executors.push(Arc::new(SendInputHandler));
-            executors.push(Arc::new(ResumeAgentHandler));
-            executors.push(Arc::new(CloseAgentHandler));
-        }
+            }),
+            exposure,
+        ));
+        executors.push(multi_agent_v2_handler(FollowupTaskHandlerV2, exposure));
+        executors.push(multi_agent_v2_handler(CloseAgentHandlerV2, exposure));
+        executors.push(multi_agent_v2_handler(ListAgentsHandlerV2, exposure));
     }
 
     if config.agent_jobs_tools {

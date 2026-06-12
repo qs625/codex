@@ -764,8 +764,10 @@ where
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct AgentsToml {
-    /// Maximum number of agent threads that can be open concurrently.
-    /// When unset, no limit is enforced.
+    /// Deprecated compatibility alias for MultiAgentV2 thread fanout.
+    /// Prefer `features.multi_agent_v2.max_concurrent_threads_per_session`.
+    /// When set, this value maps to spawned agent threads and the v2 session
+    /// cap is normalized to this value plus the root thread.
     #[schemars(range(min = 1))]
     pub max_threads: Option<usize>,
     /// Maximum nesting depth allowed for spawned agent threads.

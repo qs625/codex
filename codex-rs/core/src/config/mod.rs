@@ -2897,7 +2897,7 @@ impl Config {
         let web_search_mode = resolve_web_search_mode(&cfg, &config_profile, &features)
             .unwrap_or(WebSearchMode::Cached);
         let web_search_config = resolve_web_search_config(&cfg, &config_profile);
-        let multi_agent_v2 = resolve_multi_agent_v2_config(&cfg, &config_profile);
+        let mut multi_agent_v2 = resolve_multi_agent_v2_config(&cfg, &config_profile);
         let apps_mcp_path_override = if features.enabled(Feature::AppsMcpPathOverride) {
             let base = apps_mcp_path_override_toml_config(cfg.features.as_ref());
             let profile = apps_mcp_path_override_toml_config(config_profile.features.as_ref());
@@ -3003,29 +3003,22 @@ impl Config {
                 "features.multi_agent_v2.default_wait_timeout_ms must be at most features.multi_agent_v2.max_wait_timeout_ms",
             ));
         }
-        let agent_max_threads_from_config = cfg.agents.as_ref().and_then(|agents| agents.max_threads);
-        let agent_max_threads = if features.enabled(Feature::MultiAgentV2) {
-            if agent_max_threads_from_config.is_some() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "agents.max_threads cannot be set when multi_agent_v2 is enabled",
-                ));
-            }
-            Some(
-                multi_agent_v2
-                    .max_concurrent_threads_per_session
-                    .saturating_sub(1),
-            )
-        } else {
-            let agent_max_threads = agent_max_threads_from_config.or(DEFAULT_AGENT_MAX_THREADS);
-            if agent_max_threads == Some(0) {
+        let agent_max_threads_from_config =
+            cfg.agents.as_ref().and_then(|agents| agents.max_threads);
+        if let Some(agent_max_threads) = agent_max_threads_from_config {
+            if agent_max_threads == 0 {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     "agents.max_threads must be at least 1",
                 ));
             }
-            agent_max_threads
-        };
+            multi_agent_v2.max_concurrent_threads_per_session = agent_max_threads.saturating_add(1);
+        }
+        let agent_max_threads = agent_max_threads_from_config.or(Some(
+            multi_agent_v2
+                .max_concurrent_threads_per_session
+                .saturating_sub(1),
+        ));
         let agent_max_depth = cfg
             .agents
             .as_ref()

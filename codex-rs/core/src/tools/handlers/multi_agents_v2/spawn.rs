@@ -3,6 +3,7 @@ use crate::agent::AgentMode;
 use crate::agent::control::SpawnAgentForkMode;
 use crate::agent::control::SpawnAgentOptions;
 use crate::agent::control::render_input_preview;
+use crate::agent::exceeds_thread_spawn_depth_limit;
 use crate::agent::next_thread_spawn_depth;
 use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::apply_role_to_config;
@@ -72,6 +73,12 @@ async fn handle_spawn_agent(
 
     let session_source = turn.session_source.clone();
     let child_depth = next_thread_spawn_depth(&session_source);
+    if exceeds_thread_spawn_depth_limit(child_depth, turn.config.agent_max_depth) {
+        return Err(FunctionCallError::RespondToModel(format!(
+            "agent depth limit reached: cannot spawn depth {child_depth}; configured agents.max_depth is {}",
+            turn.config.agent_max_depth
+        )));
+    }
     let current_agent_path = session
         .services
         .agent_control
@@ -119,7 +126,6 @@ async fn handle_spawn_agent(
         args.service_tier.as_deref(),
     )
     .await?;
-    apply_spawn_agent_overrides(&mut config, child_depth);
 
     let spawn_source = thread_spawn_source(
         session.conversation_id,

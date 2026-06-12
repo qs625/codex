@@ -511,14 +511,6 @@ impl Codex {
             );
         }
 
-        if let SessionSource::SubAgent(SubAgentSource::ThreadSpawn { depth, .. }) = session_source
-            && depth >= config.agent_max_depth
-            && !config.features.enabled(Feature::MultiAgentV2)
-        {
-            let _ = config.features.disable(Feature::SpawnCsv);
-            let _ = config.features.disable(Feature::Collab);
-        }
-
         let primary_environment = environment_selections.primary_environment();
         let user_instructions = AgentsMdManager::new(&config)
             .user_instructions(primary_environment.as_deref())
@@ -933,10 +925,6 @@ impl Session {
     }
 
     pub(crate) async fn configured_multi_agent_v2_usage_hint_texts(&self) -> Vec<String> {
-        if !self.features.enabled(Feature::MultiAgentV2) {
-            return Vec::new();
-        }
-
         let state = self.state.lock().await;
         let config = &state.session_configuration.original_config_do_not_use;
         [
@@ -1686,10 +1674,6 @@ impl Session {
         sub_id: &str,
         session_source: &SessionSource,
     ) {
-        if !self.enabled(Feature::MultiAgentV2) {
-            return;
-        }
-
         let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
             parent_thread_id,
             agent_path: Some(child_agent_path),

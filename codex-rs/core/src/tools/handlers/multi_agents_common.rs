@@ -7,7 +7,6 @@ use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use codex_exec_server::LOCAL_FS;
-use codex_features::Feature;
 use codex_git_utils::resolve_root_git_project_for_trust;
 use codex_models_manager::manager::RefreshStrategy;
 use codex_protocol::AgentPath;
@@ -73,6 +72,9 @@ pub(crate) fn collab_spawn_error(err: CodexErr) -> FunctionCallError {
             FunctionCallError::RespondToModel("collab manager unavailable".to_string())
         }
         CodexErr::UnsupportedOperation(message) => FunctionCallError::RespondToModel(message),
+        CodexErr::AgentLimitReached { max_threads } => FunctionCallError::RespondToModel(format!(
+            "agent thread limit reached; configured agents.max_threads is {max_threads}"
+        )),
         err => FunctionCallError::RespondToModel(format!("collab spawn failed: {err}")),
     }
 }
@@ -214,10 +216,9 @@ pub(crate) async fn refresh_spawn_cwd_agent_roles(
 
 pub(crate) fn build_agent_resume_config(
     turn: &TurnContext,
-    child_depth: i32,
+    _child_depth: i32,
 ) -> Result<Config, FunctionCallError> {
     let mut config = build_agent_shared_config(turn, /*cwd*/ None)?;
-    apply_spawn_agent_overrides(&mut config, child_depth);
     // For resume, keep base instructions sourced from rollout/session metadata.
     config.base_instructions = None;
     Ok(config)
@@ -298,13 +299,6 @@ pub(crate) fn spawn_agent_environment_selections(
         }
     }
     environments
-}
-
-pub(crate) fn apply_spawn_agent_overrides(config: &mut Config, child_depth: i32) {
-    if child_depth >= config.agent_max_depth && !config.features.enabled(Feature::MultiAgentV2) {
-        let _ = config.features.disable(Feature::SpawnCsv);
-        let _ = config.features.disable(Feature::Collab);
-    }
 }
 
 pub(crate) async fn apply_requested_spawn_agent_model_overrides(

@@ -76,11 +76,7 @@ impl InterruptedTurnHistoryMarker {
         if !config.agent_interrupt_message_enabled {
             return Self::Disabled;
         }
-        if config.features.enabled(Feature::MultiAgentV2) {
-            Self::Developer
-        } else {
-            Self::ContextualUser
-        }
+        Self::Developer
     }
 }
 

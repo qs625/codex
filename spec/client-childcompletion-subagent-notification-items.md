@@ -57,7 +57,7 @@ renderer 侧 `conversation.ts` 已经能把 `collabAgentStatusUpdate` 构造成 
 - live item 使用当前 parent session/thread 作为通知线程，并保留 communication 内的 `sender_thread_id`、`recipient_thread_id` 和 `status`，让客户端现有目标线程解析能够把 child-origin completion 写入 root conversation。
 - persisted active subscription restore 同步写入 core `ActiveEventSubscriptionTracker`，并继续更新 app-server `ThreadWatchManager`，确保 child completion gate 与 thread status 使用一致的 active subscription 事实。
 - `Session::send_event` 不再仅凭 terminal turn event 立即转发 child completion，而是在 agent status 已进入终态后调用统一的 final status 通知检查。
-- final status 通知检查先确认 MultiAgentV2、当前 session 是 `ThreadSpawn` child、agent 非 management、状态为 final，并通过 per-session 原子标记保证同一 child completion 只发送一次。
+- final status 通知检查确认当前 session 是 `ThreadSpawn` child、agent 非 management、状态为 final，并通过 per-session 原子标记保证同一 child completion 只发送一次；MultiAgent V2 typed completion 是唯一运行时路径。
 - 发送前检查本 session 是否还有 queued response input 或 pending mailbox input。
 - 线程 active 判定复用 `AgentControl` 暴露的 subtree active 查询：同一个子树内任一线程存在 active turn、active event subscription 或非 final lifecycle status，都认为 child completion 仍需等待。
 - `Turn` runtime 在清理 `active_turn` 后再次触发 final status 通知检查，用于覆盖 terminal event 发送时仍 active、但 active 条件随后解除的生产路径。
@@ -99,7 +99,7 @@ renderer 侧 `conversation.ts` 已经能把 `collabAgentStatusUpdate` 构造成 
 
 - parent 收到 `InterAgentCommunication` 后，会立即在 live 事件流收到 `ItemCompleted(CollabAgentMessage)`，且 item 保留 child/root thread id 和 final status。
 - restored active event subscription 会阻止 child completion，直到 active count 清零后才补发。
-- child 有 pending mailbox/input 时不会发送 completion，等待直接 parent completion watcher 后改为 mailbox message。
+- child 有 pending mailbox/input 时不会发送 completion，等待 direct child completion gate 解除后改为 mailbox message。
 - child 有 active event command subscription 时不会发送 completion；active count 清零并通过 thread manager 复检后补发。
 - child 有 active grandchild/subagent 时不会发送 completion；grandchild 完成且不再 active 后补发。
 - management agent 完成时不通知 parent。

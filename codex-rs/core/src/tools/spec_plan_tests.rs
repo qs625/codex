@@ -3,13 +3,9 @@ use crate::tools::handlers::apply_patch_spec::create_apply_patch_freeform_tool;
 use crate::tools::handlers::goal_spec::create_create_goal_tool;
 use crate::tools::handlers::goal_spec::create_get_goal_tool;
 use crate::tools::handlers::goal_spec::create_update_goal_tool;
-use crate::tools::handlers::multi_agents_spec::create_close_agent_tool_v1;
 use crate::tools::handlers::multi_agents_spec::create_close_agent_tool_v2;
 use crate::tools::handlers::multi_agents_spec::create_followup_task_tool;
 use crate::tools::handlers::multi_agents_spec::create_list_agents_tool;
-use crate::tools::handlers::multi_agents_spec::create_resume_agent_tool;
-use crate::tools::handlers::multi_agents_spec::create_send_input_tool_v1;
-use crate::tools::handlers::multi_agents_spec::create_spawn_agent_tool_v1;
 use crate::tools::handlers::multi_agents_spec::create_spawn_agent_tool_v2;
 use crate::tools::handlers::plan_spec::create_update_plan_tool;
 use crate::tools::handlers::request_user_input_spec::REQUEST_USER_INPUT_TOOL_NAME;
@@ -292,25 +288,12 @@ fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
         }
     }
     if config.collab_tools {
-        let collab_specs = if config.multi_agent_v2 {
-            vec![
-                create_spawn_agent_tool_v2(spawn_agent_tool_options(&config)),
-                create_followup_task_tool(),
-                create_close_agent_tool_v2(),
-                create_list_agents_tool(),
-            ]
-        } else {
-            vec![
-                create_spawn_agent_tool_v1(spawn_agent_tool_options(&config)),
-                create_send_input_tool_v1(),
-                create_close_agent_tool_v1(),
-            ]
-        };
-        for spec in collab_specs {
-            expected.insert(spec.name().to_string(), spec);
-        }
-        if !config.multi_agent_v2 {
-            let spec = create_resume_agent_tool();
+        for spec in [
+            create_spawn_agent_tool_v2(spawn_agent_tool_options(&config)),
+            create_followup_task_tool(),
+            create_close_agent_tool_v2(),
+            create_list_agents_tool(),
+        ] {
             expected.insert(spec.name().to_string(), spec);
         }
     }
@@ -435,19 +418,23 @@ fn test_build_specs_collab_tools_enabled() {
         &[],
     );
 
-    assert_contains_tool_names(&tools, &["spawn_agent", "send_input", "close_agent"]);
+    assert_contains_tool_names(
+        &tools,
+        &["spawn_agent", "followup_task", "close_agent", "list_agents"],
+    );
     assert_lacks_tool_name(&tools, "wait_agent");
     assert!(!registry.has_handler(&ToolName::plain("wait_agent")));
     assert_lacks_tool_name(&tools, "spawn_agents_on_csv");
-    assert_lacks_tool_name(&tools, "list_agents");
+    assert_lacks_tool_name(&tools, "send_input");
+    assert_lacks_tool_name(&tools, "resume_agent");
 
     let spawn_agent = find_tool(&tools, "spawn_agent");
     let ToolSpec::Function(ResponsesApiTool { parameters, .. }) = spawn_agent else {
         panic!("spawn_agent should be a function tool");
     };
     let (properties, _) = expect_object_schema(parameters);
-    assert!(properties.contains_key("fork_context"));
-    assert!(!properties.contains_key("fork_turns"));
+    assert!(properties.contains_key("fork_turns"));
+    assert!(!properties.contains_key("fork_context"));
 }
 
 #[test]
@@ -593,7 +580,7 @@ fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
 }
 
 #[test]
-fn test_build_specs_multi_agent_v2_does_not_require_collab_feature() {
+fn test_build_specs_multi_agent_v2_does_not_expose_collab_without_collab_feature() {
     let model_info = model_info();
     let mut features = Features::with_defaults();
     features.disable(Feature::Collab);
@@ -617,10 +604,10 @@ fn test_build_specs_multi_agent_v2_does_not_require_collab_feature() {
         &[],
     );
 
-    assert_contains_tool_names(
-        &tools,
-        &["spawn_agent", "followup_task", "close_agent", "list_agents"],
-    );
+    assert_lacks_tool_name(&tools, "spawn_agent");
+    assert_lacks_tool_name(&tools, "followup_task");
+    assert_lacks_tool_name(&tools, "close_agent");
+    assert_lacks_tool_name(&tools, "list_agents");
     assert_lacks_tool_name(&tools, "wait_agent");
     assert_lacks_tool_name(&tools, "send_input");
     assert_lacks_tool_name(&tools, "resume_agent");
@@ -654,8 +641,9 @@ fn test_build_specs_enable_fanout_enables_agent_jobs_and_collab_tools() {
         &tools,
         &[
             "spawn_agent",
-            "send_input",
+            "followup_task",
             "close_agent",
+            "list_agents",
             "spawn_agents_on_csv",
         ],
     );
@@ -832,9 +820,9 @@ fn test_build_specs_agent_job_worker_tools_enabled() {
         &tools,
         &[
             "spawn_agent",
-            "send_input",
-            "resume_agent",
+            "followup_task",
             "close_agent",
+            "list_agents",
             "spawn_agents_on_csv",
             "report_agent_job_result",
             REQUEST_USER_INPUT_TOOL_NAME,

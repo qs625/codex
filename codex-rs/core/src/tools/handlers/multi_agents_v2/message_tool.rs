@@ -4,7 +4,6 @@ use super::*;
 use crate::agent::AgentMode;
 use crate::tools::context::FunctionToolOutput;
 use crate::turn_timing::now_unix_timestamp_ms;
-use codex_features::Feature;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::InterAgentOperation;
 
@@ -84,12 +83,7 @@ pub(crate) async fn handle_message_string_tool(
         .as_str()
         .rsplit_once('/')
         .is_some_and(|(parent, _)| parent == sender_agent_path.as_str());
-    let receiver_will_send_completion = receiver_agent.agent_mode != AgentMode::Management
-        && session
-            .services
-            .agent_control
-            .agent_thread_enabled(receiver_thread_id, Feature::MultiAgentV2)
-            .await;
+    let receiver_will_send_completion = receiver_agent.agent_mode != AgentMode::Management;
     if receiver_is_direct_child && receiver_will_send_completion {
         session
             .mark_direct_child_completion_pending(receiver_thread_id)

@@ -22,7 +22,6 @@ use codex_config::loader::project_trust_key;
 use codex_config::types::ToolSuggestDisabledTool;
 
 use codex_features::Feature;
-use codex_features::Features;
 use codex_login::CodexAuth;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_models_manager::bundled_models_response;
@@ -73,6 +72,7 @@ use crate::tools::context::ToolPayload;
 use crate::tools::handlers::CreateGoalHandler;
 use crate::tools::handlers::ExecCommandHandler;
 use crate::tools::handlers::ShellCommandHandler;
+use crate::tools::handlers::SpawnAgentHandler;
 use crate::tools::handlers::UpdateGoalHandler;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::router::ToolCallSource;
@@ -6931,16 +6931,11 @@ async fn build_initial_context_emits_standalone_multiagent_context() {
     );
 }
 
-async fn make_multi_agent_v2_usage_hint_test_session(
-    enable_multi_agent_v2: bool,
-) -> (Arc<Session>, Arc<TurnContext>) {
+async fn make_multi_agent_v2_usage_hint_test_session() -> (Arc<Session>, Arc<TurnContext>) {
     let (session, turn_context, _rx_event) = make_session_and_context_with_auth_and_config_and_rx(
         CodexAuth::from_api_key("Test API Key"),
         Vec::new(),
         |config| {
-            if enable_multi_agent_v2 {
-                let _ = config.features.enable(Feature::MultiAgentV2);
-            }
             config.multi_agent_v2.root_agent_usage_hint_text = Some("Root guidance.".to_string());
             config.multi_agent_v2.subagent_usage_hint_text = Some("Subagent guidance.".to_string());
         },
@@ -7022,8 +7017,7 @@ async fn build_initial_context_omits_prompt_fragments_without_extension_state() 
 
 #[tokio::test]
 async fn build_initial_context_adds_multi_agent_v2_root_usage_hint_as_developer_message() {
-    let (session, turn_context) =
-        make_multi_agent_v2_usage_hint_test_session(/*enable_multi_agent_v2*/ true).await;
+    let (session, turn_context) = make_multi_agent_v2_usage_hint_test_session().await;
 
     let initial_context = session.build_initial_context(turn_context.as_ref()).await;
 
@@ -7044,8 +7038,7 @@ async fn build_initial_context_adds_multi_agent_v2_root_usage_hint_as_developer_
 
 #[tokio::test]
 async fn build_initial_context_adds_multi_agent_v2_subagent_usage_hint_as_developer_message() {
-    let (session, mut turn_context) =
-        make_multi_agent_v2_usage_hint_test_session(/*enable_multi_agent_v2*/ true).await;
+    let (session, mut turn_context) = make_multi_agent_v2_usage_hint_test_session().await;
     let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
         parent_thread_id: ThreadId::new(),
         depth: 1,
@@ -7081,33 +7074,23 @@ async fn build_initial_context_adds_multi_agent_v2_subagent_usage_hint_as_develo
 }
 
 #[tokio::test]
-async fn build_initial_context_omits_multi_agent_v2_usage_hints_when_feature_disabled() {
-    let (session, turn_context) =
-        make_multi_agent_v2_usage_hint_test_session(/*enable_multi_agent_v2*/ false).await;
+async fn build_initial_context_adds_multi_agent_v2_usage_hints_when_feature_disabled() {
+    let (session, turn_context) = make_multi_agent_v2_usage_hint_test_session().await;
 
     let initial_context = session.build_initial_context(turn_context.as_ref()).await;
 
     let developer_messages = developer_message_texts(&initial_context);
     assert!(
-        !developer_messages.iter().any(|message| {
-            matches!(
-                message.as_slice(),
-                ["Root guidance."] | ["Subagent guidance."]
-            )
-        }),
-        "did not expect multi-agent v2 usage hint developer messages, got {developer_messages:?}"
+        developer_messages
+            .iter()
+            .any(|message| message.as_slice() == ["Root guidance."]),
+        "expected root usage hint even when legacy feature is disabled, got {developer_messages:?}"
     );
 }
 
 #[tokio::test]
-async fn configured_multi_agent_v2_usage_hint_texts_use_effective_enabled_feature_state() {
-    let (mut session, _turn_context) =
-        make_multi_agent_v2_usage_hint_test_session(/*enable_multi_agent_v2*/ false).await;
-    let mut effective_features = Features::with_defaults();
-    effective_features.enable(Feature::MultiAgentV2);
-    Arc::get_mut(&mut session)
-        .expect("session should not be shared")
-        .features = effective_features.into();
+async fn configured_multi_agent_v2_usage_hint_texts_returns_configured_texts() {
+    let (session, _turn_context) = make_multi_agent_v2_usage_hint_test_session().await;
 
     let hint_texts = session.configured_multi_agent_v2_usage_hint_texts().await;
 
@@ -7118,19 +7101,6 @@ async fn configured_multi_agent_v2_usage_hint_texts_use_effective_enabled_featur
             "Subagent guidance.".to_string()
         ]
     );
-}
-
-#[tokio::test]
-async fn configured_multi_agent_v2_usage_hint_texts_omit_effectively_disabled_feature() {
-    let (mut session, _turn_context) =
-        make_multi_agent_v2_usage_hint_test_session(/*enable_multi_agent_v2*/ true).await;
-    Arc::get_mut(&mut session)
-        .expect("session should not be shared")
-        .features = Features::with_defaults().into();
-
-    let hint_texts = session.configured_multi_agent_v2_usage_hint_texts().await;
-
-    assert_eq!(hint_texts, Vec::<String>::new());
 }
 
 #[tokio::test]
@@ -10389,6 +10359,52 @@ async fn update_goal_tool_marks_goal_complete() {
         .expect("read thread goal")
         .expect("goal should still exist");
     assert_eq!(goal.status, ThreadGoalStatus::Complete);
+}
+
+#[tokio::test]
+async fn spawn_agent_tool_rejects_depth_limit_at_call_time() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    let mut config = (*turn_context.config).clone();
+    config.agent_max_depth = 1;
+    turn_context.config = Arc::new(config);
+    turn_context.session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: ThreadId::new(),
+        depth: 1,
+        agent_path: Some(AgentPath::root().join("worker").expect("agent path")),
+        agent_nickname: None,
+        agent_role: Some("worker".to_string()),
+    });
+    let session = Arc::new(session);
+    let turn_context = Arc::new(turn_context);
+    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+    let handler = SpawnAgentHandler::default();
+
+    let response = handler
+        .handle(ToolInvocation {
+            session,
+            turn: turn_context,
+            cancellation_token: CancellationToken::new(),
+            tracker,
+            call_id: "spawn-depth-limit".to_string(),
+            tool_name: codex_tools::ToolName::plain("spawn_agent"),
+            source: ToolCallSource::Direct,
+            payload: ToolPayload::Function {
+                arguments: serde_json::json!({
+                    "task_name": "blocked_child",
+                    "message": "try to spawn",
+                })
+                .to_string(),
+            },
+        })
+        .await;
+
+    let Err(FunctionCallError::RespondToModel(output)) = response else {
+        panic!("expected depth limit error");
+    };
+    assert_eq!(
+        output,
+        "agent depth limit reached: cannot spawn depth 2; configured agents.max_depth is 1"
+    );
 }
 
 #[tokio::test]

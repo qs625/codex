@@ -6,7 +6,7 @@ use crate::config::Config;
 use crate::function_tool::FunctionCallError;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use crate::tools::handlers::multi_agents::build_agent_spawn_config;
+use crate::tools::handlers::multi_agents_common::build_agent_spawn_config;
 use crate::tools::handlers::parse_arguments;
 use codex_protocol::ThreadId;
 use codex_protocol::error::CodexErr;

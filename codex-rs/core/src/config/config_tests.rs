@@ -8027,7 +8027,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             project_doc_max_bytes: AGENTS_MD_MAX_BYTES,
             project_doc_fallback_filenames: Vec::new(),
             tool_output_token_limit: None,
-            agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
+            agent_max_threads: Some(DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION - 1),
             agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
             agent_roles: BTreeMap::new(),
             agent_tool_patterns: None,
@@ -8480,7 +8480,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         project_doc_max_bytes: AGENTS_MD_MAX_BYTES,
         project_doc_fallback_filenames: Vec::new(),
         tool_output_token_limit: None,
-        agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
+        agent_max_threads: Some(DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION - 1),
         agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
         agent_roles: BTreeMap::new(),
         agent_tool_patterns: None,
@@ -8647,7 +8647,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         project_doc_max_bytes: AGENTS_MD_MAX_BYTES,
         project_doc_fallback_filenames: Vec::new(),
         tool_output_token_limit: None,
-        agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
+        agent_max_threads: Some(DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION - 1),
         agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
         agent_roles: BTreeMap::new(),
         agent_tool_patterns: None,
@@ -8799,7 +8799,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         project_doc_max_bytes: AGENTS_MD_MAX_BYTES,
         project_doc_fallback_filenames: Vec::new(),
         tool_output_token_limit: None,
-        agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
+        agent_max_threads: Some(DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION - 1),
         agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
         agent_roles: BTreeMap::new(),
         agent_tool_patterns: None,
@@ -10570,7 +10570,7 @@ enabled = true
 }
 
 #[tokio::test]
-async fn multi_agent_v2_rejects_agents_max_threads() -> std::io::Result<()> {
+async fn multi_agent_v2_accepts_agents_max_threads_as_compat_alias() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     std::fs::write(
         codex_home.path().join(CONFIG_TOML_FILE),
@@ -10582,18 +10582,37 @@ max_threads = 3
 "#,
     )?;
 
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(codex_home.path().to_path_buf()))
+        .build()
+        .await?;
+
+    assert_eq!(config.agent_max_threads, Some(3));
+    assert_eq!(config.multi_agent_v2.max_concurrent_threads_per_session, 4);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn multi_agent_v2_rejects_zero_agents_max_threads_alias() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    std::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        r#"[agents]
+max_threads = 0
+"#,
+    )?;
+
     let err = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .build()
         .await
-        .expect_err("agents.max_threads should conflict with multi_agent_v2");
+        .expect_err("zero agents.max_threads should be rejected");
 
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
-    assert_eq!(
-        err.to_string(),
-        "agents.max_threads cannot be set when multi_agent_v2 is enabled"
-    );
+    assert_eq!(err.to_string(), "agents.max_threads must be at least 1");
 
     Ok(())
 }

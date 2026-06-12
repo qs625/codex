@@ -147,7 +147,7 @@ fn save_config_resolved_fields(
     features.materialize_resolved_enabled(config.features.get());
     let mut multi_agent_v2: MultiAgentV2ConfigToml =
         resolved_config_to_toml(&config.multi_agent_v2, "features.multi_agent_v2")?;
-    multi_agent_v2.enabled = Some(config.features.enabled(Feature::MultiAgentV2));
+    multi_agent_v2.enabled = Some(true);
     features.multi_agent_v2 = Some(FeatureToml::Config(multi_agent_v2));
     features.apps_mcp_path_override = Some(FeatureToml::Config(AppsMcpPathOverrideConfigToml {
         enabled: Some(config.features.enabled(Feature::AppsMcpPathOverride)),
@@ -159,13 +159,8 @@ fn save_config_resolved_fields(
     )?);
 
     let agents = lock_config.agents.get_or_insert_with(Default::default);
-    // Multi-agent v2 owns thread fanout through its feature config. Preserve
-    // the legacy agents.max_threads setting only when v2 is disabled.
-    agents.max_threads = if config.features.enabled(Feature::MultiAgentV2) {
-        None
-    } else {
-        config.agent_max_threads
-    };
+    // Persist the canonical v2 fanout config instead of the legacy alias.
+    agents.max_threads = None;
     agents.max_depth = Some(config.agent_max_depth);
     agents.job_max_runtime_seconds = config.agent_job_max_runtime_seconds;
     agents.interrupt_message = Some(config.agent_interrupt_message_enabled);

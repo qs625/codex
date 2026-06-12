@@ -127,61 +127,6 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
 }
 
 #[test]
-fn spawn_agent_tool_v1_keeps_legacy_fork_context_field() {
-    let tool = create_spawn_agent_tool_v1(SpawnAgentToolOptions {
-        available_models: Vec::new(),
-        agent_type_description: "role help".to_string(),
-        hide_agent_type_model_reasoning: false,
-        include_usage_hint: true,
-        usage_hint_text: None,
-        max_concurrent_threads_per_session: None,
-    });
-
-    let ToolSpec::Function(ResponsesApiTool { parameters, .. }) = tool else {
-        panic!("spawn_agent should be a function tool");
-    };
-    assert_eq!(
-        parameters.schema_type,
-        Some(JsonSchemaType::Single(JsonSchemaPrimitiveType::Object))
-    );
-    let properties = parameters
-        .properties
-        .as_ref()
-        .expect("spawn_agent should use object params");
-
-    assert!(properties.contains_key("fork_context"));
-    assert!(properties.contains_key("cwd"));
-    let agent_type_description = properties
-        .get("agent_type")
-        .and_then(|schema| schema.description.as_deref())
-        .expect("agent_type description");
-    assert!(agent_type_description.contains("role help"));
-    assert!(
-        agent_type_description
-            .contains("When `cwd` is set, agent types from that cwd or its repository may be used")
-    );
-    assert_eq!(
-        properties
-            .get("agent_mode")
-            .and_then(|schema| schema.enum_values.as_ref()),
-        Some(&vec![json!("normal"), json!("management")])
-    );
-    assert!(!properties.contains_key("fork_turns"));
-    assert_eq!(
-        properties
-            .get("model")
-            .and_then(|schema| schema.description.as_deref()),
-        Some(SPAWN_AGENT_MODEL_OVERRIDE_DESCRIPTION)
-    );
-    assert_eq!(
-        properties
-            .get("service_tier")
-            .and_then(|schema| schema.description.as_deref()),
-        Some(SPAWN_AGENT_SERVICE_TIER_OVERRIDE_DESCRIPTION)
-    );
-}
-
-#[test]
 fn spawn_agent_tool_hides_service_tier_with_spawn_metadata() {
     let tool = create_spawn_agent_tool_v2(SpawnAgentToolOptions {
         available_models: vec![model_preset("visible", /*show_in_picker*/ true)],
