@@ -70,7 +70,8 @@ Session 初始化时只注入 workflow 摘要，不注入完整 `workflow.ts`。
 
 Workflows are scripted, resumable multi-agent procedures. Use `workflow_list`
 or `workflow_describe` when the user asks for a structured workflow and the task
-matches one of the entries below.
+matches one of the entries below. Use `workflow_start`, `workflow_status`,
+`workflow_resume`, and `workflow_abort` to manage a workflow run.
 
 - feature-dev (project)
   Description: 按调研、实现、review/fix、验证流程开发功能。
@@ -87,21 +88,18 @@ matches one of the entries below.
 
 ## Tools
 
-当前已实现的 registry 阶段只暴露：
+当前已实现：
 
 - `workflow_list`
 - `workflow_describe`
-
-runner 阶段再暴露：
-
-第一版建议暴露：
-
 - `workflow_start`
 - `workflow_status`
 - `workflow_resume`
 - `workflow_abort`
 
-其中 `workflow_list` 和 init context 使用同一套 registry 数据。
+其中 `workflow_list`、`workflow_describe` 和 init context 使用同一套 registry 数据。`workflow_start/status/resume/abort` 当前管理 session 内存态 `WorkflowRun`，会返回 `runId`、workflow metadata、状态、runnerStatus、inputs、revision 和时间戳。`start/resume/abort` 会记录 typed `WorkflowRunProgress`，并通过共享 `ResponseItem -> ThreadItem` projector 投影为客户端 `ThreadItem::WorkflowRunProgress`。
+
+当前 run control 是控制面骨架，不执行 TypeScript entry，不创建 Node 子进程，也不 snapshot bundle。`runnerStatus` 使用 `control_plane_started`、`control_plane_resumed`、`aborted` 明确表达当前能力边界。完整 TS runner、durable snapshot、agent binding 和 app-server v2 直连 RPC 仍是后续阶段。
 
 ## TypeScript Runner
 
@@ -179,13 +177,16 @@ workflow_runs/<run-id>/
 
 ## 与 Item 重构的关系
 
-本设计文档不定义最终 workflow `ResponseItem` / `ThreadItem` shape。该部分应等待 typed `ResponseItem -> ThreadItem` 主路径重构完成后再实现。
+当前已定义最小 workflow progress typed item：
 
-当前可并行完成的部分：
+- `ResponseItem::WorkflowRunProgress`
+- `ThreadItem::WorkflowRunProgress`
+- `WorkflowRunProgressEvent { runId, workflowId, status, runnerStatus, kind, message, updatedAt }`
 
-- registry 发现规则。
-- init context 摘要格式。
-- workflow 文件布局。
+该路径必须继续复用 `codex-rs/app-server-protocol/src/protocol/response_item_projection.rs`，不要新增 raw response item、message marker 或 assistant JSON 解析分支。
+
+当前仍可并行完成的部分：
+
 - TypeScript authoring API 草案。
 - runner 与 host RPC 边界。
 - 示例 workflow。

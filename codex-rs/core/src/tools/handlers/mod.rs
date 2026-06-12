@@ -72,8 +72,12 @@ pub use unified_exec::ExecCommandHandler;
 pub(crate) use unified_exec::ExecCommandHandlerOptions;
 pub use unified_exec::WriteStdinHandler;
 pub use view_image::ViewImageHandler;
+pub use workflow::WorkflowAbortHandler;
 pub use workflow::WorkflowDescribeHandler;
 pub use workflow::WorkflowListHandler;
+pub use workflow::WorkflowResumeHandler;
+pub use workflow::WorkflowStartHandler;
+pub use workflow::WorkflowStatusHandler;
 
 pub(crate) fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
 where

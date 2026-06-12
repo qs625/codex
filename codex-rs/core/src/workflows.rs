@@ -6,6 +6,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs;
 use std::path::Component;
 use std::path::Path;
@@ -16,7 +17,7 @@ const MAX_WORKFLOWS_PER_SOURCE: usize = 100;
 const MAX_CONTEXT_FIELD_CHARS: usize = 600;
 const TRUNCATED_NOTICE: &str = "... [truncated]";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum WorkflowSource {
     Home,
@@ -122,8 +123,43 @@ fn load_workflow_registry_from_roots(
     }
 
     let mut by_id = BTreeMap::<String, WorkflowSummary>::new();
+    let mut invalid_same_source_ids = HashSet::<(WorkflowSource, String)>::new();
     for workflow in all {
+        if invalid_same_source_ids.contains(&(workflow.source, workflow.id.clone())) {
+            diagnostics.push(WorkflowDiagnostic {
+                source: workflow.source,
+                path: workflow.path.clone(),
+                message: format!(
+                    "workflow `{}` duplicates another {} workflow",
+                    workflow.id,
+                    workflow.source.label()
+                ),
+            });
+            continue;
+        }
         match by_id.get(&workflow.id) {
+            Some(existing) if existing.source == workflow.source => {
+                let existing = by_id
+                    .remove(&workflow.id)
+                    .expect("existing workflow should be present");
+                diagnostics.push(WorkflowDiagnostic {
+                    source: existing.source,
+                    path: existing.path.clone(),
+                    message: format!(
+                        "workflow `{}` duplicates workflow at `{}`",
+                        existing.id, workflow.path
+                    ),
+                });
+                diagnostics.push(WorkflowDiagnostic {
+                    source: workflow.source,
+                    path: workflow.path.clone(),
+                    message: format!(
+                        "workflow `{}` duplicates workflow at `{}`",
+                        workflow.id, existing.path
+                    ),
+                });
+                invalid_same_source_ids.insert((workflow.source, workflow.id));
+            }
             Some(existing) if workflow.source == WorkflowSource::Project => {
                 diagnostics.push(WorkflowDiagnostic {
                     source: existing.source,
@@ -184,14 +220,12 @@ fn load_source(
         paths.truncate(MAX_WORKFLOWS_PER_SOURCE);
     }
 
-    let mut workflows = Vec::new();
-    let mut seen_ids = HashMap::<String, String>::new();
+    let mut by_id = BTreeMap::<String, WorkflowSummary>::new();
+    let mut duplicate_ids = HashMap::<String, String>::new();
     for path in paths {
         match load_workflow(source, &path) {
             Ok(workflow) => {
-                if let Some(existing_path) =
-                    seen_ids.insert(workflow.id.clone(), workflow.path.clone())
-                {
+                if let Some(existing_path) = duplicate_ids.get(&workflow.id) {
                     diagnostics.push(WorkflowDiagnostic {
                         source,
                         path: workflow.path.clone(),
@@ -202,7 +236,27 @@ fn load_source(
                     });
                     continue;
                 }
-                workflows.push(workflow);
+                if let Some(existing) = by_id.remove(&workflow.id) {
+                    diagnostics.push(WorkflowDiagnostic {
+                        source,
+                        path: existing.path.clone(),
+                        message: format!(
+                            "workflow `{}` duplicates workflow at `{}`",
+                            existing.id, workflow.path
+                        ),
+                    });
+                    diagnostics.push(WorkflowDiagnostic {
+                        source,
+                        path: workflow.path.clone(),
+                        message: format!(
+                            "workflow `{}` duplicates workflow at `{}`",
+                            workflow.id, existing.path
+                        ),
+                    });
+                    duplicate_ids.insert(workflow.id, existing.path);
+                } else {
+                    by_id.insert(workflow.id.clone(), workflow);
+                }
             }
             Err(message) => diagnostics.push(WorkflowDiagnostic {
                 source,
@@ -211,7 +265,7 @@ fn load_source(
             }),
         }
     }
-    workflows
+    by_id.into_values().collect()
 }
 
 fn project_workflow_roots(config: &Config) -> Vec<PathBuf> {
@@ -258,6 +312,9 @@ fn load_workflow(source: WorkflowSource, dir: &Path) -> Result<WorkflowSummary, 
     if entry_escapes_workflow_dir(&manifest.entry) {
         return Err("workflow entry must stay inside the workflow directory".to_string());
     }
+    if !entry_is_typescript(&manifest.entry) {
+        return Err("workflow entry must be a TypeScript .ts file".to_string());
+    }
     let entry_path = dir.join(&manifest.entry);
     if !entry_path.is_file() {
         return Err(format!(
@@ -277,6 +334,10 @@ fn load_workflow(source: WorkflowSource, dir: &Path) -> Result<WorkflowSummary, 
         when_to_use: manifest.when_to_use,
         inputs: manifest.inputs,
     })
+}
+
+fn entry_is_typescript(entry: &str) -> bool {
+    Path::new(entry).extension().and_then(|ext| ext.to_str()) == Some("ts")
 }
 
 fn entry_escapes_workflow_dir(entry: &str) -> bool {
@@ -325,7 +386,7 @@ pub(crate) fn render_available_workflows_body(registry: &WorkflowRegistry) -> Op
     }
 
     let mut body = String::from(
-        "\nWorkflows are scripted, resumable multi-agent procedures. Use `workflow_list` or `workflow_describe` when the user asks for a structured workflow and the task matches one of the entries below.\n\n",
+        "\nWorkflows are scripted, resumable multi-agent procedures. Use `workflow_list` or `workflow_describe` when the user asks for a structured workflow and the task matches one of the entries below. Use `workflow_start`, `workflow_status`, `workflow_resume`, and `workflow_abort` to manage a workflow run.\n\n",
     );
     for workflow in &registry.workflows {
         body.push_str(&format!(
@@ -425,7 +486,7 @@ mod tests {
     }
 
     #[test]
-    fn higher_precedence_project_workflow_overrides_lower_project_workflow() {
+    fn duplicate_project_workflow_id_is_excluded() {
         let temp = tempfile::tempdir().expect("tempdir");
         let lower = temp.path().join("repo/.codex/workflows");
         let higher = temp.path().join("repo/child/.codex/workflows");
@@ -437,9 +498,9 @@ mod tests {
             vec![lower, higher],
         );
 
-        assert_eq!(registry.workflows.len(), 1);
-        assert_eq!(registry.workflows[0].description, "higher description");
-        assert_eq!(registry.diagnostics.len(), 1);
+        assert!(registry.workflows.is_empty());
+        assert_eq!(registry.diagnostics.len(), 2);
+        assert_eq!(render_available_workflows_body(&registry), None);
     }
 
     #[test]
@@ -463,6 +524,32 @@ mod tests {
         assert!(registry.workflows.is_empty());
         assert_eq!(registry.diagnostics.len(), 1);
         assert_eq!(render_available_workflows_body(&registry), None);
+    }
+
+    #[test]
+    fn non_typescript_entry_is_invalid() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workflows_root = temp.path().join("repo/.codex/workflows");
+        let dir = workflows_root.join("bad");
+        fs::create_dir_all(&dir).expect("create workflow dir");
+        fs::write(dir.join("workflow.js"), "export default {};").expect("write workflow entry");
+        fs::write(
+            dir.join("workflow.json"),
+            r#"{"id":"bad","name":"Bad","description":"bad","entry":"workflow.js"}"#,
+        )
+        .expect("write invalid manifest");
+
+        let registry = load_workflow_registry_from_roots(
+            temp.path().join("home/workflows"),
+            vec![workflows_root],
+        );
+
+        assert!(registry.workflows.is_empty());
+        assert_eq!(registry.diagnostics.len(), 1);
+        assert_eq!(
+            registry.diagnostics[0].message,
+            "workflow entry must be a TypeScript .ts file"
+        );
     }
 
     #[test]

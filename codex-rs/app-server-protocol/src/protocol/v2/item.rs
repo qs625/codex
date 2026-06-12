@@ -22,6 +22,8 @@ use codex_protocol::memory_citation::MemoryCitation as CoreMemoryCitation;
 use codex_protocol::memory_citation::MemoryCitationEntry as CoreMemoryCitationEntry;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::models::WorkflowRunProgressEvent as CoreWorkflowRunProgressEvent;
+use codex_protocol::models::WorkflowRunProgressKind as CoreWorkflowRunProgressKind;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::parse_command::ParsedCommand as CoreParsedCommand;
 use codex_protocol::protocol::AgentStatus as CoreAgentStatus;
@@ -369,6 +371,12 @@ pub enum ThreadItem {
     },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
+    WorkflowRunProgress {
+        id: String,
+        event: ThreadWorkflowRunProgressEvent,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
     CollabAgentMessage {
         id: String,
         operation: CollabAgentOperation,
@@ -510,6 +518,7 @@ impl ThreadItem {
             | ThreadItem::EventDrivenTool { id, .. }
             | ThreadItem::EventCommandCall { id, .. }
             | ThreadItem::EventCommandEvent { id, .. }
+            | ThreadItem::WorkflowRunProgress { id, .. }
             | ThreadItem::CollabAgentMessage { id, .. }
             | ThreadItem::CollabAgentToolCall { id, .. }
             | ThreadItem::CollabAgentStatusUpdate { id, .. }
@@ -534,6 +543,54 @@ pub(crate) fn assistant_message_thread_item(
         text,
         phase,
         memory_citation,
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export_to = "v2/")]
+pub struct ThreadWorkflowRunProgressEvent {
+    pub run_id: String,
+    pub workflow_id: String,
+    #[ts(type = "unknown")]
+    pub status: JsonValue,
+    pub runner_status: String,
+    pub kind: ThreadWorkflowRunProgressKind,
+    pub message: String,
+    #[ts(type = "number")]
+    pub updated_at: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export_to = "v2/")]
+pub enum ThreadWorkflowRunProgressKind {
+    Started,
+    Resumed,
+    Aborted,
+}
+
+impl From<CoreWorkflowRunProgressEvent> for ThreadWorkflowRunProgressEvent {
+    fn from(value: CoreWorkflowRunProgressEvent) -> Self {
+        Self {
+            run_id: value.run_id,
+            workflow_id: value.workflow_id,
+            status: value.status,
+            runner_status: value.runner_status,
+            kind: value.kind.into(),
+            message: value.message,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
+impl From<CoreWorkflowRunProgressKind> for ThreadWorkflowRunProgressKind {
+    fn from(value: CoreWorkflowRunProgressKind) -> Self {
+        match value {
+            CoreWorkflowRunProgressKind::Started => Self::Started,
+            CoreWorkflowRunProgressKind::Resumed => Self::Resumed,
+            CoreWorkflowRunProgressKind::Aborted => Self::Aborted,
+        }
     }
 }
 

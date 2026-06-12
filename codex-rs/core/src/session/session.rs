@@ -1,6 +1,7 @@
 use super::*;
 use crate::config::ConstraintError;
 use crate::goals::GoalRuntimeState;
+use crate::workflow_runs::WorkflowRunManager;
 use codex_config::RequirementSource;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
@@ -37,6 +38,7 @@ pub(crate) struct Session {
     pub(super) idle_pending_input: Mutex<Vec<crate::pending_input::PendingInputItem>>,
     pub(crate) goal_runtime: GoalRuntimeState,
     pub(crate) guardian_review_session: GuardianReviewSessionManager,
+    pub(crate) workflow_runs: WorkflowRunManager,
     pub(crate) services: SessionServices,
     pub(super) next_internal_sub_id: AtomicU64,
     pub(super) parent_child_completion_active: AtomicBool,
@@ -1057,6 +1059,7 @@ impl Session {
                 idle_pending_input: Mutex::new(Vec::new()),
                 goal_runtime: GoalRuntimeState::new(),
                 guardian_review_session: GuardianReviewSessionManager::default(),
+                workflow_runs: WorkflowRunManager::default(),
                 services,
                 next_internal_sub_id: AtomicU64::new(0),
                 parent_child_completion_active: AtomicBool::new(true),

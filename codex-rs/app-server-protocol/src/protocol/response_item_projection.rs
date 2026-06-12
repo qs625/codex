@@ -17,6 +17,10 @@ where
     F: Fn() -> String,
 {
     match item {
+        ResponseItem::WorkflowRunProgress { id, event } => Some(ThreadItem::WorkflowRunProgress {
+            id: id.clone().unwrap_or_else(fallback_id),
+            event: event.clone().into(),
+        }),
         ResponseItem::EventCommandEvent { id, event } => Some(event_command_event_item(
             id.clone().unwrap_or_else(|| event.stable_item_id()),
             event.clone(),
@@ -102,6 +106,26 @@ pub fn project_tool_call_completion(
         }),
         _ => None,
     }
+}
+
+#[doc(hidden)]
+pub fn is_structured_response_item_completion(item: &ResponseItem) -> bool {
+    matches!(
+        item,
+        ResponseItem::WorkflowRunProgress { .. }
+            | ResponseItem::EventCommandEvent { .. }
+            | ResponseItem::EventDrivenTool { .. }
+            | ResponseItem::InterAgentCommunication {
+                communication: InterAgentCommunication {
+                    operation: CoreInterAgentOperation::SpawnAgent
+                        | CoreInterAgentOperation::SendMessage
+                        | CoreInterAgentOperation::FollowupTask
+                        | CoreInterAgentOperation::ChildCompletion,
+                    ..
+                },
+                ..
+            }
+    )
 }
 
 #[doc(hidden)]

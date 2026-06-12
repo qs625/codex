@@ -81,4 +81,6 @@ export type { WebSearchContextSize } from "./WebSearchContextSize";
 export type { WebSearchLocation } from "./WebSearchLocation";
 export type { WebSearchMode } from "./WebSearchMode";
 export type { WebSearchToolConfig } from "./WebSearchToolConfig";
+export type { WorkflowRunProgressEvent } from "./WorkflowRunProgressEvent";
+export type { WorkflowRunProgressKind } from "./WorkflowRunProgressKind";
 export * as v2 from "./v2";

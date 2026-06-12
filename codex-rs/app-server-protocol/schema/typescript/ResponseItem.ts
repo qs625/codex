@@ -12,8 +12,9 @@ import type { MessagePhase } from "./MessagePhase";
 import type { ReasoningItemContent } from "./ReasoningItemContent";
 import type { ReasoningItemReasoningSummary } from "./ReasoningItemReasoningSummary";
 import type { WebSearchAction } from "./WebSearchAction";
+import type { WorkflowRunProgressEvent } from "./WorkflowRunProgressEvent";
 
-export type ResponseItem = { "type": "event_command_event", event: EventCommandEvent, } | { "type": "event_driven_tool", trigger: EventDrivenToolTrigger, } | { "type": "inter_agent_communication", communication: InterAgentCommunication, } | { "type": "message", role: string, content: Array<ContentItem>, phase?: MessagePhase, } | { "type": "reasoning", summary: Array<ReasoningItemReasoningSummary>, content?: Array<ReasoningItemContent>, encrypted_content: string | null, } | { "type": "local_shell_call",
+export type ResponseItem = { "type": "workflow_run_progress", event: WorkflowRunProgressEvent, } | { "type": "event_command_event", event: EventCommandEvent, } | { "type": "event_driven_tool", trigger: EventDrivenToolTrigger, } | { "type": "inter_agent_communication", communication: InterAgentCommunication, } | { "type": "message", role: string, content: Array<ContentItem>, phase?: MessagePhase, } | { "type": "reasoning", summary: Array<ReasoningItemReasoningSummary>, content?: Array<ReasoningItemContent>, encrypted_content: string | null, } | { "type": "local_shell_call",
 /**
  * Set when using the Responses API.
  */

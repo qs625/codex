@@ -22,8 +22,12 @@ use crate::tools::handlers::TestSyncHandler;
 use crate::tools::handlers::ToolSearchHandler;
 use crate::tools::handlers::UpdateGoalHandler;
 use crate::tools::handlers::ViewImageHandler;
+use crate::tools::handlers::WorkflowAbortHandler;
 use crate::tools::handlers::WorkflowDescribeHandler;
 use crate::tools::handlers::WorkflowListHandler;
+use crate::tools::handlers::WorkflowResumeHandler;
+use crate::tools::handlers::WorkflowStartHandler;
+use crate::tools::handlers::WorkflowStatusHandler;
 use crate::tools::handlers::WriteStdinHandler;
 use crate::tools::handlers::agent_jobs::ReportAgentJobResultHandler;
 use crate::tools::handlers::agent_jobs::SpawnAgentsOnCsvHandler;
@@ -383,6 +387,10 @@ pub(crate) fn collect_tool_executors(
     }));
     executors.push(Arc::new(WorkflowListHandler));
     executors.push(Arc::new(WorkflowDescribeHandler));
+    executors.push(Arc::new(WorkflowStartHandler));
+    executors.push(Arc::new(WorkflowStatusHandler));
+    executors.push(Arc::new(WorkflowResumeHandler));
+    executors.push(Arc::new(WorkflowAbortHandler));
 
     if config.request_permissions_tool_enabled {
         executors.push(Arc::new(RequestPermissionsHandler));

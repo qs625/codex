@@ -751,6 +751,12 @@ pub enum MessagePhase {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseItem {
+    WorkflowRunProgress {
+        #[serde(default, skip_serializing)]
+        #[ts(skip)]
+        id: Option<String>,
+        event: WorkflowRunProgressEvent,
+    },
     EventCommandEvent {
         #[serde(default, skip_serializing)]
         #[ts(skip)]
@@ -916,6 +922,26 @@ pub enum ResponseItem {
     },
     #[serde(other)]
     Other,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowRunProgressKind {
+    Started,
+    Resumed,
+    Aborted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowRunProgressEvent {
+    pub run_id: String,
+    pub workflow_id: String,
+    pub status: serde_json::Value,
+    pub runner_status: String,
+    pub kind: WorkflowRunProgressKind,
+    pub message: String,
+    pub updated_at: i64,
 }
 
 pub const BASE_INSTRUCTIONS_DEFAULT: &str = include_str!("prompts/base_instructions/default.md");

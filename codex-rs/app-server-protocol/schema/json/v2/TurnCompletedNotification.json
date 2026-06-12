@@ -1189,6 +1189,33 @@
         {
           "properties": {
             "event": {
+              "$ref": "#/definitions/WorkflowRunProgressEvent"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "writeOnly": true
+            },
+            "type": {
+              "enum": [
+                "workflow_run_progress"
+              ],
+              "title": "WorkflowRunProgressResponseItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "type"
+          ],
+          "title": "WorkflowRunProgressResponseItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "event": {
               "$ref": "#/definitions/EventCommandEvent"
             },
             "id": {
@@ -2504,6 +2531,30 @@
         },
         {
           "properties": {
+            "event": {
+              "$ref": "#/definitions/ThreadWorkflowRunProgressEvent"
+            },
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "workflowRunProgress"
+              ],
+              "title": "WorkflowRunProgressThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "id",
+            "type"
+          ],
+          "title": "WorkflowRunProgressThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
             "content": {
               "type": "string"
             },
@@ -2892,6 +2943,48 @@
         }
       ]
     },
+    "ThreadWorkflowRunProgressEvent": {
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/ThreadWorkflowRunProgressKind"
+        },
+        "message": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "runnerStatus": {
+          "type": "string"
+        },
+        "status": true,
+        "updatedAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "workflowId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "message",
+        "runId",
+        "runnerStatus",
+        "status",
+        "updatedAt",
+        "workflowId"
+      ],
+      "type": "object"
+    },
+    "ThreadWorkflowRunProgressKind": {
+      "enum": [
+        "started",
+        "resumed",
+        "aborted"
+      ],
+      "type": "string"
+    },
     "Turn": {
       "properties": {
         "completedAt": {
@@ -3241,6 +3334,48 @@
           "type": "object"
         }
       ]
+    },
+    "WorkflowRunProgressEvent": {
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/WorkflowRunProgressKind"
+        },
+        "message": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "runnerStatus": {
+          "type": "string"
+        },
+        "status": true,
+        "updatedAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "workflowId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "message",
+        "runId",
+        "runnerStatus",
+        "status",
+        "updatedAt",
+        "workflowId"
+      ],
+      "type": "object"
+    },
+    "WorkflowRunProgressKind": {
+      "enum": [
+        "started",
+        "resumed",
+        "aborted"
+      ],
+      "type": "string"
     }
   },
   "properties": {

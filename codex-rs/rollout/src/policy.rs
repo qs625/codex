@@ -77,6 +77,7 @@ pub fn should_persist_response_item(item: &ResponseItem) -> bool {
         | ResponseItem::CustomToolCallOutput { .. }
         | ResponseItem::WebSearchCall { .. }
         | ResponseItem::ImageGenerationCall { .. }
+        | ResponseItem::WorkflowRunProgress { .. }
         | ResponseItem::EventCommandEvent { .. }
         | ResponseItem::EventDrivenTool { .. }
         | ResponseItem::InterAgentCommunication { .. }
@@ -102,7 +103,8 @@ pub fn should_persist_response_item_for_memories(item: &ResponseItem) -> bool {
         | ResponseItem::EventCommandEvent { .. }
         | ResponseItem::EventDrivenTool { .. }
         | ResponseItem::InterAgentCommunication { .. } => true,
-        ResponseItem::Reasoning { .. }
+        ResponseItem::WorkflowRunProgress { .. }
+        | ResponseItem::Reasoning { .. }
         | ResponseItem::ImageGenerationCall { .. }
         | ResponseItem::Compaction { .. }
         | ResponseItem::ContextCompaction { .. }

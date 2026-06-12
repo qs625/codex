@@ -219,6 +219,18 @@ fn formats_typed_async_input_items_for_provider() {
                 id: Some("typed-inter-agent".to_string()),
                 communication: communication.clone(),
             },
+            ResponseItem::WorkflowRunProgress {
+                id: Some("typed-workflow-progress".to_string()),
+                event: codex_protocol::models::WorkflowRunProgressEvent {
+                    run_id: "wf_1".to_string(),
+                    workflow_id: "feature-dev".to_string(),
+                    status: serde_json::json!("running"),
+                    runner_status: "control_plane_started".to_string(),
+                    kind: codex_protocol::models::WorkflowRunProgressKind::Started,
+                    message: "workflow control run started".to_string(),
+                    updated_at: 1_700_000_000,
+                },
+            },
         ],
         ..Prompt::default()
     };

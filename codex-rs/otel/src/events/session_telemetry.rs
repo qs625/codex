@@ -1130,6 +1130,7 @@ impl SessionTelemetry {
     fn responses_item_type(item: &ResponseItem) -> String {
         match item {
             ResponseItem::Message { role, .. } => format!("message_from_{role}"),
+            ResponseItem::WorkflowRunProgress { .. } => "workflow_run_progress".into(),
             ResponseItem::EventCommandEvent { .. } => "event_command_event".into(),
             ResponseItem::EventDrivenTool { .. } => "event_driven_tool".into(),
             ResponseItem::InterAgentCommunication { .. } => "inter_agent_communication".into(),
