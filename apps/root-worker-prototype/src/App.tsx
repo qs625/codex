@@ -64,8 +64,9 @@ import {
   queuePendingThreadUpdate,
   updateThreadItem,
   updateThreadSkills,
-  updateThreadTurn,
+  updateThreadTurnLifecycle,
   upsertThread,
+  upsertThreadMetadataPreservingTurns,
   type ThreadUpdate,
 } from "./lib/thread";
 import {
@@ -660,7 +661,7 @@ function App() {
         markThreadSubscribed(threadId);
         if (response.thread) {
           const thread = response.thread;
-          setThreads((current) => upsertThreadWithPending(current, thread));
+          setThreads((current) => upsertThreadMetadata(current, thread));
         }
         return true;
       })
@@ -719,6 +720,14 @@ function App() {
     thread: Thread,
   ) {
     return upsertThread(current, applyQueuedThreadUpdates(thread));
+  }
+
+  function upsertThreadMetadata(current: Thread[], thread: Thread) {
+    const existing = current.find((candidate) => candidate.id === thread.id);
+    if (!existing) {
+      return upsertThreadWithPending(current, thread);
+    }
+    return upsertThreadMetadataPreservingTurns(current, thread);
   }
 
   function markThreadLive(threadId: string) {
@@ -1538,7 +1547,7 @@ function App() {
             setIsStoppingTurn(false);
           }
           updateInitializedThreadLocally(notification.threadId, (thread) =>
-            updateThreadTurn(thread, notification.turn),
+            updateThreadTurnLifecycle(thread, notification.turn),
           );
           break;
         }

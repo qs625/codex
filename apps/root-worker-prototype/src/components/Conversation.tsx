@@ -590,6 +590,11 @@ export const MessageRow = memo(function MessageRow({
   onOpenLocalFile,
 }: MessageRowProps) {
   const firstEntry = entries[0];
+  const shouldUseSingleBubble =
+    entries.length > 1 &&
+    entries.every(
+      (entry) => entry.kind === "message" && entry.role === "agent",
+    );
 
   return (
     <article className={`message-row message-row-${firstEntry.role}`}>
@@ -602,53 +607,74 @@ export const MessageRow = memo(function MessageRow({
           <span>{entries.at(-1)?.timestamp ?? firstEntry.timestamp}</span>
         </div>
         <div className="message-stack">
-          {entries.map((entry) => (
-            <div key={entry.id} className="message-bubble">
-              <MarkdownContent
-                text={entry.text}
-                onOpenLocalFile={onOpenLocalFile}
-              />
-              {entry.attachments.length > 0 ? (
-                <div className="message-attachments">
-                  {entry.attachments.map((attachment) => {
-                    const key = `${entry.id}:${attachment.kind}:${attachment.label}`;
-                    if (attachment.kind === "image" && attachment.url) {
-                      return (
-                        <figure key={key} className="attachment-image-card">
-                          <ZoomableImage
-                            src={attachment.url}
-                            alt={attachment.label}
-                            className="attachment-image"
-                          />
-                          <figcaption>{attachment.label}</figcaption>
-                        </figure>
-                      );
-                    }
-                    if (attachment.kind === "image" && attachment.path) {
-                      return (
-                        <LocalImage
-                          key={key}
-                          path={attachment.path}
-                          label={attachment.label}
-                        />
-                      );
-                    }
-                    return (
-                      <span key={key} className="attachment-chip">
-                        <DocumentIcon />
-                        <span>{attachment.label}</span>
-                      </span>
-                    );
-                  })}
-                </div>
-              ) : null}
+          {shouldUseSingleBubble ? (
+            <div className="message-bubble message-bubble-combined">
+              {entries.map((entry) => (
+                <section key={entry.id} className="message-segment">
+                  {renderMessageEntryContent(entry, onOpenLocalFile)}
+                </section>
+              ))}
             </div>
-          ))}
+          ) : (
+            entries.map((entry) => (
+              <div key={entry.id} className="message-bubble">
+                {renderMessageEntryContent(entry, onOpenLocalFile)}
+              </div>
+            ))
+          )}
         </div>
       </div>
     </article>
   );
 }, areMessageRowPropsEqual);
+
+function renderMessageEntryContent(
+  entry: ConversationEntry,
+  onOpenLocalFile?: (path: string) => void,
+) {
+  return (
+    <>
+      <MarkdownContent
+        text={entry.text}
+        {...(onOpenLocalFile ? { onOpenLocalFile } : {})}
+      />
+      {entry.attachments.length > 0 ? (
+        <div className="message-attachments">
+          {entry.attachments.map((attachment) => {
+            const key = `${entry.id}:${attachment.kind}:${attachment.label}`;
+            if (attachment.kind === "image" && attachment.url) {
+              return (
+                <figure key={key} className="attachment-image-card">
+                  <ZoomableImage
+                    src={attachment.url}
+                    alt={attachment.label}
+                    className="attachment-image"
+                  />
+                  <figcaption>{attachment.label}</figcaption>
+                </figure>
+              );
+            }
+            if (attachment.kind === "image" && attachment.path) {
+              return (
+                <LocalImage
+                  key={key}
+                  path={attachment.path}
+                  label={attachment.label}
+                />
+              );
+            }
+            return (
+              <span key={key} className="attachment-chip">
+                <DocumentIcon />
+                <span>{attachment.label}</span>
+              </span>
+            );
+          })}
+        </div>
+      ) : null}
+    </>
+  );
+}
 
 export const EventRow = memo(function EventRow({ entry }: EventRowProps) {
   return (

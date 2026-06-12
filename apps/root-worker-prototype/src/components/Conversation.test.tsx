@@ -92,6 +92,61 @@ test("message rows expose role classes for chat alignment", () => {
   assert.match(agentMarkup, /class="message-avatar agent"/);
 });
 
+test("grouped agent message rows render one bubble with multiple segments", () => {
+  const firstEntry: ConversationEntry = {
+    id: "agent-1",
+    kind: "message",
+    author: "Codex",
+    role: "agent",
+    text: "first",
+    timestamp: "09:41",
+    attachments: [],
+  };
+  const secondEntry: ConversationEntry = {
+    ...firstEntry,
+    id: "agent-2",
+    text: "second",
+    timestamp: "09:42",
+  };
+
+  const markup = renderToStaticMarkup(
+    <MessageRow entries={[firstEntry, secondEntry]} />,
+  );
+
+  assert.equal(markup.match(/class="message-bubble/g)?.length ?? 0, 1);
+  assert.match(markup, /class="message-bubble message-bubble-combined"/);
+  assert.equal(markup.match(/class="message-segment"/g)?.length ?? 0, 2);
+  assert.match(markup, /first[\s\S]*second/);
+});
+
+test("message rows only combine bubbles when every entry is an agent message", () => {
+  const agentEntry: ConversationEntry = {
+    id: "agent-1",
+    kind: "message",
+    author: "Codex",
+    role: "agent",
+    text: "agent",
+    timestamp: "09:41",
+    attachments: [],
+  };
+  const userEntry: ConversationEntry = {
+    id: "user-1",
+    kind: "message",
+    author: "You",
+    role: "user",
+    text: "user",
+    timestamp: "09:42",
+    attachments: [],
+  };
+
+  const markup = renderToStaticMarkup(
+    <MessageRow entries={[agentEntry, userEntry]} />,
+  );
+
+  assert.equal(markup.match(/class="message-bubble"/g)?.length ?? 0, 2);
+  assert.doesNotMatch(markup, /message-bubble-combined/);
+});
+
 test("single tool rows render a single inline item and auto-expand details with the card", () => {
   const [singleEntry] = entries;
   assert.ok(singleEntry);

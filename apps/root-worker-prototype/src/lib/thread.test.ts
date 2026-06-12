@@ -23,7 +23,9 @@ import {
   treeThreadStatusLabel,
   updateThreadItem,
   updateThreadTurn,
+  updateThreadTurnLifecycle,
   upsertThread,
+  upsertThreadMetadataPreservingTurns,
 } from "./thread";
 import type { Thread, ThreadItem, TreeNode, Turn } from "../types";
 
@@ -1623,7 +1625,7 @@ test("pending thread updates replay when the thread snapshot arrives", () => {
 });
 
 for (const terminalStatus of ["completed", "errored", "shutdown", "notFound"]) {
-  test(`updateThreadItem merges repeated terminal collab status updates for ${terminalStatus}`, () => {
+  test(`updateThreadItem preserves repeated terminal collab status updates for ${terminalStatus}`, () => {
     const thread = updateThreadItem(makeThread(), "turn-1", {
       type: "collabAgentStatusUpdate",
       id: "first-completion",
@@ -1651,6 +1653,18 @@ for (const terminalStatus of ["completed", "errored", "shutdown", "notFound"]) {
     });
 
     assert.deepEqual(updated.turns[0]?.items, [
+      {
+        type: "collabAgentStatusUpdate",
+        id: "first-completion",
+        senderThreadId: "thread-child",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        status: {
+          status: terminalStatus,
+          message: "done",
+        },
+      },
       {
         type: "collabAgentStatusUpdate",
         id: "second-completion",
@@ -1973,6 +1987,152 @@ test("child completion synthetic turn moves before later parent messages", () =>
       "/root/worker • completed • done",
       "continuing after worker",
     ],
+  );
+});
+
+test("turn lifecycle updates preserve live child completion items", () => {
+  const childCompletion: ThreadItem = {
+    type: "collabAgentStatusUpdate",
+    id: "subagent-complete",
+    senderThreadId: "thread-child",
+    senderPath: "/root/worker",
+    recipientThreadId: "thread-1",
+    recipientPath: "/root",
+    status: {
+      path: "/root/worker",
+      status: "completed",
+      message: "done",
+    },
+  };
+  const liveThread: Thread = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-parent",
+        items: [
+          {
+            type: "userMessage",
+            id: "user-1",
+            content: [{ type: "text", text: "run worker" }],
+          },
+          {
+            ...childCompletion,
+            completedAtMs: 3_000,
+          },
+        ],
+        itemsView: "full",
+        status: "running",
+        error: null,
+        startedAt: 1,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  };
+
+  const updated = updateThreadTurnLifecycle(liveThread, {
+    id: "turn-parent",
+    items: [
+      {
+        type: "userMessage",
+        id: "user-1",
+        content: [{ type: "text", text: "run worker" }],
+      },
+    ],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 1,
+    completedAt: 4,
+    durationMs: 3_000,
+  });
+
+  assert.equal(updated.turns[0]?.status, "completed");
+  assert.deepEqual(
+    buildConversationEntries(updated).map((entry) => entry.text),
+    ["run worker", "/root/worker • completed • done"],
+  );
+});
+
+test("turn lifecycle updates create empty turns when local items are missing", () => {
+  const updated = updateThreadTurnLifecycle(makeThread(), {
+    id: "turn-lifecycle",
+    items: [
+      {
+        type: "agentMessage",
+        id: "agent-from-snapshot",
+        text: "snapshot-only text",
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    itemsView: "full",
+    status: "running",
+    error: null,
+    startedAt: 5,
+    completedAt: null,
+    durationMs: null,
+  });
+
+  assert.deepEqual(updated.turns, [
+    {
+      id: "turn-lifecycle",
+      items: [],
+      itemsView: "full",
+      status: "running",
+      error: null,
+      startedAt: 5,
+      completedAt: null,
+      durationMs: null,
+    },
+  ]);
+});
+
+test("metadata updates preserve repeated terminal collab status live items", () => {
+  const firstCompletion: ThreadItem = {
+    type: "collabAgentStatusUpdate",
+    id: "first-completion",
+    senderThreadId: "thread-child",
+    senderPath: "/root/worker",
+    recipientThreadId: "thread-1",
+    recipientPath: "/root",
+    status: {
+      path: "/root/worker",
+      status: "completed",
+      message: "done",
+    },
+  };
+  const secondCompletion: ThreadItem = {
+    ...firstCompletion,
+    id: "second-completion",
+  };
+  const liveThread: Thread = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-live",
+        items: [firstCompletion, secondCompletion],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1_000,
+      },
+    ],
+  };
+
+  const updated = upsertThreadMetadataPreservingTurns([liveThread], {
+    ...liveThread,
+    preview: "metadata refreshed",
+    updatedAt: 10,
+    turns: [],
+  });
+
+  assert.equal(updated[0]?.preview, "metadata refreshed");
+  assert.deepEqual(
+    updated[0]?.turns[0]?.items.map((item) => item.id),
+    ["first-completion", "second-completion"],
   );
 });
 

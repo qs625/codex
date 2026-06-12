@@ -25,6 +25,7 @@
 - 渲染左右对齐的 message cell。
 - user 右对齐，agent/assistant 左对齐。
 - 根据 segment 数量决定 single / grouped 样式。
+- 对连续普通 agent message，`MessageRow` 必须输出一个外层 `message-cell-surface` / bubble surface；每个 `ConversationEntry` 只能作为内部 `message-segment`。只把多个 entry 放进同一个 virtual list cell、但继续渲染多个同级 `.message-bubble`，不满足本设计。
 
 建议 DOM 语义：
 
@@ -44,6 +45,7 @@ article.message-row[data-side="user|system"]
 - `message-main` 不应 `flex: 1` 占满全行；应使用 `width: fit-content` + `max-width`，并允许正文内部换行。
 - user cell 的 header 可右对齐，但屏幕阅读顺序仍应是作者、时间、内容。
 - 分组 cell 只显示一个外层 surface，内部 segment 使用轻量 divider；不要给每个 segment 单独大阴影。
+- 普通 agent message 的分组边界是 `ConversationCell.entries.length > 1 && firstEntry.role === "agent"`。该状态只影响 DOM 和样式，不新增 protocol 字段。
 
 ## MessageSegment
 

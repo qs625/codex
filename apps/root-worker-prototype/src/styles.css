@@ -872,6 +872,17 @@ svg {
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
 }
 
+.message-bubble-combined {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.message-segment + .message-segment {
+  padding-top: 12px;
+  border-top: 1px solid rgba(16, 24, 40, 0.08);
+}
+
 .message-stack {
   display: flex;
   flex-direction: column;

@@ -7,7 +7,7 @@ root-worker prototype 的会话视图需要更接近聊天布局：连续普通 
 ## 现状
 
 - `apps/root-worker-prototype/src/lib/conversation.ts` 以 typed `ThreadItem` 为输入，转换为 `ConversationEntry` 后再由 `buildConversationCells` 分组。
-- 连续普通 agent message 已由 `shouldMergeConversationEntry` 合并，且会在 `isReplacementHistory` 不同时断开。
+- 连续普通 agent message 已由 `shouldMergeConversationEntry` 合并为一个 `ConversationCell`，且会在 `isReplacementHistory` 不同时断开。视觉层还必须把同一 cell 内的 agent entries 渲染为一个外层 bubble，而不是多个相邻 bubble。
 - tool/event/multi-agent notification 等非普通消息走 `tool` cell；`childCompletion` 和 `subagentNotification` 是独立通知边界，不参与普通 agent message 合并。
 - `MessageRow` 当前没有 role class，user 和 agent 使用同一左侧布局。
 
@@ -15,10 +15,11 @@ root-worker prototype 的会话视图需要更接近聊天布局：连续普通 
 
 - 保持数据流不变：继续以 typed `ThreadItem -> ConversationEntry -> ConversationCell` 为 canonical display path，不解析 raw marker 或 assistant JSON。
 - `MessageRow` 增加 role 级别 class，让 user row 右对齐，agent row 保持左对齐。
+- 连续普通 agent message 使用一个 `.message-bubble.message-bubble-combined`，内部每条 entry 渲染为 `.message-segment`，保留 Markdown、附件和后续 entry 级状态承载点。
 - user row 使用反向 flex 布局，头像在右侧，正文区域右对齐；message stack 最大宽度限制在约 70%，窄屏提升到 90%，避免长文本横向溢出。
 - user bubble 使用现有中性色 token 的轻微背景差异，不新增解释性文案。
 - 用聚焦测试覆盖：
-  - 连续普通 agent message 合并为一个 message cell。
+  - 连续普通 agent message 合并为一个 message cell，并且组件 markup 只有一个外层 message bubble。
   - 遇到 user、tool 或 standalone notification 时不跨边界合并。
   - user/agent row 输出对应 role class，供 CSS 布局稳定命中。
 

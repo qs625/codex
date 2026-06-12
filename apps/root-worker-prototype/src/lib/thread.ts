@@ -355,6 +355,34 @@ export function updateThreadTurn(thread: Thread, turn: Turn) {
   return { ...thread, turns };
 }
 
+export function updateThreadTurnLifecycle(thread: Thread, turn: Turn) {
+  const normalizedTurn = normalizeTurnSnapshot(turn);
+  const hasExistingTurn = thread.turns.some(
+    (existing) => existing.id === normalizedTurn.id,
+  );
+  if (hasExistingTurn) {
+    const turns = thread.turns.map((existing) =>
+      existing.id === normalizedTurn.id
+        ? mergeTurnLifecycle(existing, normalizedTurn)
+        : existing,
+    );
+    return { ...thread, turns };
+  }
+
+  return {
+    ...thread,
+    turns: [...thread.turns, { ...normalizedTurn, items: [] }],
+  };
+}
+
+function mergeTurnLifecycle(existing: Turn, next: Turn): Turn {
+  return {
+    ...existing,
+    ...next,
+    items: existing.items,
+  };
+}
+
 export function updateThreadItem(
   thread: Thread,
   turnId: string,
@@ -816,6 +844,19 @@ export function upsertThread(threads: Thread[], next: Thread) {
   );
 }
 
+export function upsertThreadMetadataPreservingTurns(
+  threads: Thread[],
+  next: Thread,
+) {
+  const existing = threads.find((thread) => thread.id === next.id);
+  if (!existing) {
+    return [...threads, normalizeThreadSnapshot(next)];
+  }
+  return threads.map((thread) =>
+    thread.id === next.id ? { ...next, turns: existing.turns } : thread,
+  );
+}
+
 export type ThreadUpdate = (thread: Thread) => Thread;
 
 export function queuePendingThreadUpdate(
@@ -1115,6 +1156,10 @@ function findMatchingThreadItemIndex(
         return index;
       }
     }
+    return -1;
+  }
+
+  if (isTerminalCollabAgentStatusItem(nextItem)) {
     return -1;
   }
 
@@ -1514,6 +1559,22 @@ function canMatchThreadItemSemantically(item: ThreadItem) {
     case "webSearch":
       return false;
   }
+}
+
+function isTerminalCollabAgentStatusItem(item: ThreadItem) {
+  return (
+    item.type === "collabAgentStatusUpdate" &&
+    isTerminalCollabAgentStatus(item.status.status)
+  );
+}
+
+function isTerminalCollabAgentStatus(status: string) {
+  return (
+    status === "completed" ||
+    status === "errored" ||
+    status === "shutdown" ||
+    status === "notFound"
+  );
 }
 
 function haveCompatibleAgentMessageContent(

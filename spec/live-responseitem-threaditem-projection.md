@@ -40,8 +40,11 @@ app-server live apply 层不把普通 `RawResponseItem` 直接投影为 display 
 - 用户第一次查看某个 thread 时，调用一次 `thread/read includeTurns` 建立完整历史基线，并把该 thread 标记为 initialized。这个 snapshot 是该 thread 完整 item cache 的唯一初始化来源。
 - `thread/read` 的 in-flight token 必须按 thread 维度管理；A thread 的 read 在途时切到 B 再切回 A，B 的 read 不应让 A 的 read 结果变 stale。只有同一 thread 的更新请求可以 supersede 旧请求。
 - 已初始化 thread 后续无论是否 selected，都只消费 typed v2 live `ThreadItem` 增量更新 cache；切换回来不再触发 `thread/read includeTurns`，也不允许 snapshot/history rebuild 覆盖、重排或 merge 已接收的 live items。
+- 已初始化 thread 的 `turn/started` / `turn/completed` 只更新 turn lifecycle 元数据，例如 status、started/completed/duration/error/itemsView；不得把通知里的 `turn.items` 当作新 snapshot 覆盖本地 items。conversation item 内容只由 `item/started`、`item/completed`、agent delta 等 typed live item 增量写入。
+- `thread/resume(excludeTurns=true)` 只负责建立 live 订阅和刷新 runtime/metadata；对 renderer 已有 thread 不写入空 turns snapshot，避免切换 thread 或补订阅时清理已经显示的 live-only child completion / subagent status。
 - child completion 按 typed item 的目标 thread id 更新 initialized thread cache；如果目标 thread 未初始化，则不创建 synthetic turn 或 mixed `agentMessage + childCompletion` cache，避免首次 read 前的部分 live item 和后续 snapshot 互相消费。
 - `thread/read` 只保留给 cold start、本地缺失线程、或显式恢复路径；这些路径进入本地状态前必须继续 canonicalize 为 typed `ThreadItem`，不得从 raw marker/message envelope 反解展示项。
+- 连续普通 agent message 在 `ConversationCell` 层合并后，`MessageRow` 必须渲染为单个 agent bubble；cell 内每个 entry 作为 bubble 内的 message segment 保留文本和附件，避免视觉上仍像多个 assistant cell。
 
 legacy raw inter-agent 文本只作为旧兼容输入过滤，不作为展示来源：
 
@@ -66,6 +69,9 @@ legacy raw inter-agent 文本只作为旧兼容输入过滤，不作为展示来
 
 - thread selection policy 对未 initialized 的本地 live thread 仍执行首次 `thread/read`，对 initialized live thread 只补 subscribe、不再 read。
 - initialized thread 收到 child completion 后保留既有 assistant message，并正确追加/更新 completion 展示项。
+- initialized thread 已经显示 child completion 后，后续缺少该 item 的 `turn/completed` lifecycle 通知不会删除本地 completion。
+- `thread/resume(excludeTurns=true)` 补订阅返回的 metadata snapshot 不会覆盖 renderer 已有 turns。
+- 连续 agent entries 在同一个 message cell 内只生成一个 `.message-bubble`，内部按 segment 呈现。
 - uninitialized thread 收到 child completion/live item 不创建可展示 mixed turn cache，首次查看仍由 `thread/read` 建立基线。
 - cold/missing thread 仍保留 `thread/read`，用于首次加载或恢复。
 - snapshot、compact replacement history、conversation reducer 过滤 legacy raw `sendMessage` / `send_message` envelope，但保留 typed `CollabAgentMessage(sendMessage)`。
