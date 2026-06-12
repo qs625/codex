@@ -1173,7 +1173,7 @@ Clients can suppress specific notifications per connection by sending exact meth
 
 - Exact-match only: `item/agentMessage/delta` suppresses only that method.
 - Unknown method names are ignored.
-- Applies to app-server typed notifications such as `thread/*`, `turn/*`, `item/*`, and `rawResponseItem/*`.
+- Applies to app-server typed notifications such as `thread/*`, `turn/*`, and `item/*`.
 - Does not apply to requests/responses/errors.
 
 Examples:

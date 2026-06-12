@@ -163,11 +163,6 @@ pub struct ThreadStartParams {
     #[experimental("thread/start.mockExperimentalField")]
     #[ts(optional = nullable)]
     pub mock_experimental_field: Option<String>,
-    /// If true, opt into emitting raw Responses API items on the event stream.
-    /// This is for internal use only (e.g. Codex Cloud).
-    #[experimental("thread/start.experimentalRawEvents")]
-    #[serde(default)]
-    pub experimental_raw_events: bool,
     /// Deprecated and ignored by app-server. Kept only so older clients can
     /// continue sending the field while rollout persistence always uses the
     /// limited history policy.

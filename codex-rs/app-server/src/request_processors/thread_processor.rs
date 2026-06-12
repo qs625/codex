@@ -831,13 +831,11 @@ impl ThreadRequestProcessor {
         &self,
         conversation_id: ThreadId,
         connection_id: ConnectionId,
-        raw_events_enabled: bool,
     ) -> Result<EnsureConversationListenerResult, JSONRPCErrorError> {
         super::thread_lifecycle::ensure_conversation_listener(
             self.listener_task_context(),
             conversation_id,
             connection_id,
-            raw_events_enabled,
         )
         .await
     }
@@ -881,7 +879,6 @@ impl ThreadRequestProcessor {
             developer_instructions,
             dynamic_tools,
             mock_experimental_field: _mock_experimental_field,
-            experimental_raw_events,
             personality,
             ephemeral,
             session_start_source,
@@ -943,7 +940,6 @@ impl ThreadRequestProcessor {
                 thread_source.map(Into::into),
                 environment_selections,
                 service_name,
-                experimental_raw_events,
                 request_trace,
             )
             .await
@@ -1060,7 +1056,6 @@ impl ThreadRequestProcessor {
         thread_source: Option<codex_protocol::protocol::ThreadSource>,
         environments: Option<Vec<TurnEnvironmentSelection>>,
         service_name: Option<String>,
-        experimental_raw_events: bool,
         request_trace: Option<W3cTraceContext>,
     ) -> Result<(), JSONRPCErrorError> {
         let thread_start_started_at = std::time::Instant::now();
@@ -1227,12 +1222,10 @@ impl ThreadRequestProcessor {
                 listener_task_context.clone(),
                 thread_id,
                 request_id.connection_id,
-                experimental_raw_events,
             )
             .instrument(tracing::info_span!(
                 "app_server.thread_start.attach_listener",
                 otel.name = "app_server.thread_start.attach_listener",
-                thread_start.experimental_raw_events = experimental_raw_events,
             ))
             .await,
             thread_id,
@@ -2570,12 +2563,8 @@ impl ThreadRequestProcessor {
 
         for connection_id in connection_ids {
             log_listener_attach_result(
-                self.ensure_conversation_listener(
-                    thread_id,
-                    connection_id,
-                    /*raw_events_enabled*/ false,
-                )
-                .await,
+                self.ensure_conversation_listener(thread_id, connection_id)
+                    .await,
                 thread_id,
                 connection_id,
                 "thread",
@@ -2777,12 +2766,8 @@ impl ThreadRequestProcessor {
                 };
                 // Auto-attach a thread listener when resuming a thread.
                 log_listener_attach_result(
-                    self.ensure_conversation_listener(
-                        thread_id,
-                        request_id.connection_id,
-                        /*raw_events_enabled*/ false,
-                    )
-                    .await,
+                    self.ensure_conversation_listener(thread_id, request_id.connection_id)
+                        .await,
                     thread_id,
                     request_id.connection_id,
                     "thread",
@@ -3434,12 +3419,8 @@ impl ThreadRequestProcessor {
 
         // Auto-attach a conversation listener when forking a thread.
         log_listener_attach_result(
-            self.ensure_conversation_listener(
-                thread_id,
-                request_id.connection_id,
-                /*raw_events_enabled*/ false,
-            )
-            .await,
+            self.ensure_conversation_listener(thread_id, request_id.connection_id)
+                .await,
             thread_id,
             request_id.connection_id,
             "thread",

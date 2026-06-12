@@ -105,25 +105,6 @@ pub fn project_tool_call_completion(
 }
 
 #[doc(hidden)]
-pub fn is_structured_response_item_completion(item: &ResponseItem) -> bool {
-    matches!(
-        item,
-        ResponseItem::EventCommandEvent { .. }
-            | ResponseItem::EventDrivenTool { .. }
-            | ResponseItem::InterAgentCommunication {
-                communication: InterAgentCommunication {
-                    operation: CoreInterAgentOperation::SpawnAgent
-                        | CoreInterAgentOperation::SendMessage
-                        | CoreInterAgentOperation::FollowupTask
-                        | CoreInterAgentOperation::ChildCompletion,
-                    ..
-                },
-                ..
-            }
-    )
-}
-
-#[doc(hidden)]
 pub fn thread_item_from_inter_agent_communication(
     id: String,
     communication: InterAgentCommunication,

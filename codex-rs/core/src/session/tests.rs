@@ -95,6 +95,11 @@ use codex_otel::TelemetryAuthMode;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Settings;
+use codex_protocol::event_command::EventCommandEvent;
+use codex_protocol::event_command::EventCommandEventKind;
+use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
+use codex_protocol::items::HookPromptFragment;
+use codex_protocol::items::build_hook_prompt_message;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
@@ -106,6 +111,7 @@ use codex_protocol::protocol::CreditsSnapshot;
 use codex_protocol::protocol::GranularApprovalConfig;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::InterAgentCommunication;
+use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::NetworkApprovalProtocol;
 use codex_protocol::protocol::RateLimitSnapshot;
 use codex_protocol::protocol::RateLimitWindow;
@@ -8308,6 +8314,252 @@ async fn task_finish_emits_turn_item_lifecycle_for_leftover_pending_user_input()
             ..
         }) if turn_id == tc.sub_id
     ));
+}
+
+#[tokio::test]
+async fn explicit_record_conversation_items_emits_item_completed_for_structured_response_item() {
+    let (sess, tc, rx) = make_session_and_context_with_rx().await;
+    let trigger = EventDrivenToolTrigger {
+        tool: "fs_subscribe".to_string(),
+        title: "File watch triggered".to_string(),
+        text: "build.log changed".to_string(),
+    };
+
+    sess.record_conversation_items_and_emit_structured_item_completed(
+        &tc,
+        &[ResponseItem::EventDrivenTool {
+            id: Some("typed-event-driven-tool".to_string()),
+            trigger: trigger.clone(),
+        }],
+    )
+    .await;
+
+    let completed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let event = rx.recv().await.expect("event");
+            if let EventMsg::ItemCompleted(completed) = event.msg {
+                break completed;
+            }
+        }
+    })
+    .await
+    .expect("expected item completed event");
+
+    assert_eq!(completed.thread_id, sess.conversation_id);
+    assert_eq!(completed.turn_id, tc.sub_id);
+    assert!(completed.completed_at_ms > 0);
+    let TurnItem::EventDrivenTool(item) = completed.item else {
+        panic!("expected EventDrivenTool item");
+    };
+    assert_eq!(
+        item,
+        codex_protocol::items::EventDrivenToolItem {
+            id: "typed-event-driven-tool".to_string(),
+            tool: trigger.tool,
+            title: trigger.title,
+            text: trigger.text,
+        }
+    );
+}
+
+#[tokio::test]
+async fn record_conversation_items_does_not_emit_item_completed_for_structured_response_item() {
+    let (sess, tc, rx) = make_session_and_context_with_rx().await;
+    let trigger = EventDrivenToolTrigger {
+        tool: "fs_subscribe".to_string(),
+        title: "File watch triggered".to_string(),
+        text: "build.log changed".to_string(),
+    };
+
+    sess.record_conversation_items(
+        &tc,
+        &[ResponseItem::EventDrivenTool {
+            id: Some("typed-event-driven-tool".to_string()),
+            trigger,
+        }],
+    )
+    .await;
+
+    let completed = tokio::time::timeout(Duration::from_millis(200), async {
+        loop {
+            let event = rx.recv().await.expect("event");
+            if let EventMsg::ItemCompleted(completed) = event.msg {
+                break completed;
+            }
+        }
+    })
+    .await;
+
+    assert!(
+        completed.is_err(),
+        "plain conversation recording should not emit a structured completed item"
+    );
+}
+
+#[tokio::test]
+async fn record_response_item_emits_item_completed_for_hook_prompt() {
+    let (sess, tc, rx) = make_session_and_context_with_rx().await;
+    let hook_prompt_message = build_hook_prompt_message(&[HookPromptFragment::from_single_hook(
+        "Retry with the requested change.",
+        "hook-run-1",
+    )])
+    .expect("hook prompt message");
+
+    sess.record_response_item_and_emit_turn_item(&tc, hook_prompt_message)
+        .await;
+
+    let completed = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let event = rx.recv().await.expect("event");
+            if let EventMsg::ItemCompleted(completed) = event.msg {
+                break completed;
+            }
+        }
+    })
+    .await
+    .expect("expected item completed event");
+
+    let TurnItem::HookPrompt(item) = completed.item else {
+        panic!("expected HookPrompt item");
+    };
+    assert_eq!(
+        item.fragments,
+        vec![HookPromptFragment {
+            text: "Retry with the requested change.".to_string(),
+            hook_run_id: "hook-run-1".to_string(),
+        }]
+    );
+}
+
+#[tokio::test]
+async fn explicit_record_conversation_items_emits_item_completed_for_event_command() {
+    let (sess, tc, rx) = make_session_and_context_with_rx().await;
+    let event = EventCommandEvent {
+        subscription_id: "sub-command".to_string(),
+        kind: EventCommandEventKind::Output,
+        label: Some("build log".to_string()),
+        command: "tail -f /tmp/build.log".to_string(),
+        cwd: Some("/repo".to_string()),
+        line: Some("done".to_string()),
+        sequence: Some(1),
+        exit_code: None,
+        signal: None,
+        message: None,
+        truncated: false,
+        created_at: 1,
+    };
+
+    sess.record_conversation_items_and_emit_structured_item_completed(
+        &tc,
+        &[ResponseItem::EventCommandEvent {
+            id: Some("typed-event-command".to_string()),
+            event: event.clone(),
+        }],
+    )
+    .await;
+
+    let completed = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let event = rx.recv().await.expect("event");
+            if let EventMsg::ItemCompleted(completed) = event.msg {
+                break completed;
+            }
+        }
+    })
+    .await
+    .expect("expected item completed event");
+
+    let TurnItem::EventCommandEvent(item) = completed.item else {
+        panic!("expected EventCommandEvent item");
+    };
+    assert_eq!(
+        item,
+        codex_protocol::items::EventCommandEventItem {
+            id: "typed-event-command".to_string(),
+            event,
+        }
+    );
+}
+
+#[tokio::test]
+async fn explicit_record_conversation_items_emits_item_completed_for_collab_message() {
+    let (sess, tc, rx) = make_session_and_context_with_rx().await;
+    let communication = InterAgentCommunication::new(
+        AgentPath::try_from("/root/worker").expect("worker path should parse"),
+        AgentPath::root(),
+        Vec::new(),
+        "done".to_string(),
+        InterAgentOperation::SendMessage,
+    )
+    .with_trigger_turn(false);
+
+    sess.record_conversation_items_and_emit_structured_item_completed(
+        &tc,
+        &[ResponseItem::InterAgentCommunication {
+            id: Some("typed-collab".to_string()),
+            communication: communication.clone(),
+        }],
+    )
+    .await;
+
+    let completed = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let event = rx.recv().await.expect("event");
+            if let EventMsg::ItemCompleted(completed) = event.msg {
+                break completed;
+            }
+        }
+    })
+    .await
+    .expect("expected item completed event");
+
+    let TurnItem::CollabAgentMessage(item) = completed.item else {
+        panic!("expected CollabAgentMessage item");
+    };
+    assert_eq!(
+        item,
+        codex_protocol::items::CollabAgentMessageItem {
+            id: "typed-collab".to_string(),
+            communication,
+        }
+    );
+}
+
+#[tokio::test]
+async fn explicit_record_conversation_items_ignores_unknown_collab_message() {
+    let (sess, tc, rx) = make_session_and_context_with_rx().await;
+    let communication = InterAgentCommunication::new(
+        AgentPath::try_from("/root/worker").expect("worker path should parse"),
+        AgentPath::root(),
+        Vec::new(),
+        "raw update".to_string(),
+        InterAgentOperation::Unknown,
+    )
+    .with_trigger_turn(false);
+
+    sess.record_conversation_items_and_emit_structured_item_completed(
+        &tc,
+        &[ResponseItem::InterAgentCommunication {
+            id: Some("typed-unknown-collab".to_string()),
+            communication,
+        }],
+    )
+    .await;
+
+    let completed = tokio::time::timeout(Duration::from_millis(200), async {
+        loop {
+            let event = rx.recv().await.expect("event");
+            if let EventMsg::ItemCompleted(completed) = event.msg {
+                break completed;
+            }
+        }
+    })
+    .await;
+
+    assert!(
+        completed.is_err(),
+        "unknown collab communication should not emit a structured completed item"
+    );
 }
 
 #[tokio::test]

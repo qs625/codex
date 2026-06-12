@@ -68,7 +68,7 @@ impl Prompt {
             .input
             .iter()
             .cloned()
-            .map(format_typed_response_item_for_model)
+            .map(format_typed_response_item_for_provider)
             .collect::<Vec<_>>();
 
         // when using the *Freeform* apply_patch tool specifically, tool outputs
@@ -87,7 +87,7 @@ impl Prompt {
     }
 }
 
-fn format_typed_response_item_for_model(item: ResponseItem) -> ResponseItem {
+fn format_typed_response_item_for_provider(item: ResponseItem) -> ResponseItem {
     match item {
         ResponseItem::EventCommandEvent { event, .. } => event.to_response_item(),
         ResponseItem::EventDrivenTool { trigger, .. } => trigger.to_response_item(),

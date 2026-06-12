@@ -48,7 +48,6 @@ const SPECIAL_DEFINITIONS: &[&str] = &[
 const FLAT_V2_SHARED_DEFINITIONS: &[&str] = &["ClientRequest", "ServerNotification"];
 const V1_CLIENT_REQUEST_METHODS: &[&str] =
     &["getConversationSummary", "gitDiffToRemote", "getAuthStatus"];
-const EXCLUDED_SERVER_NOTIFICATION_METHODS_FOR_JSON: &[&str] = &["rawResponseItem/completed"];
 
 #[derive(Clone)]
 pub struct GeneratedSchema {
@@ -1322,8 +1321,6 @@ where
     if include_in_json_codegen {
         if file_stem == "ClientRequest" {
             strip_v1_client_request_variants_from_json_schema(&mut schema_value);
-        } else if file_stem == "ServerNotification" {
-            strip_v1_server_notification_variants_from_json_schema(&mut schema_value);
         }
         enforce_numbered_definition_collision_overrides(file_stem, &mut schema_value);
         normalize_inter_agent_communication_schema(&mut schema_value);
@@ -1429,14 +1426,6 @@ fn add_required_fields(schema: &mut Value, required_fields: &[&str]) {
 fn strip_v1_client_request_variants_from_json_schema(schema: &mut Value) {
     let v1_methods: HashSet<&str> = V1_CLIENT_REQUEST_METHODS.iter().copied().collect();
     strip_method_variants_from_json_schema(schema, &v1_methods);
-}
-
-fn strip_v1_server_notification_variants_from_json_schema(schema: &mut Value) {
-    let methods: HashSet<&str> = EXCLUDED_SERVER_NOTIFICATION_METHODS_FOR_JSON
-        .iter()
-        .copied()
-        .collect();
-    strip_method_variants_from_json_schema(schema, &methods);
 }
 
 fn strip_method_variants_from_json_schema(schema: &mut Value, methods_to_remove: &HashSet<&str>) {

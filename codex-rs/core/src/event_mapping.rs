@@ -1,5 +1,3 @@
-use codex_protocol::event_command::EventCommandEvent;
-use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
 use codex_protocol::items::CollabAgentMessageItem;
@@ -165,28 +163,9 @@ pub fn parse_turn_item(item: &ResponseItem) -> Option<TurnItem> {
             phase,
             ..
         } => match role.as_str() {
-            "user" => {
-                if let Some(event) = EventCommandEvent::parse_message_content(content) {
-                    Some(TurnItem::EventCommandEvent(
-                        codex_protocol::items::EventCommandEventItem {
-                            id: id.clone().unwrap_or_else(|| event.stable_item_id()),
-                            event,
-                        },
-                    ))
-                } else if let Some(trigger) = EventDrivenToolTrigger::parse_message_content(content)
-                {
-                    Some(TurnItem::EventDrivenTool(EventDrivenToolItem {
-                        id: id.clone().unwrap_or_else(|| Uuid::new_v4().to_string()),
-                        tool: trigger.tool,
-                        title: trigger.title,
-                        text: trigger.text,
-                    }))
-                } else {
-                    parse_visible_hook_prompt_message(id.as_ref(), content)
-                        .map(TurnItem::HookPrompt)
-                        .or_else(|| parse_user_message(content).map(TurnItem::UserMessage))
-                }
-            }
+            "user" => parse_visible_hook_prompt_message(id.as_ref(), content)
+                .map(TurnItem::HookPrompt)
+                .or_else(|| parse_user_message(content).map(TurnItem::UserMessage)),
             "assistant" => Some(TurnItem::AgentMessage(parse_agent_message(
                 id.as_ref(),
                 content,

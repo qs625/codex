@@ -27,22 +27,6 @@ impl EventDrivenToolTrigger {
         format!("{START_MARKER}{body}{END_MARKER}")
     }
 
-    pub fn parse_message_text(text: &str) -> Option<Self> {
-        let trimmed = text.trim();
-        let body = trimmed
-            .strip_prefix(START_MARKER)?
-            .strip_suffix(END_MARKER)?
-            .trim();
-        serde_json::from_str(body).ok()
-    }
-
-    pub fn parse_message_content(content: &[ContentItem]) -> Option<Self> {
-        let [ContentItem::InputText { text }] = content else {
-            return None;
-        };
-        Self::parse_message_text(text)
-    }
-
     pub fn to_response_item(&self) -> ResponseItem {
         ResponseItem::Message {
             id: None,
@@ -58,11 +42,9 @@ impl EventDrivenToolTrigger {
 #[cfg(test)]
 mod tests {
     use super::EventDrivenToolTrigger;
-    use crate::models::ContentItem;
-    use pretty_assertions::assert_eq;
 
     #[test]
-    fn event_driven_tool_trigger_round_trips() {
+    fn event_driven_tool_trigger_renders_provider_message() {
         let trigger = EventDrivenToolTrigger {
             tool: "fs_subscribe".to_string(),
             title: "File watch triggered".to_string(),
@@ -70,15 +52,7 @@ mod tests {
         };
 
         let text = trigger.render_message_text();
-        assert_eq!(
-            EventDrivenToolTrigger::parse_message_text(&text),
-            Some(trigger.clone())
-        );
-
-        let content = vec![ContentItem::InputText { text }];
-        assert_eq!(
-            EventDrivenToolTrigger::parse_message_content(&content),
-            Some(trigger)
-        );
+        assert!(text.starts_with("<event_driven_tool>"));
+        assert!(text.ends_with("</event_driven_tool>"));
     }
 }

@@ -111,6 +111,7 @@ use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::HasLegacyEvent;
 use codex_protocol::protocol::InterAgentCommunication;
+use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::RawResponseItemEvent;
@@ -2695,6 +2696,16 @@ impl Session {
         self.send_thread_context_usage_event(turn_context).await;
     }
 
+    pub(crate) async fn record_conversation_items_and_emit_structured_item_completed(
+        &self,
+        turn_context: &TurnContext,
+        items: &[ResponseItem],
+    ) {
+        self.record_conversation_items(turn_context, items).await;
+        self.emit_completed_structured_response_items(turn_context, items)
+            .await;
+    }
+
     /// Append ResponseItems to the in-memory conversation history only.
     pub(crate) async fn record_into_history(
         &self,
@@ -2812,6 +2823,22 @@ impl Session {
                 EventMsg::RawResponseItem(RawResponseItemEvent { item: item.clone() }),
             )
             .await;
+        }
+    }
+
+    async fn emit_completed_structured_response_items(
+        &self,
+        turn_context: &TurnContext,
+        items: &[ResponseItem],
+    ) {
+        for item in items {
+            if !is_structured_display_response_item(item) {
+                continue;
+            }
+
+            if let Some(turn_item) = parse_turn_item(item) {
+                self.emit_turn_item_completed(turn_context, turn_item).await;
+            }
         }
     }
 
@@ -3622,6 +3649,24 @@ impl Session {
     fn show_raw_agent_reasoning(&self) -> bool {
         self.services.show_raw_agent_reasoning
     }
+}
+
+fn is_structured_display_response_item(item: &ResponseItem) -> bool {
+    matches!(
+        item,
+        ResponseItem::EventCommandEvent { .. }
+            | ResponseItem::EventDrivenTool { .. }
+            | ResponseItem::InterAgentCommunication {
+                communication: InterAgentCommunication {
+                    operation: InterAgentOperation::SpawnAgent
+                        | InterAgentOperation::SendMessage
+                        | InterAgentOperation::FollowupTask
+                        | InterAgentOperation::ChildCompletion,
+                    ..
+                },
+                ..
+            }
+    )
 }
 
 pub(crate) fn emit_subagent_session_started(

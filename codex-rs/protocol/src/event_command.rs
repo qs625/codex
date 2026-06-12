@@ -61,22 +61,6 @@ impl EventCommandEvent {
         format!("{START_MARKER}{body}{END_MARKER}")
     }
 
-    pub fn parse_message_text(text: &str) -> Option<Self> {
-        let trimmed = text.trim();
-        let body = trimmed
-            .strip_prefix(START_MARKER)?
-            .strip_suffix(END_MARKER)?
-            .trim();
-        serde_json::from_str(body).ok()
-    }
-
-    pub fn parse_message_content(content: &[ContentItem]) -> Option<Self> {
-        let [ContentItem::InputText { text }] = content else {
-            return None;
-        };
-        Self::parse_message_text(text)
-    }
-
     pub fn to_response_item(&self) -> ResponseItem {
         ResponseItem::Message {
             id: None,
@@ -104,11 +88,10 @@ impl EventCommandEventKind {
 mod tests {
     use super::EventCommandEvent;
     use super::EventCommandEventKind;
-    use crate::models::ContentItem;
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn event_command_event_round_trips() {
+    fn event_command_event_renders_provider_message() {
         let event = EventCommandEvent {
             subscription_id: "sub-1".to_string(),
             kind: EventCommandEventKind::Output,
@@ -125,16 +108,8 @@ mod tests {
         };
 
         let text = event.render_message_text();
-        assert_eq!(
-            EventCommandEvent::parse_message_text(&text),
-            Some(event.clone())
-        );
-
-        let content = vec![ContentItem::InputText { text }];
-        assert_eq!(
-            EventCommandEvent::parse_message_content(&content),
-            Some(event)
-        );
+        assert!(text.starts_with("<event_command>"));
+        assert!(text.ends_with("</event_command>"));
     }
 
     #[test]

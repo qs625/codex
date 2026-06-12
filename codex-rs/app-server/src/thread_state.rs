@@ -119,7 +119,6 @@ pub(crate) struct ThreadState {
     pub(crate) turn_summary: TurnSummary,
     pub(crate) last_terminal_turn_id: Option<String>,
     pub(crate) cancel_tx: Option<oneshot::Sender<()>>,
-    pub(crate) experimental_raw_events: bool,
     pub(crate) listener_generation: u64,
     listener_command_tx: Option<mpsc::UnboundedSender<ThreadListenerCommand>>,
     current_turn_history: ThreadHistoryBuilder,
@@ -160,10 +159,6 @@ impl ThreadState {
         self.current_turn_history.reset();
         self.listener_thread = None;
         self.watch_registration = WatchRegistration::default();
-    }
-
-    pub(crate) fn set_experimental_raw_events(&mut self, enabled: bool) {
-        self.experimental_raw_events = enabled;
     }
 
     pub(crate) fn listener_command_tx(
@@ -432,9 +427,8 @@ impl ThreadStateManager {
         &self,
         thread_id: ThreadId,
         connection_id: ConnectionId,
-        experimental_raw_events: bool,
     ) -> Option<Arc<Mutex<ThreadState>>> {
-        let thread_state = {
+        {
             let mut state = self.state.lock().await;
             if !state.live_connections.contains_key(&connection_id) {
                 return None;
@@ -447,15 +441,8 @@ impl ThreadStateManager {
             let thread_entry = state.threads.entry(thread_id).or_default();
             thread_entry.connection_ids.insert(connection_id);
             thread_entry.update_has_connections();
-            thread_entry.state.clone()
-        };
-        {
-            let mut thread_state_guard = thread_state.lock().await;
-            if experimental_raw_events {
-                thread_state_guard.set_experimental_raw_events(/*enabled*/ true);
-            }
+            Some(thread_entry.state.clone())
         }
-        Some(thread_state)
     }
 
     pub(crate) async fn try_add_connection_to_thread(

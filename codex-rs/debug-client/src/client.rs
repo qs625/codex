@@ -393,7 +393,6 @@ pub fn build_thread_start_params(
         model_provider,
         cwd,
         approval_policy: Some(approval_policy),
-        experimental_raw_events: false,
         ..Default::default()
     }
 }

@@ -1367,9 +1367,7 @@ mod thread_processor_behavior_tests {
             .connection_initialized(connection, ConnectionCapabilities::default())
             .await;
         manager
-            .try_ensure_connection_subscribed(
-                thread_id, connection, /*experimental_raw_events*/ false,
-            )
+            .try_ensure_connection_subscribed(thread_id, connection)
             .await
             .expect("connection should be live");
         {
@@ -1415,19 +1413,11 @@ mod thread_processor_behavior_tests {
             .connection_initialized(connection_b, ConnectionCapabilities::default())
             .await;
         manager
-            .try_ensure_connection_subscribed(
-                thread_id,
-                connection_a,
-                /*experimental_raw_events*/ false,
-            )
+            .try_ensure_connection_subscribed(thread_id, connection_a)
             .await
             .expect("connection_a should be live");
         manager
-            .try_ensure_connection_subscribed(
-                thread_id,
-                connection_b,
-                /*experimental_raw_events*/ false,
-            )
+            .try_ensure_connection_subscribed(thread_id, connection_b)
             .await
             .expect("connection_b should be live");
         {
@@ -1464,11 +1454,7 @@ mod thread_processor_behavior_tests {
             .connection_initialized(connection_b, ConnectionCapabilities::default())
             .await;
         manager
-            .try_ensure_connection_subscribed(
-                thread_id,
-                connection_a,
-                /*experimental_raw_events*/ false,
-            )
+            .try_ensure_connection_subscribed(thread_id, connection_a)
             .await
             .expect("connection_a should be live");
         let mut has_connections = manager
@@ -1515,9 +1501,7 @@ mod thread_processor_behavior_tests {
 
         assert!(
             manager
-                .try_ensure_connection_subscribed(
-                    thread_id, connection, /*experimental_raw_events*/ false
-                )
+                .try_ensure_connection_subscribed(thread_id, connection)
                 .await
                 .is_none()
         );

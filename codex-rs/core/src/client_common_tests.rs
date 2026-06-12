@@ -178,7 +178,7 @@ fn serializes_flex_service_tier_when_set() {
 }
 
 #[test]
-fn formats_typed_async_input_items_for_model() {
+fn formats_typed_async_input_items_for_provider() {
     let event = EventCommandEvent {
         subscription_id: "sub-command".to_string(),
         kind: EventCommandEventKind::Output,

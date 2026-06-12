@@ -82,9 +82,6 @@ pub(super) fn server_notification_thread_target(
             Some(notification.thread_id.as_str())
         }
         ServerNotification::ItemCompleted(notification) => Some(notification.thread_id.as_str()),
-        ServerNotification::RawResponseItemCompleted(notification) => {
-            Some(notification.thread_id.as_str())
-        }
         ServerNotification::AgentMessageDelta(notification) => {
             Some(notification.thread_id.as_str())
         }

@@ -734,11 +734,7 @@ impl TurnRequestProcessor {
         let (thread_id, thread) = self.load_thread(thread_id).await?;
 
         match self
-            .ensure_conversation_listener(
-                thread_id,
-                request_id.connection_id,
-                /*raw_events_enabled*/ false,
-            )
+            .ensure_conversation_listener(thread_id, request_id.connection_id)
             .await
         {
             Ok(EnsureConversationListenerResult::Attached) => {}
@@ -977,12 +973,8 @@ impl TurnRequestProcessor {
             })?;
 
         log_listener_attach_result(
-            self.ensure_conversation_listener(
-                thread_id,
-                request_id.connection_id,
-                /*raw_events_enabled*/ false,
-            )
-            .await,
+            self.ensure_conversation_listener(thread_id, request_id.connection_id)
+                .await,
             thread_id,
             request_id.connection_id,
             "review thread",
@@ -1158,13 +1150,11 @@ impl TurnRequestProcessor {
         &self,
         conversation_id: ThreadId,
         connection_id: ConnectionId,
-        raw_events_enabled: bool,
     ) -> Result<EnsureConversationListenerResult, JSONRPCErrorError> {
         super::thread_lifecycle::ensure_conversation_listener(
             self.listener_task_context(),
             conversation_id,
             connection_id,
-            raw_events_enabled,
         )
         .await
     }

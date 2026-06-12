@@ -1,6 +1,4 @@
 use super::*;
-use crate::bespoke_event_handling::maybe_emit_projected_tool_call_notifications;
-use crate::event_driven_item_completion::maybe_emit_event_driven_tool_trigger_item_completed;
 
 pub(super) const THREAD_UNLOADING_DELAY: Duration = Duration::from_secs(30 * 60);
 
@@ -140,7 +138,6 @@ pub(super) async fn ensure_conversation_listener(
     listener_task_context: ListenerTaskContext,
     conversation_id: ThreadId,
     connection_id: ConnectionId,
-    raw_events_enabled: bool,
 ) -> Result<EnsureConversationListenerResult, JSONRPCErrorError> {
     let conversation = match listener_task_context
         .thread_manager
@@ -163,7 +160,7 @@ pub(super) async fn ensure_conversation_listener(
         }
         let Some(thread_state) = listener_task_context
             .thread_state_manager
-            .try_ensure_connection_subscribed(conversation_id, connection_id, raw_events_enabled)
+            .try_ensure_connection_subscribed(conversation_id, connection_id)
             .await
         else {
             return Ok(EnsureConversationListenerResult::ConnectionClosed);
@@ -292,14 +289,12 @@ pub(super) async fn ensure_listener_task_running(
                         }
                     };
 
-                    // Track the event before emitting any typed translations
-                    // so thread-local state such as raw event opt-in stays
-                    // synchronized with the conversation.
-                    let raw_events_enabled = {
+                    // Track the event before emitting typed translations so
+                    // thread-local state stays synchronized with the conversation.
+                    {
                         let mut thread_state = thread_state.lock().await;
                         thread_state.track_current_turn_event(&event.id, &event.msg);
-                        thread_state.experimental_raw_events
-                    };
+                    }
                     let subscribed_connection_ids = thread_state_manager
                         .subscribed_connection_ids(conversation_id)
                         .await;
@@ -308,34 +303,6 @@ pub(super) async fn ensure_listener_task_running(
                         subscribed_connection_ids,
                         conversation_id,
                     );
-
-                    if let EventMsg::RawResponseItem(raw_response_item_event) = &event.msg
-                        && !raw_events_enabled
-                    {
-                        maybe_emit_hook_prompt_item_completed(
-                            conversation_id,
-                            &event.id,
-                            &raw_response_item_event.item,
-                            &thread_outgoing,
-                        )
-                        .await;
-                        maybe_emit_projected_tool_call_notifications(
-                            conversation_id,
-                            &event.id,
-                            &raw_response_item_event.item,
-                            &thread_outgoing,
-                            &thread_state,
-                        )
-                        .await;
-                        maybe_emit_event_driven_tool_trigger_item_completed(
-                            conversation_id,
-                            &event.id,
-                            &raw_response_item_event.item,
-                            &thread_outgoing,
-                        )
-                        .await;
-                        continue;
-                    }
 
                     apply_bespoke_event_handling(
                         event.clone(),

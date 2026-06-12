@@ -2111,7 +2111,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_live_event_driven_tool_trigger_to_event_item() {
+    fn keeps_live_event_driven_tool_marker_as_agent_message() {
         let events = [EventMsg::AgentMessage(AgentMessageEvent {
             message: "<event_driven_tool>{\"tool\":\"process_exit_subscribe\",\"title\":\"Process exited\",\"text\":\"[Process exit subscription] Session 42 exited with code 0\"}</event_driven_tool>".into(),
             phase: None,

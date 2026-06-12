@@ -16,9 +16,6 @@ pub use jsonrpc_lite::*;
 pub use protocol::common::*;
 pub use protocol::event_mapping::*;
 pub use protocol::item_builders::*;
-#[doc(hidden)]
-pub use protocol::response_item_projection::is_structured_response_item_completion;
-#[doc(hidden)]
 pub use protocol::response_item_projection::project_structured_response_item;
 #[doc(hidden)]
 pub use protocol::response_item_projection::project_tool_call_completion;

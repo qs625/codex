@@ -10001,27 +10001,6 @@
       ],
       "type": "object"
     },
-    "RawResponseItemCompletedNotification": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "item": {
-          "$ref": "#/definitions/ResponseItem"
-        },
-        "threadId": {
-          "type": "string"
-        },
-        "turnId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "item",
-        "threadId",
-        "turnId"
-      ],
-      "title": "RawResponseItemCompletedNotification",
-      "type": "object"
-    },
     "RealtimeConversationVersion": {
       "enum": [
         "v1",

@@ -1,6 +1,5 @@
 use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
-use crate::event_driven_item_completion::maybe_emit_event_driven_tool_trigger_item_completed;
 use crate::outgoing_message::ClientRequestResult;
 use crate::outgoing_message::ThreadScopedOutgoingMessageSender;
 use crate::request_processors::populate_thread_turns_from_history;
@@ -46,7 +45,6 @@ use codex_app_server_protocol::NetworkPolicyAmendment as V2NetworkPolicyAmendmen
 use codex_app_server_protocol::NetworkPolicyRuleAction as V2NetworkPolicyRuleAction;
 use codex_app_server_protocol::PermissionsRequestApprovalParams;
 use codex_app_server_protocol::PermissionsRequestApprovalResponse;
-use codex_app_server_protocol::RawResponseItemCompletedNotification;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequestPayload;
@@ -83,7 +81,6 @@ use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::WarningNotification;
 use codex_app_server_protocol::build_item_from_guardian_event;
 use codex_app_server_protocol::guardian_auto_approval_review_notification;
-use codex_app_server_protocol::is_structured_response_item_completion;
 use codex_app_server_protocol::item_event_to_server_notification;
 use codex_app_server_protocol::project_tool_call_completion;
 use codex_app_server_protocol::project_tool_call_start;
@@ -1033,40 +1030,11 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .send_server_notification(ServerNotification::ItemCompleted(completed))
                 .await;
         }
-        EventMsg::RawResponseItem(raw_response_item_event) => {
-            maybe_emit_hook_prompt_item_completed(
-                conversation_id,
-                &event_turn_id,
-                &raw_response_item_event.item,
-                &outgoing,
-            )
-            .await;
-            maybe_emit_projected_tool_call_notifications(
-                conversation_id,
-                &event_turn_id,
-                &raw_response_item_event.item,
-                &outgoing,
-                &thread_state,
-            )
-            .await;
-            maybe_emit_event_driven_tool_trigger_item_completed(
-                conversation_id,
-                &event_turn_id,
-                &raw_response_item_event.item,
-                &outgoing,
-            )
-            .await;
-            maybe_emit_raw_response_item_completed(
-                conversation_id,
-                &event_turn_id,
-                raw_response_item_event.item,
-                &outgoing,
-            )
-            .await;
-        }
-        EventMsg::PatchApplyBegin(_) | EventMsg::PatchApplyEnd(_) => {
+        EventMsg::PatchApplyBegin(_)
+        | EventMsg::PatchApplyEnd(_)
+        | EventMsg::RawResponseItem(_) => {
             // Core still fans out these deprecated events for legacy clients;
-            // v2 clients receive the canonical FileChange item instead.
+            // v2 clients receive canonical item lifecycle notifications instead.
         }
         EventMsg::ExecCommandBegin(exec_command_begin_event) => {
             if matches!(
@@ -1434,26 +1402,6 @@ async fn complete_command_execution_item(
     };
     outgoing
         .send_server_notification(ServerNotification::ItemCompleted(notification))
-        .await;
-}
-
-async fn maybe_emit_raw_response_item_completed(
-    conversation_id: ThreadId,
-    turn_id: &str,
-    item: codex_protocol::models::ResponseItem,
-    outgoing: &ThreadScopedOutgoingMessageSender,
-) {
-    if is_structured_response_item_completion(&item) {
-        return;
-    }
-
-    let notification = RawResponseItemCompletedNotification {
-        thread_id: conversation_id.to_string(),
-        turn_id: turn_id.to_string(),
-        item,
-    };
-    outgoing
-        .send_server_notification(ServerNotification::RawResponseItemCompleted(notification))
         .await;
 }
 
@@ -2194,7 +2142,6 @@ mod tests {
     use codex_app_server_protocol::JSONRPCErrorError;
     use codex_app_server_protocol::TurnPlanStepStatus;
     use codex_login::CodexAuth;
-    use codex_protocol::AgentPath;
     use codex_protocol::items::HookPromptFragment;
     use codex_protocol::items::build_hook_prompt_message;
     use codex_protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
@@ -2212,8 +2159,6 @@ mod tests {
     use codex_protocol::protocol::EventMsg;
     use codex_protocol::protocol::GuardianAssessmentEvent;
     use codex_protocol::protocol::GuardianAssessmentStatus;
-    use codex_protocol::protocol::InterAgentCommunication;
-    use codex_protocol::protocol::InterAgentOperation;
     use codex_protocol::protocol::RateLimitSnapshot;
     use codex_protocol::protocol::RateLimitWindow;
     use codex_protocol::protocol::RolloutItem;
@@ -2263,428 +2208,6 @@ mod tests {
             codex_analytics::AnalyticsEventsClient::disabled(),
         ));
         ThreadScopedOutgoingMessageSender::new(outgoing, vec![ConnectionId(1)], ThreadId::new())
-    }
-
-    fn test_event_command_event() -> codex_protocol::event_command::EventCommandEvent {
-        codex_protocol::event_command::EventCommandEvent {
-            subscription_id: "sub-command".to_string(),
-            kind: codex_protocol::event_command::EventCommandEventKind::Output,
-            label: Some("build log".to_string()),
-            command: "tail -f /tmp/build.log".to_string(),
-            cwd: Some("/repo".to_string()),
-            line: Some("done".to_string()),
-            sequence: Some(1),
-            exit_code: None,
-            signal: None,
-            message: None,
-            truncated: false,
-            created_at: 1,
-        }
-    }
-
-    fn test_event_driven_tool_trigger() -> codex_protocol::event_driven_tool::EventDrivenToolTrigger
-    {
-        codex_protocol::event_driven_tool::EventDrivenToolTrigger {
-            tool: "fs_subscribe".to_string(),
-            title: "File watch triggered".to_string(),
-            text: "build.log changed".to_string(),
-        }
-    }
-
-    fn test_inter_agent_communication() -> InterAgentCommunication {
-        InterAgentCommunication::new(
-            AgentPath::try_from("/root/worker").expect("agent path"),
-            AgentPath::root(),
-            Vec::new(),
-            "done".to_string(),
-            InterAgentOperation::SendMessage,
-        )
-        .with_trigger_turn(false)
-    }
-
-    struct RawResponseItemHandlerTestContext {
-        _codex_home: TempDir,
-        conversation_id: ThreadId,
-        conversation: Arc<CodexThread>,
-        thread_manager: Arc<ThreadManager>,
-        outgoing: ThreadScopedOutgoingMessageSender,
-        thread_state: Arc<Mutex<ThreadState>>,
-        thread_watch_manager: ThreadWatchManager,
-        rx: mpsc::Receiver<OutgoingEnvelope>,
-    }
-
-    impl RawResponseItemHandlerTestContext {
-        async fn new() -> Result<Self> {
-            let codex_home = TempDir::new()?;
-            let config = load_default_config_for_test(&codex_home).await;
-            let thread_manager = Arc::new(
-                codex_core::test_support::thread_manager_with_models_provider_and_home(
-                    CodexAuth::create_dummy_chatgpt_auth_for_testing(),
-                    config.model_provider.clone(),
-                    config.codex_home.to_path_buf(),
-                    Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
-                ),
-            );
-            let codex_core::NewThread {
-                thread_id: conversation_id,
-                thread: conversation,
-                ..
-            } = thread_manager.start_thread(config.clone()).await?;
-            let thread_state = new_thread_state();
-            let thread_watch_manager = ThreadWatchManager::new();
-            let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
-            let outgoing = Arc::new(OutgoingMessageSender::new(
-                tx,
-                codex_analytics::AnalyticsEventsClient::disabled(),
-            ));
-            let outgoing = ThreadScopedOutgoingMessageSender::new(
-                outgoing,
-                vec![ConnectionId(1)],
-                conversation_id,
-            );
-
-            Ok(Self {
-                _codex_home: codex_home,
-                conversation_id,
-                conversation,
-                thread_manager,
-                outgoing,
-                thread_state,
-                thread_watch_manager,
-                rx,
-            })
-        }
-
-        async fn apply_raw_response_item(
-            &mut self,
-            turn_id: &str,
-            item: codex_protocol::models::ResponseItem,
-        ) -> Vec<OutgoingMessage> {
-            apply_bespoke_event_handling(
-                Event {
-                    id: turn_id.to_string(),
-                    msg: EventMsg::RawResponseItem(
-                        codex_protocol::protocol::RawResponseItemEvent { item },
-                    ),
-                },
-                self.conversation_id,
-                self.conversation.clone(),
-                self.thread_manager.clone(),
-                self.outgoing.clone(),
-                self.thread_state.clone(),
-                self.thread_watch_manager.clone(),
-                Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
-                "test-provider".to_string(),
-            )
-            .await;
-
-            let mut messages = Vec::new();
-            while let Ok(envelope) = self.rx.try_recv() {
-                let message = match envelope {
-                    OutgoingEnvelope::Broadcast { message } => message,
-                    OutgoingEnvelope::ToConnection { message, .. } => message,
-                };
-                messages.push(message);
-            }
-            messages
-        }
-    }
-
-    #[tokio::test]
-    async fn raw_response_item_completed_suppresses_structured_event_command_items() {
-        let conversation_id = ThreadId::new();
-        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = test_outgoing(tx);
-        let event = test_event_command_event();
-
-        maybe_emit_raw_response_item_completed(
-            conversation_id,
-            "turn-1",
-            codex_protocol::models::ResponseItem::EventCommandEvent {
-                id: Some("typed-event-command".to_string()),
-                event,
-            },
-            &outgoing,
-        )
-        .await;
-
-        assert!(
-            rx.try_recv().is_err(),
-            "typed event command should not emit a raw response item"
-        );
-    }
-
-    #[tokio::test]
-    async fn raw_response_item_completed_keeps_event_command_marker_messages() -> Result<()> {
-        let conversation_id = ThreadId::new();
-        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = test_outgoing(tx);
-        let event = test_event_command_event();
-        let item = event.to_response_item();
-
-        maybe_emit_raw_response_item_completed(conversation_id, "turn-1", item.clone(), &outgoing)
-            .await;
-
-        match recv_broadcast_message(&mut rx).await? {
-            OutgoingMessage::AppServerNotification(
-                ServerNotification::RawResponseItemCompleted(payload),
-            ) => assert_eq!(payload.item, item),
-            other => bail!("unexpected message: {other:?}"),
-        }
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn raw_response_item_completed_suppresses_event_driven_tool_items() {
-        let conversation_id = ThreadId::new();
-        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = test_outgoing(tx);
-        let trigger = test_event_driven_tool_trigger();
-
-        maybe_emit_raw_response_item_completed(
-            conversation_id,
-            "turn-1",
-            codex_protocol::models::ResponseItem::EventDrivenTool {
-                id: Some("typed-event-driven-tool".to_string()),
-                trigger,
-            },
-            &outgoing,
-        )
-        .await;
-
-        assert!(
-            rx.try_recv().is_err(),
-            "typed event-driven tool should not emit a raw response item"
-        );
-    }
-
-    #[tokio::test]
-    async fn raw_response_item_completed_suppresses_inter_agent_items() {
-        let conversation_id = ThreadId::new();
-        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = test_outgoing(tx);
-
-        maybe_emit_raw_response_item_completed(
-            conversation_id,
-            "turn-1",
-            codex_protocol::models::ResponseItem::InterAgentCommunication {
-                id: Some("typed-collab".to_string()),
-                communication: test_inter_agent_communication(),
-            },
-            &outgoing,
-        )
-        .await;
-
-        assert!(
-            rx.try_recv().is_err(),
-            "typed inter-agent communication should not emit a raw response item"
-        );
-    }
-
-    #[tokio::test]
-    async fn raw_response_item_completed_keeps_event_driven_tool_marker_messages() -> Result<()> {
-        let conversation_id = ThreadId::new();
-        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = test_outgoing(tx);
-        let trigger = test_event_driven_tool_trigger();
-        let item = trigger.to_response_item();
-
-        maybe_emit_raw_response_item_completed(conversation_id, "turn-1", item.clone(), &outgoing)
-            .await;
-
-        match recv_broadcast_message(&mut rx).await? {
-            OutgoingMessage::AppServerNotification(
-                ServerNotification::RawResponseItemCompleted(payload),
-            ) => assert_eq!(payload.item, item),
-            other => bail!("unexpected message: {other:?}"),
-        }
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn raw_response_item_handler_emits_structured_item_without_raw_copy() -> Result<()> {
-        let mut context = RawResponseItemHandlerTestContext::new().await?;
-        let event = test_event_command_event();
-        let event_command_cases = [codex_protocol::models::ResponseItem::EventCommandEvent {
-            id: Some("typed-event-command".to_string()),
-            event: event.clone(),
-        }];
-
-        for (index, item) in event_command_cases.into_iter().enumerate() {
-            let messages = context
-                .apply_raw_response_item(&format!("turn-event-command-{index}"), item)
-                .await;
-            assert_eq!(messages.len(), 1);
-            match &messages[0] {
-                OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(
-                    payload,
-                )) => match &payload.item {
-                    ThreadItem::EventCommandEvent {
-                        subscription_id,
-                        kind,
-                        command,
-                        cwd,
-                        line,
-                        sequence,
-                        ..
-                    } => {
-                        assert_eq!(subscription_id, "sub-command");
-                        assert_eq!(
-                            kind,
-                            &codex_app_server_protocol::EventCommandEventKind::Output
-                        );
-                        assert_eq!(command, "tail -f /tmp/build.log");
-                        assert_eq!(cwd.as_deref(), Some("/repo"));
-                        assert_eq!(line.as_deref(), Some("done"));
-                        assert_eq!(*sequence, Some(1));
-                    }
-                    other => bail!("unexpected structured item: {other:?}"),
-                },
-                other => bail!("unexpected message: {other:?}"),
-            }
-        }
-
-        let trigger = test_event_driven_tool_trigger();
-        let event_driven_tool_cases = [codex_protocol::models::ResponseItem::EventDrivenTool {
-            id: Some("typed-event-driven-tool".to_string()),
-            trigger: trigger.clone(),
-        }];
-
-        for (index, item) in event_driven_tool_cases.into_iter().enumerate() {
-            let messages = context
-                .apply_raw_response_item(&format!("turn-event-driven-tool-{index}"), item)
-                .await;
-            assert_eq!(messages.len(), 1);
-            match &messages[0] {
-                OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(
-                    payload,
-                )) => match &payload.item {
-                    ThreadItem::EventDrivenTool {
-                        id,
-                        tool,
-                        title,
-                        text,
-                    } => {
-                        if index == 0 {
-                            assert_eq!(id, "typed-event-driven-tool");
-                        }
-                        assert_eq!(tool, "fs_subscribe");
-                        assert_eq!(title, "File watch triggered");
-                        assert_eq!(text, "build.log changed");
-                    }
-                    other => bail!("unexpected structured item: {other:?}"),
-                },
-                other => bail!("unexpected message: {other:?}"),
-            }
-        }
-
-        let messages = context
-            .apply_raw_response_item(
-                "turn-inter-agent",
-                codex_protocol::models::ResponseItem::InterAgentCommunication {
-                    id: Some("typed-collab".to_string()),
-                    communication: test_inter_agent_communication(),
-                },
-            )
-            .await;
-        assert_eq!(messages.len(), 1);
-        match &messages[0] {
-            OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(payload)) => {
-                assert_eq!(
-                    payload.item,
-                    ThreadItem::CollabAgentMessage {
-                        id: "typed-collab".to_string(),
-                        operation: codex_app_server_protocol::CollabAgentOperation::SendMessage,
-                        sender_thread_id: None,
-                        sender_path: "/root/worker".to_string(),
-                        recipient_thread_id: None,
-                        recipient_path: "/root".to_string(),
-                        other_recipient_paths: Vec::new(),
-                        content: "done".to_string(),
-                        trigger_turn: false,
-                    }
-                );
-            }
-            other => bail!("unexpected message: {other:?}"),
-        }
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn raw_response_item_handler_keeps_non_structured_raw_items() -> Result<()> {
-        let mut context = RawResponseItemHandlerTestContext::new().await?;
-        let input_text_item = codex_protocol::models::ResponseItem::Message {
-            id: Some("plain-input-message".to_string()),
-            role: "user".to_string(),
-            content: vec![codex_protocol::models::ContentItem::InputText {
-                text: "not an event marker".to_string(),
-            }],
-            phase: None,
-        };
-        let function_call_item = codex_protocol::models::ResponseItem::FunctionCall {
-            id: Some("ordinary-function-call".to_string()),
-            name: "ordinary_tool".to_string(),
-            namespace: None,
-            arguments: "{}".to_string(),
-            call_id: "call-ordinary".to_string(),
-        };
-
-        for (index, item) in [input_text_item, function_call_item]
-            .into_iter()
-            .enumerate()
-        {
-            let messages = context
-                .apply_raw_response_item(&format!("turn-plain-{index}"), item.clone())
-                .await;
-            assert_eq!(messages.len(), 1);
-            match &messages[0] {
-                OutgoingMessage::AppServerNotification(
-                    ServerNotification::RawResponseItemCompleted(payload),
-                ) => {
-                    assert_eq!(payload.item, item);
-                }
-                other => bail!("unexpected message: {other:?}"),
-            }
-        }
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn raw_response_item_completed_keeps_plain_assistant_output_text() -> Result<()> {
-        let conversation_id = ThreadId::new();
-        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = test_outgoing(tx);
-        let item = codex_protocol::models::ResponseItem::Message {
-            id: Some("plain-message".to_string()),
-            role: "assistant".to_string(),
-            content: vec![codex_protocol::models::ContentItem::OutputText {
-                text: r#"{"subscription_id":"sub-command","line":"plain json"}"#.to_string(),
-            }],
-            phase: None,
-        };
-
-        maybe_emit_raw_response_item_completed(conversation_id, "turn-1", item.clone(), &outgoing)
-            .await;
-
-        let completed = recv_broadcast_message(&mut rx).await?;
-        match completed {
-            OutgoingMessage::AppServerNotification(
-                ServerNotification::RawResponseItemCompleted(payload),
-            ) => {
-                assert_eq!(payload.thread_id, conversation_id.to_string());
-                assert_eq!(payload.turn_id, "turn-1");
-                assert_eq!(payload.item, item);
-            }
-            other => bail!("unexpected message: {other:?}"),
-        }
-
-        assert!(
-            rx.try_recv().is_err(),
-            "plain message should emit exactly one raw response item"
-        );
-        Ok(())
     }
 
     #[test]
