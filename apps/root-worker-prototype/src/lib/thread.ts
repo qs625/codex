@@ -843,6 +843,28 @@ export function applyPendingThreadUpdates(
   );
 }
 
+export function applyInitializedThreadUpdate(
+  threads: Thread[],
+  initializedThreadIds: ReadonlySet<string>,
+  threadId: string,
+  update: ThreadUpdate,
+) {
+  if (!initializedThreadIds.has(threadId)) {
+    return threads;
+  }
+
+  let foundThread = false;
+  const next = threads.map((thread) => {
+    if (thread.id !== threadId) {
+      return thread;
+    }
+    foundThread = true;
+    return update(thread);
+  });
+
+  return foundThread ? next : threads;
+}
+
 export function isTurnInFlight(turn: Turn) {
   return turn.status === "running" || turn.status === "inProgress";
 }

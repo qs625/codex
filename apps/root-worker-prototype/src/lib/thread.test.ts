@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { buildConversationEntries } from "./conversation";
 import {
   appendAgentDelta,
+  applyInitializedThreadUpdate,
   applyPendingThreadUpdates,
   buildCurrentThreadTodoItems,
   formatUpdatedLabel,
@@ -2096,6 +2097,105 @@ test("terminal child status does not hide restored conversation history or keep 
   );
   assert.equal(getThreadPresenceLabel(updated), "Idle");
   assert.equal(threadDisplayStatusClass(updated), "todo");
+});
+
+test("initialized live child completion preserves existing assistant messages", () => {
+  const initializedThread: Thread = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-parent",
+        items: [
+          {
+            type: "userMessage",
+            id: "user-1",
+            content: [{ type: "text", text: "run worker" }],
+          },
+          {
+            type: "agentMessage",
+            id: "agent-1",
+            text: "Worker is running.",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1_000,
+      },
+    ],
+  };
+  const childStatus: ThreadItem = {
+    type: "collabAgentStatusUpdate",
+    id: "child-complete",
+    senderThreadId: "thread-child",
+    senderPath: "/root/worker",
+    recipientThreadId: "thread-1",
+    recipientPath: "/root",
+    status: {
+      path: "/root/worker",
+      status: "completed",
+      message: "done",
+    },
+  };
+
+  const [updated] = applyInitializedThreadUpdate(
+    [initializedThread],
+    new Set(["thread-1"]),
+    "thread-1",
+    (thread) =>
+      updateThreadItem(thread, "turn-child", childStatus, {
+        completedAtMs: 3_000,
+        syntheticTurnStatus: "completed",
+      }),
+  );
+
+  assert.ok(updated);
+  assert.deepEqual(
+    buildConversationEntries(updated).map((entry) => entry.text),
+    [
+      "run worker",
+      "Worker is running.",
+      "/root/worker • completed • done",
+    ],
+  );
+});
+
+test("uninitialized live child completion does not create display turn cache", () => {
+  const thread = makeThread();
+  const childStatus: ThreadItem = {
+    type: "collabAgentStatusUpdate",
+    id: "child-complete",
+    senderThreadId: "thread-child",
+    senderPath: "/root/worker",
+    recipientThreadId: "thread-1",
+    recipientPath: "/root",
+    status: {
+      path: "/root/worker",
+      status: "completed",
+      message: "done",
+    },
+  };
+
+  const updatedThreads = applyInitializedThreadUpdate(
+    [thread],
+    new Set(),
+    "thread-1",
+    (current) =>
+      updateThreadItem(current, "turn-child", childStatus, {
+        completedAtMs: 3_000,
+        syntheticTurnStatus: "completed",
+      }),
+  );
+
+  assert.deepEqual(updatedThreads, [thread]);
+  assert.deepEqual(
+    buildConversationEntries(updatedThreads[0]!).map((entry) => entry.text),
+    [],
+  );
 });
 
 test("collab status item notifications stay on the notification thread unless sent by that thread", () => {

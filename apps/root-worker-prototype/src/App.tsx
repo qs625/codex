@@ -40,9 +40,14 @@ import {
   buildSendMessagePayload,
 } from "./lib/sendMessagePayload";
 import { isThreadNotFoundError, toErrorMessage } from "./lib/shared";
-import { decideThreadSelectionAction } from "./lib/threadSelectionPolicy";
+import {
+  decideThreadSelectionAction,
+  nextThreadReadRequestId,
+  shouldApplyThreadReadSnapshot,
+} from "./lib/threadSelectionPolicy";
 import {
   appendAgentDelta,
+  applyInitializedThreadUpdate,
   applyPendingThreadUpdates,
   buildAgentTree,
   buildCurrentThreadTodoItems,
@@ -171,7 +176,9 @@ function App() {
     new Map(),
   );
   const loadingThreadIdsRef = useRef<Set<string>>(new Set());
-  const loadThreadRequestIdRef = useRef(0);
+  const loadThreadRequestIdsByThreadIdRef = useRef<Map<string, number>>(
+    new Map(),
+  );
   const pendingThreadUpdatesRef = useRef(new Map<string, ThreadUpdate[]>());
   const voiceSessionRef = useRef<ActiveVoiceSession | null>(null);
   const voiceDraftStateRef = useRef<VoiceDraftState | null>(null);
@@ -693,6 +700,20 @@ function App() {
     });
   }
 
+  function updateInitializedThreadLocally(
+    threadId: string,
+    update: (thread: Thread) => Thread,
+  ) {
+    setThreads((current) =>
+      applyInitializedThreadUpdate(
+        current,
+        loadedThreadIdsRef.current,
+        threadId,
+        update,
+      ),
+    );
+  }
+
   function upsertThreadWithPending(
     current: Thread[],
     thread: Thread,
@@ -755,6 +776,7 @@ function App() {
       liveThreadIdsRef.current.delete(threadId);
       subscribeThreadPromisesRef.current.delete(threadId);
       loadingThreadIdsRef.current.delete(threadId);
+      loadThreadRequestIdsByThreadIdRef.current.delete(threadId);
       runConfigOverrideByThreadIdRef.current.delete(threadId);
     }
     clearComposerDraftsForThreads(threadIdSet);
@@ -905,8 +927,11 @@ function App() {
   }
 
   async function loadThread(threadId: string) {
-    const requestId = loadThreadRequestIdRef.current + 1;
-    loadThreadRequestIdRef.current = requestId;
+    const requestId = nextThreadReadRequestId(
+      loadThreadRequestIdsByThreadIdRef.current,
+      threadId,
+    );
+    loadThreadRequestIdsByThreadIdRef.current.set(threadId, requestId);
     loadingThreadIdsRef.current.add(threadId);
     setIsLoadingThread(true);
     setError(null);
@@ -917,12 +942,26 @@ function App() {
       const payload = (await window.codexDesktop.readThread(threadId)) as {
         thread: Thread;
       };
+      if (
+        !shouldApplyThreadReadSnapshot({
+          threadId,
+          selectedThreadId: selectedThreadIdRef.current,
+          requestId,
+          latestRequestId:
+            loadThreadRequestIdsByThreadIdRef.current.get(threadId) ?? null,
+          isLoaded: loadedThreadIdsRef.current.has(threadId),
+        })
+      ) {
+        return;
+      }
       markThreadLoaded(threadId);
       setThreads((current) => upsertThreadWithPending(current, payload.thread));
     } catch (loadError) {
+      const latestRequestId =
+        loadThreadRequestIdsByThreadIdRef.current.get(threadId) ?? null;
       if (
         selectedThreadIdRef.current !== threadId ||
-        loadThreadRequestIdRef.current !== requestId
+        latestRequestId !== requestId
       ) {
         return;
       }
@@ -932,13 +971,18 @@ function App() {
       }
       setError(message);
     } finally {
+      const latestRequestId =
+        loadThreadRequestIdsByThreadIdRef.current.get(threadId) ?? null;
       if (
         selectedThreadIdRef.current === threadId &&
-        loadThreadRequestIdRef.current === requestId
+        latestRequestId === requestId
       ) {
         setIsLoadingThread(false);
       }
-      loadingThreadIdsRef.current.delete(threadId);
+      if (latestRequestId === requestId) {
+        loadingThreadIdsRef.current.delete(threadId);
+        loadThreadRequestIdsByThreadIdRef.current.delete(threadId);
+      }
     }
   }
 
@@ -1493,7 +1537,7 @@ function App() {
           ) {
             setIsStoppingTurn(false);
           }
-          updateThreadLocally(notification.threadId, (thread) =>
+          updateInitializedThreadLocally(notification.threadId, (thread) =>
             updateThreadTurn(thread, notification.turn),
           );
           break;
@@ -1512,7 +1556,7 @@ function App() {
             notification.item,
           )) {
             markThreadLive(threadId);
-            updateThreadLocally(threadId, (thread) =>
+            updateInitializedThreadLocally(threadId, (thread) =>
               updateThreadItem(thread, notification.turnId, notification.item, {
                 startedAtMs: notification.startedAtMs,
                 completedAtMs: notification.completedAtMs,
@@ -1534,7 +1578,7 @@ function App() {
             delta: string;
           };
           markThreadLive(notification.threadId);
-          updateThreadLocally(notification.threadId, (thread) =>
+          updateInitializedThreadLocally(notification.threadId, (thread) =>
             appendAgentDelta(
               thread,
               notification.turnId,

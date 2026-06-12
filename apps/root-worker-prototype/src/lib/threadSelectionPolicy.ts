@@ -32,21 +32,50 @@ export function decideThreadSelectionAction({
     return "readAndSubscribe";
   }
 
-  if (hasLiveCache) {
-    return isSubscribed ? "none" : "subscribeOnly";
-  }
-
   if (!isLoaded && !isSubscribed) {
     return "readAndSubscribe";
+  }
+
+  if (!isLoaded) {
+    return "readAndSubscribe";
+  }
+
+  if (hasLiveCache) {
+    return isSubscribed ? "none" : "subscribeOnly";
   }
 
   if (!isSubscribed) {
     return "subscribeOnly";
   }
 
-  if (!isLoaded) {
-    return "none";
-  }
-
   return "none";
+}
+
+type ThreadReadSnapshotPolicyInput = {
+  threadId: string;
+  selectedThreadId: string | null;
+  requestId: number;
+  latestRequestId: number | null;
+  isLoaded: boolean;
+};
+
+export function shouldApplyThreadReadSnapshot({
+  threadId,
+  selectedThreadId,
+  requestId,
+  latestRequestId,
+  isLoaded,
+}: ThreadReadSnapshotPolicyInput) {
+  return (
+    selectedThreadId === threadId &&
+    requestId === latestRequestId &&
+    !isLoaded
+  );
+}
+
+export function nextThreadReadRequestId(
+  requestIdsByThreadId: ReadonlyMap<string, number>,
+  threadId: string,
+) {
+  return (requestIdsByThreadId.get(threadId) ?? 0) + 1;
 }

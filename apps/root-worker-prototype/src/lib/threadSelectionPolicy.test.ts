@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { decideThreadSelectionAction } from "./threadSelectionPolicy";
+import {
+  decideThreadSelectionAction,
+  nextThreadReadRequestId,
+  shouldApplyThreadReadSnapshot,
+} from "./threadSelectionPolicy";
 
 test("selection policy does nothing for a loaded and subscribed thread", () => {
   assert.equal(
@@ -56,7 +60,7 @@ test("selection policy reads and subscribes missing threads", () => {
   );
 });
 
-test("selection policy keeps subscribed local live threads without reading", () => {
+test("selection policy reads subscribed local live threads before initialization", () => {
   assert.equal(
     decideThreadSelectionAction({
       selectedThreadId: "thread-1",
@@ -66,7 +70,7 @@ test("selection policy keeps subscribed local live threads without reading", () 
       isLoading: false,
       hasLiveCache: true,
     }),
-    "none",
+    "readAndSubscribe",
   );
 });
 
@@ -84,7 +88,7 @@ test("selection policy ignores threads already being loaded", () => {
   );
 });
 
-test("selection policy subscribes live cached threads without reading", () => {
+test("selection policy reads local live cached threads before initialization", () => {
   assert.equal(
     decideThreadSelectionAction({
       selectedThreadId: "thread-1",
@@ -94,8 +98,11 @@ test("selection policy subscribes live cached threads without reading", () => {
       isLoading: false,
       hasLiveCache: true,
     }),
-    "subscribeOnly",
+    "readAndSubscribe",
   );
+});
+
+test("selection policy subscribes initialized live cached threads without reading", () => {
   assert.equal(
     decideThreadSelectionAction({
       selectedThreadId: "thread-1",
@@ -106,5 +113,79 @@ test("selection policy subscribes live cached threads without reading", () => {
       hasLiveCache: true,
     }),
     "subscribeOnly",
+  );
+});
+
+test("thread read snapshots apply only to the current uninitialized request", () => {
+  assert.equal(
+    shouldApplyThreadReadSnapshot({
+      threadId: "thread-a",
+      selectedThreadId: "thread-a",
+      requestId: 2,
+      latestRequestId: 2,
+      isLoaded: false,
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldApplyThreadReadSnapshot({
+      threadId: "thread-a",
+      selectedThreadId: "thread-b",
+      requestId: 2,
+      latestRequestId: 2,
+      isLoaded: false,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldApplyThreadReadSnapshot({
+      threadId: "thread-a",
+      selectedThreadId: "thread-a",
+      requestId: 1,
+      latestRequestId: 2,
+      isLoaded: false,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldApplyThreadReadSnapshot({
+      threadId: "thread-a",
+      selectedThreadId: "thread-a",
+      requestId: 2,
+      latestRequestId: 2,
+      isLoaded: true,
+    }),
+    false,
+  );
+});
+
+test("thread read request ids are scoped per thread for switch away and back", () => {
+  const requestIdsByThreadId = new Map<string, number>();
+  const threadARequestId = nextThreadReadRequestId(
+    requestIdsByThreadId,
+    "thread-a",
+  );
+  requestIdsByThreadId.set("thread-a", threadARequestId);
+
+  const threadBRequestId = nextThreadReadRequestId(
+    requestIdsByThreadId,
+    "thread-b",
+  );
+  requestIdsByThreadId.set("thread-b", threadBRequestId);
+
+  assert.equal(threadARequestId, 1);
+  assert.equal(threadBRequestId, 1);
+  assert.equal(
+    shouldApplyThreadReadSnapshot({
+      threadId: "thread-a",
+      selectedThreadId: "thread-a",
+      requestId: threadARequestId,
+      latestRequestId: requestIdsByThreadId.get("thread-a") ?? null,
+      isLoaded: false,
+    }),
+    true,
   );
 });
