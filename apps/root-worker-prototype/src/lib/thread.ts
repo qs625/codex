@@ -795,6 +795,58 @@ function mergeThreadItem(existing: ThreadItem, next: ThreadItem): ThreadItem {
   };
 }
 
+function normalizeThreadItemSnapshot(item: ThreadItem): ThreadItem {
+  if (item.type !== "agentMessage") {
+    return item;
+  }
+
+  const trigger = parseEventDrivenToolTrigger(item.text);
+  if (!trigger) {
+    return item;
+  }
+
+  return {
+    type: "eventDrivenTool",
+    id: item.id,
+    tool: trigger.tool,
+    title: trigger.title,
+    text: trigger.text,
+    startedAtMs: item.startedAtMs,
+    completedAtMs: item.completedAtMs,
+  };
+}
+
+function parseEventDrivenToolTrigger(text: string) {
+  const trimmed = text.trim();
+  const startMarker = "<event_driven_tool>";
+  const endMarker = "</event_driven_tool>";
+  if (!trimmed.startsWith(startMarker) || !trimmed.endsWith(endMarker)) {
+    return null;
+  }
+
+  const body = trimmed
+    .slice(startMarker.length, trimmed.length - endMarker.length)
+    .trim();
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    const record = parsed as Record<string, unknown>;
+    return typeof record.tool === "string" &&
+      typeof record.title === "string" &&
+      typeof record.text === "string"
+      ? {
+          tool: record.tool,
+          title: record.title,
+          text: record.text,
+        }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function markStreamingAgentMessage<
   T extends Extract<ThreadItem, { type: "agentMessage" }>,
 >(item: T) {
