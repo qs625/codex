@@ -23,6 +23,7 @@ skills: [code-review, "code-review-*"]
 - 验证充分性：委派要求的测试、benchmark、snapshot 或手工验证步骤是否执行，结论是否足以支持交付。
 - 维护性：改动范围是否聚焦，抽象是否必要，模块边界和调用方可读性是否清楚。
 - 项目约定：Rust clippy 约定、TUI style、app-server API 规则、snapshot 要求和 AGENTS.md 约束。
+- typed display 架构：涉及 app-server/root-worker 对话、线程、tool、event-command、schedule、collab 或 workflow 展示的改动，必须继续走 typed `ResponseItem -> ThreadItem`、显式 live lifecycle 和 shared projector；把新增或扩展 `RawResponseItem`、message marker、assistant message JSON、legacy envelope 解析作为问题指出。
 - 无关改动：是否包含不必要格式化、重命名、重构或依赖变更。
 
 ## 流程

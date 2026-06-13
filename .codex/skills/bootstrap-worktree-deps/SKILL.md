@@ -36,7 +36,7 @@ python3 .codex/skills/bootstrap-worktree-deps/scripts/bootstrap_worktree_deps.py
 - `node_modules`
 - `apps/root-worker-prototype/node_modules`
 
-如果主 checkout 中还没有 `codex-rs/target`，脚本会创建它。对于 `node_modules`，主 checkout 必须已经通过 `pnpm install` 准备好依赖目录。
+如果主 checkout 中还没有 `codex-rs/target`，脚本会创建它。对于 `node_modules`，主 checkout 必须已经通过 `pnpm install` 准备好依赖目录。root-worker prototype 的 Playwright/Electron 调试依赖也通过 `apps/root-worker-prototype/node_modules` 一起复用。
 
 ## 安全规则
 

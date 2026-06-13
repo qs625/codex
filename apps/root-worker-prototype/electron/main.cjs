@@ -35,7 +35,8 @@ const lspManager = new LspManager();
 const windows = new Set();
 const threadRuntimeById = new Map();
 const defaultWorkspace = resolveDefaultWorkspace();
-const devServerUrl = "http://127.0.0.1:5173";
+const devServerUrl =
+  process.env.ROOT_WORKER_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
 const builtRendererPath = path.join(__dirname, "../dist/index.html");
 
 async function createWindow() {
@@ -60,7 +61,9 @@ async function createWindow() {
 
   if (isDev) {
     void window.loadURL(devServerUrl);
-    window.webContents.openDevTools({ mode: "detach" });
+    if (process.env.ROOT_WORKER_OPEN_DEVTOOLS !== "0") {
+      window.webContents.openDevTools({ mode: "detach" });
+    }
   } else {
     await ensureBuiltRenderer();
     void window.loadFile(builtRendererPath);

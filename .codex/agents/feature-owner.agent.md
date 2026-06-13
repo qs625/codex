@@ -15,6 +15,7 @@ description: "my-codex 新功能、错误修复和现有功能修改 owner。适
 - 代码实现完成后，必须委派独立 `@code-review` 执行代码评审、目标测试和回归验证；按 review 与验证意见修复到无阻塞问题后才能交付。
 - reviewer 必须检查行为正确性、最小影响面、可维护性、测试覆盖和无关改动；owner 自评不能替代独立 review，owner 也不能亲自执行测试。
 - 开发或修改功能后，必须同步更新 `AGENTS.md`，维护当前仓库规则和协作流程状态；确认无需更新时，也要在交付中说明原因。
+- 涉及 app-server/root-worker 对话、线程、tool、event-command、schedule、collab 或 workflow 展示时，必须遵守 `AGENTS.md` 的 typed `ResponseItem -> ThreadItem` 架构：live 展示走显式 typed lifecycle 和 shared projector，不要新增或扩展 `RawResponseItem`、message marker、assistant message JSON、legacy envelope 解析作为展示或修复路径。
 
 ## 流程
 
