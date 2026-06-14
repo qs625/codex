@@ -2765,6 +2765,150 @@
             },
             "method": {
               "enum": [
+                "workflow/list"
+              ],
+              "title": "Workflow/listRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/WorkflowListParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Workflow/listRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "workflow/describe"
+              ],
+              "title": "Workflow/describeRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/WorkflowDescribeParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Workflow/describeRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "workflow/start"
+              ],
+              "title": "Workflow/startRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/WorkflowStartParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Workflow/startRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "workflow/status"
+              ],
+              "title": "Workflow/statusRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/WorkflowStatusParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Workflow/statusRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "workflow/resume"
+              ],
+              "title": "Workflow/resumeRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/WorkflowResumeParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Workflow/resumeRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "workflow/abort"
+              ],
+              "title": "Workflow/abortRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/WorkflowAbortParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Workflow/abortRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
                 "account/read"
               ],
               "title": "Account/readRequestMethod",
@@ -11911,6 +12055,26 @@
           "properties": {
             "method": {
               "enum": [
+                "workflow/run/updated"
+              ],
+              "title": "Workflow/run/updatedNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/WorkflowRunUpdatedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "Workflow/run/updatedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
                 "turn/started"
               ],
               "title": "Turn/startedNotificationMethod",
@@ -16839,6 +17003,8 @@
       "enum": [
         "started",
         "resumed",
+        "completed",
+        "failed",
         "aborted"
       ],
       "type": "string"
@@ -17814,6 +17980,290 @@
       "title": "WindowsWorldWritableWarningNotification",
       "type": "object"
     },
+    "WorkflowAbortParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "runId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "runId"
+      ],
+      "title": "WorkflowAbortParams",
+      "type": "object"
+    },
+    "WorkflowAbortResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "run": {
+          "$ref": "#/definitions/WorkflowRun"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "title": "WorkflowAbortResponse",
+      "type": "object"
+    },
+    "WorkflowDescribeParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workflow": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workflow"
+      ],
+      "title": "WorkflowDescribeParams",
+      "type": "object"
+    },
+    "WorkflowDescribeResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "workflow": {
+          "$ref": "#/definitions/WorkflowDetails"
+        }
+      },
+      "required": [
+        "workflow"
+      ],
+      "title": "WorkflowDescribeResponse",
+      "type": "object"
+    },
+    "WorkflowDetails": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "entry": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "$ref": "#/definitions/WorkflowInputSpec"
+          },
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "readme": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "$ref": "#/definitions/WorkflowSource"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "whenToUse": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "description",
+        "entry",
+        "id",
+        "inputs",
+        "name",
+        "path",
+        "source",
+        "whenToUse"
+      ],
+      "type": "object"
+    },
+    "WorkflowDiagnostic": {
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/definitions/WorkflowSource"
+        }
+      },
+      "required": [
+        "message",
+        "path",
+        "source"
+      ],
+      "type": "object"
+    },
+    "WorkflowInputSpec": {
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "WorkflowListParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "WorkflowListParams",
+      "type": "object"
+    },
+    "WorkflowListResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "diagnostics": {
+          "items": {
+            "$ref": "#/definitions/WorkflowDiagnostic"
+          },
+          "type": "array"
+        },
+        "workflows": {
+          "items": {
+            "$ref": "#/definitions/WorkflowSummary"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "diagnostics",
+        "workflows"
+      ],
+      "title": "WorkflowListResponse",
+      "type": "object"
+    },
+    "WorkflowResumeParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "inputs": true,
+        "runId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "runId"
+      ],
+      "title": "WorkflowResumeParams",
+      "type": "object"
+    },
+    "WorkflowResumeResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "run": {
+          "$ref": "#/definitions/WorkflowRun"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "title": "WorkflowResumeResponse",
+      "type": "object"
+    },
+    "WorkflowRun": {
+      "properties": {
+        "abortReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inputs": true,
+        "message": {
+          "type": "string"
+        },
+        "output": true,
+        "revision": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "runnerStatus": {
+          "type": "string"
+        },
+        "snapshotPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/WorkflowRunStatus"
+        },
+        "updatedAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "workflow": {
+          "$ref": "#/definitions/WorkflowSummary"
+        }
+      },
+      "required": [
+        "createdAt",
+        "inputs",
+        "message",
+        "revision",
+        "runId",
+        "runnerStatus",
+        "status",
+        "updatedAt",
+        "workflow"
+      ],
+      "type": "object"
+    },
     "WorkflowRunProgressEvent": {
       "properties": {
         "kind": {
@@ -17852,9 +18302,151 @@
       "enum": [
         "started",
         "resumed",
+        "completed",
+        "failed",
         "aborted"
       ],
       "type": "string"
+    },
+    "WorkflowRunStatus": {
+      "enum": [
+        "running",
+        "completed",
+        "failed",
+        "aborted"
+      ],
+      "type": "string"
+    },
+    "WorkflowRunUpdatedNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "run": {
+          "$ref": "#/definitions/WorkflowRun"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "title": "WorkflowRunUpdatedNotification",
+      "type": "object"
+    },
+    "WorkflowSource": {
+      "enum": [
+        "home",
+        "project"
+      ],
+      "type": "string"
+    },
+    "WorkflowStartParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inputs": true,
+        "workflow": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "inputs",
+        "workflow"
+      ],
+      "title": "WorkflowStartParams",
+      "type": "object"
+    },
+    "WorkflowStartResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "run": {
+          "$ref": "#/definitions/WorkflowRun"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "title": "WorkflowStartResponse",
+      "type": "object"
+    },
+    "WorkflowStatusParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "runId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "runId"
+      ],
+      "title": "WorkflowStatusParams",
+      "type": "object"
+    },
+    "WorkflowStatusResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "run": {
+          "$ref": "#/definitions/WorkflowRun"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "title": "WorkflowStatusResponse",
+      "type": "object"
+    },
+    "WorkflowSummary": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "entry": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "$ref": "#/definitions/WorkflowInputSpec"
+          },
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/definitions/WorkflowSource"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "whenToUse": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "description",
+        "entry",
+        "id",
+        "inputs",
+        "name",
+        "path",
+        "source",
+        "whenToUse"
+      ],
+      "type": "object"
     },
     "WriteStatus": {
       "enum": [

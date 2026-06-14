@@ -981,6 +981,8 @@ pub enum CommandWaitNotificationKind {
 pub enum WorkflowRunProgressKind {
     Started,
     Resumed,
+    Completed,
+    Failed,
     Aborted,
 }
 

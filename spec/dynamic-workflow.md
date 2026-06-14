@@ -136,10 +136,9 @@ workflow 脚本不能直接调用真实系统能力。`wf.Agent`、`wf.shell`、
 推荐流程：
 
 1. `workflow_start` 找到 `.ts` entry。
-2. 编译或 bundle 成 `workflow.bundle.mjs`。
-3. snapshot workflow source、bundle、manifest、script hash。
-4. runner import bundle 并执行 `definition.run(wf)`。
-5. resume 永远执行该 run 的 snapshot bundle，而不是仓库里的最新脚本。
+2. snapshot workflow 目录、manifest 和 entry 相对路径。
+3. runner 在 snapshot 目录中 import entry，并执行 `definition.run(wf)`。
+4. resume 永远执行该 run 的 snapshot 目录，而不是仓库里的最新脚本。
 
 这样可以避免 workflow 文件更新后破坏已有 run 的 resume 语义。
 
@@ -204,14 +203,14 @@ Workflow 能力通过 agent session 可用的 tools 暴露：
 - `workflow_resume`
 - `workflow_abort`
 
-当前实现了最小控制面：
+当前实现了 durable runner 控制面：
 
-- start：校验 registry 中的 workflow，创建 session 内存态 `WorkflowRun`。
-- status：按 `runId` 返回当前 run 状态。
-- resume：对未 abort 的 run 更新 inputs、revision 和 runnerStatus。
-- abort：标记 run 为 aborted，并保存可选 reason。
+- start：校验 registry 中的 workflow，创建 durable `WorkflowRun`，snapshot workflow 目录，并启动 Node runner。
+- status：优先返回内存 run 状态，进程或会话恢复后可从 `$CODEX_HOME/workflow-runs/<runId>/run.json` 读取状态。
+- resume：对未 abort 的 run 更新 inputs/revision，并基于 snapshot entry 重新执行 runner。
+- abort：向 live runner 发送 abort 信号，停止子进程并持久化 aborted 状态；如果没有 live runner，也会把 durable run 标记为 aborted。
 
-当前控制面不会执行 TypeScript entry，不启动 Node runner，也不创建 agent binding；这些能力仍属于后续 TS runner/snapshot 阶段。为避免误导，当前 `runnerStatus` 使用 `control_plane_started`、`control_plane_resumed`、`aborted` 表达真实执行层级。
+当前 runner 已能通过 Node 加载 workflow `.ts` module，并提供最小 `@codex/workflow` shim 支持 `defineWorkflow()`。workflow 目录内的相对 import 会随 snapshot 一起保留；仍不提供独立 TypeScript bundler/transpiler，脚本必须是当前 Node 运行时可加载的 `.ts`。第一版 runtime API 仍是薄实现：`wf.emit` 写入 runtime events，`wf.Agent`/`wf.shell` 记录请求并返回结构化占位结果，不直接驱动 MultiAgent runtime 或真实 shell。真实 agent binding、durable shell step 和跨进程 RPC callback 是后续扩展点。
 
 后续可以增加：
 
@@ -225,7 +224,10 @@ Workflow 能力通过 agent session 可用的 tools 暴露：
 
 - `ResponseItem::WorkflowRunProgress`
 - `ThreadItem::WorkflowRunProgress`
-- `WorkflowRunProgressKind::{Started, Resumed, Aborted}`
+- `WorkflowRunProgressKind::{Started, Resumed, Completed, Failed, Aborted}`
+
+workflow tool 的 start/resume/abort 会写入 typed `ResponseItem::WorkflowRunProgress`，并通过显式 `item/completed` lifecycle 投影为 `ThreadItem::WorkflowRunProgress`。客户端 live 展示不得从 function output JSON、assistant 文本或 marker 反解 workflow progress。
+runner 进入 completed/failed 终态时会通过同一 typed lifecycle 追加终态 progress；显式 abort 由 `workflow_abort` 路径负责记录 Aborted progress，避免 start/resume 的旧 turn 重复记录 abort。app-server v2 直连控制面通过 `workflow/run/updated` notification 广播 run 状态更新，abort notification 也只由 `workflow/abort` 路径发送。
 
 后续完整 runner 可能继续扩展：
 
@@ -281,29 +283,29 @@ thread 状态能表示 agent 是否 running/completed，但不能表达：
 
 ## 开放问题
 
-- `wf.shell` 是否第一版支持 durable resume，还是仅支持短命令。
-- workflow run state 存储在 thread-store、state DB，还是独立 workflow store。
+- `wf.shell` 后续是否接入现有 command/session 工具并提供 durable resume。
+- workflow run state 当前存储在独立 `$CODEX_HOME/workflow-runs`，后续是否迁移到 thread-store/state DB。
 - workflow typed `ResponseItem` 的粒度：单一 `WorkflowEvent` 还是多个具体 variant。
 - 客户端是否使用 React Flow + ELK.js 实现 DAG 展示。
-- workflow snapshot bundle 的依赖边界如何限制。
+- workflow snapshot 目前是 workflow 目录 + shim，后续是否引入 bundle、transpile 和依赖锁定。
 - workflow run 与当前 thread 的权限、cwd、approval policy 如何继承。
 
 ## MVP 范围建议
 
-第一版建议实现：
+第一版已实现：
 
 - TS workflow definition + runner。
 - `workflow_start/status/resume/abort`。
-- `Agent(id)` 幂等绑定已有 subagent。
-- `staticGraph + runtimeGraph`。
 - workflow run state 持久化。
 - typed workflow response item 到 thread item 的展示。
-- 客户端展示高层流程图和实际 agent 节点状态。
+- app-server v2 `workflow/list|describe|start|status|resume|abort` 控制面和 `workflow/run/updated` notification。
 
-暂不实现：
+仍暂不实现：
 
 - 完整 BPMN engine。
 - 图形化 workflow editor。
 - 复杂 durable shell step。
 - AST 静态分析。
 - 任意远程 workflow 脚本执行。
+- `Agent(id)` 真实绑定/恢复 subagent session。
+- 客户端展示高层流程图和实际 agent 节点状态。

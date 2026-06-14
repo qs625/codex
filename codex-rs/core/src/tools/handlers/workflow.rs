@@ -18,6 +18,7 @@ use crate::tools::handlers::workflow_spec::create_workflow_status_tool;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
 use crate::workflow_runs::WorkflowRun;
+use crate::workflow_runs::WorkflowRunStatus;
 use crate::workflows::load_workflow_registry;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::models::WorkflowRunProgressEvent;
@@ -170,12 +171,14 @@ impl ToolExecutor<ToolInvocation> for WorkflowStartHandler {
         }
 
         let registry = load_workflow_registry(&turn.config);
+        let updates = session.workflow_runs.subscribe();
         let run = session
             .workflow_runs
             .start(&registry, workflow, args.inputs.unwrap_or(Value::Null))
             .await
             .map_err(FunctionCallError::RespondToModel)?;
         record_workflow_progress(&session, &turn, &run, WorkflowRunProgressKind::Started).await;
+        record_terminal_workflow_progress(session, turn, updates, run.run_id.clone());
         json_output(&run)
     }
 }
@@ -250,12 +253,14 @@ impl ToolExecutor<ToolInvocation> for WorkflowResumeHandler {
             ));
         }
 
+        let updates = session.workflow_runs.subscribe();
         let run = session
             .workflow_runs
             .resume(run_id, args.inputs)
             .await
             .map_err(FunctionCallError::RespondToModel)?;
         record_workflow_progress(&session, &turn, &run, WorkflowRunProgressKind::Resumed).await;
+        record_terminal_workflow_progress(session, turn, updates, run.run_id.clone());
         json_output(&run)
     }
 }
@@ -338,6 +343,40 @@ async fn record_workflow_progress(
         },
     };
     session
-        .record_conversation_items(turn, std::slice::from_ref(&item))
+        .record_conversation_items_and_emit_item_completed(turn, std::slice::from_ref(&item))
         .await;
+}
+
+fn record_terminal_workflow_progress(
+    session: std::sync::Arc<crate::session::session::Session>,
+    turn: std::sync::Arc<crate::session::turn_context::TurnContext>,
+    mut updates: tokio::sync::broadcast::Receiver<WorkflowRun>,
+    run_id: String,
+) {
+    tokio::spawn(async move {
+        loop {
+            let run = match updates.recv().await {
+                Ok(run) => run,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            if run.run_id == run_id
+                && let Some(kind) = workflow_progress_kind_for_terminal_status(run.status)
+            {
+                record_workflow_progress(&session, &turn, &run, kind).await;
+                break;
+            }
+        }
+    });
+}
+
+fn workflow_progress_kind_for_terminal_status(
+    status: WorkflowRunStatus,
+) -> Option<WorkflowRunProgressKind> {
+    match status {
+        WorkflowRunStatus::Running => None,
+        WorkflowRunStatus::Completed => Some(WorkflowRunProgressKind::Completed),
+        WorkflowRunStatus::Failed => Some(WorkflowRunProgressKind::Failed),
+        WorkflowRunStatus::Aborted => None,
+    }
 }

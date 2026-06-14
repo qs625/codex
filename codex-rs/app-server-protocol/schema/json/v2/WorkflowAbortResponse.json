@@ -1,0 +1,163 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "WorkflowInputSpec": {
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "WorkflowRun": {
+      "properties": {
+        "abortReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inputs": true,
+        "message": {
+          "type": "string"
+        },
+        "output": true,
+        "revision": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "runnerStatus": {
+          "type": "string"
+        },
+        "snapshotPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/WorkflowRunStatus"
+        },
+        "updatedAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "workflow": {
+          "$ref": "#/definitions/WorkflowSummary"
+        }
+      },
+      "required": [
+        "createdAt",
+        "inputs",
+        "message",
+        "revision",
+        "runId",
+        "runnerStatus",
+        "status",
+        "updatedAt",
+        "workflow"
+      ],
+      "type": "object"
+    },
+    "WorkflowRunStatus": {
+      "enum": [
+        "running",
+        "completed",
+        "failed",
+        "aborted"
+      ],
+      "type": "string"
+    },
+    "WorkflowSource": {
+      "enum": [
+        "home",
+        "project"
+      ],
+      "type": "string"
+    },
+    "WorkflowSummary": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "entry": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "$ref": "#/definitions/WorkflowInputSpec"
+          },
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/definitions/WorkflowSource"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "whenToUse": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "description",
+        "entry",
+        "id",
+        "inputs",
+        "name",
+        "path",
+        "source",
+        "whenToUse"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "run": {
+      "$ref": "#/definitions/WorkflowRun"
+    }
+  },
+  "required": [
+    "run"
+  ],
+  "title": "WorkflowAbortResponse",
+  "type": "object"
+}

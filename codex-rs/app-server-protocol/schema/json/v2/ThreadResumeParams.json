@@ -1533,6 +1533,8 @@
       "enum": [
         "started",
         "resumed",
+        "completed",
+        "failed",
         "aborted"
       ],
       "type": "string"

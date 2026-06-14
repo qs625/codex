@@ -3,6 +3,7 @@ use crate::protocol::v2::CommandExecutionNotificationKind;
 use crate::protocol::v2::CommandWaitNotificationKind;
 use crate::protocol::v2::CommandWaitStatus;
 use crate::protocol::v2::DynamicToolCallStatus;
+use crate::protocol::v2::EventCommandEventKind;
 use crate::protocol::v2::ThreadItem;
 use codex_protocol::models::CommandExecutionNotificationKind as CoreCommandExecutionNotificationKind;
 use codex_protocol::models::CommandWaitNotificationKind as CoreCommandWaitNotificationKind;
@@ -71,6 +72,21 @@ where
         ResponseItem::WorkflowRunProgress { id, event } => Some(ThreadItem::WorkflowRunProgress {
             id: id.clone().unwrap_or_else(fallback_id),
             event: event.clone().into(),
+        }),
+        ResponseItem::EventCommandEvent { id, event } => Some(ThreadItem::EventCommandEvent {
+            id: id.clone().unwrap_or_else(|| event.stable_item_id()),
+            subscription_id: event.subscription_id.clone(),
+            kind: EventCommandEventKind::from(event.kind.clone()),
+            label: event.label.clone(),
+            command: event.command.clone(),
+            cwd: event.cwd.clone(),
+            line: event.line.clone(),
+            sequence: event.sequence,
+            exit_code: event.exit_code,
+            signal: event.signal.clone(),
+            message: event.message.clone(),
+            truncated: event.truncated,
+            created_at: event.created_at,
         }),
         ResponseItem::EventDrivenTool { id, trigger } => Some(ThreadItem::EventDrivenTool {
             id: id.clone().unwrap_or_else(fallback_id),
@@ -206,7 +222,11 @@ fn subscription_tool_name(namespace: Option<&str>, name: &str) -> Option<String>
     }
 
     match name {
-        "schedule_subscribe" | "schedule_unsubscribe" => Some(name.to_string()),
+        "schedule_subscribe"
+        | "schedule_unsubscribe"
+        | "event_command_write_stdin"
+        | "command_wait"
+        | "command_write_stdin" => Some(name.to_string()),
         _ => None,
     }
 }
@@ -259,7 +279,7 @@ mod tests {
     use codex_protocol::event_command::EventCommandEventKind;
 
     #[test]
-    fn event_command_event_is_not_projected_to_thread_item() {
+    fn event_command_event_projects_to_thread_item() {
         let event = EventCommandEvent {
             subscription_id: "sub-command".to_string(),
             kind: EventCommandEventKind::Output,
@@ -283,7 +303,21 @@ mod tests {
                 },
                 || "fallback".to_string(),
             ),
-            None,
+            Some(ThreadItem::EventCommandEvent {
+                id: "typed-event-command".to_string(),
+                subscription_id: "sub-command".to_string(),
+                kind: crate::protocol::v2::EventCommandEventKind::Output,
+                label: Some("build log".to_string()),
+                command: "tail -f /tmp/build.log".to_string(),
+                cwd: Some("/repo".to_string()),
+                line: Some("done".to_string()),
+                sequence: Some(1),
+                exit_code: None,
+                signal: None,
+                message: None,
+                truncated: false,
+                created_at: 1,
+            }),
         );
     }
 }

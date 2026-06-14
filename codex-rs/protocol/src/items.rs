@@ -241,8 +241,9 @@ pub struct McpToolCallError {
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
 pub struct ContextCompactionItem {
     pub id: String,
+    #[serde(rename = "replacementHistory", alias = "replacement_history")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
+    #[ts(optional, rename = "replacementHistory")]
     pub replacement_history: Option<Vec<ResponseItem>>,
 }
 
