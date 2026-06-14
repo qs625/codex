@@ -257,6 +257,27 @@ test("renders command wait and stdin actions as standalone event entries", () =>
       ],
     ],
   );
+
+  const cells = buildConversationCells(entries);
+  assert.deepEqual(
+    cells.map((cell) => ({
+      id: cell.id,
+      kind: cell.kind,
+      entries: cell.entries.map((entry) => entry.id),
+    })),
+    [
+      {
+        id: "wait-1",
+        kind: "event",
+        entries: ["wait-1"],
+      },
+      {
+        id: "stdin-1",
+        kind: "event",
+        entries: ["stdin-1"],
+      },
+    ],
+  );
 });
 
 test("groups consecutive agent messages without crossing semantic boundaries", () => {

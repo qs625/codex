@@ -80,7 +80,7 @@ test("keeps running command active and records latest output line", () => {
   );
 
   assert.equal(analysis.monitors.totalCount, 1);
-  assert.equal(analysis.monitors.eventCount, 0);
+  assert.equal(analysis.monitors.eventCount, 1);
   assert.deepEqual(analysis.monitors.sections[0]?.monitors, [
     {
       id: "command-1",
@@ -95,7 +95,39 @@ test("keeps running command active and records latest output line", () => {
   ]);
 });
 
-test("keeps failed command in the live command index", () => {
+test("keeps in-progress command statuses active", () => {
+  const analysis = buildThreadAnalysis(
+    makeThread([
+      {
+        type: "commandExecution",
+        id: "command-1",
+        command: "rtk cargo test",
+        cwd: "/repo",
+        status: "inProgress",
+        aggregatedOutput: null,
+        exitCode: null,
+        durationMs: null,
+      },
+      {
+        type: "commandExecution",
+        id: "command-2",
+        command: "rtk pnpm test",
+        cwd: "/repo",
+        status: "in_progress",
+        aggregatedOutput: null,
+        exitCode: null,
+        durationMs: null,
+      },
+    ]),
+    0,
+  );
+
+  assert.equal(analysis.monitors.totalCount, 2);
+  assert.equal(analysis.monitors.sections[0]?.monitors[0]?.status, "Running");
+  assert.equal(analysis.monitors.sections[0]?.monitors[1]?.status, "Running");
+});
+
+test("omits failed completed commands from live command index", () => {
   const analysis = buildThreadAnalysis(
     makeThread([
       {
@@ -112,19 +144,8 @@ test("keeps failed command in the live command index", () => {
     0,
   );
 
-  assert.equal(analysis.monitors.totalCount, 1);
-  assert.deepEqual(analysis.monitors.sections[0]?.monitors, [
-    {
-      id: "command-1",
-      subscriptionId: "command-1",
-      kind: "command",
-      label: "cargo test -p codex-tui",
-      detail: "/repo",
-      status: "Exit 101",
-      eventCount: 1,
-      latestEvent: "test failed",
-    },
-  ]);
+  assert.equal(analysis.monitors.totalCount, 0);
+  assert.deepEqual(analysis.monitors.sections[0]?.monitors, []);
 });
 
 test("uses command notification as latest live command event", () => {

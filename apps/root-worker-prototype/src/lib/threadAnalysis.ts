@@ -192,9 +192,7 @@ function buildCommandMonitorSummary(
   latestNotification: string | null,
 ): MonitorSummary | null {
   const status = statusLabel(item.status);
-  const failed = item.exitCode !== null && item.exitCode !== undefined && item.exitCode !== 0;
-  const running = status === "Running" || status === "In progress";
-  if (!running && !failed) {
+  if (!isRunningCommandStatus(item.status)) {
     return null;
   }
   const latestOutput = stringOrNull(item.aggregatedOutput)
@@ -207,10 +205,15 @@ function buildCommandMonitorSummary(
     kind: "command",
     label: item.command,
     detail: item.cwd,
-    status: failed ? `Exit ${item.exitCode}` : status,
+    status,
     eventCount: latestNotification || latestOutput ? 1 : 0,
     latestEvent: latestNotification ?? latestOutput,
   };
+}
+
+function isRunningCommandStatus(status: string) {
+  const normalized = status.trim().toLowerCase().replace(/[_-]/g, "");
+  return normalized === "running" || normalized === "inprogress";
 }
 
 function summarizeCommandNotification(
@@ -308,7 +311,7 @@ function statusLabel(status: string) {
     return "Failed";
   }
 
-  if (status === "running" || status === "inProgress") {
+  if (isRunningCommandStatus(status)) {
     return "Running";
   }
 
