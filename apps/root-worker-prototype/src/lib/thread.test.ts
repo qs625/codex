@@ -259,6 +259,37 @@ test("updateThreadItem preserves started time when completion updates the same i
   });
 });
 
+test("command wait item notifications create visible conversation entries", () => {
+  const updated = updateThreadItem(
+    makeThread(),
+    "turn-1",
+    {
+      type: "commandWait",
+      id: "wait-1",
+      commandId: "7",
+      status: "completed",
+      notification: "exit",
+      exitCode: 0,
+      wallTimeSeconds: 0.25,
+      createdAtMs: 2_000,
+    },
+    { completedAtMs: 2_000 },
+  );
+
+  const entries = buildConversationEntries(updated);
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.id, entry.kind, entry.text]),
+    [
+      [
+        "wait-1",
+        "event",
+        "Waited for command 7 after exit notification: completed, exit 0 in 0.250s.",
+      ],
+    ],
+  );
+});
+
 test("updateThreadTurn preserves item timestamps when a completed turn snapshot arrives", () => {
   const thread = updateThreadItem(
     makeThread(),
