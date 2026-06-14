@@ -21,7 +21,6 @@ use codex_protocol::items::TurnItem as CoreTurnItem;
 use codex_protocol::memory_citation::MemoryCitation as CoreMemoryCitation;
 use codex_protocol::memory_citation::MemoryCitationEntry as CoreMemoryCitationEntry;
 use codex_protocol::models::MessagePhase;
-use codex_protocol::models::ResponseItem;
 use codex_protocol::models::WorkflowRunProgressEvent as CoreWorkflowRunProgressEvent;
 use codex_protocol::models::WorkflowRunProgressKind as CoreWorkflowRunProgressKind;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -458,7 +457,7 @@ pub enum ThreadItem {
     #[ts(rename_all = "camelCase")]
     ContextCompaction {
         id: String,
-        replacement_history: Option<Vec<ResponseItem>>,
+        replacement_history: Option<JsonValue>,
     },
 }
 
@@ -1101,10 +1100,20 @@ impl From<CoreTurnItem> for ThreadItem {
                     duration_ms,
                 }
             }
-            CoreTurnItem::ContextCompaction(compaction) => ThreadItem::ContextCompaction {
-                id: compaction.id,
-                replacement_history: compaction.replacement_history,
-            },
+            CoreTurnItem::ContextCompaction(compaction) => {
+                let replacement_history =
+                    serde_json::to_value(&compaction)
+                        .ok()
+                        .and_then(|mut value| {
+                            value
+                                .as_object_mut()
+                                .and_then(|object| object.remove("replacementHistory"))
+                        });
+                ThreadItem::ContextCompaction {
+                    id: compaction.id,
+                    replacement_history,
+                }
+            }
         }
     }
 }

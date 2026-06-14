@@ -191,16 +191,17 @@ fn thread_turns_items_list_round_trips() {
 
 #[test]
 fn context_compaction_serializes_replacement_history() {
+    let replacement_history = vec![ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "recent request".to_string(),
+        }],
+        phase: None,
+    }];
     let item = ThreadItem::ContextCompaction {
         id: "item_3".to_string(),
-        replacement_history: Some(vec![ResponseItem::Message {
-            id: None,
-            role: "user".to_string(),
-            content: vec![ContentItem::InputText {
-                text: "recent request".to_string(),
-            }],
-            phase: None,
-        }]),
+        replacement_history: Some(serde_json::to_value(replacement_history).unwrap()),
     };
 
     assert_eq!(

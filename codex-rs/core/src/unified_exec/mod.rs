@@ -34,6 +34,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use rand::Rng;
 use rand::rng;
 use tokio::sync::Mutex;
+use tokio::sync::Notify;
 
 use crate::sandboxing::SandboxPermissions;
 use crate::session::session::Session;
@@ -66,6 +67,7 @@ pub(crate) const DEFAULT_MAX_OUTPUT_TOKENS: usize = 10_000;
 pub(crate) const UNIFIED_EXEC_OUTPUT_MAX_BYTES: usize = 1024 * 1024; // 1 MiB
 pub(crate) const UNIFIED_EXEC_OUTPUT_MAX_TOKENS: usize = UNIFIED_EXEC_OUTPUT_MAX_BYTES / 4;
 pub(crate) const MAX_UNIFIED_EXEC_PROCESSES: usize = 64;
+pub(crate) const MAX_COMPLETED_UNIFIED_EXEC_PROCESSES: usize = 256;
 
 pub(crate) struct UnifiedExecContext {
     pub session: Arc<Session>,
@@ -101,31 +103,138 @@ pub(crate) struct ExecCommandRequest {
     pub additional_permissions_preapproved: bool,
     pub justification: Option<String>,
     pub prefix_rule: Option<Vec<String>>,
+    pub notify_on: CommandNotificationFilter,
 }
 
 #[derive(Debug)]
 pub(crate) struct WriteStdinRequest<'a> {
     pub process_id: i32,
     pub input: &'a str,
-    pub yield_time_ms: u64,
-    pub max_output_tokens: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct WriteStdinOutput {
+    pub process_id: i32,
+    pub call_id: String,
+    pub bytes_written: usize,
+}
+
+#[derive(Debug)]
+pub(crate) struct CommandWaitRequest {
+    pub process_id: i32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CommandNotificationFilter {
+    Output,
+    Exit,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CommandNotificationKind {
+    Output,
+    Exit,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CommandWaitStatus {
+    Running,
+    Completed,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CommandWaitOutput {
+    pub process_id: i32,
+    pub status: CommandWaitStatus,
+    pub notification: Option<CommandNotificationKind>,
+    pub exit_code: Option<i32>,
+    pub wall_time: std::time::Duration,
+}
+
+#[derive(Default)]
+pub(crate) struct CommandNotificationState {
+    inner: Mutex<CommandNotificationSnapshot>,
+    notify: Notify,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct CommandNotificationSnapshot {
+    sequence: u64,
+    kind: Option<CommandNotificationKind>,
+}
+
+impl CommandNotificationState {
+    async fn snapshot(&self) -> CommandNotificationSnapshot {
+        *self.inner.lock().await
+    }
+
+    pub(crate) async fn notify(&self, kind: CommandNotificationKind) {
+        {
+            let mut guard = self.inner.lock().await;
+            guard.sequence += 1;
+            guard.kind = Some(kind);
+        }
+        self.notify.notify_waiters();
+    }
+
+    async fn wait_after(&self, snapshot: CommandNotificationSnapshot) -> CommandNotificationKind {
+        loop {
+            let notified = self.notify.notified();
+            {
+                let guard = self.inner.lock().await;
+                if guard.sequence > snapshot.sequence
+                    && let Some(kind) = guard.kind
+                {
+                    return kind;
+                }
+            }
+            notified.await;
+        }
+    }
 }
 
 #[derive(Default)]
 pub(crate) struct ProcessStore {
     processes: HashMap<i32, ProcessEntry>,
+    completed_processes: HashMap<i32, CompletedProcessEntry>,
     reserved_process_ids: HashSet<i32>,
 }
 
 impl ProcessStore {
     fn remove(&mut self, process_id: i32) -> Option<ProcessEntry> {
         self.reserved_process_ids.remove(&process_id);
-        self.processes.remove(&process_id)
+        let entry = self.processes.remove(&process_id)?;
+        if entry.process.has_exited() || entry.process.exit_code().is_some() {
+            self.completed_processes.insert(
+                process_id,
+                CompletedProcessEntry {
+                    exit_code: entry.process.exit_code(),
+                    completed_at: tokio::time::Instant::now(),
+                },
+            );
+            self.prune_completed_processes();
+        }
+        Some(entry)
+    }
+
+    fn prune_completed_processes(&mut self) {
+        while self.completed_processes.len() > MAX_COMPLETED_UNIFIED_EXEC_PROCESSES {
+            let Some(process_id) = self
+                .completed_processes
+                .iter()
+                .min_by_key(|(_, entry)| entry.completed_at)
+                .map(|(process_id, _)| *process_id)
+            else {
+                return;
+            };
+            self.completed_processes.remove(&process_id);
+        }
     }
 }
 
 pub struct UnifiedExecProcessManager {
     process_store: Mutex<ProcessStore>,
+    command_wait_hard_cap: std::time::Duration,
 }
 
 #[derive(Clone)]
@@ -166,9 +275,10 @@ impl ProcessExitSubscription {
 }
 
 impl UnifiedExecProcessManager {
-    pub(crate) fn new(_max_write_stdin_yield_time_ms: u64) -> Self {
+    pub(crate) fn new(max_write_stdin_yield_time_ms: u64) -> Self {
         Self {
             process_store: Mutex::new(ProcessStore::default()),
+            command_wait_hard_cap: std::time::Duration::from_millis(max_write_stdin_yield_time_ms),
         }
     }
 }
@@ -183,12 +293,17 @@ struct ProcessEntry {
     process: Arc<UnifiedExecProcess>,
     call_id: String,
     process_id: i32,
-    hook_command: String,
     tty: bool,
     network_approval: Option<DeferredNetworkApproval>,
     session: Weak<Session>,
     last_used: tokio::time::Instant,
     transcript: Arc<Mutex<head_tail_buffer::HeadTailBuffer>>,
+    notification_state: Arc<CommandNotificationState>,
+}
+
+struct CompletedProcessEntry {
+    exit_code: Option<i32>,
+    completed_at: tokio::time::Instant,
 }
 
 pub(crate) fn clamp_yield_time(yield_time_ms: u64) -> u64 {

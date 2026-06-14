@@ -1,5 +1,10 @@
 # EventCommand / Monitor 最终目标设计
 
+> 状态：已被 `spec/command-session.md` 取代。旧 `event_command_subscribe`、
+> `event_command_write_stdin` 和 `event_command_unsubscribe` 不再作为 command
+> 工具注册；新的后台命令、等待、退出通知与 stdin 写入能力以
+> `exec_command`、`command_wait`、`command_write_stdin` 为准。本文仅保留历史设计上下文。
+
 ## 任务 brief
 
 目标是把“监听文件”和“监听命令退出”统一收敛到一个 EventCommand 工具。EventCommand 在后台运行一条命令，runtime 每次从命令 stdout 读取到一段非空数据都会作为一条事件发送回 thread/model；命令退出、启动失败或取消时生成明确 terminal event，并清理 active 状态。

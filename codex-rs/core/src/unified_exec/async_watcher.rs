@@ -6,6 +6,9 @@ use tokio::time::Duration;
 use tokio::time::Instant;
 use tokio::time::Sleep;
 
+use super::CommandNotificationFilter;
+use super::CommandNotificationKind;
+use super::CommandNotificationState;
 use super::UnifiedExecContext;
 use super::process::UnifiedExecProcess;
 use crate::exec::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
@@ -41,6 +44,8 @@ pub(crate) fn start_streaming_output(
     process: &UnifiedExecProcess,
     context: &UnifiedExecContext,
     transcript: Arc<Mutex<HeadTailBuffer>>,
+    notify_on: CommandNotificationFilter,
+    notification_state: Arc<CommandNotificationState>,
 ) {
     let mut receiver = process.output_receiver();
     let output_drained = process.output_drained_notify();
@@ -93,6 +98,8 @@ pub(crate) fn start_streaming_output(
                         &session_ref,
                         &turn_ref,
                         &mut emitted_deltas,
+                        notify_on,
+                        &notification_state,
                         chunk,
                     ).await;
                 }
@@ -114,6 +121,7 @@ pub(crate) fn spawn_exit_watcher(
     process_id: i32,
     transcript: Arc<Mutex<HeadTailBuffer>>,
     started_at: Instant,
+    notification_state: Arc<CommandNotificationState>,
 ) {
     let exit_token = process.cancellation_token();
     let output_drained = process.output_drained_notify();
@@ -153,6 +161,9 @@ pub(crate) fn spawn_exit_watcher(
             )
             .await;
         }
+        notification_state
+            .notify(CommandNotificationKind::Exit)
+            .await;
     });
 }
 
@@ -163,6 +174,8 @@ async fn process_chunk(
     session_ref: &Arc<Session>,
     turn_ref: &Arc<TurnContext>,
     emitted_deltas: &mut usize,
+    notify_on: CommandNotificationFilter,
+    notification_state: &Arc<CommandNotificationState>,
     chunk: Vec<u8>,
 ) {
     pending.extend_from_slice(&chunk);
@@ -185,6 +198,11 @@ async fn process_chunk(
             .send_event(turn_ref.as_ref(), EventMsg::ExecCommandOutputDelta(event))
             .await;
         *emitted_deltas += 1;
+        if matches!(notify_on, CommandNotificationFilter::Output) {
+            notification_state
+                .notify(CommandNotificationKind::Output)
+                .await;
+        }
     }
 }
 

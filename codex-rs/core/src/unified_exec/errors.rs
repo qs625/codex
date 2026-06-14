@@ -7,13 +7,12 @@ pub(crate) enum UnifiedExecError {
     CreateProcess { message: String },
     #[error("Unified exec process failed: {message}")]
     ProcessFailed { message: String },
-    // The model is trained on `session_id`, but internally we track a `process_id`.
-    #[error("Unknown process id {process_id}")]
+    #[error("Unknown command id {process_id}")]
     UnknownProcessId { process_id: i32 },
     #[error("failed to write to stdin")]
     WriteToStdin,
     #[error(
-        "write_stdin requires non-empty chars; use event_command_subscribe for command completion, log watching, or other background monitoring instead of polling for output"
+        "command_write_stdin requires non-empty chars; use command_wait for command completion or output notifications instead of polling for output"
     )]
     EmptyStdin,
     #[error(

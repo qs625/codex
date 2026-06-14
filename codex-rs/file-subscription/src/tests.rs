@@ -42,13 +42,7 @@ fn tools_include_file_and_timer_subscriptions_without_exec_manager() {
 
     assert_eq!(
         tool_names,
-        vec![
-            "event_command_subscribe",
-            "event_command_unsubscribe",
-            "event_command_write_stdin",
-            "schedule_subscribe",
-            "schedule_unsubscribe",
-        ]
+        vec!["schedule_subscribe", "schedule_unsubscribe",]
     );
 }
 
@@ -79,12 +73,6 @@ fn old_process_exit_tools_are_not_contributed_with_exec_manager_handle() {
 
     assert_eq!(
         tool_names,
-        vec![
-            "event_command_subscribe",
-            "event_command_unsubscribe",
-            "event_command_write_stdin",
-            "schedule_subscribe",
-            "schedule_unsubscribe",
-        ]
+        vec!["schedule_subscribe", "schedule_unsubscribe",]
     );
 }

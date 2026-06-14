@@ -3,6 +3,7 @@ use crate::tools::flat_tool_name;
 use crate::tools::handlers::ApplyPatchHandler;
 use crate::tools::handlers::CodeModeExecuteHandler;
 use crate::tools::handlers::CodeModeWaitHandler;
+use crate::tools::handlers::CommandWaitHandler;
 use crate::tools::handlers::CreateGoalHandler;
 use crate::tools::handlers::DynamicToolHandler;
 use crate::tools::handlers::ExecCommandHandler;
@@ -332,6 +333,7 @@ pub(crate) fn collect_tool_executors(
                         include_environment_id,
                     },
                 )));
+                executors.push(Arc::new(CommandWaitHandler));
                 executors.push(Arc::new(WriteStdinHandler));
             }
             ConfigShellToolType::Disabled => {}

@@ -27,16 +27,21 @@ use crate::tools::runtimes::unified_exec::UnifiedExecRequest as UnifiedExecToolR
 use crate::tools::runtimes::unified_exec::UnifiedExecRuntime;
 use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
+use crate::unified_exec::CommandNotificationFilter;
+use crate::unified_exec::CommandNotificationKind;
+use crate::unified_exec::CommandNotificationState;
+use crate::unified_exec::CommandWaitOutput;
+use crate::unified_exec::CommandWaitRequest;
+use crate::unified_exec::CommandWaitStatus;
 use crate::unified_exec::ExecCommandRequest;
 use crate::unified_exec::MAX_UNIFIED_EXEC_PROCESSES;
-use crate::unified_exec::MAX_YIELD_TIME_MS;
-use crate::unified_exec::MIN_YIELD_TIME_MS;
 use crate::unified_exec::ProcessEntry;
 use crate::unified_exec::ProcessExitSubscription;
 use crate::unified_exec::ProcessStore;
 use crate::unified_exec::UnifiedExecContext;
 use crate::unified_exec::UnifiedExecError;
 use crate::unified_exec::UnifiedExecProcessManager;
+use crate::unified_exec::WriteStdinOutput;
 use crate::unified_exec::WriteStdinRequest;
 use crate::unified_exec::async_watcher::emit_exec_end_for_unified_exec;
 use crate::unified_exec::async_watcher::emit_failed_exec_end_for_unified_exec;
@@ -163,22 +168,6 @@ fn exec_server_params_for_request(
     }
 }
 
-/// Borrowed process state prepared for a `write_stdin` operation.
-struct PreparedProcessHandles {
-    process: Arc<UnifiedExecProcess>,
-    output_buffer: OutputBuffer,
-    output_notify: Arc<Notify>,
-    output_closed: Arc<AtomicBool>,
-    output_closed_notify: Arc<Notify>,
-    cancellation_token: CancellationToken,
-    pause_state: Option<watch::Receiver<bool>>,
-    session: Option<Arc<crate::session::session::Session>>,
-    network_approval: Option<DeferredNetworkApproval>,
-    hook_command: String,
-    process_id: i32,
-    tty: bool,
-}
-
 fn exec_server_process_id(process_id: i32) -> String {
     process_id.to_string()
 }
@@ -193,17 +182,6 @@ async fn unregister_network_approval_for_entry(entry: &ProcessEntry) {
             .unregister_call(network_approval.registration_id())
             .await;
     }
-}
-
-async fn finish_network_approval_after_process_exit_for_entry(
-    entry: &ProcessEntry,
-) -> Result<(), String> {
-    let session = entry.session.upgrade();
-    finish_deferred_network_approval_after_process_exit_for_session(
-        session.as_ref(),
-        entry.network_approval.clone(),
-    )
-    .await
 }
 
 async fn finish_deferred_network_approval_for_session(
@@ -353,6 +331,7 @@ impl UnifiedExecProcessManager {
                 store
                     .reserved_process_ids
                     .iter()
+                    .chain(store.completed_processes.keys())
                     .copied()
                     .max()
                     .map(|m| std::cmp::max(m, 999) + 1)
@@ -362,7 +341,9 @@ impl UnifiedExecProcessManager {
                 rand::rng().random_range(1_000..100_000)
             };
 
-            if store.reserved_process_ids.contains(&process_id) {
+            if store.reserved_process_ids.contains(&process_id)
+                || store.completed_processes.contains_key(&process_id)
+            {
                 continue;
             }
 
@@ -423,7 +404,14 @@ impl UnifiedExecProcessManager {
         );
         emitter.emit(event_ctx, ToolEventStage::Begin).await;
 
-        start_streaming_output(&process, context, Arc::clone(&transcript));
+        let notification_state = Arc::new(CommandNotificationState::default());
+        start_streaming_output(
+            &process,
+            context,
+            Arc::clone(&transcript),
+            request.notify_on,
+            Arc::clone(&notification_state),
+        );
         let start = Instant::now();
         // Persist live sessions before the initial yield wait so interrupting the
         // turn cannot drop the last Arc and terminate the background process.
@@ -433,13 +421,13 @@ impl UnifiedExecProcessManager {
                 Arc::clone(&process),
                 context,
                 &request.command,
-                request.hook_command.clone(),
                 cwd.clone(),
                 start,
                 request.process_id,
                 request.tty,
                 deferred_network_approval.clone(),
                 Arc::clone(&transcript),
+                Arc::clone(&notification_state),
             )
             .await;
         }
@@ -606,78 +594,45 @@ impl UnifiedExecProcessManager {
         Ok(response)
     }
 
-    pub(crate) async fn write_stdin(
+    pub(crate) async fn write_command_stdin(
         &self,
         request: WriteStdinRequest<'_>,
-    ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
+    ) -> Result<WriteStdinOutput, UnifiedExecError> {
         if request.input.is_empty() {
             return Err(UnifiedExecError::EmptyStdin);
         }
 
         let process_id = request.process_id;
-
-        let PreparedProcessHandles {
-            process,
-            output_buffer,
-            output_notify,
-            output_closed,
-            output_closed_notify,
-            cancellation_token,
-            pause_state,
-            session,
-            network_approval,
-            hook_command,
-            process_id,
-            tty,
-            ..
-        } = self.prepare_process_handles(process_id).await?;
-        let mut status_after_write = None;
+        let (process, session, network_approval, call_id, tty) = {
+            let mut store = self.process_store.lock().await;
+            let entry = store
+                .processes
+                .get_mut(&process_id)
+                .ok_or(UnifiedExecError::UnknownProcessId { process_id })?;
+            entry.last_used = Instant::now();
+            (
+                Arc::clone(&entry.process),
+                entry.session.upgrade(),
+                entry.network_approval.clone(),
+                entry.call_id.clone(),
+                entry.tty,
+            )
+        };
 
         if !tty {
             return Err(UnifiedExecError::StdinClosed);
         }
         match process.write(request.input.as_bytes()).await {
-            Ok(()) => {
-                // Give the remote process a brief window to react so that we are
-                // more likely to capture its output in the collection below.
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
+            Ok(()) => {}
             Err(err) => {
-                let status = self.refresh_process_state(process_id).await;
-                if matches!(status, ProcessStatus::Exited { .. }) {
-                    status_after_write = Some(status);
-                } else if matches!(err, UnifiedExecError::ProcessFailed { .. }) {
+                if matches!(err, UnifiedExecError::ProcessFailed { .. }) {
                     process.terminate();
                     self.release_process_id(process_id).await;
                     return Err(err);
-                } else {
-                    return Err(err);
                 }
+                return Err(err);
             }
         }
-
-        let yield_time_ms = {
-            // Writes keep a fixed max cap so interactive stdin remains responsive.
-            let time_ms = request.yield_time_ms.max(MIN_YIELD_TIME_MS);
-            time_ms.min(MAX_YIELD_TIME_MS)
-        };
-        let start = Instant::now();
-        let deadline = start + Duration::from_millis(yield_time_ms);
-        let collected = Self::collect_output_until_deadline(
-            &output_buffer,
-            &output_notify,
-            &output_closed,
-            &output_closed_notify,
-            &cancellation_token,
-            pause_state,
-            deadline,
-        )
-        .await;
-        let wall_time = Instant::now().saturating_duration_since(start);
-
-        let text = String::from_utf8_lossy(&collected).to_string();
-        let original_token_count = approx_token_count(&text);
-        let chunk_id = generate_chunk_id();
         if network_approval
             .as_ref()
             .is_some_and(DeferredNetworkApproval::is_cancelled)
@@ -701,50 +656,11 @@ impl UnifiedExecProcessManager {
             return Err(UnifiedExecError::process_failed(message));
         }
 
-        // After collecting, refresh_process_state tells us whether the PTY is
-        // still alive or has exited and been removed from the store; we thread
-        // that through so the handler can tag TerminalInteraction with an
-        // appropriate process_id and exit_code.
-        let status = if let Some(status) = status_after_write {
-            status
-        } else {
-            self.refresh_process_state(process_id).await
-        };
-        let (process_id, exit_code, event_call_id) = match status {
-            ProcessStatus::Alive {
-                exit_code,
-                call_id,
-                process_id,
-            } => (Some(process_id), exit_code, call_id),
-            ProcessStatus::Exited { exit_code, entry } => {
-                let call_id = entry.call_id.clone();
-                if let Err(message) =
-                    finish_network_approval_after_process_exit_for_entry(&entry).await
-                {
-                    return Err(fail_process_with_message(entry.process.as_ref(), message));
-                }
-                (None, exit_code, call_id)
-            }
-            ProcessStatus::Unknown => {
-                return Err(UnifiedExecError::UnknownProcessId {
-                    process_id: request.process_id,
-                });
-            }
-        };
-
-        let response = ExecCommandToolOutput {
-            event_call_id,
-            chunk_id,
-            wall_time,
-            raw_output: collected,
-            max_output_tokens: request.max_output_tokens,
+        Ok(WriteStdinOutput {
             process_id,
-            exit_code,
-            original_token_count: Some(original_token_count),
-            hook_command: Some(hook_command),
-        };
-
-        Ok(response)
+            call_id,
+            bytes_written: request.input.len(),
+        })
     }
 
     async fn refresh_process_state(&self, process_id: i32) -> ProcessStatus {
@@ -775,69 +691,30 @@ impl UnifiedExecProcessManager {
         }
     }
 
-    async fn prepare_process_handles(
-        &self,
-        process_id: i32,
-    ) -> Result<PreparedProcessHandles, UnifiedExecError> {
-        let mut store = self.process_store.lock().await;
-        let entry = store
-            .processes
-            .get_mut(&process_id)
-            .ok_or(UnifiedExecError::UnknownProcessId { process_id })?;
-        entry.last_used = Instant::now();
-        let OutputHandles {
-            output_buffer,
-            output_notify,
-            output_closed,
-            output_closed_notify,
-            cancellation_token,
-        } = entry.process.output_handles();
-        let pause_state = entry
-            .session
-            .upgrade()
-            .map(|session| session.subscribe_out_of_band_elicitation_pause_state());
-        let session = entry.session.upgrade();
-
-        Ok(PreparedProcessHandles {
-            process: Arc::clone(&entry.process),
-            output_buffer,
-            output_notify,
-            output_closed,
-            output_closed_notify,
-            cancellation_token,
-            pause_state,
-            session,
-            network_approval: entry.network_approval.clone(),
-            hook_command: entry.hook_command.clone(),
-            process_id: entry.process_id,
-            tty: entry.tty,
-        })
-    }
-
     #[allow(clippy::too_many_arguments)]
     async fn store_process(
         &self,
         process: Arc<UnifiedExecProcess>,
         context: &UnifiedExecContext,
         command: &[String],
-        hook_command: String,
         cwd: AbsolutePathBuf,
         started_at: Instant,
         process_id: i32,
         tty: bool,
         network_approval: Option<DeferredNetworkApproval>,
         transcript: Arc<tokio::sync::Mutex<HeadTailBuffer>>,
+        notification_state: Arc<CommandNotificationState>,
     ) {
         let entry = ProcessEntry {
             process: Arc::clone(&process),
             call_id: context.call_id.clone(),
             process_id,
-            hook_command,
             tty,
             network_approval,
             session: Arc::downgrade(&context.session),
             last_used: started_at,
             transcript: Arc::clone(&transcript),
+            notification_state: Arc::clone(&notification_state),
         };
         let pruned_entry = {
             let mut store = self.process_store.lock().await;
@@ -862,7 +739,73 @@ impl UnifiedExecProcessManager {
             process_id,
             transcript,
             started_at,
+            notification_state,
         );
+    }
+
+    pub(crate) async fn wait_for_command_notification(
+        &self,
+        request: CommandWaitRequest,
+    ) -> Result<CommandWaitOutput, UnifiedExecError> {
+        let started_at = Instant::now();
+        let process_id = request.process_id;
+        let (process, notification_state) = {
+            let mut store = self.process_store.lock().await;
+            let Some(entry) = store.processes.get_mut(&process_id) else {
+                if let Some(entry) = store.completed_processes.get(&process_id) {
+                    return Ok(CommandWaitOutput {
+                        process_id,
+                        status: CommandWaitStatus::Completed,
+                        notification: Some(CommandNotificationKind::Exit),
+                        exit_code: entry.exit_code,
+                        wall_time: std::time::Duration::ZERO,
+                    });
+                }
+                return Err(UnifiedExecError::UnknownProcessId { process_id });
+            };
+            entry.last_used = started_at;
+            if entry.process.has_exited() {
+                return Ok(CommandWaitOutput {
+                    process_id,
+                    status: CommandWaitStatus::Completed,
+                    notification: Some(CommandNotificationKind::Exit),
+                    exit_code: entry.process.exit_code(),
+                    wall_time: std::time::Duration::ZERO,
+                });
+            }
+            (
+                Arc::clone(&entry.process),
+                Arc::clone(&entry.notification_state),
+            )
+        };
+        let snapshot = notification_state.snapshot().await;
+        let cancellation_token = process.cancellation_token();
+
+        let notification = tokio::select! {
+            _ = cancellation_token.cancelled() => CommandNotificationKind::Exit,
+            kind = notification_state.wait_after(snapshot) => kind,
+            _ = tokio::time::sleep(self.command_wait_hard_cap) => {
+                return Ok(CommandWaitOutput {
+                    process_id,
+                    status: CommandWaitStatus::Running,
+                    notification: None,
+                    exit_code: process.exit_code(),
+                    wall_time: Instant::now().saturating_duration_since(started_at),
+                });
+            }
+        };
+        let status = if process.has_exited() {
+            CommandWaitStatus::Completed
+        } else {
+            CommandWaitStatus::Running
+        };
+        Ok(CommandWaitOutput {
+            process_id,
+            status,
+            notification: Some(notification),
+            exit_code: process.exit_code(),
+            wall_time: Instant::now().saturating_duration_since(started_at),
+        })
     }
 
     pub(crate) async fn open_session_with_exec_env(

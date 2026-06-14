@@ -1,42 +1,36 @@
 use crate::function_tool::FunctionCallError;
-use crate::tools::context::ExecCommandToolOutput;
+use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::handlers::parse_arguments;
-use crate::tools::registry::PostToolUsePayload;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
 use crate::unified_exec::WriteStdinRequest;
+use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TerminalInteractionEvent;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use serde::Deserialize;
+use serde::Serialize;
 
 use super::super::shell_spec::create_write_stdin_tool;
-use super::effective_max_output_tokens;
-use super::post_unified_exec_tool_use_payload;
 
 #[derive(Debug, Deserialize)]
 struct WriteStdinArgs {
-    // The model is trained on `session_id`.
-    session_id: i32,
+    command_id: i32,
     #[serde(default)]
     chars: Option<String>,
-    #[serde(default = "super::default_write_stdin_yield_time_ms")]
-    yield_time_ms: u64,
-    #[serde(default)]
-    max_output_tokens: Option<usize>,
 }
 
 pub struct WriteStdinHandler;
 
 #[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
-    type Output = ExecCommandToolOutput;
+    type Output = FunctionToolOutput;
 
     fn tool_name(&self) -> ToolName {
-        ToolName::plain("write_stdin")
+        ToolName::plain("command_write_stdin")
     }
 
     fn spec(&self) -> Option<ToolSpec> {
@@ -55,7 +49,7 @@ impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
             ToolPayload::Function { arguments } => arguments,
             _ => {
                 return Err(FunctionCallError::RespondToModel(
-                    "write_stdin handler received unsupported payload".to_string(),
+                    "command_write_stdin handler received unsupported payload".to_string(),
                 ));
             }
         };
@@ -63,53 +57,56 @@ impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
         let args: WriteStdinArgs = parse_arguments(&arguments)?;
         let Some(chars) = args.chars else {
             return Err(FunctionCallError::RespondToModel(
-                "write_stdin requires non-empty `chars`; use event_command_subscribe for command completion, log watching, or other background monitoring instead of polling for output.".to_string(),
+                "command_write_stdin requires non-empty `chars`; use command_wait for command completion or output notifications instead of polling for output.".to_string(),
             ));
         };
         if chars.is_empty() {
             return Err(FunctionCallError::RespondToModel(
-                "write_stdin requires non-empty `chars`; use event_command_subscribe for command completion, log watching, or other background monitoring instead of polling for output.".to_string(),
+                "command_write_stdin requires non-empty `chars`; use command_wait for command completion or output notifications instead of polling for output.".to_string(),
             ));
         }
-        let max_output_tokens =
-            effective_max_output_tokens(args.max_output_tokens, turn.truncation_policy);
         let response = session
             .services
             .unified_exec_manager
-            .write_stdin(WriteStdinRequest {
-                process_id: args.session_id,
+            .write_command_stdin(WriteStdinRequest {
+                process_id: args.command_id,
                 input: &chars,
-                yield_time_ms: args.yield_time_ms,
-                max_output_tokens: Some(max_output_tokens),
             })
             .await
             .map_err(|err| {
-                FunctionCallError::RespondToModel(format!("write_stdin failed: {err}"))
+                FunctionCallError::RespondToModel(format!("command_write_stdin failed: {err}"))
             })?;
 
         let interaction = TerminalInteractionEvent {
-            call_id: response.event_call_id.clone(),
-            process_id: args.session_id.to_string(),
-            stdin: chars,
+            call_id: response.call_id.clone(),
+            process_id: response.process_id.to_string(),
+            stdin: chars.clone(),
         };
         session
             .send_event(turn.as_ref(), EventMsg::TerminalInteraction(interaction))
             .await;
 
-        Ok(response)
+        let text = serde_json::to_string(&CommandWriteStdinResponse {
+            command_id: response.process_id,
+            bytes_written: response.bytes_written,
+        })
+        .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
+        Ok(FunctionToolOutput {
+            body: vec![FunctionCallOutputContentItem::InputText { text }],
+            success: Some(true),
+            post_tool_use_response: None,
+        })
     }
+}
+
+#[derive(Serialize)]
+struct CommandWriteStdinResponse {
+    command_id: i32,
+    bytes_written: usize,
 }
 
 impl ToolHandler for WriteStdinHandler {
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
         matches!(payload, ToolPayload::Function { .. })
-    }
-
-    fn post_tool_use_payload(
-        &self,
-        invocation: &ToolInvocation,
-        result: &Self::Output,
-    ) -> Option<PostToolUsePayload> {
-        post_unified_exec_tool_use_payload(invocation, result)
     }
 }

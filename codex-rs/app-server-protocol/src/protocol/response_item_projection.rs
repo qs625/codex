@@ -1,8 +1,6 @@
 use crate::protocol::v2::CollabAgentState;
 use crate::protocol::v2::DynamicToolCallStatus;
-use crate::protocol::v2::EventCommandEventKind;
 use crate::protocol::v2::ThreadItem;
-use codex_protocol::event_command::EventCommandEvent;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::InterAgentCommunication;
@@ -21,10 +19,6 @@ where
             id: id.clone().unwrap_or_else(fallback_id),
             event: event.clone().into(),
         }),
-        ResponseItem::EventCommandEvent { id, event } => Some(event_command_event_item(
-            id.clone().unwrap_or_else(|| event.stable_item_id()),
-            event.clone(),
-        )),
         ResponseItem::EventDrivenTool { id, trigger } => Some(ThreadItem::EventDrivenTool {
             id: id.clone().unwrap_or_else(fallback_id),
             tool: trigger.tool.clone(),
@@ -51,15 +45,6 @@ pub fn project_tool_call_start(
     call_id: &str,
 ) -> Option<ThreadItem> {
     let arguments = parse_raw_function_call_arguments(arguments);
-    if is_event_command_subscribe_tool(namespace, name) {
-        return Some(event_command_call_item(
-            call_id.to_string(),
-            arguments,
-            DynamicToolCallStatus::InProgress,
-            None,
-        ));
-    }
-
     subscription_tool_name(namespace, name).map(|tool| ThreadItem::EventDrivenToolCall {
         id: call_id.to_string(),
         tool,
@@ -76,25 +61,6 @@ pub fn project_tool_call_completion(
     output: &FunctionCallOutputPayload,
 ) -> Option<ThreadItem> {
     match existing {
-        ThreadItem::EventCommandCall {
-            command,
-            cwd,
-            label,
-            ..
-        } => {
-            let output_json = event_command_output_payload_to_json(output);
-            Some(ThreadItem::EventCommandCall {
-                id: call_id.to_string(),
-                subscription_id: string_field(&output_json, "subscription_id")
-                    .or_else(|| string_field(&output_json, "subscriptionId"))
-                    .unwrap_or_default(),
-                command: string_field(&output_json, "command").unwrap_or_else(|| command.clone()),
-                cwd: string_field(&output_json, "cwd").or_else(|| cwd.clone()),
-                label: string_field(&output_json, "label").or_else(|| label.clone()),
-                status: DynamicToolCallStatus::Completed,
-                output: Some(output_json),
-            })
-        }
         ThreadItem::EventDrivenToolCall {
             tool, arguments, ..
         } => Some(ThreadItem::EventDrivenToolCall {
@@ -106,26 +72,6 @@ pub fn project_tool_call_completion(
         }),
         _ => None,
     }
-}
-
-#[doc(hidden)]
-pub fn is_structured_response_item_completion(item: &ResponseItem) -> bool {
-    matches!(
-        item,
-        ResponseItem::WorkflowRunProgress { .. }
-            | ResponseItem::EventCommandEvent { .. }
-            | ResponseItem::EventDrivenTool { .. }
-            | ResponseItem::InterAgentCommunication {
-                communication: InterAgentCommunication {
-                    operation: CoreInterAgentOperation::SpawnAgent
-                        | CoreInterAgentOperation::SendMessage
-                        | CoreInterAgentOperation::FollowupTask
-                        | CoreInterAgentOperation::ChildCompletion,
-                    ..
-                },
-                ..
-            }
-    )
 }
 
 #[doc(hidden)]
@@ -180,56 +126,8 @@ fn subscription_tool_name(namespace: Option<&str>, name: &str) -> Option<String>
     }
 
     match name {
-        "event_command_unsubscribe"
-        | "event_command_write_stdin"
-        | "schedule_subscribe"
-        | "schedule_unsubscribe" => Some(name.to_string()),
+        "schedule_subscribe" | "schedule_unsubscribe" => Some(name.to_string()),
         _ => None,
-    }
-}
-
-fn is_event_command_subscribe_tool(namespace: Option<&str>, name: &str) -> bool {
-    namespace.is_none() && name == "event_command_subscribe"
-}
-
-fn event_command_call_item(
-    id: String,
-    arguments: serde_json::Value,
-    status: DynamicToolCallStatus,
-    output: Option<serde_json::Value>,
-) -> ThreadItem {
-    ThreadItem::EventCommandCall {
-        id,
-        subscription_id: output
-            .as_ref()
-            .and_then(|value| {
-                string_field(value, "subscription_id")
-                    .or_else(|| string_field(value, "subscriptionId"))
-            })
-            .unwrap_or_default(),
-        command: string_field(&arguments, "command").unwrap_or_default(),
-        cwd: string_field(&arguments, "cwd"),
-        label: string_field(&arguments, "label"),
-        status,
-        output,
-    }
-}
-
-fn event_command_event_item(id: String, event: EventCommandEvent) -> ThreadItem {
-    ThreadItem::EventCommandEvent {
-        id,
-        subscription_id: event.subscription_id,
-        kind: EventCommandEventKind::from(event.kind),
-        label: event.label,
-        command: event.command,
-        cwd: event.cwd,
-        line: event.line,
-        sequence: event.sequence,
-        exit_code: event.exit_code,
-        signal: event.signal,
-        message: event.message,
-        truncated: event.truncated,
-        created_at: event.created_at,
     }
 }
 
@@ -274,16 +172,38 @@ fn function_call_output_payload_to_json(output: &FunctionCallOutputPayload) -> s
     serde_json::to_value(output).unwrap_or_else(|_| serde_json::Value::String(output.to_string()))
 }
 
-fn event_command_output_payload_to_json(output: &FunctionCallOutputPayload) -> serde_json::Value {
-    output
-        .text_content()
-        .and_then(|text| serde_json::from_str(text).ok())
-        .unwrap_or_else(|| function_call_output_payload_to_json(output))
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_protocol::event_command::EventCommandEvent;
+    use codex_protocol::event_command::EventCommandEventKind;
 
-fn string_field(value: &serde_json::Value, field: &str) -> Option<String> {
-    value
-        .get(field)
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
+    #[test]
+    fn event_command_event_is_not_projected_to_thread_item() {
+        let event = EventCommandEvent {
+            subscription_id: "sub-command".to_string(),
+            kind: EventCommandEventKind::Output,
+            label: Some("build log".to_string()),
+            command: "tail -f /tmp/build.log".to_string(),
+            cwd: Some("/repo".to_string()),
+            line: Some("done".to_string()),
+            sequence: Some(1),
+            exit_code: None,
+            signal: None,
+            message: None,
+            truncated: false,
+            created_at: 1,
+        };
+
+        assert_eq!(
+            project_structured_response_item(
+                &ResponseItem::EventCommandEvent {
+                    id: Some("typed-event-command".to_string()),
+                    event,
+                },
+                || "fallback".to_string(),
+            ),
+            None,
+        );
+    }
 }

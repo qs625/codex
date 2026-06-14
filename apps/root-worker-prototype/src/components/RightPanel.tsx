@@ -215,7 +215,7 @@ function ThreadAnalysisPanel({ analysis }: { analysis: ThreadAnalysis }) {
         <div className="panel-content-copy">
           <span className="panel-eyebrow">Thread Analysis</span>
           <h2>Thread Analysis</h2>
-          <p>Context mix, loaded skills, and active thread monitors.</p>
+          <p>Context mix, loaded skills, and live command activity.</p>
         </div>
       </header>
 
@@ -282,11 +282,11 @@ function ThreadAnalysisPanel({ analysis }: { analysis: ThreadAnalysis }) {
         <section className="context-section-card">
           <div className="context-section-header">
             <div>
-              <span className="context-section-eyebrow">Active Monitors</span>
-              <strong>Subscriptions</strong>
+              <span className="context-section-eyebrow">Command Activity</span>
+              <strong>Live Index</strong>
             </div>
             <span className="context-inline-metric">
-              {monitors.totalCount} listener
+              {monitors.totalCount} item
               {monitors.totalCount === 1 ? "" : "s"}
             </span>
           </div>
@@ -366,7 +366,7 @@ function statusClassName(status: string) {
     return "evented";
   }
 
-  return status.toLowerCase();
+  return status.toLowerCase().replace(/\s+/g, "-");
 }
 
 function TodoPanel({

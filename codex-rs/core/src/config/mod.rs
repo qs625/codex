@@ -926,9 +926,8 @@ pub struct Config {
     /// If set to `true`, used only the experimental unified exec tool.
     pub use_experimental_unified_exec_tool: bool,
 
-    /// Deprecated compatibility setting for the former background terminal
-    /// output poll window. `write_stdin` no longer polls output; use
-    /// `event_command_subscribe` for background command monitoring.
+    /// Command session wait hard cap. This is a wait protection limit and does
+    /// not terminate the underlying command.
     pub background_terminal_max_timeout: u64,
 
     /// Compatibility-only settings retained for legacy `ghost_snapshot`

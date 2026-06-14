@@ -1367,7 +1367,10 @@ impl ThreadHistoryBuilder {
     /// `finish_current_turn` when they have no renderable items and were not
     /// explicitly opened.
     fn handle_compacted(&mut self, payload: &CompactedItem) {
-        let replacement_history = payload.replacement_history.clone();
+        let replacement_history = payload
+            .replacement_history
+            .as_ref()
+            .and_then(|history| serde_json::to_value(history).ok());
         {
             let turn = self.ensure_turn();
             turn.saw_compaction = true;
@@ -5264,7 +5267,7 @@ mod tests {
             turns[0].items,
             vec![ThreadItem::ContextCompaction {
                 id: "item-1".into(),
-                replacement_history: Some(replacement_history),
+                replacement_history: Some(serde_json::to_value(replacement_history).unwrap()),
             }]
         );
     }
@@ -5315,7 +5318,7 @@ mod tests {
                 items_view: TurnItemsView::Full,
                 items: vec![ThreadItem::ContextCompaction {
                     id: "item-1".into(),
-                    replacement_history: Some(replacement_history),
+                    replacement_history: Some(serde_json::to_value(replacement_history).unwrap()),
                 }],
             }]
         );

@@ -15135,15 +15135,7 @@
             "id": {
               "type": "string"
             },
-            "replacementHistory": {
-              "items": {
-                "$ref": "#/definitions/ResponseItem"
-              },
-              "type": [
-                "array",
-                "null"
-              ]
-            },
+            "replacementHistory": true,
             "type": {
               "enum": [
                 "contextCompaction"

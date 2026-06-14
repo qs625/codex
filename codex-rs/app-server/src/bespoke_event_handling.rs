@@ -2760,7 +2760,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn event_command_call_notifications_emit_started_then_completed() -> Result<()> {
+    async fn event_command_call_notifications_do_not_emit_projected_items() -> Result<()> {
         let conversation_id = ThreadId::new();
         let thread_state = new_thread_state();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
@@ -2790,24 +2790,10 @@ mod tests {
         )
         .await;
 
-        let started = recv_broadcast_message(&mut rx).await?;
-        match started {
-            OutgoingMessage::AppServerNotification(ServerNotification::ItemStarted(payload)) => {
-                assert_eq!(
-                    payload.item,
-                    ThreadItem::EventCommandCall {
-                        id: "call-1".to_string(),
-                        subscription_id: String::new(),
-                        command: "tail -f /tmp/log".to_string(),
-                        cwd: Some("/tmp".to_string()),
-                        label: Some("build log".to_string()),
-                        status: DynamicToolCallStatus::InProgress,
-                        output: None,
-                    }
-                );
-            }
-            other => bail!("unexpected message: {other:?}"),
-        }
+        assert!(
+            rx.try_recv().is_err(),
+            "event_command_subscribe should not emit legacy projected items"
+        );
 
         maybe_emit_projected_tool_call_notifications(
             conversation_id,
@@ -2824,33 +2810,56 @@ mod tests {
         )
         .await;
 
-        let completed = recv_broadcast_message(&mut rx).await?;
-        match completed {
-            OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(payload)) => {
-                assert_eq!(
-                    payload.item,
-                    ThreadItem::EventCommandCall {
-                        id: "call-1".to_string(),
-                        subscription_id: "sub-1".to_string(),
-                        command: "tail -f /tmp/log".to_string(),
-                        cwd: Some("/tmp".to_string()),
-                        label: Some("build log".to_string()),
-                        status: DynamicToolCallStatus::Completed,
-                        output: Some(json!({
-                            "subscription_id": "sub-1",
-                            "command": "tail -f /tmp/log",
-                            "cwd": "/tmp",
-                            "label": "build log",
-                        })),
-                    }
-                );
-            }
-            other => bail!("unexpected message: {other:?}"),
-        }
+        assert!(
+            rx.try_recv().is_err(),
+            "event_command_subscribe output should not emit legacy projected items"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn event_command_event_response_item_does_not_emit_projected_items() -> Result<()> {
+        let conversation_id = ThreadId::new();
+        let thread_state = new_thread_state();
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let outgoing = Arc::new(OutgoingMessageSender::new(
+            tx,
+            codex_analytics::AnalyticsEventsClient::disabled(),
+        ));
+        let outgoing = ThreadScopedOutgoingMessageSender::new(
+            outgoing,
+            vec![ConnectionId(1)],
+            ThreadId::new(),
+        );
+
+        maybe_emit_projected_tool_call_notifications(
+            conversation_id,
+            "turn-1",
+            &codex_protocol::models::ResponseItem::EventCommandEvent {
+                id: None,
+                event: codex_protocol::event_command::EventCommandEvent {
+                    subscription_id: "sub-1".to_string(),
+                    kind: codex_protocol::event_command::EventCommandEventKind::Output,
+                    label: Some("build log".to_string()),
+                    command: "tail -f /tmp/log".to_string(),
+                    cwd: Some("/tmp".to_string()),
+                    line: Some("ready".to_string()),
+                    sequence: Some(1),
+                    exit_code: None,
+                    signal: None,
+                    message: None,
+                    truncated: false,
+                    created_at: 1_700_000_000,
+                },
+            },
+            &outgoing,
+            &thread_state,
+        )
+        .await;
 
         assert!(
             rx.try_recv().is_err(),
-            "event-driven tool call should emit exactly twice"
+            "event command events should not emit legacy projected items"
         );
         Ok(())
     }

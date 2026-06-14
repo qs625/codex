@@ -68,6 +68,7 @@ pub use shell::ShellCommandHandler;
 pub(crate) use shell::ShellCommandHandlerOptions;
 pub use test_sync::TestSyncHandler;
 pub use tool_search::ToolSearchHandler;
+pub use unified_exec::CommandWaitHandler;
 pub use unified_exec::ExecCommandHandler;
 pub(crate) use unified_exec::ExecCommandHandlerOptions;
 pub use unified_exec::WriteStdinHandler;

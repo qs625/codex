@@ -6,7 +6,7 @@ use serde_json::json;
 use std::collections::BTreeMap;
 
 fn exec_command_description() -> String {
-    "Runs a command in a PTY, returning output or a session ID for ongoing interaction. For background command monitoring, command-exit notifications, or file/log watching, use `event_command_subscribe` to run a quiet monitor command whose stdout lines become events."
+    "Runs a command and creates a command session. If the command exits during the initial wait window, returns its output and exit code; otherwise returns a command_id for `command_wait` and `command_write_stdin`. Live output is streamed to clients independently from model notifications."
         .to_string()
 }
 
@@ -51,9 +51,21 @@ pub(crate) fn create_exec_command_tool_with_environment_id(
             )),
         ),
         (
+            "initial_wait_ms".to_string(),
+            JsonSchema::number(Some(
+                "How long to wait initially (in milliseconds) before returning a running command session. If omitted, uses yield_time_ms for compatibility.".to_string(),
+            )),
+        ),
+        (
+            "notify_on".to_string(),
+            JsonSchema::string(Some(
+                "When the model should be notified after the initial response: \"output\" wakes on new output or exit; \"exit\" wakes only when the command exits. Defaults to \"exit\".".to_string(),
+            )),
+        ),
+        (
             "yield_time_ms".to_string(),
             JsonSchema::number(Some(
-                "How long to wait (in milliseconds) for output before yielding.".to_string(),
+                "Compatibility alias for initial_wait_ms.".to_string(),
             )),
         ),
         (
@@ -105,12 +117,31 @@ pub(crate) fn create_exec_command_tool_with_environment_id(
     })
 }
 
+pub fn create_command_wait_tool() -> ToolSpec {
+    let properties = BTreeMap::from([(
+        "command_id".to_string(),
+        JsonSchema::number(Some(
+            "Identifier of the command session returned by exec_command.".to_string(),
+        )),
+    )]);
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "command_wait".to_string(),
+        description: "Wait for the next future notification from a running command session. This does not return command output or replay older notifications; if the command has already exited, it returns completed immediately."
+            .to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::object(properties, Some(vec!["command_id".to_string()]), Some(false.into())),
+        output_schema: Some(command_wait_output_schema()),
+    })
+}
+
 pub fn create_write_stdin_tool() -> ToolSpec {
     let properties = BTreeMap::from([
         (
-            "session_id".to_string(),
+            "command_id".to_string(),
             JsonSchema::number(Some(
-                "Identifier of the running unified exec session to send input to.".to_string(),
+                "Identifier of the running command session to send input to.".to_string(),
             )),
         ),
         (
@@ -119,36 +150,23 @@ pub fn create_write_stdin_tool() -> ToolSpec {
                 "Non-empty bytes to write to stdin. Use this only to send real input to a running interactive PTY session; do not use it to read output, wait for completion, or refresh command status.".to_string(),
             )),
         ),
-        (
-            "yield_time_ms".to_string(),
-            JsonSchema::number(Some(
-                "How long to wait (in milliseconds) for any immediate response after writing input.".to_string(),
-            )),
-        ),
-        (
-            "max_output_tokens".to_string(),
-            JsonSchema::number(Some(
-                "Maximum number of tokens to return for the immediate response after writing input. Excess output will be truncated.".to_string(),
-            )),
-        ),
     ]);
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "write_stdin".to_string(),
-        description: "Writes characters to an existing unified exec session so you can interact \
+        name: "command_write_stdin".to_string(),
+        description: "Writes characters to an existing command session so you can interact \
             with a running PTY-backed command. Use this to answer prompts, send confirmations, or \
             provide interactive input. `chars` is required and must be non-empty; use \
-            `event_command_subscribe` for command-completion notifications, log watching, or other \
-            background monitoring instead of calling `write_stdin` to poll for output."
+            `command_wait` for command completion or output notifications instead of polling."
             .to_string(),
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::object(
             properties,
-            Some(vec!["session_id".to_string(), "chars".to_string()]),
+            Some(vec!["command_id".to_string(), "chars".to_string()]),
             Some(false.into()),
         ),
-        output_schema: Some(unified_exec_output_schema()),
+        output_schema: Some(command_write_stdin_output_schema()),
     })
 }
 
@@ -268,9 +286,9 @@ fn unified_exec_output_schema() -> Value {
                 "type": "number",
                 "description": "Process exit code when the command finished during this call."
             },
-            "session_id": {
+            "command_id": {
                 "type": "number",
-                "description": "Session identifier to pass to write_stdin when the process is still running."
+                "description": "Command identifier to pass to command_wait or command_write_stdin when the process is still running."
             },
             "original_token_count": {
                 "type": "number",
@@ -282,6 +300,54 @@ fn unified_exec_output_schema() -> Value {
             }
         },
         "required": ["wall_time_seconds", "output"],
+        "additionalProperties": false
+    })
+}
+
+fn command_wait_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "command_id": {
+                "type": "number",
+                "description": "Command session identifier."
+            },
+            "status": {
+                "type": "string",
+                "description": "Current command status: running or completed."
+            },
+            "notification": {
+                "type": "string",
+                "description": "Notification that released this wait: output or exit. Omitted when the hard cap is reached without a notification."
+            },
+            "exit_code": {
+                "type": "number",
+                "description": "Process exit code when available."
+            },
+            "wall_time_seconds": {
+                "type": "number",
+                "description": "Elapsed wall time spent waiting."
+            }
+        },
+        "required": ["command_id", "status", "wall_time_seconds"],
+        "additionalProperties": false
+    })
+}
+
+fn command_write_stdin_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "command_id": {
+                "type": "number",
+                "description": "Command session identifier."
+            },
+            "bytes_written": {
+                "type": "number",
+                "description": "Number of bytes accepted for stdin."
+            }
+        },
+        "required": ["command_id", "bytes_written"],
         "additionalProperties": false
     })
 }

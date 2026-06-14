@@ -4,7 +4,7 @@ import {
 } from "./contextUsage";
 import type { Thread, ThreadItem } from "../types";
 
-export type MonitorKind = "eventCommand" | "schedule";
+export type MonitorKind = "command" | "schedule";
 
 export type MonitorSummary = {
   id: string;
@@ -52,9 +52,9 @@ const MONITOR_SECTIONS: Array<{
   emptyLabel: string;
 }> = [
   {
-    kind: "eventCommand",
-    title: "Event commands",
-    emptyLabel: "No command monitors.",
+    kind: "command",
+    title: "Live Commands",
+    emptyLabel: "No live commands.",
   },
   {
     kind: "schedule",
@@ -113,13 +113,12 @@ function buildMonitorSections(
           eventsByTool.set(item.tool, events);
         }
 
-        if (item.type === "eventCommandCall") {
-          monitors.push(buildEventCommandMonitorSummary(item));
+        if (item.type === "commandExecution") {
+          const commandMonitor = buildCommandMonitorSummary(item);
+          if (commandMonitor) {
+            monitors.push(commandMonitor);
+          }
           continue;
-        }
-
-        if (item.type === "eventCommandEvent") {
-          applyEventCommandEvent(monitors, item);
         }
       }
     }
@@ -128,7 +127,7 @@ function buildMonitorSections(
   const activeMonitors: MonitorSummary[] = [];
   for (const monitor of monitors) {
     const tool = toolFromMonitorKind(monitor.kind);
-    const events = eventsByTool.get(tool) ?? [];
+    const events = tool ? (eventsByTool.get(tool) ?? []) : [];
     const matchingEvents = events.filter((event) =>
       monitorMatchesEvent(monitor, event.matchText),
     );
@@ -159,76 +158,38 @@ function buildMonitorSections(
 
   return {
     totalCount: activeMonitors.length,
-    eventCount: [...eventsByTool.values()].reduce(
-      (sum, events) => sum + events.length,
-      0,
-    ),
+    eventCount:
+      [...eventsByTool.values()].reduce((sum, events) => sum + events.length, 0) +
+      activeMonitors
+        .filter((monitor) => monitor.kind === "command")
+        .reduce((sum, monitor) => sum + monitor.eventCount, 0),
     sections,
   };
 }
 
-function buildEventCommandMonitorSummary(
-  item: Extract<ThreadItem, { type: "eventCommandCall" }>,
-): MonitorSummary {
+function buildCommandMonitorSummary(
+  item: Extract<ThreadItem, { type: "commandExecution" }>,
+): MonitorSummary | null {
+  const status = statusLabel(item.status);
+  const failed = item.exitCode !== null && item.exitCode !== undefined && item.exitCode !== 0;
+  const running = status === "Running" || status === "In progress";
+  if (!running && !failed) {
+    return null;
+  }
+  const latestOutput = stringOrNull(item.aggregatedOutput)
+    ?.split(/\r?\n/)
+    .filter(Boolean)
+    .at(-1) ?? null;
   return {
     id: item.id,
-    subscriptionId: item.subscriptionId || null,
-    kind: "eventCommand",
-    label: item.label || item.command || "Event command",
-    detail: item.cwd ? `${item.command} (${item.cwd})` : item.command,
-    status: statusLabel(item.status),
-    eventCount: 0,
-    latestEvent: null,
+    subscriptionId: item.id,
+    kind: "command",
+    label: item.command,
+    detail: item.cwd,
+    status: failed ? `Exit ${item.exitCode}` : status,
+    eventCount: latestOutput ? 1 : 0,
+    latestEvent: latestOutput,
   };
-}
-
-function applyEventCommandEvent(
-  monitors: MonitorSummary[],
-  item: Extract<ThreadItem, { type: "eventCommandEvent" }>,
-) {
-  const monitorIndex = findEventCommandMonitorIndex(monitors, item);
-  if (monitorIndex === -1) {
-    return;
-  }
-
-  if (
-    item.kind === "exited" ||
-    item.kind === "cancelled" ||
-    item.kind === "failedToStart"
-  ) {
-    monitors.splice(monitorIndex, 1);
-    return;
-  }
-
-  const monitor = monitors[monitorIndex];
-  monitors[monitorIndex] = {
-    ...monitor,
-    subscriptionId: item.subscriptionId,
-    eventCount: monitor.eventCount + 1,
-    latestEvent: item.line ?? item.message ?? item.kind,
-  };
-}
-
-function findEventCommandMonitorIndex(
-  monitors: MonitorSummary[],
-  item: Extract<ThreadItem, { type: "eventCommandEvent" }>,
-): number {
-  const exactIndex = monitors.findIndex(
-    (monitor) => monitor.subscriptionId === item.subscriptionId,
-  );
-  if (exactIndex !== -1) {
-    return exactIndex;
-  }
-
-  const label = item.label || item.command || "Event command";
-  const detail = item.cwd ? `${item.command} (${item.cwd})` : item.command;
-  return monitors.findIndex(
-    (monitor) =>
-      monitor.kind === "eventCommand" &&
-      monitor.subscriptionId === null &&
-      monitor.label === label &&
-      monitor.detail === detail,
-  );
 }
 
 function buildMonitorSummary(
@@ -243,7 +204,7 @@ function buildMonitorSummary(
     kind,
     label: monitorLabel(kind, args),
     detail: monitorDetail(kind, args, item.output),
-    status: statusLabel(item.status),
+    status: item.status === "completed" ? "Listening" : statusLabel(item.status),
     eventCount: 0,
     latestEvent: null,
   };
@@ -305,7 +266,7 @@ function monitorMatchesEvent(monitor: MonitorSummary, event: string) {
 
 function statusLabel(status: string) {
   if (status === "completed") {
-    return "Listening";
+    return "Completed";
   }
 
   if (status === "failed") {
@@ -313,7 +274,7 @@ function statusLabel(status: string) {
   }
 
   if (status === "running" || status === "inProgress") {
-    return "Subscribing";
+    return "Running";
   }
 
   return status || "Unknown";
@@ -336,7 +297,7 @@ function toolFromMonitorKind(kind: MonitorKind) {
     }
   }
 
-  return "event_command_subscribe";
+  return null;
 }
 
 function objectRecord(value: unknown): Record<string, unknown> {

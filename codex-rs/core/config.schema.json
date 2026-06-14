@@ -4166,7 +4166,7 @@
       "description": "Optional policy instructions for the guardian auto-reviewer."
     },
     "background_terminal_max_timeout": {
-      "description": "Deprecated compatibility setting for the former background terminal output poll window. `write_stdin` no longer polls output; use `event_command_subscribe` for background command monitoring.",
+      "description": "Command session wait hard cap. This is a wait protection limit and does not terminate the underlying command.",
       "format": "uint64",
       "minimum": 0.0,
       "type": "integer"

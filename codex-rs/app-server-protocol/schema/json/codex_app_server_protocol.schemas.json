@@ -17311,15 +17311,7 @@
               "id": {
                 "type": "string"
               },
-              "replacementHistory": {
-                "items": {
-                  "$ref": "#/definitions/v2/ResponseItem"
-                },
-                "type": [
-                  "array",
-                  "null"
-                ]
-              },
+              "replacementHistory": true,
               "type": {
                 "enum": [
                   "contextCompaction"

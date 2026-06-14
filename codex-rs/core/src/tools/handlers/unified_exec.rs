@@ -19,9 +19,11 @@ use std::sync::Arc;
 #[cfg(test)]
 use crate::tools::handlers::parse_arguments;
 
+mod command_wait;
 mod exec_command;
 mod write_stdin;
 
+pub use command_wait::CommandWaitHandler;
 pub use exec_command::ExecCommandHandler;
 pub(crate) use exec_command::ExecCommandHandlerOptions;
 pub use write_stdin::WriteStdinHandler;
@@ -40,6 +42,10 @@ pub(crate) struct ExecCommandArgs {
     #[serde(default = "default_exec_yield_time_ms")]
     yield_time_ms: u64,
     #[serde(default)]
+    initial_wait_ms: Option<u64>,
+    #[serde(default)]
+    notify_on: CommandNotifyOnArg,
+    #[serde(default)]
     max_output_tokens: Option<usize>,
     #[serde(default)]
     sandbox_permissions: SandboxPermissions,
@@ -49,6 +55,23 @@ pub(crate) struct ExecCommandArgs {
     justification: Option<String>,
     #[serde(default)]
     prefix_rule: Option<Vec<String>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum CommandNotifyOnArg {
+    Output,
+    #[default]
+    Exit,
+}
+
+impl From<CommandNotifyOnArg> for crate::unified_exec::CommandNotificationFilter {
+    fn from(value: CommandNotifyOnArg) -> Self {
+        match value {
+            CommandNotifyOnArg::Output => Self::Output,
+            CommandNotifyOnArg::Exit => Self::Exit,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,10 +86,6 @@ struct ExecCommandEnvironmentArgs {
 
 fn default_exec_yield_time_ms() -> u64 {
     10_000
-}
-
-fn default_write_stdin_yield_time_ms() -> u64 {
-    250
 }
 
 fn default_tty() -> bool {

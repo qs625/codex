@@ -47,6 +47,7 @@ import {
 } from "./lib/threadSelectionPolicy";
 import {
   appendAgentDelta,
+  appendCommandExecutionDelta,
   applyInitializedThreadUpdate,
   applyPendingThreadUpdates,
   buildAgentTree,
@@ -1589,6 +1590,24 @@ function App() {
           markThreadLive(notification.threadId);
           updateInitializedThreadLocally(notification.threadId, (thread) =>
             appendAgentDelta(
+              thread,
+              notification.turnId,
+              notification.itemId,
+              notification.delta,
+            ),
+          );
+          break;
+        }
+        case "item/commandExecution/outputDelta": {
+          const notification = params as {
+            threadId: string;
+            turnId: string;
+            itemId: string;
+            delta: string;
+          };
+          markThreadLive(notification.threadId);
+          updateInitializedThreadLocally(notification.threadId, (thread) =>
+            appendCommandExecutionDelta(
               thread,
               notification.turnId,
               notification.itemId,

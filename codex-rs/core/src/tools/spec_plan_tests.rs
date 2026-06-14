@@ -1288,7 +1288,10 @@ fn test_parallel_support_flags() {
         &[],
     );
 
-    assert_contains_tool_names(&tools, &["exec_command", "write_stdin"]);
+    assert_contains_tool_names(
+        &tools,
+        &["exec_command", "command_wait", "command_write_stdin"],
+    );
 }
 
 #[test]

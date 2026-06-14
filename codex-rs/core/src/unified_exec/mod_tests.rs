@@ -115,12 +115,12 @@ async fn exec_command_with_tty(
             process: Arc::clone(&process),
             call_id: context.call_id.clone(),
             process_id,
-            hook_command: cmd.to_string(),
             tty,
             network_approval: None,
             session: Arc::downgrade(session),
             last_used: started_at,
             transcript,
+            notification_state: Arc::new(CommandNotificationState::default()),
         };
         manager
             .process_store
@@ -189,16 +189,69 @@ async fn write_stdin(
     input: &str,
     yield_time_ms: u64,
 ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
-    session
+    let response = session
         .services
         .unified_exec_manager
-        .write_stdin(WriteStdinRequest {
-            process_id,
-            input,
-            yield_time_ms,
-            max_output_tokens: None,
-        })
-        .await
+        .write_command_stdin(WriteStdinRequest { process_id, input })
+        .await?;
+    let process = {
+        let store = session
+            .services
+            .unified_exec_manager
+            .process_store
+            .lock()
+            .await;
+        Arc::clone(
+            &store
+                .processes
+                .get(&process_id)
+                .ok_or(UnifiedExecError::UnknownProcessId { process_id })?
+                .process,
+        )
+    };
+    let OutputHandles {
+        output_buffer,
+        output_notify,
+        output_closed,
+        output_closed_notify,
+        cancellation_token,
+    } = process.output_handles();
+    let start = Instant::now();
+    let deadline = start + Duration::from_millis(yield_time_ms);
+    let collected = UnifiedExecProcessManager::collect_output_until_deadline(
+        &output_buffer,
+        &output_notify,
+        &output_closed,
+        &output_closed_notify,
+        &cancellation_token,
+        Some(session.subscribe_out_of_band_elicitation_pause_state()),
+        deadline,
+    )
+    .await;
+    let wall_time = Instant::now().saturating_duration_since(start);
+    let text = String::from_utf8_lossy(&collected).to_string();
+    let exit_code = process.exit_code();
+    let response_process_id = if process.has_exited() {
+        session
+            .services
+            .unified_exec_manager
+            .release_process_id(process_id)
+            .await;
+        None
+    } else {
+        Some(process_id)
+    };
+    Ok(ExecCommandToolOutput {
+        event_call_id: response.call_id,
+        chunk_id: generate_chunk_id(),
+        wall_time,
+        raw_output: collected,
+        max_output_tokens: None,
+        process_id: response_process_id,
+        exit_code,
+        original_token_count: Some(approx_token_count(&text)),
+        hook_command: None,
+    })
 }
 
 #[tokio::test]
@@ -535,6 +588,17 @@ async fn reusing_completed_process_returns_unknown_process() -> anyhow::Result<(
         }
         other => panic!("expected UnknownProcessId, got {other:?}"),
     }
+
+    let wait_output = session
+        .services
+        .unified_exec_manager
+        .wait_for_command_notification(CommandWaitRequest { process_id })
+        .await?;
+    assert_eq!(wait_output.status, CommandWaitStatus::Completed);
+    assert_eq!(
+        wait_output.notification,
+        Some(CommandNotificationKind::Exit)
+    );
 
     assert!(
         session

@@ -600,6 +600,36 @@ export function appendAgentDelta(
   return { ...thread, turns };
 }
 
+export function appendCommandExecutionDelta(
+  thread: Thread,
+  turnId: string,
+  itemId: string,
+  delta: string,
+) {
+  const appendDelta = (
+    item: Extract<ThreadItem, { type: "commandExecution" }>,
+  ): ThreadItem => ({
+    ...item,
+    aggregatedOutput: `${item.aggregatedOutput ?? ""}${delta}`,
+  });
+  const turns = thread.turns.some((turn) => turn.id === turnId)
+    ? thread.turns.map((turn) => {
+        if (turn.id !== turnId) {
+          return turn;
+        }
+        return {
+          ...turn,
+          items: turn.items.map((item) =>
+            item.id === itemId && item.type === "commandExecution"
+              ? appendDelta(item)
+              : item,
+          ),
+        };
+      })
+    : thread.turns;
+  return { ...thread, turns };
+}
+
 export function mergeTurn(existing: Turn, next: Turn): Turn {
   const existingItems = existing.items.map(normalizeThreadItemSnapshot);
   const nextItems = next.items.map(normalizeThreadItemSnapshot);

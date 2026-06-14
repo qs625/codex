@@ -296,7 +296,28 @@ async fn run_compact_task_inner_impl(
     client_session.reset_websocket_session();
     sess.recompute_token_usage(&turn_context).await;
 
-    compaction_item.replacement_history = replacement_history;
+    let mut compaction_item_value = serde_json::to_value(&compaction_item).map_err(|err| {
+        CodexErr::Fatal(format!(
+            "failed to serialize context compaction item: {err}"
+        ))
+    })?;
+    let Some(compaction_item_object) = compaction_item_value.as_object_mut() else {
+        return Err(CodexErr::Fatal(
+            "failed to serialize context compaction item as object".to_string(),
+        ));
+    };
+    let replacement_history_value = serde_json::to_value(&replacement_history).map_err(|err| {
+        CodexErr::Fatal(format!(
+            "failed to serialize compact replacement history: {err}"
+        ))
+    })?;
+    compaction_item_object.insert("replacementHistory".to_string(), replacement_history_value);
+    let compaction_item: ContextCompactionItem = serde_json::from_value(compaction_item_value)
+        .map_err(|err| {
+            CodexErr::Fatal(format!(
+                "failed to deserialize context compaction item: {err}"
+            ))
+        })?;
     sess.emit_turn_item_completed(&turn_context, TurnItem::ContextCompaction(compaction_item))
         .await;
     let warning = EventMsg::Warning(WarningEvent {

@@ -79,22 +79,22 @@ test("renders thread analysis title and monitor empty states", () => {
 
   assert.match(markup, /Thread Analysis/);
   assert.match(markup, /Context Window Used/);
-  assert.match(markup, /No command monitors\./);
+  assert.match(markup, /No live commands\./);
   assert.match(markup, /No scheduled listeners\./);
 });
 
-test("renders EventCommand and schedule subscriptions", () => {
+test("renders live commands and schedule subscriptions", () => {
   const markup = renderRightPanel(
     makeThread([
       {
-        type: "eventCommandCall",
-        id: "event-command-1",
-        subscriptionId: "sub-command",
+        type: "commandExecution",
+        id: "command-1",
         command: "tail -f /tmp/out.log",
         cwd: "/tmp",
-        label: "build log",
-        status: "completed",
-        output: { subscription_id: "sub-command" },
+        status: "running",
+        aggregatedOutput: "changed:/tmp/out.log\n",
+        exitCode: null,
+        durationMs: null,
       },
       {
         type: "eventDrivenToolCall",
@@ -104,28 +104,12 @@ test("renders EventCommand and schedule subscriptions", () => {
         status: "completed",
         output: null,
       },
-      {
-        type: "eventCommandEvent",
-        id: "event-command-event-1",
-        subscriptionId: "sub-command",
-        kind: "output",
-        label: "build log",
-        command: "tail -f /tmp/out.log",
-        cwd: "/tmp",
-        line: "changed:/tmp/out.log",
-        sequence: 1,
-        exitCode: null,
-        signal: null,
-        message: null,
-        truncated: false,
-        createdAt: 1,
-      },
     ]),
   );
 
-  assert.match(markup, /build log/);
+  assert.match(markup, /tail -f \/tmp\/out\.log/);
   assert.match(markup, /changed:\/tmp\/out\.log/);
-  assert.doesNotMatch(markup, /No command monitors\./);
+  assert.doesNotMatch(markup, /No live commands\./);
   assert.match(markup, /standup ping/);
   assert.match(markup, /once_after:60/);
 });

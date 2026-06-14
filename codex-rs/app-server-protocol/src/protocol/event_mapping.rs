@@ -514,7 +514,6 @@ mod tests {
     use codex_protocol::items::AgentMessageContent;
     use codex_protocol::items::AgentMessageItem;
     use codex_protocol::items::CollabAgentMessageItem;
-    use codex_protocol::items::ContextCompactionItem;
     use codex_protocol::items::EventCommandEventItem;
     use codex_protocol::items::EventDrivenToolItem;
     use codex_protocol::items::TurnItem;
@@ -531,6 +530,7 @@ mod tests {
     use codex_protocol::protocol::ItemCompletedEvent;
     use codex_protocol::protocol::ItemStartedEvent;
     use pretty_assertions::assert_eq;
+    use serde_json::json;
 
     fn assert_item_started_server_notification(
         notification: ServerNotification,
@@ -759,10 +759,13 @@ mod tests {
         let event = ItemCompletedEvent {
             thread_id: ThreadId::new(),
             turn_id: "turn-ignored".to_string(),
-            item: TurnItem::ContextCompaction(ContextCompactionItem {
-                id: "compact-1".to_string(),
-                replacement_history: Some(replacement_history.clone()),
-            }),
+            item: TurnItem::ContextCompaction(
+                serde_json::from_value(json!({
+                    "id": "compact-1",
+                    "replacementHistory": replacement_history.clone(),
+                }))
+                .expect("context compaction item"),
+            ),
             completed_at_ms: 789,
         };
 
@@ -780,7 +783,7 @@ mod tests {
                 completed_at_ms: event.completed_at_ms,
                 item: ThreadItem::ContextCompaction {
                     id: "compact-1".to_string(),
-                    replacement_history: Some(replacement_history),
+                    replacement_history: Some(serde_json::to_value(replacement_history).unwrap()),
                 },
             },
         );

@@ -42,7 +42,7 @@ function makeThread(items: Thread["turns"][number]["items"]): Thread {
   };
 }
 
-test("returns EventCommand and schedule monitor sections when no thread is selected", () => {
+test("returns command and schedule monitor sections when no thread is selected", () => {
   const analysis = buildThreadAnalysis(null, 4);
 
   assert.equal(analysis.contextUsage.totalSkills, 4);
@@ -56,40 +56,24 @@ test("returns EventCommand and schedule monitor sections when no thread is selec
       section.monitors,
     ]),
     [
-      ["eventCommand", "Event commands", "No command monitors.", []],
+      ["command", "Live Commands", "No live commands.", []],
       ["schedule", "Schedules", "No scheduled listeners.", []],
     ],
   );
 });
 
-test("keeps EventCommand active and records output events", () => {
+test("keeps running command active and records latest output line", () => {
   const analysis = buildThreadAnalysis(
     makeThread([
       {
-        type: "eventCommandCall",
-        id: "event-command-1",
-        subscriptionId: "sub-command",
+        type: "commandExecution",
+        id: "command-1",
         command: "tail -f /tmp/build.log",
         cwd: "/repo",
-        label: "build log",
-        status: "completed",
-        output: { subscription_id: "sub-command" },
-      },
-      {
-        type: "eventCommandEvent",
-        id: "event-command-event-1",
-        subscriptionId: "sub-command",
-        kind: "output",
-        label: "build log",
-        command: "tail -f /tmp/build.log",
-        cwd: "/repo",
-        line: "changed:/tmp/build.log",
-        sequence: 1,
+        status: "running",
+        aggregatedOutput: "starting\nchanged:/tmp/build.log\n",
         exitCode: null,
-        signal: null,
-        message: null,
-        truncated: false,
-        createdAt: 1,
+        durationMs: null,
       },
     ]),
     0,
@@ -99,46 +83,30 @@ test("keeps EventCommand active and records output events", () => {
   assert.equal(analysis.monitors.eventCount, 0);
   assert.deepEqual(analysis.monitors.sections[0]?.monitors, [
     {
-      id: "event-command-1",
-      subscriptionId: "sub-command",
-      kind: "eventCommand",
-      label: "build log",
-      detail: "tail -f /tmp/build.log (/repo)",
-      status: "Listening",
+      id: "command-1",
+      subscriptionId: "command-1",
+      kind: "command",
+      label: "tail -f /tmp/build.log",
+      detail: "/repo",
+      status: "Running",
       eventCount: 1,
       latestEvent: "changed:/tmp/build.log",
     },
   ]);
 });
 
-test("attaches early EventCommand output before subscription id is recorded", () => {
+test("keeps failed command in the live command index", () => {
   const analysis = buildThreadAnalysis(
     makeThread([
       {
-        type: "eventCommandCall",
-        id: "event-command-1",
-        subscriptionId: "",
-        command: "tail -f /tmp/build.log",
+        type: "commandExecution",
+        id: "command-1",
+        command: "cargo test -p codex-tui",
         cwd: "/repo",
-        label: "build log",
-        status: "inProgress",
-        output: null,
-      },
-      {
-        type: "eventCommandEvent",
-        id: "event-command-event-1",
-        subscriptionId: "sub-command",
-        kind: "output",
-        label: "build log",
-        command: "tail -f /tmp/build.log",
-        cwd: "/repo",
-        line: "changed:/tmp/build.log",
-        sequence: 1,
-        exitCode: null,
-        signal: null,
-        message: null,
-        truncated: false,
-        createdAt: 1,
+        status: "completed",
+        aggregatedOutput: "test failed\n",
+        exitCode: 101,
+        durationMs: 1200,
       },
     ]),
     0,
@@ -147,83 +115,30 @@ test("attaches early EventCommand output before subscription id is recorded", ()
   assert.equal(analysis.monitors.totalCount, 1);
   assert.deepEqual(analysis.monitors.sections[0]?.monitors, [
     {
-      id: "event-command-1",
-      subscriptionId: "sub-command",
-      kind: "eventCommand",
-      label: "build log",
-      detail: "tail -f /tmp/build.log (/repo)",
-      status: "Subscribing",
+      id: "command-1",
+      subscriptionId: "command-1",
+      kind: "command",
+      label: "cargo test -p codex-tui",
+      detail: "/repo",
+      status: "Exit 101",
       eventCount: 1,
-      latestEvent: "changed:/tmp/build.log",
+      latestEvent: "test failed",
     },
   ]);
 });
 
-test("removes EventCommand monitor after early terminal event", () => {
+test("omits successful completed commands from live command index", () => {
   const analysis = buildThreadAnalysis(
     makeThread([
       {
-        type: "eventCommandCall",
-        id: "event-command-1",
-        subscriptionId: "",
+        type: "commandExecution",
+        id: "command-1",
         command: "cargo test -p codex-tui",
         cwd: "/repo",
-        label: "tui tests",
-        status: "inProgress",
-        output: null,
-      },
-      {
-        type: "eventCommandEvent",
-        id: "event-command-event-1",
-        subscriptionId: "sub-command",
-        kind: "exited",
-        label: "tui tests",
-        command: "cargo test -p codex-tui",
-        cwd: "/repo",
-        line: null,
-        sequence: null,
-        exitCode: 0,
-        signal: null,
-        message: "EventCommand exited with status exit status: 0",
-        truncated: false,
-        createdAt: 1,
-      },
-    ]),
-    0,
-  );
-
-  assert.equal(analysis.monitors.totalCount, 0);
-  assert.deepEqual(analysis.monitors.sections[0]?.monitors, []);
-});
-
-test("removes EventCommand monitor after terminal event", () => {
-  const analysis = buildThreadAnalysis(
-    makeThread([
-      {
-        type: "eventCommandCall",
-        id: "event-command-1",
-        subscriptionId: "sub-command",
-        command: "cargo test -p codex-tui",
-        cwd: "/repo",
-        label: "tui tests",
         status: "completed",
-        output: { subscription_id: "sub-command" },
-      },
-      {
-        type: "eventCommandEvent",
-        id: "event-command-event-1",
-        subscriptionId: "sub-command",
-        kind: "exited",
-        label: "tui tests",
-        command: "cargo test -p codex-tui",
-        cwd: "/repo",
-        line: null,
-        sequence: null,
+        aggregatedOutput: "ok\n",
         exitCode: 0,
-        signal: null,
-        message: "EventCommand exited with status exit status: 0",
-        truncated: false,
-        createdAt: 1,
+        durationMs: 1200,
       },
     ]),
     0,
@@ -263,7 +178,7 @@ test("does not restore legacy fs or process monitors as active", () => {
   );
 });
 
-test("keeps schedule subscriptions separate from EventCommand monitors", () => {
+test("keeps schedule subscriptions separate from command sessions", () => {
   const analysis = buildThreadAnalysis(
     makeThread([
       {
