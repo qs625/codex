@@ -9578,6 +9578,37 @@ async fn typed_queue_only_inter_agent_message_does_not_trigger_idle_turn() {
 }
 
 #[tokio::test]
+async fn pending_mailbox_input_can_be_peeked_without_consuming() {
+    let (sess, _tc, _rx) = make_session_and_context_with_rx().await;
+    let communication = InterAgentCommunication::new(
+        AgentPath::try_from("/root/worker").expect("worker path should parse"),
+        AgentPath::root(),
+        Vec::new(),
+        "already pending".to_string(),
+        codex_protocol::protocol::InterAgentOperation::ChildCompletion,
+    )
+    .with_trigger_turn(false);
+
+    sess.enqueue_mailbox_communication(communication.clone());
+
+    let found = sess
+        .find_pending_input(|item| match item {
+            PendingInputItem::InterAgentCommunication(mail)
+                if mail.author == communication.author =>
+            {
+                Some(mail.clone())
+            }
+            _ => None,
+        })
+        .await;
+    assert_eq!(found, Some(communication.clone()));
+    assert_eq!(
+        sess.get_pending_input().await,
+        vec![PendingInputItem::from(communication)],
+    );
+}
+
+#[tokio::test]
 async fn inter_agent_unknown_communication_does_not_emit_live_collab_item() -> anyhow::Result<()> {
     let parent_thread_id = ThreadId::new();
     let (session, rx_event) = make_session_with_history_source_and_agent_control_and_rx(

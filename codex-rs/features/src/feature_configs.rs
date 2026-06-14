@@ -13,13 +13,13 @@ pub struct MultiAgentV2ConfigToml {
     #[schemars(range(min = 1))]
     pub max_concurrent_threads_per_session: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(range(min = 0, max = 3600000))]
+    #[schemars(range(min = 0, max = 1800000))]
     pub min_wait_timeout_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(range(min = 0, max = 3600000))]
+    #[schemars(range(min = 0, max = 1800000))]
     pub max_wait_timeout_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(range(min = 0, max = 3600000))]
+    #[schemars(range(min = 0, max = 1800000))]
     pub default_wait_timeout_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_hint_enabled: Option<bool>,

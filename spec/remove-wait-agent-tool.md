@@ -1,31 +1,35 @@
-# 移除 wait_agent tool
+# 恢复 MultiAgent V2 wait_agent tool
 
 ## 任务 brief
 
 - 用户：使用 multi-agent 协作能力的 Codex agent。
-- 问题：`wait_agent` 曾作为等待子 agent 的工具暴露给模型，容易把正常协作流程变成显式等待或轮询。当前期望是子 agent 完成、阻塞或发送消息时自动通知父 agent。
-- 成功标准：可用 tool 列表中不再包含 `wait_agent`；提示词和 agent 工作流不再指导调用它；移除不再可达的 handler、schema 和测试；不破坏 child completion 自动通知链路。
-- 非目标：不删除旧会话历史中 `wait_agent` tool call 的展示兼容；不修改 `InterAgentCommunication::ChildCompletion`、mailbox 入站、app-server status update 或前端 child completion 展示。
+- 问题：移除 `wait_agent` 后，父 agent 在需要显式等待 subagent 下一条相关 typed IAC、child completion 或 final status 时，只能依赖模型自行 sleep/轮询，容易造成高频空转或错过已经进入 parent pending input 的消息。
+- 成功标准：MultiAgent V2 tool surface 重新暴露 `wait_agent`；调用开始先检查 parent pending input/mailbox 中已有匹配消息并立即返回；后续使用 runtime notify/backoff 等待 status 或 mailbox 事件；不 drain/消费 pending 输入；live/history/display 继续走 typed `CollabWaitingBegin/End` 与 `ResponseItem -> ThreadItem` 投影。
+- 非目标：不恢复 V1 `send_input`/`resume_agent`；不恢复 legacy completion watcher 或 raw child completion fallback；不从 `<subagent_notification>`、assistant text、legacy JSON envelope 或 raw marker 反解展示；不实现 Dynamic Workflow 后续 runner/persistence/app-server v2 控制面。
 
 ## 技术设计
 
-`wait_agent` 的可见入口集中在 `codex-rs/core/src/tools/spec_plan.rs` 的 collab tool 注册。删除 v1 和 v2 注册后，模型不会再从正常 tool surface 中看到或调用该工具。对应 handler 模块、tool schema helper、timeout 参数注入和 handler/schema 测试随之删除，避免保留不可达配置和编译引用。
+`wait_agent` 的可见入口集中在 `codex-rs/core/src/tools/spec_plan.rs` 的 collab tool 注册。本次只在 MultiAgent V2 工具集中恢复：
 
-child completion 自动通知由 session/mailbox/protocol 链路负责，不依赖 `wait_agent` handler：
+- tool spec helper：`create_wait_agent_tool_v2`
+- handler：`multi_agents_v2::wait_agent`
+- 注册：与 `spawn_agent`、`followup_task`、`close_agent`、`list_agents` 同属 `collab_tools`
 
-- `InterAgentCommunication::ChildCompletion`
-- `Session::maybe_notify_parent_of_final_status`
-- `Session::forward_child_completion_to_parent`
-- mailbox 入站和 live item 分发
-- app-server `CollabAgentStatusUpdate` 映射
+等待语义：
 
-本改动不触碰这些路径。
+- 目标解析复用 V2 `resolve_agent_target`，支持 agent id、canonical task path 和当前 V2 已支持的相对 task path。
+- 调用开始先检查目标 agent status；若已 final，立即返回。
+- 再检查 parent active turn pending input 与 mailbox buffered input 中的 typed `PendingInputItem::InterAgentCommunication` / `ResponseItem::InterAgentCommunication`，匹配 `author` 或 `sender_thread_id` 指向目标 agent 的消息；若已有匹配消息，立即返回，不 drain。
+- 未命中时订阅目标 status watch 与 parent mailbox sequence watch，按 snapshot + notify 模式等待后续事件。
+- 收到相关 status/mailbox event 后重置 backoff/window 并返回摘要；如果 event 不相关，则继续等待并按 runtime backoff 延长无进展窗口。
+- `features.multi_agent_v2.default_wait_timeout_ms` 作为 initial window，默认 60 秒；`features.multi_agent_v2.max_wait_timeout_ms` 作为 hard cap，默认 30 分钟。工具不暴露 poll interval。
 
 ## 兼容性
 
-旧配置中的 multi-agent wait timeout 字段暂不从配置结构中移除，避免扩大到配置 schema 和迁移。它们不再进入 `ToolsConfig` 运行时 tool 构建。root-worker prototype 对历史 `wait_agent` tool call 的摘要展示暂保留，用于旧会话回放兼容，不代表该 tool 仍可调用。
+旧配置中的 multi-agent wait timeout 字段继续保留并重新生效，不新增配置项。root-worker prototype 对历史 `wait_agent` tool call 的摘要展示继续走现有 typed wait/collab tool 映射，不作为 raw marker 兼容路径扩展。
 
 ## 风险
 
-- 如果未来还有外部客户端依赖 `wait_agent` 调用，会收到未知工具或无法调用；这是本次移除的预期兼容影响。
-- `wait_agent` 被移除后，父 agent 必须依赖自动通知和 mailbox 更新继续工作；因此回归验证需要覆盖 tool 列表以及 child completion/mailbox 相关测试。
+- pending input 的立即唤醒必须使用 canonical typed 数据源，不能为了匹配 child completion 去解析 assistant 文本，否则会破坏 `ResponseItem -> ThreadItem` 约束。
+- mailbox 检查只能 peek，不能 drain；否则后续 model-visible history 会丢失 IAC。
+- hard cap 较长，测试需要使用可配置的短 timeout 覆盖超时路径，避免真实等待。

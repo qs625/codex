@@ -69,6 +69,11 @@ impl MailboxReceiver {
             .any(PendingInputItem::trigger_turn)
     }
 
+    pub(crate) fn pending(&mut self) -> impl Iterator<Item = &PendingInputItem> {
+        self.sync_pending_mails();
+        self.pending_mails.iter()
+    }
+
     pub(crate) fn drain(&mut self) -> Vec<PendingInputItem> {
         self.sync_pending_mails();
         self.pending_mails.drain(..).collect()
