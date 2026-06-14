@@ -14,6 +14,7 @@ use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandBeginEvent;
 use codex_protocol::protocol::ExecCommandEndEvent;
+use codex_protocol::protocol::ExecCommandNotifyOn;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_protocol::protocol::ExecCommandStatus;
 use codex_protocol::protocol::FileChange;
@@ -91,6 +92,8 @@ pub(crate) async fn emit_exec_command_begin(
     source: ExecCommandSource,
     interaction_input: Option<String>,
     process_id: Option<&str>,
+    initial_wait_ms: Option<u64>,
+    notify_on: Option<ExecCommandNotifyOn>,
 ) {
     ctx.session
         .send_event(
@@ -105,6 +108,8 @@ pub(crate) async fn emit_exec_command_begin(
                 parsed_cmd: parsed_cmd.to_vec(),
                 source,
                 interaction_input,
+                initial_wait_ms,
+                notify_on,
             }),
         )
         .await;
@@ -128,6 +133,8 @@ pub(crate) enum ToolEmitter {
         source: ExecCommandSource,
         parsed_cmd: Vec<ParsedCommand>,
         process_id: Option<String>,
+        initial_wait_ms: Option<u64>,
+        notify_on: Option<ExecCommandNotifyOn>,
     },
 }
 
@@ -160,6 +167,8 @@ impl ToolEmitter {
         cwd: AbsolutePathBuf,
         source: ExecCommandSource,
         process_id: Option<String>,
+        initial_wait_ms: u64,
+        notify_on: ExecCommandNotifyOn,
     ) -> Self {
         let parsed_cmd = parse_command(command);
         Self::UnifiedExec {
@@ -168,6 +177,8 @@ impl ToolEmitter {
             source,
             parsed_cmd,
             process_id,
+            initial_wait_ms: Some(initial_wait_ms),
+            notify_on: Some(notify_on),
         }
     }
 
@@ -187,7 +198,8 @@ impl ToolEmitter {
                     ctx,
                     ExecCommandInput::new(
                         command, cwd, parsed_cmd, *source, /*interaction_input*/ None,
-                        /*process_id*/ None,
+                        /*process_id*/ None, /*initial_wait_ms*/ None,
+                        /*notify_on*/ None,
                     ),
                     stage,
                 )
@@ -299,6 +311,8 @@ impl ToolEmitter {
                     source,
                     parsed_cmd,
                     process_id,
+                    initial_wait_ms,
+                    notify_on,
                 },
                 stage,
             ) => {
@@ -311,6 +325,8 @@ impl ToolEmitter {
                         *source,
                         /*interaction_input*/ None,
                         process_id.as_deref(),
+                        *initial_wait_ms,
+                        *notify_on,
                     ),
                     stage,
                 )
@@ -424,6 +440,8 @@ struct ExecCommandInput<'a> {
     source: ExecCommandSource,
     interaction_input: Option<&'a str>,
     process_id: Option<&'a str>,
+    initial_wait_ms: Option<u64>,
+    notify_on: Option<ExecCommandNotifyOn>,
 }
 
 impl<'a> ExecCommandInput<'a> {
@@ -434,6 +452,8 @@ impl<'a> ExecCommandInput<'a> {
         source: ExecCommandSource,
         interaction_input: Option<&'a str>,
         process_id: Option<&'a str>,
+        initial_wait_ms: Option<u64>,
+        notify_on: Option<ExecCommandNotifyOn>,
     ) -> Self {
         Self {
             command,
@@ -442,6 +462,8 @@ impl<'a> ExecCommandInput<'a> {
             source,
             interaction_input,
             process_id,
+            initial_wait_ms,
+            notify_on,
         }
     }
 }
@@ -471,6 +493,8 @@ async fn emit_exec_stage(
                 exec_input.source,
                 exec_input.interaction_input.map(str::to_owned),
                 exec_input.process_id,
+                exec_input.initial_wait_ms,
+                exec_input.notify_on,
             )
             .await;
         }
@@ -538,6 +562,8 @@ async fn emit_exec_end(
                 parsed_cmd: exec_input.parsed_cmd.to_vec(),
                 source: exec_input.source,
                 interaction_input: exec_input.interaction_input.map(str::to_owned),
+                initial_wait_ms: exec_input.initial_wait_ms,
+                notify_on: exec_input.notify_on,
                 stdout: exec_result.stdout,
                 stderr: exec_result.stderr,
                 aggregated_output: exec_result.aggregated_output,

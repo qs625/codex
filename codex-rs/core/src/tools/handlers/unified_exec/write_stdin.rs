@@ -7,12 +7,15 @@ use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
 use crate::unified_exec::WriteStdinRequest;
 use codex_protocol::models::FunctionCallOutputContentItem;
+use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TerminalInteractionEvent;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use serde::Deserialize;
 use serde::Serialize;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use super::super::shell_spec::create_write_stdin_tool;
 
@@ -84,6 +87,23 @@ impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
         };
         session
             .send_event(turn.as_ref(), EventMsg::TerminalInteraction(interaction))
+            .await;
+
+        let response_item = ResponseItem::CommandWriteStdin {
+            id: None,
+            command_id: response.process_id.to_string(),
+            bytes_written: response.bytes_written,
+            contains_newline: chars.contains('\n'),
+            created_at_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64,
+        };
+        session
+            .record_conversation_items_and_emit_item_completed(
+                turn.as_ref(),
+                std::slice::from_ref(&response_item),
+            )
             .await;
 
         let text = serde_json::to_string(&CommandWriteStdinResponse {

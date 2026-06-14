@@ -12,6 +12,8 @@
 use crate::protocol::common::ServerNotification;
 use crate::protocol::v2::AutoReviewDecisionSource;
 use crate::protocol::v2::CommandAction;
+use crate::protocol::v2::CommandExecutionNotificationKind;
+use crate::protocol::v2::CommandExecutionNotifyOn;
 use crate::protocol::v2::CommandExecutionSource;
 use crate::protocol::v2::CommandExecutionStatus;
 use crate::protocol::v2::FileUpdateChange;
@@ -27,6 +29,8 @@ use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
 use codex_protocol::protocol::ExecApprovalRequestEvent;
 use codex_protocol::protocol::ExecCommandBeginEvent;
 use codex_protocol::protocol::ExecCommandEndEvent;
+use codex_protocol::protocol::ExecCommandNotifyOn as CoreExecCommandNotifyOn;
+use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::GuardianAssessmentAction;
 use codex_protocol::protocol::GuardianAssessmentEvent;
@@ -36,6 +40,15 @@ use codex_shell_command::parse_command::parse_command;
 use codex_shell_command::parse_command::shlex_join;
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+impl From<CoreExecCommandNotifyOn> for CommandExecutionNotifyOn {
+    fn from(value: CoreExecCommandNotifyOn) -> Self {
+        match value {
+            CoreExecCommandNotifyOn::Output => Self::Output,
+            CoreExecCommandNotifyOn::Exit => Self::Exit,
+        }
+    }
+}
 
 pub fn build_file_change_approval_request_item(
     payload: &ApplyPatchApprovalRequestEvent,
@@ -73,6 +86,8 @@ pub fn build_command_execution_approval_request_item(
         process_id: None,
         source: CommandExecutionSource::Agent,
         status: CommandExecutionStatus::InProgress,
+        initial_wait_ms: None,
+        notify_on: None,
         command_actions: payload
             .parsed_cmd
             .iter()
@@ -93,6 +108,10 @@ pub fn build_command_execution_begin_item(payload: &ExecCommandBeginEvent) -> Th
         process_id: payload.process_id.clone(),
         source: payload.source.into(),
         status: CommandExecutionStatus::InProgress,
+        initial_wait_ms: payload
+            .initial_wait_ms
+            .and_then(|value| i64::try_from(value).ok()),
+        notify_on: payload.notify_on.map(CommandExecutionNotifyOn::from),
         command_actions: payload
             .parsed_cmd
             .iter()
@@ -120,6 +139,10 @@ pub fn build_command_execution_end_item(payload: &ExecCommandEndEvent) -> Thread
         process_id: payload.process_id.clone(),
         source: payload.source.into(),
         status: (&payload.status).into(),
+        initial_wait_ms: payload
+            .initial_wait_ms
+            .and_then(|value| i64::try_from(value).ok()),
+        notify_on: payload.notify_on.map(CommandExecutionNotifyOn::from),
         command_actions: payload
             .parsed_cmd
             .iter()
@@ -129,6 +152,38 @@ pub fn build_command_execution_end_item(payload: &ExecCommandEndEvent) -> Thread
         aggregated_output,
         exit_code: Some(payload.exit_code),
         duration_ms: Some(duration_ms),
+    }
+}
+
+pub fn build_command_execution_output_notification_item(
+    payload: &ExecCommandOutputDeltaEvent,
+) -> Option<ThreadItem> {
+    if !payload.generates_notification {
+        return None;
+    }
+
+    let sequence = payload.sequence?;
+    let output = String::from_utf8_lossy(&payload.chunk).to_string();
+    Some(ThreadItem::CommandExecutionNotification {
+        id: format!("{}:notification:output:{sequence}", payload.call_id),
+        command_item_id: payload.call_id.clone(),
+        kind: CommandExecutionNotificationKind::Output,
+        message: "Command output notification received.".to_string(),
+        output: Some(output),
+        exit_code: None,
+        created_at_ms: payload.created_at_ms,
+    })
+}
+
+pub fn build_command_execution_exit_notification_item(payload: &ExecCommandEndEvent) -> ThreadItem {
+    ThreadItem::CommandExecutionNotification {
+        id: format!("{}:notification:exit", payload.call_id),
+        command_item_id: payload.call_id.clone(),
+        kind: CommandExecutionNotificationKind::Exit,
+        message: "Command exit notification received.".to_string(),
+        output: None,
+        exit_code: Some(payload.exit_code),
+        created_at_ms: payload.completed_at_ms,
     }
 }
 
@@ -154,6 +209,8 @@ pub fn build_item_from_guardian_event(
                 process_id: None,
                 source: CommandExecutionSource::Agent,
                 status,
+                initial_wait_ms: None,
+                notify_on: None,
                 command_actions,
                 aggregated_output: None,
                 exit_code: None,
@@ -190,6 +247,8 @@ pub fn build_item_from_guardian_event(
                 process_id: None,
                 source: CommandExecutionSource::Agent,
                 status,
+                initial_wait_ms: None,
+                notify_on: None,
                 command_actions,
                 aggregated_output: None,
                 exit_code: None,

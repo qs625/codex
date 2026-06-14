@@ -57,12 +57,16 @@ export type { CommandExecTerminateResponse } from "./CommandExecTerminateRespons
 export type { CommandExecWriteParams } from "./CommandExecWriteParams";
 export type { CommandExecWriteResponse } from "./CommandExecWriteResponse";
 export type { CommandExecutionApprovalDecision } from "./CommandExecutionApprovalDecision";
+export type { CommandExecutionNotificationKind } from "./CommandExecutionNotificationKind";
+export type { CommandExecutionNotifyOn } from "./CommandExecutionNotifyOn";
 export type { CommandExecutionOutputDeltaNotification } from "./CommandExecutionOutputDeltaNotification";
 export type { CommandExecutionRequestApprovalParams } from "./CommandExecutionRequestApprovalParams";
 export type { CommandExecutionRequestApprovalResponse } from "./CommandExecutionRequestApprovalResponse";
 export type { CommandExecutionSource } from "./CommandExecutionSource";
 export type { CommandExecutionStatus } from "./CommandExecutionStatus";
 export type { CommandMigration } from "./CommandMigration";
+export type { CommandWaitNotificationKind } from "./CommandWaitNotificationKind";
+export type { CommandWaitStatus } from "./CommandWaitStatus";
 export type { Config } from "./Config";
 export type { ConfigBatchWriteParams } from "./ConfigBatchWriteParams";
 export type { ConfigEdit } from "./ConfigEdit";

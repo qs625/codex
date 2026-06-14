@@ -89,7 +89,10 @@ impl Prompt {
 
 fn format_typed_response_item_for_provider(item: ResponseItem) -> Option<ResponseItem> {
     match item {
-        ResponseItem::WorkflowRunProgress { .. } => None,
+        ResponseItem::CommandWait { .. }
+        | ResponseItem::CommandWriteStdin { .. }
+        | ResponseItem::CommandExecutionNotification { .. }
+        | ResponseItem::WorkflowRunProgress { .. } => None,
         ResponseItem::EventCommandEvent { event, .. } => Some(event.to_response_item()),
         ResponseItem::EventDrivenTool { trigger, .. } => Some(trigger.to_response_item()),
         ResponseItem::InterAgentCommunication { communication, .. } => {

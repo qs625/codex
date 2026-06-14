@@ -268,6 +268,11 @@ pub enum ThreadItem {
         #[serde(default)]
         source: CommandExecutionSource,
         status: CommandExecutionStatus,
+        /// Initial wait window requested by exec_command, in milliseconds.
+        #[ts(type = "number | null")]
+        initial_wait_ms: Option<i64>,
+        /// Notification policy requested by exec_command.
+        notify_on: Option<CommandExecutionNotifyOn>,
         /// A best-effort parsing of the command to understand the action(s) it will perform.
         /// This returns a list of CommandAction objects because a single shell command may
         /// be composed of many commands piped together.
@@ -279,6 +284,47 @@ pub enum ThreadItem {
         /// The duration of the command execution in milliseconds.
         #[ts(type = "number | null")]
         duration_ms: Option<i64>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    CommandExecutionNotification {
+        id: String,
+        /// The command execution item that produced this notification.
+        command_item_id: String,
+        kind: CommandExecutionNotificationKind,
+        /// User-visible notification summary.
+        message: String,
+        /// Output text associated with an output notification.
+        output: Option<String>,
+        /// Exit code associated with an exit notification.
+        exit_code: Option<i32>,
+        /// Timestamp when the notification was created.
+        #[ts(type = "number")]
+        created_at_ms: i64,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    CommandWait {
+        id: String,
+        /// Identifier of the command session being waited on.
+        command_id: String,
+        status: CommandWaitStatus,
+        notification: Option<CommandWaitNotificationKind>,
+        exit_code: Option<i32>,
+        wall_time_seconds: f64,
+        #[ts(type = "number")]
+        created_at_ms: i64,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    CommandWriteStdin {
+        id: String,
+        /// Identifier of the command session receiving stdin.
+        command_id: String,
+        bytes_written: usize,
+        contains_newline: bool,
+        #[ts(type = "number")]
+        created_at_ms: i64,
     },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
@@ -510,6 +556,9 @@ impl ThreadItem {
             | ThreadItem::Plan { id, .. }
             | ThreadItem::Reasoning { id, .. }
             | ThreadItem::CommandExecution { id, .. }
+            | ThreadItem::CommandExecutionNotification { id, .. }
+            | ThreadItem::CommandWait { id, .. }
+            | ThreadItem::CommandWriteStdin { id, .. }
             | ThreadItem::FileChange { id, .. }
             | ThreadItem::McpToolCall { id, .. }
             | ThreadItem::DynamicToolCall { id, .. }
@@ -1135,6 +1184,42 @@ pub enum CommandExecutionStatus {
     Completed,
     Failed,
     Declined,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[ts(export_to = "v2/")]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum CommandExecutionNotifyOn {
+    Output,
+    Exit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[ts(export_to = "v2/")]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum CommandExecutionNotificationKind {
+    Output,
+    Exit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[ts(export_to = "v2/")]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum CommandWaitStatus {
+    Running,
+    Completed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[ts(export_to = "v2/")]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum CommandWaitNotificationKind {
+    Output,
+    Exit,
 }
 
 impl From<CoreExecCommandStatus> for CommandExecutionStatus {

@@ -149,6 +149,10 @@ function App() {
   const [rightPanelView, setRightPanelView] = useState<RightPanelView>(
     readStoredRightPanelView,
   );
+  const [focusedConversationItem, setFocusedConversationItem] = useState<{
+    itemId: string;
+    token: number;
+  } | null>(null);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -1873,6 +1877,7 @@ function App() {
           draft={draft}
           draftImages={draftImages}
           draftSkills={draftSkills}
+          focusedConversationItem={focusedConversationItem}
           imageInputRef={imageInputRef}
           isLoadingThread={isLoadingThread}
           isSending={isSending}
@@ -1911,6 +1916,12 @@ function App() {
           }
           onOpenPreviewExternally={() => void openPreviewExternally()}
           onSelectTaskThread={setSelectedThreadId}
+          onSelectCommandMonitor={(commandItemId) =>
+            setFocusedConversationItem((current) => ({
+              itemId: commandItemId,
+              token: (current?.token ?? 0) + 1,
+            }))
+          }
           onSetActiveView={setRightPanelView}
           onSetTaskFilter={setTaskFilter}
           preview={filePreview}

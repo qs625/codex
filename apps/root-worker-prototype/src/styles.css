@@ -1,12 +1,13 @@
 :root {
   color: #171717;
   background:
-    radial-gradient(circle at top left, rgba(252, 246, 237, 0.92), transparent 28%),
+    radial-gradient(
+      circle at top left,
+      rgba(252, 246, 237, 0.92),
+      transparent 28%
+    ),
     linear-gradient(180deg, #f7f5f1 0%, #f1efea 100%);
-  font-family:
-    "SF Pro Display",
-    "Segoe UI",
-    sans-serif;
+  font-family: "SF Pro Display", "Segoe UI", sans-serif;
   line-height: 1.5;
   font-weight: 400;
 }
@@ -21,7 +22,11 @@ body {
   min-height: 100vh;
   color: #171717;
   background:
-    radial-gradient(circle at top left, rgba(252, 246, 237, 0.92), transparent 28%),
+    radial-gradient(
+      circle at top left,
+      rgba(252, 246, 237, 0.92),
+      transparent 28%
+    ),
     linear-gradient(180deg, #f7f5f1 0%, #f1efea 100%);
 }
 
@@ -733,7 +738,72 @@ svg {
 
 .conversation-actions {
   display: flex;
+  align-items: center;
   gap: 6px;
+}
+
+.conversation-search-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: min(420px, 48vw);
+  max-width: min(520px, 56vw);
+  height: 30px;
+  padding: 0 4px 0 8px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.04);
+}
+
+.conversation-search-controls svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: #78716c;
+}
+
+.conversation-search-controls input {
+  min-width: 80px;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #292524;
+  font-size: 11px;
+}
+
+.conversation-search-controls input::placeholder {
+  color: #a8a29e;
+}
+
+.conversation-search-count {
+  min-width: 42px;
+  color: #78716c;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.conversation-search-step,
+.conversation-search-clear {
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  border-radius: 6px;
+  background: #fafaf9;
+  color: #44403c;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.conversation-search-step:disabled,
+.conversation-search-clear:disabled,
+.conversation-search-controls input:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .conversation-scroll {
@@ -741,7 +811,11 @@ svg {
   padding: 10px 16px 16px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0)),
-    radial-gradient(circle at top center, rgba(245, 245, 244, 0.65), transparent 52%);
+    radial-gradient(
+      circle at top center,
+      rgba(245, 245, 244, 0.65),
+      transparent 52%
+    );
 }
 
 .conversation-virtual-list {
@@ -754,6 +828,27 @@ svg {
   left: 0;
   right: 0;
   top: 0;
+  border-radius: 8px;
+  transition:
+    background-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.conversation-virtual-row.highlighted {
+  background: rgba(14, 165, 233, 0.08);
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.2);
+}
+
+.conversation-virtual-row.search-match {
+  background: rgba(217, 119, 6, 0.08);
+  box-shadow: inset 2px 0 0 rgba(217, 119, 6, 0.38);
+}
+
+.conversation-virtual-row.search-current {
+  background: rgba(217, 119, 6, 0.14);
+  box-shadow:
+    inset 3px 0 0 rgba(217, 119, 6, 0.72),
+    0 0 0 2px rgba(217, 119, 6, 0.2);
 }
 
 .message-row,
@@ -975,10 +1070,7 @@ svg {
   border-radius: 8px;
   background: #f5f5f4;
   color: #44403c;
-  font-family:
-    "SF Mono",
-    "Menlo",
-    monospace;
+  font-family: "SF Mono", "Menlo", monospace;
   font-size: 0.92em;
 }
 
@@ -1096,24 +1188,40 @@ svg {
 
 .tool-card-command {
   border-color: rgba(13, 148, 136, 0.18);
-  background: linear-gradient(180deg, rgba(240, 253, 250, 0.88), rgba(255, 255, 255, 0.72));
+  background: linear-gradient(
+    180deg,
+    rgba(240, 253, 250, 0.88),
+    rgba(255, 255, 255, 0.72)
+  );
 }
 
 .tool-card-eventDrivenSubscription {
   border-color: rgba(234, 88, 12, 0.14);
-  background: linear-gradient(180deg, rgba(255, 247, 237, 0.9), rgba(255, 255, 255, 0.72));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 247, 237, 0.9),
+    rgba(255, 255, 255, 0.72)
+  );
 }
 
 .tool-card-eventDrivenEvent {
   border-color: rgba(59, 130, 246, 0.16);
-  background: linear-gradient(180deg, rgba(239, 246, 255, 0.92), rgba(255, 255, 255, 0.74));
+  background: linear-gradient(
+    180deg,
+    rgba(239, 246, 255, 0.92),
+    rgba(255, 255, 255, 0.74)
+  );
 }
 
 .tool-card-multiAgent,
 .tool-card-childCompletion,
 .tool-card-subagentNotification {
   border-color: rgba(59, 130, 246, 0.16);
-  background: linear-gradient(180deg, rgba(239, 246, 255, 0.92), rgba(255, 255, 255, 0.74));
+  background: linear-gradient(
+    180deg,
+    rgba(239, 246, 255, 0.92),
+    rgba(255, 255, 255, 0.74)
+  );
 }
 
 .tool-card[open] {
@@ -1121,21 +1229,37 @@ svg {
 }
 
 .tool-card-command[open] {
-  background: linear-gradient(180deg, rgba(240, 253, 250, 0.96), rgba(255, 255, 255, 0.82));
+  background: linear-gradient(
+    180deg,
+    rgba(240, 253, 250, 0.96),
+    rgba(255, 255, 255, 0.82)
+  );
 }
 
 .tool-card-eventDrivenSubscription[open] {
-  background: linear-gradient(180deg, rgba(255, 247, 237, 0.96), rgba(255, 255, 255, 0.82));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 247, 237, 0.96),
+    rgba(255, 255, 255, 0.82)
+  );
 }
 
 .tool-card-eventDrivenEvent[open] {
-  background: linear-gradient(180deg, rgba(239, 246, 255, 0.97), rgba(255, 255, 255, 0.82));
+  background: linear-gradient(
+    180deg,
+    rgba(239, 246, 255, 0.97),
+    rgba(255, 255, 255, 0.82)
+  );
 }
 
 .tool-card-multiAgent[open],
 .tool-card-childCompletion[open],
 .tool-card-subagentNotification[open] {
-  background: linear-gradient(180deg, rgba(239, 246, 255, 0.97), rgba(255, 255, 255, 0.82));
+  background: linear-gradient(
+    180deg,
+    rgba(239, 246, 255, 0.97),
+    rgba(255, 255, 255, 0.82)
+  );
 }
 
 .tool-card-summary {
@@ -1275,10 +1399,7 @@ svg {
   color: #44403c;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family:
-    "SF Mono",
-    "Menlo",
-    monospace;
+  font-family: "SF Mono", "Menlo", monospace;
   font-size: 12px;
   line-height: 1.6;
 }
@@ -1314,7 +1435,11 @@ svg {
   width: 100%;
   border: 1px solid rgba(75, 85, 99, 0.18);
   border-radius: 14px;
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.94), rgba(255, 255, 255, 0.78));
+  background: linear-gradient(
+    180deg,
+    rgba(248, 250, 252, 0.94),
+    rgba(255, 255, 255, 0.78)
+  );
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.035);
   overflow: hidden;
 }
@@ -2228,6 +2353,17 @@ svg {
   border-top: 1px solid rgba(16, 24, 40, 0.06);
 }
 
+.monitor-row.clickable {
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.monitor-row.clickable:hover,
+.monitor-row.clickable:focus-visible {
+  background: rgba(15, 23, 42, 0.04);
+  outline: none;
+}
+
 .monitor-list > .monitor-row:first-child {
   padding-top: 0;
   border-top: 0;
@@ -2308,13 +2444,12 @@ svg {
   height: 8px;
   overflow: hidden;
   border-radius: 999px;
-  background:
-    linear-gradient(
-      90deg,
-      rgba(251, 191, 36, 0.14) 0%,
-      rgba(245, 158, 11, 0.5) 52%,
-      rgba(217, 119, 6, 0.92) 100%
-    );
+  background: linear-gradient(
+    90deg,
+    rgba(251, 191, 36, 0.14) 0%,
+    rgba(245, 158, 11, 0.5) 52%,
+    rgba(217, 119, 6, 0.92) 100%
+  );
 }
 
 .context-trend-grid {
@@ -2691,8 +2826,7 @@ svg {
   flex: 1;
   min-height: 0;
   padding: 10px;
-  background:
-    repeating-conic-gradient(
+  background: repeating-conic-gradient(
       rgba(16, 24, 40, 0.05) 0% 25%,
       transparent 0% 50%
     )
@@ -2892,7 +3026,9 @@ svg {
 
 .image-zoom-trigger {
   cursor: zoom-in;
-  transition: transform 180ms ease, box-shadow 180ms ease;
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease;
 }
 
 .image-zoom-trigger:hover {
@@ -2978,7 +3114,9 @@ svg {
   color: inherit;
   font: inherit;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
 }
 
 .image-lightbox-tool:hover:not(:disabled) {

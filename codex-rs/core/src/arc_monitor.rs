@@ -383,7 +383,10 @@ fn build_arc_monitor_message_item(
         | ResponseItem::CustomToolCallOutput { .. }
         | ResponseItem::ToolSearchOutput { .. }
         | ResponseItem::ImageGenerationCall { .. }
+        | ResponseItem::CommandWait { .. }
+        | ResponseItem::CommandWriteStdin { .. }
         | ResponseItem::WorkflowRunProgress { .. }
+        | ResponseItem::CommandExecutionNotification { .. }
         | ResponseItem::EventCommandEvent { .. }
         | ResponseItem::EventDrivenTool { .. }
         | ResponseItem::InterAgentCommunication { .. }

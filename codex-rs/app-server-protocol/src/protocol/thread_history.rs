@@ -1,5 +1,7 @@
 use crate::protocol::item_builders::build_command_execution_begin_item;
 use crate::protocol::item_builders::build_command_execution_end_item;
+use crate::protocol::item_builders::build_command_execution_exit_notification_item;
+use crate::protocol::item_builders::build_command_execution_output_notification_item;
 use crate::protocol::item_builders::build_file_change_approval_request_item;
 use crate::protocol::item_builders::build_file_change_begin_item;
 use crate::protocol::item_builders::build_file_change_end_item;
@@ -48,6 +50,7 @@ use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandBeginEvent;
 use codex_protocol::protocol::ExecCommandEndEvent;
+use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
 use codex_protocol::protocol::GuardianAssessmentEvent;
 use codex_protocol::protocol::GuardianAssessmentStatus;
 use codex_protocol::protocol::ImageGenerationBeginEvent;
@@ -206,6 +209,9 @@ impl ThreadHistoryBuilder {
             EventMsg::WebSearchBegin(payload) => self.handle_web_search_begin(payload),
             EventMsg::WebSearchEnd(payload) => self.handle_web_search_end(payload),
             EventMsg::ExecCommandBegin(payload) => self.handle_exec_command_begin(payload),
+            EventMsg::ExecCommandOutputDelta(payload) => {
+                self.handle_exec_command_output_delta(payload)
+            }
             EventMsg::ExecCommandEnd(payload) => self.handle_exec_command_end(payload),
             EventMsg::GuardianAssessment(payload) => self.handle_guardian_assessment(payload),
             EventMsg::ApplyPatchApprovalRequest(payload) => {
@@ -332,7 +338,10 @@ impl ThreadHistoryBuilder {
                         .collect(),
                 });
             }
-            ResponseItem::WorkflowRunProgress { .. }
+            ResponseItem::CommandWait { .. }
+            | ResponseItem::CommandWriteStdin { .. }
+            | ResponseItem::CommandExecutionNotification { .. }
+            | ResponseItem::WorkflowRunProgress { .. }
             | ResponseItem::EventCommandEvent { .. }
             | ResponseItem::EventDrivenTool { .. }
             | ResponseItem::InterAgentCommunication { .. } => {
@@ -709,6 +718,13 @@ impl ThreadHistoryBuilder {
         self.upsert_item_in_turn_id(&payload.turn_id, item);
     }
 
+    fn handle_exec_command_output_delta(&mut self, payload: &ExecCommandOutputDeltaEvent) {
+        let Some(item) = build_command_execution_output_notification_item(payload) else {
+            return;
+        };
+        self.upsert_item_in_current_turn(item);
+    }
+
     fn handle_exec_command_end(&mut self, payload: &ExecCommandEndEvent) {
         let item = build_command_execution_end_item(payload);
         // Command completions can arrive out of order. Unified exec may return
@@ -717,6 +733,10 @@ impl ThreadHistoryBuilder {
         // newer user turn may already have started. Route by event turn_id so
         // replay preserves the original turn association.
         self.upsert_item_in_turn_id(&payload.turn_id, item);
+        self.upsert_item_in_turn_id(
+            &payload.turn_id,
+            build_command_execution_exit_notification_item(payload),
+        );
     }
 
     fn handle_guardian_assessment(&mut self, payload: &GuardianAssessmentEvent) {
@@ -2081,7 +2101,7 @@ mod tests {
         .with_trigger_turn(false);
         let text = serde_json::to_string(&communication).expect("serialize communication");
         let events = [EventMsg::AgentMessage(AgentMessageEvent {
-            message: text.clone(),
+            message: text,
             phase: None,
             memory_citation: None,
         })];
@@ -2109,7 +2129,7 @@ mod tests {
         )));
         let text = serde_json::to_string(&communication).expect("serialize communication");
         let events = [EventMsg::AgentMessage(AgentMessageEvent {
-            message: text.clone(),
+            message: text,
             phase: None,
             memory_citation: None,
         })];
@@ -2671,7 +2691,7 @@ mod tests {
         )
         .to_string();
         let events = [EventMsg::AgentMessage(AgentMessageEvent {
-            message: message.clone(),
+            message: message,
             phase: None,
             memory_citation: None,
         })];
@@ -3293,6 +3313,8 @@ mod tests {
                 }],
                 source: ExecCommandSource::Agent,
                 interaction_input: None,
+                initial_wait_ms: None,
+                notify_on: None,
                 stdout: String::new(),
                 stderr: String::new(),
                 aggregated_output: "hello world\n".into(),
@@ -3341,6 +3363,8 @@ mod tests {
                 process_id: Some("pid-1".into()),
                 source: CommandExecutionSource::Agent,
                 status: CommandExecutionStatus::Completed,
+                initial_wait_ms: None,
+                notify_on: None,
                 command_actions: vec![CommandAction::Unknown {
                     command: "echo hello world".into(),
                 }],
@@ -3961,6 +3985,8 @@ mod tests {
                 parsed_cmd: vec![ParsedCommand::Unknown { cmd: "ls".into() }],
                 source: ExecCommandSource::Agent,
                 interaction_input: None,
+                initial_wait_ms: None,
+                notify_on: None,
                 stdout: String::new(),
                 stderr: String::new(),
                 aggregated_output: String::new(),
@@ -3986,6 +4012,8 @@ mod tests {
                 process_id: Some("pid-1".into()),
                 source: CommandExecutionSource::Agent,
                 status: CommandExecutionStatus::Completed,
+                initial_wait_ms: None,
+                notify_on: None,
                 command_actions: vec![CommandAction::Unknown {
                     command: "ls".into(),
                 }],
@@ -4423,7 +4451,7 @@ mod tests {
             RolloutItem::ResponseItem(ResponseItem::Message {
                 id: Some("msg-1".into()),
                 role: "assistant".into(),
-                content: vec![ContentItem::OutputText { text: text.clone() }],
+                content: vec![ContentItem::OutputText { text: text }],
                 phase: None,
             }),
         ];
@@ -4460,7 +4488,7 @@ mod tests {
             RolloutItem::ResponseItem(ResponseItem::Message {
                 id: Some("msg-1".into()),
                 role: "assistant".into(),
-                content: vec![ContentItem::OutputText { text: text.clone() }],
+                content: vec![ContentItem::OutputText { text: text }],
                 phase: None,
             }),
         ];
@@ -4497,7 +4525,7 @@ mod tests {
             RolloutItem::ResponseItem(ResponseItem::Message {
                 id: Some("msg-1".into()),
                 role: "assistant".into(),
-                content: vec![ContentItem::OutputText { text: text.clone() }],
+                content: vec![ContentItem::OutputText { text: text }],
                 phase: None,
             }),
         ];
@@ -4534,6 +4562,8 @@ mod tests {
                 parsed_cmd: vec![ParsedCommand::Unknown { cmd: "ls".into() }],
                 source: ExecCommandSource::Agent,
                 interaction_input: None,
+                initial_wait_ms: None,
+                notify_on: None,
                 stdout: String::new(),
                 stderr: "exec command rejected by user".into(),
                 aggregated_output: "exec command rejected by user".into(),
@@ -4576,6 +4606,8 @@ mod tests {
                 process_id: Some("pid-2".into()),
                 source: CommandExecutionSource::Agent,
                 status: CommandExecutionStatus::Declined,
+                initial_wait_ms: None,
+                notify_on: None,
                 command_actions: vec![CommandAction::Unknown {
                     command: "ls".into(),
                 }],
@@ -4672,6 +4704,8 @@ mod tests {
                 process_id: None,
                 source: CommandExecutionSource::Agent,
                 status: CommandExecutionStatus::Declined,
+                initial_wait_ms: None,
+                notify_on: None,
                 command_actions: vec![CommandAction::Unknown {
                     command: "rm -rf /tmp/guardian".into(),
                 }],
@@ -4736,6 +4770,8 @@ mod tests {
                 process_id: None,
                 source: CommandExecutionSource::Agent,
                 status: CommandExecutionStatus::InProgress,
+                initial_wait_ms: None,
+                notify_on: None,
                 command_actions: vec![CommandAction::Unknown {
                     command: "/bin/rm -f /tmp/file.sqlite".into(),
                 }],
@@ -4794,6 +4830,8 @@ mod tests {
                 }],
                 source: ExecCommandSource::Agent,
                 interaction_input: None,
+                initial_wait_ms: None,
+                notify_on: None,
                 stdout: "done\n".into(),
                 stderr: String::new(),
                 aggregated_output: "done\n".into(),
@@ -4830,6 +4868,8 @@ mod tests {
                 process_id: Some("pid-42".into()),
                 source: CommandExecutionSource::Agent,
                 status: CommandExecutionStatus::Completed,
+                initial_wait_ms: None,
+                notify_on: None,
                 command_actions: vec![CommandAction::Unknown {
                     command: "echo done".into(),
                 }],
@@ -4888,6 +4928,8 @@ mod tests {
                 }],
                 source: ExecCommandSource::Agent,
                 interaction_input: None,
+                initial_wait_ms: None,
+                notify_on: None,
                 stdout: "done\n".into(),
                 stderr: String::new(),
                 aggregated_output: "done\n".into(),

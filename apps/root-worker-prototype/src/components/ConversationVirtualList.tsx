@@ -25,7 +25,10 @@ import type { ConversationCell } from "../types";
 type ConversationVirtualListProps = {
   cells: ConversationCell[];
   containerRef: RefObject<HTMLDivElement | null>;
+  focusedItem: { itemId: string; token: number } | null;
   onOpenLocalFile: (target: string) => void;
+  searchCurrentCellId: string | null;
+  searchMatchCellIds: Set<string>;
 };
 
 type ViewportState = {
@@ -36,12 +39,15 @@ type ViewportState = {
 export function ConversationVirtualList({
   cells,
   containerRef,
+  focusedItem,
   onOpenLocalFile,
+  searchCurrentCellId,
+  searchMatchCellIds,
 }: ConversationVirtualListProps) {
   const measuredHeightsRef = useRef<Map<string, number>>(new Map());
-  const layoutRef = useRef<ReturnType<typeof buildConversationVirtualLayout> | null>(
-    null,
-  );
+  const layoutRef = useRef<ReturnType<
+    typeof buildConversationVirtualLayout
+  > | null>(null);
   const [heightVersion, setHeightVersion] = useState(0);
   const [viewport, setViewport] = useState<ViewportState>({
     scrollTop: 0,
@@ -53,11 +59,17 @@ export function ConversationVirtualList({
   const [selectedToolEntryIds, setSelectedToolEntryIds] = useState<
     Map<string, string>
   >(() => new Map());
+  const [highlightedCellId, setHighlightedCellId] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     const liveCellIds = new Set(cells.map((cell) => cell.id));
     const entryIdsByCellId = new Map(
-      cells.map((cell) => [cell.id, new Set(cell.entries.map((entry) => entry.id))]),
+      cells.map((cell) => [
+        cell.id,
+        new Set(cell.entries.map((entry) => entry.id)),
+      ]),
     );
     let removedMeasuredHeights = false;
 
@@ -156,6 +168,37 @@ export function ConversationVirtualList({
   );
   layoutRef.current = layout;
 
+  const focusedItemId = focusedItem?.itemId ?? null;
+  const focusedItemToken = focusedItem?.token ?? null;
+
+  useEffect(() => {
+    if (!focusedItemId) {
+      return;
+    }
+
+    const index = cells.findIndex((cell) =>
+      cell.entries.some((entry) => entry.id === focusedItemId),
+    );
+    if (index === -1) {
+      return;
+    }
+
+    const cell = cells[index];
+    const container = containerRef.current;
+    const top = layoutRef.current?.offsets[index] ?? 0;
+    if (container) {
+      container.scrollTo({
+        top: Math.max(0, top - 24),
+        behavior: "smooth",
+      });
+    }
+    setHighlightedCellId(cell.id);
+    const timeout = window.setTimeout(() => {
+      setHighlightedCellId((current) => (current === cell.id ? null : current));
+    }, 2000);
+    return () => window.clearTimeout(timeout);
+  }, [cells, containerRef, focusedItemId, focusedItemToken]);
+
   const visibleWindow = useMemo(
     () =>
       findConversationWindow(
@@ -185,9 +228,7 @@ export function ConversationVirtualList({
     const currentTop = layoutRef.current?.offsets[index] ?? 0;
     const shouldStickToBottom =
       container != null &&
-      container.scrollHeight -
-        container.clientHeight -
-        container.scrollTop <=
+      container.scrollHeight - container.clientHeight - container.scrollTop <=
         24;
     if (container && currentTop < container.scrollTop) {
       container.scrollTop += roundedHeight - previousHeight;
@@ -265,6 +306,9 @@ export function ConversationVirtualList({
           return (
             <MeasuredConversationCell
               key={cell.id}
+              highlighted={cell.id === highlightedCellId}
+              searchCurrent={cell.id === searchCurrentCellId}
+              searchMatch={searchMatchCellIds.has(cell.id)}
               top={layout.offsets[index] ?? 0}
               onHeightChange={(height) =>
                 handleCellHeightChange(cell, index, height)
@@ -329,11 +373,17 @@ function renderConversationCell(
 
 function MeasuredConversationCell({
   children,
+  highlighted,
   onHeightChange,
+  searchCurrent,
+  searchMatch,
   top,
 }: {
   children: ReactNode;
+  highlighted: boolean;
   onHeightChange: (height: number) => void;
+  searchCurrent: boolean;
+  searchMatch: boolean;
   top: number;
 }) {
   const elementRef = useRef<HTMLDivElement | null>(null);
@@ -368,10 +418,36 @@ function MeasuredConversationCell({
   return (
     <div
       ref={elementRef}
-      className="conversation-virtual-row"
+      className={buildConversationRowClassName({
+        highlighted,
+        searchCurrent,
+        searchMatch,
+      })}
       style={{ transform: `translateY(${top}px)` }}
     >
       {children}
     </div>
   );
+}
+
+export function buildConversationRowClassName({
+  highlighted,
+  searchCurrent,
+  searchMatch,
+}: {
+  highlighted: boolean;
+  searchCurrent: boolean;
+  searchMatch: boolean;
+}) {
+  const classNames = ["conversation-virtual-row"];
+  if (highlighted) {
+    classNames.push("highlighted");
+  }
+  if (searchMatch) {
+    classNames.push("search-match");
+  }
+  if (searchCurrent) {
+    classNames.push("search-current");
+  }
+  return classNames.join(" ");
 }

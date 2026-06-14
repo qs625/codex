@@ -751,6 +751,37 @@ pub enum MessagePhase {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseItem {
+    CommandWait {
+        #[serde(default, skip_serializing)]
+        #[ts(skip)]
+        id: Option<String>,
+        command_id: String,
+        status: CommandWaitStatus,
+        notification: Option<CommandWaitNotificationKind>,
+        exit_code: Option<i32>,
+        wall_time_seconds: f64,
+        created_at_ms: i64,
+    },
+    CommandWriteStdin {
+        #[serde(default, skip_serializing)]
+        #[ts(skip)]
+        id: Option<String>,
+        command_id: String,
+        bytes_written: usize,
+        contains_newline: bool,
+        created_at_ms: i64,
+    },
+    CommandExecutionNotification {
+        #[serde(default, skip_serializing)]
+        #[ts(skip)]
+        id: Option<String>,
+        command_item_id: String,
+        kind: CommandExecutionNotificationKind,
+        message: String,
+        output: Option<String>,
+        exit_code: Option<i32>,
+        created_at_ms: i64,
+    },
     WorkflowRunProgress {
         #[serde(default, skip_serializing)]
         #[ts(skip)]
@@ -922,6 +953,27 @@ pub enum ResponseItem {
     },
     #[serde(other)]
     Other,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum CommandExecutionNotificationKind {
+    Output,
+    Exit,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum CommandWaitStatus {
+    Running,
+    Completed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum CommandWaitNotificationKind {
+    Output,
+    Exit,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]

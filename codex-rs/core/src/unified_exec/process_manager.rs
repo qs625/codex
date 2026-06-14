@@ -279,6 +279,8 @@ async fn emit_failed_initial_exec_end_if_unstored(
         fallback_output,
         message,
         wall_time,
+        request.yield_time_ms,
+        request.notify_on.into(),
     )
     .await;
 }
@@ -401,6 +403,8 @@ impl UnifiedExecProcessManager {
             cwd.clone(),
             ExecCommandSource::UnifiedExecStartup,
             Some(request.process_id.to_string()),
+            request.yield_time_ms,
+            request.notify_on.into(),
         );
         emitter.emit(event_ctx, ToolEventStage::Begin).await;
 
@@ -428,6 +432,8 @@ impl UnifiedExecProcessManager {
                 deferred_network_approval.clone(),
                 Arc::clone(&transcript),
                 Arc::clone(&notification_state),
+                request.yield_time_ms,
+                request.notify_on,
             )
             .await;
         }
@@ -570,6 +576,8 @@ impl UnifiedExecProcessManager {
                 text.clone(),
                 exit,
                 wall_time,
+                request.yield_time_ms,
+                request.notify_on.into(),
             )
             .await;
 
@@ -704,6 +712,8 @@ impl UnifiedExecProcessManager {
         network_approval: Option<DeferredNetworkApproval>,
         transcript: Arc<tokio::sync::Mutex<HeadTailBuffer>>,
         notification_state: Arc<CommandNotificationState>,
+        initial_wait_ms: u64,
+        notify_on: CommandNotificationFilter,
     ) {
         let entry = ProcessEntry {
             process: Arc::clone(&process),
@@ -740,6 +750,8 @@ impl UnifiedExecProcessManager {
             transcript,
             started_at,
             notification_state,
+            initial_wait_ms,
+            notify_on,
         );
     }
 

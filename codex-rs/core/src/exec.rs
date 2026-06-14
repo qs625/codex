@@ -1436,6 +1436,9 @@ async fn read_output<R: AsyncRead + Unpin + Send + 'static>(
             let chunk = tmp[..n].to_vec();
             let msg = EventMsg::ExecCommandOutputDelta(ExecCommandOutputDeltaEvent {
                 call_id: stream.call_id.clone(),
+                sequence: None,
+                generates_notification: false,
+                created_at_ms: 0,
                 stream: if is_stderr {
                     ExecOutputStream::Stderr
                 } else {

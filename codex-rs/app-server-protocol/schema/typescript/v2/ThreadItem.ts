@@ -10,8 +10,12 @@ import type { CollabAgentState } from "./CollabAgentState";
 import type { CollabAgentTool } from "./CollabAgentTool";
 import type { CollabAgentToolCallStatus } from "./CollabAgentToolCallStatus";
 import type { CommandAction } from "./CommandAction";
+import type { CommandExecutionNotificationKind } from "./CommandExecutionNotificationKind";
+import type { CommandExecutionNotifyOn } from "./CommandExecutionNotifyOn";
 import type { CommandExecutionSource } from "./CommandExecutionSource";
 import type { CommandExecutionStatus } from "./CommandExecutionStatus";
+import type { CommandWaitNotificationKind } from "./CommandWaitNotificationKind";
+import type { CommandWaitStatus } from "./CommandWaitStatus";
 import type { DynamicToolCallOutputContentItem } from "./DynamicToolCallOutputContentItem";
 import type { DynamicToolCallStatus } from "./DynamicToolCallStatus";
 import type { FileUpdateChange } from "./FileUpdateChange";
@@ -41,6 +45,14 @@ cwd: AbsolutePathBuf,
  */
 processId: string | null, source: CommandExecutionSource, status: CommandExecutionStatus,
 /**
+ * Initial wait window requested by exec_command, in milliseconds.
+ */
+initialWaitMs: number | null,
+/**
+ * Notification policy requested by exec_command.
+ */
+notifyOn: CommandExecutionNotifyOn | null,
+/**
  * A best-effort parsing of the command to understand the action(s) it will perform.
  * This returns a list of CommandAction objects because a single shell command may
  * be composed of many commands piped together.
@@ -57,7 +69,35 @@ exitCode: number | null,
 /**
  * The duration of the command execution in milliseconds.
  */
-durationMs: number | null, } | { "type": "fileChange", id: string, changes: Array<FileUpdateChange>, status: PatchApplyStatus, } | { "type": "mcpToolCall", id: string, server: string, tool: string, status: McpToolCallStatus, arguments: JsonValue, mcpAppResourceUri?: string, result: McpToolCallResult | null, error: McpToolCallError | null,
+durationMs: number | null, } | { "type": "commandExecutionNotification", id: string,
+/**
+ * The command execution item that produced this notification.
+ */
+commandItemId: string, kind: CommandExecutionNotificationKind,
+/**
+ * User-visible notification summary.
+ */
+message: string,
+/**
+ * Output text associated with an output notification.
+ */
+output: string | null,
+/**
+ * Exit code associated with an exit notification.
+ */
+exitCode: number | null,
+/**
+ * Timestamp when the notification was created.
+ */
+createdAtMs: number, } | { "type": "commandWait", id: string,
+/**
+ * Identifier of the command session being waited on.
+ */
+commandId: string, status: CommandWaitStatus, notification: CommandWaitNotificationKind | null, exitCode: number | null, wallTimeSeconds: number, createdAtMs: number, } | { "type": "commandWriteStdin", id: string,
+/**
+ * Identifier of the command session receiving stdin.
+ */
+commandId: string, bytesWritten: number, containsNewline: boolean, createdAtMs: number, } | { "type": "fileChange", id: string, changes: Array<FileUpdateChange>, status: PatchApplyStatus, } | { "type": "mcpToolCall", id: string, server: string, tool: string, status: McpToolCallStatus, arguments: JsonValue, mcpAppResourceUri?: string, result: McpToolCallResult | null, error: McpToolCallError | null,
 /**
  * The duration of the MCP tool call in milliseconds.
  */

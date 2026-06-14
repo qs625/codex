@@ -158,6 +158,107 @@ test("keeps consecutive ordinary tools grouped in one visible cell", () => {
   );
 });
 
+test("includes command session parameters in command details", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "commandExecution",
+        id: "cmd-1",
+        command: "cargo test",
+        cwd: "/tmp/project",
+        status: "running",
+        initialWaitMs: 3000,
+        notifyOn: "output",
+        aggregatedOutput: null,
+        exitCode: null,
+        durationMs: null,
+      },
+    ]),
+  );
+
+  assert.equal(entries[0]?.toolDetails?.includes("Initial Wait\n3000 ms"), true);
+  assert.equal(entries[0]?.toolDetails?.includes("Notify On\noutput"), true);
+});
+
+test("renders command notifications as standalone event entries", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "commandExecutionNotification",
+        id: "cmd-1:notification:output:1",
+        commandItemId: "cmd-1",
+        kind: "output",
+        message: "Command output notification received.",
+        output: "changed",
+        exitCode: null,
+        createdAtMs: 1,
+      },
+      {
+        type: "commandExecutionNotification",
+        id: "cmd-1:notification:exit",
+        commandItemId: "cmd-1",
+        kind: "exit",
+        message: "Command exit notification received.",
+        output: null,
+        exitCode: 0,
+        createdAtMs: 2,
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.kind, entry.text]),
+    [
+      [
+        "event",
+        "Command output notification received for cmd-1: changed",
+      ],
+      ["event", "Command exit notification received for cmd-1: exit 0."],
+    ],
+  );
+});
+
+test("renders command wait and stdin actions as standalone event entries", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "commandWait",
+        id: "wait-1",
+        commandId: "7",
+        status: "completed",
+        notification: "exit",
+        exitCode: 0,
+        wallTimeSeconds: 1.25,
+        createdAtMs: 2_000,
+      },
+      {
+        type: "commandWriteStdin",
+        id: "stdin-1",
+        commandId: "7",
+        bytesWritten: 4,
+        containsNewline: true,
+        createdAtMs: 3_000,
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.kind, entry.text, entry.timestamp]),
+    [
+      [
+        "event",
+        "Waited for command 7 after exit notification: completed, exit 0 in 1.250s.",
+        formatClockTime(2),
+      ],
+      [
+        "event",
+        "Wrote 4 bytes to command 7 including newline.",
+        formatClockTime(3),
+      ],
+    ],
+  );
+});
+
 test("groups consecutive agent messages without crossing semantic boundaries", () => {
   const entries = buildConversationEntries(
     makeThread([

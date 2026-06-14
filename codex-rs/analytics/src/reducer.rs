@@ -362,6 +362,9 @@ impl TurnToolCounts {
             | ThreadItem::AgentMessage { .. }
             | ThreadItem::Plan { .. }
             | ThreadItem::Reasoning { .. }
+            | ThreadItem::CommandWait { .. }
+            | ThreadItem::CommandWriteStdin { .. }
+            | ThreadItem::CommandExecutionNotification { .. }
             | ThreadItem::EventDrivenToolCall { .. }
             | ThreadItem::EventDrivenTool { .. }
             | ThreadItem::EventCommandCall { .. }
@@ -1599,6 +1602,9 @@ fn tracked_tool_item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::AgentMessage { .. }
         | ThreadItem::Plan { .. }
         | ThreadItem::Reasoning { .. }
+        | ThreadItem::CommandWait { .. }
+        | ThreadItem::CommandWriteStdin { .. }
+        | ThreadItem::CommandExecutionNotification { .. }
         | ThreadItem::EventDrivenToolCall { .. }
         | ThreadItem::EventDrivenTool { .. }
         | ThreadItem::EventCommandCall { .. }

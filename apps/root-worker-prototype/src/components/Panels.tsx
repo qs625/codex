@@ -5,6 +5,7 @@ import {
   useState,
   type ChangeEvent,
   type ClipboardEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
 
@@ -22,6 +23,7 @@ import {
   OpenIcon,
   PaperclipIcon,
   PlusIcon,
+  SearchIcon,
   SendIcon,
   StopIcon,
 } from "./icons";
@@ -36,6 +38,11 @@ import {
   threadDisplayStatusClass,
   trimPath,
 } from "../lib/thread";
+import {
+  buildConversationSearchResults,
+  getNextConversationSearchIndex,
+  type ConversationSearchResult,
+} from "../lib/conversationSearch";
 import { isVoiceCaptureToggleDisabled } from "../lib/voiceCaptureState";
 import type {
   ComposerImage,
@@ -135,6 +142,7 @@ export function ConversationPanel({
   draft,
   draftImages,
   draftSkills,
+  focusedConversationItem,
   imageInputRef,
   isLoadingThread,
   isSending,
@@ -162,6 +170,7 @@ export function ConversationPanel({
   draft: string;
   draftImages: ComposerImage[];
   draftSkills: DraftSkill[];
+  focusedConversationItem: { itemId: string; token: number } | null;
   imageInputRef: RefObject<HTMLInputElement | null>;
   isLoadingThread: boolean;
   isSending: boolean;
@@ -191,15 +200,56 @@ export function ConversationPanel({
     isSending,
   });
   const [selectedSkillIndex, setSelectedSkillIndex] = useState(0);
-  const [dismissedSkillQuery, setDismissedSkillQuery] = useState<string | null>(null);
+  const [dismissedSkillQuery, setDismissedSkillQuery] = useState<string | null>(
+    null,
+  );
+  const [conversationSearchOpen, setConversationSearchOpen] = useState(false);
+  const [conversationSearchQuery, setConversationSearchQuery] = useState("");
+  const [activeSearchIndex, setActiveSearchIndex] = useState(0);
+  const [searchFocusToken, setSearchFocusToken] = useState(0);
+  const [conversationFocusSource, setConversationFocusSource] = useState<
+    "external" | "search"
+  >("external");
   const selectedSkillOptionRef = useRef<HTMLButtonElement | null>(null);
+  const conversationSearchInputRef = useRef<HTMLInputElement | null>(null);
   const skillQuery = getActiveSkillSlashQuery(draft);
   const skillSuggestions = useMemo(
     () => filterSkillSlashSuggestions(availableSkills, draftSkills, skillQuery),
     [availableSkills, draftSkills, skillQuery],
   );
+  const conversationSearchResults = useMemo(
+    () =>
+      buildConversationSearchResults(
+        conversationCells,
+        conversationSearchQuery,
+      ),
+    [conversationCells, conversationSearchQuery],
+  );
+  const safeActiveSearchIndex =
+    conversationSearchResults.length > 0
+      ? Math.min(activeSearchIndex, conversationSearchResults.length - 1)
+      : 0;
+  const activeSearchResult =
+    conversationSearchResults[safeActiveSearchIndex] ?? null;
+  const conversationSearchMatchingCellIds = useMemo(
+    () => new Set(conversationSearchResults.map((result) => result.cellId)),
+    [conversationSearchResults],
+  );
+  const focusedSearchItem = useMemo(
+    () =>
+      activeSearchResult
+        ? { itemId: activeSearchResult.entryId, token: searchFocusToken }
+        : null,
+    [activeSearchResult?.entryId, searchFocusToken],
+  );
+  const focusedConversationListItem =
+    conversationFocusSource === "search" && focusedSearchItem
+      ? focusedSearchItem
+      : focusedConversationItem;
   const skillMenuVisible =
-    skillQuery !== null && skillSuggestions.length > 0 && dismissedSkillQuery !== skillQuery;
+    skillQuery !== null &&
+    skillSuggestions.length > 0 &&
+    dismissedSkillQuery !== skillQuery;
   const voiceCaptureActive =
     voiceCaptureStatus === "requesting" ||
     voiceCaptureStatus === "connecting" ||
@@ -221,7 +271,9 @@ export function ConversationPanel({
       setSelectedSkillIndex(0);
       return;
     }
-    setSelectedSkillIndex((current) => Math.min(current, skillSuggestions.length - 1));
+    setSelectedSkillIndex((current) =>
+      Math.min(current, skillSuggestions.length - 1),
+    );
   }, [skillSuggestions]);
 
   useEffect(() => {
@@ -233,6 +285,59 @@ export function ConversationPanel({
     });
   }, [selectedSkillIndex, skillMenuVisible]);
 
+  useEffect(() => {
+    setConversationSearchQuery("");
+    setActiveSearchIndex(0);
+    setConversationFocusSource("external");
+  }, [selectedThreadId]);
+
+  useEffect(() => {
+    if (!focusedConversationItem) {
+      return;
+    }
+    setConversationFocusSource("external");
+  }, [focusedConversationItem?.itemId, focusedConversationItem?.token]);
+
+  useEffect(() => {
+    if (!conversationSearchOpen) {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      conversationSearchInputRef.current?.focus();
+      conversationSearchInputRef.current?.select();
+    });
+  }, [conversationSearchOpen]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        setConversationSearchOpen(true);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (conversationSearchResults.length === 0) {
+      setActiveSearchIndex(0);
+      return;
+    }
+    setActiveSearchIndex((current) =>
+      Math.min(current, conversationSearchResults.length - 1),
+    );
+  }, [conversationSearchResults.length]);
+
+  useEffect(() => {
+    if (!activeSearchResult) {
+      return;
+    }
+    setSearchFocusToken((current) => current + 1);
+    setConversationFocusSource("search");
+  }, [activeSearchResult?.id]);
+
   function selectSkill(skill: ThreadSkill) {
     onAddDraftSkill({
       name: skill.name,
@@ -241,6 +346,46 @@ export function ConversationPanel({
     onDraftChange("");
     setDismissedSkillQuery(null);
     setSelectedSkillIndex(0);
+  }
+
+  function openConversationSearch() {
+    setConversationSearchOpen(true);
+  }
+
+  function clearConversationSearch() {
+    if (conversationSearchQuery) {
+      setConversationSearchQuery("");
+      setActiveSearchIndex(0);
+      return;
+    }
+    setConversationSearchOpen(false);
+  }
+
+  function moveConversationSearchResult(direction: -1 | 1) {
+    if (conversationSearchResults.length === 0) {
+      return;
+    }
+    setActiveSearchIndex((current) =>
+      getNextConversationSearchIndex(
+        current,
+        conversationSearchResults.length,
+        direction,
+      ),
+    );
+  }
+
+  function handleConversationSearchKeyDown(
+    event: ReactKeyboardEvent<HTMLInputElement>,
+  ) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      moveConversationSearchResult(event.shiftKey ? -1 : 1);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      clearConversationSearch();
+    }
   }
 
   return (
@@ -252,7 +397,11 @@ export function ConversationPanel({
             <span
               className={`status-dot ${threadDisplayStatusClass(selectedThread)}`}
             />
-            <span>{selectedThread ? getAgentRoleLabel(selectedThread) : "Root Agent"}</span>
+            <span>
+              {selectedThread
+                ? getAgentRoleLabel(selectedThread)
+                : "Root Agent"}
+            </span>
             <span className="subtitle-separator">•</span>
             <span>{getThreadPresenceLabel(selectedThread)}</span>
             <span className="subtitle-separator">•</span>
@@ -262,17 +411,56 @@ export function ConversationPanel({
               selectedThread={selectedThread}
             />
             {selectedThread ? (
-              <span className="thread-chip thread-chip-cwd" title={selectedThread.cwd}>
+              <span
+                className="thread-chip thread-chip-cwd"
+                title={selectedThread.cwd}
+              >
                 cwd: {trimPath(selectedThread.cwd)}
               </span>
             ) : null}
           </div>
         </div>
         <div className="conversation-actions">
-          <button type="button" className="icon-button subtle" aria-label="Open thread details">
+          {conversationSearchOpen ? (
+            <ConversationSearchControls
+              activeResult={activeSearchResult}
+              disabled={!selectedThread}
+              inputRef={conversationSearchInputRef}
+              onClear={clearConversationSearch}
+              onKeyDown={handleConversationSearchKeyDown}
+              onMoveNext={() => moveConversationSearchResult(1)}
+              onMovePrevious={() => moveConversationSearchResult(-1)}
+              onQueryChange={(value) => {
+                setConversationSearchQuery(value);
+                setActiveSearchIndex(0);
+              }}
+              query={conversationSearchQuery}
+              resultCount={conversationSearchResults.length}
+              resultIndex={safeActiveSearchIndex}
+            />
+          ) : (
+            <button
+              type="button"
+              className="icon-button subtle"
+              aria-label="Search conversation"
+              disabled={!selectedThread}
+              onClick={openConversationSearch}
+            >
+              <SearchIcon />
+            </button>
+          )}
+          <button
+            type="button"
+            className="icon-button subtle"
+            aria-label="Open thread details"
+          >
             <OpenIcon />
           </button>
-          <button type="button" className="icon-button subtle" aria-label="More thread actions">
+          <button
+            type="button"
+            className="icon-button subtle"
+            aria-label="More thread actions"
+          >
             <MoreIcon />
           </button>
         </div>
@@ -289,11 +477,16 @@ export function ConversationPanel({
               key={selectedThreadId}
               cells={conversationCells}
               containerRef={conversationScrollRef}
+              focusedItem={focusedConversationListItem}
               onOpenLocalFile={onOpenLocalFile}
+              searchCurrentCellId={activeSearchResult?.cellId ?? null}
+              searchMatchCellIds={conversationSearchMatchingCellIds}
             />
           ) : (
             <div className="conversation-empty">
-              <p>Select this agent and start the work from the composer below.</p>
+              <p>
+                Select this agent and start the work from the composer below.
+              </p>
             </div>
           )
         ) : (
@@ -399,11 +592,17 @@ export function ConversationPanel({
             }}
           />
           {skillMenuVisible ? (
-            <div className="composer-skill-menu" role="listbox" aria-label="Skill slash commands">
+            <div
+              className="composer-skill-menu"
+              role="listbox"
+              aria-label="Skill slash commands"
+            >
               {skillSuggestions.map((skill, index) => (
                 <button
                   key={skill.path}
-                  ref={index === selectedSkillIndex ? selectedSkillOptionRef : null}
+                  ref={
+                    index === selectedSkillIndex ? selectedSkillOptionRef : null
+                  }
                   type="button"
                   className={`composer-skill-option ${index === selectedSkillIndex ? "selected" : ""}`}
                   role="option"
@@ -414,23 +613,37 @@ export function ConversationPanel({
                   }}
                   onMouseEnter={() => setSelectedSkillIndex(index)}
                 >
-                  <span className="composer-skill-option-name">/{skill.name}</span>
-                  <span className="composer-skill-option-meta">{formatSkillOptionMeta(skill)}</span>
+                  <span className="composer-skill-option-name">
+                    /{skill.name}
+                  </span>
+                  <span className="composer-skill-option-meta">
+                    {formatSkillOptionMeta(skill)}
+                  </span>
                 </button>
               ))}
             </div>
           ) : null}
           {voiceCaptureMessage ? (
-            <div className={`composer-status composer-status-${voiceCaptureStatus}`}>
+            <div
+              className={`composer-status composer-status-${voiceCaptureStatus}`}
+            >
               {voiceCaptureMessage}
             </div>
           ) : null}
           <div className="composer-toolbar">
             <div className="composer-tools">
-              <button type="button" className="tool-button" aria-label="Attach file">
+              <button
+                type="button"
+                className="tool-button"
+                aria-label="Attach file"
+              >
                 <PaperclipIcon />
               </button>
-              <button type="button" className="tool-button" aria-label="Insert code">
+              <button
+                type="button"
+                className="tool-button"
+                aria-label="Insert code"
+              >
                 <CodeIcon />
               </button>
               <button
@@ -448,7 +661,9 @@ export function ConversationPanel({
                 className={`tool-button voice-button ${voiceCaptureActive ? "is-active" : ""} ${
                   voiceCaptureStatus === "error" ? "is-error" : ""
                 }`}
-                aria-label={voiceCaptureActive ? "Stop voice input" : "Start voice input"}
+                aria-label={
+                  voiceCaptureActive ? "Stop voice input" : "Start voice input"
+                }
                 disabled={isVoiceCaptureToggleDisabled({
                   selectedThreadId,
                   isSending,
@@ -458,27 +673,107 @@ export function ConversationPanel({
               >
                 {voiceCaptureActive ? <StopIcon /> : <MicrophoneIcon />}
               </button>
-            <button
-              type="button"
-              className={`send-button ${activeTurnId ? "is-stop-button" : ""}`}
-              disabled={
-                activeTurnId
-                  ? isStoppingTurn
-                  : !selectedThreadId ||
-                    isSending ||
-                    voiceCaptureActive ||
-                    (!draft.trim() && draftImages.length === 0 && draftSkills.length === 0)
-              }
-              aria-label={activeTurnId ? "Stop current turn" : "Send message"}
-              onClick={activeTurnId ? onStopTurn : onSendMessage}
-            >
-              {activeTurnId ? <StopIcon /> : <SendIcon />}
-            </button>
+              <button
+                type="button"
+                className={`send-button ${activeTurnId ? "is-stop-button" : ""}`}
+                disabled={
+                  activeTurnId
+                    ? isStoppingTurn
+                    : !selectedThreadId ||
+                      isSending ||
+                      voiceCaptureActive ||
+                      (!draft.trim() &&
+                        draftImages.length === 0 &&
+                        draftSkills.length === 0)
+                }
+                aria-label={activeTurnId ? "Stop current turn" : "Send message"}
+                onClick={activeTurnId ? onStopTurn : onSendMessage}
+              >
+                {activeTurnId ? <StopIcon /> : <SendIcon />}
+              </button>
             </div>
           </div>
         </div>
       </footer>
     </section>
+  );
+}
+
+function ConversationSearchControls({
+  activeResult,
+  disabled,
+  inputRef,
+  onClear,
+  onKeyDown,
+  onMoveNext,
+  onMovePrevious,
+  onQueryChange,
+  query,
+  resultCount,
+  resultIndex,
+}: {
+  activeResult: ConversationSearchResult | null;
+  disabled: boolean;
+  inputRef: RefObject<HTMLInputElement | null>;
+  onClear: () => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLInputElement>) => void;
+  onMoveNext: () => void;
+  onMovePrevious: () => void;
+  onQueryChange: (value: string) => void;
+  query: string;
+  resultCount: number;
+  resultIndex: number;
+}) {
+  const hasResults = resultCount > 0;
+  const countLabel = hasResults
+    ? `${resultIndex + 1} / ${resultCount}`
+    : "0 / 0";
+  const title = activeResult
+    ? `${activeResult.sourceLabel}: ${activeResult.preview}`
+    : "No matches";
+
+  return (
+    <div className="conversation-search-controls" title={title}>
+      <SearchIcon />
+      <input
+        ref={inputRef}
+        aria-label="Search current conversation"
+        disabled={disabled}
+        placeholder="Search conversation"
+        value={query}
+        onChange={(event) => onQueryChange(event.target.value)}
+        onKeyDown={onKeyDown}
+      />
+      <span className="conversation-search-count">{countLabel}</span>
+      <button
+        type="button"
+        className="conversation-search-step"
+        disabled={!hasResults}
+        aria-label="Previous conversation search result"
+        onClick={onMovePrevious}
+      >
+        Prev
+      </button>
+      <button
+        type="button"
+        className="conversation-search-step"
+        disabled={!hasResults}
+        aria-label="Next conversation search result"
+        onClick={onMoveNext}
+      >
+        Next
+      </button>
+      <button
+        type="button"
+        className="conversation-search-clear"
+        aria-label={
+          query ? "Clear conversation search" : "Close conversation search"
+        }
+        onClick={onClear}
+      >
+        Clear
+      </button>
+    </div>
   );
 }
 
@@ -511,7 +806,9 @@ function filterSkillSlashSuggestions(
       return true;
     }
 
-    const searchable = [skill.name, skill.kind, skill.path].join(" ").toLowerCase();
+    const searchable = [skill.name, skill.kind, skill.path]
+      .join(" ")
+      .toLowerCase();
     return searchable.includes(normalizedQuery);
   });
 }
@@ -546,7 +843,9 @@ export function TreeContextMenu({
     return null;
   }
 
-  const thread = threads.find((candidate) => candidate.id === treeMenu.threadId);
+  const thread = threads.find(
+    (candidate) => candidate.id === treeMenu.threadId,
+  );
   if (!thread || isRootThread(thread)) {
     return null;
   }

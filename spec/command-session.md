@@ -44,6 +44,17 @@
 - live 输出继续走 `ExecCommandBegin/OutputDelta/End -> ThreadItem::CommandExecution`。
 - 删除 `response_item_projection.rs` 中针对旧 `event_command_subscribe` 的 command call 特判；schedule 仍作为 EventDrivenToolCall。
 - root-worker Conversation 侧消费 `ThreadItem::CommandExecution` 与 output delta 更新同一个 command cell；Live Commands index 从 command execution 状态派生。
+- `ThreadItem::CommandExecution` 携带 `initial_wait_ms` 与 `notify_on`，客户端 command details 必须展示这两个 session 参数；旧 shell/user shell 或 approval 派生项没有该参数时展示可省略。
+- command notification 本身使用独立 typed item 展示：`CommandExecutionNotification { command_item_id, kind, message, output, exit_code, created_at_ms }`。
+  - `notify_on=exit`：中间 `ExecCommandOutputDelta` 只更新 command cell 的 live tail，不生成 output notification item；`ExecCommandEnd` 生成 exit notification item。
+  - `notify_on=output`：每个唤醒模型的 output delta 生成 output notification item；`ExecCommandEnd` 仍生成 exit notification item。
+  - notification item 的 `id` 必须不同于 command execution item，关联只通过 typed `command_item_id`，不得按 command/output 文本匹配。
+- `command_wait` 与 `command_write_stdin` 的工具行为也使用独立 typed item 展示：
+  - `CommandWait { command_id, status, notification, exit_code, wall_time_seconds, created_at_ms }` 表示模型等待 command session 的结果。
+  - `CommandWriteStdin { command_id, bytes_written, contains_newline, created_at_ms }` 表示模型向 command session 写入 stdin；不持久化原始 stdin 文本。
+  - 两者必须通过 shared projector 生成 `ThreadItem`，不得只依赖函数返回 JSON、terminal interaction event 或 raw marker 展示。
+- root-worker Conversation 以独立 event row 展示 command output/exit notification；RightPanel Live Commands 仍以 command execution 状态决定显示/清理，latest event 优先显示 typed notification 摘要。
+- RightPanel Live Commands 点击 command row 时按 `ThreadItem.id` 定位到 conversation 中对应 command cell，短暂高亮，不展开详情、不打断 composer 输入。
 
 ## 风险
 

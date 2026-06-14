@@ -90,6 +90,7 @@ function buildMonitorSections(
 ): ThreadAnalysis["monitors"] {
   const monitors: MonitorSummary[] = [];
   const eventsByTool = new Map<string, MonitorEvent[]>();
+  const commandNotificationsByCommandId = new Map<string, string>();
 
   if (thread) {
     for (const turn of thread.turns) {
@@ -114,9 +115,28 @@ function buildMonitorSections(
         }
 
         if (item.type === "commandExecution") {
-          const commandMonitor = buildCommandMonitorSummary(item);
+          const commandMonitor = buildCommandMonitorSummary(
+            item,
+            commandNotificationsByCommandId.get(item.id) ?? null,
+          );
           if (commandMonitor) {
             monitors.push(commandMonitor);
+          }
+          continue;
+        }
+
+        if (item.type === "commandExecutionNotification") {
+          const summary = summarizeCommandNotification(item);
+          commandNotificationsByCommandId.set(
+            item.commandItemId,
+            summary,
+          );
+          const existingMonitor = monitors.find(
+            (monitor) => monitor.id === item.commandItemId,
+          );
+          if (existingMonitor) {
+            existingMonitor.latestEvent = summary;
+            existingMonitor.eventCount = Math.max(existingMonitor.eventCount, 1);
           }
           continue;
         }
@@ -169,6 +189,7 @@ function buildMonitorSections(
 
 function buildCommandMonitorSummary(
   item: Extract<ThreadItem, { type: "commandExecution" }>,
+  latestNotification: string | null,
 ): MonitorSummary | null {
   const status = statusLabel(item.status);
   const failed = item.exitCode !== null && item.exitCode !== undefined && item.exitCode !== 0;
@@ -187,9 +208,23 @@ function buildCommandMonitorSummary(
     label: item.command,
     detail: item.cwd,
     status: failed ? `Exit ${item.exitCode}` : status,
-    eventCount: latestOutput ? 1 : 0,
-    latestEvent: latestOutput,
+    eventCount: latestNotification || latestOutput ? 1 : 0,
+    latestEvent: latestNotification ?? latestOutput,
   };
+}
+
+function summarizeCommandNotification(
+  item: Extract<ThreadItem, { type: "commandExecutionNotification" }>,
+) {
+  if (item.kind === "output") {
+    return stringOrNull(item.output) ?? "Output notification";
+  }
+  if (item.kind === "exit") {
+    return item.exitCode === null || item.exitCode === undefined
+      ? "Exit notification"
+      : `Exit notification ${item.exitCode}`;
+  }
+  return item.message;
 }
 
 function buildMonitorSummary(

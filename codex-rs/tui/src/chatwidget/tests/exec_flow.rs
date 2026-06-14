@@ -362,6 +362,8 @@ async fn exec_end_without_begin_uses_event_command() {
             process_id: None,
             source: ExecCommandSource::Agent,
             status: AppServerCommandExecutionStatus::Completed,
+            initial_wait_ms: None,
+            notify_on: None,
             command_actions,
             aggregated_output: Some("done".to_string()),
             exit_code: Some(0),

@@ -130,6 +130,15 @@ pub(crate) enum CommandNotificationFilter {
     Exit,
 }
 
+impl From<CommandNotificationFilter> for codex_protocol::protocol::ExecCommandNotifyOn {
+    fn from(value: CommandNotificationFilter) -> Self {
+        match value {
+            CommandNotificationFilter::Output => Self::Output,
+            CommandNotificationFilter::Exit => Self::Exit,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CommandNotificationKind {
     Output,

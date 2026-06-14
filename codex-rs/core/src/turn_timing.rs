@@ -161,7 +161,10 @@ fn response_item_records_turn_ttft(item: &ResponseItem) -> bool {
         ResponseItem::Message { .. } => {
             raw_assistant_output_text_from_item(item).is_some_and(|text| !text.is_empty())
         }
-        ResponseItem::WorkflowRunProgress { .. }
+        ResponseItem::CommandWait { .. }
+        | ResponseItem::CommandWriteStdin { .. }
+        | ResponseItem::WorkflowRunProgress { .. }
+        | ResponseItem::CommandExecutionNotification { .. }
         | ResponseItem::EventCommandEvent { .. }
         | ResponseItem::EventDrivenTool { .. }
         | ResponseItem::InterAgentCommunication { .. } => false,

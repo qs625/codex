@@ -298,7 +298,10 @@ fn chat_message_from_response_item(item: ResponseItem) -> Option<ChatMessage> {
             tool_call_id: Some(call_id),
             tool_calls: Vec::new(),
         }),
-        ResponseItem::WorkflowRunProgress { .. }
+        ResponseItem::CommandWait { .. }
+        | ResponseItem::CommandWriteStdin { .. }
+        | ResponseItem::CommandExecutionNotification { .. }
+        | ResponseItem::WorkflowRunProgress { .. }
         | ResponseItem::EventCommandEvent { .. }
         | ResponseItem::EventDrivenTool { .. }
         | ResponseItem::InterAgentCommunication { .. }

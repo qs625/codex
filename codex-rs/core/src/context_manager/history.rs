@@ -213,7 +213,10 @@ impl ContextManager {
                 replaced
             }
             ResponseItem::Message { .. }
+            | ResponseItem::CommandWait { .. }
+            | ResponseItem::CommandWriteStdin { .. }
             | ResponseItem::WorkflowRunProgress { .. }
+            | ResponseItem::CommandExecutionNotification { .. }
             | ResponseItem::EventCommandEvent { .. }
             | ResponseItem::EventDrivenTool { .. }
             | ResponseItem::InterAgentCommunication { .. } => false,
@@ -394,7 +397,10 @@ impl ContextManager {
                 output: truncate_function_output_payload(output, policy_with_serialization_budget),
             },
             ResponseItem::Message { .. }
+            | ResponseItem::CommandWait { .. }
+            | ResponseItem::CommandWriteStdin { .. }
             | ResponseItem::WorkflowRunProgress { .. }
+            | ResponseItem::CommandExecutionNotification { .. }
             | ResponseItem::EventCommandEvent { .. }
             | ResponseItem::EventDrivenTool { .. }
             | ResponseItem::InterAgentCommunication { .. }
@@ -485,7 +491,10 @@ pub(crate) fn truncate_function_output_payload(
 fn is_api_message(message: &ResponseItem) -> bool {
     match message {
         ResponseItem::Message { role, .. } => role.as_str() != "system",
-        ResponseItem::EventCommandEvent { .. }
+        ResponseItem::CommandWait { .. }
+        | ResponseItem::CommandWriteStdin { .. }
+        | ResponseItem::CommandExecutionNotification { .. }
+        | ResponseItem::EventCommandEvent { .. }
         | ResponseItem::EventDrivenTool { .. }
         | ResponseItem::InterAgentCommunication { .. } => true,
         ResponseItem::FunctionCallOutput { .. }
@@ -699,7 +708,10 @@ fn is_model_generated_item(item: &ResponseItem) -> bool {
         | ResponseItem::Compaction { .. }
         | ResponseItem::ContextCompaction { .. } => true,
         ResponseItem::FunctionCallOutput { .. }
+        | ResponseItem::CommandWait { .. }
+        | ResponseItem::CommandWriteStdin { .. }
         | ResponseItem::WorkflowRunProgress { .. }
+        | ResponseItem::CommandExecutionNotification { .. }
         | ResponseItem::EventCommandEvent { .. }
         | ResponseItem::EventDrivenTool { .. }
         | ResponseItem::InterAgentCommunication { .. }
@@ -720,7 +732,11 @@ pub(crate) fn is_codex_generated_item(item: &ResponseItem) -> bool {
 
 pub(crate) fn is_user_turn_boundary(item: &ResponseItem) -> bool {
     match item {
-        ResponseItem::EventCommandEvent { .. } | ResponseItem::EventDrivenTool { .. } => {
+        ResponseItem::CommandWait { .. }
+        | ResponseItem::CommandWriteStdin { .. }
+        | ResponseItem::CommandExecutionNotification { .. }
+        | ResponseItem::EventCommandEvent { .. }
+        | ResponseItem::EventDrivenTool { .. } => {
             return true;
         }
         ResponseItem::InterAgentCommunication { communication, .. } => {

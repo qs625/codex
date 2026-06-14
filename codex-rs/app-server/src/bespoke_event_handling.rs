@@ -79,6 +79,8 @@ use codex_app_server_protocol::TurnPlanUpdatedNotification;
 use codex_app_server_protocol::TurnStartedNotification;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::WarningNotification;
+use codex_app_server_protocol::build_command_execution_exit_notification_item;
+use codex_app_server_protocol::build_command_execution_output_notification_item;
 use codex_app_server_protocol::build_item_from_guardian_event;
 use codex_app_server_protocol::guardian_auto_approval_review_notification;
 use codex_app_server_protocol::item_event_to_server_notification;
@@ -1142,15 +1144,33 @@ pub(crate) async fn apply_bespoke_event_handling(
             }
         }
         EventMsg::ExecCommandOutputDelta(exec_command_output_delta_event) => {
+            let created_at_ms = exec_command_output_delta_event.created_at_ms;
+            let notification_item =
+                build_command_execution_output_notification_item(&exec_command_output_delta_event);
             let notification = item_event_to_server_notification(
                 EventMsg::ExecCommandOutputDelta(exec_command_output_delta_event),
                 &conversation_id.to_string(),
                 &event_turn_id,
             );
             outgoing.send_server_notification(notification).await;
+            if let Some(item) = notification_item {
+                outgoing
+                    .send_server_notification(ServerNotification::ItemCompleted(
+                        ItemCompletedNotification {
+                            thread_id: conversation_id.to_string(),
+                            turn_id: event_turn_id.clone(),
+                            item,
+                            completed_at_ms: created_at_ms,
+                        },
+                    ))
+                    .await;
+            }
         }
         EventMsg::ExecCommandEnd(exec_command_end_event) => {
             let call_id = exec_command_end_event.call_id.clone();
+            let notification_item =
+                build_command_execution_exit_notification_item(&exec_command_end_event);
+            let completed_at_ms = exec_command_end_event.completed_at_ms;
             {
                 let mut state = thread_state.lock().await;
                 state
@@ -1173,6 +1193,16 @@ pub(crate) async fn apply_bespoke_event_handling(
                 &event_turn_id,
             );
             outgoing.send_server_notification(notification).await;
+            outgoing
+                .send_server_notification(ServerNotification::ItemCompleted(
+                    ItemCompletedNotification {
+                        thread_id: conversation_id.to_string(),
+                        turn_id: event_turn_id,
+                        item: notification_item,
+                        completed_at_ms,
+                    },
+                ))
+                .await;
         }
         // If this is a TurnAborted, reply to any pending interrupt requests.
         EventMsg::TurnAborted(turn_aborted_event) => {
@@ -1423,6 +1453,8 @@ async fn start_command_execution_item(
                 process_id: None,
                 source,
                 status: CommandExecutionStatus::InProgress,
+                initial_wait_ms: None,
+                notify_on: None,
                 command_actions,
                 aggregated_output: None,
                 exit_code: None,
@@ -1467,6 +1499,8 @@ async fn complete_command_execution_item(
         process_id,
         source,
         status,
+        initial_wait_ms: None,
+        notify_on: None,
         command_actions,
         aggregated_output: None,
         exit_code: None,
@@ -2653,6 +2687,8 @@ mod tests {
                         process_id: None,
                         source: CommandExecutionSource::Agent,
                         status: CommandExecutionStatus::InProgress,
+                        initial_wait_ms: None,
+                        notify_on: None,
                         command_actions: completion_item.command_actions.clone(),
                         aggregated_output: None,
                         exit_code: None,

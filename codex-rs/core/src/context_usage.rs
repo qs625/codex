@@ -285,7 +285,10 @@ fn build_thread_context_usage_inner(
                     .tool_calls
                     .saturating_add(estimate_response_item_model_visible_bytes(item));
             }
-            ResponseItem::WorkflowRunProgress { .. }
+            ResponseItem::CommandWait { .. }
+            | ResponseItem::CommandWriteStdin { .. }
+            | ResponseItem::WorkflowRunProgress { .. }
+            | ResponseItem::CommandExecutionNotification { .. }
             | ResponseItem::EventCommandEvent { .. }
             | ResponseItem::EventDrivenTool { .. } => {
                 categories.tools_metadata = categories

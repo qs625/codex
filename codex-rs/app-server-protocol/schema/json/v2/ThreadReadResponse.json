@@ -337,6 +337,20 @@
         }
       ]
     },
+    "CommandExecutionNotificationKind": {
+      "enum": [
+        "output",
+        "exit"
+      ],
+      "type": "string"
+    },
+    "CommandExecutionNotifyOn": {
+      "enum": [
+        "output",
+        "exit"
+      ],
+      "type": "string"
+    },
     "CommandExecutionSource": {
       "enum": [
         "agent",
@@ -352,6 +366,20 @@
         "completed",
         "failed",
         "declined"
+      ],
+      "type": "string"
+    },
+    "CommandWaitNotificationKind": {
+      "enum": [
+        "output",
+        "exit"
+      ],
+      "type": "string"
+    },
+    "CommandWaitStatus": {
+      "enum": [
+        "running",
+        "completed"
       ],
       "type": "string"
     },
@@ -1366,6 +1394,25 @@
             "id": {
               "type": "string"
             },
+            "initialWaitMs": {
+              "description": "Initial wait window requested by exec_command, in milliseconds.",
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "notifyOn": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CommandExecutionNotifyOn"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Notification policy requested by exec_command."
+            },
             "processId": {
               "description": "Identifier for the underlying PTY process (when available).",
               "type": [
@@ -1401,6 +1448,157 @@
             "type"
           ],
           "title": "CommandExecutionThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "commandItemId": {
+              "description": "The command execution item that produced this notification.",
+              "type": "string"
+            },
+            "createdAtMs": {
+              "description": "Timestamp when the notification was created.",
+              "format": "int64",
+              "type": "integer"
+            },
+            "exitCode": {
+              "description": "Exit code associated with an exit notification.",
+              "format": "int32",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/CommandExecutionNotificationKind"
+            },
+            "message": {
+              "description": "User-visible notification summary.",
+              "type": "string"
+            },
+            "output": {
+              "description": "Output text associated with an output notification.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "commandExecutionNotification"
+              ],
+              "title": "CommandExecutionNotificationThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "commandItemId",
+            "createdAtMs",
+            "id",
+            "kind",
+            "message",
+            "type"
+          ],
+          "title": "CommandExecutionNotificationThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "commandId": {
+              "description": "Identifier of the command session being waited on.",
+              "type": "string"
+            },
+            "createdAtMs": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "exitCode": {
+              "format": "int32",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "notification": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CommandWaitNotificationKind"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "$ref": "#/definitions/CommandWaitStatus"
+            },
+            "type": {
+              "enum": [
+                "commandWait"
+              ],
+              "title": "CommandWaitThreadItemType",
+              "type": "string"
+            },
+            "wallTimeSeconds": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "commandId",
+            "createdAtMs",
+            "id",
+            "status",
+            "type",
+            "wallTimeSeconds"
+          ],
+          "title": "CommandWaitThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "bytesWritten": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "commandId": {
+              "description": "Identifier of the command session receiving stdin.",
+              "type": "string"
+            },
+            "containsNewline": {
+              "type": "boolean"
+            },
+            "createdAtMs": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "commandWriteStdin"
+              ],
+              "title": "CommandWriteStdinThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "bytesWritten",
+            "commandId",
+            "containsNewline",
+            "createdAtMs",
+            "id",
+            "type"
+          ],
+          "title": "CommandWriteStdinThreadItem",
           "type": "object"
         },
         {

@@ -75,9 +75,39 @@ export type ThreadItem = ThreadItemTimestamps &
       command: string;
       cwd: string;
       status: string;
+      initialWaitMs?: number | null;
+      notifyOn?: "output" | "exit" | string | null;
       aggregatedOutput: string | null;
       exitCode: number | null;
       durationMs: number | null;
+    }
+  | {
+      type: "commandExecutionNotification";
+      id: string;
+      commandItemId: string;
+      kind: "output" | "exit" | string;
+      message: string;
+      output: string | null;
+      exitCode: number | null;
+      createdAtMs: number;
+    }
+  | {
+      type: "commandWait";
+      id: string;
+      commandId: string;
+      status: "running" | "completed" | string;
+      notification: "output" | "exit" | string | null;
+      exitCode: number | null;
+      wallTimeSeconds: number;
+      createdAtMs: number;
+    }
+  | {
+      type: "commandWriteStdin";
+      id: string;
+      commandId: string;
+      bytesWritten: number;
+      containsNewline: boolean;
+      createdAtMs: number;
     }
   | {
       type: "fileChange";

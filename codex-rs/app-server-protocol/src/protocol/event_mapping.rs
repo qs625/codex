@@ -762,7 +762,7 @@ mod tests {
             item: TurnItem::ContextCompaction(
                 serde_json::from_value(json!({
                     "id": "compact-1",
-                    "replacementHistory": replacement_history.clone(),
+                    "replacementHistory": replacement_history,
                 }))
                 .expect("context compaction item"),
             ),
@@ -1026,6 +1026,9 @@ mod tests {
         let notification = item_event_to_server_notification(
             EventMsg::ExecCommandOutputDelta(ExecCommandOutputDeltaEvent {
                 call_id: "call-1".to_string(),
+                sequence: None,
+                generates_notification: false,
+                created_at_ms: 0,
                 stream: ExecOutputStream::Stdout,
                 chunk: b"hello".to_vec(),
             }),

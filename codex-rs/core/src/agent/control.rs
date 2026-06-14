@@ -105,7 +105,10 @@ fn keep_forked_rollout_item(item: &RolloutItem) -> bool {
             _ => false,
         },
         RolloutItem::ResponseItem(
-            ResponseItem::WorkflowRunProgress { .. }
+            ResponseItem::CommandWait { .. }
+            | ResponseItem::CommandWriteStdin { .. }
+            | ResponseItem::WorkflowRunProgress { .. }
+            | ResponseItem::CommandExecutionNotification { .. }
             | ResponseItem::EventCommandEvent { .. }
             | ResponseItem::EventDrivenTool { .. }
             | ResponseItem::InterAgentCommunication { .. },
@@ -548,7 +551,7 @@ impl AgentControl {
 
     async fn resume_single_agent_from_rollout(
         &self,
-        mut config: crate::config::Config,
+        config: crate::config::Config,
         thread_id: ThreadId,
         session_source: SessionSource,
     ) -> CodexResult<ThreadId> {

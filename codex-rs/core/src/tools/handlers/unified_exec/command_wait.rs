@@ -8,11 +8,16 @@ use crate::tools::registry::ToolHandler;
 use crate::unified_exec::CommandNotificationKind;
 use crate::unified_exec::CommandWaitRequest;
 use crate::unified_exec::CommandWaitStatus;
+use codex_protocol::models::CommandWaitNotificationKind as ResponseCommandWaitNotificationKind;
+use codex_protocol::models::CommandWaitStatus as ResponseCommandWaitStatus;
 use codex_protocol::models::FunctionCallOutputContentItem;
+use codex_protocol::models::ResponseItem;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use serde::Deserialize;
 use serde::Serialize;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use super::super::shell_spec::create_command_wait_tool;
 
@@ -37,7 +42,10 @@ impl ToolExecutor<ToolInvocation> for CommandWaitHandler {
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
         let ToolInvocation {
-            session, payload, ..
+            session,
+            turn,
+            payload,
+            ..
         } = invocation;
 
         let arguments = match payload {
@@ -61,9 +69,34 @@ impl ToolExecutor<ToolInvocation> for CommandWaitHandler {
                 FunctionCallError::RespondToModel(format!("command_wait failed: {err}"))
             })?;
 
+        let response_item = ResponseItem::CommandWait {
+            id: None,
+            command_id: output.process_id.to_string(),
+            status: match &output.status {
+                CommandWaitStatus::Running => ResponseCommandWaitStatus::Running,
+                CommandWaitStatus::Completed => ResponseCommandWaitStatus::Completed,
+            },
+            notification: output.notification.map(|kind| match kind {
+                CommandNotificationKind::Output => ResponseCommandWaitNotificationKind::Output,
+                CommandNotificationKind::Exit => ResponseCommandWaitNotificationKind::Exit,
+            }),
+            exit_code: output.exit_code,
+            wall_time_seconds: output.wall_time.as_secs_f64(),
+            created_at_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64,
+        };
+        session
+            .record_conversation_items_and_emit_item_completed(
+                turn.as_ref(),
+                std::slice::from_ref(&response_item),
+            )
+            .await;
+
         let response = CommandWaitResponse {
             command_id: output.process_id,
-            status: match output.status {
+            status: match &output.status {
                 CommandWaitStatus::Running => "running",
                 CommandWaitStatus::Completed => "completed",
             },

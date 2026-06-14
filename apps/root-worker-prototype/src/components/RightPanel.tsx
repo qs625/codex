@@ -64,6 +64,7 @@ export function RightPanel({
   onCreateRootThread,
   onNavigateToSymbol,
   onOpenPreviewExternally,
+  onSelectCommandMonitor,
   onSelectTaskThread,
   onSetActiveView,
   onSetTaskFilter,
@@ -83,6 +84,7 @@ export function RightPanel({
   onCreateRootThread: () => void;
   onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
   onOpenPreviewExternally: () => void;
+  onSelectCommandMonitor?: (commandItemId: string) => void;
   onSelectTaskThread: (threadId: string) => void;
   onSetActiveView: (value: RightPanelView) => void;
   onSetTaskFilter: (value: TaskFilter) => void;
@@ -121,7 +123,10 @@ export function RightPanel({
               todoItems={todoItems}
             />
           ) : activeView === "skills" ? (
-            <ThreadAnalysisPanel analysis={threadAnalysis} />
+            <ThreadAnalysisPanel
+              analysis={threadAnalysis}
+              onSelectCommandMonitor={onSelectCommandMonitor}
+            />
           ) : (
             <FilePreviewPanel
               onNavigateToSymbol={onNavigateToSymbol}
@@ -206,7 +211,13 @@ export function RightPanel({
   );
 }
 
-function ThreadAnalysisPanel({ analysis }: { analysis: ThreadAnalysis }) {
+function ThreadAnalysisPanel({
+  analysis,
+  onSelectCommandMonitor,
+}: {
+  analysis: ThreadAnalysis;
+  onSelectCommandMonitor?: (commandItemId: string) => void;
+}) {
   const { contextUsage, monitors } = analysis;
 
   return (
@@ -301,7 +312,26 @@ function ThreadAnalysisPanel({ analysis }: { analysis: ThreadAnalysis }) {
                 {section.monitors.length > 0 ? (
                   <div className="monitor-list">
                     {section.monitors.map((monitor) => (
-                      <article key={monitor.id} className="monitor-row">
+                      <article
+                        key={monitor.id}
+                        className={`monitor-row ${monitor.kind === "command" ? "clickable" : ""}`}
+                        tabIndex={monitor.kind === "command" ? 0 : undefined}
+                        role={monitor.kind === "command" ? "button" : undefined}
+                        onClick={() => {
+                          if (monitor.kind === "command") {
+                            onSelectCommandMonitor?.(monitor.id);
+                          }
+                        }}
+                        onKeyDown={(event) => {
+                          if (
+                            monitor.kind === "command" &&
+                            (event.key === "Enter" || event.key === " ")
+                          ) {
+                            event.preventDefault();
+                            onSelectCommandMonitor?.(monitor.id);
+                          }
+                        }}
+                      >
                         <div className="monitor-row-main">
                           <strong title={monitor.label}>{monitor.label}</strong>
                           <span title={monitor.detail}>{monitor.detail}</span>

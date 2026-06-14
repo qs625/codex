@@ -174,7 +174,7 @@ async fn run_compact_task_inner_impl(
     input: Vec<UserInput>,
     initial_context_injection: InitialContextInjection,
 ) -> CodexResult<String> {
-    let mut compaction_item = ContextCompactionItem::new();
+    let compaction_item = ContextCompactionItem::new();
     let started_compaction_item = TurnItem::ContextCompaction(compaction_item.clone());
     sess.emit_turn_item_started(&turn_context, &started_compaction_item)
         .await;

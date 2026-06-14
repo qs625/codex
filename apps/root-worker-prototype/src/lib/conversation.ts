@@ -210,6 +210,48 @@ function buildConversationItemEntries(
     ];
   }
 
+  if (item.type === "commandExecutionNotification") {
+    return [
+      {
+        id: item.id,
+        kind: "event" as const,
+        author,
+        role: "system" as const,
+        text: summarizeCommandExecutionNotification(item),
+        timestamp,
+        attachments: [],
+      },
+    ];
+  }
+
+  if (item.type === "commandWait") {
+    return [
+      {
+        id: item.id,
+        kind: "event" as const,
+        author,
+        role: "system" as const,
+        text: summarizeCommandWait(item),
+        timestamp,
+        attachments: [],
+      },
+    ];
+  }
+
+  if (item.type === "commandWriteStdin") {
+    return [
+      {
+        id: item.id,
+        kind: "event" as const,
+        author,
+        role: "system" as const,
+        text: summarizeCommandWriteStdin(item),
+        timestamp,
+        attachments: [],
+      },
+    ];
+  }
+
   if (item.type === "collabAgentToolCall") {
     return [
       {
@@ -466,6 +508,15 @@ function buildConversationItemEntries(
 }
 
 function formatItemTimestamp(item: ThreadItem) {
+  if (
+    (item.type === "commandExecutionNotification" ||
+      item.type === "commandWait" ||
+      item.type === "commandWriteStdin") &&
+    Number.isFinite(item.createdAtMs)
+  ) {
+    return formatClockTime(item.createdAtMs / 1000);
+  }
+
   const timestampMs = item.completedAtMs ?? item.startedAtMs;
   return timestampMs === null || timestampMs === undefined
     ? null
@@ -1404,6 +1455,14 @@ function formatCommandExecutionDetails(
     `Status\n${item.status}`,
   ];
 
+  if (item.initialWaitMs !== null && item.initialWaitMs !== undefined) {
+    sections.push(`Initial Wait\n${item.initialWaitMs} ms`);
+  }
+
+  if (item.notifyOn) {
+    sections.push(`Notify On\n${item.notifyOn}`);
+  }
+
   if (item.durationMs !== null && item.durationMs !== undefined) {
     sections.push(`Duration\n${item.durationMs} ms`);
   }
@@ -1418,6 +1477,48 @@ function formatCommandExecutionDetails(
   }
 
   return sections.join("\n\n");
+}
+
+function summarizeCommandExecutionNotification(
+  item: Extract<ThreadItem, { type: "commandExecutionNotification" }>,
+) {
+  if (item.kind === "output") {
+    const output = stringOrNull(item.output);
+    return output
+      ? `Command output notification received for ${item.commandItemId}: ${output}`
+      : `Command output notification received for ${item.commandItemId}.`;
+  }
+
+  if (item.kind === "exit") {
+    const exitCode =
+      item.exitCode === null || item.exitCode === undefined
+        ? "unknown exit"
+        : `exit ${item.exitCode}`;
+    return `Command exit notification received for ${item.commandItemId}: ${exitCode}.`;
+  }
+
+  return item.message || `Command notification received for ${item.commandItemId}.`;
+}
+
+function summarizeCommandWait(item: Extract<ThreadItem, { type: "commandWait" }>) {
+  const notification = item.notification
+    ? ` after ${item.notification} notification`
+    : "";
+  const exitCode =
+    item.exitCode === null || item.exitCode === undefined
+      ? ""
+      : `, exit ${item.exitCode}`;
+  const seconds = Number.isFinite(item.wallTimeSeconds)
+    ? ` in ${item.wallTimeSeconds.toFixed(3)}s`
+    : "";
+  return `Waited for command ${item.commandId}${notification}: ${item.status}${exitCode}${seconds}.`;
+}
+
+function summarizeCommandWriteStdin(
+  item: Extract<ThreadItem, { type: "commandWriteStdin" }>,
+) {
+  const suffix = item.containsNewline ? " including newline" : "";
+  return `Wrote ${item.bytesWritten} bytes to command ${item.commandId}${suffix}.`;
 }
 
 function formatStructuredToolDetails(input: unknown, output: unknown) {

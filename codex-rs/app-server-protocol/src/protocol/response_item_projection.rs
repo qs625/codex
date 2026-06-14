@@ -1,6 +1,12 @@
 use crate::protocol::v2::CollabAgentState;
+use crate::protocol::v2::CommandExecutionNotificationKind;
+use crate::protocol::v2::CommandWaitNotificationKind;
+use crate::protocol::v2::CommandWaitStatus;
 use crate::protocol::v2::DynamicToolCallStatus;
 use crate::protocol::v2::ThreadItem;
+use codex_protocol::models::CommandExecutionNotificationKind as CoreCommandExecutionNotificationKind;
+use codex_protocol::models::CommandWaitNotificationKind as CoreCommandWaitNotificationKind;
+use codex_protocol::models::CommandWaitStatus as CoreCommandWaitStatus;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::InterAgentCommunication;
@@ -15,6 +21,53 @@ where
     F: Fn() -> String,
 {
     match item {
+        ResponseItem::CommandWait {
+            id,
+            command_id,
+            status,
+            notification,
+            exit_code,
+            wall_time_seconds,
+            created_at_ms,
+        } => Some(ThreadItem::CommandWait {
+            id: id.clone().unwrap_or_else(fallback_id),
+            command_id: command_id.clone(),
+            status: CommandWaitStatus::from(*status),
+            notification: notification.map(CommandWaitNotificationKind::from),
+            exit_code: *exit_code,
+            wall_time_seconds: *wall_time_seconds,
+            created_at_ms: *created_at_ms,
+        }),
+        ResponseItem::CommandWriteStdin {
+            id,
+            command_id,
+            bytes_written,
+            contains_newline,
+            created_at_ms,
+        } => Some(ThreadItem::CommandWriteStdin {
+            id: id.clone().unwrap_or_else(fallback_id),
+            command_id: command_id.clone(),
+            bytes_written: *bytes_written,
+            contains_newline: *contains_newline,
+            created_at_ms: *created_at_ms,
+        }),
+        ResponseItem::CommandExecutionNotification {
+            id,
+            command_item_id,
+            kind,
+            message,
+            output,
+            exit_code,
+            created_at_ms,
+        } => Some(ThreadItem::CommandExecutionNotification {
+            id: id.clone().unwrap_or_else(fallback_id),
+            command_item_id: command_item_id.clone(),
+            kind: CommandExecutionNotificationKind::from(*kind),
+            message: message.clone(),
+            output: output.clone(),
+            exit_code: *exit_code,
+            created_at_ms: *created_at_ms,
+        }),
         ResponseItem::WorkflowRunProgress { id, event } => Some(ThreadItem::WorkflowRunProgress {
             id: id.clone().unwrap_or_else(fallback_id),
             event: event.clone().into(),
@@ -34,6 +87,33 @@ where
             ))
         }
         _ => None,
+    }
+}
+
+impl From<CoreCommandExecutionNotificationKind> for CommandExecutionNotificationKind {
+    fn from(value: CoreCommandExecutionNotificationKind) -> Self {
+        match value {
+            CoreCommandExecutionNotificationKind::Output => Self::Output,
+            CoreCommandExecutionNotificationKind::Exit => Self::Exit,
+        }
+    }
+}
+
+impl From<CoreCommandWaitStatus> for CommandWaitStatus {
+    fn from(value: CoreCommandWaitStatus) -> Self {
+        match value {
+            CoreCommandWaitStatus::Running => Self::Running,
+            CoreCommandWaitStatus::Completed => Self::Completed,
+        }
+    }
+}
+
+impl From<CoreCommandWaitNotificationKind> for CommandWaitNotificationKind {
+    fn from(value: CoreCommandWaitNotificationKind) -> Self {
+        match value {
+            CoreCommandWaitNotificationKind::Output => Self::Output,
+            CoreCommandWaitNotificationKind::Exit => Self::Exit,
+        }
     }
 }
 

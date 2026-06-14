@@ -134,6 +134,27 @@
         }
       ]
     },
+    "CommandExecutionNotificationKind": {
+      "enum": [
+        "output",
+        "exit"
+      ],
+      "type": "string"
+    },
+    "CommandWaitNotificationKind": {
+      "enum": [
+        "output",
+        "exit"
+      ],
+      "type": "string"
+    },
+    "CommandWaitStatus": {
+      "enum": [
+        "running",
+        "completed"
+      ],
+      "type": "string"
+    },
     "ContentItem": {
       "oneOf": [
         {
@@ -634,6 +655,159 @@
     },
     "ResponseItem": {
       "oneOf": [
+        {
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "created_at_ms": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "exit_code": {
+              "format": "int32",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "writeOnly": true
+            },
+            "notification": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CommandWaitNotificationKind"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "$ref": "#/definitions/CommandWaitStatus"
+            },
+            "type": {
+              "enum": [
+                "command_wait"
+              ],
+              "title": "CommandWaitResponseItemType",
+              "type": "string"
+            },
+            "wall_time_seconds": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "command_id",
+            "created_at_ms",
+            "status",
+            "type",
+            "wall_time_seconds"
+          ],
+          "title": "CommandWaitResponseItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "bytes_written": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "command_id": {
+              "type": "string"
+            },
+            "contains_newline": {
+              "type": "boolean"
+            },
+            "created_at_ms": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "writeOnly": true
+            },
+            "type": {
+              "enum": [
+                "command_write_stdin"
+              ],
+              "title": "CommandWriteStdinResponseItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "bytes_written",
+            "command_id",
+            "contains_newline",
+            "created_at_ms",
+            "type"
+          ],
+          "title": "CommandWriteStdinResponseItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "command_item_id": {
+              "type": "string"
+            },
+            "created_at_ms": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "exit_code": {
+              "format": "int32",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "writeOnly": true
+            },
+            "kind": {
+              "$ref": "#/definitions/CommandExecutionNotificationKind"
+            },
+            "message": {
+              "type": "string"
+            },
+            "output": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "command_execution_notification"
+              ],
+              "title": "CommandExecutionNotificationResponseItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "command_item_id",
+            "created_at_ms",
+            "kind",
+            "message",
+            "type"
+          ],
+          "title": "CommandExecutionNotificationResponseItem",
+          "type": "object"
+        },
         {
           "properties": {
             "event": {

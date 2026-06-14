@@ -379,6 +379,8 @@ async fn live_app_server_command_execution_strips_shell_wrapper() {
                 process_id: None,
                 source: AppServerCommandExecutionSource::UserShell,
                 status: AppServerCommandExecutionStatus::InProgress,
+                initial_wait_ms: None,
+                notify_on: None,
                 command_actions: vec![AppServerCommandAction::Unknown {
                     command: script.to_string(),
                 }],
@@ -401,6 +403,8 @@ async fn live_app_server_command_execution_strips_shell_wrapper() {
                 process_id: None,
                 source: AppServerCommandExecutionSource::UserShell,
                 status: AppServerCommandExecutionStatus::Completed,
+                initial_wait_ms: None,
+                notify_on: None,
                 command_actions: vec![AppServerCommandAction::Unknown {
                     command: script.to_string(),
                 }],

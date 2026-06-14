@@ -9,6 +9,7 @@ import {
   MessageRow,
   ToolRow,
 } from "./Conversation";
+import { buildConversationRowClassName } from "./ConversationVirtualList";
 import type { ConversationEntry } from "../types";
 
 const entries: ConversationEntry[] = [
@@ -165,10 +166,7 @@ test("single tool rows render a single inline item and auto-expand details with 
 
   assert.match(expandedMarkup, /first summary[\s\S]*first details/);
   assert.doesNotMatch(expandedMarkup, /tool-card-item-single/);
-  assert.equal(
-    expandedMarkup.match(/first summary/g)?.length ?? 0,
-    1,
-  );
+  assert.equal(expandedMarkup.match(/first summary/g)?.length ?? 0, 1);
 });
 
 test("tool rows treat partially completed lists as in progress", () => {
@@ -189,6 +187,25 @@ test("tool rows treat partially completed lists as in progress", () => {
   assert.match(markup, /tool-status-badge doing/);
   assert.match(markup, /tool-status-badge done[^>]*>completed/);
   assert.match(markup, /tool-status-badge doing[^>]*>running/);
+});
+
+test("conversation virtual rows expose search match and current highlight classes", () => {
+  assert.equal(
+    buildConversationRowClassName({
+      highlighted: false,
+      searchCurrent: false,
+      searchMatch: true,
+    }),
+    "conversation-virtual-row search-match",
+  );
+  assert.equal(
+    buildConversationRowClassName({
+      highlighted: true,
+      searchCurrent: true,
+      searchMatch: true,
+    }),
+    "conversation-virtual-row highlighted search-match search-current",
+  );
 });
 
 test("compact rows point to replacement history in the active chat list", () => {

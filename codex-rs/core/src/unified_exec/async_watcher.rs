@@ -18,10 +18,12 @@ use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
 use crate::tools::events::ToolEventFailure;
 use crate::tools::events::ToolEventStage;
+use crate::turn_timing::now_unix_timestamp_ms;
 use crate::unified_exec::head_tail_buffer::HeadTailBuffer;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::exec_output::StreamOutput;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::ExecCommandNotifyOn;
 use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_protocol::protocol::ExecOutputStream;
@@ -122,6 +124,8 @@ pub(crate) fn spawn_exit_watcher(
     transcript: Arc<Mutex<HeadTailBuffer>>,
     started_at: Instant,
     notification_state: Arc<CommandNotificationState>,
+    initial_wait_ms: u64,
+    notify_on: CommandNotificationFilter,
 ) {
     let exit_token = process.cancellation_token();
     let output_drained = process.output_drained_notify();
@@ -143,6 +147,8 @@ pub(crate) fn spawn_exit_watcher(
                 String::new(),
                 message,
                 duration,
+                initial_wait_ms,
+                notify_on.into(),
             )
             .await;
         } else {
@@ -158,6 +164,8 @@ pub(crate) fn spawn_exit_watcher(
                 String::new(),
                 exit_code,
                 duration,
+                initial_wait_ms,
+                notify_on.into(),
             )
             .await;
         }
@@ -191,6 +199,9 @@ async fn process_chunk(
 
         let event = ExecCommandOutputDeltaEvent {
             call_id: call_id.to_string(),
+            sequence: Some(*emitted_deltas as u64 + 1),
+            generates_notification: matches!(notify_on, CommandNotificationFilter::Output),
+            created_at_ms: now_unix_timestamp_ms(),
             stream: ExecOutputStream::Stdout,
             chunk: prefix,
         };
@@ -221,6 +232,8 @@ pub(crate) async fn emit_exec_end_for_unified_exec(
     fallback_output: String,
     exit_code: i32,
     duration: Duration,
+    initial_wait_ms: u64,
+    notify_on: ExecCommandNotifyOn,
 ) {
     let aggregated_output = resolve_aggregated_output(&transcript, fallback_output).await;
     let output = ExecToolCallOutput {
@@ -242,6 +255,8 @@ pub(crate) async fn emit_exec_end_for_unified_exec(
         cwd,
         ExecCommandSource::UnifiedExecStartup,
         process_id,
+        initial_wait_ms,
+        notify_on,
     );
     emitter
         .emit(
@@ -266,6 +281,8 @@ pub(crate) async fn emit_failed_exec_end_for_unified_exec(
     fallback_output: String,
     message: String,
     duration: Duration,
+    initial_wait_ms: u64,
+    notify_on: ExecCommandNotifyOn,
 ) {
     let stdout = if fallback_output.is_empty() {
         resolve_aggregated_output(&transcript, fallback_output).await
@@ -296,6 +313,8 @@ pub(crate) async fn emit_failed_exec_end_for_unified_exec(
         cwd,
         ExecCommandSource::UnifiedExecStartup,
         process_id,
+        initial_wait_ms,
+        notify_on,
     );
     emitter
         .emit(

@@ -72,6 +72,7 @@ mod thread_processor_behavior_tests {
     use codex_protocol::permissions::FileSystemSandboxEntry;
     use codex_protocol::permissions::NetworkSandboxPolicy;
     use codex_protocol::protocol::AskForApproval;
+    use codex_protocol::protocol::EventMsg;
     use codex_protocol::protocol::SandboxPolicy;
     use codex_protocol::protocol::SessionSource;
     use codex_protocol::protocol::SubAgentSource;

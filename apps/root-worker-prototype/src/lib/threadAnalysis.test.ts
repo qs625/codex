@@ -127,6 +127,39 @@ test("keeps failed command in the live command index", () => {
   ]);
 });
 
+test("uses command notification as latest live command event", () => {
+  const analysis = buildThreadAnalysis(
+    makeThread([
+      {
+        type: "commandExecution",
+        id: "command-1",
+        command: "tail -f /tmp/build.log",
+        cwd: "/repo",
+        status: "running",
+        aggregatedOutput: "older output\n",
+        exitCode: null,
+        durationMs: null,
+      },
+      {
+        type: "commandExecutionNotification",
+        id: "command-1:notification:output:1",
+        commandItemId: "command-1",
+        kind: "output",
+        message: "Command output notification received.",
+        output: "fresh notification",
+        exitCode: null,
+        createdAtMs: 1,
+      },
+    ]),
+    0,
+  );
+
+  assert.equal(
+    analysis.monitors.sections[0]?.monitors[0]?.latestEvent,
+    "fresh notification",
+  );
+});
+
 test("omits successful completed commands from live command index", () => {
   const analysis = buildThreadAnalysis(
     makeThread([

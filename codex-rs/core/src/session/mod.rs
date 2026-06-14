@@ -3626,7 +3626,10 @@ impl Session {
 fn is_structured_display_response_item(item: &ResponseItem) -> bool {
     matches!(
         item,
-        ResponseItem::EventCommandEvent { .. }
+        ResponseItem::CommandWait { .. }
+            | ResponseItem::CommandWriteStdin { .. }
+            | ResponseItem::CommandExecutionNotification { .. }
+            | ResponseItem::EventCommandEvent { .. }
             | ResponseItem::EventDrivenTool { .. }
             | ResponseItem::InterAgentCommunication {
                 communication: InterAgentCommunication {

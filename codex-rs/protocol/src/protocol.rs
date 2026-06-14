@@ -3127,6 +3127,13 @@ pub enum ExecCommandStatus {
     Declined,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecCommandNotifyOn {
+    Output,
+    Exit,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct ExecCommandBeginEvent {
     /// Identifier so this can be paired with the ExecCommandEnd event.
@@ -3151,6 +3158,14 @@ pub struct ExecCommandBeginEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub interaction_input: Option<String>,
+    /// Initial wait window requested by exec_command, in milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub initial_wait_ms: Option<u64>,
+    /// Notification policy requested by exec_command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub notify_on: Option<ExecCommandNotifyOn>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
@@ -3177,6 +3192,14 @@ pub struct ExecCommandEndEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub interaction_input: Option<String>,
+    /// Initial wait window requested by exec_command, in milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub initial_wait_ms: Option<u64>,
+    /// Notification policy requested by exec_command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub notify_on: Option<ExecCommandNotifyOn>,
 
     /// Captured stdout
     pub stdout: String,
@@ -3216,6 +3239,16 @@ pub enum ExecOutputStream {
 pub struct ExecCommandOutputDeltaEvent {
     /// Identifier for the ExecCommandBegin that produced this chunk.
     pub call_id: String,
+    /// Monotonic output sequence for this command when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub sequence: Option<u64>,
+    /// Whether this output delta also woke the model as a command notification.
+    #[serde(default)]
+    pub generates_notification: bool,
+    /// Timestamp when this output notification was created.
+    #[serde(default)]
+    pub created_at_ms: i64,
     /// Which stream produced this chunk.
     pub stream: ExecOutputStream,
     /// Raw bytes from the stream (may not be valid UTF-8).
@@ -5577,12 +5610,15 @@ mod tests {
     fn vec_u8_as_base64_serialization_and_deserialization() -> Result<()> {
         let event = ExecCommandOutputDeltaEvent {
             call_id: "call21".to_string(),
+            sequence: None,
+            generates_notification: false,
+            created_at_ms: 0,
             stream: ExecOutputStream::Stdout,
             chunk: vec![1, 2, 3, 4, 5],
         };
         let serialized = serde_json::to_string(&event)?;
         assert_eq!(
-            r#"{"call_id":"call21","stream":"stdout","chunk":"AQIDBAU="}"#,
+            r#"{"call_id":"call21","generates_notification":false,"created_at_ms":0,"stream":"stdout","chunk":"AQIDBAU="}"#,
             serialized,
         );
 
