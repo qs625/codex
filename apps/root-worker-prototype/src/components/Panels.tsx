@@ -44,6 +44,12 @@ import {
   type ConversationSearchResult,
 } from "../lib/conversationSearch";
 import { isVoiceCaptureToggleDisabled } from "../lib/voiceCaptureState";
+import {
+  buildComposerSlashSuggestions,
+  getActiveComposerSlashQuery,
+  type ComposerSlashCommandId,
+  type ComposerSlashSuggestion,
+} from "../lib/slashMenu";
 import type {
   ComposerImage,
   ConversationCell,
@@ -155,6 +161,7 @@ export function ConversationPanel({
   onOpenLocalFile,
   onRemoveDraftImage,
   onRemoveDraftSkill,
+  onRunSlashCommand,
   onUpdateRunConfig,
   onSendMessage,
   onStopTurn,
@@ -183,6 +190,7 @@ export function ConversationPanel({
   onOpenLocalFile: (target: string) => void;
   onRemoveDraftImage: (imageId: string) => void;
   onRemoveDraftSkill: (path: string) => void;
+  onRunSlashCommand: (commandId: ComposerSlashCommandId) => void;
   onUpdateRunConfig: (selection: RunConfigSelection) => void;
   onSendMessage: () => void;
   onStopTurn: () => void;
@@ -199,8 +207,8 @@ export function ConversationPanel({
     isLoadingThread,
     isSending,
   });
-  const [selectedSkillIndex, setSelectedSkillIndex] = useState(0);
-  const [dismissedSkillQuery, setDismissedSkillQuery] = useState<string | null>(
+  const [selectedSlashIndex, setSelectedSlashIndex] = useState(0);
+  const [dismissedSlashQuery, setDismissedSlashQuery] = useState<string | null>(
     null,
   );
   const [conversationSearchOpen, setConversationSearchOpen] = useState(false);
@@ -210,12 +218,18 @@ export function ConversationPanel({
   const [conversationFocusSource, setConversationFocusSource] = useState<
     "external" | "search"
   >("external");
-  const selectedSkillOptionRef = useRef<HTMLButtonElement | null>(null);
+  const selectedSlashOptionRef = useRef<HTMLButtonElement | null>(null);
   const conversationSearchInputRef = useRef<HTMLInputElement | null>(null);
-  const skillQuery = getActiveSkillSlashQuery(draft);
-  const skillSuggestions = useMemo(
-    () => filterSkillSlashSuggestions(availableSkills, draftSkills, skillQuery),
-    [availableSkills, draftSkills, skillQuery],
+  const slashQuery = getActiveComposerSlashQuery(draft);
+  const slashSuggestions = useMemo(
+    () =>
+      buildComposerSlashSuggestions({
+        availableSkills,
+        commandsEnabled: draftImages.length === 0 && draftSkills.length === 0,
+        draftSkills,
+        query: slashQuery,
+      }),
+    [availableSkills, draftImages.length, draftSkills, slashQuery],
   );
   const conversationSearchResults = useMemo(
     () =>
@@ -246,10 +260,14 @@ export function ConversationPanel({
     conversationFocusSource === "search" && focusedSearchItem
       ? focusedSearchItem
       : focusedConversationItem;
-  const skillMenuVisible =
-    skillQuery !== null &&
-    skillSuggestions.length > 0 &&
-    dismissedSkillQuery !== skillQuery;
+  const slashMenuVisible =
+    slashQuery !== null && dismissedSlashQuery !== slashQuery;
+  const commandSlashSuggestions = slashSuggestions.filter(
+    (suggestion) => suggestion.type === "command",
+  );
+  const skillSlashSuggestions = slashSuggestions.filter(
+    (suggestion) => suggestion.type === "skill",
+  );
   const voiceCaptureActive =
     voiceCaptureStatus === "requesting" ||
     voiceCaptureStatus === "connecting" ||
@@ -257,33 +275,33 @@ export function ConversationPanel({
     voiceCaptureStatus === "stopping";
 
   useEffect(() => {
-    setSelectedSkillIndex(0);
-  }, [skillQuery]);
+    setSelectedSlashIndex(0);
+  }, [slashQuery]);
 
   useEffect(() => {
-    if (skillQuery !== dismissedSkillQuery) {
-      setDismissedSkillQuery(null);
+    if (slashQuery !== dismissedSlashQuery) {
+      setDismissedSlashQuery(null);
     }
-  }, [dismissedSkillQuery, skillQuery]);
+  }, [dismissedSlashQuery, slashQuery]);
 
   useEffect(() => {
-    if (skillSuggestions.length === 0) {
-      setSelectedSkillIndex(0);
+    if (slashSuggestions.length === 0) {
+      setSelectedSlashIndex(0);
       return;
     }
-    setSelectedSkillIndex((current) =>
-      Math.min(current, skillSuggestions.length - 1),
+    setSelectedSlashIndex((current) =>
+      Math.min(current, slashSuggestions.length - 1),
     );
-  }, [skillSuggestions]);
+  }, [slashSuggestions]);
 
   useEffect(() => {
-    if (!skillMenuVisible) {
+    if (!slashMenuVisible) {
       return;
     }
-    selectedSkillOptionRef.current?.scrollIntoView({
+    selectedSlashOptionRef.current?.scrollIntoView({
       block: "nearest",
     });
-  }, [selectedSkillIndex, skillMenuVisible]);
+  }, [selectedSlashIndex, slashMenuVisible]);
 
   useEffect(() => {
     setConversationSearchQuery("");
@@ -344,8 +362,22 @@ export function ConversationPanel({
       path: skill.path,
     });
     onDraftChange("");
-    setDismissedSkillQuery(null);
-    setSelectedSkillIndex(0);
+    setDismissedSlashQuery(null);
+    setSelectedSlashIndex(0);
+  }
+
+  function selectSlashSuggestion(suggestion: ComposerSlashSuggestion) {
+    switch (suggestion.type) {
+      case "command":
+        onDraftChange("");
+        onRunSlashCommand(suggestion.commandId);
+        setDismissedSlashQuery(null);
+        setSelectedSlashIndex(0);
+        return;
+      case "skill":
+        selectSkill(suggestion.skill);
+        return;
+    }
   }
 
   function openConversationSearch() {
@@ -556,32 +588,38 @@ export function ConversationPanel({
             onChange={(event) => onDraftChange(event.target.value)}
             onPaste={onHandleComposerPaste}
             onKeyDown={(event) => {
-              if (skillMenuVisible) {
+              if (slashMenuVisible) {
                 if (event.key === "ArrowDown") {
+                  if (slashSuggestions.length === 0) {
+                    return;
+                  }
                   event.preventDefault();
-                  setSelectedSkillIndex((current) =>
-                    current + 1 >= skillSuggestions.length ? 0 : current + 1,
+                  setSelectedSlashIndex((current) =>
+                    current + 1 >= slashSuggestions.length ? 0 : current + 1,
                   );
                   return;
                 }
                 if (event.key === "ArrowUp") {
+                  if (slashSuggestions.length === 0) {
+                    return;
+                  }
                   event.preventDefault();
-                  setSelectedSkillIndex((current) =>
-                    current === 0 ? skillSuggestions.length - 1 : current - 1,
+                  setSelectedSlashIndex((current) =>
+                    current === 0 ? slashSuggestions.length - 1 : current - 1,
                   );
                   return;
                 }
                 if (event.key === "Enter" || event.key === "Tab") {
-                  event.preventDefault();
-                  const skill = skillSuggestions[selectedSkillIndex];
-                  if (skill) {
-                    selectSkill(skill);
+                  const suggestion = slashSuggestions[selectedSlashIndex];
+                  if (suggestion) {
+                    event.preventDefault();
+                    selectSlashSuggestion(suggestion);
                   }
                   return;
                 }
                 if (event.key === "Escape") {
                   event.preventDefault();
-                  setDismissedSkillQuery(skillQuery);
+                  setDismissedSlashQuery(slashQuery);
                   return;
                 }
               }
@@ -591,36 +629,42 @@ export function ConversationPanel({
               }
             }}
           />
-          {skillMenuVisible ? (
+          {slashMenuVisible ? (
             <div
-              className="composer-skill-menu"
+              className="composer-slash-menu"
               role="listbox"
-              aria-label="Skill slash commands"
+              aria-label="Slash commands and skills"
             >
-              {skillSuggestions.map((skill, index) => (
-                <button
-                  key={skill.path}
-                  ref={
-                    index === selectedSkillIndex ? selectedSkillOptionRef : null
-                  }
-                  type="button"
-                  className={`composer-skill-option ${index === selectedSkillIndex ? "selected" : ""}`}
-                  role="option"
-                  aria-selected={index === selectedSkillIndex}
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    selectSkill(skill);
-                  }}
-                  onMouseEnter={() => setSelectedSkillIndex(index)}
-                >
-                  <span className="composer-skill-option-name">
-                    /{skill.name}
-                  </span>
-                  <span className="composer-skill-option-meta">
-                    {formatSkillOptionMeta(skill)}
-                  </span>
-                </button>
-              ))}
+              {slashSuggestions.length > 0 ? (
+                <>
+                  {commandSlashSuggestions.length > 0 ? (
+                    <SlashMenuGroup
+                      allSuggestions={slashSuggestions}
+                      selectedIndex={selectedSlashIndex}
+                      selectedOptionRef={selectedSlashOptionRef}
+                      suggestions={commandSlashSuggestions}
+                      title="Commands"
+                      onSelect={selectSlashSuggestion}
+                      onSelectIndex={setSelectedSlashIndex}
+                    />
+                  ) : null}
+                  {skillSlashSuggestions.length > 0 ? (
+                    <SlashMenuGroup
+                      allSuggestions={slashSuggestions}
+                      selectedIndex={selectedSlashIndex}
+                      selectedOptionRef={selectedSlashOptionRef}
+                      suggestions={skillSlashSuggestions}
+                      title="Skills"
+                      onSelect={selectSlashSuggestion}
+                      onSelectIndex={setSelectedSlashIndex}
+                    />
+                  ) : null}
+                </>
+              ) : (
+                <div className="composer-slash-empty">
+                  No commands or skills match “/{slashQuery ?? ""}”
+                </div>
+              )}
             </div>
           ) : null}
           {voiceCaptureMessage ? (
@@ -777,44 +821,88 @@ function ConversationSearchControls({
   );
 }
 
-function getActiveSkillSlashQuery(draft: string) {
-  const firstLine = draft.trimStart().split("\n", 1)[0] ?? "";
-  if (!firstLine.startsWith("/") || firstLine.includes(" ")) {
-    return null;
-  }
-  return firstLine.slice(1);
-}
-
-function filterSkillSlashSuggestions(
-  availableSkills: ThreadSkill[],
-  draftSkills: DraftSkill[],
-  query: string | null,
-) {
-  if (query === null) {
-    return [];
-  }
-
-  const normalizedQuery = query.trim().toLowerCase();
-  const selectedPaths = new Set(draftSkills.map((skill) => skill.path));
-
-  return availableSkills.filter((skill) => {
-    if (selectedPaths.has(skill.path)) {
-      return false;
-    }
-
-    if (!normalizedQuery) {
-      return true;
-    }
-
-    const searchable = [skill.name, skill.kind, skill.path]
-      .join(" ")
-      .toLowerCase();
-    return searchable.includes(normalizedQuery);
-  });
-}
-
 function formatSkillOptionMeta(skill: ThreadSkill) {
   return `${formatSkillKindLabel(skill.kind)} · ${trimPath(skill.path)}`;
+}
+
+function getSlashSuggestionKey(suggestion: ComposerSlashSuggestion) {
+  switch (suggestion.type) {
+    case "command":
+      return `command:${suggestion.commandId}`;
+    case "skill":
+      return `skill:${suggestion.skill.path}`;
+  }
+}
+
+function SlashMenuGroup({
+  allSuggestions,
+  onSelect,
+  onSelectIndex,
+  selectedIndex,
+  selectedOptionRef,
+  suggestions,
+  title,
+}: {
+  allSuggestions: ComposerSlashSuggestion[];
+  onSelect: (suggestion: ComposerSlashSuggestion) => void;
+  onSelectIndex: (index: number) => void;
+  selectedIndex: number;
+  selectedOptionRef: RefObject<HTMLButtonElement | null>;
+  suggestions: ComposerSlashSuggestion[];
+  title: string;
+}) {
+  return (
+    <div className="composer-slash-group">
+      <div className="composer-slash-group-title">{title}</div>
+      {suggestions.map((suggestion) => {
+        const index = allSuggestions.indexOf(suggestion);
+        return (
+          <button
+            key={getSlashSuggestionKey(suggestion)}
+            ref={index === selectedIndex ? selectedOptionRef : null}
+            type="button"
+            className={`composer-slash-option ${index === selectedIndex ? "selected" : ""}`}
+            role="option"
+            aria-selected={index === selectedIndex}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              onSelect(suggestion);
+            }}
+            onMouseEnter={() => onSelectIndex(index)}
+          >
+            {renderSlashSuggestion(suggestion)}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function renderSlashSuggestion(suggestion: ComposerSlashSuggestion) {
+  switch (suggestion.type) {
+    case "command":
+      return (
+        <>
+          <span className="composer-slash-option-name">
+            {suggestion.label}
+          </span>
+          <span className="composer-slash-option-meta">
+            Command · {suggestion.description}
+          </span>
+        </>
+      );
+    case "skill":
+      return (
+        <>
+          <span className="composer-slash-option-name">
+            ${suggestion.skill.name}
+          </span>
+          <span className="composer-slash-option-meta">
+            Skill · {formatSkillOptionMeta(suggestion.skill)}
+          </span>
+        </>
+      );
+  }
 }
 
 function formatSkillKindLabel(kind: ThreadSkill["kind"]) {

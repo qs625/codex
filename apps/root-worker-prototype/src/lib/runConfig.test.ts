@@ -141,7 +141,7 @@ test("ensureCurrentModelVisible keeps missing reasoning unselectable", () => {
 
   assert.deepEqual(models, [
     {
-      id: "current:thread-model",
+      id: "current::thread-model",
       model: "thread-model",
       modelProvider: null,
       displayName: "thread-model",

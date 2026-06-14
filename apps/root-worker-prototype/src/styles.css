@@ -1671,10 +1671,10 @@ svg {
   color: #a8a29e;
 }
 
-.composer-skill-menu {
+.composer-slash-menu {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
   margin: 2px 0 8px;
   padding: 6px;
   max-height: 240px;
@@ -1685,7 +1685,21 @@ svg {
   background: rgba(250, 250, 249, 0.96);
 }
 
-.composer-skill-option {
+.composer-slash-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.composer-slash-group-title {
+  padding: 4px 8px 2px;
+  color: #78716c;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.composer-slash-option {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1700,21 +1714,27 @@ svg {
   cursor: pointer;
 }
 
-.composer-skill-option.selected {
+.composer-slash-option.selected {
   background: rgba(245, 158, 11, 0.12);
 }
 
-.composer-skill-option-name {
+.composer-slash-option-name {
   font-size: 13px;
   font-weight: 600;
 }
 
-.composer-skill-option-meta {
+.composer-slash-option-meta {
   color: #78716c;
   font-size: 11px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.composer-slash-empty {
+  padding: 10px;
+  color: #78716c;
+  font-size: 12px;
 }
 
 .composer-toolbar {

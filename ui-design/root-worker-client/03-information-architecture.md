@@ -28,3 +28,19 @@ RightPanel Live Commands：
 - 只保留 active/recent-attention 列表。
 - 每行显示 command、cwd、状态、latest notification 或 latest output tail。
 - 不显示完整 output，不替代 conversation details。
+
+## Composer Slash 菜单信息层级
+
+位置：菜单锚定在底部 composer 上方，最大宽度跟随 composer，最大高度不超过 conversation 可视区的 40%；在小窗口中向上展开并内部滚动。
+
+层级：
+- 输入区：保留 composer draft、selection 和已有 Skill chips。
+- 弹层 header 不常驻显示；分组标题直接承担结构说明。
+- `Commands` 分组优先展示高频内置命令，候选行包含 command token、动作说明、执行提示。
+- `Skills` 分组展示可用 skill，候选行至少包含 `$skill-name`；说明、来源和可用状态仅在现有数据或后续 metadata 可用时展示。
+- 状态行只出现在对应分组内：loading、error、empty，不占用 active 候选序列。
+
+响应式：
+- 桌面宽度充足时菜单左边缘与 composer 输入文本起点对齐。
+- 窄窗口时菜单左右贴合 composer 容器内边距，不覆盖发送按钮和关键状态提示。
+- 长候选名单行截断，完整名称进入 `title` / tooltip；说明最多一行。

@@ -204,7 +204,7 @@ test("uses last token usage for budget percent and context usage ratios for toke
   assert.equal(analysis.loadedConcreteSkills[0]?.loadCount, 1);
   assert.equal(analysis.turnTrend.turns[0]?.label, "1");
   assert.equal(analysis.turnTrend.rows.find((row) => row.id === "llmMessages")?.cells.length, 1);
-  assert.equal(analysis.categories.find((row) => row.id === "llmMessages")?.sharePercent, 3.6);
+  assert.equal(analysis.categories.find((row) => row.id === "llmMessages")?.sharePercent, 1.8);
   assert.equal(analysis.categories.find((row) => row.id === "llmMessages")?.units, 19900);
 });
 

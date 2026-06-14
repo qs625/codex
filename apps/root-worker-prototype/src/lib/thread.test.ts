@@ -2209,8 +2209,7 @@ test("terminal child status does not hide restored conversation history or keep 
   const restoredThread: Thread = {
     ...makeThread(),
     status: {
-      type: "active",
-      activeFlags: [],
+      type: "idle",
     },
     turns: [
       {

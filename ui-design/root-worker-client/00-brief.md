@@ -33,3 +33,23 @@ Feature：Command Session UI details and live index behavior。
 当前 baseline 使用完整 Electron smoke 获取，不使用 Vite renderer 直开：
 
 ![Command Session baseline](assets/baseline-command-session-2026-06-14.png)
+
+## 本次增量 feature：Composer Slash 菜单
+
+目标：用户在 composer 输入 `/` 后，在现有 Skills slash 候选菜单中同时看到内置命令和已安装 Skills。Skills 的 chip 与 payload 行为保持不变；新增重点是让内置 slash commands 可发现、可过滤、可键盘/鼠标选择，并按命令语义执行而不是发送普通文本。
+
+范围：
+- 入口：root-worker prototype 底部 composer。
+- 内容：内置命令分组、Skills 分组、过滤结果、空态、加载/失败态。
+- 交互：键盘 `Up` / `Down` / `Enter` / `Tab` / `Escape`，鼠标 hover 和点击。
+- 非目标：不改动 Agent Tree、Thread Analysis、conversation typed item 投影链路；不新增通用命令面板。
+
+约束：
+- 继续使用当前 Electron 客户端样式基线和 composer 视觉，不引入新的全屏 modal。
+- 菜单状态仅影响当前 composer draft，不从 assistant text 或 raw marker 反解 Skills。
+- Skill 候选沿用当前已基本可用的 chip/payload 路径，本次不改变现有选择结果。
+- 内置命令执行语义必须由显式 command id 决定，不能把展示 label 当作执行协议。
+
+Baseline：2026-06-14 使用 `$root-worker-playwright-debug` 完整 Electron smoke 获取，输入 `/` 后当前版本只保留 composer 输入，尚未出现 slash menu。
+
+![Slash menu baseline](assets/baseline-slash-menu-2026-06-14.png)
