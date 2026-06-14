@@ -180,6 +180,60 @@ fn followup_task_tool_requires_message_and_has_no_output_schema() {
 }
 
 #[test]
+fn wait_agent_tool_requires_target_and_exposes_wait_metadata() {
+    let ToolSpec::Function(ResponsesApiTool {
+        parameters,
+        output_schema,
+        ..
+    }) = create_wait_agent_tool_v2()
+    else {
+        panic!("wait_agent should be a function tool");
+    };
+    assert_eq!(
+        parameters.schema_type,
+        Some(JsonSchemaType::Single(JsonSchemaPrimitiveType::Object))
+    );
+    let properties = parameters
+        .properties
+        .as_ref()
+        .expect("wait_agent should use object params");
+    assert!(properties.contains_key("target"));
+    assert!(!properties.contains_key("timeout_ms"));
+    assert_eq!(
+        parameters.required.as_ref(),
+        Some(&vec!["target".to_string()])
+    );
+
+    let output_schema = output_schema.expect("wait_agent output schema");
+    assert_eq!(
+        output_schema["required"],
+        json!([
+            "target",
+            "agent_name",
+            "reason",
+            "timed_out",
+            "status",
+            "message_operation",
+            "message_author",
+            "message_excerpt",
+            "waited_ms",
+            "initial_timeout_ms",
+            "hard_cap_timeout_ms"
+        ])
+    );
+    assert_eq!(
+        output_schema["properties"]["reason"]["enum"],
+        json!([
+            "pending_message",
+            "mailbox_message",
+            "status_update",
+            "final_status",
+            "timeout"
+        ])
+    );
+}
+
+#[test]
 fn list_agents_tool_includes_path_prefix_and_agent_fields() {
     let ToolSpec::Function(ResponsesApiTool {
         parameters,

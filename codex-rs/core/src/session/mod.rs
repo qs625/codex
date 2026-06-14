@@ -3480,6 +3480,40 @@ impl Session {
 
     #[expect(
         clippy::await_holding_invalid_type,
+        reason = "active turn checks and turn state reads must remain atomic"
+    )]
+    pub(crate) async fn find_pending_input<F, R>(&self, mut f: F) -> Option<R>
+    where
+        F: FnMut(&PendingInputItem) -> Option<R>,
+    {
+        let accepts_mailbox_delivery = {
+            let active = self.active_turn.lock().await;
+            match active.as_ref() {
+                Some(at) => {
+                    let ts = at.turn_state.lock().await;
+                    if let Some(found) = ts.pending_input().iter().find_map(&mut f) {
+                        return Some(found);
+                    }
+                    ts.accepts_mailbox_delivery_for_current_turn()
+                }
+                None => true,
+            }
+        };
+        if !accepts_mailbox_delivery {
+            return None;
+        }
+        {
+            let idle_pending_input = self.idle_pending_input.lock().await;
+            if let Some(found) = idle_pending_input.iter().find_map(&mut f) {
+                return Some(found);
+            }
+        }
+        let mut mailbox_rx = self.mailbox_rx.lock().await;
+        mailbox_rx.pending().find_map(f)
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
         reason = "active turn checks and turn state updates must remain atomic"
     )]
     pub async fn prepend_pending_input(&self, input: Vec<PendingInputItem>) -> Result<(), ()> {

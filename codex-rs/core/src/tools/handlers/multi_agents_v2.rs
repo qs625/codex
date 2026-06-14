@@ -29,9 +29,11 @@ pub(crate) use close_agent::Handler as CloseAgentHandler;
 pub(crate) use followup_task::Handler as FollowupTaskHandler;
 pub(crate) use list_agents::Handler as ListAgentsHandler;
 pub(crate) use spawn::Handler as SpawnAgentHandler;
+pub(crate) use wait_agent::Handler as WaitAgentHandler;
 
 mod close_agent;
 mod followup_task;
 mod list_agents;
 mod message_tool;
 mod spawn;
+mod wait_agent;
