@@ -38,6 +38,7 @@
 - `ProcessEntry` 保存 `notify_on`、原始 call id、输出/退出 notification 的 `Notify`。
 - 输出 streaming task 在收到输出 delta 后根据 `notify_on=output` 唤醒 waiter；exit watcher 在结束事件发出后唤醒 exit waiter。
 - `command_wait` 获取调用开始后的 receiver/notify，等待 future notification；如果 entry 不存在但 process 已被移除，则按 completed 返回。
+- command session notification 只在 `exec_command` 超过 `initial_wait_ms`、确认返回 `command_id` 后激活；在初始等待窗口内完成的命令只通过 `exec_command` 工具结果和 `CommandExecution` 完成状态表达，不额外生成 output/exit notification，也不额外唤醒模型。
 
 ### 展示链路
 
@@ -48,6 +49,7 @@
 - command notification 本身使用独立 typed item 展示：`CommandExecutionNotification { command_item_id, kind, message, output, exit_code, created_at_ms }`。
   - `notify_on=exit`：中间 `ExecCommandOutputDelta` 只更新 command cell 的 live tail，不生成 output notification item；`ExecCommandEnd` 生成 exit notification item。
   - `notify_on=output`：每个唤醒模型的 output delta 生成 output notification item；`ExecCommandEnd` 仍生成 exit notification item。
+  - 如果命令在 `initial_wait_ms` 内完成并且没有返回可复用 `command_id`，`ExecCommandEnd` 只更新原 command execution item，不生成 exit notification item；同一初始窗口内的 output delta 也不得生成 output notification item。
   - notification item 的 `id` 必须不同于 command execution item，关联只通过 typed `command_item_id`，不得按 command/output 文本匹配。
 - `command_wait` 与 `command_write_stdin` 的工具行为也使用独立 typed item 展示：
   - `CommandWait { command_id, status, notification, exit_code, wall_time_seconds, created_at_ms }` 表示模型等待 command session 的结果。

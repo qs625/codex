@@ -175,8 +175,16 @@ pub fn build_command_execution_output_notification_item(
     })
 }
 
-pub fn build_command_execution_exit_notification_item(payload: &ExecCommandEndEvent) -> ThreadItem {
-    ThreadItem::CommandExecutionNotification {
+pub fn build_command_execution_exit_notification_item(
+    payload: &ExecCommandEndEvent,
+) -> Option<ThreadItem> {
+    if CommandExecutionSource::from(payload.source) == CommandExecutionSource::UnifiedExecStartup
+        && payload.process_id.is_none()
+    {
+        return None;
+    }
+
+    Some(ThreadItem::CommandExecutionNotification {
         id: format!("{}:notification:exit", payload.call_id),
         command_item_id: payload.call_id.clone(),
         kind: CommandExecutionNotificationKind::Exit,
@@ -184,7 +192,7 @@ pub fn build_command_execution_exit_notification_item(payload: &ExecCommandEndEv
         output: None,
         exit_code: Some(payload.exit_code),
         created_at_ms: payload.completed_at_ms,
-    }
+    })
 }
 
 /// Build a guardian-derived [`ThreadItem`].

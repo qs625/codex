@@ -274,7 +274,7 @@ async fn emit_failed_initial_exec_end_if_unstored(
         context.call_id.clone(),
         request.command.clone(),
         cwd,
-        Some(request.process_id.to_string()),
+        None,
         transcript,
         fallback_output,
         message,
@@ -571,7 +571,7 @@ impl UnifiedExecProcessManager {
                 context.call_id.clone(),
                 request.command.clone(),
                 cwd.clone(),
-                Some(process_id.to_string()),
+                None,
                 Arc::clone(&transcript),
                 text.clone(),
                 exit,
@@ -690,6 +690,7 @@ impl UnifiedExecProcessManager {
                     entry: Box::new(entry),
                 }
             } else {
+                entry.notification_state.activate_background_session();
                 ProcessStatus::Alive {
                     exit_code,
                     call_id: entry.call_id.clone(),

@@ -1193,16 +1193,18 @@ pub(crate) async fn apply_bespoke_event_handling(
                 &event_turn_id,
             );
             outgoing.send_server_notification(notification).await;
-            outgoing
-                .send_server_notification(ServerNotification::ItemCompleted(
-                    ItemCompletedNotification {
-                        thread_id: conversation_id.to_string(),
-                        turn_id: event_turn_id,
-                        item: notification_item,
-                        completed_at_ms,
-                    },
-                ))
-                .await;
+            if let Some(item) = notification_item {
+                outgoing
+                    .send_server_notification(ServerNotification::ItemCompleted(
+                        ItemCompletedNotification {
+                            thread_id: conversation_id.to_string(),
+                            turn_id: event_turn_id,
+                            item,
+                            completed_at_ms,
+                        },
+                    ))
+                    .await;
+            }
         }
         // If this is a TurnAborted, reply to any pending interrupt requests.
         EventMsg::TurnAborted(turn_aborted_event) => {

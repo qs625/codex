@@ -26,6 +26,8 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Weak;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use codex_exec_server::Environment;
 use codex_network_proxy::NetworkProxy;
@@ -164,6 +166,7 @@ pub(crate) struct CommandWaitOutput {
 pub(crate) struct CommandNotificationState {
     inner: Mutex<CommandNotificationSnapshot>,
     notify: Notify,
+    background_session_active: AtomicBool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -173,6 +176,15 @@ struct CommandNotificationSnapshot {
 }
 
 impl CommandNotificationState {
+    pub(crate) fn activate_background_session(&self) {
+        self.background_session_active
+            .store(true, Ordering::Relaxed);
+    }
+
+    pub(crate) fn is_background_session_active(&self) -> bool {
+        self.background_session_active.load(Ordering::Relaxed)
+    }
+
     async fn snapshot(&self) -> CommandNotificationSnapshot {
         *self.inner.lock().await
     }

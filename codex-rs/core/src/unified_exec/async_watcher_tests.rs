@@ -1,6 +1,13 @@
+use super::process_chunk;
 use super::split_valid_utf8_prefix_with_max;
 
+use crate::unified_exec::CommandNotificationFilter;
+use crate::unified_exec::CommandNotificationState;
+use crate::unified_exec::head_tail_buffer::HeadTailBuffer;
+use codex_protocol::protocol::EventMsg;
 use pretty_assertions::assert_eq;
+use std::sync::Arc;
+use tokio::time::Duration;
 
 #[test]
 fn split_valid_utf8_prefix_respects_max_bytes_for_ascii() {
@@ -36,4 +43,58 @@ fn split_valid_utf8_prefix_makes_progress_on_invalid_utf8() {
         split_valid_utf8_prefix_with_max(&mut buf, /*max_bytes*/ 2).expect("expected prefix");
     assert_eq!(first, vec![0xff]);
     assert_eq!(buf, b"ab".to_vec());
+}
+
+#[tokio::test]
+async fn output_delta_generates_notification_only_after_background_session_activation() {
+    let (session, turn, rx_event) = crate::session::tests::make_session_and_context_with_rx().await;
+    let transcript = Arc::new(tokio::sync::Mutex::new(HeadTailBuffer::default()));
+    let notification_state = Arc::new(CommandNotificationState::default());
+    let mut pending = Vec::new();
+    let mut emitted_deltas = 0;
+
+    process_chunk(
+        &mut pending,
+        &transcript,
+        "call-output",
+        &session,
+        &turn,
+        &mut emitted_deltas,
+        CommandNotificationFilter::Output,
+        &notification_state,
+        b"inline".to_vec(),
+    )
+    .await;
+
+    let event = tokio::time::timeout(Duration::from_secs(1), rx_event.recv())
+        .await
+        .expect("timed out waiting for inline output delta")
+        .expect("event channel closed");
+    let EventMsg::ExecCommandOutputDelta(delta) = event.msg else {
+        panic!("expected ExecCommandOutputDelta");
+    };
+    assert_eq!(delta.generates_notification, false);
+
+    notification_state.activate_background_session();
+    process_chunk(
+        &mut pending,
+        &transcript,
+        "call-output",
+        &session,
+        &turn,
+        &mut emitted_deltas,
+        CommandNotificationFilter::Output,
+        &notification_state,
+        b"background".to_vec(),
+    )
+    .await;
+
+    let event = tokio::time::timeout(Duration::from_secs(1), rx_event.recv())
+        .await
+        .expect("timed out waiting for background output delta")
+        .expect("event channel closed");
+    let EventMsg::ExecCommandOutputDelta(delta) = event.msg else {
+        panic!("expected ExecCommandOutputDelta");
+    };
+    assert_eq!(delta.generates_notification, true);
 }

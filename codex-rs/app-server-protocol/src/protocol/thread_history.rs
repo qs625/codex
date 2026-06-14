@@ -733,10 +733,9 @@ impl ThreadHistoryBuilder {
         // newer user turn may already have started. Route by event turn_id so
         // replay preserves the original turn association.
         self.upsert_item_in_turn_id(&payload.turn_id, item);
-        self.upsert_item_in_turn_id(
-            &payload.turn_id,
-            build_command_execution_exit_notification_item(payload),
-        );
+        if let Some(item) = build_command_execution_exit_notification_item(payload) {
+            self.upsert_item_in_turn_id(&payload.turn_id, item);
+        }
     }
 
     fn handle_guardian_assessment(&mut self, payload: &GuardianAssessmentEvent) {
@@ -1906,6 +1905,8 @@ impl From<&PendingTurn> for Turn {
 mod tests {
     use super::*;
     use crate::protocol::v2::CollabAgentStatus;
+    use crate::protocol::v2::CommandExecutionNotificationKind;
+    use crate::protocol::v2::CommandExecutionNotifyOn;
     use crate::protocol::v2::CommandExecutionSource;
     use codex_protocol::AgentPath;
     use codex_protocol::ThreadId;
@@ -1983,6 +1984,31 @@ mod tests {
             final_output_json_schema: None,
             truncation_policy: None,
         }
+    }
+
+    fn completed_exec_event(call_id: &str, process_id: Option<String>) -> EventMsg {
+        EventMsg::ExecCommandEnd(ExecCommandEndEvent {
+            call_id: call_id.into(),
+            process_id,
+            turn_id: "turn-1".into(),
+            completed_at_ms: 123,
+            command: vec!["echo".into(), "done".into()],
+            cwd: test_path_buf("/tmp").abs(),
+            parsed_cmd: vec![ParsedCommand::Unknown {
+                cmd: "echo done".into(),
+            }],
+            source: ExecCommandSource::UnifiedExecStartup,
+            interaction_input: None,
+            initial_wait_ms: Some(1000),
+            notify_on: Some(codex_protocol::protocol::ExecCommandNotifyOn::Exit),
+            stdout: "done\n".into(),
+            stderr: String::new(),
+            aggregated_output: "done\n".into(),
+            exit_code: 0,
+            duration: Duration::from_millis(5),
+            formatted_output: "done\n".into(),
+            status: CoreExecCommandStatus::Completed,
+        })
     }
 
     #[test]
@@ -3387,6 +3413,75 @@ mod tests {
                     message: "boom".into(),
                 }),
                 duration_ms: Some(8),
+            }
+        );
+    }
+
+    #[test]
+    fn inline_completed_exec_replay_does_not_create_exit_notification_item() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(completed_exec_event("exec-inline", None)),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::CommandExecution {
+                id: "exec-inline".into(),
+                command: "echo done".into(),
+                cwd: test_path_buf("/tmp").abs(),
+                process_id: None,
+                source: CommandExecutionSource::UnifiedExecStartup,
+                status: CommandExecutionStatus::Completed,
+                initial_wait_ms: Some(1000),
+                notify_on: Some(CommandExecutionNotifyOn::Exit),
+                command_actions: vec![CommandAction::Unknown {
+                    command: "echo done".into(),
+                }],
+                aggregated_output: Some("done\n".into()),
+                exit_code: Some(0),
+                duration_ms: Some(5),
+            }]
+        );
+    }
+
+    #[test]
+    fn background_exec_replay_creates_exit_notification_item() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(completed_exec_event(
+                "exec-background",
+                Some("pid-42".into()),
+            )),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 2);
+        assert_eq!(
+            turns[0].items[1],
+            ThreadItem::CommandExecutionNotification {
+                id: "exec-background:notification:exit".into(),
+                command_item_id: "exec-background".into(),
+                kind: CommandExecutionNotificationKind::Exit,
+                message: "Command exit notification received.".into(),
+                output: None,
+                exit_code: Some(0),
+                created_at_ms: 123,
             }
         );
     }

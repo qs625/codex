@@ -135,6 +135,9 @@ pub(crate) fn spawn_exit_watcher(
         output_drained.notified().await;
 
         let duration = Instant::now().saturating_duration_since(started_at);
+        let process_id = notification_state
+            .is_background_session_active()
+            .then(|| process_id.to_string());
         if let Some(message) = process.failure_message() {
             emit_failed_exec_end_for_unified_exec(
                 session_ref,
@@ -142,7 +145,7 @@ pub(crate) fn spawn_exit_watcher(
                 call_id,
                 command,
                 cwd,
-                Some(process_id.to_string()),
+                process_id,
                 transcript,
                 String::new(),
                 message,
@@ -159,7 +162,7 @@ pub(crate) fn spawn_exit_watcher(
                 call_id,
                 command,
                 cwd,
-                Some(process_id.to_string()),
+                process_id,
                 transcript,
                 String::new(),
                 exit_code,
@@ -169,9 +172,11 @@ pub(crate) fn spawn_exit_watcher(
             )
             .await;
         }
-        notification_state
-            .notify(CommandNotificationKind::Exit)
-            .await;
+        if notification_state.is_background_session_active() {
+            notification_state
+                .notify(CommandNotificationKind::Exit)
+                .await;
+        }
     });
 }
 
@@ -197,10 +202,12 @@ async fn process_chunk(
             continue;
         }
 
+        let generates_notification = matches!(notify_on, CommandNotificationFilter::Output)
+            && notification_state.is_background_session_active();
         let event = ExecCommandOutputDeltaEvent {
             call_id: call_id.to_string(),
             sequence: Some(*emitted_deltas as u64 + 1),
-            generates_notification: matches!(notify_on, CommandNotificationFilter::Output),
+            generates_notification,
             created_at_ms: now_unix_timestamp_ms(),
             stream: ExecOutputStream::Stdout,
             chunk: prefix,
@@ -209,7 +216,7 @@ async fn process_chunk(
             .send_event(turn_ref.as_ref(), EventMsg::ExecCommandOutputDelta(event))
             .await;
         *emitted_deltas += 1;
-        if matches!(notify_on, CommandNotificationFilter::Output) {
+        if generates_notification {
             notification_state
                 .notify(CommandNotificationKind::Output)
                 .await;

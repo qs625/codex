@@ -226,7 +226,7 @@ async fn failed_initial_end_for_unstored_process_uses_fallback_output() {
         codex_protocol::protocol::ExecCommandStatus::Failed
     );
     assert_eq!(end_event.exit_code, -1);
-    assert_eq!(end_event.process_id.as_deref(), Some("123"));
+    assert_eq!(end_event.process_id, None);
     assert_eq!(
         end_event.aggregated_output,
         "PRE_DENIAL_MARKER\nNetwork access denied"
