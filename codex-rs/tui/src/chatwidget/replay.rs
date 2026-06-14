@@ -128,6 +128,55 @@ impl ChatWidget {
                 ..
             } => self.on_command_execution_started(item),
             item @ ThreadItem::CommandExecution { .. } => self.on_command_execution_completed(item),
+            ThreadItem::CommandExecutionNotification {
+                kind,
+                message,
+                output,
+                exit_code,
+                ..
+            } => {
+                let mut text = format!("Command notification: {kind:?} · {message}");
+                if let Some(exit_code) = exit_code {
+                    text.push_str(&format!(" · exit {exit_code}"));
+                }
+                if let Some(output) = output
+                    && !output.trim().is_empty()
+                {
+                    text.push_str(&format!("\n{}", output.trim_end()));
+                }
+                self.add_info_message(text, /*hint*/ None);
+            }
+            ThreadItem::CommandWait {
+                status,
+                notification,
+                exit_code,
+                wall_time_seconds,
+                ..
+            } => {
+                let mut text = format!("Command wait: {status:?} · {wall_time_seconds:.1}s");
+                if let Some(notification) = notification {
+                    text.push_str(&format!(" · {notification:?}"));
+                }
+                if let Some(exit_code) = exit_code {
+                    text.push_str(&format!(" · exit {exit_code}"));
+                }
+                self.add_info_message(text, /*hint*/ None);
+            }
+            ThreadItem::CommandWriteStdin {
+                bytes_written,
+                contains_newline,
+                ..
+            } => {
+                let suffix = if contains_newline {
+                    " with newline"
+                } else {
+                    ""
+                };
+                self.add_info_message(
+                    format!("Command stdin: wrote {bytes_written} bytes{suffix}"),
+                    /*hint*/ None,
+                );
+            }
             ThreadItem::FileChange {
                 status: codex_app_server_protocol::PatchApplyStatus::InProgress,
                 ..

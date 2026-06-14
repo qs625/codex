@@ -1075,6 +1075,8 @@ pub(super) fn end_exec(
             } else {
                 AppServerCommandExecutionStatus::Failed
             },
+            initial_wait_ms: None,
+            notify_on: None,
             command_actions,
             aggregated_output: (!aggregated.is_empty()).then_some(aggregated),
             exit_code: Some(exit_code),

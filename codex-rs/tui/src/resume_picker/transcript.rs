@@ -154,6 +154,68 @@ fn fallback_transcript_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
             }
             lines
         }
+        ThreadItem::CommandExecutionNotification {
+            kind,
+            message,
+            output,
+            exit_code,
+            ..
+        } => {
+            let mut lines: Vec<Line<'static>> = vec![
+                format!("command notification: {kind:?} · {message}")
+                    .dim()
+                    .into(),
+            ];
+            if let Some(output) = output.as_deref()
+                && !output.trim().is_empty()
+            {
+                lines.extend(
+                    output
+                        .lines()
+                        .map(|line| vec!["  ".dim(), line.trim_end().to_string().dim()].into()),
+                );
+            }
+            if let Some(exit_code) = exit_code {
+                lines.push(format!("  exit {exit_code}").dim().into());
+            }
+            lines
+        }
+        ThreadItem::CommandWait {
+            status,
+            notification,
+            exit_code,
+            wall_time_seconds,
+            ..
+        } => {
+            let mut details = vec![format!("{wall_time_seconds:.1}s")];
+            if let Some(notification) = notification {
+                details.push(format!("{notification:?}"));
+            }
+            if let Some(exit_code) = exit_code {
+                details.push(format!("exit {exit_code}"));
+            }
+            vec![
+                format!("command wait: {status:?} · {}", details.join(" · "))
+                    .dim()
+                    .into(),
+            ]
+        }
+        ThreadItem::CommandWriteStdin {
+            bytes_written,
+            contains_newline,
+            ..
+        } => {
+            let suffix = if *contains_newline {
+                " with newline"
+            } else {
+                ""
+            };
+            vec![
+                format!("command stdin: wrote {bytes_written} bytes{suffix}")
+                    .dim()
+                    .into(),
+            ]
+        }
         ThreadItem::FileChange {
             changes, status, ..
         } => vec![
