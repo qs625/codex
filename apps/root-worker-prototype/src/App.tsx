@@ -39,6 +39,7 @@ import {
   applyRunConfigOverride,
   buildSendMessagePayload,
 } from "./lib/sendMessagePayload";
+import type { ComposerSlashCommandId } from "./lib/slashMenu";
 import { isThreadNotFoundError, toErrorMessage } from "./lib/shared";
 import {
   decideThreadSelectionAction,
@@ -1112,6 +1113,14 @@ function App() {
     }
   }
 
+  function runComposerSlashCommand(commandId: ComposerSlashCommandId) {
+    switch (commandId) {
+      case "clear":
+        void clearCurrentRootSession();
+        return;
+    }
+  }
+
   async function interruptCurrentTurn() {
     if (!selectedThreadId || isStoppingTurn) {
       return;
@@ -1890,6 +1899,7 @@ function App() {
           onOpenLocalFile={(target) => void handleOpenLocalFile(target)}
           onRemoveDraftImage={removeDraftImage}
           onRemoveDraftSkill={removeDraftSkill}
+          onRunSlashCommand={runComposerSlashCommand}
           onUpdateRunConfig={(selection) =>
             void updateSelectedThreadRunConfig(selection)
           }

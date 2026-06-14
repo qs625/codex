@@ -80,7 +80,7 @@ test("keeps running command active and records latest output line", () => {
   );
 
   assert.equal(analysis.monitors.totalCount, 1);
-  assert.equal(analysis.monitors.eventCount, 0);
+  assert.equal(analysis.monitors.eventCount, 1);
   assert.deepEqual(analysis.monitors.sections[0]?.monitors, [
     {
       id: "command-1",
