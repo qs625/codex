@@ -3691,6 +3691,7 @@ fn is_structured_display_response_item(item: &ResponseItem) -> bool {
         ResponseItem::CommandWait { .. }
             | ResponseItem::CommandWriteStdin { .. }
             | ResponseItem::CommandExecutionNotification { .. }
+            | ResponseItem::WorkflowRunProgress { .. }
             | ResponseItem::EventCommandEvent { .. }
             | ResponseItem::EventDrivenTool { .. }
             | ResponseItem::InterAgentCommunication {

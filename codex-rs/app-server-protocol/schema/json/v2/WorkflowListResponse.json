@@ -1,0 +1,119 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "WorkflowDiagnostic": {
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/definitions/WorkflowSource"
+        }
+      },
+      "required": [
+        "message",
+        "path",
+        "source"
+      ],
+      "type": "object"
+    },
+    "WorkflowInputSpec": {
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "WorkflowSource": {
+      "enum": [
+        "home",
+        "project"
+      ],
+      "type": "string"
+    },
+    "WorkflowSummary": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "entry": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "$ref": "#/definitions/WorkflowInputSpec"
+          },
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/definitions/WorkflowSource"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "whenToUse": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "description",
+        "entry",
+        "id",
+        "inputs",
+        "name",
+        "path",
+        "source",
+        "whenToUse"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "diagnostics": {
+      "items": {
+        "$ref": "#/definitions/WorkflowDiagnostic"
+      },
+      "type": "array"
+    },
+    "workflows": {
+      "items": {
+        "$ref": "#/definitions/WorkflowSummary"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "diagnostics",
+    "workflows"
+  ],
+  "title": "WorkflowListResponse",
+  "type": "object"
+}

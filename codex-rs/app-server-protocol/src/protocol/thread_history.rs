@@ -86,6 +86,8 @@ use uuid::Uuid;
 #[cfg(test)]
 use crate::protocol::v2::CommandAction;
 #[cfg(test)]
+use crate::protocol::v2::CommandExecutionNotificationKind;
+#[cfg(test)]
 use crate::protocol::v2::FileUpdateChange;
 #[cfg(test)]
 use crate::protocol::v2::PatchApplyStatus;
@@ -2717,7 +2719,7 @@ mod tests {
         )
         .to_string();
         let events = [EventMsg::AgentMessage(AgentMessageEvent {
-            message: message,
+            message,
             phase: None,
             memory_citation: None,
         })];
@@ -3368,7 +3370,7 @@ mod tests {
             .collect::<Vec<_>>();
         let turns = build_turns_from_rollout_items(&items);
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items.len(), 4);
+        assert_eq!(turns[0].items.len(), 5);
         assert_eq!(
             turns[0].items[1],
             ThreadItem::WebSearch {
@@ -3401,6 +3403,18 @@ mod tests {
         );
         assert_eq!(
             turns[0].items[3],
+            ThreadItem::CommandExecutionNotification {
+                id: "exec-1:notification:exit".into(),
+                command_item_id: "exec-1".into(),
+                kind: CommandExecutionNotificationKind::Exit,
+                message: "Command exit notification received.".into(),
+                output: None,
+                exit_code: Some(0),
+                created_at_ms: 0,
+            }
+        );
+        assert_eq!(
+            turns[0].items[4],
             ThreadItem::McpToolCall {
                 id: "mcp-1".into(),
                 server: "docs".into(),
@@ -4546,7 +4560,7 @@ mod tests {
             RolloutItem::ResponseItem(ResponseItem::Message {
                 id: Some("msg-1".into()),
                 role: "assistant".into(),
-                content: vec![ContentItem::OutputText { text: text }],
+                content: vec![ContentItem::OutputText { text }],
                 phase: None,
             }),
         ];
@@ -4583,7 +4597,7 @@ mod tests {
             RolloutItem::ResponseItem(ResponseItem::Message {
                 id: Some("msg-1".into()),
                 role: "assistant".into(),
-                content: vec![ContentItem::OutputText { text: text }],
+                content: vec![ContentItem::OutputText { text }],
                 phase: None,
             }),
         ];
@@ -4620,7 +4634,7 @@ mod tests {
             RolloutItem::ResponseItem(ResponseItem::Message {
                 id: Some("msg-1".into()),
                 role: "assistant".into(),
-                content: vec![ContentItem::OutputText { text: text }],
+                content: vec![ContentItem::OutputText { text }],
                 phase: None,
             }),
         ];
@@ -4691,7 +4705,7 @@ mod tests {
             .collect::<Vec<_>>();
         let turns = build_turns_from_rollout_items(&items);
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items.len(), 3);
+        assert_eq!(turns[0].items.len(), 4);
         assert_eq!(
             turns[0].items[1],
             ThreadItem::CommandExecution {
@@ -4713,6 +4727,18 @@ mod tests {
         );
         assert_eq!(
             turns[0].items[2],
+            ThreadItem::CommandExecutionNotification {
+                id: "exec-declined:notification:exit".into(),
+                command_item_id: "exec-declined".into(),
+                kind: CommandExecutionNotificationKind::Exit,
+                message: "Command exit notification received.".into(),
+                output: None,
+                exit_code: Some(-1),
+                created_at_ms: 0,
+            }
+        );
+        assert_eq!(
+            turns[0].items[3],
             ThreadItem::FileChange {
                 id: "patch-declined".into(),
                 changes: vec![FileUpdateChange {
@@ -4952,8 +4978,20 @@ mod tests {
         assert_eq!(turns.len(), 2);
         assert_eq!(turns[0].id, "turn-a");
         assert_eq!(turns[1].id, "turn-b");
-        assert_eq!(turns[0].items.len(), 2);
+        assert_eq!(turns[0].items.len(), 3);
         assert_eq!(turns[1].items.len(), 1);
+        assert_eq!(
+            turns[0].items[2],
+            ThreadItem::CommandExecutionNotification {
+                id: "exec-late:notification:exit".into(),
+                command_item_id: "exec-late".into(),
+                kind: CommandExecutionNotificationKind::Exit,
+                message: "Command exit notification received.".into(),
+                output: None,
+                exit_code: Some(0),
+                created_at_ms: 0,
+            }
+        );
         assert_eq!(
             turns[0].items[1],
             ThreadItem::CommandExecution {

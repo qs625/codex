@@ -222,6 +222,13 @@ Example with notification opt-out:
 - `config/value/write` — write a single config key/value to the user's config.toml on disk; dotted paths such as `desktop.someKey` use the same generic write surface.
 - `config/batchWrite` — apply multiple config edits atomically to the user's config.toml on disk, with optional `reloadUserConfig: true` to hot-reload loaded threads, including multiple `desktop.*` edits.
 - `configRequirements/read` — fetch loaded requirements constraints from `requirements.toml` and/or MDM (or `null` if none are configured), including allow-lists (`allowedApprovalPolicies`, `allowedSandboxModes`, `allowedWebSearchModes`), lifecycle hook lockdown (`allowManagedHooksOnly`), pinned feature values (`featureRequirements`), managed lifecycle hooks (`hooks`), `enforceResidency`, and `network` constraints such as canonical domain/socket permissions plus `managedAllowedDomainsOnly` and `dangerFullAccessDenylistOnly`.
+- `workflow/list` — list home and project workflows for an optional `cwd`, including diagnostics. Project workflows shadow home workflows with the same id.
+- `workflow/describe` — read one workflow's manifest summary and optional README for an optional `cwd`.
+- `workflow/start` — create a durable workflow run, snapshot the workflow directory into `$CODEX_HOME/workflow-runs/<runId>/`, and start the Node runner.
+- `workflow/status` — read the latest in-memory or durable workflow run snapshot.
+- `workflow/resume` — update optional inputs and re-run the workflow from its stored snapshot.
+- `workflow/abort` — abort a live workflow runner when present and persist the run as aborted.
+- `workflow/run/updated` — notification emitted when a workflow run starts/resumes/aborts and again when the runner completes or fails.
 
 ### Example: Start or resume a thread
 

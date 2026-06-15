@@ -999,6 +999,37 @@ client_request_definitions! {
         response: v2::ConfigRequirementsReadResponse,
     },
 
+    WorkflowList => "workflow/list" {
+        params: v2::WorkflowListParams,
+        serialization: global_shared_read("workflow"),
+        response: v2::WorkflowListResponse,
+    },
+    WorkflowDescribe => "workflow/describe" {
+        params: v2::WorkflowDescribeParams,
+        serialization: global_shared_read("workflow"),
+        response: v2::WorkflowDescribeResponse,
+    },
+    WorkflowStart => "workflow/start" {
+        params: v2::WorkflowStartParams,
+        serialization: global("workflow"),
+        response: v2::WorkflowStartResponse,
+    },
+    WorkflowStatus => "workflow/status" {
+        params: v2::WorkflowStatusParams,
+        serialization: global_shared_read("workflow"),
+        response: v2::WorkflowStatusResponse,
+    },
+    WorkflowResume => "workflow/resume" {
+        params: v2::WorkflowResumeParams,
+        serialization: global("workflow"),
+        response: v2::WorkflowResumeResponse,
+    },
+    WorkflowAbort => "workflow/abort" {
+        params: v2::WorkflowAbortParams,
+        serialization: global("workflow"),
+        response: v2::WorkflowAbortResponse,
+    },
+
     GetAccount => "account/read" {
         params: v2::GetAccountParams,
         serialization: global("account-auth"),
@@ -1456,6 +1487,7 @@ server_notification_definitions! {
     ThreadGoalCleared => "thread/goal/cleared" (v2::ThreadGoalClearedNotification),
     ThreadTokenUsageUpdated => "thread/tokenUsage/updated" (v2::ThreadTokenUsageUpdatedNotification),
     ThreadContextUsageUpdated => "thread/contextUsage/updated" (v2::ThreadContextUsageUpdatedNotification),
+    WorkflowRunUpdated => "workflow/run/updated" (v2::WorkflowRunUpdatedNotification),
     TurnStarted => "turn/started" (v2::TurnStartedNotification),
     HookStarted => "hook/started" (v2::HookStartedNotification),
     TurnCompleted => "turn/completed" (v2::TurnCompletedNotification),

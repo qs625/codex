@@ -17,9 +17,9 @@ const MAX_WORKFLOWS_PER_SOURCE: usize = 100;
 const MAX_CONTEXT_FIELD_CHARS: usize = 600;
 const TRUNCATED_NOTICE: &str = "... [truncated]";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum WorkflowSource {
+pub enum WorkflowSource {
     Home,
     Project,
 }
@@ -35,68 +35,68 @@ impl WorkflowSource {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct WorkflowInputSpec {
+pub struct WorkflowInputSpec {
     #[serde(rename = "type")]
-    pub(crate) input_type: String,
+    pub input_type: String,
     #[serde(default)]
-    pub(crate) description: Option<String>,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct WorkflowManifest {
-    pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) description: String,
-    pub(crate) entry: String,
+pub struct WorkflowManifest {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub entry: String,
     #[serde(default)]
-    pub(crate) version: Option<String>,
+    pub version: Option<String>,
     #[serde(default)]
-    pub(crate) when_to_use: Vec<String>,
+    pub when_to_use: Vec<String>,
     #[serde(default)]
-    pub(crate) inputs: BTreeMap<String, WorkflowInputSpec>,
+    pub inputs: BTreeMap<String, WorkflowInputSpec>,
     #[serde(flatten)]
-    pub(crate) extra: BTreeMap<String, Value>,
+    pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct WorkflowSummary {
-    pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) description: String,
-    pub(crate) source: WorkflowSource,
-    pub(crate) path: String,
-    pub(crate) entry: String,
-    pub(crate) version: Option<String>,
-    pub(crate) when_to_use: Vec<String>,
-    pub(crate) inputs: BTreeMap<String, WorkflowInputSpec>,
+pub struct WorkflowSummary {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub source: WorkflowSource,
+    pub path: String,
+    pub entry: String,
+    pub version: Option<String>,
+    pub when_to_use: Vec<String>,
+    pub inputs: BTreeMap<String, WorkflowInputSpec>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct WorkflowDetails {
+pub struct WorkflowDetails {
     #[serde(flatten)]
-    pub(crate) summary: WorkflowSummary,
-    pub(crate) readme: Option<String>,
+    pub summary: WorkflowSummary,
+    pub readme: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct WorkflowDiagnostic {
-    pub(crate) source: WorkflowSource,
-    pub(crate) path: String,
-    pub(crate) message: String,
+pub struct WorkflowDiagnostic {
+    pub source: WorkflowSource,
+    pub path: String,
+    pub message: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct WorkflowRegistry {
-    pub(crate) workflows: Vec<WorkflowSummary>,
-    pub(crate) diagnostics: Vec<WorkflowDiagnostic>,
+pub struct WorkflowRegistry {
+    pub workflows: Vec<WorkflowSummary>,
+    pub diagnostics: Vec<WorkflowDiagnostic>,
 }
 
-pub(crate) fn load_workflow_registry(config: &Config) -> WorkflowRegistry {
+pub fn load_workflow_registry(config: &Config) -> WorkflowRegistry {
     load_workflow_registry_from_roots(
         config.codex_home.join("workflows").to_path_buf(),
         project_workflow_roots(config),
@@ -350,11 +350,11 @@ fn entry_escapes_workflow_dir(entry: &str) -> bool {
 }
 
 impl WorkflowRegistry {
-    pub(crate) fn find(&self, id: &str) -> Option<&WorkflowSummary> {
+    pub fn find(&self, id: &str) -> Option<&WorkflowSummary> {
         self.workflows.iter().find(|workflow| workflow.id == id)
     }
 
-    pub(crate) fn details(&self, id: &str) -> Result<WorkflowDetails, String> {
+    pub fn details(&self, id: &str) -> Result<WorkflowDetails, String> {
         let summary = self
             .find(id)
             .ok_or_else(|| format!("unknown workflow `{id}`"))?

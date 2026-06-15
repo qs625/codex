@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "cwd": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "workflow": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "workflow"
+  ],
+  "title": "WorkflowDescribeParams",
+  "type": "object"
+}

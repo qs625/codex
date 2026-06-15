@@ -1059,7 +1059,7 @@ impl Session {
                 idle_pending_input: Mutex::new(Vec::new()),
                 goal_runtime: GoalRuntimeState::new(),
                 guardian_review_session: GuardianReviewSessionManager::default(),
-                workflow_runs: WorkflowRunManager::default(),
+                workflow_runs: WorkflowRunManager::new(config.codex_home.clone()),
                 services,
                 next_internal_sub_id: AtomicU64::new(0),
                 parent_child_completion_active: AtomicBool::new(true),

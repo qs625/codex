@@ -615,6 +615,8 @@ pub struct ThreadWorkflowRunProgressEvent {
 pub enum ThreadWorkflowRunProgressKind {
     Started,
     Resumed,
+    Completed,
+    Failed,
     Aborted,
 }
 
@@ -637,6 +639,8 @@ impl From<CoreWorkflowRunProgressKind> for ThreadWorkflowRunProgressKind {
         match value {
             CoreWorkflowRunProgressKind::Started => Self::Started,
             CoreWorkflowRunProgressKind::Resumed => Self::Resumed,
+            CoreWorkflowRunProgressKind::Completed => Self::Completed,
+            CoreWorkflowRunProgressKind::Failed => Self::Failed,
             CoreWorkflowRunProgressKind::Aborted => Self::Aborted,
         }
     }
@@ -1150,14 +1154,9 @@ impl From<CoreTurnItem> for ThreadItem {
                 }
             }
             CoreTurnItem::ContextCompaction(compaction) => {
-                let replacement_history =
-                    serde_json::to_value(&compaction)
-                        .ok()
-                        .and_then(|mut value| {
-                            value
-                                .as_object_mut()
-                                .and_then(|object| object.remove("replacementHistory"))
-                        });
+                let replacement_history = compaction
+                    .replacement_history
+                    .and_then(|history| serde_json::to_value(history).ok());
                 ThreadItem::ContextCompaction {
                     id: compaction.id,
                     replacement_history,

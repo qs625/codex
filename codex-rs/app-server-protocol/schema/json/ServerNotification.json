@@ -5177,6 +5177,8 @@
       "enum": [
         "started",
         "resumed",
+        "completed",
+        "failed",
         "aborted"
       ],
       "type": "string"
@@ -5734,6 +5736,165 @@
         "samplePaths"
       ],
       "type": "object"
+    },
+    "WorkflowInputSpec": {
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "WorkflowRun": {
+      "properties": {
+        "abortReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inputs": true,
+        "message": {
+          "type": "string"
+        },
+        "output": true,
+        "revision": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "runnerStatus": {
+          "type": "string"
+        },
+        "snapshotPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/WorkflowRunStatus"
+        },
+        "updatedAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "workflow": {
+          "$ref": "#/definitions/WorkflowSummary"
+        }
+      },
+      "required": [
+        "createdAt",
+        "inputs",
+        "message",
+        "revision",
+        "runId",
+        "runnerStatus",
+        "status",
+        "updatedAt",
+        "workflow"
+      ],
+      "type": "object"
+    },
+    "WorkflowRunStatus": {
+      "enum": [
+        "running",
+        "completed",
+        "failed",
+        "aborted"
+      ],
+      "type": "string"
+    },
+    "WorkflowRunUpdatedNotification": {
+      "properties": {
+        "run": {
+          "$ref": "#/definitions/WorkflowRun"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "type": "object"
+    },
+    "WorkflowSource": {
+      "enum": [
+        "home",
+        "project"
+      ],
+      "type": "string"
+    },
+    "WorkflowSummary": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "entry": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "$ref": "#/definitions/WorkflowInputSpec"
+          },
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/definitions/WorkflowSource"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "whenToUse": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "description",
+        "entry",
+        "id",
+        "inputs",
+        "name",
+        "path",
+        "source",
+        "whenToUse"
+      ],
+      "type": "object"
     }
   },
   "description": "Notification sent from the server to the client.",
@@ -5997,6 +6158,26 @@
         "params"
       ],
       "title": "Thread/contextUsage/updatedNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "workflow/run/updated"
+          ],
+          "title": "Workflow/run/updatedNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/WorkflowRunUpdatedNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Workflow/run/updatedNotification",
       "type": "object"
     },
     {

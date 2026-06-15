@@ -36,6 +36,7 @@ use crate::request_processors::ThreadGoalRequestProcessor;
 use crate::request_processors::ThreadRequestProcessor;
 use crate::request_processors::TurnRequestProcessor;
 use crate::request_processors::WindowsSandboxRequestProcessor;
+use crate::request_processors::WorkflowRequestProcessor;
 use crate::request_serialization::QueuedInitializedRequest;
 use crate::request_serialization::RequestSerializationQueueKey;
 use crate::request_serialization::RequestSerializationQueues;
@@ -180,6 +181,7 @@ pub(crate) struct MessageProcessor {
     thread_processor: ThreadRequestProcessor,
     turn_processor: TurnRequestProcessor,
     windows_sandbox_processor: WindowsSandboxRequestProcessor,
+    workflow_processor: WorkflowRequestProcessor,
     request_serialization_queues: RequestSerializationQueues,
 }
 
@@ -476,7 +478,12 @@ impl MessageProcessor {
         let windows_sandbox_processor = WindowsSandboxRequestProcessor::new(
             outgoing.clone(),
             Arc::clone(&config),
+            config_manager.clone(),
+        );
+        let workflow_processor = WorkflowRequestProcessor::new(
             config_manager,
+            outgoing.clone(),
+            config.codex_home.to_path_buf(),
         );
 
         Self {
@@ -502,6 +509,7 @@ impl MessageProcessor {
             thread_processor,
             turn_processor,
             windows_sandbox_processor,
+            workflow_processor,
             request_serialization_queues: RequestSerializationQueues::default(),
         }
     }
@@ -918,6 +926,36 @@ impl MessageProcessor {
             ClientRequest::ConfigRequirementsRead { params: _, .. } => self
                 .config_processor
                 .config_requirements_read()
+                .await
+                .map(|response| Some(response.into())),
+            ClientRequest::WorkflowList { params, .. } => self
+                .workflow_processor
+                .list(params)
+                .await
+                .map(|response| Some(response.into())),
+            ClientRequest::WorkflowDescribe { params, .. } => self
+                .workflow_processor
+                .describe(params)
+                .await
+                .map(|response| Some(response.into())),
+            ClientRequest::WorkflowStart { params, .. } => self
+                .workflow_processor
+                .start(params)
+                .await
+                .map(|response| Some(response.into())),
+            ClientRequest::WorkflowStatus { params, .. } => self
+                .workflow_processor
+                .status(params)
+                .await
+                .map(|response| Some(response.into())),
+            ClientRequest::WorkflowResume { params, .. } => self
+                .workflow_processor
+                .resume(params)
+                .await
+                .map(|response| Some(response.into())),
+            ClientRequest::WorkflowAbort { params, .. } => self
+                .workflow_processor
+                .abort(params)
                 .await
                 .map(|response| Some(response.into())),
             ClientRequest::EnvironmentAdd { params, .. } => {

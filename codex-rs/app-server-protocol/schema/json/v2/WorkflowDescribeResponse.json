@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "WorkflowDetails": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "entry": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "$ref": "#/definitions/WorkflowInputSpec"
+          },
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "readme": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "$ref": "#/definitions/WorkflowSource"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "whenToUse": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "description",
+        "entry",
+        "id",
+        "inputs",
+        "name",
+        "path",
+        "source",
+        "whenToUse"
+      ],
+      "type": "object"
+    },
+    "WorkflowInputSpec": {
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "WorkflowSource": {
+      "enum": [
+        "home",
+        "project"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "workflow": {
+      "$ref": "#/definitions/WorkflowDetails"
+    }
+  },
+  "required": [
+    "workflow"
+  ],
+  "title": "WorkflowDescribeResponse",
+  "type": "object"
+}
