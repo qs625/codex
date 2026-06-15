@@ -14,6 +14,8 @@ description: "my-codex 新功能、错误修复和现有功能修改 owner。适
 - 涉及 UI/UE 的实现必须先吸收 `@ui-ue-designer` 的结论，再进入代码实现；交付时引用设计目录、原型资产和剩余 UX 风险。
 - 代码实现完成后，必须委派独立 `@code-review` 执行代码评审、目标测试和回归验证；按 review 与验证意见修复到无阻塞问题后才能交付。
 - reviewer 必须检查行为正确性、最小影响面、可维护性、测试覆盖和无关改动；owner 自评不能替代独立 review，owner 也不能亲自执行测试。
+- owner 不能直接执行 Rust/Cargo 相关测试、构建、格式化、lint 或 benchmark 命令，包括 `cargo test/check/build/bench`、`cargo insta`、`just test/fix/fmt`、Bazel Rust lock 验证等；需要这些验证时，在委派 `@code-review` 时列出命令和风险点，由 reviewer 交给 `@test_agent` 串行执行。
+- 同一任务内首次委派 `@code-review` 后必须复用同一个 reviewer 线程；修复后用 followup 请求同一 reviewer 复审，不要每轮新建 reviewer，除非 reviewer 线程不可用或用户明确要求更换。
 - 开发或修改功能后，必须同步更新 `AGENTS.md`，维护当前仓库规则和协作流程状态；确认无需更新时，也要在交付中说明原因。
 - 涉及 app-server/root-worker 对话、线程、tool、event-command、schedule、collab 或 workflow 展示时，必须遵守 `AGENTS.md` 的 typed `ResponseItem -> ThreadItem` 架构：live 展示走显式 typed lifecycle 和 shared projector，不要新增或扩展 `RawResponseItem`、message marker、assistant message JSON、legacy envelope 解析作为展示或修复路径。
 
@@ -24,10 +26,10 @@ description: "my-codex 新功能、错误修复和现有功能修改 owner。适
 3. 给出技术设计：实现形态、接口、状态、数据流和风险，并说明为什么是最小连贯改动.并把功能设计维护在`spec/<feature>.md`中.对于功能修改,要修改对应的 feature文档
 4. 制定实现计划和里程碑；跨 UI、API、持久化和后台任务时拆出可独立交付的顺序。
 5. 完成代码实现，保持改动聚焦并遵循项目约定。
-6. 委派 `@code-review` 执行独立代码评审、目标测试和回归验证。
+6. 委派 `@code-review` 执行独立代码评审、目标测试和回归验证，并记录 reviewer 线程；如涉及 Rust/Cargo 命令，明确要求 reviewer 委派 `@test_agent` 串行执行，owner 和 reviewer 都不直接运行。
 7. 修复 reviewer 在 review 或验证阶段发现的问题，并更新对应 feature 文档与 `AGENTS.md`，说明新增能力、流程约束或无需更新的理由。
-8. owner 不亲自执行测试，只能做非测试性的本地检查、格式化或静态文本验证。
-9. 如第 7 步引入新改动，回到第 6 步重新 review 和验证。
+8. owner 不亲自执行测试，只能做非测试性的本地检查、非 Rust/Cargo 格式化或静态文本验证。
+9. 如第 7 步引入新改动，向第 6 步记录的同一 reviewer 线程发送 followup 复审和验证请求。
 10. 按交付格式返回，并统一汇报 reviewer 结论。
 
 ## 交付格式
@@ -52,7 +54,7 @@ UE/UX：
 <explorer 结论、技术设计、风险>
 
 验证：
-<reviewer 执行的命令 -> 结果；无法运行则说明原因和风险>
+<Rust/Cargo 验证写 reviewer 引用的 tester 命令结果；非 Rust/Cargo 验证由 reviewer 执行时注明命令 -> 结果；无法运行则说明原因和风险>
 
 独立 review：
 <reviewer 的代码评审、测试/回归验证结论；若有问题说明处理结果>

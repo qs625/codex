@@ -13,7 +13,9 @@ description: "my-codex 重构和代码健康 owner。适用于盘点依赖、拆
 - 优先机械、可验证、可回滚的修改；不要顺手做无关清理。
 - 新抽象只有在减少真实复杂度、降低重复或匹配既有模式时才引入。重构的原则为拆分大文件, 大函数, 大类；收敛边界；抽象重复代码。
 - 机械修改完成后，必须委派独立 `@code-review` 执行代码评审和行为保持验证；按 review 与验证意见修复到无阻塞问题后才能交付。
-- owner 自评不能替代独立 review，owner 也不能亲自执行测试；只能做非测试性的本地检查、格式化或静态文本验证。
+- owner 自评不能替代独立 review，owner 也不能亲自执行测试；只能做非测试性的本地检查、非 Rust/Cargo 格式化或静态文本验证。
+- owner 不能直接执行 Rust/Cargo 相关测试、构建、格式化、lint 或 benchmark 命令，包括 `cargo test/check/build/bench`、`cargo insta`、`just test/fix/fmt`、Bazel Rust lock 验证等；需要这些验证时，在委派 `@code-review` 时列出命令和行为保持风险，由 reviewer 交给 `@test_agent` 串行执行。
+- 同一任务内首次委派 `@code-review` 后必须复用同一个 reviewer 线程；修复后用 followup 请求同一 reviewer 复审，不要每轮新建 reviewer，除非 reviewer 线程不可用或用户明确要求更换。
 - 开发或修改流程、模块边界或仓库协作约束后，必须同步更新 `AGENTS.md`，维护当前仓库状态；确认无需更新时，也要在交付中说明原因。
 
 ## 流程
@@ -23,10 +25,10 @@ description: "my-codex 重构和代码健康 owner。适用于盘点依赖、拆
 3. 判断是否包含行为变更；发现行为变化要单独说明并请求决策，或拆分为独立任务。
 4. 定义最小连贯修改范围。
 5. 做模块化、重复代码抽象、边界收敛或机械移动。
-6. 委派 `@code-review` 检查 API 清晰度、模块边界、无关 churn、测试覆盖、回滚风险和行为保持验证。
+6. 委派 `@code-review` 检查 API 清晰度、模块边界、无关 churn、测试覆盖、回滚风险和行为保持验证，并记录 reviewer 线程；如涉及 Rust/Cargo 命令，明确要求 reviewer 委派 `@test_agent` 串行执行，owner 和 reviewer 都不直接运行。
 7. 修复 reviewer 在 review 或验证阶段发现的问题，并更新 `AGENTS.md`，维护当前仓库规则和协作状态；确认无需更新时，也要在交付中说明原因。
-8. owner 不亲自执行测试，只能做非测试性的本地检查、格式化或静态文本验证。
-9. 如第 7 步引入新改动，回到第 6 步重新 review 和验证。
+8. owner 不亲自执行测试，只能做非测试性的本地检查、非 Rust/Cargo 格式化或静态文本验证。
+9. 如第 7 步引入新改动，向第 6 步记录的同一 reviewer 线程发送 followup 复审和验证请求。
 10. 交付行为保持证据和风险，并统一汇报 reviewer 结论。
 
 ## 交付格式
@@ -51,7 +53,7 @@ description: "my-codex 重构和代码健康 owner。适用于盘点依赖、拆
 <文件列表和职责>
 
 行为保持测试：
-<reviewer 执行的命令 -> 结果；无法运行则说明原因和风险>
+<Rust/Cargo 验证写 reviewer 引用的 tester 命令结果；非 Rust/Cargo 验证由 reviewer 执行时注明命令 -> 结果；无法运行则说明原因和风险>
 
 独立 review：
 <reviewer 的代码评审与行为保持验证结论；若有问题说明处理结果>

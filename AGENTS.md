@@ -16,7 +16,7 @@ In the codex-rs folder where the rust code lives:
   - Use an exact `/*param_name*/` comment before opaque literal arguments such as `None`, booleans, and numeric literals when passing them by position.
   - Do not add these comments for string or char literals unless the comment adds real clarity; those literals are intentionally exempt from the lint.
   - The parameter name in the comment must exactly match the callee signature.
-  - You can run `just argument-comment-lint` to run the lint check locally. This is powered by Bazel, so running it the first time can be slow if Bazel is not warmed up, though incremental invocations should take <15s. Most of the time, it is best to update the PR and let CI take responsibility for checking this (or run it asynchronously in the background after submitting the PR). Note CI checks all three platforms, which the local run does not.
+  - If local lint verification is needed, have reviewer include `just argument-comment-lint` in the `@test_agent` serialized Rust/Cargo command list. This is powered by Bazel, so running it the first time can be slow if Bazel is not warmed up, though incremental invocations should take <15s. Most of the time, it is best to update the PR and let CI take responsibility for checking this. Note CI checks all three platforms, which the local run does not.
 - When possible, make `match` statements exhaustive and avoid wildcard arms.
 - Newly added traits should include doc comments that explain their role and how implementations are expected to use them.
 - Discourage both `#[async_trait]` and `#[allow(async_fn_in_trait)]` in Rust traits.
@@ -28,7 +28,7 @@ In the codex-rs folder where the rust code lives:
 - When writing tests, prefer comparing the equality of entire objects over fields one by one.
 - Do not add general product or user-facing documentation to the `docs/` folder. The official Codex documentation lives elsewhere. The exception is app-server API documentation, which is covered by the app-server guidance below.
 - Prefer private modules and explicitly exported public crate API.
-- If you change `ConfigToml` or nested config types, run `just write-config-schema` to update `codex-rs/core/config.schema.json`.
+- If you change `ConfigToml` or nested config types, have reviewer include `just write-config-schema` in the `@test_agent` serialized Rust/Cargo command list to update `codex-rs/core/config.schema.json`.
 - When working with MCP tool calls, prefer using `codex-rs/codex-mcp/src/mcp_connection_manager.rs` to handle mutation of tools and tool calls. Aim to minimize the footprint of changes and leverage existing abstractions rather than plumbing code through multiple levels of function calls.
 - 对话/线程展示相关的结构化语义以 typed `ResponseItem` 为 canonical source；`ThreadItem` 应通过共享 projector 统一生成。新增或修改 event-command、schedule、collab 这类展示项时，必须复用 `codex-rs/app-server-protocol/src/protocol/response_item_projection.rs`，不要新增 raw response item 展示分支，也不要从 message marker 文本或 assistant message JSON 解析 typed item。provider 请求侧为了 wire/model 输入需要保留 marker 包装时，只能作为单向 formatting，不得作为展示或 history 重建的解析来源。schedule subscribe/unsubscribe 仍属于这套 typed projection，不要作为旧 generic event-driven 兼容路径移除。
 - 工具执行完成后的纯历史记录路径应尽早 canonicalize 为 typed `ResponseItem`；pending user-hook 路径使用 `PendingInputItem::HookInspectable(ResponseItem)` 表达“需要 hook 检查的对话项”。`ResponseInputItem` 只保留在 Responses API request 输入和 client/request 输入适配层，不要作为工具输出、pending history 或 hook history 的核心中转类型继续扩散。
@@ -48,10 +48,11 @@ In the codex-rs folder where the rust code lives:
 - MultiAgent V2 的 `wait_agent` 只能等待 canonical typed subagent 更新：调用开始必须先非消费式检查 parent pending input/mailbox 中已有的 typed `InterAgentCommunication` / child completion / status，然后再通过 status watch 与 mailbox sequence notify 进入 runtime backoff；不得 drain mailbox，不得从 raw marker、assistant text 或 legacy JSON envelope 反解唤醒条件。`features.multi_agent_v2.default_wait_timeout_ms` 表示 initial window，`max_wait_timeout_ms` 表示 hard cap。
 - Compact 当前用户可见和默认路径是 Local Compact：手动 `/compact`、`thread/compact/start` 和自动 context-limit compact 都应走 `codex-rs/core/src/compact.rs` 的本地 summarization 流程，并把 `CompactedItem.replacement_history` 持久化到 rollout 以便 thread/history 和 app-server 展示检查；compact 完成的 live `item/completed` 也必须携带同一份 replacement history，已 live/loaded 的 root-worker thread 不得依赖 `thread/read` 回填。Local Compact summary 在 active history 中是带 `SUMMARY_PREFIX` 的 user message，context usage 分类必须把它计入 compact 类别，不能当作普通 user message 导致 compact ratio 丢失。`compact_remote.rs` / `compact_remote_v2.rs` 只保留为未路由的历史兼容实现，不要重新接到默认入口、用户触发入口或模型请求 beta header。
 - Dynamic Workflow 已实现 registry/init context、`workflow_list`、`workflow_describe`、TypeScript 子进程 runner、`$CODEX_HOME/workflow-runs/<runId>` snapshot 持久化、`workflow_start/status/resume/abort` run control，以及 app-server v2 `workflow/list|describe|start|status|resume|abort` 控制面和 `workflow/run/updated` notification；home workflow 位于 `$CODEX_HOME/workflows/<workflow-id>/`，project workflow 位于各 active project `.codex/workflows/<workflow-id>/`，project 同 id 覆盖 home；`workflow.json.id` 必须等于目录名，`entry` 必须指向同目录内存在的 TypeScript 文件。workflow progress 展示必须继续走 typed `ResponseItem -> ThreadItem` 路径，并通过显式 typed lifecycle 发出 live item；不要新增 raw marker、assistant message JSON 或 legacy envelope 解析。当前 TS runner 的 `wf.Agent`/`wf.shell` 仍是结构化占位 API，尚未接入真实 MultiAgent runtime callback 或 durable shell step。
-- If you change Rust dependencies (`Cargo.toml` or `Cargo.lock`), run `just bazel-lock-update` from the
-  repo root to refresh `MODULE.bazel.lock`, and include that lockfile update in the same change.
-- After dependency changes, run `just bazel-lock-check` from the repo root so lockfile drift is caught
-  locally before CI.
+- If you change Rust dependencies (`Cargo.toml` or `Cargo.lock`), include `just bazel-lock-update`
+  from the repo root in the reviewer -> `@test_agent` serialized Rust/Cargo command list to refresh
+  `MODULE.bazel.lock`, and include that lockfile update in the same change.
+- After dependency changes, include `just bazel-lock-check` from the repo root in the tester command
+  list so lockfile drift is caught locally before CI.
 - Bazel does not automatically make source-tree files available to compile-time Rust file access. If
   you add `include_str!`, `include_bytes!`, `sqlx::migrate!`, or similar build-time file or
   directory reads, update the crate's `BUILD.bazel` (`compile_data`, `build_script_data`, or test
@@ -72,17 +73,19 @@ In the codex-rs folder where the rust code lives:
     trivial; prefer new modules/files and keep `chatwidget.rs` focused on orchestration.
 - When running Rust commands (e.g. `just fix` or `cargo test`) be patient with the command and never try to kill them using the PID. Rust lock can make the execution slow, this is expected.
 - owner 在完成开发、功能修改、重构或性能优化后，必须检查并更新 `AGENTS.md`，维护当前仓库规则、协作流程和约束；如果确认无需更新，也要在交付中明确说明原因。
+- owner 和 reviewer 都不能直接执行 Rust/Cargo 相关测试、构建、格式化、lint 或 benchmark 命令，包括 `cargo test/check/build/bench`、`cargo insta`、`just test/fix/fmt`、Bazel Rust lock 验证等；需要这些命令时，由 reviewer 整理最小命令清单并委派统一 `@test_agent` 串行执行，reviewer 在结论中引用 tester 结果。
+- 同一 owner 任务内，首次独立 `@code-review` 后的修复复审默认复用同一个 reviewer 线程；owner 通过 followup 请求同一 reviewer 复审，不要为每轮修复新建 reviewer，除非 reviewer 线程不可用或用户明确要求更换。
 - 验证 Rust 编译和测试时，不要为当前 worktree 配置独立的 `TARGET_DIR`；使用项目默认的共享 target 目录，避免把验证环境和常规开发/CI 环境分叉。
 - 如果多个 Rust 测试或构建命令出现文件锁竞争，使用 `exec_command` 启动命令并通过 `command_wait` 等待通知；不要通过反复轮询、sleep 循环或持续检查进程状态来等待锁释放。
 - Rust/Cargo/`just` 长时间验证命令一旦使用 `command_wait` 等待完成事件，当前验证流程必须进入静默等待：不要查询该命令状态、不要查看日志、不要启动替代测试、不要派发额外 reviewer/tester 重复验证同一结果。
 - 同一任务中同一时间只允许一个会竞争 Rust 共享 target 或 Cargo 文件锁的长命令运行；在它完成前，不要连续启动新的 `cargo test`、`cargo check`、`cargo build`、`just fix` 或其他 Rust 验证命令。可以继续处理不依赖该命令结果、且不竞争 Rust/Cargo 资源的前端、文档或只读设计工作。
 
-Run `just fmt` (in `codex-rs` directory) automatically after you have finished making Rust code changes; do not ask for approval to run it. Additionally, run the tests:
+Rust 代码变更完成后，把 `codex-rs` 目录下的 `just fmt` 纳入 reviewer 提交给 `@test_agent` 的串行命令清单；不要让 owner 或 reviewer 直接运行。随后由 tester 串行运行测试：
 
-1. Run the test for the specific project that was changed. For example, if changes were made in `codex-rs/tui`, run `cargo test -p codex-tui`.
-2. Once those pass, if any changes were made in common, core, or protocol, run the complete test suite with `cargo test` (or `just test` if `cargo-nextest` is installed). Avoid `--all-features` for routine local runs because it expands the build matrix and can significantly increase `target/` disk usage; use it only when you specifically need full feature coverage. project-specific or individual tests can be run without asking the user, but do ask the user before running the complete test suite.
+1. Include the test for the specific project that was changed. For example, if changes were made in `codex-rs/tui`, include `cargo test -p codex-tui`.
+2. Once those pass, if any changes were made in common, core, or protocol, include the complete test suite with `cargo test` (or `just test` if `cargo-nextest` is installed). Avoid `--all-features` for routine local runs because it expands the build matrix and can significantly increase `target/` disk usage; use it only when you specifically need full feature coverage. project-specific or individual tests can be delegated without asking the user, but do ask the user before delegating the complete test suite.
 
-Before finalizing a large change to `codex-rs`, run `just fix -p <project>` (in `codex-rs` directory) to fix any linter issues in the code. Prefer scoping with `-p` to avoid slow workspace‑wide Clippy builds; only run `just fix` without `-p` if you changed shared crates. Do not re-run tests after running `fix` or `fmt`.
+Before finalizing a large change to `codex-rs`, have `@test_agent` run `just fix -p <project>` (in `codex-rs` directory) as part of the same serialized Rust/Cargo command queue to fix any linter issues in the code. Prefer scoping with `-p` to avoid slow workspace-wide Clippy builds; only include unscoped `just fix` in the tester command list if you changed shared crates. Do not re-run tests after running `fix` or `fmt`.
 
 ## The `codex-core` crate
 
@@ -140,20 +143,21 @@ corresponding `insta` snapshot coverage (add a new snapshot test if one doesn't 
 update the existing snapshot). Review and accept snapshot updates as part of the PR so UI impact
 is easy to review and future diffs stay visual.
 
-When UI or text output changes intentionally, update the snapshots as follows:
+When UI or text output changes intentionally, have reviewer include the snapshot workflow in the
+`@test_agent` serialized Rust/Cargo command list:
 
-- Run tests to generate any updated snapshots:
+- Generate any updated snapshots:
   - `cargo test -p codex-tui`
 - Check what’s pending:
   - `cargo insta pending-snapshots -p codex-tui`
 - Review changes by reading the generated `*.snap.new` files directly in the repo, or preview a specific file:
   - `cargo insta show -p codex-tui path/to/file.snap.new`
-- Only if you intend to accept all new snapshots in this crate, run:
+- Only if you intend to accept all new snapshots in this crate, have tester run:
   - `cargo insta accept -p codex-tui`
 
-If you don’t have the tool:
+If tester doesn’t have the tool:
 
-- `cargo install --locked cargo-insta`
+- Include `cargo install --locked cargo-insta` in the tester command list before snapshot commands.
 
 ### Test assertions
 
@@ -234,9 +238,11 @@ These guidelines apply to app-server protocol work in `codex-rs`, especially:
 ### Development Workflow
 
 - Update app-server docs/examples when API behavior changes (at minimum `app-server/README.md`).
-- Regenerate schema fixtures when API shapes change:
+- Regenerate schema fixtures when API shapes change by having reviewer include these commands in the
+  `@test_agent` serialized Rust/Cargo command list:
   `just write-app-server-schema`
   (and `just write-app-server-schema --experimental` when experimental API fixtures are affected).
-- Validate with `cargo test -p codex-app-server-protocol`.
+- Validate by having reviewer include `cargo test -p codex-app-server-protocol` in the `@test_agent`
+  serialized Rust/Cargo command list.
 - Avoid boilerplate tests that only assert experimental field markers for individual
   request fields in `common.rs`; rely on schema generation/tests and behavioral coverage instead.

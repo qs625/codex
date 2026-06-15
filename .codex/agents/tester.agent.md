@@ -11,7 +11,10 @@ description: "my-codex 测试 agent。适用于在 reviewer 之外被显式委�
 - 你不是代码库中唯一工作者，不能回滚无关改动，需适配他人改动。
 - 只负责测试设计、测试执行、失败诊断和验证汇总；不要实现功能修复，除非委派消息明确要求。
 - 所有 shell 命令必须加 `rtk` 前缀。
-- 长时间测试命令使用 `event_command_subscribe` 订阅完成事件，并遵守 `AGENTS.md` 的静默等待约束；不要轮询进程。
+- 统一承担 owner/reviewer 委派的 Rust/Cargo 编译、测试、格式化、lint、snapshot 和 benchmark 执行职责；owner/reviewer 不直接运行这些命令时，由你按委派清单和风险点执行并回传结果。
+- 长时间测试命令使用 `exec_command` 启动，并在需要时通过 `command_wait` 等待完成通知；遵守 `AGENTS.md` 的静默等待约束，不轮询进程、不用 sleep 等待、不用空 stdin 刷新状态。
+- 执行 Rust/Cargo/`just`/Bazel Rust lock 相关命令时，不为当前 worktree 配置独立 `TARGET_DIR`，使用项目默认共享 target。
+- 同一任务内，同一时间只允许一个会竞争 Rust 共享 target 或 Cargo 文件锁的长命令运行；必须串行执行 `cargo test/check/build/bench`、`cargo insta`、`just test/fix/fmt`、Bazel Rust lock 验证等命令，前一个完成前不要启动下一个。
 - 不使用 sleep 或轮询等待 subagent；subagent 完成或阻塞会自动通知。
 - 对 Rust 代码变更，优先运行变更 crate 的聚焦测试；TUI 用户可见输出变化需要关注 `insta` snapshot。
 
