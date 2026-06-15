@@ -1,7 +1,12 @@
 use super::*;
 use codex_protocol::AgentPath;
+use codex_protocol::ThreadId;
+use codex_protocol::error::CodexErr;
+use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::SubAgentSource;
 use pretty_assertions::assert_eq;
 use std::collections::HashSet;
+use std::sync::Arc;
 
 fn agent_path(path: &str) -> AgentPath {
     AgentPath::try_from(path).expect("valid agent path")

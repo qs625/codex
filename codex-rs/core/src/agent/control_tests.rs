@@ -2446,7 +2446,8 @@ async fn resume_agent_from_rollout_reads_archived_rollout_path() {
 
 #[tokio::test]
 async fn list_agent_subtree_thread_ids_includes_anonymous_and_closed_descendants() {
-    let harness = AgentControlHarness::new().await;
+    let mut harness = AgentControlHarness::new().await;
+    harness.config.agent_max_threads = Some(5);
     let (parent_thread_id, _parent_thread) = harness.start_thread().await;
     let worker_path = AgentPath::root().join("worker").expect("worker path");
     let reviewer_path = AgentPath::root().join("reviewer").expect("reviewer path");
@@ -2530,6 +2531,18 @@ async fn list_agent_subtree_thread_ids_includes_anonymous_and_closed_descendants
         )
         .await
         .expect("reviewer spawn should succeed");
+    wait_for_live_thread_spawn_children(
+        &harness.control,
+        worker_thread_id,
+        &[worker_child_thread_id, no_path_child_thread_id],
+    )
+    .await;
+    wait_for_live_thread_spawn_children(
+        &harness.control,
+        no_path_child_thread_id,
+        &[no_path_grandchild_thread_id],
+    )
+    .await;
 
     let _ = harness
         .control
@@ -2572,7 +2585,8 @@ async fn list_agent_subtree_thread_ids_includes_anonymous_and_closed_descendants
 
 #[tokio::test]
 async fn direct_subagent_paths_returns_only_immediate_canonical_paths() {
-    let harness = AgentControlHarness::new().await;
+    let mut harness = AgentControlHarness::new().await;
+    harness.config.agent_max_threads = Some(4);
     let (parent_thread_id, _parent_thread) = harness.start_thread().await;
     let worker_path = AgentPath::root().join("worker").expect("worker path");
     let reviewer_path = AgentPath::root().join("reviewer").expect("reviewer path");
@@ -2592,7 +2606,7 @@ async fn direct_subagent_paths_returns_only_immediate_canonical_paths() {
         )
         .await
         .expect("worker spawn should succeed");
-    let _worker_child_thread_id = harness
+    let worker_child_thread_id = harness
         .control
         .spawn_agent(
             harness.config.clone(),
@@ -2611,7 +2625,7 @@ async fn direct_subagent_paths_returns_only_immediate_canonical_paths() {
         )
         .await
         .expect("worker child spawn should succeed");
-    let _reviewer_thread_id = harness
+    let reviewer_thread_id = harness
         .control
         .spawn_agent(
             harness.config.clone(),
@@ -2626,7 +2640,7 @@ async fn direct_subagent_paths_returns_only_immediate_canonical_paths() {
         )
         .await
         .expect("reviewer spawn should succeed");
-    let _anonymous_thread_id = harness
+    let anonymous_thread_id = harness
         .control
         .spawn_agent(
             harness.config.clone(),
@@ -2641,6 +2655,18 @@ async fn direct_subagent_paths_returns_only_immediate_canonical_paths() {
         )
         .await
         .expect("anonymous spawn should succeed");
+    wait_for_live_thread_spawn_children(
+        &harness.control,
+        parent_thread_id,
+        &[worker_thread_id, reviewer_thread_id, anonymous_thread_id],
+    )
+    .await;
+    wait_for_live_thread_spawn_children(
+        &harness.control,
+        worker_thread_id,
+        &[worker_child_thread_id],
+    )
+    .await;
 
     let direct_paths = harness
         .control

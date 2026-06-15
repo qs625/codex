@@ -332,7 +332,10 @@ impl AgentControl {
             })) => state.get_thread(*parent_thread_id).await.ok(),
             _ => None,
         };
-        let child_will_send_completion = agent_metadata.agent_mode != AgentMode::Management;
+        let child_will_send_completion = agent_metadata.agent_mode != AgentMode::Management
+            && parent_thread_for_completion
+                .as_ref()
+                .is_some_and(|parent_thread| parent_thread.enabled(Feature::MultiAgentV2));
         if child_will_send_completion
             && let Some(parent_thread) = parent_thread_for_completion.as_ref()
         {

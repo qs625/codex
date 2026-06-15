@@ -15,20 +15,20 @@ use std::sync::atomic::Ordering;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AgentMode {
+pub enum AgentMode {
     #[default]
     Normal,
     Management,
 }
 
-/// This structure is used to add some limits on the multi-agent capabilities for Codex. In
-/// the current implementation, it limits:
-/// * Total number of sub-agents (i.e. threads) per user session
+/// Tracks live agent metadata and spawn reservations for a user session.
 ///
-/// This structure is shared by all agents in the same user session (because the `AgentControl`
-/// is).
+/// This structure is used to add limits on the multi-agent capabilities for Codex. In
+/// the current implementation, it limits the total number of sub-agents (threads)
+/// per user session. It is shared by all agents in the same user session through
+/// `AgentControl`.
 #[derive(Default)]
-pub(crate) struct AgentRegistry {
+pub struct AgentRegistry {
     active_agents: Mutex<ActiveAgents>,
     total_count: AtomicUsize,
 }
@@ -41,13 +41,13 @@ struct ActiveAgents {
 }
 
 #[derive(Clone, Debug, Default)]
-pub(crate) struct AgentMetadata {
-    pub(crate) agent_id: Option<ThreadId>,
-    pub(crate) agent_path: Option<AgentPath>,
-    pub(crate) agent_nickname: Option<String>,
-    pub(crate) agent_role: Option<String>,
-    pub(crate) agent_mode: AgentMode,
-    pub(crate) last_task_message: Option<String>,
+pub struct AgentMetadata {
+    pub agent_id: Option<ThreadId>,
+    pub agent_path: Option<AgentPath>,
+    pub agent_nickname: Option<String>,
+    pub agent_role: Option<String>,
+    pub agent_mode: AgentMode,
+    pub last_task_message: Option<String>,
 }
 
 fn format_agent_nickname(name: &str, nickname_reset_count: usize) -> String {
@@ -77,16 +77,16 @@ fn session_depth(session_source: &SessionSource) -> i32 {
     }
 }
 
-pub(crate) fn next_thread_spawn_depth(session_source: &SessionSource) -> i32 {
+pub fn next_thread_spawn_depth(session_source: &SessionSource) -> i32 {
     session_depth(session_source).saturating_add(1)
 }
 
-pub(crate) fn exceeds_thread_spawn_depth_limit(depth: i32, max_depth: i32) -> bool {
+pub fn exceeds_thread_spawn_depth_limit(depth: i32, max_depth: i32) -> bool {
     depth > max_depth
 }
 
 impl AgentRegistry {
-    pub(crate) fn reserve_spawn_slot(
+    pub fn reserve_spawn_slot(
         self: &Arc<Self>,
         max_threads: Option<usize>,
     ) -> Result<SpawnReservation> {
@@ -105,7 +105,7 @@ impl AgentRegistry {
         })
     }
 
-    pub(crate) fn release_spawned_thread(&self, thread_id: ThreadId) {
+    pub fn release_spawned_thread(&self, thread_id: ThreadId) {
         let removed_counted_agent = {
             let mut active_agents = self
                 .active_agents
@@ -127,7 +127,7 @@ impl AgentRegistry {
         }
     }
 
-    pub(crate) fn register_root_thread(&self, thread_id: ThreadId) {
+    pub fn register_root_thread(&self, thread_id: ThreadId) {
         let mut active_agents = self
             .active_agents
             .lock()
@@ -142,7 +142,7 @@ impl AgentRegistry {
             });
     }
 
-    pub(crate) fn agent_id_for_path(&self, agent_path: &AgentPath) -> Option<ThreadId> {
+    pub fn agent_id_for_path(&self, agent_path: &AgentPath) -> Option<ThreadId> {
         self.active_agents
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -151,7 +151,7 @@ impl AgentRegistry {
             .and_then(|metadata| metadata.agent_id)
     }
 
-    pub(crate) fn agent_metadata_for_thread(&self, thread_id: ThreadId) -> Option<AgentMetadata> {
+    pub fn agent_metadata_for_thread(&self, thread_id: ThreadId) -> Option<AgentMetadata> {
         self.active_agents
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -161,7 +161,7 @@ impl AgentRegistry {
             .cloned()
     }
 
-    pub(crate) fn live_agents(&self) -> Vec<AgentMetadata> {
+    pub fn live_agents(&self) -> Vec<AgentMetadata> {
         self.active_agents
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -175,7 +175,7 @@ impl AgentRegistry {
             .collect()
     }
 
-    pub(crate) fn update_last_task_message(&self, thread_id: ThreadId, last_task_message: String) {
+    pub fn update_last_task_message(&self, thread_id: ThreadId, last_task_message: String) {
         let mut active_agents = self
             .active_agents
             .lock()
@@ -300,7 +300,7 @@ impl AgentRegistry {
     }
 }
 
-pub(crate) struct SpawnReservation {
+pub struct SpawnReservation {
     state: Arc<AgentRegistry>,
     active: bool,
     reserved_agent_nickname: Option<String>,
@@ -308,7 +308,7 @@ pub(crate) struct SpawnReservation {
 }
 
 impl SpawnReservation {
-    pub(crate) fn reserve_agent_nickname_with_preference(
+    pub fn reserve_agent_nickname_with_preference(
         &mut self,
         names: &[&str],
         preferred: Option<&str>,
@@ -323,13 +323,13 @@ impl SpawnReservation {
         Ok(agent_nickname)
     }
 
-    pub(crate) fn reserve_agent_path(&mut self, agent_path: &AgentPath) -> Result<()> {
+    pub fn reserve_agent_path(&mut self, agent_path: &AgentPath) -> Result<()> {
         self.state.reserve_agent_path(agent_path)?;
         self.reserved_agent_path = Some(agent_path.clone());
         Ok(())
     }
 
-    pub(crate) fn commit(mut self, agent_metadata: AgentMetadata) {
+    pub fn commit(mut self, agent_metadata: AgentMetadata) {
         self.reserved_agent_nickname = None;
         self.reserved_agent_path = None;
         self.state.register_spawned_thread(agent_metadata);

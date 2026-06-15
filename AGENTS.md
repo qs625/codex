@@ -99,6 +99,7 @@ Particularly when introducing a new concept/feature/API, before adding to `codex
 
 - There is an existing crate other than `codex-core` that is an appropriate place for your new code to live.
 - It is time to introduce a new crate to the Cargo workspace for your new functionality. Refactor existing code as necessary to make this happen.
+- 不依赖 `codex-core` 内部实现的稳定 MultiAgent runtime 基础层，例如 agent registry 和 status helper，应放在 `codex-rs/agent-runtime`（`codex-agent-runtime`）。`AgentControl`、session/turn loop、绑定 `PendingInputItem` 的 mailbox 状态、tool dispatch adapter 等偏编排的代码，在边界被明确拆分前继续留在 `codex-core`。
 
 Likewise, when reviewing code, do not hesitate to push back on PRs that would unnecessarily add code to `codex-core`.
 

@@ -133,8 +133,16 @@ INSERT INTO thread_spawn_edges (
     status
 ) VALUES (?, ?, ?)
 ON CONFLICT(child_thread_id) DO UPDATE SET
-    parent_thread_id = excluded.parent_thread_id,
-    status = excluded.status
+    parent_thread_id = CASE
+        WHEN thread_spawn_edges.status = 'closed' AND excluded.status = 'open'
+        THEN thread_spawn_edges.parent_thread_id
+        ELSE excluded.parent_thread_id
+    END,
+    status = CASE
+        WHEN thread_spawn_edges.status = 'closed' AND excluded.status = 'open'
+        THEN thread_spawn_edges.status
+        ELSE excluded.status
+    END
             "#,
         )
         .bind(parent_thread_id.to_string())
@@ -233,14 +241,15 @@ LIMIT 2
     ) -> anyhow::Result<Option<ThreadId>> {
         let rows = sqlx::query(
             r#"
-WITH RECURSIVE subtree(child_thread_id) AS (
-    SELECT child_thread_id
+WITH RECURSIVE subtree(child_thread_id, path) AS (
+    SELECT child_thread_id, printf(',%s,%s,', ?, child_thread_id)
     FROM thread_spawn_edges
     WHERE parent_thread_id = ?
     UNION ALL
-    SELECT edge.child_thread_id
+    SELECT edge.child_thread_id, subtree.path || edge.child_thread_id || ','
     FROM thread_spawn_edges AS edge
     JOIN subtree ON edge.parent_thread_id = subtree.child_thread_id
+    WHERE instr(subtree.path, ',' || edge.child_thread_id || ',') = 0
 )
 SELECT threads.id
 FROM subtree
@@ -250,6 +259,7 @@ ORDER BY threads.id
 LIMIT 2
             "#,
         )
+        .bind(root_thread_id.to_string())
         .bind(root_thread_id.to_string())
         .bind(agent_path)
         .fetch_all(self.pool.as_ref())
@@ -2096,6 +2106,14 @@ mod tests {
             .set_thread_spawn_edge_status(child_thread_id, DirectionalThreadSpawnEdgeStatus::Closed)
             .await
             .expect("edge close should succeed");
+        runtime
+            .upsert_thread_spawn_edge(
+                parent_thread_id,
+                child_thread_id,
+                DirectionalThreadSpawnEdgeStatus::Open,
+            )
+            .await
+            .expect("resume-style upsert should succeed");
 
         let open_children = runtime
             .list_thread_spawn_children_with_status(
@@ -2199,5 +2217,40 @@ INSERT INTO thread_spawn_edges (
                 future_child_thread_id,
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn find_thread_spawn_descendant_by_path_ignores_cycles() {
+        let codex_home = unique_temp_dir();
+        let runtime = StateRuntime::init(codex_home, "test-provider".to_string())
+            .await
+            .expect("state db should initialize");
+        let parent_thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000920")
+            .expect("valid thread id");
+        let child_thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000921")
+            .expect("valid thread id");
+
+        runtime
+            .upsert_thread_spawn_edge(
+                parent_thread_id,
+                child_thread_id,
+                DirectionalThreadSpawnEdgeStatus::Open,
+            )
+            .await
+            .expect("child edge insert should succeed");
+        runtime
+            .upsert_thread_spawn_edge(
+                child_thread_id,
+                parent_thread_id,
+                DirectionalThreadSpawnEdgeStatus::Open,
+            )
+            .await
+            .expect("cycle edge insert should succeed");
+
+        let descendant = runtime
+            .find_thread_spawn_descendant_by_path(parent_thread_id, "/root/missing")
+            .await
+            .expect("descendant lookup should finish");
+        assert_eq!(descendant, None);
     }
 }

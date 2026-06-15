@@ -1821,6 +1821,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-agent-runtime"
+version = "0.0.0"
+dependencies = [
+ "codex-otel",
+ "codex-protocol",
+ "pretty_assertions",
+ "rand 0.9.3",
+ "serde",
+]
+
+[[package]]
 name = "codex-analytics"
 version = "0.0.0"
 dependencies = [
@@ -2499,6 +2510,7 @@ dependencies = [
  "bm25",
  "chrono",
  "clap",
+ "codex-agent-runtime",
  "codex-analytics",
  "codex-api",
  "codex-app-server-protocol",

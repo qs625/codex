@@ -1,0 +1,20 @@
+[package]
+name = "codex-agent-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-otel = { workspace = true }
+codex-protocol = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+
+[lib]
+doctest = false
