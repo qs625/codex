@@ -68,6 +68,7 @@ pub(super) fn server_notification_thread_target(
         ServerNotification::ThreadGoalCleared(notification) => {
             Some(notification.thread_id.as_str())
         }
+        ServerNotification::WorkflowRunUpdated(_) => None,
         ServerNotification::TurnStarted(notification) => Some(notification.thread_id.as_str()),
         ServerNotification::HookStarted(notification) => Some(notification.thread_id.as_str()),
         ServerNotification::TurnCompleted(notification) => Some(notification.thread_id.as_str()),
@@ -181,8 +182,15 @@ mod tests {
     use codex_app_server_protocol::GuardianWarningNotification;
     use codex_app_server_protocol::ServerNotification;
     use codex_app_server_protocol::WarningNotification;
+    use codex_app_server_protocol::v2::WorkflowRun;
+    use codex_app_server_protocol::v2::WorkflowRunStatus;
+    use codex_app_server_protocol::v2::WorkflowRunUpdatedNotification;
+    use codex_app_server_protocol::v2::WorkflowSource;
+    use codex_app_server_protocol::v2::WorkflowSummary;
     use codex_protocol::ThreadId;
     use pretty_assertions::assert_eq;
+    use serde_json::json;
+    use std::collections::BTreeMap;
 
     #[test]
     fn warning_notifications_without_threads_are_global() {
@@ -220,5 +228,40 @@ mod tests {
         let target = server_notification_thread_target(&notification);
 
         assert_eq!(target, ServerNotificationThreadTarget::Thread(thread_id));
+    }
+
+    #[test]
+    fn workflow_run_updated_notifications_are_global() {
+        let notification = ServerNotification::WorkflowRunUpdated(WorkflowRunUpdatedNotification {
+            run: WorkflowRun {
+                run_id: "wf_run_1".to_string(),
+                workflow: WorkflowSummary {
+                    id: "feature-dev".to_string(),
+                    name: "Feature Development".to_string(),
+                    description: "按调研、实现、review/fix、验证流程开发功能".to_string(),
+                    source: WorkflowSource::Project,
+                    path: ".codex/workflows/feature-dev".to_string(),
+                    entry: "workflow.ts".to_string(),
+                    version: Some("0.1.0".to_string()),
+                    when_to_use: Vec::new(),
+                    inputs: BTreeMap::new(),
+                },
+                status: WorkflowRunStatus::Running,
+                runner_status: "control_plane_started".to_string(),
+                inputs: json!({}),
+                created_at: 1,
+                updated_at: 1,
+                revision: 1,
+                message: "started".to_string(),
+                abort_reason: None,
+                output: None,
+                error: None,
+                snapshot_path: None,
+            },
+        });
+
+        let target = server_notification_thread_target(&notification);
+
+        assert_eq!(target, ServerNotificationThreadTarget::Global);
     }
 }
