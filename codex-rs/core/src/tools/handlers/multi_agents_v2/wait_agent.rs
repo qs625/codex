@@ -148,7 +148,7 @@ async fn handle_wait_agent(
                 sender_agent_path: sender_agent_path.to_string(),
                 receiver_thread_ids: vec![receiver_thread_id],
                 receiver_agents,
-                timeout_ms: hard_cap_timeout_ms,
+                timeout_ms: wait_lifecycle_timeout_ms(initial_timeout_ms),
             }
             .into(),
         )
@@ -246,7 +246,7 @@ async fn handle_wait_agent(
                 completed_at_ms: now_unix_timestamp_ms(),
                 sender_thread_id: session.conversation_id,
                 sender_agent_path: sender_agent_path.to_string(),
-                timeout_ms: hard_cap_timeout_ms,
+                timeout_ms: wait_lifecycle_timeout_ms(initial_timeout_ms),
                 agent_statuses: vec![CollabAgentStatusEntry {
                     thread_id: receiver_thread_id,
                     agent_path: Some(receiver_agent_path.to_string()),
@@ -567,6 +567,10 @@ fn non_zero_duration_from_ms(ms: i64) -> Duration {
     }
 }
 
+fn wait_lifecycle_timeout_ms(initial_timeout_ms: i64) -> i64 {
+    initial_timeout_ms
+}
+
 fn operation_name(operation: InterAgentOperation) -> &'static str {
     match operation {
         InterAgentOperation::Unknown => "unknown",
@@ -678,5 +682,10 @@ mod tests {
             Some("child_completion")
         );
         assert_eq!(result.message_excerpt.as_deref(), Some("child finished"));
+    }
+
+    #[test]
+    fn wait_lifecycle_timeout_uses_initial_window_not_hard_cap() {
+        assert_eq!(wait_lifecycle_timeout_ms(60_000), 60_000);
     }
 }

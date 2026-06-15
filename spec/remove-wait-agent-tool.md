@@ -23,6 +23,7 @@
 - 未命中时订阅目标 status watch 与 parent mailbox sequence watch，按 snapshot + notify 模式等待后续事件。
 - 收到相关 status/mailbox event 后重置 backoff/window 并返回摘要；如果 event 不相关，则继续等待并按 runtime backoff 延长无进展窗口。
 - `features.multi_agent_v2.default_wait_timeout_ms` 作为 initial window，默认 60 秒；`features.multi_agent_v2.max_wait_timeout_ms` 作为 hard cap，默认 30 分钟。工具不暴露 poll interval。
+- `CollabWaitingBegin/End.timeout_ms` 面向客户端 wait lifecycle 展示，只表达本次等待窗口（当前为 initial window），不能填入 hard cap；hard cap 仅保留在 `wait_agent` 工具结果的 `hard_cap_timeout_ms` 中，避免 UI 把总上限误显示为本次等待 timeout。
 
 ## 兼容性
 
