@@ -20,6 +20,7 @@ import {
   estimateConversationCellHeight,
   findConversationWindow,
 } from "../lib/conversationVirtualization";
+import { planConversationHeightChangeScroll } from "../lib/conversationScroll";
 import type { ConversationCell } from "../types";
 
 type ConversationVirtualListProps = {
@@ -226,17 +227,24 @@ export function ConversationVirtualList({
 
     const container = containerRef.current;
     const currentTop = layoutRef.current?.offsets[index] ?? 0;
-    const shouldStickToBottom =
-      container != null &&
-      container.scrollHeight - container.clientHeight - container.scrollTop <=
-        24;
-    if (container && currentTop < container.scrollTop) {
-      container.scrollTop += roundedHeight - previousHeight;
+    const scrollPlan = container
+      ? planConversationHeightChangeScroll({
+          cellTop: currentTop,
+          heightDelta: roundedHeight - previousHeight,
+          metrics: {
+            scrollHeight: container.scrollHeight,
+            clientHeight: container.clientHeight,
+            scrollTop: container.scrollTop,
+          },
+        })
+      : null;
+    if (container && scrollPlan && scrollPlan.scrollTopAdjustment !== 0) {
+      container.scrollTop += scrollPlan.scrollTopAdjustment;
     }
 
     setHeightVersion((version) => version + 1);
 
-    if (container && shouldStickToBottom) {
+    if (container && scrollPlan?.shouldStickToBottom) {
       window.requestAnimationFrame(() => {
         container.scrollTop = container.scrollHeight;
       });
