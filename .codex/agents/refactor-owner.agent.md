@@ -30,7 +30,7 @@ description: "my-codex 重构和代码健康 owner。适用于盘点依赖、拆
 7. 修复 reviewer 在 review 阶段发现的问题，并更新 `AGENTS.md`，维护当前仓库规则和协作状态；确认无需更新时，也要在交付中说明原因。
 8. owner 不亲自执行测试，只能做非测试性的本地检查、非 Rust/Cargo 格式化或静态文本验证。
 9. 如第 7 步引入新改动，向第 6 步记录的同一 reviewer 线程发送 followup 复审请求；循环到 reviewer 明确无阻塞问题。
-10. review 通过后，由 owner 自行按固定 JSON 格式 `followup_task` 给 `/root/my_codex_pm/rust_cargo_tester` 发送默认轻量验证命令：修改模块的单元测试/最小 crate 测试，以及 `codex-rs` 下的 `cargo build -p codex-cli`；仅在变更确实需要或用户要求时追加更重命令。
+10. review 通过后，由 owner 自行按固定 JSON 格式 `followup_task` 给 `/root/my_codex_pm/rust_cargo_tester` 发送默认轻量验证命令：修改模块的单元测试/最小 crate 测试，以及与入口匹配的 binary 编译验证；只涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时使用 `codex-rs` 下的 `cargo build -p codex-app-server --bin codex-app-server`，只有确实改到 CLI/TUI 或 CLI app-server 子命令包装时才使用 `cargo build -p codex-cli`；仅在变更确实需要或用户要求时追加更重命令。
 11. 交付行为保持证据和风险，并统一汇报 reviewer 结论和 tester 命令结果。
 
 ## 交付格式

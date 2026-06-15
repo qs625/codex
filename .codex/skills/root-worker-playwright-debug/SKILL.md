@@ -102,19 +102,19 @@ rtk env \
 Electron app-server command 选择逻辑：
 
 1. 优先使用 `CODEX_APP_SERVER_CMD`
-2. 否则从 Electron 文件目录向上查找 `codex-rs/target/debug/codex`
-3. 找不到 workspace binary 时 fallback 到 PATH 上的 `codex`
+2. 否则从 Electron 文件目录向上查找 `codex-rs/target/debug/codex-app-server`
+3. 找不到 workspace binary 时 fallback 到 PATH 上的 `codex-app-server`
 
 固定脚本默认显式使用当前 repo 的 debug binary：
 
 ```text
-CODEX_APP_SERVER_CMD="$REPO/codex-rs/target/debug/codex app-server --listen stdio://"
+CODEX_APP_SERVER_CMD="$REPO/codex-rs/target/debug/codex-app-server --listen stdio://"
 ```
 
 如需指定其他 binary：
 
 ```bash
-rtk env CODEX_APP_SERVER_CMD="/path/to/codex app-server --listen stdio://" \
+rtk env CODEX_APP_SERVER_CMD="/path/to/codex-app-server --listen stdio://" \
   scripts/run-electron-smoke.sh
 ```
 

@@ -85,7 +85,7 @@ In the codex-rs folder where the rust code lives:
 Rust 代码变更完成并通过 code review 后，默认只让固定 tester `/root/my_codex_pm/rust_cargo_tester` 串行执行两类验证；不要让 owner 或 reviewer 直接运行：
 
 1. 修改模块的单元测试或最小 crate 测试。例如改 `codex-rs/tui` 时，include `cargo test -p codex-tui`；更窄的单测命令可用时优先用更窄命令。
-2. 验证 `codex` binary 能编译：include `cargo build -p codex-cli` from `codex-rs`.
+2. 验证与入口匹配的 binary 能编译：只涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时，include `cargo build -p codex-app-server --bin codex-app-server` from `codex-rs`；只有确实改到 CLI/TUI 或 CLI app-server 子命令包装时，才 include `cargo build -p codex-cli` from `codex-rs`.
 
 Do not run full workspace `cargo test`, `just test`, broad `just fix`, or snapshot/schema/lockfile workflows by default in every worktree. Add those commands only when the change specifically requires them or the user asks for broader validation.
 
@@ -244,8 +244,9 @@ These guidelines apply to app-server protocol work in `codex-rs`, especially:
 - Regenerate schema fixtures when API shapes change if the change requires it. Owner can include:
   `just write-app-server-schema`
   (and `just write-app-server-schema --experimental` when experimental API fixtures are affected).
-- For app-server protocol changes, the default validation remains the modified module/crate test plus
-  `cargo build -p codex-cli`; owner may add `cargo test -p codex-app-server-protocol` when protocol
-  coverage is specifically needed.
+- For app-server protocol/runtime/root-worker backend startup changes, the default binary validation is
+  `cargo build -p codex-app-server --bin codex-app-server`; use `cargo build -p codex-cli` only when
+  the CLI/TUI entrypoint or `codex app-server` subcommand wrapper changed. Owner may add
+  `cargo test -p codex-app-server-protocol` when protocol coverage is specifically needed.
 - Avoid boilerplate tests that only assert experimental field markers for individual
   request fields in `common.rs`; rely on schema generation/tests and behavioral coverage instead.

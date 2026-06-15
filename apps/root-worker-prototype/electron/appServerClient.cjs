@@ -5,7 +5,7 @@ const path = require("node:path");
 const { createInterface } = require("node:readline");
 const { EventEmitter } = require("node:events");
 
-const DEFAULT_APP_SERVER_COMMAND = `${resolveWorkspaceCodexBinary()} app-server --listen stdio://`;
+const DEFAULT_APP_SERVER_COMMAND = `${resolveWorkspaceAppServerBinary()} --listen stdio://`;
 const DEFAULT_CODEX_HOME = resolvePrototypeCodexHome();
 
 class AppServerClient extends EventEmitter {
@@ -191,18 +191,21 @@ module.exports = {
   AppServerClient,
 };
 
-function resolveWorkspaceCodexBinary() {
+function resolveWorkspaceAppServerBinary() {
   for (
     let current = __dirname;
     current !== path.dirname(current);
     current = path.dirname(current)
   ) {
-    const workspaceBinary = path.join(current, "codex-rs/target/debug/codex");
+    const workspaceBinary = path.join(
+      current,
+      "codex-rs/target/debug/codex-app-server",
+    );
     if (fs.existsSync(workspaceBinary)) {
       return shellQuote(workspaceBinary);
     }
   }
-  return "codex";
+  return "codex-app-server";
 }
 
 function resolvePrototypeCodexHome() {

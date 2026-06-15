@@ -35,7 +35,7 @@ description: "my-codex 性能优化 owner。适用于制定测量口径、准备
 11. 修复 reviewer 在 review 阶段发现的问题，并更新 `AGENTS.md`，维护当前仓库规则和协作状态；确认无需更新时，也要在交付中说明原因。
 12. owner 不亲自执行测试，只能做非测试性的本地检查、非 Rust/Cargo 格式化、静态文本验证或用于形成优化假设的测量准备。
 13. 如第 11 步引入新改动，向第 10 步记录的同一 reviewer 线程发送 followup 复审请求；循环到 reviewer 明确无阻塞问题。
-14. review 通过后，由 owner 自行按固定 JSON 格式 `followup_task` 给 `/root/my_codex_pm/rust_cargo_tester` 发送默认轻量验证命令：修改模块的单元测试/最小 crate 测试，以及 `codex-rs` 下的 `cargo build -p codex-cli`；性能测量或 benchmark 只有在本任务目标确实需要时才追加。
+14. review 通过后，由 owner 自行按固定 JSON 格式 `followup_task` 给 `/root/my_codex_pm/rust_cargo_tester` 发送默认轻量验证命令：修改模块的单元测试/最小 crate 测试，以及与入口匹配的 binary 编译验证；只涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时使用 `codex-rs` 下的 `cargo build -p codex-app-server --bin codex-app-server`，只有确实改到 CLI/TUI 或 CLI app-server 子命令包装时才使用 `cargo build -p codex-cli`；性能测量或 benchmark 只有在本任务目标确实需要时才追加。
 15. 按交付格式返回，并统一汇报 reviewer 结论和 tester 命令结果。
 
 ## 交付格式

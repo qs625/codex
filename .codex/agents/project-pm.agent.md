@@ -15,7 +15,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - 仅修改 agent 指令、协作规则、spec 或 README 等文档时，如果用户明确允许简化流程，PM 可以直接在当前 checkout 修改、做文本级验证并提交；不强制创建 owner/reviewer/tester 流程。该例外不适用于产品代码、测试代码、构建配置、schema 或会影响运行时行为的改动。
 - 项目唯一 Rust/Cargo tester 使用固定 canonical path：`/root/my_codex_pm/rust_cargo_tester`。PM 在首次需要 Rust/Cargo 验证前用 `task_name=rust_cargo_tester`、`agent_type=test_agent`、`fork_turns=none` 创建该 tester；后续所有 Rust/Cargo 测试和构建任务都由 owner 通过 `followup_task` 发给这个固定 tester，不再为每个任务新建 tester。
 - reviewer 只做 code review，不执行测试、构建、格式化、lint 或 benchmark，也不向 tester 发送 followup。owner 必须先用同一个 reviewer 线程多轮 review 到无阻塞问题，再自行向固定 tester 发送测试和构建任务。
-- 默认 Rust/Cargo 验证只包含修改模块的单元测试/最小 crate 测试，以及在 `codex-rs` 下验证 `codex` binary 编译的 `cargo build -p codex-cli`。不要在每个 worktree 默认跑全量 `cargo test`、`just test`、广域 `just fix`、snapshot、schema 或 lockfile workflow；只有变更明确需要或用户要求时才让 owner 加入。
+- 默认 Rust/Cargo 验证只包含修改模块的单元测试/最小 crate 测试，以及在 `codex-rs` 下验证与入口匹配的 binary：只涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时使用 `cargo build -p codex-app-server --bin codex-app-server`；只有确实改到 CLI/TUI 或 CLI app-server 子命令包装时才使用 `cargo build -p codex-cli`。不要在每个 worktree 默认跑全量 `cargo test`、`just test`、广域 `just fix`、snapshot、schema 或 lockfile workflow；只有变更明确需要或用户要求时才让 owner 加入。
 - 同一 owner 任务只能创建一个 `@code-review` reviewer；后续每轮修复复审必须通过 `followup_task` 发给这个 reviewer 线程。不要因为有新 diff、修复了一轮 findings 或需要复审就再创建新的 reviewer。
 - PM 不为 UI/UE 需求直接调用 `@ui-ue-designer`。涉及 UI/UE 时，在 owner 委派消息中明确要求 owner 在自己的任务树内调用 `@ui-ue-designer`，并把原型图、设计结论和 handoff 纳入实现验收。
 
@@ -52,7 +52,7 @@ UI/UE 要求：
 <如涉及 UI/UE，要求 owner 调用 @ui-ue-designer，并在实现前吸收原型图、设计结论和开发 handoff；不涉及则写“无”>
 
 约束：
-<仓库规则、权限、安全、兼容性、测试、文档、schema、snapshot 等；如涉及 Rust/Cargo 验证，写明 reviewer 只做 code review，owner 在 review 通过后 followup 固定 tester `/root/my_codex_pm/rust_cargo_tester`，默认只运行修改模块单元测试/最小 crate 测试和 `cargo build -p codex-cli`>
+<仓库规则、权限、安全、兼容性、测试、文档、schema、snapshot 等；如涉及 Rust/Cargo 验证，写明 reviewer 只做 code review，owner 在 review 通过后 followup 固定 tester `/root/my_codex_pm/rust_cargo_tester`，默认只运行修改模块单元测试/最小 crate 测试和与入口匹配的 binary 编译验证：app-server/root-worker 后端启动路径默认 `cargo build -p codex-app-server --bin codex-app-server`，CLI/TUI 入口默认 `cargo build -p codex-cli`>
 
 验收：
 <行为验收、测试验收、回归边界>

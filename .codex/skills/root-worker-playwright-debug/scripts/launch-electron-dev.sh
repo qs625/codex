@@ -6,7 +6,7 @@ app_dir="$repo_root/apps/root-worker-prototype"
 debug_root="${ROOT_WORKER_DEBUG_ROOT:-/tmp/my-codex-root-worker-debug}"
 debug_codex_home="${ROOT_WORKER_DEBUG_CODEX_HOME:-$debug_root/codex-home}"
 debug_workspace="${ROOT_WORKER_DEBUG_WORKSPACE:-$debug_root/workspace}"
-codex_cmd="${CODEX_APP_SERVER_CMD:-$repo_root/codex-rs/target/debug/codex app-server --listen stdio://}"
+codex_cmd="${CODEX_APP_SERVER_CMD:-$repo_root/codex-rs/target/debug/codex-app-server --listen stdio://}"
 
 mkdir -p "$debug_codex_home" "$debug_workspace"
 
