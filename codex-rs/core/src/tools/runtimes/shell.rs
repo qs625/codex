@@ -8,7 +8,6 @@ builds sandbox transform inputs, and runs them under the current SandboxAttempt.
 pub(crate) mod unix_escalation;
 pub(crate) mod zsh_fork_backend;
 
-use crate::command_canonicalization::canonicalize_command_for_approval;
 use crate::exec::ExecCapturePolicy;
 use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::GuardianNetworkAccessTrigger;
@@ -40,6 +39,7 @@ use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::ReviewDecision;
 use codex_sandboxing::SandboxablePreference;
+use codex_shell_command::canonicalize_command_for_approval;
 use codex_shell_command::powershell::prefix_powershell_script_with_utf8;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::future::BoxFuture;

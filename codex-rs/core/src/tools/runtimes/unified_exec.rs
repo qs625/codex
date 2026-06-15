@@ -4,7 +4,6 @@ Runtime: unified exec
 Handles approval + sandbox orchestration for unified exec requests, delegating to
 the process manager to spawn PTYs once an ExecRequest is prepared.
 */
-use crate::command_canonicalization::canonicalize_command_for_approval;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
 use crate::guardian::GuardianApprovalRequest;
@@ -44,6 +43,7 @@ use codex_protocol::error::SandboxErr;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::ReviewDecision;
 use codex_sandboxing::SandboxablePreference;
+use codex_shell_command::canonicalize_command_for_approval;
 use codex_shell_command::powershell::prefix_powershell_script_with_utf8;
 use codex_tools::UnifiedExecShellMode;
 use codex_utils_absolute_path::AbsolutePathBuf;

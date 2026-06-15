@@ -28,7 +28,6 @@ mod agent;
 pub use active_event_subscriptions::ActiveEventSubscriptionTracker;
 mod attestation;
 mod codex_delegate;
-mod command_canonicalization;
 pub mod config;
 pub mod connectors;
 pub mod context;
