@@ -2,7 +2,7 @@ use crate::function_tool::FunctionCallError;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::context::ToolSearchOutput;
-use crate::tools::handlers::tool_search_spec::create_tool_search_tool;
+use codex_tools::create_tool_search_tool;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
 use crate::tools::tool_search_entry::ToolSearchEntry;

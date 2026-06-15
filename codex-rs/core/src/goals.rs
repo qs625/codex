@@ -13,7 +13,7 @@ use crate::session::turn_context::TurnContext;
 use crate::state::ActiveTurn;
 use crate::state::TurnState;
 use crate::tasks::RegularTask;
-use crate::tools::handlers::goal_spec::UPDATE_GOAL_TOOL_NAME;
+use codex_tools::UPDATE_GOAL_TOOL_NAME;
 use anyhow::Context;
 use codex_features::Feature;
 use codex_otel::GOAL_BUDGET_LIMITED_METRIC;

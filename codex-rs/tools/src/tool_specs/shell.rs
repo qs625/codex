@@ -1,6 +1,6 @@
-use codex_tools::JsonSchema;
-use codex_tools::ResponsesApiTool;
-use codex_tools::ToolSpec;
+use crate::JsonSchema;
+use crate::ResponsesApiTool;
+use crate::ToolSpec;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -16,12 +16,11 @@ pub struct CommandToolOptions {
     pub exec_permission_approvals_enabled: bool,
 }
 
-#[cfg(test)]
 pub fn create_exec_command_tool(options: CommandToolOptions) -> ToolSpec {
     create_exec_command_tool_with_environment_id(options, /*include_environment_id*/ false)
 }
 
-pub(crate) fn create_exec_command_tool_with_environment_id(
+pub fn create_exec_command_tool_with_environment_id(
     options: CommandToolOptions,
     include_environment_id: bool,
 ) -> ToolSpec {
@@ -451,5 +450,5 @@ fn windows_shell_guidance() -> &'static str {
 }
 
 #[cfg(test)]
-#[path = "shell_spec_tests.rs"]
+#[path = "shell_tests.rs"]
 mod tests;

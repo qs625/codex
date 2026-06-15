@@ -1,8 +1,8 @@
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::request_user_input::RequestUserInputArgs;
-use codex_tools::JsonSchema;
-use codex_tools::ResponsesApiTool;
-use codex_tools::ToolSpec;
+use crate::JsonSchema;
+use crate::ResponsesApiTool;
+use crate::ToolSpec;
 use std::collections::BTreeMap;
 
 pub const REQUEST_USER_INPUT_TOOL_NAME: &str = "request_user_input";
@@ -136,5 +136,5 @@ fn format_allowed_modes(available_modes: &[ModeKind]) -> String {
 }
 
 #[cfg(test)]
-#[path = "request_user_input_spec_tests.rs"]
+#[path = "request_user_input_tests.rs"]
 mod tests;

@@ -1,10 +1,10 @@
-use codex_tools::JsonSchema;
-use codex_tools::TOOL_SEARCH_TOOL_NAME;
-use codex_tools::ToolSearchSourceInfo;
-use codex_tools::ToolSpec;
+use crate::JsonSchema;
+use crate::TOOL_SEARCH_TOOL_NAME;
+use crate::ToolSearchSourceInfo;
+use crate::ToolSpec;
 use std::collections::BTreeMap;
 
-pub(crate) fn create_tool_search_tool(
+pub fn create_tool_search_tool(
     searchable_sources: &[ToolSearchSourceInfo],
     default_limit: usize,
 ) -> ToolSpec {
@@ -64,7 +64,7 @@ pub(crate) fn create_tool_search_tool(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_tools::JsonSchema;
+    use crate::JsonSchema;
     use pretty_assertions::assert_eq;
     use std::collections::BTreeMap;
 

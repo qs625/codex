@@ -1,16 +1,16 @@
-use codex_tools::JsonSchema;
-use codex_tools::ResponsesApiTool;
-use codex_tools::ToolSpec;
+use crate::JsonSchema;
+use crate::ResponsesApiTool;
+use crate::ToolSpec;
 use std::collections::BTreeMap;
 
-pub(crate) const WORKFLOW_LIST_TOOL_NAME: &str = "workflow_list";
-pub(crate) const WORKFLOW_DESCRIBE_TOOL_NAME: &str = "workflow_describe";
-pub(crate) const WORKFLOW_START_TOOL_NAME: &str = "workflow_start";
-pub(crate) const WORKFLOW_STATUS_TOOL_NAME: &str = "workflow_status";
-pub(crate) const WORKFLOW_RESUME_TOOL_NAME: &str = "workflow_resume";
-pub(crate) const WORKFLOW_ABORT_TOOL_NAME: &str = "workflow_abort";
+pub const WORKFLOW_LIST_TOOL_NAME: &str = "workflow_list";
+pub const WORKFLOW_DESCRIBE_TOOL_NAME: &str = "workflow_describe";
+pub const WORKFLOW_START_TOOL_NAME: &str = "workflow_start";
+pub const WORKFLOW_STATUS_TOOL_NAME: &str = "workflow_status";
+pub const WORKFLOW_RESUME_TOOL_NAME: &str = "workflow_resume";
+pub const WORKFLOW_ABORT_TOOL_NAME: &str = "workflow_abort";
 
-pub(crate) fn create_workflow_list_tool() -> ToolSpec {
+pub fn create_workflow_list_tool() -> ToolSpec {
     ToolSpec::Function(ResponsesApiTool {
         name: WORKFLOW_LIST_TOOL_NAME.to_string(),
         description: "List Codex Dynamic Workflows available from CODEX_HOME and the current project's .codex/workflows directories.".to_string(),
@@ -21,7 +21,7 @@ pub(crate) fn create_workflow_list_tool() -> ToolSpec {
     })
 }
 
-pub(crate) fn create_workflow_describe_tool() -> ToolSpec {
+pub fn create_workflow_describe_tool() -> ToolSpec {
     let properties = BTreeMap::from([(
         "workflow".to_string(),
         JsonSchema::string(Some(
@@ -42,7 +42,7 @@ pub(crate) fn create_workflow_describe_tool() -> ToolSpec {
     })
 }
 
-pub(crate) fn create_workflow_start_tool() -> ToolSpec {
+pub fn create_workflow_start_tool() -> ToolSpec {
     let properties = BTreeMap::from([
         (
             "workflow".to_string(),
@@ -70,7 +70,7 @@ pub(crate) fn create_workflow_start_tool() -> ToolSpec {
     })
 }
 
-pub(crate) fn create_workflow_status_tool() -> ToolSpec {
+pub fn create_workflow_status_tool() -> ToolSpec {
     let properties = BTreeMap::from([(
         "run_id".to_string(),
         JsonSchema::string(Some(
@@ -91,7 +91,7 @@ pub(crate) fn create_workflow_status_tool() -> ToolSpec {
     })
 }
 
-pub(crate) fn create_workflow_resume_tool() -> ToolSpec {
+pub fn create_workflow_resume_tool() -> ToolSpec {
     let properties = BTreeMap::from([
         (
             "run_id".to_string(),
@@ -120,7 +120,7 @@ pub(crate) fn create_workflow_resume_tool() -> ToolSpec {
     })
 }
 
-pub(crate) fn create_workflow_abort_tool() -> ToolSpec {
+pub fn create_workflow_abort_tool() -> ToolSpec {
     let properties = BTreeMap::from([
         (
             "run_id".to_string(),
@@ -150,7 +150,7 @@ pub(crate) fn create_workflow_abort_tool() -> ToolSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_tools::ToolSpec;
+    use crate::ToolSpec;
     use pretty_assertions::assert_eq;
 
     #[test]

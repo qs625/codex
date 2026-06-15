@@ -1,7 +1,7 @@
 use codex_protocol::openai_models::ModelPreset;
-use codex_tools::JsonSchema;
-use codex_tools::ResponsesApiTool;
-use codex_tools::ToolSpec;
+use crate::JsonSchema;
+use crate::ResponsesApiTool;
+use crate::ToolSpec;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -471,5 +471,5 @@ fn spawn_agent_models_description(models: &[ModelPreset]) -> String {
 }
 
 #[cfg(test)]
-#[path = "multi_agents_spec_tests.rs"]
+#[path = "multi_agents_tests.rs"]
 mod tests;

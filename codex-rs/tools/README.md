@@ -26,6 +26,9 @@ crate，而是按可 review、可回滚的增量迁出可复用部分；兼容�
 - tool-set planning 和 discovery helpers
 - MCP 与 dynamic-tool 到 Responses API 形状的适配
 - 不依赖 `codex-core` 的 code-mode 兼容 shim
+- 不依赖 `Session` / `TurnContext` / approval runtime 的内建工具 `ToolSpec`
+  构造器，包括 shell-like、workflow、multi-agent、goal、MCP resource、plan、
+  request-user-input、plugin-install、test-sync、view-image 和 code-mode spec
 - 其他有明确复用方、范围窄的 host utilities
 
 对应的非目标同样重要：

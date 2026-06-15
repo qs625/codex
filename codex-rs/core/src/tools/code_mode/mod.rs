@@ -1,8 +1,6 @@
 mod execute_handler;
-pub(crate) mod execute_spec;
 mod response_adapter;
 mod wait_handler;
-pub(crate) mod wait_spec;
 
 use std::sync::Arc;
 use std::time::Duration;

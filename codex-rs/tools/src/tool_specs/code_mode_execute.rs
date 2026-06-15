@@ -1,10 +1,10 @@
 use codex_code_mode::ToolDefinition as CodeModeToolDefinition;
-use codex_tools::FreeformTool;
-use codex_tools::FreeformToolFormat;
-use codex_tools::ToolSpec;
+use crate::FreeformTool;
+use crate::FreeformToolFormat;
+use crate::ToolSpec;
 use std::collections::BTreeMap;
 
-pub(crate) fn create_code_mode_tool(
+pub fn create_code_mode_tool(
     enabled_tools: &[CodeModeToolDefinition],
     namespace_descriptions: &BTreeMap<String, codex_code_mode::ToolNamespaceDescription>,
     code_mode_only: bool,
@@ -39,7 +39,7 @@ SOURCE: /[\s\S]+/
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_tools::ToolName;
+    use crate::ToolName;
     use pretty_assertions::assert_eq;
 
     #[test]

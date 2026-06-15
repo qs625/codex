@@ -1,13 +1,13 @@
-use codex_tools::DiscoverableToolType;
-use codex_tools::JsonSchema;
-use codex_tools::REQUEST_PLUGIN_INSTALL_TOOL_NAME;
-use codex_tools::RequestPluginInstallEntry;
-use codex_tools::ResponsesApiTool;
-use codex_tools::TOOL_SEARCH_TOOL_NAME;
-use codex_tools::ToolSpec;
+use crate::DiscoverableToolType;
+use crate::JsonSchema;
+use crate::REQUEST_PLUGIN_INSTALL_TOOL_NAME;
+use crate::RequestPluginInstallEntry;
+use crate::ResponsesApiTool;
+use crate::TOOL_SEARCH_TOOL_NAME;
+use crate::ToolSpec;
 use std::collections::BTreeMap;
 
-pub(crate) fn create_request_plugin_install_tool(
+pub fn create_request_plugin_install_tool(
     discoverable_tools: &[RequestPluginInstallEntry],
 ) -> ToolSpec {
     let properties = BTreeMap::from([
@@ -130,7 +130,7 @@ fn discoverable_tool_type_str(tool_type: DiscoverableToolType) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_tools::JsonSchema;
+    use crate::JsonSchema;
     use pretty_assertions::assert_eq;
     use std::collections::BTreeMap;
 

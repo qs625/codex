@@ -2,7 +2,7 @@ use super::*;
 use crate::agent::status::is_final;
 use crate::pending_input::PendingInputItem;
 use crate::session::session::Session;
-use crate::tools::handlers::multi_agents_spec::create_wait_agent_tool_v2;
+use codex_tools::create_wait_agent_tool_v2;
 use crate::turn_timing::now_unix_timestamp_ms;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;

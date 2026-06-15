@@ -1,5 +1,5 @@
 use super::*;
-use crate::tools::handlers::multi_agents_spec::create_close_agent_tool_v2;
+use codex_tools::create_close_agent_tool_v2;
 use crate::turn_timing::now_unix_timestamp_ms;
 use codex_tools::ToolSpec;
 

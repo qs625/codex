@@ -19,7 +19,7 @@ use serde::Serialize;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-use super::super::shell_spec::create_command_wait_tool;
+use codex_tools::create_command_wait_tool;
 
 #[derive(Debug, Deserialize)]
 struct CommandWaitArgs {

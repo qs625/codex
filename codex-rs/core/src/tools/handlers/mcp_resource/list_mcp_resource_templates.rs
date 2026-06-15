@@ -4,7 +4,7 @@ use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
-use crate::tools::handlers::mcp_resource_spec::create_list_mcp_resource_templates_tool;
+use codex_tools::create_list_mcp_resource_templates_tool;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
 use codex_protocol::models::function_call_output_content_items_to_text;

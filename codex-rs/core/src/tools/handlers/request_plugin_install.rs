@@ -33,7 +33,7 @@ use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::handlers::parse_arguments;
-use crate::tools::handlers::request_plugin_install_spec::create_request_plugin_install_tool;
+use codex_tools::create_request_plugin_install_tool;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
 

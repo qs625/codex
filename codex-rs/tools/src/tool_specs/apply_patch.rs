@@ -1,6 +1,6 @@
-use codex_tools::FreeformTool;
-use codex_tools::FreeformToolFormat;
-use codex_tools::ToolSpec;
+use crate::FreeformTool;
+use crate::FreeformToolFormat;
+use crate::ToolSpec;
 
 const APPLY_PATCH_LARK_GRAMMAR: &str = include_str!("apply_patch.lark");
 
@@ -27,5 +27,5 @@ pub fn create_apply_patch_freeform_tool(include_environment_id: bool) -> ToolSpe
 }
 
 #[cfg(test)]
-#[path = "apply_patch_spec_tests.rs"]
+#[path = "apply_patch_tests.rs"]
 mod tests;

@@ -26,8 +26,8 @@ use crate::tools::registry::ToolHandler;
 use crate::tools::runtimes::shell::ShellRuntimeBackend;
 use codex_tools::ToolSpec;
 
-use super::super::shell_spec::CommandToolOptions;
-use super::super::shell_spec::create_shell_command_tool;
+use codex_tools::CommandToolOptions;
+use codex_tools::create_shell_command_tool;
 use super::RunExecLikeArgs;
 use super::run_exec_like;
 use super::shell_command_payload_command;
