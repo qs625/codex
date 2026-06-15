@@ -39,6 +39,7 @@ use crate::context_usage::build_thread_context_usage_from_history;
 use crate::default_skill_metadata_budget;
 use crate::environment_selection::ResolvedTurnEnvironments;
 use crate::exec_policy::ExecPolicyManager;
+use crate::goals::ThreadPostTurnState;
 use crate::parse_turn_item;
 use crate::path_utils::normalize_for_native_workdir;
 use crate::pending_input::PendingInputItem;
@@ -1694,10 +1695,15 @@ impl Session {
         {
             return;
         }
-        if Box::pin(self.has_active_child_completion_work()).await {
-            self.parent_child_completion_active
-                .store(true, Ordering::SeqCst);
-            return;
+        match Box::pin(self.thread_post_turn_state()).await {
+            ThreadPostTurnState::ThreadCompletion => {}
+            ThreadPostTurnState::ThreadActive
+            | ThreadPostTurnState::ThreadIdle
+            | ThreadPostTurnState::GoContextContinuation { .. } => {
+                self.parent_child_completion_active
+                    .store(true, Ordering::SeqCst);
+                return;
+            }
         }
 
         if self
@@ -1780,7 +1786,7 @@ impl Session {
         true
     }
 
-    async fn has_active_child_completion_work(&self) -> bool {
+    pub(crate) async fn has_active_child_completion_work(&self) -> bool {
         self.prune_final_direct_child_completion_pending().await;
         if self.has_pending_direct_child_completions().await
             || self.has_queued_response_items_for_next_turn().await
@@ -1793,6 +1799,28 @@ impl Session {
             self.services
                 .agent_control
                 .agent_subtree_is_active(self.conversation_id),
+        )
+        .await
+    }
+
+    pub(crate) async fn has_active_post_turn_work(&self) -> bool {
+        self.prune_final_direct_child_completion_pending().await;
+        if self
+            .services
+            .active_event_subscriptions
+            .active_count(self.conversation_id)
+            > 0
+            || self.has_pending_direct_child_completions().await
+            || self.has_queued_response_items_for_next_turn().await
+            || self.has_pending_mailbox_items().await
+        {
+            return true;
+        }
+
+        Box::pin(
+            self.services
+                .agent_control
+                .agent_descendants_are_active(self.conversation_id),
         )
         .await
     }

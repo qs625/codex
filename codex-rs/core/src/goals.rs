@@ -178,6 +178,14 @@ struct GoalContinuationCandidate {
     items: Vec<ResponseInputItem>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ThreadPostTurnState {
+    ThreadActive,
+    ThreadIdle,
+    GoContextContinuation { goal_id: String },
+    ThreadCompletion,
+}
+
 impl GoalRuntimeState {
     pub(crate) fn new() -> Self {
         Self {
@@ -554,6 +562,10 @@ impl Session {
             }),
         )
         .await;
+        if goal_status != codex_state::ThreadGoalStatus::Active {
+            self.maybe_notify_parent_of_final_status_for_current_source()
+                .await;
+        }
         Ok(goal)
     }
 
@@ -677,6 +689,10 @@ impl Session {
             codex_state::ThreadGoalStatus::Paused | codex_state::ThreadGoalStatus::Complete => {
                 self.clear_stopped_thread_goal_runtime_state().await;
             }
+        }
+        if status != codex_state::ThreadGoalStatus::Active {
+            self.maybe_notify_parent_of_final_status_for_current_source()
+                .await;
         }
     }
 
@@ -1310,27 +1326,11 @@ impl Session {
     async fn goal_continuation_candidate_if_active(
         self: &Arc<Self>,
     ) -> Option<GoalContinuationCandidate> {
-        if !self.enabled(Feature::Goals) {
+        let ThreadPostTurnState::GoContextContinuation { goal_id } =
+            self.thread_post_turn_state().await
+        else {
             return None;
-        }
-        if should_ignore_goal_for_mode(self.collaboration_mode().await.mode) {
-            tracing::debug!("skipping active goal continuation while plan mode is active");
-            return None;
-        }
-        if self.active_turn.lock().await.is_some() {
-            tracing::debug!("skipping active goal continuation because a turn is already active");
-            return None;
-        }
-        if self.has_queued_response_items_for_next_turn().await {
-            tracing::debug!("skipping active goal continuation because queued input exists");
-            return None;
-        }
-        if self.has_trigger_turn_mailbox_items().await {
-            tracing::debug!(
-                "skipping active goal continuation because trigger-turn mailbox input is pending"
-            );
-            return None;
-        }
+        };
         let state_db = match self.state_db_for_thread_goals().await {
             Ok(Some(state_db)) => state_db,
             Ok(None) => {
@@ -1353,23 +1353,69 @@ impl Session {
                 return None;
             }
         };
-        if goal.status != codex_state::ThreadGoalStatus::Active {
+        if goal.goal_id != goal_id || goal.status != codex_state::ThreadGoalStatus::Active {
             tracing::debug!(status = ?goal.status, "skipping inactive thread goal");
             return None;
         }
-        if self.active_turn.lock().await.is_some()
-            || self.has_queued_response_items_for_next_turn().await
-            || self.has_trigger_turn_mailbox_items().await
+        if self.thread_post_turn_state().await
+            != (ThreadPostTurnState::GoContextContinuation {
+                goal_id: goal_id.clone(),
+            })
         {
             tracing::debug!("skipping active goal continuation because pending work appeared");
             return None;
         }
-        let goal_id = goal.goal_id.clone();
         let goal = protocol_goal_from_state(goal);
         Some(GoalContinuationCandidate {
             goal_id,
             items: vec![goal_context_input_item(continuation_prompt(&goal))],
         })
+    }
+
+    pub(crate) async fn thread_post_turn_state(&self) -> ThreadPostTurnState {
+        if self.active_turn.lock().await.is_some()
+            || Box::pin(self.has_active_post_turn_work()).await
+        {
+            return ThreadPostTurnState::ThreadActive;
+        }
+        let idle_state = ThreadPostTurnState::ThreadIdle;
+        if !self.enabled(Feature::Goals) {
+            return ThreadPostTurnState::ThreadCompletion;
+        }
+        if should_ignore_goal_for_mode(self.collaboration_mode().await.mode) {
+            tracing::debug!("skipping active goal continuation while plan mode is active");
+            return ThreadPostTurnState::ThreadCompletion;
+        }
+        let state_db = match self.state_db_for_thread_goals().await {
+            Ok(Some(state_db)) => state_db,
+            Ok(None) => return ThreadPostTurnState::ThreadCompletion,
+            Err(err) => {
+                tracing::warn!("failed to open state db for post-turn goal state: {err}");
+                return ThreadPostTurnState::ThreadCompletion;
+            }
+        };
+        let goal = match state_db.get_thread_goal(self.conversation_id).await {
+            Ok(Some(goal)) => goal,
+            Ok(None) => return ThreadPostTurnState::ThreadCompletion,
+            Err(err) => {
+                tracing::warn!("failed to read thread goal for post-turn state: {err}");
+                return ThreadPostTurnState::ThreadCompletion;
+            }
+        };
+        let state = match goal.status {
+            codex_state::ThreadGoalStatus::Active => ThreadPostTurnState::GoContextContinuation {
+                goal_id: goal.goal_id,
+            },
+            codex_state::ThreadGoalStatus::Complete
+            | codex_state::ThreadGoalStatus::Paused
+            | codex_state::ThreadGoalStatus::BudgetLimited => idle_state,
+        };
+        match state {
+            ThreadPostTurnState::ThreadIdle => ThreadPostTurnState::ThreadCompletion,
+            ThreadPostTurnState::ThreadActive
+            | ThreadPostTurnState::GoContextContinuation { .. }
+            | ThreadPostTurnState::ThreadCompletion => state,
+        }
     }
 }
 
