@@ -1,67 +1,57 @@
 # codex-tools
 
-`codex-tools` is the shared support crate for building, adapting, planning, and
-executing model-visible tool sets outside `codex-core`.
+`codex-tools` 是 `codex-core` 之外的共享工具基础 crate，负责承载可被多个
+crate 复用的 model-visible tool 定义、适配、规划和基础执行契约。
 
-Today this crate owns the host-facing tool models and helpers that no longer
-need to live in `core/src/tools/spec.rs` or `core/src/client_common.rs`:
+当前这个 crate 拥有原本不需要继续留在 `core/src/tools/spec.rs` 或
+`core/src/client_common.rs` 的 host-facing tool 模型和辅助逻辑：
 
-- aggregate host models such as `ToolSpec`, `ConfiguredToolSpec`,
-  `LoadableToolSpec`, `ResponsesApiNamespace`, and
+- 聚合模型，例如 `ToolSpec`、`LoadableToolSpec`、`ResponsesApiNamespace` 和
   `ResponsesApiNamespaceTool`
-- host config and discovery models used while assembling tool sets, including
-  `ToolsConfig`, discoverable-tool models, and request-plugin-install helpers
-- host adapters such as schema sanitization, MCP/dynamic conversion, code-mode
-  augmentation, and image-detail normalization
-- shared executable-tool contracts such as `ToolExecutor`, `ToolCall`, and
-  `ToolOutput`
+- 组装工具集时使用的 host config 和 discovery 模型，包括 `ToolsConfig`、
+  discoverable-tool 模型，以及 request-plugin-install helpers
+- host adapters，例如 schema sanitization、MCP/dynamic conversion、
+  code-mode augmentation 和 image-detail normalization
+- 共享的 executable-tool 契约，例如 `ToolExecutor`、`ToolCall` 和 `ToolOutput`
 
-That extraction is the first step in a longer migration. The goal is not to
-move all of `core/src/tools` into this crate in one shot. Instead, the plan is
-to peel off reusable pieces in reviewable increments while keeping
-compatibility-sensitive orchestration in `codex-core` until the surrounding
-boundaries are ready.
+这次提取是长期迁移的第一步。目标不是一次性把整个 `core/src/tools` 搬进这个
+crate，而是按可 review、可回滚的增量迁出可复用部分；兼容性敏感的编排逻辑在
+周边边界稳定前继续留在 `codex-core`。
 
-## Vision
+## 目标边界
 
-Over time, this crate should hold host-side tool machinery that is shared by
-multiple consumers, for example:
+后续这个 crate 应继续承载多个消费者共享的 host-side tool 基础设施，例如：
 
 - host-visible aggregate tool models
-- tool-set planning and discovery helpers
-- MCP and dynamic-tool adaptation into Responses API shapes
-- code-mode compatibility shims that do not depend on `codex-core`
-- other narrowly scoped host utilities that multiple crates need
+- tool-set planning 和 discovery helpers
+- MCP 与 dynamic-tool 到 Responses API 形状的适配
+- 不依赖 `codex-core` 的 code-mode 兼容 shim
+- 其他有明确复用方、范围窄的 host utilities
 
-The corresponding non-goals are just as important:
+对应的非目标同样重要：
 
-- do not move `codex-core` orchestration here prematurely
-- do not pull `Session` / `TurnContext` / approval flow / runtime execution
-  logic into this crate unless those dependencies have first been split into
-  stable shared interfaces
-- do not turn this crate into a grab-bag for unrelated helper code
+- 不要过早移动 `codex-core` 的 Session/turn orchestration
+- 不要把 `Session` / `TurnContext` / approval flow / runtime execution 逻辑拉进
+  这个 crate，除非这些依赖已经先拆成稳定共享接口
+- 不要把这个 crate 变成无关 helper code 的集合
 
-## Migration approach
+## 迁移方式
 
-The expected migration shape is:
+预期迁移形态：
 
-1. Keep extension-owned executable-tool authoring in `codex-extension-api`.
-2. Move host-side planning/adaptation helpers here when they no longer need to
-   stay coupled to `codex-core`.
-3. Leave compatibility-sensitive adapters in `codex-core` while downstream
-   call sites are updated.
-4. Only extract higher-level host infrastructure after the crate boundaries are
-   clear and independently testable.
+1. extension-owned executable-tool authoring 继续留在 `codex-extension-api`。
+2. host-side planning/adaptation helpers 在不再需要耦合 `codex-core` 时迁入这里。
+3. compatibility-sensitive adapters 在下游调用方更新前继续留在 `codex-core`。
+4. 更高层的 host infrastructure 只有在边界清楚且可独立测试后再提取。
 
-## Crate conventions
+## Crate 约定
 
-This crate should start with stricter structure than `core/src/tools` so it
-stays easy to grow:
+这个 crate 应保持比 `core/src/tools` 更严格的结构，避免继续膨胀：
 
-- `src/lib.rs` should remain exports-only.
-- Business logic should live in named module files such as `foo.rs`.
-- Unit tests for `foo.rs` should live in a sibling `foo_tests.rs`.
-- The implementation file should wire tests with:
+- `src/lib.rs` 保持只做 exports。
+- 业务逻辑放在具名模块文件中，例如 `foo.rs`。
+- `foo.rs` 的单元测试放在相邻的 `foo_tests.rs`。
+- 实现文件使用下面方式挂载测试：
 
 ```rust
 #[cfg(test)]
@@ -69,6 +59,5 @@ stays easy to grow:
 mod tests;
 ```
 
-If this crate starts accumulating code that needs runtime state from
-`codex-core`, that is a sign to revisit the extraction boundary before adding
-more here.
+如果这个 crate 开始积累需要 `codex-core` runtime state 的代码，应先重新审视拆分边界，
+再决定是否继续添加。

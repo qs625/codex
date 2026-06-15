@@ -13,14 +13,19 @@ use crate::tools::handlers::request_user_input_spec::REQUEST_USER_INPUT_TOOL_NAM
 use crate::tools::handlers::request_user_input_spec::create_request_user_input_tool;
 use crate::tools::handlers::request_user_input_spec::request_user_input_tool_description;
 use crate::tools::handlers::shell_spec::CommandToolOptions;
+use crate::tools::handlers::shell_spec::create_command_wait_tool;
 use crate::tools::handlers::shell_spec::create_exec_command_tool;
 use crate::tools::handlers::shell_spec::create_request_permissions_tool;
 use crate::tools::handlers::shell_spec::create_write_stdin_tool;
 use crate::tools::handlers::shell_spec::request_permissions_tool_description;
 use crate::tools::handlers::view_image_spec::ViewImageToolOptions;
 use crate::tools::handlers::view_image_spec::create_view_image_tool;
+use crate::tools::handlers::workflow_spec::create_workflow_abort_tool;
 use crate::tools::handlers::workflow_spec::create_workflow_describe_tool;
 use crate::tools::handlers::workflow_spec::create_workflow_list_tool;
+use crate::tools::handlers::workflow_spec::create_workflow_resume_tool;
+use crate::tools::handlers::workflow_spec::create_workflow_start_tool;
+use crate::tools::handlers::workflow_spec::create_workflow_status_tool;
 use crate::tools::registry::ToolRegistry;
 use codex_app_server_protocol::AppInfo;
 use codex_extension_api::ExtensionToolExecutor;
@@ -57,6 +62,7 @@ use codex_tools::TOOL_SEARCH_TOOL_NAME;
 use codex_tools::ToolEnvironmentMode;
 use codex_tools::ToolName;
 use codex_tools::ToolsConfigParams;
+use codex_tools::create_image_generation_tool;
 use codex_tools::mcp_call_tool_result_output_schema;
 use codex_tools::request_user_input_available_modes;
 use pretty_assertions::assert_eq;
@@ -258,11 +264,16 @@ fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
             allow_login_shell: true,
             exec_permission_approvals_enabled: false,
         }),
+        create_command_wait_tool(),
         create_write_stdin_tool(),
         create_update_plan_tool(),
         request_user_input_tool_spec(&request_user_input_available_modes(&features)),
         create_workflow_list_tool(),
         create_workflow_describe_tool(),
+        create_workflow_start_tool(),
+        create_workflow_status_tool(),
+        create_workflow_resume_tool(),
+        create_workflow_abort_tool(),
         create_apply_patch_freeform_tool(/*include_environment_id*/ false),
         ToolSpec::WebSearch {
             external_web_access: Some(true),

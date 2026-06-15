@@ -4,6 +4,7 @@
 mod code_mode;
 mod dynamic_tool;
 mod function_call_error;
+mod hosted_spec;
 mod image_detail;
 mod json_schema;
 mod mcp_tool;
@@ -26,6 +27,9 @@ pub use code_mode::tool_spec_to_code_mode_tool_definition;
 pub use codex_protocol::ToolName;
 pub use dynamic_tool::parse_dynamic_tool;
 pub use function_call_error::FunctionCallError;
+pub use hosted_spec::WebSearchToolOptions;
+pub use hosted_spec::create_image_generation_tool;
+pub use hosted_spec::create_web_search_tool;
 pub use image_detail::can_request_original_image_detail;
 pub use image_detail::normalize_output_image_detail;
 pub use image_detail::sanitize_original_image_detail;
