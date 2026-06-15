@@ -1937,6 +1937,7 @@ dependencies = [
  "codex-utils-cli",
  "codex-utils-json-to-toml",
  "codex-utils-pty",
+ "codex-workflow",
  "core_test_support",
  "flate2",
  "futures",
@@ -2550,6 +2551,7 @@ dependencies = [
  "codex-utils-string",
  "codex-utils-template",
  "codex-windows-sandbox",
+ "codex-workflow",
  "core_test_support",
  "csv",
  "ctor 0.6.3",
@@ -4149,6 +4151,19 @@ dependencies = [
  "windows 0.58.0",
  "windows-sys 0.52.0",
  "winres",
+]
+
+[[package]]
+name = "codex-workflow"
+version = "0.0.0"
+dependencies = [
+ "once_cell",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
