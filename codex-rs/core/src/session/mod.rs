@@ -115,6 +115,7 @@ use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ItemStartedEvent;
+use codex_protocol::protocol::ResponseItemCompletedEvent;
 use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionSource;
@@ -1976,6 +1977,23 @@ impl Session {
         .await;
     }
 
+    pub(crate) async fn emit_response_item_completed(
+        &self,
+        turn_context: &TurnContext,
+        item: ResponseItem,
+    ) {
+        self.send_event(
+            turn_context,
+            EventMsg::ResponseItemCompleted(ResponseItemCompletedEvent {
+                thread_id: self.conversation_id,
+                turn_id: turn_context.sub_id.clone(),
+                item,
+                completed_at_ms: now_unix_timestamp_ms(),
+            }),
+        )
+        .await;
+    }
+
     /// Adds an execpolicy amendment to both the in-memory and on-disk policies so future
     /// commands can use the newly approved prefix.
     pub(crate) async fn persist_execpolicy_amendment(
@@ -2711,8 +2729,32 @@ impl Session {
         turn_context: &TurnContext,
         items: &[ResponseItem],
     ) {
-        self.record_conversation_items(turn_context, items).await;
-        self.emit_completed_display_response_items(turn_context, items)
+        let items: Vec<ResponseItem> = items
+            .iter()
+            .cloned()
+            .map(|mut item| {
+                if !is_structured_display_response_item(&item) {
+                    return item;
+                }
+
+                let id = match &mut item {
+                    ResponseItem::CommandWait { id, .. }
+                    | ResponseItem::CommandWriteStdin { id, .. }
+                    | ResponseItem::CommandExecutionNotification { id, .. }
+                    | ResponseItem::WorkflowRunProgress { id, .. }
+                    | ResponseItem::EventCommandEvent { id, .. }
+                    | ResponseItem::EventDrivenTool { id, .. }
+                    | ResponseItem::InterAgentCommunication { id, .. } => id,
+                    _ => return item,
+                };
+                if id.is_none() {
+                    *id = Some(format!("response-item-{}", Uuid::new_v4()));
+                }
+                item
+            })
+            .collect();
+        self.record_conversation_items(turn_context, &items).await;
+        self.emit_completed_display_response_items(turn_context, &items)
             .await;
     }
 
@@ -2838,6 +2880,9 @@ impl Session {
 
             if let Some(turn_item) = parse_turn_item(item) {
                 self.emit_turn_item_completed(turn_context, turn_item).await;
+            } else {
+                self.emit_response_item_completed(turn_context, item.clone())
+                    .await;
             }
         }
     }

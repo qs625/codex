@@ -223,6 +223,7 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::ShutdownComplete
         | EventMsg::DeprecationNotice(_)
         | EventMsg::ItemStarted(_)
+        | EventMsg::ResponseItemCompleted(_)
         | EventMsg::HookStarted(_)
         | EventMsg::HookCompleted(_)
         | EventMsg::AgentMessageContentDelta(_)

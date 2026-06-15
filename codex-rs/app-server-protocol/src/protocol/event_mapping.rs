@@ -2,6 +2,7 @@ use crate::protocol::common::ServerNotification;
 use crate::protocol::item_builders::build_command_execution_begin_item;
 use crate::protocol::item_builders::build_command_execution_end_item;
 use crate::protocol::item_builders::convert_patch_changes;
+use crate::protocol::response_item_projection::project_structured_response_item;
 use crate::protocol::v2::AgentMessageDeltaNotification;
 use crate::protocol::v2::CollabAgentState;
 use crate::protocol::v2::CollabAgentTool;
@@ -454,6 +455,24 @@ pub fn item_event_to_server_notification(
                 completed_at_ms: item_completed_event.completed_at_ms,
             })
         }
+        EventMsg::ResponseItemCompleted(response_item_completed_event) => {
+            let fallback_id = || {
+                format!(
+                    "{}-response-item-completed-{}",
+                    response_item_completed_event.turn_id,
+                    response_item_completed_event.completed_at_ms
+                )
+            };
+            let item =
+                project_structured_response_item(&response_item_completed_event.item, fallback_id)
+                    .expect("response item completed event must carry a structured display item");
+            ServerNotification::ItemCompleted(ItemCompletedNotification {
+                thread_id,
+                turn_id,
+                item,
+                completed_at_ms: response_item_completed_event.completed_at_ms,
+            })
+        }
         EventMsg::PatchApplyUpdated(event) => {
             ServerNotification::FileChangePatchUpdated(FileChangePatchUpdatedNotification {
                 thread_id,
@@ -529,6 +548,7 @@ mod tests {
     use codex_protocol::protocol::InterAgentOperation;
     use codex_protocol::protocol::ItemCompletedEvent;
     use codex_protocol::protocol::ItemStartedEvent;
+    use codex_protocol::protocol::ResponseItemCompletedEvent;
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
@@ -741,6 +761,48 @@ mod tests {
                     text: "[Process exit subscription] Session 42 exited with code 0".to_string(),
                     phase: None,
                     memory_citation: None,
+                },
+            },
+        );
+    }
+
+    #[test]
+    fn response_item_completed_maps_command_wait_to_thread_item() {
+        let event = ResponseItemCompletedEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-ignored".to_string(),
+            item: ResponseItem::CommandWait {
+                id: Some("wait-1".to_string()),
+                command_id: "cmd-1".to_string(),
+                status: codex_protocol::models::CommandWaitStatus::Completed,
+                notification: Some(codex_protocol::models::CommandWaitNotificationKind::Exit),
+                exit_code: Some(0),
+                wall_time_seconds: 1.25,
+                created_at_ms: 1234,
+            },
+            completed_at_ms: 789,
+        };
+
+        let notification = item_event_to_server_notification(
+            EventMsg::ResponseItemCompleted(event.clone()),
+            "thread-4",
+            "turn-4",
+        );
+
+        assert_item_completed_server_notification(
+            notification,
+            ItemCompletedNotification {
+                thread_id: "thread-4".to_string(),
+                turn_id: "turn-4".to_string(),
+                completed_at_ms: event.completed_at_ms,
+                item: ThreadItem::CommandWait {
+                    id: "wait-1".to_string(),
+                    command_id: "cmd-1".to_string(),
+                    status: crate::protocol::v2::CommandWaitStatus::Completed,
+                    notification: Some(crate::protocol::v2::CommandWaitNotificationKind::Exit),
+                    exit_code: Some(0),
+                    wall_time_seconds: 1.25,
+                    created_at_ms: 1234,
                 },
             },
         );

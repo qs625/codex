@@ -86,8 +86,6 @@ use uuid::Uuid;
 #[cfg(test)]
 use crate::protocol::v2::CommandAction;
 #[cfg(test)]
-use crate::protocol::v2::CommandExecutionNotificationKind;
-#[cfg(test)]
 use crate::protocol::v2::FileUpdateChange;
 #[cfg(test)]
 use crate::protocol::v2::PatchApplyStatus;
@@ -253,6 +251,7 @@ impl ThreadHistoryBuilder {
             EventMsg::ExitedReviewMode(payload) => self.handle_exited_review_mode(payload),
             EventMsg::ItemStarted(payload) => self.handle_item_started(payload),
             EventMsg::ItemCompleted(payload) => self.handle_item_completed(payload),
+            EventMsg::ResponseItemCompleted(_) => {}
             EventMsg::RawResponseItem(payload) => self.handle_response_item(&payload.item),
             EventMsg::HookStarted(_) | EventMsg::HookCompleted(_) => {}
             EventMsg::Error(payload) => self.handle_error(payload),
@@ -4164,6 +4163,71 @@ mod tests {
                 text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
             }
         );
+    }
+
+    #[test]
+    fn response_item_completed_event_does_not_duplicate_command_wait_history() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::CommandWait {
+                id: None,
+                command_id: "cmd-1".into(),
+                status: codex_protocol::models::CommandWaitStatus::Completed,
+                notification: Some(codex_protocol::models::CommandWaitNotificationKind::Exit),
+                exit_code: Some(0),
+                wall_time_seconds: 1.25,
+                created_at_ms: 1234,
+            }),
+            RolloutItem::EventMsg(EventMsg::ResponseItemCompleted(
+                codex_protocol::protocol::ResponseItemCompletedEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    item: ResponseItem::CommandWait {
+                        id: None,
+                        command_id: "cmd-1".into(),
+                        status: codex_protocol::models::CommandWaitStatus::Completed,
+                        notification: Some(
+                            codex_protocol::models::CommandWaitNotificationKind::Exit,
+                        ),
+                        exit_code: Some(0),
+                        wall_time_seconds: 1.25,
+                        created_at_ms: 1234,
+                    },
+                    completed_at_ms: 5678,
+                },
+            )),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 1);
+        let ThreadItem::CommandWait {
+            command_id,
+            status,
+            notification,
+            exit_code,
+            wall_time_seconds,
+            created_at_ms,
+            ..
+        } = &turns[0].items[0]
+        else {
+            panic!("expected CommandWait item");
+        };
+        assert_eq!(command_id, "cmd-1");
+        assert_eq!(*status, crate::protocol::v2::CommandWaitStatus::Completed);
+        assert_eq!(
+            *notification,
+            Some(crate::protocol::v2::CommandWaitNotificationKind::Exit)
+        );
+        assert_eq!(*exit_code, Some(0));
+        assert_eq!(*wall_time_seconds, 1.25);
+        assert_eq!(*created_at_ms, 1234);
     }
 
     #[test]

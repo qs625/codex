@@ -8352,6 +8352,73 @@ async fn explicit_record_conversation_items_emits_item_completed_for_structured_
 }
 
 #[tokio::test]
+async fn explicit_record_conversation_items_emits_response_item_completed_for_command_wait() {
+    let (sess, tc, rx) = make_session_and_context_with_rx().await;
+
+    sess.record_conversation_items_and_emit_item_completed(
+        &tc,
+        &[ResponseItem::CommandWait {
+            id: None,
+            command_id: "cmd-1".to_string(),
+            status: codex_protocol::models::CommandWaitStatus::Completed,
+            notification: Some(codex_protocol::models::CommandWaitNotificationKind::Exit),
+            exit_code: Some(0),
+            wall_time_seconds: 1.25,
+            created_at_ms: 1234,
+        }],
+    )
+    .await;
+
+    let completed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let event = rx.recv().await.expect("event");
+            if let EventMsg::ResponseItemCompleted(completed) = event.msg {
+                break completed;
+            }
+        }
+    })
+    .await
+    .expect("expected response item completed event");
+
+    assert_eq!(completed.thread_id, sess.conversation_id);
+    assert_eq!(completed.turn_id, tc.sub_id);
+    assert!(completed.completed_at_ms > 0);
+    let ResponseItem::CommandWait {
+        id,
+        command_id,
+        status,
+        notification,
+        exit_code,
+        wall_time_seconds,
+        created_at_ms,
+    } = completed.item
+    else {
+        panic!("expected CommandWait item");
+    };
+    assert!(id.is_some());
+    assert_eq!(
+        ResponseItem::CommandWait {
+            id: None,
+            command_id,
+            status,
+            notification,
+            exit_code,
+            wall_time_seconds,
+            created_at_ms,
+        },
+        ResponseItem::CommandWait {
+            id: None,
+            command_id: "cmd-1".to_string(),
+            status: codex_protocol::models::CommandWaitStatus::Completed,
+            notification: Some(codex_protocol::models::CommandWaitNotificationKind::Exit),
+            exit_code: Some(0),
+            wall_time_seconds: 1.25,
+            created_at_ms: 1234,
+        }
+    );
+}
+
+#[tokio::test]
 async fn record_conversation_items_does_not_emit_item_completed_for_structured_response_item() {
     let (sess, tc, rx) = make_session_and_context_with_rx().await;
     let trigger = EventDrivenToolTrigger {

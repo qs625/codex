@@ -1027,6 +1027,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .await;
         }
         msg @ (EventMsg::ItemStarted(_)
+        | EventMsg::ResponseItemCompleted(_)
         | EventMsg::PatchApplyUpdated(_)
         | EventMsg::TerminalInteraction(_)) => {
             let notification = item_event_to_server_notification(
@@ -3780,6 +3781,87 @@ mod tests {
                 assert_eq!(n.turn.id, "turn-1");
                 assert_eq!(n.turn.items_view, TurnItemsView::NotLoaded);
                 assert!(n.turn.items.is_empty());
+            }
+            other => bail!("unexpected message: {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn response_item_completed_emits_command_wait_thread_item() -> Result<()> {
+        let codex_home = TempDir::new()?;
+        let config = load_default_config_for_test(&codex_home).await;
+        let thread_manager = Arc::new(
+            codex_core::test_support::thread_manager_with_models_provider_and_home(
+                CodexAuth::create_dummy_chatgpt_auth_for_testing(),
+                config.model_provider.clone(),
+                config.codex_home.to_path_buf(),
+                Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+            ),
+        );
+        let codex_core::NewThread {
+            thread_id: conversation_id,
+            thread: conversation,
+            ..
+        } = thread_manager.start_thread(config).await?;
+        let thread_state = new_thread_state();
+        let thread_watch_manager = ThreadWatchManager::new();
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let outgoing = test_outgoing(tx);
+
+        apply_bespoke_event_handling(
+            Event {
+                id: "turn-1".to_string(),
+                msg: EventMsg::ResponseItemCompleted(
+                    codex_protocol::protocol::ResponseItemCompletedEvent {
+                        thread_id: conversation_id.clone(),
+                        turn_id: "turn-1".to_string(),
+                        item: codex_protocol::models::ResponseItem::CommandWait {
+                            id: Some("wait-1".to_string()),
+                            command_id: "cmd-1".to_string(),
+                            status: codex_protocol::models::CommandWaitStatus::Completed,
+                            notification: Some(
+                                codex_protocol::models::CommandWaitNotificationKind::Exit,
+                            ),
+                            exit_code: Some(0),
+                            wall_time_seconds: 1.25,
+                            created_at_ms: 1234,
+                        },
+                        completed_at_ms: 5678,
+                    },
+                ),
+            },
+            conversation_id,
+            conversation,
+            thread_manager,
+            outgoing,
+            thread_state,
+            thread_watch_manager,
+            Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
+            "test-provider".to_string(),
+        )
+        .await;
+
+        let msg = recv_broadcast_message(&mut rx).await?;
+        match msg {
+            OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(payload)) => {
+                assert_eq!(payload.thread_id, conversation_id.to_string());
+                assert_eq!(payload.turn_id, "turn-1");
+                assert_eq!(payload.completed_at_ms, 5678);
+                assert_eq!(
+                    payload.item,
+                    ThreadItem::CommandWait {
+                        id: "wait-1".to_string(),
+                        command_id: "cmd-1".to_string(),
+                        status: codex_app_server_protocol::CommandWaitStatus::Completed,
+                        notification: Some(
+                            codex_app_server_protocol::CommandWaitNotificationKind::Exit,
+                        ),
+                        exit_code: Some(0),
+                        wall_time_seconds: 1.25,
+                        created_at_ms: 1234,
+                    }
+                );
             }
             other => bail!("unexpected message: {other:?}"),
         }
