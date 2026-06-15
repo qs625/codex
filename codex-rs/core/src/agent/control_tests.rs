@@ -2,6 +2,7 @@ use super::*;
 use crate::CodexThread;
 use crate::StateDbHandle;
 use crate::ThreadManager;
+use crate::TurnContext;
 use crate::agent::AgentMode;
 use crate::agent::agent_status_from_event;
 use crate::config::AgentRoleConfig;
@@ -9,6 +10,8 @@ use crate::config::Config;
 use crate::config::ConfigBuilder;
 use crate::context::ContextualUserFragment;
 use crate::context::SubagentNotification;
+use crate::goals::SetGoalRequest;
+use crate::goals::ThreadPostTurnState;
 use crate::init_state_db;
 use assert_matches::assert_matches;
 use codex_features::Feature;
@@ -24,10 +27,12 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
+use codex_protocol::protocol::ThreadGoalStatus;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnCompleteEvent;
 use codex_protocol::protocol::TurnStartedEvent;
+use codex_state::ThreadGoalStatus as StateThreadGoalStatus;
 use codex_thread_store::ArchiveThreadParams;
 use codex_thread_store::LocalThreadStore;
 use codex_thread_store::LocalThreadStoreConfig;
@@ -231,7 +236,10 @@ async fn wait_for_live_thread_spawn_children(
     .expect("expected persisted child tree");
 }
 
-async fn emit_turn_complete(thread: &Arc<CodexThread>, last_agent_message: &str) {
+async fn emit_turn_complete(
+    thread: &Arc<CodexThread>,
+    last_agent_message: &str,
+) -> Arc<TurnContext> {
     let turn = thread.codex.session.new_default_turn().await;
     thread
         .codex
@@ -248,6 +256,18 @@ async fn emit_turn_complete(thread: &Arc<CodexThread>, last_agent_message: &str)
         )
         .await;
     *thread.codex.session.active_turn.lock().await = None;
+    turn
+}
+
+async fn replace_thread_goal(
+    state_db: &StateDbHandle,
+    thread_id: ThreadId,
+    status: StateThreadGoalStatus,
+) {
+    state_db
+        .replace_thread_goal(thread_id, "finish the worker task", status, None)
+        .await
+        .expect("thread goal should be written");
 }
 
 fn captured_child_completion(
@@ -1563,6 +1583,259 @@ async fn multi_agent_v2_completion_waits_for_active_event_subscription() {
         &worker_path,
         &AgentPath::root(),
     ));
+}
+
+#[tokio::test]
+async fn goal_post_turn_state_waits_for_live_direct_child() {
+    let harness = AgentControlHarness::new().await;
+    let mut config = harness.config.clone();
+    let _ = config.features.enable(Feature::Goals);
+    let parent = harness
+        .manager
+        .start_thread(config)
+        .await
+        .expect("parent thread should start");
+    let parent_thread_id = parent.thread_id;
+    let parent_thread = parent.thread;
+    let (child_thread_id, child_thread) = harness.start_thread().await;
+    replace_thread_goal(
+        harness.state_db.as_ref().expect("state db should exist"),
+        parent_thread_id,
+        StateThreadGoalStatus::Active,
+    )
+    .await;
+    emit_turn_complete(&parent_thread, "parent turn done").await;
+    parent_thread
+        .codex
+        .session
+        .mark_direct_child_completion_pending(child_thread_id)
+        .await;
+
+    assert_eq!(
+        parent_thread.codex.session.thread_post_turn_state().await,
+        ThreadPostTurnState::ThreadActive
+    );
+
+    emit_turn_complete(&child_thread, "child done").await;
+    assert_eq!(
+        parent_thread.codex.session.thread_post_turn_state().await,
+        ThreadPostTurnState::GoContextContinuation {
+            goal_id: harness
+                .state_db
+                .as_ref()
+                .expect("state db should exist")
+                .get_thread_goal(parent_thread_id)
+                .await
+                .expect("goal query should succeed")
+                .expect("goal should exist")
+                .goal_id,
+        }
+    );
+}
+
+#[tokio::test]
+async fn goal_post_turn_state_waits_for_active_event_subscription() {
+    let harness = AgentControlHarness::new().await;
+    let mut config = harness.config.clone();
+    let _ = config.features.enable(Feature::Goals);
+    let thread = harness
+        .manager
+        .start_thread(config)
+        .await
+        .expect("thread should start");
+    replace_thread_goal(
+        harness.state_db.as_ref().expect("state db should exist"),
+        thread.thread_id,
+        StateThreadGoalStatus::Active,
+    )
+    .await;
+    emit_turn_complete(&thread.thread, "turn done").await;
+    harness
+        .manager
+        .active_event_subscriptions()
+        .set_active_count(thread.thread_id, 1);
+
+    assert_eq!(
+        thread.thread.codex.session.thread_post_turn_state().await,
+        ThreadPostTurnState::ThreadActive
+    );
+
+    harness
+        .manager
+        .active_event_subscriptions()
+        .set_active_count(thread.thread_id, 0);
+    assert_eq!(
+        thread.thread.codex.session.thread_post_turn_state().await,
+        ThreadPostTurnState::GoContextContinuation {
+            goal_id: harness
+                .state_db
+                .as_ref()
+                .expect("state db should exist")
+                .get_thread_goal(thread.thread_id)
+                .await
+                .expect("goal query should succeed")
+                .expect("goal should exist")
+                .goal_id,
+        }
+    );
+}
+
+#[tokio::test]
+async fn multi_agent_v2_completion_waits_for_active_goal_continuation() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let mut config = harness.config.clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    let _ = config.features.enable(Feature::Goals);
+    let worker_path = AgentPath::root().join("goal_worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            config,
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("explorer".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+    worker_thread
+        .codex
+        .session
+        .abort_all_tasks(TurnAbortReason::Replaced)
+        .await;
+    sleep(Duration::from_millis(100)).await;
+    replace_thread_goal(
+        harness.state_db.as_ref().expect("state db should exist"),
+        worker_thread_id,
+        StateThreadGoalStatus::Active,
+    )
+    .await;
+    let baseline_op_count = harness.manager.captured_ops().len();
+
+    let completed_turn = emit_turn_complete(&worker_thread, "waiting for goal continuation").await;
+    harness
+        .manager
+        .maybe_notify_parent_of_final_status(worker_thread_id)
+        .await;
+    let captured_ops = harness.manager.captured_ops();
+    assert!(!captured_child_completion(
+        &captured_ops[baseline_op_count..],
+        root_thread_id,
+        &worker_path,
+        &AgentPath::root(),
+    ));
+
+    worker_thread
+        .codex
+        .session
+        .set_thread_goal(
+            completed_turn.as_ref(),
+            SetGoalRequest {
+                objective: None,
+                status: Some(ThreadGoalStatus::Complete),
+                token_budget: None,
+            },
+        )
+        .await
+        .expect("goal completion should be written");
+    let captured_ops = harness.manager.captured_ops();
+    assert_eq!(
+        count_captured_child_completions(
+            &captured_ops[baseline_op_count..],
+            root_thread_id,
+            &worker_path,
+            &AgentPath::root(),
+        ),
+        1
+    );
+
+    worker_thread
+        .codex
+        .session
+        .maybe_notify_parent_of_final_status(completed_turn.as_ref())
+        .await;
+    let captured_ops = harness.manager.captured_ops();
+    assert_eq!(
+        count_captured_child_completions(
+            &captured_ops[baseline_op_count..],
+            root_thread_id,
+            &worker_path,
+            &AgentPath::root(),
+        ),
+        1
+    );
+}
+
+#[tokio::test]
+async fn multi_agent_v2_completion_allows_paused_and_budget_limited_goals() {
+    for status in [
+        StateThreadGoalStatus::Complete,
+        StateThreadGoalStatus::Paused,
+        StateThreadGoalStatus::BudgetLimited,
+    ] {
+        let harness = AgentControlHarness::new().await;
+        let (root_thread_id, _root_thread) = harness.start_thread().await;
+        let mut config = harness.config.clone();
+        let _ = config.features.enable(Feature::MultiAgentV2);
+        let _ = config.features.enable(Feature::Goals);
+        let worker_path = AgentPath::root()
+            .join(format!("goal_worker_{}", status.as_str()).as_str())
+            .expect("worker path");
+        let worker_thread_id = harness
+            .control
+            .spawn_agent(
+                config,
+                text_input("hello worker"),
+                Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                    parent_thread_id: root_thread_id,
+                    depth: 1,
+                    agent_path: Some(worker_path.clone()),
+                    agent_nickname: None,
+                    agent_role: Some("explorer".to_string()),
+                })),
+            )
+            .await
+            .expect("worker spawn should succeed");
+        let worker_thread = harness
+            .manager
+            .get_thread(worker_thread_id)
+            .await
+            .expect("worker thread should exist");
+        replace_thread_goal(
+            harness.state_db.as_ref().expect("state db should exist"),
+            worker_thread_id,
+            status,
+        )
+        .await;
+        let baseline_op_count = harness.manager.captured_ops().len();
+
+        emit_turn_complete(&worker_thread, "goal is no longer active").await;
+        harness
+            .manager
+            .maybe_notify_parent_of_final_status(worker_thread_id)
+            .await;
+        let captured_ops = harness.manager.captured_ops();
+        assert_eq!(
+            count_captured_child_completions(
+                &captured_ops[baseline_op_count..],
+                root_thread_id,
+                &worker_path,
+                &AgentPath::root(),
+            ),
+            1,
+            "{status:?} should allow child completion"
+        );
+    }
 }
 
 #[tokio::test]

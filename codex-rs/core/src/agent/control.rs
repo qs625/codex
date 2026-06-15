@@ -834,6 +834,18 @@ impl AgentControl {
         false
     }
 
+    pub(crate) async fn agent_descendants_are_active(&self, agent_id: ThreadId) -> bool {
+        let Ok(thread_ids) = Box::pin(self.live_thread_spawn_descendants(agent_id)).await else {
+            return false;
+        };
+        for thread_id in thread_ids {
+            if Box::pin(self.agent_thread_is_active(thread_id)).await {
+                return true;
+            }
+        }
+        false
+    }
+
     pub(crate) fn register_session_root(
         &self,
         current_thread_id: ThreadId,

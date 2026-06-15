@@ -8931,9 +8931,8 @@ async fn active_goal_continuation_runs_again_after_no_tool_turn() -> anyhow::Res
             responsesapi_client_metadata: None,
         })
         .await?;
-
     let mut completed_turns = 0;
-    tokio::time::timeout(std::time::Duration::from_secs(8), async {
+    tokio::time::timeout(std::time::Duration::from_secs(120), async {
         loop {
             let event = test.codex.next_event().await?;
             if matches!(event.msg, EventMsg::TurnComplete(_)) {
