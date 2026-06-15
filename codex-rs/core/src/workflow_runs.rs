@@ -591,6 +591,7 @@ mod tests {
                         description: Some("goal".to_string()),
                     },
                 )]),
+                instructions: String::new(),
             }],
             diagnostics: Vec::new(),
         }

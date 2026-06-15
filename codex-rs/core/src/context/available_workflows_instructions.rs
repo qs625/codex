@@ -51,6 +51,7 @@ mod tests {
                         description: Some("Goal".to_string()),
                     },
                 )]),
+                instructions: "Follow the feature development workflow.".to_string(),
             }],
             diagnostics: Vec::new(),
         };
@@ -60,6 +61,8 @@ mod tests {
 
         assert!(rendered.starts_with("<workflows_instructions>"));
         assert!(rendered.contains("- feature-dev (project)"));
+        assert!(rendered.contains("Name: Feature Development"));
+        assert!(rendered.contains("Instructions:\n    Follow the feature development workflow."));
         assert!(rendered.contains("Inputs: objective"));
         assert!(rendered.ends_with("</workflows_instructions>"));
     }

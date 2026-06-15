@@ -24,11 +24,8 @@
         "path": {
           "type": "string"
         },
-        "readme": {
-          "type": [
-            "string",
-            "null"
-          ]
+        "instructions": {
+          "type": "string"
         },
         "source": {
           "$ref": "#/definitions/WorkflowSource"
@@ -51,6 +48,7 @@
         "entry",
         "id",
         "inputs",
+        "instructions",
         "name",
         "path",
         "source",

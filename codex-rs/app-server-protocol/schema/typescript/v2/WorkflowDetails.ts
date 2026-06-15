@@ -4,4 +4,4 @@
 import type { WorkflowInputSpec } from "./WorkflowInputSpec";
 import type { WorkflowSource } from "./WorkflowSource";
 
-export type WorkflowDetails = { readme: string | null, id: string, name: string, description: string, source: WorkflowSource, path: string, entry: string, version: string | null, whenToUse: Array<string>, inputs: { [key in string]?: WorkflowInputSpec }, };
+export type WorkflowDetails = { instructions: string, id: string, name: string, description: string, source: WorkflowSource, path: string, entry: string, version: string | null, whenToUse: Array<string>, inputs: { [key in string]?: WorkflowInputSpec }, };

@@ -3,7 +3,6 @@ use codex_app_server_protocol::ConfigLayerSource;
 use codex_config::ConfigLayerStackOrdering;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -12,9 +11,12 @@ use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 
-const MAX_WORKFLOW_README_BYTES: usize = 16 * 1024;
+const WORKFLOW_INSTRUCTIONS_FILE: &str = "WORKFLOW.md";
+const MAX_WORKFLOW_INSTRUCTIONS_BYTES: usize = 16 * 1024;
 const MAX_WORKFLOWS_PER_SOURCE: usize = 100;
 const MAX_CONTEXT_FIELD_CHARS: usize = 600;
+const MAX_CONTEXT_INSTRUCTIONS_CHARS: usize = 2_000;
+const MAX_AVAILABLE_WORKFLOWS_CONTEXT_CHARS: usize = 24_000;
 const TRUNCATED_NOTICE: &str = "... [truncated]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
@@ -51,12 +53,10 @@ pub struct WorkflowManifest {
     pub entry: String,
     #[serde(default)]
     pub version: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "when_to_use")]
     pub when_to_use: Vec<String>,
     #[serde(default)]
     pub inputs: BTreeMap<String, WorkflowInputSpec>,
-    #[serde(flatten)]
-    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -71,6 +71,8 @@ pub struct WorkflowSummary {
     pub version: Option<String>,
     pub when_to_use: Vec<String>,
     pub inputs: BTreeMap<String, WorkflowInputSpec>,
+    #[serde(default, skip)]
+    pub instructions: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -78,7 +80,14 @@ pub struct WorkflowSummary {
 pub struct WorkflowDetails {
     #[serde(flatten)]
     pub summary: WorkflowSummary,
-    pub readme: Option<String>,
+    pub instructions: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkflowMarkdown {
+    manifest: WorkflowManifest,
+    body: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -291,11 +300,8 @@ fn project_workflow_roots(config: &Config) -> Vec<PathBuf> {
 }
 
 fn load_workflow(source: WorkflowSource, dir: &Path) -> Result<WorkflowSummary, String> {
-    let manifest_path = dir.join("workflow.json");
-    let manifest_text = fs::read_to_string(&manifest_path)
-        .map_err(|err| format!("failed to read workflow.json: {err}"))?;
-    let manifest: WorkflowManifest = serde_json::from_str(&manifest_text)
-        .map_err(|err| format!("failed to parse workflow.json: {err}"))?;
+    let workflow_markdown = load_workflow_markdown(dir)?;
+    let manifest = workflow_markdown.manifest;
     let dir_name = dir
         .file_name()
         .and_then(|name| name.to_str())
@@ -333,7 +339,70 @@ fn load_workflow(source: WorkflowSource, dir: &Path) -> Result<WorkflowSummary, 
         version: manifest.version,
         when_to_use: manifest.when_to_use,
         inputs: manifest.inputs,
+        instructions: workflow_markdown.body,
     })
+}
+
+fn load_workflow_markdown(dir: &Path) -> Result<WorkflowMarkdown, String> {
+    let instructions_path = dir.join(WORKFLOW_INSTRUCTIONS_FILE);
+    let text = fs::read_to_string(&instructions_path)
+        .map_err(|err| format!("failed to read {WORKFLOW_INSTRUCTIONS_FILE}: {err}"))?;
+    let (frontmatter, body) =
+        extract_workflow_instructions_frontmatter(&text, &instructions_path)?;
+    let manifest: WorkflowManifest = serde_yaml::from_str(frontmatter)
+        .map_err(|err| format!("failed to parse {WORKFLOW_INSTRUCTIONS_FILE} frontmatter: {err}"))?;
+    validate_workflow_manifest(&manifest)?;
+    Ok(WorkflowMarkdown {
+        manifest,
+        body: truncate_instructions(body.trim_start().to_string()),
+    })
+}
+
+fn validate_workflow_manifest(manifest: &WorkflowManifest) -> Result<(), String> {
+    if manifest.id.trim().is_empty() {
+        return Err(format!(
+            "{WORKFLOW_INSTRUCTIONS_FILE} frontmatter field `id` must not be empty"
+        ));
+    }
+    if manifest.name.trim().is_empty() {
+        return Err(format!(
+            "{WORKFLOW_INSTRUCTIONS_FILE} frontmatter field `name` must not be empty"
+        ));
+    }
+    if manifest.description.trim().is_empty() {
+        return Err(format!(
+            "{WORKFLOW_INSTRUCTIONS_FILE} frontmatter field `description` must not be empty"
+        ));
+    }
+    if manifest.entry.trim().is_empty() {
+        return Err(format!(
+            "{WORKFLOW_INSTRUCTIONS_FILE} frontmatter field `entry` must not be empty"
+        ));
+    }
+    Ok(())
+}
+
+fn extract_workflow_instructions_frontmatter<'a>(
+    text: &'a str,
+    path: &Path,
+) -> Result<(&'a str, &'a str), String> {
+    let Some(rest) = text.strip_prefix("---\n").or_else(|| text.strip_prefix("---\r\n")) else {
+        return Err(format!(
+            "{} must start with YAML frontmatter delimited by ---",
+            path.display()
+        ));
+    };
+    let Some((frontmatter, body)) = rest.split_once("\n---") else {
+        return Err(format!(
+            "{} must close YAML frontmatter with ---",
+            path.display()
+        ));
+    };
+    let body = body
+        .strip_prefix("\r\n")
+        .or_else(|| body.strip_prefix('\n'))
+        .unwrap_or(body);
+    Ok((frontmatter, body))
 }
 
 fn entry_is_typescript(entry: &str) -> bool {
@@ -359,25 +428,22 @@ impl WorkflowRegistry {
             .find(id)
             .ok_or_else(|| format!("unknown workflow `{id}`"))?
             .clone();
-        let readme_path = Path::new(&summary.path).join("README.md");
-        let readme = match fs::read_to_string(&readme_path) {
-            Ok(text) => Some(truncate_readme(text)),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-            Err(err) => return Err(format!("failed to read README.md for `{id}`: {err}")),
-        };
-        Ok(WorkflowDetails { summary, readme })
+        Ok(WorkflowDetails {
+            instructions: summary.instructions.clone(),
+            summary,
+        })
     }
 }
 
-fn truncate_readme(readme: String) -> String {
-    if readme.len() <= MAX_WORKFLOW_README_BYTES {
-        return readme;
+fn truncate_instructions(instructions: String) -> String {
+    if instructions.len() <= MAX_WORKFLOW_INSTRUCTIONS_BYTES {
+        return instructions;
     }
-    let mut end = MAX_WORKFLOW_README_BYTES.saturating_sub(TRUNCATED_NOTICE.len());
-    while !readme.is_char_boundary(end) {
+    let mut end = MAX_WORKFLOW_INSTRUCTIONS_BYTES.saturating_sub(TRUNCATED_NOTICE.len());
+    while !instructions.is_char_boundary(end) {
         end = end.saturating_sub(1);
     }
-    format!("{}{TRUNCATED_NOTICE}", &readme[..end])
+    format!("{}{TRUNCATED_NOTICE}", &instructions[..end])
 }
 
 pub(crate) fn render_available_workflows_body(registry: &WorkflowRegistry) -> Option<String> {
@@ -388,21 +454,29 @@ pub(crate) fn render_available_workflows_body(registry: &WorkflowRegistry) -> Op
     let mut body = String::from(
         "\nWorkflows are scripted, resumable multi-agent procedures. Use `workflow_list` or `workflow_describe` when the user asks for a structured workflow and the task matches one of the entries below. Use `workflow_start`, `workflow_status`, `workflow_resume`, and `workflow_abort` to manage a workflow run.\n\n",
     );
-    for workflow in &registry.workflows {
-        body.push_str(&format!(
-            "- {} ({})\n  Description: {}\n",
+    let mut used_chars = body.chars().count();
+    for (index, workflow) in registry.workflows.iter().enumerate() {
+        let mut entry = format!(
+            "- {} ({})\n  Name: {}\n  Description: {}\n",
             workflow.id,
             workflow.source.label(),
+            truncate_for_context(&workflow.name),
             truncate_for_context(&workflow.description)
-        ));
+        );
+        if !workflow.instructions.trim().is_empty() {
+            entry.push_str(&format!(
+                "  Instructions:\n{}\n",
+                indent_instructions_for_context(&workflow.instructions)
+            ));
+        }
         if !workflow.when_to_use.is_empty() {
-            body.push_str(&format!(
+            entry.push_str(&format!(
                 "  Use when: {}\n",
                 truncate_for_context(&workflow.when_to_use.join("; "))
             ));
         }
         if !workflow.inputs.is_empty() {
-            body.push_str(&format!(
+            entry.push_str(&format!(
                 "  Inputs: {}\n",
                 workflow
                     .inputs
@@ -412,12 +486,28 @@ pub(crate) fn render_available_workflows_body(registry: &WorkflowRegistry) -> Op
                     .join(", ")
             ));
         }
-        body.push_str(&format!(
+        entry.push_str(&format!(
             "  Inspect: workflow_describe({{\"workflow\": \"{}\"}})\n",
             workflow.id
         ));
+        let remaining = registry.workflows.len().saturating_sub(index);
+        let omitted_notice = format!(
+            "  ... {remaining} workflow(s) omitted because the workflow context budget was reached.\n"
+        );
+        let entry_chars = entry.chars().count();
+        let notice_chars = omitted_notice.chars().count();
+        if used_chars + entry_chars + notice_chars + 1 > MAX_AVAILABLE_WORKFLOWS_CONTEXT_CHARS {
+            if used_chars + notice_chars + 1 <= MAX_AVAILABLE_WORKFLOWS_CONTEXT_CHARS {
+                body.push_str(&omitted_notice);
+            }
+            break;
+        }
+        body.push_str(&entry);
+        used_chars += entry_chars;
     }
-    body.push('\n');
+    if used_chars < MAX_AVAILABLE_WORKFLOWS_CONTEXT_CHARS {
+        body.push('\n');
+    }
     Some(body)
 }
 
@@ -432,6 +522,25 @@ fn truncate_for_context(value: &str) -> String {
     )
 }
 
+fn truncate_instructions_for_context(value: &str) -> String {
+    if value.chars().count() <= MAX_CONTEXT_INSTRUCTIONS_CHARS {
+        return value.to_string();
+    }
+    let keep = MAX_CONTEXT_INSTRUCTIONS_CHARS.saturating_sub(TRUNCATED_NOTICE.len());
+    format!(
+        "{}{TRUNCATED_NOTICE}",
+        value.chars().take(keep).collect::<String>()
+    )
+}
+
+fn indent_instructions_for_context(value: &str) -> String {
+    truncate_instructions_for_context(value)
+        .lines()
+        .map(|line| format!("    {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,20 +551,28 @@ mod tests {
         fs::create_dir_all(&dir).expect("create workflow dir");
         fs::write(dir.join("workflow.ts"), "export default {};").expect("write workflow entry");
         fs::write(
-            dir.join("workflow.json"),
+            dir.join(WORKFLOW_INSTRUCTIONS_FILE),
             format!(
-                r#"{{
-  "id": "{id}",
-  "name": "{id}",
-  "description": "{description}",
-  "entry": "workflow.ts",
-  "version": "0.1.0",
-  "when_to_use": ["when useful"],
-  "inputs": {{"objective": {{"type": "string", "description": "goal"}}}}
-}}"#
+                r#"---
+id: {id}
+name: {id}
+description: {description}
+entry: workflow.ts
+version: "0.1.0"
+when_to_use:
+  - when useful
+inputs:
+  objective:
+    type: string
+    description: goal
+---
+# {id}
+
+Workflow instructions for {id}.
+"#
             ),
         )
-        .expect("write workflow manifest");
+        .expect("write workflow markdown");
     }
 
     #[test]
@@ -511,10 +628,17 @@ mod tests {
         let dir = cwd.join(".codex/workflows/bad");
         fs::create_dir_all(&dir).expect("create workflow dir");
         fs::write(
-            dir.join("workflow.json"),
-            r#"{"id":"other","name":"Bad","description":"bad","entry":"../bad.ts"}"#,
+            dir.join(WORKFLOW_INSTRUCTIONS_FILE),
+            "---
+id: other
+name: Bad
+description: bad
+entry: ../bad.ts
+---
+Bad.
+",
         )
-        .expect("write invalid manifest");
+        .expect("write workflow instructions");
 
         let registry = load_workflow_registry_from_roots(
             codex_home.join("workflows"),
@@ -534,10 +658,17 @@ mod tests {
         fs::create_dir_all(&dir).expect("create workflow dir");
         fs::write(dir.join("workflow.js"), "export default {};").expect("write workflow entry");
         fs::write(
-            dir.join("workflow.json"),
-            r#"{"id":"bad","name":"Bad","description":"bad","entry":"workflow.js"}"#,
+            dir.join(WORKFLOW_INSTRUCTIONS_FILE),
+            "---
+id: bad
+name: Bad
+description: bad
+entry: workflow.js
+---
+Bad.
+",
         )
-        .expect("write invalid manifest");
+        .expect("write workflow instructions");
 
         let registry = load_workflow_registry_from_roots(
             temp.path().join("home/workflows"),
@@ -553,17 +684,26 @@ mod tests {
     }
 
     #[test]
-    fn details_includes_readme_when_present() {
+    fn details_includes_workflow_instructions() {
         let temp = tempfile::tempdir().expect("tempdir");
         let codex_home = temp.path().join("home");
         let cwd = temp.path().join("repo");
         let workflows_root = cwd.join(".codex/workflows");
         write_workflow(&workflows_root, "feature-dev", "project description");
         fs::write(
-            workflows_root.join("feature-dev/README.md"),
-            "# Feature Dev",
+            workflows_root.join(format!("feature-dev/{WORKFLOW_INSTRUCTIONS_FILE}")),
+            "---
+id: feature-dev
+name: Feature Dev
+description: project description
+entry: workflow.ts
+---
+# Feature Dev
+
+Use this workflow for feature development.
+",
         )
-        .expect("write readme");
+        .expect("write workflow instructions");
 
         let registry = load_workflow_registry_from_roots(
             codex_home.join("workflows"),
@@ -571,28 +711,121 @@ mod tests {
         );
         let details = registry.details("feature-dev").expect("workflow details");
 
-        assert_eq!(details.readme.as_deref(), Some("# Feature Dev"));
+        assert_eq!(details.summary.name, "Feature Dev");
+        assert_eq!(
+            details.instructions,
+            "# Feature Dev\n\nUse this workflow for feature development.\n"
+        );
     }
 
     #[test]
-    fn details_truncates_large_readme() {
+    fn details_truncates_large_workflow_instructions() {
         let temp = tempfile::tempdir().expect("tempdir");
         let workflows_root = temp.path().join("repo/.codex/workflows");
         write_workflow(&workflows_root, "feature-dev", "project description");
         fs::write(
-            workflows_root.join("feature-dev/README.md"),
-            "a".repeat(MAX_WORKFLOW_README_BYTES + 100),
+            workflows_root.join(format!("feature-dev/{WORKFLOW_INSTRUCTIONS_FILE}")),
+            format!(
+                "---
+id: feature-dev
+name: Feature Dev
+description: project description
+entry: workflow.ts
+---
+{}",
+                "a".repeat(MAX_WORKFLOW_INSTRUCTIONS_BYTES + 100)
+            ),
         )
-        .expect("write large readme");
+        .expect("write large workflow instructions");
 
         let registry = load_workflow_registry_from_roots(
             temp.path().join("home/workflows"),
             vec![workflows_root],
         );
         let details = registry.details("feature-dev").expect("workflow details");
-        let readme = details.readme.expect("readme");
 
-        assert!(readme.len() <= MAX_WORKFLOW_README_BYTES);
-        assert!(readme.ends_with(TRUNCATED_NOTICE));
+        assert!(details.instructions.len() <= MAX_WORKFLOW_INSTRUCTIONS_BYTES);
+        assert!(details.instructions.ends_with(TRUNCATED_NOTICE));
+    }
+
+    #[test]
+    fn workflow_instructions_frontmatter_is_required() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workflows_root = temp.path().join("repo/.codex/workflows");
+        let dir = workflows_root.join("bad");
+        fs::create_dir_all(&dir).expect("create workflow dir");
+        fs::write(dir.join("workflow.ts"), "export default {};").expect("write workflow entry");
+        fs::write(dir.join(WORKFLOW_INSTRUCTIONS_FILE), "# Missing frontmatter")
+            .expect("write workflow instructions");
+
+        let registry = load_workflow_registry_from_roots(
+            temp.path().join("home/workflows"),
+            vec![workflows_root],
+        );
+
+        assert!(registry.workflows.is_empty());
+        assert_eq!(registry.diagnostics.len(), 1);
+        assert!(
+            registry.diagnostics[0]
+                .message
+                .contains("must start with YAML frontmatter")
+        );
+    }
+
+    #[test]
+    fn rendered_context_includes_workflow_name_and_instructions() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workflows_root = temp.path().join("repo/.codex/workflows");
+        write_workflow(&workflows_root, "feature-dev", "project description");
+
+        let registry = load_workflow_registry_from_roots(
+            temp.path().join("home/workflows"),
+            vec![workflows_root],
+        );
+        let body = render_available_workflows_body(&registry).expect("rendered workflows");
+
+        assert!(body.contains("- feature-dev (project)"));
+        assert!(body.contains("Name: feature-dev"));
+        assert!(body.contains("Description: project description"));
+        assert!(body.contains("Instructions:\n    # feature-dev"));
+    }
+
+    #[test]
+    fn rendered_context_has_total_budget() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workflows_root = temp.path().join("repo/.codex/workflows");
+        for index in 0..40 {
+            let id = format!("workflow-{index:03}");
+            let dir = workflows_root.join(&id);
+            fs::create_dir_all(&dir).expect("create workflow dir");
+            fs::write(dir.join("workflow.ts"), "export default {};")
+                .expect("write workflow entry");
+            fs::write(
+                dir.join(WORKFLOW_INSTRUCTIONS_FILE),
+                format!(
+                    r#"---
+id: {id}
+name: Workflow {index}
+description: workflow {index} description
+entry: workflow.ts
+---
+{}
+"#,
+                    "long instructions ".repeat(400)
+                ),
+            )
+            .expect("write workflow markdown");
+        }
+
+        let registry = load_workflow_registry_from_roots(
+            temp.path().join("home/workflows"),
+            vec![workflows_root],
+        );
+        let body = render_available_workflows_body(&registry).expect("rendered workflows");
+
+        assert!(body.chars().count() <= MAX_AVAILABLE_WORKFLOWS_CONTEXT_CHARS);
+        assert!(body.contains("workflow-000"));
+        assert!(body.contains("workflow context budget was reached"));
+        assert!(!body.contains("workflow-039"));
     }
 }

@@ -30,7 +30,7 @@ pub(crate) fn create_workflow_describe_tool() -> ToolSpec {
     )]);
     ToolSpec::Function(ResponsesApiTool {
         name: WORKFLOW_DESCRIBE_TOOL_NAME.to_string(),
-        description: "Read metadata and README context for one available Codex Dynamic Workflow. Use this before deciding how to run or emulate a workflow.".to_string(),
+        description: "Read WORKFLOW.md frontmatter metadata and instructions for one available Codex Dynamic Workflow. Use this before deciding how to run or emulate a workflow.".to_string(),
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::object(

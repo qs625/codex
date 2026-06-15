@@ -7272,19 +7272,25 @@ async fn build_initial_context_loads_project_workflows() {
         std::fs::write(workflow_dir.join("workflow.ts"), "export default {};")
             .expect("write workflow entry");
         std::fs::write(
-            workflow_dir.join("workflow.json"),
+            workflow_dir.join("WORKFLOW.md"),
             format!(
-                r#"{{
-  "id": "{id}",
-  "name": "Feature Development",
-  "description": "{description}",
-  "entry": "workflow.ts",
-  "when_to_use": ["feature work"],
-  "inputs": {{"objective": {{"type": "string", "description": "Goal"}}}}
-}}"#
+                r#"---
+id: {id}
+name: Feature Development
+description: {description}
+entry: workflow.ts
+when_to_use:
+  - feature work
+inputs:
+  objective:
+    type: string
+    description: Goal
+---
+Use this workflow when feature work needs a structured process.
+"#
             ),
         )
-        .expect("write workflow manifest");
+        .expect("write workflow markdown");
     }
 
     let codex_home = tempfile::tempdir().expect("create codex home");
@@ -7314,7 +7320,8 @@ async fn build_initial_context_loads_project_workflows() {
             .iter()
             .any(|text| text.contains("<workflows_instructions>")
                 && text.contains("- feature-dev (project)")
-                && text.contains("structured feature workflow")),
+                && text.contains("structured feature workflow")
+                && text.contains("Use this workflow when feature work needs a structured process.")),
         "expected project workflow in initial context, got {developer_texts:?}"
     );
 }

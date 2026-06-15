@@ -252,7 +252,7 @@ fn map_workflow_run_status(status: WorkflowRunStatus) -> ApiWorkflowRunStatus {
 fn map_workflow_details(details: WorkflowDetails) -> ApiWorkflowDetails {
     ApiWorkflowDetails {
         summary: map_workflow_summary(details.summary),
-        readme: details.readme,
+        instructions: details.instructions,
     }
 }
 

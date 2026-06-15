@@ -1,3 +1,22 @@
+---
+id: feature-dev
+name: Feature Development
+description: 按调研、实现、review/fix、验证流程开发功能。
+entry: workflow.ts
+version: "0.1.0"
+when_to_use:
+  - 用户要求开发新功能
+  - 用户要求修复复杂 bug
+  - 需要多 agent 协作、review 和验证
+  - 需要把 PM/owner/reviewer 流程固定下来并支持 resume
+inputs:
+  objective:
+    type: string
+    description: 要完成的开发目标
+  cwd:
+    type: string
+    description: 执行 workflow 的仓库或 worktree 路径
+---
 # Feature Development Workflow
 
 ## 用途
@@ -61,8 +80,8 @@ Resume 时重新执行 `workflow.ts`，但 `wf.Agent(id)` 返回已有 agent ses
 Dynamic Workflow runner 已支持：
 
 - 发现 project/home workflow，并按 project 覆盖 home。
-- 校验 `workflow.json.id` 与目录名一致、entry 是目录内 TypeScript 文件。
-- snapshot workflow 目录到 `$CODEX_HOME/workflow-runs/<runId>/`。
+- 校验 `WORKFLOW.md` frontmatter 中的 `id` 与目录名一致、`entry` 是目录内 TypeScript 文件。
+- snapshot workflow 目录到 `$CODEX_HOME/workflow-runs/<runId>`。
 - 启动 Node runner 执行 snapshot entry。
 - 持久化 `run.json`，支持 status/resume/abort 查询和恢复。
 - 通过 typed `WorkflowRunProgress` 展示 start/resume/abort 进度。

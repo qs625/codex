@@ -43,7 +43,7 @@ pub struct WorkflowSummary {
 pub struct WorkflowDetails {
     #[serde(flatten)]
     pub summary: WorkflowSummary,
-    pub readme: Option<String>,
+    pub instructions: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
