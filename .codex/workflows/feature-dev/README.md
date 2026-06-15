@@ -26,7 +26,8 @@ workflow 会创建长期 agent session：
 
 - `explorer`：只读调研。
 - `owner`：负责实现和修复 review findings。
-- `reviewer-<n>`：每轮 review 创建一个 reviewer。
+- `reviewer`：同一 workflow run 内复用一个 reviewer session；修复后通过 followup 请求同一 reviewer 复审。
+- `tester`：根据 reviewer 结论执行必要验证；Rust/Cargo 命令必须按 `AGENTS.md` 串行执行。
 
 `Agent(id)` 应在 resume 时绑定回已有 agent session，不重复 spawn。
 
@@ -45,7 +46,8 @@ Research -> Implement -> Review/Fix -> Verify
 ```text
 research: explorer
 implement: owner
-review_fix: reviewer-0, reviewer-1
+review_fix: reviewer
+verify: tester
 ```
 
 ## Resume

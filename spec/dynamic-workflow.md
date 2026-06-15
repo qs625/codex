@@ -264,9 +264,10 @@ Research -> Implement -> Review/Fix -> Verify
 ```text
 research.explorer
 implement.owner
-review_fix.reviewer_0
+review_fix.reviewer
 review_fix.fix_0
-review_fix.reviewer_1
+review_fix.reviewer
+verify.tester
 ```
 
 ### 为什么不完全靠 thread 状态
