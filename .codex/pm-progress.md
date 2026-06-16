@@ -6,7 +6,27 @@ Complete all Active Work recorded in this progress file.
 
 ## Active Work
 
-None.
+- id: eventmsg-threaditem-display-source
+  owner: /root/my_codex_pm/eventmsg_threaditem_owner
+  worktree: /Users/bytedance/Projects/my-codex/.worktrees/eventmsg-threaditem-display-source
+  branch: agent/eventmsg-threaditem-display-source
+  status: in_progress
+  objective: Make EventMsg the canonical runtime/UI display event source while keeping ResponseItem dedicated to model context/provider interaction.
+  last_update: 2026-06-16
+  next_action: Owner to write the architecture spec and implement the first incremental slice: define EventMsg -> ThreadItem projection boundaries, document dual-write helpers for model ResponseItem plus UI EventMsg, and stop adding new display-only ResponseItem variants.
+  blockers: None.
+  validation: pending
+  commit: pending
+
+## Design Direction
+
+- `ResponseItem` is for model interaction, context manager history, provider wire history, compact, guardian, and model-visible tool outputs.
+- `EventMsg` is the runtime event log and canonical source for app-server/root-worker UI display.
+- `ThreadItem` is the app-server/client display projection, generated from display-capable `EventMsg` variants.
+- Do not make provider/model requests rebuild `ResponseItem` from `EventMsg`; model context continues to store and consume `ResponseItem`.
+- Business actions that need both model visibility and UI visibility should use a helper that writes the model `ResponseItem` and emits the UI/runtime `EventMsg` together.
+- Display-only items such as command wait display, workflow progress, goal lifecycle, event command display, inter-agent display, and command notifications should migrate toward dedicated `EventMsg` variants instead of new `ResponseItem` variants.
+- `ResponseItem -> ThreadItem` remains only as a legacy compatibility adapter during migration, not the long-term primary display path.
 
 ## Completed
 
