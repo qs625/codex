@@ -25,6 +25,7 @@ import type {
   RightPanelView,
   TaskFilter,
   Thread,
+  ThreadGoal,
   ThreadPlanStep,
   ThreadPlanUpdate,
   ThreadSkill,
@@ -68,7 +69,11 @@ export function RightPanel({
   onSelectTaskThread,
   onSetActiveView,
   onSetTaskFilter,
+  onCancelGoal,
   planUpdate,
+  goal,
+  goalCancelError,
+  goalCanceling,
   preview,
   previewError,
   previewLoading,
@@ -88,7 +93,11 @@ export function RightPanel({
   onSelectTaskThread: (threadId: string) => void;
   onSetActiveView: (value: RightPanelView) => void;
   onSetTaskFilter: (value: TaskFilter) => void;
+  onCancelGoal: () => void;
   planUpdate: ThreadPlanUpdate | null;
+  goal: ThreadGoal | null;
+  goalCancelError: string | null;
+  goalCanceling: boolean;
   preview: FilePreview | null;
   previewError: string | null;
   previewLoading: boolean;
@@ -125,6 +134,10 @@ export function RightPanel({
           ) : activeView === "skills" ? (
             <ThreadAnalysisPanel
               analysis={threadAnalysis}
+              goal={goal}
+              goalCancelError={goalCancelError}
+              goalCanceling={goalCanceling}
+              onCancelGoal={onCancelGoal}
               onSelectCommandMonitor={onSelectCommandMonitor}
             />
           ) : (
@@ -213,9 +226,17 @@ export function RightPanel({
 
 function ThreadAnalysisPanel({
   analysis,
+  goal,
+  goalCancelError,
+  goalCanceling,
+  onCancelGoal,
   onSelectCommandMonitor,
 }: {
   analysis: ThreadAnalysis;
+  goal: ThreadGoal | null;
+  goalCancelError: string | null;
+  goalCanceling: boolean;
+  onCancelGoal: () => void;
   onSelectCommandMonitor?: (commandItemId: string) => void;
 }) {
   const { contextUsage, monitors } = analysis;
@@ -251,6 +272,13 @@ function ThreadAnalysisPanel({
             tone="blocked"
           />
         </section>
+
+        <GoalDetailPanel
+          goal={goal}
+          cancelError={goalCancelError}
+          canceling={goalCanceling}
+          onCancel={onCancelGoal}
+        />
 
         <section className="context-budget-card">
           <div className="context-budget-header">
@@ -389,6 +417,89 @@ function ThreadAnalysisPanel({
       </div>
     </div>
   );
+}
+
+function GoalDetailPanel({
+  cancelError,
+  canceling,
+  goal,
+  onCancel,
+}: {
+  cancelError: string | null;
+  canceling: boolean;
+  goal: ThreadGoal | null;
+  onCancel: () => void;
+}) {
+  return (
+    <section className="context-section-card goal-detail-card">
+      <div className="context-section-header">
+        <div>
+          <span className="context-section-eyebrow">Thread Goal</span>
+          <strong>{goal ? formatGoalStatus(goal.status) : "No active goal"}</strong>
+        </div>
+        <button
+          type="button"
+          className="goal-detail-cancel"
+          disabled={!goal || canceling}
+          title={goal ? "Cancel goal" : "No active goal"}
+          onClick={onCancel}
+        >
+          {canceling ? "Cancelling" : "Cancel"}
+        </button>
+      </div>
+      {goal ? (
+        <>
+          <p className="goal-detail-objective">{goal.objective}</p>
+          <div className="goal-detail-metrics">
+            <span>{formatGoalTokens(goal)}</span>
+            <span>{formatGoalDuration(goal.timeUsedSeconds)}</span>
+          </div>
+        </>
+      ) : (
+        <p className="goal-detail-empty">
+          No active goal.
+        </p>
+      )}
+      {cancelError ? (
+        <p className="goal-detail-error" role="status">
+          Could not cancel goal: {cancelError}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function formatGoalStatus(status: ThreadGoal["status"]) {
+  switch (status) {
+    case "active":
+      return "Goal active";
+    case "paused":
+      return "Goal paused";
+    case "budgetLimited":
+      return "Budget limited";
+    case "complete":
+      return "Goal complete";
+  }
+}
+
+function formatGoalTokens(goal: ThreadGoal) {
+  if (goal.tokenBudget && goal.tokenBudget > 0) {
+    return `${formatTokenCount(goal.tokensUsed)} / ${formatTokenCount(goal.tokenBudget)} tokens`;
+  }
+  return `${formatTokenCount(goal.tokensUsed)} tokens`;
+}
+
+function formatGoalDuration(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "0s";
+  }
+  if (seconds >= 3600) {
+    return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+  }
+  if (seconds >= 60) {
+    return `${Math.floor(seconds / 60)}m`;
+  }
+  return `${Math.floor(seconds)}s`;
 }
 
 function statusClassName(status: string) {

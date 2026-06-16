@@ -5,6 +5,7 @@ import {
   clearComposerDraft,
   getComposerDraft,
   isClearComposerCommand,
+  isGoalCancelComposerCommand,
   updateComposerDraft,
   type ComposerDraftsByThreadId,
 } from "./composerDraft";
@@ -105,6 +106,33 @@ test("detects clear command only when the draft has no attachments", () => {
           previewUrl: "blob:screen",
         },
       ],
+    }),
+    false,
+  );
+});
+
+test("detects goal cancel command only when the draft has no attachments", () => {
+  assert.equal(
+    isGoalCancelComposerCommand({
+      text: " /goal cancel ",
+      skills: [],
+      images: [],
+    }),
+    true,
+  );
+  assert.equal(
+    isGoalCancelComposerCommand({
+      text: "/cancel-goal",
+      skills: [],
+      images: [],
+    }),
+    true,
+  );
+  assert.equal(
+    isGoalCancelComposerCommand({
+      text: "/goal cancel",
+      skills: [{ name: "review", path: "skills/review.md" }],
+      images: [],
     }),
     false,
   );

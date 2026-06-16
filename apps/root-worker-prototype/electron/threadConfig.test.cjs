@@ -7,6 +7,7 @@ test("withRealtimeConversationFeature enables realtime conversation by default",
   assert.deepEqual(withRealtimeConversationFeature(), {
     config: {
       features: {
+        goals: true,
         realtime_conversation: true,
       },
       realtime: {
@@ -37,6 +38,7 @@ test("withRealtimeConversationFeature preserves existing config entries", () => 
       config: {
         model: "gpt-5",
         features: {
+          goals: true,
           plugins: true,
           realtime_conversation: true,
         },
@@ -61,6 +63,7 @@ test("withRealtimeConversationFeature replaces non-object features values", () =
     {
       config: {
         features: {
+          goals: true,
           realtime_conversation: true,
         },
         realtime: {
@@ -83,6 +86,7 @@ test("withRealtimeConversationFeature replaces non-object realtime values", () =
     {
       config: {
         features: {
+          goals: true,
           realtime_conversation: true,
         },
         realtime: {

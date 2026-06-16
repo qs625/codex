@@ -1,6 +1,6 @@
 import type { DraftSkill, ThreadSkill } from "../types";
 
-export type ComposerSlashCommandId = "clear";
+export type ComposerSlashCommandId = "clear" | "goalCancel";
 
 export type BuiltInSlashCommand = {
   type: "command";
@@ -26,6 +26,14 @@ export const BUILT_IN_SLASH_COMMANDS: BuiltInSlashCommand[] = [
     label: "/clear",
     description: "Archive this root session and start a fresh root",
     aliases: ["reset", "new"],
+  },
+  {
+    type: "command",
+    commandId: "goalCancel",
+    token: "goal cancel",
+    label: "/goal cancel",
+    description: "Cancel the current thread goal",
+    aliases: ["cancel-goal", "goal", "cancel"],
   },
 ];
 

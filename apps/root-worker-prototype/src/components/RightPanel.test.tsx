@@ -61,7 +61,11 @@ function renderRightPanel(
       onSelectTaskThread={() => {}}
       onSetActiveView={() => {}}
       onSetTaskFilter={() => {}}
+      onCancelGoal={() => {}}
       planUpdate={planUpdate}
+      goal={null}
+      goalCancelError={null}
+      goalCanceling={false}
       preview={null}
       previewError={null}
       previewLoading={false}
@@ -81,6 +85,48 @@ test("renders thread analysis title and monitor empty states", () => {
   assert.match(markup, /Context Window Used/);
   assert.match(markup, /No live commands\./);
   assert.match(markup, /No scheduled listeners\./);
+});
+
+test("renders thread goal details in thread analysis", () => {
+  const markup = renderToStaticMarkup(
+    <RightPanel
+      activeView="skills"
+      availableSkillCount={0}
+      onCreateRootThread={() => {}}
+      onNavigateToSymbol={() => {}}
+      onOpenPreviewExternally={() => {}}
+      onSelectTaskThread={() => {}}
+      onSetActiveView={() => {}}
+      onSetTaskFilter={() => {}}
+      onCancelGoal={() => {}}
+      planUpdate={null}
+      goal={{
+        threadId: "thread-1",
+        objective: "Ship the slash goal display.",
+        status: "active",
+        tokenBudget: 50_000,
+        tokensUsed: 12_000,
+        timeUsedSeconds: 125,
+        createdAt: 1,
+        updatedAt: 2,
+      }}
+      goalCancelError={null}
+      goalCanceling={false}
+      preview={null}
+      previewError={null}
+      previewLoading={false}
+      skills={[]}
+      selectedThreadId="thread-1"
+      thread={makeThread([])}
+      taskFilter="all"
+      todoItems={[]}
+    />,
+  );
+
+  assert.match(markup, /Thread Goal/);
+  assert.match(markup, /Goal active/);
+  assert.match(markup, /Ship the slash goal display\./);
+  assert.match(markup, /12K \/ 50K tokens/);
 });
 
 test("renders live commands and schedule subscriptions", () => {

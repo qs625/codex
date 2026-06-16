@@ -1,53 +1,74 @@
 # UE Flow
 
-## Command Session 主路径
+## 既有 Command Session 主路径
 
 1. agent 发起 `exec_command`。
-2. conversation 插入一个 command cell，显示命令摘要和 running/in progress 状态。
+2. conversation 插入 command cell，显示命令摘要和 running/in progress 状态。
 3. command cell 可展开查看 session details：命令、工作目录、状态、时长、退出码、output 摘要和 session 参数。
-4. command 运行中或等待 notification 时，RightPanel 的 Live Commands 显示该条 session。
+4. command 运行中或等待 notification 时，Right Panel 的 Live Commands 显示该条 session。
 5. `output` 或 `exit` notification 到达时，conversation 追加独立 typed notification event，用文案说明这是来自同一 command session 的通知，而不是 command cell 本身的展开内容。
-6. 点击 RightPanel 条目，conversation 滚动到对应 command cell 或最近一条关联 notification，并短暂高亮。
+6. 点击 Right Panel 条目，conversation 滚动到对应 command cell 或最近一条关联 notification，并短暂高亮。
 7. 成功完成后 Live Commands 自动移除；失败完成后作为近期失败保留。
 
-## 点击定位
+## 既有 Composer Slash 菜单主路径
 
-- 关联键：只使用 typed item id。command cell 使用 `ThreadItem.id`，关联 notification event 使用 `targetCommandItemId` 或等价 typed reference。
-- 默认目标：点击 command row 定位到 command cell。
-- 如果 row 展示的是 latest notification 摘要，辅助点击区域或二级动作可定位到 latest notification；默认仍回到 command cell。
-- 定位行为：滚动到目标，使其位于 conversation 可视区域中上部；目标 cell 高亮 1600ms 到 2400ms。
-- 输入保护：不 blur composer，不修改 selection，不自动展开 details；如果目标 command details 已折叠，只高亮外层 cell。
-- 未找到目标：保留 RightPanel 行，显示轻量失败状态，例如 `Not in local view`，并提供不可点击/禁用语义。
+1. 用户在 composer 当前支持的 slash 触发位置输入 `/`。
+2. composer 上方打开 slash menu，焦点仍在 composer。
+3. 菜单按 `Commands`、`Skills` 分组展示。
+4. 用户继续输入查询，菜单即时过滤名称、别名和简短说明。
+5. `Down` / `Up` 在可见候选中循环移动，跳过分组标题和禁用行。
+6. `Enter` 选择 active 候选；鼠标点击选择对应候选。
+7. 选择内置命令时，使用候选的稳定 `commandId` 执行语义动作。
+8. 选择 Skill 时，沿用当前 skill slash 行为：添加对应 Skill chip/attachment，payload 继续走现有结构化 skill 输入链路。
+9. `Escape` 关闭菜单，保留 composer 中的 `/query` 文本和 selection。
+
+## 主路径：查看 active goal
+
+1. 用户选择一个 thread。
+2. 客户端从 typed thread state / v2 payload 获取 `goal`。
+3. 如果 goal 为 active，thread header 下方显示 Goal Strip。
+4. Goal Strip 展示状态 badge、目标摘要、预算/continuation 摘要和 `Cancel` icon button。
+5. 用户需要更多信息时，切换右侧 Thread Analysis；Goal Detail 展示完整 goal 内容、状态、预算和最近 goal lifecycle event。
+
+## 主路径：通过 slash command 初始化 goal
+
+1. 用户在 composer 首行输入 `/` 或 `/goal`。
+2. Slash menu 展示 Commands 分组：`/goal cancel`、`/clear`。
+3. `/init` 由 system skill discovery 出现在 Skills 分组，不作为 root-worker builtin command。
+4. `/goal cancel` 直接调用 typed goal clear action；不发送普通 user message。
+5. 如果当前 thread 没有 goal，`/goal cancel` 反馈 `No active goal to cancel.`。
+6. 提交有效内容后，composer 显示 sending 状态；成功后清空 draft，Goal Strip 更新为 active；失败时 composer status 显示错误并保留 draft。
+
+## 主路径：通过 slash command 取消 goal
+
+1. 用户输入 `/goal cancel` 或从 slash menu 选择该命令。
+2. 如果当前 thread 有 active/paused/budgetLimited goal，命令可执行；否则 command row disabled，并在 meta 显示 `No active goal`。
+3. 执行后 composer status 显示 `Cancelling goal...`，send button 与 command row 暂时禁用；这个 pending 状态来自本地 action result lifecycle， keyed by `threadId + goalActionId`，直到取消 RPC 返回或 typed goal lifecycle event 到达。
+4. 成功后 Goal Strip 消失或转为短暂 `Cancelled` 状态，Thread Analysis Goal Detail 记录最近取消事件。
+5. 失败后 Goal Strip 保持原状态，composer status 显示来自 action result 或 typed lifecycle item 的失败原因，并允许重试；不得从 assistant text 中提取错误。
+
+## 主路径：从 Goal Strip 取消
+
+1. 用户点击 Goal Strip 右侧 `Cancel goal` icon button。
+2. Button 进入 busy 状态，aria-label 变为 `Cancelling goal`。
+3. 成功后 Goal Strip 显示 2-3 秒 `Cancelled` inline feedback 后收起；如果后端保留 terminal goal state，则显示 `Cancelled` badge 且不显示 cancel button。
+4. 失败时在 strip 右侧显示 inline error，按钮恢复可用。
 
 ## 状态覆盖
 
-- 空态：`No live commands.`，保留在 Command Activity 下。
-- 加载态：thread analysis 尚未构建时显示 `Loading command activity...`，不要闪烁成空态。
-- running：显示 `Running`，可附 latest output tail。
-- waiting：显示 `Waiting` 或 `Waiting: output` / `Waiting: exit`，说明正在等待下一次 command session notification。
-- success completed：从 Live Commands 移除，完整记录留在 conversation command cell 和 notification events。
-- failed completed：显示 `Exit N`，作为近期失败保留；行视觉使用 error status，但不占用 running 语义。
+- 无 thread：不显示 Goal Strip；composer placeholder 保持 `Select an agent...`。
+- thread notLoaded：Goal Strip skeleton 不显示，Right Panel 只显示 `Goal unavailable until thread loads`。
+- 无 goal：header 不显示 strip；Thread Analysis Goal Detail 可显示 `No active goal`。
+- active：显示 accent badge、目标摘要、预算/continuation。
+- paused：显示 neutral badge，保留 Resume/Cancel 由后端能力决定；本 feature 只要求 Cancel。
+- complete：显示 success badge；header 可短暂显示，之后进入 detail 历史。
+- budgetLimited：显示 warning badge，突出 remaining/used budget；Cancel 可用。
+- cancelling：由本地 action pending 或 typed `cancelRequested` lifecycle item 驱动，禁用重复操作，保留原 goal 内容。
+- cancel failed：由 action error result 或 typed `cancelFailed` lifecycle item 驱动，保留原 goal 内容，显示短错误。
 
-## Composer Slash 菜单主路径
+## 键盘与可访问性
 
-1. 用户在 composer 当前已支持的 slash 触发位置输入 `/`：trimStart 后第一行以 `/` 开头，且 slash query 不包含空格。本次不扩大到普通文本边界、路径中间或多行任意位置触发。
-2. composer 上方打开 `SlashCommandMenu`，焦点仍在 composer，第一条可选候选进入 active descendant。
-3. 菜单按 `Commands`、`Skills` 分组展示。Commands 行显示 token、动作说明和类型/快捷提示；Skills 行至少显示 `$skill-name`，如 metadata 可用再显示短说明。
-4. 用户继续输入查询，例如 `/comp`；菜单即时过滤名称、别名和简短说明。
-5. `Down` / `Up` 在可见候选中循环移动，跳过分组标题和禁用行。
-6. `Enter` 选择 active 候选；鼠标点击选择对应候选。
-7. 选择内置命令时，使用候选的稳定 `commandId` 执行语义动作。本次验收只覆盖现有无参数内置命令 `/clear`。
-8. 选择 Skill 时，沿用当前 skill slash 行为：添加对应 Skill chip/attachment，payload 继续走现有结构化 skill 输入链路；本次不改变清空 slash query、chip 展示和提交规则。
-9. `Tab` 对 active 候选做补全/选择：内置命令补全为 `/command ` 或直接执行；Skill 走现有选择行为；不触发普通消息发送。
-10. `Escape` 关闭菜单，保留 composer 中的 `/query` 文本和 selection。
-
-## Composer Slash 菜单分支与反馈
-
-- 触发条件：沿用当前 `trimStart()` 后首行 `/query` 规则；URL、文件路径或普通单词中间的 `/` 不打开。
-- 关闭条件：`Escape`、点击菜单外、光标移动到 slash token 之外、删除触发 slash、提交消息后。
-- 空态：查询无匹配时显示 `No commands or skills match “/query”`，保留关闭和继续输入能力。
-- 加载态：Skills 尚未加载时保留 Commands 分组，Skills 区显示 `Loading skills...`，不阻塞内置命令。
-- 失败态：Skills 加载失败时显示 `Skills unavailable` 和短原因；Commands 仍可选。
-- 鼠标：hover 更新 active 候选；点击 row 选择；滚轮只滚动菜单，不滚动 conversation。
-- Skill chip 保留：本次新增内置命令不能破坏现有 skill chip 和 payload 行为；重复选择、删除和提交沿用当前实现。
-- 内置命令执行语义：`/clear` 不得作为普通用户消息发送；选择后按当前实现归档当前 session threads 并创建新的 root thread，菜单文案必须提示真实后果。
+- Slash menu 保持现有 ArrowUp/ArrowDown、Enter、Tab、Escape 行为。
+- Disabled command row 仍可被屏幕阅读器理解：使用 `aria-disabled=true`，并在 meta 中给出原因；是否跳过键盘选中由实现决定，但不可执行。
+- Goal Strip 的 cancel button 使用图标按钮加 tooltip/aria-label：`Cancel goal`。
+- Goal 内容摘要使用文本，不只靠颜色表达状态。

@@ -43,6 +43,8 @@ declare global {
       subscribeThread: (
         threadId: string,
       ) => Promise<{ thread?: unknown | null }>;
+      getThreadGoal: (threadId: string) => Promise<{ goal: unknown | null }>;
+      clearThreadGoal: (threadId: string) => Promise<{ cleared: boolean }>;
       readLocalImage: (target: string) => Promise<{
         path: string;
         name: string;

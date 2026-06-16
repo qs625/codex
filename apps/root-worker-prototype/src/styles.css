@@ -464,6 +464,98 @@ svg {
   white-space: nowrap;
 }
 
+.goal-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 7px 14px;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.goal-strip-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.goal-status-badge {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(22, 163, 74, 0.1);
+  color: #166534;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.goal-status-badge.paused {
+  background: rgba(217, 119, 6, 0.1);
+  color: #b45309;
+}
+
+.goal-status-badge.budgetLimited,
+.goal-status-badge.none {
+  background: rgba(220, 38, 38, 0.08);
+  color: #b91c1c;
+}
+
+.goal-status-badge.complete {
+  background: rgba(2, 132, 199, 0.1);
+  color: #0369a1;
+}
+
+.goal-strip-objective {
+  min-width: 0;
+  overflow: hidden;
+  color: #292524;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goal-strip-usage {
+  flex: none;
+  color: #78716c;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.goal-strip-error {
+  max-width: 28ch;
+  overflow: hidden;
+  color: #b91c1c;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goal-strip-cancel,
+.goal-detail-cancel {
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.8);
+  color: #44403c;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.goal-strip-cancel {
+  padding: 5px 8px;
+}
+
+.goal-strip-cancel:disabled,
+.goal-detail-cancel:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
 .run-config-picker {
   position: relative;
 }
@@ -2279,6 +2371,53 @@ svg {
 
 .context-section-card {
   padding: 12px;
+}
+
+.goal-detail-card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.goal-detail-cancel {
+  flex: none;
+  padding: 5px 8px;
+}
+
+.goal-detail-objective,
+.goal-detail-empty,
+.goal-detail-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.goal-detail-objective {
+  color: #44403c;
+  overflow-wrap: anywhere;
+}
+
+.goal-detail-empty {
+  color: #78716c;
+}
+
+.goal-detail-error {
+  color: #b91c1c;
+}
+
+.goal-detail-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.goal-detail-metrics span {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(28, 25, 23, 0.06);
+  color: #57534e;
+  font-size: 10px;
+  font-weight: 600;
 }
 
 .context-skill-list {

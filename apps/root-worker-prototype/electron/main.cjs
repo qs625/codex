@@ -211,6 +211,21 @@ ipcMain.handle("codex:subscribeThread", async (_event, threadId) => {
   return subscribeThread(threadId);
 });
 
+ipcMain.handle("codex:getThreadGoal", async (_event, threadId) => {
+  const response = await appServerClient.request("thread/goal/get", {
+    threadId,
+  });
+  return {
+    goal: response.goal ? normalizeThreadGoal(response.goal) : null,
+  };
+});
+
+ipcMain.handle("codex:clearThreadGoal", async (_event, threadId) => {
+  return appServerClient.request("thread/goal/clear", {
+    threadId,
+  });
+});
+
 ipcMain.handle("codex:openLink", async (_event, target) => {
   await openLinkTarget(target);
   return { ok: true };
@@ -480,6 +495,16 @@ function normalizeNotification(notification) {
     };
   }
 
+  if (notification.method === "thread/goal/updated") {
+    return {
+      ...notification,
+      params: {
+        ...notification.params,
+        goal: normalizeThreadGoal(notification.params.goal),
+      },
+    };
+  }
+
   if (
     notification.method === "turn/started" ||
     notification.method === "turn/completed"
@@ -604,6 +629,22 @@ function normalizeAvailableSkill(skill) {
     name: skill?.name ?? "skill",
     path: skill?.path ?? "",
     kind: "all",
+  };
+}
+
+function normalizeThreadGoal(goal) {
+  return {
+    threadId: goal?.threadId ?? goal?.thread_id ?? "",
+    objective: goal?.objective ?? "",
+    status: normalizeStatusValue(goal?.status),
+    tokenBudget:
+      goal?.tokenBudget === undefined ? goal?.token_budget ?? null : goal.tokenBudget,
+    tokensUsed: Number(goal?.tokensUsed ?? goal?.tokens_used ?? 0),
+    timeUsedSeconds: Number(
+      goal?.timeUsedSeconds ?? goal?.time_used_seconds ?? 0,
+    ),
+    createdAt: Number(goal?.createdAt ?? goal?.created_at ?? 0),
+    updatedAt: Number(goal?.updatedAt ?? goal?.updated_at ?? 0),
   };
 }
 

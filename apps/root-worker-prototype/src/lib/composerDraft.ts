@@ -62,3 +62,12 @@ export function isClearComposerCommand(draft: ComposerDraft) {
     draft.images.length === 0
   );
 }
+
+export function isGoalCancelComposerCommand(draft: ComposerDraft) {
+  const command = draft.text.trim().toLowerCase();
+  return (
+    (command === "/goal cancel" || command === "/cancel-goal") &&
+    draft.skills.length === 0 &&
+    draft.images.length === 0
+  );
+}

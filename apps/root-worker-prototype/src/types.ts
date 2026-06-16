@@ -319,6 +319,23 @@ export type ThreadStatus =
       activeFlags: ThreadActiveFlag[];
     };
 
+export type ThreadGoalStatus =
+  | "active"
+  | "paused"
+  | "budgetLimited"
+  | "complete";
+
+export type ThreadGoal = {
+  threadId: string;
+  objective: string;
+  status: ThreadGoalStatus;
+  tokenBudget: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type Thread = {
   id: string;
   sessionId: string;

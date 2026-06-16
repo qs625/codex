@@ -19,6 +19,7 @@ import {
   clearComposerDraft,
   getComposerDraft,
   isClearComposerCommand,
+  isGoalCancelComposerCommand,
   updateComposerDraft,
   type ComposerDraft,
   type ComposerDraftsByThreadId,
@@ -93,6 +94,7 @@ import type {
   TaskFilter,
   Thread,
   ThreadContextUsage,
+  ThreadGoal,
   ThreadItem,
   ThreadPlanUpdate,
   ThreadSkill,
@@ -137,6 +139,15 @@ function App() {
     Record<string, ThreadPlanUpdate>
   >({});
   const [availableSkills, setAvailableSkills] = useState<ThreadSkill[]>([]);
+  const [goalsByThreadId, setGoalsByThreadId] = useState<
+    Record<string, ThreadGoal | null>
+  >({});
+  const [goalCancelingThreadIds, setGoalCancelingThreadIds] = useState<
+    string[]
+  >([]);
+  const [goalActionErrorsByThreadId, setGoalActionErrorsByThreadId] = useState<
+    Record<string, string | null>
+  >({});
   const [composerDraftsByThreadId, setComposerDraftsByThreadId] =
     useState<ComposerDraftsByThreadId>({});
   const [isSending, setIsSending] = useState(false);
@@ -213,6 +224,15 @@ function App() {
     composerDraftsByThreadId,
     selectedThreadId,
   );
+  const selectedThreadGoal = selectedThreadId
+    ? goalsByThreadId[selectedThreadId] ?? null
+    : null;
+  const selectedThreadGoalCanceling = selectedThreadId
+    ? goalCancelingThreadIds.includes(selectedThreadId)
+    : false;
+  const selectedThreadGoalError = selectedThreadId
+    ? goalActionErrorsByThreadId[selectedThreadId] ?? null
+    : null;
   const draft = selectedComposerDraft.text;
   const draftSkills = selectedComposerDraft.skills;
   const draftImages = selectedComposerDraft.images;
@@ -257,6 +277,13 @@ function App() {
     if (!selectedThreadId) {
       setIsLoadingThread(false);
     }
+  }, [selectedThreadId]);
+
+  useEffect(() => {
+    if (!selectedThreadId) {
+      return;
+    }
+    void refreshThreadGoal(selectedThreadId);
   }, [selectedThreadId]);
 
   useEffect(() => {
@@ -941,6 +968,34 @@ function App() {
     }));
   }
 
+  function updateThreadGoalLocally(threadId: string, goal: ThreadGoal | null) {
+    setGoalsByThreadId((current) => ({
+      ...current,
+      [threadId]: goal,
+    }));
+    setGoalActionErrorsByThreadId((current) => ({
+      ...current,
+      [threadId]: null,
+    }));
+    if (!goal) {
+      setGoalCancelingThreadIds((current) =>
+        current.filter((candidate) => candidate !== threadId),
+      );
+    }
+  }
+
+  async function refreshThreadGoal(threadId: string) {
+    try {
+      const response = await window.codexDesktop.getThreadGoal(threadId);
+      if (selectedThreadIdRef.current !== threadId) {
+        return;
+      }
+      updateThreadGoalLocally(threadId, response.goal as ThreadGoal | null);
+    } catch {
+      updateThreadGoalLocally(threadId, null);
+    }
+  }
+
   async function loadThread(threadId: string) {
     const requestId = nextThreadReadRequestId(
       loadThreadRequestIdsByThreadIdRef.current,
@@ -1087,6 +1142,10 @@ function App() {
       await clearCurrentRootSession();
       return;
     }
+    if (isGoalCancelComposerCommand(draftToSend)) {
+      await clearCurrentThreadGoal();
+      return;
+    }
     setIsSending(true);
     setError(null);
     const runConfigOverride = runConfigOverrideByThreadIdRef.current.get(threadId);
@@ -1118,6 +1177,44 @@ function App() {
       case "clear":
         void clearCurrentRootSession();
         return;
+      case "goalCancel":
+        void clearCurrentThreadGoal();
+        return;
+    }
+  }
+
+  async function clearCurrentThreadGoal() {
+    if (!selectedThreadId) {
+      return;
+    }
+    const threadId = selectedThreadId;
+    setGoalCancelingThreadIds((current) =>
+      current.includes(threadId) ? current : [...current, threadId],
+    );
+    setGoalActionErrorsByThreadId((current) => ({
+      ...current,
+      [threadId]: null,
+    }));
+    setError(null);
+    try {
+      const response = await window.codexDesktop.clearThreadGoal(threadId);
+      updateThreadGoalLocally(threadId, null);
+      if (!response.cleared) {
+        setGoalActionErrorsByThreadId((current) => ({
+          ...current,
+          [threadId]: "No active goal to cancel.",
+        }));
+      }
+      clearComposerDraftForThread(threadId);
+    } catch (goalError) {
+      setGoalActionErrorsByThreadId((current) => ({
+        ...current,
+        [threadId]: toErrorMessage(goalError),
+      }));
+    } finally {
+      setGoalCancelingThreadIds((current) =>
+        current.filter((candidate) => candidate !== threadId),
+      );
     }
   }
 
@@ -1536,6 +1633,19 @@ function App() {
           updateThreadStatusLocally(notification.threadId, notification.status);
           break;
         }
+        case "thread/goal/updated": {
+          const notification = params as {
+            threadId: string;
+            goal: ThreadGoal;
+          };
+          updateThreadGoalLocally(notification.threadId, notification.goal);
+          break;
+        }
+        case "thread/goal/cleared": {
+          const notification = params as { threadId: string };
+          updateThreadGoalLocally(notification.threadId, null);
+          break;
+        }
         case "error": {
           const notification = params as AppServerErrorNotification;
           const message =
@@ -1891,7 +2001,11 @@ function App() {
           isLoadingThread={isLoadingThread}
           isSending={isSending}
           isStoppingTurn={isStoppingTurn}
+          goal={selectedThreadGoal}
+          goalCancelError={selectedThreadGoalError}
+          goalCanceling={selectedThreadGoalCanceling}
           onAddDraftSkill={addDraftSkill}
+          onCancelGoal={() => void clearCurrentThreadGoal()}
           onConversationScroll={handleConversationScroll}
           onDraftChange={handleDraftChange}
           onHandleComposerPaste={(event) => void handleComposerPaste(event)}
@@ -1938,6 +2052,10 @@ function App() {
           previewError={previewError}
           previewLoading={isLoadingPreview}
           planUpdate={selectedThreadPlan}
+          goal={selectedThreadGoal}
+          goalCancelError={selectedThreadGoalError}
+          goalCanceling={selectedThreadGoalCanceling}
+          onCancelGoal={() => void clearCurrentThreadGoal()}
           skills={selectedThread?.skills ?? []}
           selectedThreadId={selectedThreadId}
           thread={selectedThread}

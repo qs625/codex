@@ -55,6 +55,7 @@ import type {
   ConversationCell,
   DraftSkill,
   Thread,
+  ThreadGoal,
   ThreadSkill,
   TreeMenuState,
   TreeNode,
@@ -153,7 +154,11 @@ export function ConversationPanel({
   isLoadingThread,
   isSending,
   isStoppingTurn,
+  goal,
+  goalCancelError,
+  goalCanceling,
   onAddDraftSkill,
+  onCancelGoal,
   onConversationScroll,
   onDraftChange,
   onHandleComposerPaste,
@@ -182,7 +187,11 @@ export function ConversationPanel({
   isLoadingThread: boolean;
   isSending: boolean;
   isStoppingTurn: boolean;
+  goal: ThreadGoal | null;
+  goalCancelError: string | null;
+  goalCanceling: boolean;
   onAddDraftSkill: (skill: DraftSkill) => void;
+  onCancelGoal: () => void;
   onConversationScroll: () => void;
   onDraftChange: (value: string) => void;
   onHandleComposerPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
@@ -498,6 +507,13 @@ export function ConversationPanel({
         </div>
       </header>
 
+      <GoalStrip
+        goal={goal}
+        cancelError={goalCancelError}
+        canceling={goalCanceling}
+        onCancel={onCancelGoal}
+      />
+
       <div
         ref={conversationScrollRef}
         className="conversation-scroll"
@@ -741,6 +757,87 @@ export function ConversationPanel({
       </footer>
     </section>
   );
+}
+
+function GoalStrip({
+  cancelError,
+  canceling,
+  goal,
+  onCancel,
+}: {
+  cancelError: string | null;
+  canceling: boolean;
+  goal: ThreadGoal | null;
+  onCancel: () => void;
+}) {
+  if (!goal && !cancelError) {
+    return null;
+  }
+
+  const label = goal ? formatGoalStatus(goal.status) : "Goal";
+  const objective = goal?.objective ?? "No active goal.";
+  const usage = goal ? formatGoalUsage(goal) : "";
+
+  return (
+    <section className="goal-strip" aria-label="Thread goal">
+      <div className="goal-strip-main">
+        <span className={`goal-status-badge ${goal?.status ?? "none"}`}>
+          {canceling ? "Cancelling" : label}
+        </span>
+        <span className="goal-strip-objective" title={objective}>
+          {objective}
+        </span>
+        {usage ? <span className="goal-strip-usage">{usage}</span> : null}
+      </div>
+      {cancelError ? (
+        <span className="goal-strip-error" role="status">
+          {cancelError}
+        </span>
+      ) : null}
+      <button
+        type="button"
+        className="goal-strip-cancel"
+        disabled={!goal || canceling}
+        title={goal ? "Cancel goal" : "No active goal"}
+        onClick={onCancel}
+      >
+        {canceling ? "Cancelling" : "Cancel"}
+      </button>
+    </section>
+  );
+}
+
+function formatGoalStatus(status: ThreadGoal["status"]) {
+  switch (status) {
+    case "active":
+      return "Goal active";
+    case "paused":
+      return "Goal paused";
+    case "budgetLimited":
+      return "Budget limited";
+    case "complete":
+      return "Goal complete";
+  }
+}
+
+function formatGoalUsage(goal: ThreadGoal) {
+  if (goal.tokenBudget && goal.tokenBudget > 0) {
+    return `${formatCompactNumber(goal.tokensUsed)} / ${formatCompactNumber(goal.tokenBudget)} tokens`;
+  }
+  if (goal.tokensUsed > 0) {
+    return `${formatCompactNumber(goal.tokensUsed)} tokens`;
+  }
+  return "";
+}
+
+function formatCompactNumber(value: number) {
+  if (value >= 1_000_000) {
+    return `${Math.round((value / 1_000_000) * 10) / 10}M`;
+  }
+  if (value >= 1_000) {
+    return `${Math.round(value / 100) / 10}K`;
+  }
+  return String(value);
 }
 
 function ConversationSearchControls({

@@ -5,6 +5,7 @@ function withRealtimeConversationFeature(params = {}) {
       ...(params.config ?? {}),
       features: {
         ...readObject(params.config?.features),
+        goals: true,
         realtime_conversation: true,
       },
       realtime: {

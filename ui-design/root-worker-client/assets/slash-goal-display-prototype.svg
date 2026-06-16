@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="title desc">
+  <title id="title">Slash goal display prototype</title>
+  <desc id="desc">Root Worker Prototype screen with a goal strip under the thread header, a slash command menu in the composer, and goal details in the right panel.</desc>
+  <rect width="1440" height="900" fill="#fafaf9"/>
+  <rect x="0" y="0" width="1440" height="38" fill="#fff7ed"/>
+  <text x="14" y="24" font-family="Inter, Arial, sans-serif" font-size="14" fill="#9a3412">Prototype: goal state is shown from typed thread state, not parsed agent text.</text>
+
+  <rect x="0" y="38" width="245" height="862" fill="#ffffff" stroke="#e7e5e4"/>
+  <text x="16" y="72" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700" fill="#292524">Agent Tree</text>
+  <text x="101" y="72" font-family="Inter, Arial, sans-serif" font-size="12" fill="#a8a29e">1 root</text>
+  <rect x="14" y="98" width="216" height="52" rx="8" fill="#fff" stroke="#e7e5e4"/>
+  <circle cx="30" cy="124" r="5" fill="#65a30d"/>
+  <text x="44" y="119" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700" fill="#292524">/root</text>
+  <text x="44" y="137" font-family="Inter, Arial, sans-serif" font-size="11" fill="#78716c">Root Agent · Idle</text>
+
+  <rect x="245" y="38" width="750" height="862" fill="#ffffff" stroke="#e7e5e4"/>
+  <text x="260" y="72" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="800" fill="#1c1917">/root</text>
+  <circle cx="315" cy="66" r="5" fill="#65a30d"/>
+  <text x="329" y="72" font-family="Inter, Arial, sans-serif" font-size="12" fill="#78716c">Root Agent · Idle</text>
+  <rect x="455" y="53" width="156" height="25" rx="12" fill="#f5f5f4" stroke="#e7e5e4"/>
+  <text x="471" y="70" font-family="Inter, Arial, sans-serif" font-size="11" fill="#78716c">运行配置 · default</text>
+
+  <rect x="260" y="92" width="720" height="68" rx="8" fill="#fffbeb" stroke="#f59e0b"/>
+  <rect x="276" y="108" width="82" height="24" rx="12" fill="#fef3c7" stroke="#fbbf24"/>
+  <text x="288" y="124" font-family="Inter, Arial, sans-serif" font-size="11" font-weight="700" fill="#92400e">Goal active</text>
+  <text x="370" y="121" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" fill="#292524">Ship slash goal display and cancellation flow</text>
+  <text x="370" y="143" font-family="Inter, Arial, sans-serif" font-size="12" fill="#78716c">Budget 6 turns left · Continues when thread becomes idle</text>
+  <rect x="920" y="111" width="34" height="34" rx="8" fill="#ffffff" stroke="#f59e0b"/>
+  <line x1="930" y1="121" x2="944" y2="135" stroke="#92400e" stroke-width="2" stroke-linecap="round"/>
+  <line x1="944" y1="121" x2="930" y2="135" stroke="#92400e" stroke-width="2" stroke-linecap="round"/>
+
+  <rect x="260" y="184" width="720" height="88" rx="14" fill="#ffffff" stroke="#e7e5e4" stroke-dasharray="4 4"/>
+  <text x="282" y="218" font-family="Inter, Arial, sans-serif" font-size="16" fill="#57534e">Conversation continues below the goal strip.</text>
+
+  <rect x="260" y="704" width="720" height="160" rx="16" fill="#ffffff" stroke="#e7e5e4"/>
+  <text x="278" y="736" font-family="Inter, Arial, sans-serif" font-size="14" fill="#a8a29e">/goal</text>
+  <rect x="278" y="752" width="680" height="96" rx="12" fill="#fafaf9" stroke="#e7e5e4"/>
+  <text x="292" y="775" font-family="Inter, Arial, sans-serif" font-size="11" font-weight="800" fill="#78716c">COMMANDS</text>
+  <rect x="288" y="786" width="660" height="28" rx="8" fill="#fef3c7"/>
+  <text x="302" y="805" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700" fill="#292524">/init</text>
+  <text x="840" y="805" font-family="Inter, Arial, sans-serif" font-size="11" fill="#78716c">Set thread goal</text>
+  <text x="302" y="834" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700" fill="#292524">/goal cancel</text>
+  <text x="804" y="834" font-family="Inter, Arial, sans-serif" font-size="11" fill="#78716c">Cancel current goal</text>
+
+  <rect x="995" y="38" width="402" height="862" fill="#ffffff" stroke="#e7e5e4"/>
+  <text x="1012" y="72" font-family="Inter, Arial, sans-serif" font-size="11" font-weight="800" fill="#a8a29e">THREAD ANALYSIS</text>
+  <text x="1012" y="95" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="800" fill="#292524">Goal</text>
+  <rect x="1012" y="114" width="360" height="180" rx="12" fill="#ffffff" stroke="#e7e5e4"/>
+  <rect x="1030" y="132" width="86" height="24" rx="12" fill="#fef3c7" stroke="#fbbf24"/>
+  <text x="1042" y="148" font-family="Inter, Arial, sans-serif" font-size="11" font-weight="700" fill="#92400e">Goal active</text>
+  <text x="1030" y="183" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700" fill="#292524">Ship slash goal display and cancellation flow.</text>
+  <text x="1030" y="208" font-family="Inter, Arial, sans-serif" font-size="12" fill="#78716c">Turns: 2 used / 8 limit</text>
+  <text x="1030" y="230" font-family="Inter, Arial, sans-serif" font-size="12" fill="#78716c">Last event: goal context injected after idle</text>
+  <rect x="1030" y="248" width="112" height="30" rx="8" fill="#fff7ed" stroke="#fed7aa"/>
+  <text x="1051" y="268" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#9a3412">Cancel goal</text>
+  <text x="1012" y="334" font-family="Inter, Arial, sans-serif" font-size="11" font-weight="800" fill="#a8a29e">CONTEXT</text>
+  <rect x="1012" y="352" width="360" height="70" rx="12" fill="#ffffff" stroke="#e7e5e4"/>
+  <text x="1030" y="390" font-family="Inter, Arial, sans-serif" font-size="13" fill="#78716c">Existing Thread Analysis content stays below.</text>
+
+  <rect x="1397" y="38" width="43" height="862" fill="#fafaf9" stroke="#e7e5e4"/>
+  <circle cx="1418" cy="82" r="14" fill="#292524"/>
+  <text x="1414" y="87" font-family="Inter, Arial, sans-serif" font-size="12" fill="#ffffff">1</text>
+  <circle cx="1418" cy="128" r="12" fill="#ffffff" stroke="#e7e5e4"/>
+  <circle cx="1418" cy="174" r="12" fill="#ffffff" stroke="#e7e5e4"/>
+</svg>

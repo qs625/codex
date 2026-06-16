@@ -36,7 +36,7 @@ test("shows built-in commands and skills for an empty slash query", () => {
         ? `${suggestion.type}:${suggestion.commandId}`
         : `${suggestion.type}:${suggestion.skill.name}`,
     ),
-    ["command:clear", "skill:review"],
+    ["command:clear", "command:goalCancel", "skill:review"],
   );
 });
 
@@ -55,6 +55,14 @@ test("keeps built-in commands visible when no skills are available", () => {
       label: "/clear",
       description: "Archive this root session and start a fresh root",
       aliases: ["reset", "new"],
+    },
+    {
+      type: "command",
+      commandId: "goalCancel",
+      token: "goal cancel",
+      label: "/goal cancel",
+      description: "Cancel the current thread goal",
+      aliases: ["cancel-goal", "goal", "cancel"],
     },
   ]);
 });
@@ -95,7 +103,7 @@ test("does not suggest skills already attached to the draft", () => {
         ? `${suggestion.type}:${suggestion.commandId}`
         : `${suggestion.type}:${suggestion.skill.name}`,
     ),
-    ["command:clear", "skill:test"],
+    ["command:clear", "command:goalCancel", "skill:test"],
   );
 });
 
@@ -130,5 +138,19 @@ test("clear is modeled as a command rather than a skill payload", () => {
     assert.fail("expected the first clear suggestion to be a command");
   } else {
     assert.equal(suggestion.commandId, "clear");
+  }
+});
+
+test("goal cancel is modeled as a command and can be found by alias", () => {
+  const [suggestion] = buildComposerSlashSuggestions({
+    availableSkills: [],
+    draftSkills: [],
+    query: "cancel-goal",
+  });
+
+  if (!suggestion || suggestion.type !== "command") {
+    assert.fail("expected goal cancel suggestion to be a command");
+  } else {
+    assert.equal(suggestion.commandId, "goalCancel");
   }
 });
