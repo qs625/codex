@@ -9,7 +9,9 @@ use tokio::time::Sleep;
 use super::CommandNotificationFilter;
 use super::CommandNotificationKind;
 use super::CommandNotificationState;
+use super::HeadTailBuffer;
 use super::UnifiedExecContext;
+use super::command_notification_filter_to_protocol;
 use super::process::UnifiedExecProcess;
 use crate::exec::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
 use crate::session::session::Session;
@@ -19,7 +21,6 @@ use crate::tools::events::ToolEventCtx;
 use crate::tools::events::ToolEventFailure;
 use crate::tools::events::ToolEventStage;
 use crate::turn_timing::now_unix_timestamp_ms;
-use crate::unified_exec::head_tail_buffer::HeadTailBuffer;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::exec_output::StreamOutput;
 use codex_protocol::protocol::EventMsg;
@@ -33,10 +34,9 @@ pub(crate) const TRAILING_OUTPUT_GRACE: Duration = Duration::from_millis(100);
 
 /// Upper bound for a single ExecCommandOutputDelta chunk emitted by unified exec.
 ///
-/// The unified exec output buffer already caps *retained* output (see
-/// `UNIFIED_EXEC_OUTPUT_MAX_BYTES`), but we also cap per-event payload size so
-/// downstream event consumers (especially app-server JSON-RPC) don't have to
-/// process arbitrarily large delta payloads.
+/// The command runtime output buffer already caps *retained* output, but we
+/// also cap per-event payload size so downstream event consumers (especially
+/// app-server JSON-RPC) don't have to process arbitrarily large delta payloads.
 const UNIFIED_EXEC_OUTPUT_DELTA_MAX_BYTES: usize = 8192;
 
 /// Spawn a background task that continuously reads from the PTY, appends to the
@@ -151,7 +151,7 @@ pub(crate) fn spawn_exit_watcher(
                 message,
                 duration,
                 initial_wait_ms,
-                notify_on.into(),
+                command_notification_filter_to_protocol(notify_on),
             )
             .await;
         } else {
@@ -168,7 +168,7 @@ pub(crate) fn spawn_exit_watcher(
                 exit_code,
                 duration,
                 initial_wait_ms,
-                notify_on.into(),
+                command_notification_filter_to_protocol(notify_on),
             )
             .await;
         }

@@ -109,6 +109,11 @@ Particularly when introducing a new concept/feature/API, before adding to `codex
   plan，也属于 `codex-tools` 边界。`Session`、`TurnContext`、hooks、approval、
   telemetry、真实 tool handler 执行、`dispatch_any` 和 turn loop 编排继续留在 `codex-core`，
   除非先拆出稳定共享接口。
+- 不依赖 `codex-core` 的 command runtime primitive，例如 command output buffer、process
+  state、wait/write-stdin DTO、notification filter/state 和 yield/token/chunk id helper，应放在
+  `codex-rs/command-runtime`（`codex-command-runtime`）。`ExecCommandHandler`、
+  `CommandWaitHandler`、`WriteStdinHandler`、approval/sandbox/spawn、async watcher event
+  emission、`Session`/`TurnContext` 编排继续留在 `codex-core`。
 
 Likewise, when reviewing code, do not hesitate to push back on PRs that would unnecessarily add code to `codex-core`.
 

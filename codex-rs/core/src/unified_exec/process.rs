@@ -25,10 +25,10 @@ use codex_utils_output_truncation::formatted_truncate_text;
 use codex_utils_pty::ExecCommandSession;
 use codex_utils_pty::SpawnedPty;
 
+use super::HeadTailBuffer;
 use super::UNIFIED_EXEC_OUTPUT_MAX_TOKENS;
 use super::UnifiedExecError;
-use super::head_tail_buffer::HeadTailBuffer;
-use super::process_state::ProcessState;
+use codex_command_runtime::ProcessState;
 
 const EARLY_EXIT_GRACE_PERIOD: Duration = Duration::from_millis(150);
 

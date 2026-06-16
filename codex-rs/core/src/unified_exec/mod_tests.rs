@@ -1,4 +1,4 @@
-use super::head_tail_buffer::HeadTailBuffer;
+use super::HeadTailBuffer;
 use super::*;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
@@ -9,6 +9,7 @@ use crate::session::turn_context::TurnContext;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::unified_exec::WriteStdinRequest;
 use crate::unified_exec::process::OutputHandles;
+use codex_command_runtime::DEFAULT_COMMAND_OUTPUT_MAX_BYTES;
 use codex_sandboxing::SandboxType;
 use codex_utils_output_truncation::approx_token_count;
 use core_test_support::get_remote_test_env;
@@ -108,9 +109,16 @@ async fn exec_command_with_tty(
     let context =
         UnifiedExecContext::new(Arc::clone(session), Arc::clone(turn), "call".to_string());
     let started_at = Instant::now();
+    let OutputHandles {
+        output_buffer,
+        output_notify,
+        output_closed,
+        output_closed_notify,
+        cancellation_token,
+    } = process.output_handles();
+    let transcript = Arc::new(tokio::sync::Mutex::new(HeadTailBuffer::default()));
     let process_started_alive = !process.has_exited() && process.exit_code().is_none();
     if process_started_alive {
-        let transcript = Arc::new(tokio::sync::Mutex::new(HeadTailBuffer::default()));
         let entry = ProcessEntry {
             process: Arc::clone(&process),
             call_id: context.call_id.clone(),
@@ -119,7 +127,7 @@ async fn exec_command_with_tty(
             network_approval: None,
             session: Arc::downgrade(session),
             last_used: started_at,
-            transcript,
+            transcript: Arc::clone(&transcript),
             notification_state: Arc::new(CommandNotificationState::default()),
         };
         manager
@@ -130,13 +138,6 @@ async fn exec_command_with_tty(
             .insert(process_id, entry);
     }
 
-    let OutputHandles {
-        output_buffer,
-        output_notify,
-        output_closed,
-        output_closed_notify,
-        cancellation_token,
-    } = process.output_handles();
     let deadline = started_at + Duration::from_millis(yield_time_ms);
     let collected = UnifiedExecProcessManager::collect_output_until_deadline(
         &output_buffer,
@@ -148,6 +149,9 @@ async fn exec_command_with_tty(
         deadline,
     )
     .await;
+    if process_started_alive && !collected.is_empty() {
+        transcript.lock().await.push_chunk(collected.clone());
+    }
     let wall_time = Instant::now().saturating_duration_since(started_at);
     let text = String::from_utf8_lossy(&collected).to_string();
     let has_exited = process.has_exited();
@@ -269,11 +273,11 @@ async fn write_stdin_rejects_empty_input() -> anyhow::Result<()> {
 #[test]
 fn push_chunk_preserves_prefix_and_suffix() {
     let mut buffer = HeadTailBuffer::default();
-    buffer.push_chunk(vec![b'a'; UNIFIED_EXEC_OUTPUT_MAX_BYTES]);
+    buffer.push_chunk(vec![b'a'; DEFAULT_COMMAND_OUTPUT_MAX_BYTES]);
     buffer.push_chunk(vec![b'b']);
     buffer.push_chunk(vec![b'c']);
 
-    assert_eq!(buffer.retained_bytes(), UNIFIED_EXEC_OUTPUT_MAX_BYTES);
+    assert_eq!(buffer.retained_bytes(), DEFAULT_COMMAND_OUTPUT_MAX_BYTES);
     let snapshot = buffer.snapshot_chunks();
 
     let first = snapshot.first().expect("expected at least one chunk");
@@ -291,7 +295,7 @@ fn push_chunk_preserves_prefix_and_suffix() {
 #[test]
 fn head_tail_buffer_default_preserves_prefix_and_suffix() {
     let mut buffer = HeadTailBuffer::default();
-    buffer.push_chunk(vec![b'a'; UNIFIED_EXEC_OUTPUT_MAX_BYTES]);
+    buffer.push_chunk(vec![b'a'; DEFAULT_COMMAND_OUTPUT_MAX_BYTES]);
     buffer.push_chunk(b"bc".to_vec());
 
     let rendered = buffer.to_bytes();

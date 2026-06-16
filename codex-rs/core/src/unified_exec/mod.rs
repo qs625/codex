@@ -19,24 +19,32 @@
 //! This keeps policy logic and user interaction centralized while the PTY/process
 //! concerns remain isolated here. The implementation is split between:
 //! - `process.rs`: PTY process lifecycle + output buffering.
-//! - `process_state.rs`: shared exit/failure state for local and remote processes.
 //! - `process_manager.rs`: orchestration (approvals, sandboxing, reuse) and request handling.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Weak;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 
+pub(crate) use codex_command_runtime::CommandNotificationFilter;
+pub(crate) use codex_command_runtime::CommandNotificationKind;
+pub(crate) use codex_command_runtime::CommandNotificationState;
+pub(crate) use codex_command_runtime::CommandWaitOutput;
+pub(crate) use codex_command_runtime::CommandWaitRequest;
+pub(crate) use codex_command_runtime::CommandWaitStatus;
+pub(crate) use codex_command_runtime::DEFAULT_COMMAND_OUTPUT_MAX_TOKENS as UNIFIED_EXEC_OUTPUT_MAX_TOKENS;
+pub(crate) use codex_command_runtime::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
+pub(crate) use codex_command_runtime::HeadTailBuffer;
+pub(crate) use codex_command_runtime::WriteStdinOutput;
+pub(crate) use codex_command_runtime::WriteStdinRequest;
+pub(crate) use codex_command_runtime::clamp_yield_time;
+pub(crate) use codex_command_runtime::generate_chunk_id;
+pub(crate) use codex_command_runtime::resolve_max_tokens;
 use codex_exec_server::Environment;
 use codex_network_proxy::NetworkProxy;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use rand::Rng;
-use rand::rng;
 use tokio::sync::Mutex;
-use tokio::sync::Notify;
 
 use crate::sandboxing::SandboxPermissions;
 use crate::session::session::Session;
@@ -46,10 +54,8 @@ use crate::tools::network_approval::DeferredNetworkApproval;
 
 mod async_watcher;
 mod errors;
-mod head_tail_buffer;
 mod process;
 mod process_manager;
-mod process_state;
 
 pub(crate) fn set_deterministic_process_ids_for_tests(enabled: bool) {
     process_manager::set_deterministic_process_ids_for_tests(enabled);
@@ -62,12 +68,6 @@ pub(crate) use process::SpawnLifecycle;
 pub(crate) use process::SpawnLifecycleHandle;
 pub(crate) use process::UnifiedExecProcess;
 
-pub(crate) const MIN_YIELD_TIME_MS: u64 = 250;
-pub(crate) const MAX_YIELD_TIME_MS: u64 = 30_000;
-pub(crate) const DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS: u64 = 300_000;
-pub(crate) const DEFAULT_MAX_OUTPUT_TOKENS: usize = 10_000;
-pub(crate) const UNIFIED_EXEC_OUTPUT_MAX_BYTES: usize = 1024 * 1024; // 1 MiB
-pub(crate) const UNIFIED_EXEC_OUTPUT_MAX_TOKENS: usize = UNIFIED_EXEC_OUTPUT_MAX_BYTES / 4;
 pub(crate) const MAX_UNIFIED_EXEC_PROCESSES: usize = 64;
 pub(crate) const MAX_COMPLETED_UNIFIED_EXEC_PROCESSES: usize = 256;
 
@@ -108,109 +108,12 @@ pub(crate) struct ExecCommandRequest {
     pub notify_on: CommandNotificationFilter,
 }
 
-#[derive(Debug)]
-pub(crate) struct WriteStdinRequest<'a> {
-    pub process_id: i32,
-    pub input: &'a str,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct WriteStdinOutput {
-    pub process_id: i32,
-    pub call_id: String,
-    pub bytes_written: usize,
-}
-
-#[derive(Debug)]
-pub(crate) struct CommandWaitRequest {
-    pub process_id: i32,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CommandNotificationFilter {
-    Output,
-    Exit,
-}
-
-impl From<CommandNotificationFilter> for codex_protocol::protocol::ExecCommandNotifyOn {
-    fn from(value: CommandNotificationFilter) -> Self {
-        match value {
-            CommandNotificationFilter::Output => Self::Output,
-            CommandNotificationFilter::Exit => Self::Exit,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CommandNotificationKind {
-    Output,
-    Exit,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum CommandWaitStatus {
-    Running,
-    Completed,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct CommandWaitOutput {
-    pub process_id: i32,
-    pub status: CommandWaitStatus,
-    pub notification: Option<CommandNotificationKind>,
-    pub exit_code: Option<i32>,
-    pub wall_time: std::time::Duration,
-}
-
-#[derive(Default)]
-pub(crate) struct CommandNotificationState {
-    inner: Mutex<CommandNotificationSnapshot>,
-    notify: Notify,
-    background_session_active: AtomicBool,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct CommandNotificationSnapshot {
-    sequence: u64,
-    kind: Option<CommandNotificationKind>,
-}
-
-impl CommandNotificationState {
-    pub(crate) fn activate_background_session(&self) {
-        self.background_session_active
-            .store(true, Ordering::Relaxed);
-    }
-
-    pub(crate) fn is_background_session_active(&self) -> bool {
-        self.background_session_active.load(Ordering::Relaxed)
-    }
-
-    async fn snapshot(&self) -> CommandNotificationSnapshot {
-        *self.inner.lock().await
-    }
-
-    pub(crate) async fn notify(&self, kind: CommandNotificationKind) {
-        {
-            let mut guard = self.inner.lock().await;
-            guard.sequence += 1;
-            guard.kind = Some(kind);
-        }
-        self.notify.notify_waiters();
-    }
-
-    async fn wait_after(&self, snapshot: CommandNotificationSnapshot) -> CommandNotificationKind {
-        loop {
-            let notified = self.notify.notified();
-            {
-                let guard = self.inner.lock().await;
-                if guard.sequence > snapshot.sequence
-                    && let Some(kind) = guard.kind
-                {
-                    return kind;
-                }
-            }
-            notified.await;
-        }
+pub(crate) fn command_notification_filter_to_protocol(
+    value: CommandNotificationFilter,
+) -> codex_protocol::protocol::ExecCommandNotifyOn {
+    match value {
+        CommandNotificationFilter::Output => codex_protocol::protocol::ExecCommandNotifyOn::Output,
+        CommandNotificationFilter::Exit => codex_protocol::protocol::ExecCommandNotifyOn::Exit,
     }
 }
 
@@ -276,7 +179,7 @@ impl UnifiedExecManagerHandle {
 pub struct ProcessExitSubscription {
     process: Arc<UnifiedExecProcess>,
     cancellation_token: tokio_util::sync::CancellationToken,
-    transcript: Arc<Mutex<head_tail_buffer::HeadTailBuffer>>,
+    transcript: Arc<Mutex<HeadTailBuffer>>,
 }
 
 impl ProcessExitSubscription {
@@ -318,28 +221,13 @@ struct ProcessEntry {
     network_approval: Option<DeferredNetworkApproval>,
     session: Weak<Session>,
     last_used: tokio::time::Instant,
-    transcript: Arc<Mutex<head_tail_buffer::HeadTailBuffer>>,
+    transcript: Arc<Mutex<HeadTailBuffer>>,
     notification_state: Arc<CommandNotificationState>,
 }
 
 struct CompletedProcessEntry {
     exit_code: Option<i32>,
     completed_at: tokio::time::Instant,
-}
-
-pub(crate) fn clamp_yield_time(yield_time_ms: u64) -> u64 {
-    yield_time_ms.clamp(MIN_YIELD_TIME_MS, MAX_YIELD_TIME_MS)
-}
-
-pub(crate) fn resolve_max_tokens(max_tokens: Option<usize>) -> usize {
-    max_tokens.unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS)
-}
-
-pub(crate) fn generate_chunk_id() -> String {
-    let mut rng = rng();
-    (0..6)
-        .map(|_| format!("{:x}", rng.random_range(0..16)))
-        .collect()
 }
 
 #[cfg(test)]

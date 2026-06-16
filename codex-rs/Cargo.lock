@@ -2434,6 +2434,15 @@ name = "codex-collaboration-mode-templates"
 version = "0.0.0"
 
 [[package]]
+name = "codex-command-runtime"
+version = "0.0.0"
+dependencies = [
+ "pretty_assertions",
+ "rand 0.9.3",
+ "tokio",
+]
+
+[[package]]
 name = "codex-config"
 version = "0.0.0"
 dependencies = [
@@ -2517,6 +2526,7 @@ dependencies = [
  "codex-apply-patch",
  "codex-async-utils",
  "codex-code-mode",
+ "codex-command-runtime",
  "codex-config",
  "codex-connectors",
  "codex-core-plugins",

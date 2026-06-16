@@ -34,6 +34,7 @@ use crate::unified_exec::CommandWaitOutput;
 use crate::unified_exec::CommandWaitRequest;
 use crate::unified_exec::CommandWaitStatus;
 use crate::unified_exec::ExecCommandRequest;
+use crate::unified_exec::HeadTailBuffer;
 use crate::unified_exec::MAX_UNIFIED_EXEC_PROCESSES;
 use crate::unified_exec::ProcessEntry;
 use crate::unified_exec::ProcessExitSubscription;
@@ -48,8 +49,8 @@ use crate::unified_exec::async_watcher::emit_failed_exec_end_for_unified_exec;
 use crate::unified_exec::async_watcher::spawn_exit_watcher;
 use crate::unified_exec::async_watcher::start_streaming_output;
 use crate::unified_exec::clamp_yield_time;
+use crate::unified_exec::command_notification_filter_to_protocol;
 use crate::unified_exec::generate_chunk_id;
-use crate::unified_exec::head_tail_buffer::HeadTailBuffer;
 use crate::unified_exec::process::OutputBuffer;
 use crate::unified_exec::process::OutputHandles;
 use crate::unified_exec::process::SpawnLifecycleHandle;
@@ -280,7 +281,7 @@ async fn emit_failed_initial_exec_end_if_unstored(
         message,
         wall_time,
         request.yield_time_ms,
-        request.notify_on.into(),
+        command_notification_filter_to_protocol(request.notify_on),
     )
     .await;
 }
@@ -404,7 +405,7 @@ impl UnifiedExecProcessManager {
             ExecCommandSource::UnifiedExecStartup,
             Some(request.process_id.to_string()),
             request.yield_time_ms,
-            request.notify_on.into(),
+            command_notification_filter_to_protocol(request.notify_on),
         );
         emitter.emit(event_ctx, ToolEventStage::Begin).await;
 
@@ -577,7 +578,7 @@ impl UnifiedExecProcessManager {
                 exit,
                 wall_time,
                 request.yield_time_ms,
-                request.notify_on.into(),
+                command_notification_filter_to_protocol(request.notify_on),
             )
             .await;
 

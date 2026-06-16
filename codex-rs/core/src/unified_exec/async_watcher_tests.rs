@@ -3,7 +3,7 @@ use super::split_valid_utf8_prefix_with_max;
 
 use crate::unified_exec::CommandNotificationFilter;
 use crate::unified_exec::CommandNotificationState;
-use crate::unified_exec::head_tail_buffer::HeadTailBuffer;
+use crate::unified_exec::HeadTailBuffer;
 use codex_protocol::protocol::EventMsg;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
