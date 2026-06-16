@@ -53,6 +53,17 @@ root-worker prototype 是面向 my-codex 多 agent 调试和协作执行的桌�
 3. `update_goal(status=complete)` 成功后，conversation 追加 `Goal complete` item，并和 GoalStrip 收起/RightPanel terminal event 保持一致。
 4. 历史 snapshot、live item、compact replacement history 中的 goal item 都按 `ThreadItem.id` 保留，不按 goal 文本去重。
 
+### 2026-06-16 增量：EventMsg Display Source Migration
+
+本次 handoff 覆盖 EventMsg 成为 app-server / root-worker UI display source 后的 UX 不变量。目标是后端 display source 可替换，但 root-worker 用户可见 conversation、live update、thread/read、replacement history、RightPanel 定位和 Agent Tree 状态保持不变。
+
+关键原则：
+
+1. root-worker 仍消费 typed `ThreadItem` / typed lifecycle payload，不新增 EventMsg raw parser。
+2. `ThreadItem.id` 仍是 conversation 合并、去重、定位、live 更新和 replacement history 保留的唯一键。
+3. command、collab/child completion、goal、workflow、event-command 等系统事实继续作为 typed event 展示，不退化成普通 agent message 或 raw JSON。
+4. 本次为文字级迁移 handoff，不改变 UI 视觉形态，因此不新增 baseline screenshot 或原型资产；如实现改变布局或组件视觉，需重新获取完整 Electron baseline。
+
 ## 目标用户
 
 - 角色：使用 Goal/Go 持续推进长任务的 owner、PM agent、调试 root-worker prototype 的工程师。
@@ -68,6 +79,7 @@ root-worker prototype 是面向 my-codex 多 agent 调试和协作执行的桌�
 - Selected thread header 下方的 Goal Strip，用于显示 goal 状态、内容摘要、预算和取消入口。
 - Thread Analysis 面板中的 Goal Detail 区块，用于展示更完整的 goal 内容、预算、最近事件和取消反馈。
 - `/goal cancel`、无 goal、active、paused、complete、budget limited、取消中、取消失败等状态。
+- EventMsg display source 迁移后的 conversation/live/thread-read/replacement history/RightPanel/Agent Tree 用户可见不变量。
 
 不涉及：
 
@@ -77,7 +89,7 @@ root-worker prototype 是面向 my-codex 多 agent 调试和协作执行的桌�
 
 ## 数据与实现约束
 
-- Goal 显示必须消费 typed state/API：优先使用后端 canonical goal state / v2 payload；如以 conversation 事件展示，必须经 typed `ResponseItem -> ThreadItem` 投影。
+- Goal 显示必须消费 typed state/API：优先使用后端 canonical goal state / v2 payload；如以 conversation 事件展示，必须经 typed `EventMsg -> ThreadItem` 投影，迁移期可兼容 `ResponseItem::ThreadGoalUpdate`。
 - Slash command 执行可以走现有 composer command 分发，但 command 的可用性和执行结果不能通过解析 assistant 文本判断。
 - Thread running/waiting/idle 继续消费 canonical `ThreadStatus` / `thread/status/changed`。
 - Cancel 成功或失败需要产生可追踪反馈：优先为 composer 局部状态 + typed goal event；不可只依赖 toast 或 agent message 文本。
@@ -111,3 +123,4 @@ root-worker prototype 是面向 my-codex 多 agent 调试和协作执行的桌�
 - 视觉保持当前 root-worker 工程工具风格：浅色、低装饰、高信息密度、8px 左右圆角、清晰 focus ring。
 - 设计进入开发前完成独立 UI/UE review，并在 `05-review.md` 记录结论。
 - 模型通过 goal 工具创建、更新、完成 goal 时，conversation 至少生成一个 typed `ConversationEntry`，视觉上与普通 agent message 分离，并可被搜索、定位和历史回放保留。
+- EventMsg 迁移后 root-worker 不新增 raw parser；缺 typed item 的 fallback 也必须由 app-server/protocol projector 产出 typed payload。

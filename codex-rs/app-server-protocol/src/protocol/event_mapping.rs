@@ -1,8 +1,9 @@
 use crate::protocol::common::ServerNotification;
+use crate::protocol::event_item_projection::ProjectedEventItem;
+use crate::protocol::event_item_projection::project_event_msg_item;
 use crate::protocol::item_builders::build_command_execution_begin_item;
 use crate::protocol::item_builders::build_command_execution_end_item;
 use crate::protocol::item_builders::convert_patch_changes;
-use crate::protocol::response_item_projection::project_structured_response_item;
 use crate::protocol::v2::AgentMessageDeltaNotification;
 use crate::protocol::v2::CollabAgentState;
 use crate::protocol::v2::CollabAgentTool;
@@ -35,6 +36,30 @@ pub fn item_event_to_server_notification(
 ) -> ServerNotification {
     let thread_id = thread_id.to_string();
     let turn_id = turn_id.to_string();
+    if let Some(projected) = project_event_msg_item(&msg) {
+        return match projected {
+            ProjectedEventItem::Started {
+                item,
+                started_at_ms,
+                ..
+            } => ServerNotification::ItemStarted(ItemStartedNotification {
+                thread_id,
+                turn_id,
+                item,
+                started_at_ms,
+            }),
+            ProjectedEventItem::Completed {
+                item,
+                completed_at_ms,
+                ..
+            } => ServerNotification::ItemCompleted(ItemCompletedNotification {
+                thread_id,
+                turn_id,
+                item,
+                completed_at_ms,
+            }),
+        };
+    }
     match msg {
         EventMsg::DynamicToolCallResponse(response) => {
             let status = if response.success {
@@ -429,66 +454,6 @@ pub fn item_event_to_server_notification(
                 turn_id,
                 item_id: event.item_id,
                 summary_index: event.summary_index,
-            })
-        }
-        EventMsg::ItemStarted(item_started_event) => {
-            // Legacy core/rollout lifecycle events still carry `TurnItem`.
-            // Convert at the app-server protocol edge so the v2 notification
-            // path below consumes only `ThreadItem`.
-            let item = ThreadItem::from(item_started_event.item);
-            ServerNotification::ItemStarted(ItemStartedNotification {
-                thread_id,
-                turn_id,
-                item,
-                started_at_ms: item_started_event.started_at_ms,
-            })
-        }
-        EventMsg::ItemCompleted(item_completed_event) => {
-            // Legacy core/rollout lifecycle events still carry `TurnItem`.
-            // Convert at the app-server protocol edge so the v2 notification
-            // path below consumes only `ThreadItem`.
-            let item = ThreadItem::from(item_completed_event.item);
-            ServerNotification::ItemCompleted(ItemCompletedNotification {
-                thread_id,
-                turn_id,
-                item,
-                completed_at_ms: item_completed_event.completed_at_ms,
-            })
-        }
-        EventMsg::ResponseItemStarted(response_item_started_event) => {
-            let fallback_id = || {
-                format!(
-                    "{}-response-item-started-{}",
-                    response_item_started_event.turn_id,
-                    response_item_started_event.started_at_ms
-                )
-            };
-            let item =
-                project_structured_response_item(&response_item_started_event.item, fallback_id)
-                    .expect("response item started event must carry a structured display item");
-            ServerNotification::ItemStarted(ItemStartedNotification {
-                thread_id,
-                turn_id,
-                item,
-                started_at_ms: response_item_started_event.started_at_ms,
-            })
-        }
-        EventMsg::ResponseItemCompleted(response_item_completed_event) => {
-            let fallback_id = || {
-                format!(
-                    "{}-response-item-completed-{}",
-                    response_item_completed_event.turn_id,
-                    response_item_completed_event.completed_at_ms
-                )
-            };
-            let item =
-                project_structured_response_item(&response_item_completed_event.item, fallback_id)
-                    .expect("response item completed event must carry a structured display item");
-            ServerNotification::ItemCompleted(ItemCompletedNotification {
-                thread_id,
-                turn_id,
-                item,
-                completed_at_ms: response_item_completed_event.completed_at_ms,
             })
         }
         EventMsg::PatchApplyUpdated(event) => {

@@ -655,7 +655,7 @@ impl Session {
             previous_status: previous_status.map(thread_goal_update_status_from_state),
             goal: thread_goal_update_goal_from_protocol(goal),
         };
-        self.record_conversation_items_and_emit_item_completed(
+        self.record_model_items_and_emit_display_events(
             turn_context,
             std::slice::from_ref(&item),
         )

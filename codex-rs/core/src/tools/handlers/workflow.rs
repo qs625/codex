@@ -534,7 +534,7 @@ async fn record_workflow_progress(
         },
     };
     session
-        .record_conversation_items_and_emit_item_completed(turn, std::slice::from_ref(&item))
+        .record_model_items_and_emit_display_events(turn, std::slice::from_ref(&item))
         .await;
 }
 

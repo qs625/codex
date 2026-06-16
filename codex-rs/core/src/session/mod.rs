@@ -2758,7 +2758,7 @@ impl Session {
         self.send_thread_context_usage_event(turn_context).await;
     }
 
-    pub(crate) async fn record_conversation_items_and_emit_item_completed(
+    pub(crate) async fn record_model_items_and_emit_display_events(
         &self,
         turn_context: &TurnContext,
         items: &[ResponseItem],
@@ -2789,7 +2789,7 @@ impl Session {
             })
             .collect();
         self.record_conversation_items(turn_context, &items).await;
-        self.emit_completed_display_response_items(turn_context, &items)
+        self.emit_completed_model_item_display_events(turn_context, &items)
             .await;
     }
 
@@ -2903,7 +2903,7 @@ impl Session {
         state.session_configuration.collaboration_mode.clone()
     }
 
-    async fn emit_completed_display_response_items(
+    async fn emit_completed_model_item_display_events(
         &self,
         turn_context: &TurnContext,
         items: &[ResponseItem],

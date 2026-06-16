@@ -1,12 +1,18 @@
 # Live ResponseItem 到 ThreadItem 投影修复
 
+> 迁移说明：本文记录早期 live/history 投影修复背景。新的架构目标已调整为
+> `ResponseItem = model/context source`、`EventMsg = runtime/UI display source`、
+> `ThreadItem = client display projection`。后续新增展示语义以
+> [EventMsg 作为 ThreadItem 展示源](eventmsg-threaditem-display-source.md) 为准；
+> 本文中的 `ResponseItem -> ThreadItem` 主路径表述只代表历史阶段和 legacy 兼容。
+
 ## 任务 brief
 
 用户反馈 app-server live 场景最后一条消息不显示，重启后通过 history 重建才显示。成功标准是：
 
 - live `item/started` / `item/completed` 和 `thread/history` 重建都以 typed `ThreadItem` 为展示 payload。
 - 最终 assistant message 在 live 流中可见，不需要等重启后从 rollout history 重建。
-- `function_call`、`event_command_subscribe`、schedule subscribe/unsubscribe、event-command event、collab / inter-agent / child-completion 继续复用 shared `ResponseItem -> ThreadItem` projector。
+- `function_call`、`event_command_subscribe`、schedule subscribe/unsubscribe、event-command event、collab / inter-agent / child-completion 在迁移期继续复用 legacy structured projector；新增展示语义应迁向 `EventMsg -> ThreadItem` projector。
 - `event_command_subscribe` 工具调用本身在 live/app-server/root-worker 中产生 typed `ThreadItem::EventCommandCall` started/completed；后续 event output/completion 产生 typed `ThreadItem::EventCommandEvent`，两者都不能只以 raw JSON/message 出现。
 - 非 TUI 展示/history 路径不新增 raw response item 展示分支，不从 assistant marker JSON 或 message marker 文本反解展示项。
 
@@ -27,7 +33,7 @@ live/history 路径有两个相关缺口：
 
 ### TurnItem 迁移阶段
 
-扩展目标是让 `ResponseItem` 成为 core live event、history 和 UI lifecycle 的 canonical state；app-server v2 display payload 只通过 shared `ResponseItem -> ThreadItem` projector 生成。一次性删除 `TurnItem` 不适合作为本阶段闭环：`TurnItemContributor` extension API、stream finalization 的 `FinalizedTurnItemFacts`、TTFM metrics、legacy event 生成、旧 rollout replay，以及 `UserMessage` 的 `text_elements` 保留都仍直接依赖 `TurnItem`。
+早期扩展目标曾是让 `ResponseItem` 成为 core live event、history 和 UI lifecycle 的 canonical state。当前 EventMsg 重构后，该目标已被替换：`ResponseItem` 只负责模型/context/provider 侧事实，`EventMsg` 负责 runtime/UI display source，app-server v2 display payload 通过 `EventMsg -> ThreadItem` projector 生成。一次性删除 `TurnItem` 仍不适合作为本阶段闭环：`TurnItemContributor` extension API、stream finalization 的 `FinalizedTurnItemFacts`、TTFM metrics、legacy event 生成、旧 rollout replay，以及 `UserMessage` 的 `text_elements` 保留都仍直接依赖 `TurnItem`。
 
 本阶段采用分阶段迁移：
 
@@ -46,11 +52,11 @@ live/history 路径有两个相关缺口：
 
 core 的 `record_conversation_items` 只负责写入 in-memory history、persist `RolloutItem::ResponseItem` 并刷新 context usage；需要 live 展示的路径必须显式发 typed lifecycle。app-server live apply 层不把普通 `RawResponseItem` 直接投影为 display `ThreadItem`，避免和 semantic lifecycle 双发；history builder 在 recovery/read 路径把 typed `ResponseItem::Message` canonicalize 为 `ThreadItem::AgentMessage`。root-worker renderer 不再解析或过滤 legacy marker / inter-agent JSON envelope，避免展示层根据文本内容丢 typed item。
 
-业务入口不得为了“即时展示”直接 `send_event_raw(ItemCompleted(...))` 发 conversation display item。child completion 收到时只负责写入 mailbox、清理 direct-child outstanding 屏障并按 `trigger_turn` 唤醒 pending work；真正的 collab/child-completion 展示项由 pending input 录入阶段生成 `ResponseItem::InterAgentCommunication`，再通过 `record_conversation_items_and_emit_item_completed` 和 shared projector 发出唯一 live completed item。这样 live app-server 不会同时收到旧 `ItemCompleted(TurnItem::CollabAgentMessage)` 和 typed 录入后的 completed display item。
+业务入口不得为了“即时展示”直接 `send_event_raw(ItemCompleted(...))` 发 conversation display item。child completion 收到时只负责写入 mailbox、清理 direct-child outstanding 屏障并按 `trigger_turn` 唤醒 pending work；真正的 collab/child-completion 展示项在迁移期由 pending input 录入阶段生成 `ResponseItem::InterAgentCommunication`，再通过 `record_model_items_and_emit_display_events` 双写 model item 和 display event。后续新增 collab 展示语义应使用 dedicated `EventMsg` variant。这样 live app-server 不会同时收到旧 `ItemCompleted(TurnItem::CollabAgentMessage)` 和 typed 录入后的 completed display item。
 
-`CommandWait`、`CommandWriteStdin`、`CommandExecutionNotification` 这类工具交互历史项已经是 canonical typed `ResponseItem`，但没有对应的 legacy `TurnItem` 变体。live completed 路径不能为了展示继续扩展 `TurnItem`，而应在 core 发出 `EventMsg::ResponseItemCompleted(ResponseItemCompletedEvent)`，由 app-server v2 边界复用 `project_structured_response_item` 投影为现有 `item/completed` notification 的 typed `ThreadItem`。这样 history rebuild 和 live lifecycle 都使用同一套 `ResponseItem -> ThreadItem` projector，root-worker 只消费 typed `ThreadItem::CommandWait` 等 payload，不从 raw marker、assistant text 或 legacy envelope 反解。
+`CommandWait`、`CommandWriteStdin`、`CommandExecutionNotification` 这类工具交互历史项在迁移期仍保留 typed `ResponseItem`，但没有对应的 legacy `TurnItem` 变体。live completed 路径不能为了展示继续扩展 `TurnItem`，而应在 core 发出 display-capable `EventMsg`；当前兼容路径使用 `EventMsg::ResponseItemStarted/Completed(ResponseItem)`，由 app-server v2 的 `event_item_projection` 投影为 typed `ThreadItem`。root-worker 只消费 typed `ThreadItem::CommandWait` 等 payload，不从 raw marker、assistant text 或 legacy envelope 反解。
 
-`record_conversation_items_and_emit_item_completed` 在写 in-memory history 和发 live completed 前，会为缺失 id 的 structured display `ResponseItem` 生成同一个本地 display id，live root-worker 不会在同一 turn 多个 command wait/stdin 项之间互相覆盖。由于这些 local display id 不写入 rollout JSON，cold/history rebuild 仍只从 `RolloutItem::ResponseItem` canonicalize；`ResponseItemCompleted` 事件不作为 history display 来源，避免重启回放时把同一 command wait/stdin 双写。
+`record_model_items_and_emit_display_events` 在写 in-memory history 和发 live completed 前，会为缺失 id 的 structured model/display item 生成同一个本地 display id，live root-worker 不会在同一 turn 多个 command wait/stdin 项之间互相覆盖。旧 id-less lifecycle event 在 history replay 中仍按兼容规则跳过，避免重启回放时把同一 command wait/stdin 双写；带 id 的 `ResponseItemStarted/Completed` 会通过 `EventMsg -> ThreadItem` adapter replay。
 
 `RawResponseItem` 协议分支暂时保留为旧 rollout / 旧 client 兼容输入，但新的 runtime 不再通过 `record_conversation_items` 广播 raw response item。provider 请求侧仍可在最后一步把 typed `ResponseItem` formatting 成 provider-visible marker message；该 formatting 产物不得写回 history、rollout 或 display。
 
@@ -90,7 +96,7 @@ legacy raw inter-agent 文本不作为结构化展示来源：
 
 新增 core 单元测试覆盖：
 
-- `record_conversation_items_and_emit_item_completed` 对缺失 id 的 `ResponseItem::CommandWait` 生成 display id 并发出 `EventMsg::ResponseItemCompleted`，证明 structured display item 不再因无法转换为 legacy `TurnItem` 被 live completed 路径静默丢弃。
+- `record_model_items_and_emit_display_events` 对缺失 id 的 `ResponseItem::CommandWait` 生成 display id 并发出 `EventMsg::ResponseItemCompleted`，证明迁移期 structured item 不再因无法转换为 legacy `TurnItem` 被 live completed 路径静默丢弃。
 - `inter_agent_communication(ChildCompletion)` 收到 mailbox 消息时不直接发 live collab `ItemCompleted`；同一个 child completion 经 pending input typed 录入后只发出一条 collab completed item，防止 live app-server/root-worker 看到两条 child completion 展示项。
 
 复用已有 `event_command_call_notifications_emit_started_then_completed` 和 hook prompt 测试覆盖 function call 与 hook prompt 的 live helper。

@@ -12,7 +12,7 @@
 - `command_wait({ command_id })` 只等待调用开始之后的下一条 notification；命令已退出时立即返回 completed，不回放旧输出。每次调用只等待当前 runtime window，超时后返回 running 并推进该 command session 的 backoff window；下一次同 command 调用使用推进后的窗口。收到 output/exit 或发现命令已结束时重置 backoff。
 - `command_write_stdin({ command_id, chars })` 只负责写 stdin，不读取输出、不刷新状态。
 - 旧 `event_command_subscribe` 与 `event_command_write_stdin` 不再作为 command 工具注册；schedule subscribe/unsubscribe 保留。
-- 客户端展示继续以 typed `ResponseItem -> ThreadItem` 和 command execution lifecycle 为主，不从 raw marker 或 assistant JSON 反解命令展示。
+- 客户端展示继续以 typed `EventMsg -> ThreadItem` display lifecycle 和 command execution lifecycle 为主；确实需要模型可见的 command wait/stdin 事实再双写 `ResponseItem`，不从 raw marker 或 assistant JSON 反解命令展示。
 
 ## 非目标
 

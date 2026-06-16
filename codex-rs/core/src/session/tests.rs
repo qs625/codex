@@ -8323,7 +8323,7 @@ async fn explicit_record_conversation_items_emits_item_completed_for_structured_
         text: "build.log changed".to_string(),
     };
 
-    sess.record_conversation_items_and_emit_item_completed(
+    sess.record_model_items_and_emit_display_events(
         &tc,
         &[ResponseItem::EventDrivenTool {
             id: Some("typed-event-driven-tool".to_string()),
@@ -8364,7 +8364,7 @@ async fn explicit_record_conversation_items_emits_item_completed_for_structured_
 async fn explicit_record_conversation_items_emits_response_item_completed_for_command_wait() {
     let (sess, tc, rx) = make_session_and_context_with_rx().await;
 
-    sess.record_conversation_items_and_emit_item_completed(
+    sess.record_model_items_and_emit_display_events(
         &tc,
         &[ResponseItem::CommandWait {
             id: None,
@@ -8518,7 +8518,7 @@ async fn explicit_record_conversation_items_emits_item_completed_for_event_comma
         created_at: 1,
     };
 
-    sess.record_conversation_items_and_emit_item_completed(
+    sess.record_model_items_and_emit_display_events(
         &tc,
         &[ResponseItem::EventCommandEvent {
             id: Some("typed-event-command".to_string()),
@@ -8562,7 +8562,7 @@ async fn explicit_record_conversation_items_emits_response_item_completed_for_co
     )
     .with_trigger_turn(false);
 
-    sess.record_conversation_items_and_emit_item_completed(
+    sess.record_model_items_and_emit_display_events(
         &tc,
         &[ResponseItem::InterAgentCommunication {
             id: Some("typed-collab".to_string()),
@@ -8605,7 +8605,7 @@ async fn explicit_record_conversation_items_ignores_unknown_collab_message() {
     )
     .with_trigger_turn(false);
 
-    sess.record_conversation_items_and_emit_item_completed(
+    sess.record_model_items_and_emit_display_events(
         &tc,
         &[ResponseItem::InterAgentCommunication {
             id: Some("typed-unknown-collab".to_string()),

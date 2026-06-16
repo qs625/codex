@@ -100,7 +100,7 @@ impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
                 .as_millis() as i64,
         };
         session
-            .record_conversation_items_and_emit_item_completed(
+            .record_model_items_and_emit_display_events(
                 turn.as_ref(),
                 std::slice::from_ref(&response_item),
             )

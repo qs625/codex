@@ -106,7 +106,7 @@ impl ToolExecutor<ToolInvocation> for CommandWaitHandler {
             created_at_ms,
         });
         session
-            .record_conversation_items_and_emit_item_completed(
+            .record_model_items_and_emit_display_events(
                 turn.as_ref(),
                 std::slice::from_ref(&response_item),
             )

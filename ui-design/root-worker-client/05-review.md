@@ -105,3 +105,20 @@ Composer Slash 菜单增量设计已完成独立 `@ui-ue-reviewer` 复审，通�
 - 原型补充 responsive rules callout，并移除容易造成行尾重叠误解的长时间文案。
 
 复审结论：通过，可进入开发。
+
+## EventMsg Display Source Migration review
+
+第一轮结论：未通过，需修正。
+
+本轮待审范围：
+
+- `features/eventmsg-display-source-migration.md`
+- `00-brief.md` 中的 EventMsg Display Source Migration 增量
+
+已处理问题：
+
+- 明确 fallback event 必须由 app-server/protocol projector 生成 typed `ThreadItem` 或 typed fallback lifecycle payload；root-worker 只能消费 typed fallback，不能从 raw function output、EventMsg debug text、legacy JSON envelope 或 assistant text 自行解析生成 fallback。
+- 补充 schedule 事件族约束：subscribe、unsubscribe、fired、failed、terminal update 均走 typed projection；同一 recurring subscription 的多次 fired event 保留不同 `ThreadItem.id`；RightPanel 定位使用 item id；replacement history 按 typed id 和 server 顺序保留。
+- 在 `00-brief.md` 的范围与验收中补充 EventMsg display source 迁移、typed fallback 和 root-worker 不新增 raw parser 的约束。
+
+复审结论：通过，可进入开发。

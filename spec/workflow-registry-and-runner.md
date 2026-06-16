@@ -2,7 +2,7 @@
 
 ## 目标
 
-本文补充 `dynamic-workflow.md` 中可并行推进的实现边界，聚焦不依赖 `ResponseItem -> ThreadItem` 大重构的部分：
+本文补充 `dynamic-workflow.md` 中可并行推进的实现边界，聚焦 workflow registry / runner 本身，不依赖展示源迁移重构：
 
 - project/home 两级 workflow registry。
 - session init context 中的 workflow 摘要注入。
@@ -130,7 +130,7 @@ Dynamic Workflow 需要明确区分三层入口，避免把 client RPC、模型 
 - `workflow_resume`
 - `workflow_abort`
 
-其中 `workflow_list`、`workflow_describe` 和 init context 使用同一套 registry 数据。`workflow_start/status/resume/abort` 当前管理 durable `WorkflowRun`，会返回 `runId`、workflow metadata、状态、runnerStatus、inputs、revision、时间戳和 snapshot path。`start/resume/abort` 会记录 typed `WorkflowRunProgress`，并通过共享 `ResponseItem -> ThreadItem` projector 投影为客户端 `ThreadItem::WorkflowRunProgress`。
+其中 `workflow_list`、`workflow_describe` 和 init context 使用同一套 registry 数据。`workflow_start/status/resume/abort` 当前管理 durable `WorkflowRun`，会返回 `runId`、workflow metadata、状态、runnerStatus、inputs、revision、时间戳和 snapshot path。`start/resume/abort` 会记录 workflow progress，并通过 typed `EventMsg -> ThreadItem` lifecycle 投影为客户端 `ThreadItem::WorkflowRunProgress`；迁移期可继续用 `ResponseItem::WorkflowRunProgress` 作为模型历史兼容记录。
 
 当前 runner 会 snapshot workflow 目录到 `$CODEX_HOME/workflow-runs/<runId>`，写入 `@codex/workflow` shim，并启动 Node 子进程执行 TypeScript entry。`runnerStatus` 使用 `runner_starting`、`runner_active`、`runner_resuming`、`completed`、`failed`、`aborted` 表达当前能力边界。通过 `workflow_start` / `workflow_resume` model tool 启动时，runner 会绑定当前 turn 的 runtime bridge；app-server v2 直连 workflow RPC 不绑定这层 bridge。
 
@@ -206,7 +206,7 @@ shell.exec
 - `agent.wait` 复用 MultiAgent V2 wait 的 pending mailbox/status watch 语义，不通过 raw marker、assistant text 或 legacy envelope 解析。
 - `wf.shell` 后续应映射到真实 `exec_command`/unified exec 能力，并沿用权限、hook、environment 和 typed command item lifecycle。第一阶段尚未安全接入时返回明确 unsupported typed error，不得继续无效果占位。
 
-真实权限、cwd、approval、agent primitive 都在 Rust host 中执行，workflow 脚本不直接绕过现有策略。workflow run progress 继续通过 typed `ResponseItem -> ThreadItem` live/history 路径展示，不新增 raw marker 或 assistant message JSON 解析路径。
+真实权限、cwd、approval、agent primitive 都在 Rust host 中执行，workflow 脚本不直接绕过现有策略。workflow run progress 继续通过 typed `EventMsg -> ThreadItem` live/history 路径展示；迁移期可保留 `ResponseItem::WorkflowRunProgress` 模型历史记录，不新增 raw marker 或 assistant message JSON 解析路径。
 
 ## Resume
 

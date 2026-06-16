@@ -796,6 +796,10 @@ pub struct ThreadGoalUpdateGoal {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseItem {
+    /// Model-context record for a `command_wait` tool result.
+    ///
+    /// UI display must be emitted as a display-capable `EventMsg` and
+    /// projected to `ThreadItem` at the app-server protocol edge.
     CommandWait {
         #[serde(default, skip_serializing)]
         #[ts(skip)]
@@ -808,6 +812,7 @@ pub enum ResponseItem {
         wait_timeout_ms: i64,
         created_at_ms: i64,
     },
+    /// Model-context record for a `command_write_stdin` tool result.
     CommandWriteStdin {
         #[serde(default, skip_serializing)]
         #[ts(skip)]
@@ -817,6 +822,7 @@ pub enum ResponseItem {
         contains_newline: bool,
         created_at_ms: i64,
     },
+    /// Model-context record for a command output/exit notification.
     CommandExecutionNotification {
         #[serde(default, skip_serializing)]
         #[ts(skip)]
@@ -828,30 +834,36 @@ pub enum ResponseItem {
         exit_code: Option<i32>,
         created_at_ms: i64,
     },
+    /// Model-context record for workflow progress that should also be visible
+    /// in clients through the EventMsg display projection.
     WorkflowRunProgress {
         #[serde(default, skip_serializing)]
         #[ts(skip)]
         id: Option<String>,
         event: WorkflowRunProgressEvent,
     },
+    /// Model-context record for event-command output.
     EventCommandEvent {
         #[serde(default, skip_serializing)]
         #[ts(skip)]
         id: Option<String>,
         event: EventCommandEvent,
     },
+    /// Model-context record for an event-driven tool notification.
     EventDrivenTool {
         #[serde(default, skip_serializing)]
         #[ts(skip)]
         id: Option<String>,
         trigger: EventDrivenToolTrigger,
     },
+    /// Model-context record for inter-agent communication.
     InterAgentCommunication {
         #[serde(default, skip_serializing)]
         #[ts(skip)]
         id: Option<String>,
         communication: InterAgentCommunication,
     },
+    /// Model-context record for a goal lifecycle update.
     ThreadGoalUpdate {
         #[serde(default, skip_serializing)]
         #[ts(skip)]

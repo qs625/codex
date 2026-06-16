@@ -4,7 +4,7 @@
 
 - 用户：使用 multi-agent 协作能力的 Codex agent。
 - 问题：移除 `wait_agent` 后，父 agent 在需要显式等待 subagent 下一条相关 typed IAC、child completion 或 final status 时，只能依赖模型自行 sleep/轮询，容易造成高频空转或错过已经进入 parent pending input 的消息。
-- 成功标准：MultiAgent V2 tool surface 重新暴露 `wait_agent`；调用开始先检查 parent pending input/mailbox 中已有匹配消息并立即返回；后续使用 runtime notify/backoff 等待 status 或 mailbox 事件；不 drain/消费 pending 输入；live/history/display 继续走 typed `CollabWaitingBegin/End` 与 `ResponseItem -> ThreadItem` 投影。
+- 成功标准：MultiAgent V2 tool surface 重新暴露 `wait_agent`；调用开始先检查 parent pending input/mailbox 中已有匹配消息并立即返回；后续使用 runtime notify/backoff 等待 status 或 mailbox 事件；不 drain/消费 pending 输入；live/history/display 继续走 typed `CollabWaitingBegin/End` 与 `EventMsg -> ThreadItem` 投影，迁移期保留必要的 `ResponseItem` 模型历史兼容。
 - 非目标：不恢复 V1 `send_input`/`resume_agent`；不恢复 legacy completion watcher 或 raw child completion fallback；不从 `<subagent_notification>`、assistant text、legacy JSON envelope 或 raw marker 反解展示；不实现 Dynamic Workflow 后续 runner/persistence/app-server v2 控制面。
 
 ## 技术设计
@@ -32,6 +32,6 @@
 
 ## 风险
 
-- pending input 的立即唤醒必须使用 canonical typed 数据源，不能为了匹配 child completion 去解析 assistant 文本，否则会破坏 `ResponseItem -> ThreadItem` 约束。
+- pending input 的立即唤醒必须使用 canonical typed 数据源，不能为了匹配 child completion 去解析 assistant 文本，否则会破坏 `EventMsg -> ThreadItem` display source 约束。
 - mailbox 检查只能 peek，不能 drain；否则后续 model-visible history 会丢失 IAC。
 - hard cap 较长，测试需要使用可配置的短 timeout 覆盖超时路径，避免真实等待。

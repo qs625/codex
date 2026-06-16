@@ -24,9 +24,9 @@ Complete all Active Work recorded in this progress file.
   status: in_progress
   objective: Write and land the full architecture plan for EventMsg as runtime/UI display source and ResponseItem as model context/provider source.
   last_update: 2026-06-16
-  next_action: Reconcile the reviewed EventMsg architecture work with current main, including the newer ResponseItemStarted lifecycle path, then land the architecture/spec updates as part of the full refactor.
+  next_action: Architecture/spec/AGENTS updates implemented, independently reviewed, and fixed tester validation passed for this landing step.
   blockers: None.
-  validation: pending
+  validation: passed via fixed tester request eventmsg-full-refactor-20260616-01.
   commit: pending
 - id: eventmsg-threaditem-projector-boundary
   owner: /root/my_codex_pm/eventmsg_full_refactor_owner
@@ -35,9 +35,9 @@ Complete all Active Work recorded in this progress file.
   status: in_progress
   objective: Add a shared EventMsg -> ThreadItem adapter boundary in app-server/protocol while preserving existing behavior.
   last_update: 2026-06-16
-  next_action: Implement adapter for ItemStarted, ItemCompleted, ResponseItemStarted, ResponseItemCompleted, and new semantic display EventMsg variants; use it for live mapping and persisted thread history replay.
+  next_action: Adapter implemented for ItemStarted, ItemCompleted, ResponseItemStarted, and ResponseItemCompleted; live mapping uses it, and thread history replays id-bearing ResponseItem lifecycle events through it. Reviewed and validation passed.
   blockers: eventmsg-threaditem-architecture-plan.
-  validation: pending
+  validation: passed via fixed tester request eventmsg-full-refactor-20260616-01.
   commit: pending
 - id: eventmsg-dual-write-helpers
   owner: /root/my_codex_pm/eventmsg_full_refactor_owner
@@ -46,9 +46,9 @@ Complete all Active Work recorded in this progress file.
   status: in_progress
   objective: Introduce semantic helpers for actions that need both model ResponseItem context and UI/runtime EventMsg display.
   last_update: 2026-06-16
-  next_action: Add narrow helpers for dual-write call sites; helpers must write model-visible ResponseItem only when needed and emit display-capable EventMsg for UI.
+  next_action: Existing helper renamed to `record_model_items_and_emit_display_events`; command_wait, write_stdin, workflow, goal, and inter-agent call sites updated. Reviewed and validation passed.
   blockers: eventmsg-threaditem-projector-boundary.
-  validation: pending
+  validation: passed via fixed tester request eventmsg-full-refactor-20260616-01.
   commit: pending
 - id: migrate-wait-command-display-events
   owner: /root/my_codex_pm/eventmsg_full_refactor_owner
@@ -57,9 +57,9 @@ Complete all Active Work recorded in this progress file.
   status: in_progress
   objective: Move command_wait, command_write_stdin, and command execution notification display semantics toward dedicated EventMsg variants.
   last_update: 2026-06-16
-  next_action: Replace display-only ResponseItem lifecycle for command_wait, command_write_stdin, and command execution notifications with EventMsg-driven ThreadItem projection while preserving model-visible tool outputs.
+  next_action: First migration step implemented: command_wait/write_stdin display now flows through the EventMsg projection boundary and dual-write helper naming reflects model/display split. Dedicated command EventMsg variants remain follow-up work.
   blockers: eventmsg-dual-write-helpers.
-  validation: pending
+  validation: passed via fixed tester request eventmsg-full-refactor-20260616-01.
   commit: pending
 - id: migrate-collab-goal-workflow-display-events
   owner: /root/my_codex_pm/eventmsg_full_refactor_owner
@@ -68,9 +68,9 @@ Complete all Active Work recorded in this progress file.
   status: in_progress
   objective: Move inter-agent/child completion, goal lifecycle, workflow progress, event command, and event-driven tool display semantics toward EventMsg variants.
   last_update: 2026-06-16
-  next_action: Migrate one display family at a time to EventMsg -> ThreadItem projection, with legacy ResponseItem compatibility only for old rollout/history.
+  next_action: Current compatibility path documented and routed through EventMsg projection boundary; dedicated EventMsg variants for collab/goal/workflow/event-command remain follow-up work.
   blockers: eventmsg-dual-write-helpers.
-  validation: pending
+  validation: passed via fixed tester request eventmsg-full-refactor-20260616-01.
   commit: pending
 - id: responseitem-contract-tightening
   owner: /root/my_codex_pm/eventmsg_full_refactor_owner
@@ -79,9 +79,9 @@ Complete all Active Work recorded in this progress file.
   status: in_progress
   objective: Tighten ResponseItem so new variants are model-context/provider-facing only, not UI display-only.
   last_update: 2026-06-16
-  next_action: Add compile-time/documentation guardrails, update review guidance, and deprecate display-only ResponseItem variants after EventMsg replacements exist.
+  next_action: AGENTS/spec/code comments updated to forbid new display-only ResponseItem variants; reviewed and validation passed.
   blockers: migrate-wait-command-display-events, migrate-collab-goal-workflow-display-events.
-  validation: pending
+  validation: passed via fixed tester request eventmsg-full-refactor-20260616-01.
   commit: pending
 - id: legacy-display-path-cleanup
   owner: /root/my_codex_pm/eventmsg_full_refactor_owner
@@ -90,9 +90,9 @@ Complete all Active Work recorded in this progress file.
   status: in_progress
   objective: Remove or quarantine legacy display paths after EventMsg projection covers live/read.
   last_update: 2026-06-16
-  next_action: Delete or isolate TurnItem -> ThreadItem live display, RawResponseItem display, marker/text/JSON envelope parsing, and raw tool output fallback display after migrated families have tests.
+  next_action: Legacy paths documented as compatibility only; no broad deletion in this first landing step. Further cleanup remains follow-up work after dedicated EventMsg variants land.
   blockers: eventmsg-threaditem-projector-boundary, migrate-wait-command-display-events, migrate-collab-goal-workflow-display-events.
-  validation: pending
+  validation: passed via fixed tester request eventmsg-full-refactor-20260616-01.
   commit: pending
 
 ## Design Direction
