@@ -206,7 +206,7 @@ shell.exec
 - `agent.wait` 复用 MultiAgent V2 wait 的 pending mailbox/status watch 语义，不通过 raw marker、assistant text 或 legacy envelope 解析。
 - `wf.shell` 后续应映射到真实 `exec_command`/unified exec 能力，并沿用权限、hook、environment 和 typed command item lifecycle。第一阶段尚未安全接入时返回明确 unsupported typed error，不得继续无效果占位。
 
-真实权限、cwd、approval、agent primitive 都在 Rust host 中执行，workflow 脚本不直接绕过现有策略。workflow run progress 继续通过 typed `EventMsg -> ThreadItem` live/history 路径展示；迁移期可保留 `ResponseItem::WorkflowRunProgress` 模型历史记录，不新增 raw marker 或 assistant message JSON 解析路径。
+真实权限、cwd、approval、agent primitive 都在 Rust host 中执行，workflow 脚本不直接绕过现有策略。workflow run progress 继续通过 `EventMsg::WorkflowRunProgressCompleted -> ThreadItem::WorkflowRunProgress` live/history 路径展示；`ResponseItem::WorkflowRunProgress` 只作为模型历史记录和旧 rollout/history 兼容，不新增 raw marker 或 assistant message JSON 解析路径。
 
 ## Resume
 

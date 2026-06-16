@@ -8315,7 +8315,7 @@ async fn task_finish_emits_turn_item_lifecycle_for_leftover_pending_user_input()
 }
 
 #[tokio::test]
-async fn explicit_record_conversation_items_emits_item_completed_for_structured_response_item() {
+async fn explicit_record_conversation_items_emits_event_driven_tool_display_event() {
     let (sess, tc, rx) = make_session_and_context_with_rx().await;
     let trigger = EventDrivenToolTrigger {
         tool: "fs_subscribe".to_string(),
@@ -8335,7 +8335,7 @@ async fn explicit_record_conversation_items_emits_item_completed_for_structured_
     let completed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
             let event = rx.recv().await.expect("event");
-            if let EventMsg::ItemCompleted(completed) = event.msg {
+            if let EventMsg::EventDrivenToolCompleted(completed) = event.msg {
                 break completed;
             }
         }
@@ -8346,22 +8346,12 @@ async fn explicit_record_conversation_items_emits_item_completed_for_structured_
     assert_eq!(completed.thread_id, sess.conversation_id);
     assert_eq!(completed.turn_id, tc.sub_id);
     assert!(completed.completed_at_ms > 0);
-    let TurnItem::EventDrivenTool(item) = completed.item else {
-        panic!("expected EventDrivenTool item");
-    };
-    assert_eq!(
-        item,
-        codex_protocol::items::EventDrivenToolItem {
-            id: "typed-event-driven-tool".to_string(),
-            tool: trigger.tool,
-            title: trigger.title,
-            text: trigger.text,
-        }
-    );
+    assert_eq!(completed.id, "typed-event-driven-tool");
+    assert_eq!(completed.trigger, trigger);
 }
 
 #[tokio::test]
-async fn explicit_record_conversation_items_emits_response_item_completed_for_command_wait() {
+async fn explicit_record_conversation_items_emits_command_wait_display_event() {
     let (sess, tc, rx) = make_session_and_context_with_rx().await;
 
     sess.record_model_items_and_emit_display_events(
@@ -8382,7 +8372,7 @@ async fn explicit_record_conversation_items_emits_response_item_completed_for_co
     let completed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
             let event = rx.recv().await.expect("event");
-            if let EventMsg::ResponseItemCompleted(completed) = event.msg {
+            if let EventMsg::CommandWaitCompleted(completed) = event.msg {
                 break completed;
             }
         }
@@ -8392,43 +8382,21 @@ async fn explicit_record_conversation_items_emits_response_item_completed_for_co
 
     assert_eq!(completed.thread_id, sess.conversation_id);
     assert_eq!(completed.turn_id, tc.sub_id);
-    assert!(completed.completed_at_ms > 0);
-    let ResponseItem::CommandWait {
-        id,
-        command_id,
-        status,
-        notification,
-        exit_code,
-        wall_time_seconds,
-        wait_timeout_ms,
-        created_at_ms,
-    } = completed.item
-    else {
-        panic!("expected CommandWait item");
-    };
-    assert!(id.is_some());
+    assert!(completed.lifecycle_at_ms > 0);
+    assert_eq!(completed.id.starts_with("response-item-"), true);
+    assert_eq!(completed.command_id, "cmd-1");
     assert_eq!(
-        ResponseItem::CommandWait {
-            id: None,
-            command_id,
-            status,
-            notification,
-            exit_code,
-            wall_time_seconds,
-            wait_timeout_ms,
-            created_at_ms,
-        },
-        ResponseItem::CommandWait {
-            id: None,
-            command_id: "cmd-1".to_string(),
-            status: codex_protocol::models::CommandWaitStatus::Completed,
-            notification: Some(codex_protocol::models::CommandWaitNotificationKind::Exit),
-            exit_code: Some(0),
-            wall_time_seconds: 1.25,
-            wait_timeout_ms: 250,
-            created_at_ms: 1234,
-        }
+        completed.status,
+        codex_protocol::models::CommandWaitStatus::Completed
     );
+    assert_eq!(
+        completed.notification,
+        Some(codex_protocol::models::CommandWaitNotificationKind::Exit)
+    );
+    assert_eq!(completed.exit_code, Some(0));
+    assert_eq!(completed.wall_time_seconds, 1.25);
+    assert_eq!(completed.wait_timeout_ms, 250);
+    assert_eq!(completed.created_at_ms, 1234);
 }
 
 #[tokio::test]
@@ -8501,7 +8469,7 @@ async fn record_response_item_emits_item_completed_for_hook_prompt() {
 }
 
 #[tokio::test]
-async fn explicit_record_conversation_items_emits_item_completed_for_event_command() {
+async fn explicit_record_conversation_items_emits_event_command_display_event() {
     let (sess, tc, rx) = make_session_and_context_with_rx().await;
     let event = EventCommandEvent {
         subscription_id: "sub-command".to_string(),
@@ -8530,7 +8498,7 @@ async fn explicit_record_conversation_items_emits_item_completed_for_event_comma
     let completed = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             let event = rx.recv().await.expect("event");
-            if let EventMsg::ItemCompleted(completed) = event.msg {
+            if let EventMsg::EventCommandEventCompleted(completed) = event.msg {
                 break completed;
             }
         }
@@ -8538,20 +8506,12 @@ async fn explicit_record_conversation_items_emits_item_completed_for_event_comma
     .await
     .expect("expected item completed event");
 
-    let TurnItem::EventCommandEvent(item) = completed.item else {
-        panic!("expected EventCommandEvent item");
-    };
-    assert_eq!(
-        item,
-        codex_protocol::items::EventCommandEventItem {
-            id: "typed-event-command".to_string(),
-            event,
-        }
-    );
+    assert_eq!(completed.id, "typed-event-command");
+    assert_eq!(completed.event, event);
 }
 
 #[tokio::test]
-async fn explicit_record_conversation_items_emits_response_item_completed_for_collab_message() {
+async fn explicit_record_conversation_items_emits_inter_agent_display_event() {
     let (sess, tc, rx) = make_session_and_context_with_rx().await;
     let communication = InterAgentCommunication::new(
         AgentPath::try_from("/root/worker").expect("worker path should parse"),
@@ -8574,7 +8534,7 @@ async fn explicit_record_conversation_items_emits_response_item_completed_for_co
     let completed = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             let event = rx.recv().await.expect("event");
-            if let EventMsg::ResponseItemCompleted(completed) = event.msg {
+            if let EventMsg::InterAgentCommunicationCompleted(completed) = event.msg {
                 break completed;
             }
         }
@@ -8582,15 +8542,8 @@ async fn explicit_record_conversation_items_emits_response_item_completed_for_co
     .await
     .expect("expected response item completed event");
 
-    let ResponseItem::InterAgentCommunication {
-        id,
-        communication: completed_communication,
-    } = completed.item
-    else {
-        panic!("expected InterAgentCommunication response item");
-    };
-    assert_eq!(id.as_deref(), Some("typed-collab"));
-    assert_eq!(completed_communication, communication);
+    assert_eq!(completed.id, "typed-collab");
+    assert_eq!(completed.communication, communication);
 }
 
 #[tokio::test]
@@ -10407,37 +10360,25 @@ async fn create_goal_tool_rejects_existing_goal() {
     let completed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
             let event = rx.recv().await.expect("event");
-            if let EventMsg::ResponseItemCompleted(completed) = event.msg
-                && matches!(&completed.item, ResponseItem::ThreadGoalUpdate { .. })
-            {
+            if let EventMsg::ThreadGoalUpdateCompleted(completed) = event.msg {
                 break completed;
             }
         }
     })
     .await
-    .expect("expected goal response item completed event");
+    .expect("expected goal display event");
     assert_eq!(completed.thread_id, session.conversation_id);
     assert_eq!(completed.turn_id, turn_context.sub_id);
-    let ResponseItem::ThreadGoalUpdate {
-        action,
-        source,
-        previous_status,
-        goal,
-        ..
-    } = completed.item
-    else {
-        panic!("expected ThreadGoalUpdate item");
-    };
     assert_eq!(
-        action,
+        completed.action,
         codex_protocol::models::ThreadGoalUpdateEventAction::Created
     );
     assert_eq!(
-        source,
+        completed.source,
         codex_protocol::models::ThreadGoalUpdateEventSource::ModelTool
     );
-    assert_eq!(previous_status, None);
-    assert_eq!(goal.objective, "Keep the watcher alive");
+    assert_eq!(completed.previous_status, None);
+    assert_eq!(completed.goal.objective, "Keep the watcher alive");
 
     let response = handler
         .handle(ToolInvocation {
@@ -10585,42 +10526,32 @@ async fn update_goal_tool_marks_goal_complete() {
     let completed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
             let event = rx.recv().await.expect("event");
-            if let EventMsg::ResponseItemCompleted(completed) = event.msg
-                && matches!(&completed.item, ResponseItem::ThreadGoalUpdate {
-                    action: codex_protocol::models::ThreadGoalUpdateEventAction::Completed,
-                    ..
-                })
-            {
-                break completed;
+            if let EventMsg::ThreadGoalUpdateCompleted(completed) = event.msg {
+                if matches!(
+                    completed.action,
+                    codex_protocol::models::ThreadGoalUpdateEventAction::Completed
+                ) {
+                    break completed;
+                }
             }
         }
     })
     .await
-    .expect("expected completed goal response item");
-    let ResponseItem::ThreadGoalUpdate {
-        action,
-        source,
-        previous_status,
-        goal,
-        ..
-    } = completed.item
-    else {
-        panic!("expected ThreadGoalUpdate item");
-    };
+    .expect("expected completed goal display event");
     assert_eq!(
-        action,
+        completed.action,
         codex_protocol::models::ThreadGoalUpdateEventAction::Completed
     );
     assert_eq!(
-        source,
+        completed.source,
         codex_protocol::models::ThreadGoalUpdateEventSource::ModelTool
     );
     assert_eq!(
-        previous_status,
+        completed.previous_status,
         Some(codex_protocol::models::ThreadGoalUpdateGoalStatus::Active)
     );
     assert_eq!(
-        goal.status,
+        completed.goal.status,
         codex_protocol::models::ThreadGoalUpdateGoalStatus::Complete
     );
 

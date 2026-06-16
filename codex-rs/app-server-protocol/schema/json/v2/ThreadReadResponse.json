@@ -1148,6 +1148,80 @@
       ],
       "type": "string"
     },
+    "ThreadGoal": {
+      "properties": {
+        "createdAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "objective": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/ThreadGoalStatus"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "timeUsedSeconds": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "tokenBudget": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "tokensUsed": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "updatedAt": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "createdAt",
+        "objective",
+        "status",
+        "threadId",
+        "timeUsedSeconds",
+        "tokensUsed",
+        "updatedAt"
+      ],
+      "type": "object"
+    },
+    "ThreadGoalStatus": {
+      "enum": [
+        "active",
+        "paused",
+        "budgetLimited",
+        "complete"
+      ],
+      "type": "string"
+    },
+    "ThreadGoalUpdateAction": {
+      "enum": [
+        "created",
+        "updated",
+        "paused",
+        "resumed",
+        "budgetLimited",
+        "completed"
+      ],
+      "type": "string"
+    },
+    "ThreadGoalUpdateSource": {
+      "enum": [
+        "modelTool",
+        "client",
+        "system"
+      ],
+      "type": "string"
+    },
     "ThreadId": {
       "type": "string"
     },
@@ -1545,13 +1619,13 @@
               "title": "CommandWaitThreadItemType",
               "type": "string"
             },
-            "wallTimeSeconds": {
-              "format": "double",
-              "type": "number"
-            },
             "waitTimeoutMs": {
               "format": "int64",
               "type": "integer"
+            },
+            "wallTimeSeconds": {
+              "format": "double",
+              "type": "number"
             }
           },
           "required": [
@@ -1560,8 +1634,8 @@
             "id",
             "status",
             "type",
-            "wallTimeSeconds",
-            "waitTimeoutMs"
+            "waitTimeoutMs",
+            "wallTimeSeconds"
           ],
           "title": "CommandWaitThreadItem",
           "type": "object"
@@ -2963,25 +3037,6 @@
           "type": "object"
         }
       ]
-    },
-    "ThreadGoalUpdateAction": {
-      "enum": [
-        "created",
-        "updated",
-        "paused",
-        "resumed",
-        "budgetLimited",
-        "completed"
-      ],
-      "type": "string"
-    },
-    "ThreadGoalUpdateSource": {
-      "enum": [
-        "modelTool",
-        "client",
-        "system"
-      ],
-      "type": "string"
     }
   },
   "properties": {

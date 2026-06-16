@@ -4,4 +4,4 @@
 import type { ThreadGoalUpdateGoalStatus } from "./ThreadGoalUpdateGoalStatus";
 import type { ThreadId } from "./ThreadId";
 
-export type ThreadGoalUpdateGoal = { threadId: ThreadId, objective: string, status: ThreadGoalUpdateGoalStatus, tokenBudget?: number, tokensUsed: number, timeUsedSeconds: number, createdAt: number, updatedAt: number, };
+export type ThreadGoalUpdateGoal = { threadId: ThreadId, objective: string, status: ThreadGoalUpdateGoalStatus, tokenBudget?: bigint, tokensUsed: bigint, timeUsedSeconds: bigint, createdAt: bigint, updatedAt: bigint, };

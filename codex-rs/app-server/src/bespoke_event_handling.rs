@@ -1029,6 +1029,15 @@ pub(crate) async fn apply_bespoke_event_handling(
         msg @ (EventMsg::ItemStarted(_)
         | EventMsg::ResponseItemStarted(_)
         | EventMsg::ResponseItemCompleted(_)
+        | EventMsg::CommandWaitStarted(_)
+        | EventMsg::CommandWaitCompleted(_)
+        | EventMsg::CommandWriteStdinCompleted(_)
+        | EventMsg::CommandExecutionNotificationCompleted(_)
+        | EventMsg::WorkflowRunProgressCompleted(_)
+        | EventMsg::EventCommandEventCompleted(_)
+        | EventMsg::EventDrivenToolCompleted(_)
+        | EventMsg::InterAgentCommunicationCompleted(_)
+        | EventMsg::ThreadGoalUpdateCompleted(_)
         | EventMsg::PatchApplyUpdated(_)
         | EventMsg::TerminalInteraction(_)) => {
             let notification = item_event_to_server_notification(

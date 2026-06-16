@@ -15,9 +15,9 @@ import type { MessagePhase } from "./MessagePhase";
 import type { ReasoningItemContent } from "./ReasoningItemContent";
 import type { ReasoningItemReasoningSummary } from "./ReasoningItemReasoningSummary";
 import type { ThreadGoalUpdateEventAction } from "./ThreadGoalUpdateEventAction";
+import type { ThreadGoalUpdateEventSource } from "./ThreadGoalUpdateEventSource";
 import type { ThreadGoalUpdateGoal } from "./ThreadGoalUpdateGoal";
 import type { ThreadGoalUpdateGoalStatus } from "./ThreadGoalUpdateGoalStatus";
-import type { ThreadGoalUpdateEventSource } from "./ThreadGoalUpdateEventSource";
 import type { WebSearchAction } from "./WebSearchAction";
 import type { WorkflowRunProgressEvent } from "./WorkflowRunProgressEvent";
 

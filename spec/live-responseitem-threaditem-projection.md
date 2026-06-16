@@ -37,7 +37,7 @@ live/history 路径有两个相关缺口：
 
 本阶段采用分阶段迁移：
 
-- 第一阶段：新增 typed `ResponseItemCompleted` lifecycle 事件，app-server v2 对该事件统一复用 shared projector。没有 `TurnItem` 变体的 typed display completion 优先走 `ResponseItem` lifecycle；旧 `ItemStarted` / `ItemCompleted(TurnItem)` 仅保留为 legacy rollout / 旧 emit 点兼容适配，不再作为新增展示语义的扩展方向。
+- 第一阶段：新增 typed `ResponseItemCompleted` lifecycle 事件，app-server v2 对该事件统一复用 shared projector。该路径现在只保留为 legacy rollout/history 兼容和模型历史 fallback；没有 `TurnItem` 变体的 typed display completion 已迁到 dedicated `EventMsg` lifecycle。旧 `ItemStarted` / `ItemCompleted(TurnItem)` 仅保留为 legacy rollout / 旧 emit 点兼容适配，不再作为新增展示语义的扩展方向。
 - 第二阶段：补齐 typed started lifecycle，扩展 `response_item_projection` 覆盖现有 14 个 `TurnItem` variant 对应的 `ResponseItem` 表达，并逐个把 core emit 点从 `emit_turn_item_*` 迁到 `emit_response_item_*`。每个迁移都必须明确 provider/model-visible 处理由 request builder 决定，display/history 不解析 raw marker 或 assistant JSON。
 - 第三阶段：迁移 extension contributor、TTFM 和 stream finalization 的内部事实结构，删除 `parse_turn_item` 和 `TurnItem -> ThreadItem` app-server adapter；只保留读取旧 rollout 的兼容转换，直到旧数据兼容窗口结束。
 
@@ -54,9 +54,9 @@ core 的 `record_conversation_items` 只负责写入 in-memory history、persist
 
 业务入口不得为了“即时展示”直接 `send_event_raw(ItemCompleted(...))` 发 conversation display item。child completion 收到时只负责写入 mailbox、清理 direct-child outstanding 屏障并按 `trigger_turn` 唤醒 pending work；真正的 collab/child-completion 展示项在迁移期由 pending input 录入阶段生成 `ResponseItem::InterAgentCommunication`，再通过 `record_model_items_and_emit_display_events` 双写 model item 和 display event。后续新增 collab 展示语义应使用 dedicated `EventMsg` variant。这样 live app-server 不会同时收到旧 `ItemCompleted(TurnItem::CollabAgentMessage)` 和 typed 录入后的 completed display item。
 
-`CommandWait`、`CommandWriteStdin`、`CommandExecutionNotification` 这类工具交互历史项在迁移期仍保留 typed `ResponseItem`，但没有对应的 legacy `TurnItem` 变体。live completed 路径不能为了展示继续扩展 `TurnItem`，而应在 core 发出 display-capable `EventMsg`；当前兼容路径使用 `EventMsg::ResponseItemStarted/Completed(ResponseItem)`，由 app-server v2 的 `event_item_projection` 投影为 typed `ThreadItem`。root-worker 只消费 typed `ThreadItem::CommandWait` 等 payload，不从 raw marker、assistant text 或 legacy envelope 反解。
+`CommandWait`、`CommandWriteStdin`、`CommandExecutionNotification` 这类工具交互历史项在模型上下文和旧 history replay 中仍保留 typed `ResponseItem`，但没有对应的 legacy `TurnItem` 变体。live completed 路径不能为了展示继续扩展 `TurnItem`，而应在 core 发出 display-capable `EventMsg`；当前主路径使用 `CommandWaitStarted/Completed`、`CommandWriteStdinCompleted` 和 `CommandExecutionNotificationCompleted`，由 app-server v2 的 `event_item_projection` 投影为 typed `ThreadItem`。root-worker 只消费 typed `ThreadItem::CommandWait` 等 payload，不从 raw marker、assistant text 或 legacy envelope 反解。
 
-`record_model_items_and_emit_display_events` 在写 in-memory history 和发 live completed 前，会为缺失 id 的 structured model/display item 生成同一个本地 display id，live root-worker 不会在同一 turn 多个 command wait/stdin 项之间互相覆盖。旧 id-less lifecycle event 在 history replay 中仍按兼容规则跳过，避免重启回放时把同一 command wait/stdin 双写；带 id 的 `ResponseItemStarted/Completed` 会通过 `EventMsg -> ThreadItem` adapter replay。
+`record_model_items_and_emit_display_events` 在写 in-memory history 和发 live completed 前，会为缺失 id 的 structured model/display item 生成同一个本地 display id，live root-worker 不会在同一 turn 多个 command wait/stdin 项之间互相覆盖。旧 id-less lifecycle event 在 history replay 中仍按兼容规则跳过，避免重启回放时把同一 command wait/stdin 双写；带 id 的 dedicated display `EventMsg` 会通过 `EventMsg -> ThreadItem` adapter replay，`ResponseItemStarted/Completed` 只作为旧 rollout 兼容。
 
 `RawResponseItem` 协议分支暂时保留为旧 rollout / 旧 client 兼容输入，但新的 runtime 不再通过 `record_conversation_items` 广播 raw response item。provider 请求侧仍可在最后一步把 typed `ResponseItem` formatting 成 provider-visible marker message；该 formatting 产物不得写回 history、rollout 或 display。
 
@@ -91,12 +91,12 @@ legacy raw inter-agent 文本不作为结构化展示来源：
 
 - `EventMsg::ItemCompleted(TurnItem::AgentMessage)` 会进入 active/history builder 的 turn items。
 - `EventMsg::ItemCompleted(TurnItem::AgentMessage)` 后接同 id/text 的 `RawResponseItem(Message)` 不重复展示。
-- `EventMsg::ResponseItemCompleted(ResponseItem::CommandWait)` 会通过 shared projector 映射为 v2 `ItemCompletedNotification`，payload item 是 `ThreadItem::CommandWait`，并保留 command id、状态、通知、exit code、耗时和创建时间。
+- `EventMsg::CommandWaitCompleted` 会通过 shared projector 映射为 v2 `ItemCompletedNotification`，payload item 是 `ThreadItem::CommandWait`，并保留 command id、状态、通知、exit code、耗时和创建时间。
 - `ThreadHistoryBuilder` 回放 `ResponseItem(CommandWait { id: None })` 后再回放 `ResponseItemCompleted(CommandWait { id: None })` 时只保留一个 `ThreadItem::CommandWait`，证明 completed event 不会在 cold/history rebuild 中制造重复展示。
 
 新增 core 单元测试覆盖：
 
-- `record_model_items_and_emit_display_events` 对缺失 id 的 `ResponseItem::CommandWait` 生成 display id 并发出 `EventMsg::ResponseItemCompleted`，证明迁移期 structured item 不再因无法转换为 legacy `TurnItem` 被 live completed 路径静默丢弃。
+- `record_model_items_and_emit_display_events` 对缺失 id 的 `ResponseItem::CommandWait` 生成 display id 并发出 `EventMsg::CommandWaitCompleted`，证明 structured model item 不再因无法转换为 legacy `TurnItem` 被 live completed 路径静默丢弃。
 - `inter_agent_communication(ChildCompletion)` 收到 mailbox 消息时不直接发 live collab `ItemCompleted`；同一个 child completion 经 pending input typed 录入后只发出一条 collab completed item，防止 live app-server/root-worker 看到两条 child completion 展示项。
 
 复用已有 `event_command_call_notifications_emit_started_then_completed` 和 hook prompt 测试覆盖 function call 与 hook prompt 的 live helper。

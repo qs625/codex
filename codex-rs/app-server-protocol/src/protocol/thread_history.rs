@@ -264,6 +264,17 @@ impl ThreadHistoryBuilder {
                 self.handle_projected_event_item(event);
             }
             EventMsg::ResponseItemStarted(_) | EventMsg::ResponseItemCompleted(_) => {}
+            EventMsg::CommandWaitStarted(_)
+            | EventMsg::CommandWaitCompleted(_)
+            | EventMsg::CommandWriteStdinCompleted(_)
+            | EventMsg::CommandExecutionNotificationCompleted(_)
+            | EventMsg::WorkflowRunProgressCompleted(_)
+            | EventMsg::EventCommandEventCompleted(_)
+            | EventMsg::EventDrivenToolCompleted(_)
+            | EventMsg::InterAgentCommunicationCompleted(_)
+            | EventMsg::ThreadGoalUpdateCompleted(_) => {
+                self.handle_projected_event_item(event);
+            }
             EventMsg::RawResponseItem(payload) => self.handle_response_item(&payload.item),
             EventMsg::HookStarted(_) | EventMsg::HookCompleted(_) => {}
             EventMsg::Error(payload) => self.handle_error(payload),
@@ -363,7 +374,9 @@ impl ThreadHistoryBuilder {
                 if let Some(projected) =
                     project_structured_response_item(item, || fallback_id.clone())
                 {
-                    self.ensure_turn().items.push(projected);
+                    self.ensure_turn()
+                        .legacy_structured_response_items
+                        .push(projected);
                     return;
                 }
 
@@ -716,7 +729,7 @@ impl ThreadHistoryBuilder {
         match projected {
             ProjectedEventItem::Started { turn_id, item, .. }
             | ProjectedEventItem::Completed { turn_id, item, .. } => {
-                self.upsert_item_in_turn_id_or_create(&turn_id, item);
+                self.upsert_projected_event_item_in_turn_id_or_create(&turn_id, item);
             }
         }
     }
@@ -1459,7 +1472,8 @@ impl ThreadHistoryBuilder {
     fn finish_current_turn(&mut self) {
         self.pending_agent_message_responses.clear();
         self.pending_legacy_agent_messages.clear();
-        if let Some(turn) = self.current_turn.take() {
+        if let Some(mut turn) = self.current_turn.take() {
+            turn.items.append(&mut turn.legacy_structured_response_items);
             if turn.items.is_empty() && !turn.opened_explicitly && !turn.saw_compaction {
                 return;
             }
@@ -1485,6 +1499,7 @@ impl ThreadHistoryBuilder {
             duration_ms: None,
             opened_explicitly: false,
             saw_compaction: false,
+            legacy_structured_response_items: Vec::new(),
             rollout_start_index: self.current_rollout_index,
         }
     }
@@ -1544,6 +1559,36 @@ impl ThreadHistoryBuilder {
 
         self.finish_current_turn();
         let mut turn = self.new_turn(Some(turn_id.to_string()));
+        upsert_turn_item(&mut turn.items, item);
+        self.current_turn = Some(turn);
+    }
+
+    fn upsert_projected_event_item_in_turn_id_or_create(&mut self, turn_id: &str, item: ThreadItem) {
+        if let Some(turn) = self.current_turn.as_mut()
+            && turn.id == turn_id
+        {
+            suppress_legacy_structured_response_item(&mut turn.legacy_structured_response_items, &item);
+            upsert_turn_item(&mut turn.items, item);
+            return;
+        }
+
+        if let Some(turn) = self.turns.iter_mut().find(|turn| turn.id == turn_id) {
+            upsert_turn_item(&mut turn.items, item);
+            return;
+        }
+
+        if let Some(turn) = self.current_turn.as_mut()
+            && turn.opened_explicitly
+            && matches!(turn.status, TurnStatus::InProgress)
+        {
+            suppress_legacy_structured_response_item(&mut turn.legacy_structured_response_items, &item);
+            upsert_turn_item(&mut turn.items, item);
+            return;
+        }
+
+        self.finish_current_turn();
+        let mut turn = self.new_turn(Some(turn_id.to_string()));
+        suppress_legacy_structured_response_item(&mut turn.legacy_structured_response_items, &item);
         upsert_turn_item(&mut turn.items, item);
         self.current_turn = Some(turn);
     }
@@ -1838,6 +1883,294 @@ fn upsert_turn_item(items: &mut Vec<ThreadItem>, item: ThreadItem) {
     items.push(item);
 }
 
+fn suppress_legacy_structured_response_item(items: &mut Vec<ThreadItem>, item: &ThreadItem) {
+    if let Some(index) = items
+        .iter()
+        .position(|legacy_item| legacy_item.id() == item.id())
+    {
+        items.remove(index);
+        return;
+    }
+
+    if let Some(index) = items
+        .iter()
+        .position(|legacy_item| same_structured_display_item(legacy_item, item))
+    {
+        items.remove(index);
+    }
+}
+
+fn same_structured_display_item(left: &ThreadItem, right: &ThreadItem) -> bool {
+    match (left, right) {
+        (
+            ThreadItem::CommandExecutionNotification {
+                command_item_id: left_command_item_id,
+                kind: left_kind,
+                message: left_message,
+                output: left_output,
+                exit_code: left_exit_code,
+                created_at_ms: left_created_at_ms,
+                ..
+            },
+            ThreadItem::CommandExecutionNotification {
+                command_item_id: right_command_item_id,
+                kind: right_kind,
+                message: right_message,
+                output: right_output,
+                exit_code: right_exit_code,
+                created_at_ms: right_created_at_ms,
+                ..
+            },
+        ) => {
+            left_command_item_id == right_command_item_id
+                && left_kind == right_kind
+                && left_message == right_message
+                && left_output == right_output
+                && left_exit_code == right_exit_code
+                && left_created_at_ms == right_created_at_ms
+        }
+        (
+            ThreadItem::CommandWait {
+                command_id: left_command_id,
+                status: left_status,
+                notification: left_notification,
+                exit_code: left_exit_code,
+                wall_time_seconds: left_wall_time_seconds,
+                wait_timeout_ms: left_wait_timeout_ms,
+                created_at_ms: left_created_at_ms,
+                ..
+            },
+            ThreadItem::CommandWait {
+                command_id: right_command_id,
+                status: right_status,
+                notification: right_notification,
+                exit_code: right_exit_code,
+                wall_time_seconds: right_wall_time_seconds,
+                wait_timeout_ms: right_wait_timeout_ms,
+                created_at_ms: right_created_at_ms,
+                ..
+            },
+        ) => {
+            left_command_id == right_command_id
+                && left_status == right_status
+                && left_notification == right_notification
+                && left_exit_code == right_exit_code
+                && left_wall_time_seconds == right_wall_time_seconds
+                && left_wait_timeout_ms == right_wait_timeout_ms
+                && left_created_at_ms == right_created_at_ms
+        }
+        (
+            ThreadItem::CommandWriteStdin {
+                command_id: left_command_id,
+                bytes_written: left_bytes_written,
+                contains_newline: left_contains_newline,
+                created_at_ms: left_created_at_ms,
+                ..
+            },
+            ThreadItem::CommandWriteStdin {
+                command_id: right_command_id,
+                bytes_written: right_bytes_written,
+                contains_newline: right_contains_newline,
+                created_at_ms: right_created_at_ms,
+                ..
+            },
+        ) => {
+            left_command_id == right_command_id
+                && left_bytes_written == right_bytes_written
+                && left_contains_newline == right_contains_newline
+                && left_created_at_ms == right_created_at_ms
+        }
+        (
+            ThreadItem::EventDrivenTool {
+                tool: left_tool,
+                title: left_title,
+                text: left_text,
+                ..
+            },
+            ThreadItem::EventDrivenTool {
+                tool: right_tool,
+                title: right_title,
+                text: right_text,
+                ..
+            },
+        ) => left_tool == right_tool && left_title == right_title && left_text == right_text,
+        (
+            ThreadItem::EventCommandEvent {
+                subscription_id: left_subscription_id,
+                kind: left_kind,
+                label: left_label,
+                command: left_command,
+                cwd: left_cwd,
+                line: left_line,
+                sequence: left_sequence,
+                exit_code: left_exit_code,
+                signal: left_signal,
+                message: left_message,
+                truncated: left_truncated,
+                created_at: left_created_at,
+                ..
+            },
+            ThreadItem::EventCommandEvent {
+                subscription_id: right_subscription_id,
+                kind: right_kind,
+                label: right_label,
+                command: right_command,
+                cwd: right_cwd,
+                line: right_line,
+                sequence: right_sequence,
+                exit_code: right_exit_code,
+                signal: right_signal,
+                message: right_message,
+                truncated: right_truncated,
+                created_at: right_created_at,
+                ..
+            },
+        ) => {
+            left_subscription_id == right_subscription_id
+                && left_kind == right_kind
+                && left_label == right_label
+                && left_command == right_command
+                && left_cwd == right_cwd
+                && left_line == right_line
+                && left_sequence == right_sequence
+                && left_exit_code == right_exit_code
+                && left_signal == right_signal
+                && left_message == right_message
+                && left_truncated == right_truncated
+                && left_created_at == right_created_at
+        }
+        (
+            ThreadItem::WorkflowRunProgress {
+                event: left_event, ..
+            },
+            ThreadItem::WorkflowRunProgress {
+                event: right_event, ..
+            },
+        ) => left_event == right_event,
+        (
+            ThreadItem::ThreadGoalUpdate {
+                goal: left_goal,
+                action: left_action,
+                source: left_source,
+                previous_status: left_previous_status,
+                ..
+            },
+            ThreadItem::ThreadGoalUpdate {
+                goal: right_goal,
+                action: right_action,
+                source: right_source,
+                previous_status: right_previous_status,
+                ..
+            },
+        ) => {
+            left_goal == right_goal
+                && left_action == right_action
+                && left_source == right_source
+                && left_previous_status == right_previous_status
+        }
+        (
+            ThreadItem::CollabAgentMessage {
+                operation: left_operation,
+                sender_thread_id: left_sender_thread_id,
+                sender_path: left_sender_path,
+                recipient_thread_id: left_recipient_thread_id,
+                recipient_path: left_recipient_path,
+                other_recipient_paths: left_other_recipient_paths,
+                content: left_content,
+                trigger_turn: left_trigger_turn,
+                ..
+            },
+            ThreadItem::CollabAgentMessage {
+                operation: right_operation,
+                sender_thread_id: right_sender_thread_id,
+                sender_path: right_sender_path,
+                recipient_thread_id: right_recipient_thread_id,
+                recipient_path: right_recipient_path,
+                other_recipient_paths: right_other_recipient_paths,
+                content: right_content,
+                trigger_turn: right_trigger_turn,
+                ..
+            },
+        ) => {
+            left_operation == right_operation
+                && left_sender_thread_id == right_sender_thread_id
+                && left_sender_path == right_sender_path
+                && left_recipient_thread_id == right_recipient_thread_id
+                && left_recipient_path == right_recipient_path
+                && left_other_recipient_paths == right_other_recipient_paths
+                && left_content == right_content
+                && left_trigger_turn == right_trigger_turn
+        }
+        (
+            ThreadItem::CollabAgentToolCall {
+                tool: left_tool,
+                status: left_status,
+                sender_thread_id: left_sender_thread_id,
+                sender_path: left_sender_path,
+                receiver_thread_ids: left_receiver_thread_ids,
+                receiver_paths: left_receiver_paths,
+                timeout_ms: left_timeout_ms,
+                prompt: left_prompt,
+                model: left_model,
+                reasoning_effort: left_reasoning_effort,
+                agents_states: left_agents_states,
+                ..
+            },
+            ThreadItem::CollabAgentToolCall {
+                tool: right_tool,
+                status: right_status,
+                sender_thread_id: right_sender_thread_id,
+                sender_path: right_sender_path,
+                receiver_thread_ids: right_receiver_thread_ids,
+                receiver_paths: right_receiver_paths,
+                timeout_ms: right_timeout_ms,
+                prompt: right_prompt,
+                model: right_model,
+                reasoning_effort: right_reasoning_effort,
+                agents_states: right_agents_states,
+                ..
+            },
+        ) => {
+            left_tool == right_tool
+                && left_status == right_status
+                && left_sender_thread_id == right_sender_thread_id
+                && left_sender_path == right_sender_path
+                && left_receiver_thread_ids == right_receiver_thread_ids
+                && left_receiver_paths == right_receiver_paths
+                && left_timeout_ms == right_timeout_ms
+                && left_prompt == right_prompt
+                && left_model == right_model
+                && left_reasoning_effort == right_reasoning_effort
+                && left_agents_states == right_agents_states
+        }
+        (
+            ThreadItem::CollabAgentStatusUpdate {
+                sender_thread_id: left_sender_thread_id,
+                sender_path: left_sender_path,
+                recipient_thread_id: left_recipient_thread_id,
+                recipient_path: left_recipient_path,
+                status: left_status,
+                ..
+            },
+            ThreadItem::CollabAgentStatusUpdate {
+                sender_thread_id: right_sender_thread_id,
+                sender_path: right_sender_path,
+                recipient_thread_id: right_recipient_thread_id,
+                recipient_path: right_recipient_path,
+                status: right_status,
+                ..
+            },
+        ) => {
+            left_sender_thread_id == right_sender_thread_id
+                && left_sender_path == right_sender_path
+                && left_recipient_thread_id == right_recipient_thread_id
+                && left_recipient_path == right_recipient_path
+                && left_status == right_status
+        }
+        _ => false,
+    }
+}
+
 fn upsert_event_driven_tool_call(items: &mut Vec<ThreadItem>, item: ThreadItem) {
     if let Some(existing_item) = items
         .iter_mut()
@@ -1871,6 +2204,7 @@ fn structured_response_item_id(item: &ResponseItem) -> Option<&str> {
 struct PendingTurn {
     id: String,
     items: Vec<ThreadItem>,
+    legacy_structured_response_items: Vec<ThreadItem>,
     error: Option<TurnError>,
     status: TurnStatus,
     started_at: Option<i64>,
@@ -4318,6 +4652,185 @@ mod tests {
                 wait_timeout_ms: 250,
                 created_at_ms: 1234,
             }]
+        );
+    }
+
+    #[test]
+    fn dedicated_display_event_suppresses_legacy_response_item_fallback() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::CommandWait {
+                id: None,
+                command_id: "cmd-1".into(),
+                status: codex_protocol::models::CommandWaitStatus::Completed,
+                notification: Some(codex_protocol::models::CommandWaitNotificationKind::Exit),
+                exit_code: Some(0),
+                wall_time_seconds: 1.25,
+                wait_timeout_ms: 250,
+                created_at_ms: 1234,
+            }),
+            RolloutItem::EventMsg(EventMsg::CommandWaitCompleted(
+                codex_protocol::protocol::CommandWaitDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "wait-1".into(),
+                    command_id: "cmd-1".into(),
+                    status: codex_protocol::models::CommandWaitStatus::Completed,
+                    notification: Some(codex_protocol::models::CommandWaitNotificationKind::Exit),
+                    exit_code: Some(0),
+                    wall_time_seconds: 1.25,
+                    wait_timeout_ms: 250,
+                    created_at_ms: 1234,
+                    lifecycle_at_ms: 5678,
+                },
+            )),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::CommandWait {
+                id: "wait-1".into(),
+                command_id: "cmd-1".into(),
+                status: crate::protocol::v2::CommandWaitStatus::Completed,
+                notification: Some(crate::protocol::v2::CommandWaitNotificationKind::Exit),
+                exit_code: Some(0),
+                wall_time_seconds: 1.25,
+                wait_timeout_ms: 250,
+                created_at_ms: 1234,
+            }]
+        );
+    }
+
+    #[test]
+    fn dedicated_display_event_only_suppresses_matching_legacy_fallback() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::CommandWait {
+                id: None,
+                command_id: "cmd-1".into(),
+                status: codex_protocol::models::CommandWaitStatus::Completed,
+                notification: Some(codex_protocol::models::CommandWaitNotificationKind::Exit),
+                exit_code: Some(0),
+                wall_time_seconds: 1.25,
+                wait_timeout_ms: 250,
+                created_at_ms: 1234,
+            }),
+            RolloutItem::ResponseItem(ResponseItem::CommandWriteStdin {
+                id: None,
+                command_id: "cmd-2".into(),
+                bytes_written: 4,
+                contains_newline: true,
+                created_at_ms: 2234,
+            }),
+            RolloutItem::EventMsg(EventMsg::CommandWaitCompleted(
+                codex_protocol::protocol::CommandWaitDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "wait-1".into(),
+                    command_id: "cmd-1".into(),
+                    status: codex_protocol::models::CommandWaitStatus::Completed,
+                    notification: Some(codex_protocol::models::CommandWaitNotificationKind::Exit),
+                    exit_code: Some(0),
+                    wall_time_seconds: 1.25,
+                    wait_timeout_ms: 250,
+                    created_at_ms: 1234,
+                    lifecycle_at_ms: 5678,
+                },
+            )),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![
+                ThreadItem::CommandWait {
+                    id: "wait-1".into(),
+                    command_id: "cmd-1".into(),
+                    status: crate::protocol::v2::CommandWaitStatus::Completed,
+                    notification: Some(crate::protocol::v2::CommandWaitNotificationKind::Exit),
+                    exit_code: Some(0),
+                    wall_time_seconds: 1.25,
+                    wait_timeout_ms: 250,
+                    created_at_ms: 1234,
+                },
+                ThreadItem::CommandWriteStdin {
+                    id: "item-2".into(),
+                    command_id: "cmd-2".into(),
+                    bytes_written: 4,
+                    contains_newline: true,
+                    created_at_ms: 2234,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn dedicated_display_event_suppresses_only_one_semantic_legacy_fallback() {
+        let trigger = EventDrivenToolTrigger {
+            tool: "fs_subscribe".into(),
+            title: "File watch triggered".into(),
+            text: "build.log changed".into(),
+        };
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::EventDrivenTool {
+                id: None,
+                trigger: trigger.clone(),
+            }),
+            RolloutItem::ResponseItem(ResponseItem::EventDrivenTool {
+                id: None,
+                trigger: trigger.clone(),
+            }),
+            RolloutItem::EventMsg(EventMsg::EventDrivenToolCompleted(
+                codex_protocol::protocol::EventDrivenToolDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "trigger-dedicated".into(),
+                    trigger,
+                    completed_at_ms: 5678,
+                },
+            )),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![
+                ThreadItem::EventDrivenTool {
+                    id: "trigger-dedicated".into(),
+                    tool: "fs_subscribe".into(),
+                    title: "File watch triggered".into(),
+                    text: "build.log changed".into(),
+                },
+                ThreadItem::EventDrivenTool {
+                    id: "item-2".into(),
+                    tool: "fs_subscribe".into(),
+                    title: "File watch triggered".into(),
+                    text: "build.log changed".into(),
+                },
+            ]
         );
     }
 

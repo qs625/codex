@@ -77,7 +77,7 @@
         },
         "globScanMaxDepth": {
           "format": "uint",
-          "minimum": 1,
+          "minimum": 1.0,
           "type": [
             "integer",
             "null"
@@ -3502,6 +3502,25 @@
       ],
       "type": "string"
     },
+    "ThreadGoalUpdateAction": {
+      "enum": [
+        "created",
+        "updated",
+        "paused",
+        "resumed",
+        "budgetLimited",
+        "completed"
+      ],
+      "type": "string"
+    },
+    "ThreadGoalUpdateSource": {
+      "enum": [
+        "modelTool",
+        "client",
+        "system"
+      ],
+      "type": "string"
+    },
     "ThreadGoalUpdatedNotification": {
       "properties": {
         "goal": {
@@ -3920,13 +3939,13 @@
               "title": "CommandWaitThreadItemType",
               "type": "string"
             },
-            "wallTimeSeconds": {
-              "format": "double",
-              "type": "number"
-            },
             "waitTimeoutMs": {
               "format": "int64",
               "type": "integer"
+            },
+            "wallTimeSeconds": {
+              "format": "double",
+              "type": "number"
             }
           },
           "required": [
@@ -3935,8 +3954,8 @@
             "id",
             "status",
             "type",
-            "wallTimeSeconds",
-            "waitTimeoutMs"
+            "waitTimeoutMs",
+            "wallTimeSeconds"
           ],
           "title": "CommandWaitThreadItem",
           "type": "object"
@@ -5942,25 +5961,6 @@
         "whenToUse"
       ],
       "type": "object"
-    },
-    "ThreadGoalUpdateAction": {
-      "enum": [
-        "created",
-        "updated",
-        "paused",
-        "resumed",
-        "budgetLimited",
-        "completed"
-      ],
-      "type": "string"
-    },
-    "ThreadGoalUpdateSource": {
-      "enum": [
-        "modelTool",
-        "client",
-        "system"
-      ],
-      "type": "string"
     }
   },
   "description": "Notification sent from the server to the client.",

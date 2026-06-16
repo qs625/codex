@@ -839,6 +839,48 @@ mod tests {
     }
 
     #[test]
+    fn command_wait_completed_display_event_maps_to_thread_item() {
+        let event = codex_protocol::protocol::CommandWaitDisplayEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-ignored".to_string(),
+            id: "wait-1".to_string(),
+            command_id: "cmd-1".to_string(),
+            status: codex_protocol::models::CommandWaitStatus::Completed,
+            notification: Some(codex_protocol::models::CommandWaitNotificationKind::Exit),
+            exit_code: Some(0),
+            wall_time_seconds: 1.25,
+            wait_timeout_ms: 250,
+            created_at_ms: 1234,
+            lifecycle_at_ms: 789,
+        };
+
+        let notification = item_event_to_server_notification(
+            EventMsg::CommandWaitCompleted(event.clone()),
+            "thread-4",
+            "turn-4",
+        );
+
+        assert_item_completed_server_notification(
+            notification,
+            ItemCompletedNotification {
+                thread_id: "thread-4".to_string(),
+                turn_id: "turn-4".to_string(),
+                completed_at_ms: event.lifecycle_at_ms,
+                item: ThreadItem::CommandWait {
+                    id: "wait-1".to_string(),
+                    command_id: "cmd-1".to_string(),
+                    status: crate::protocol::v2::CommandWaitStatus::Completed,
+                    notification: Some(crate::protocol::v2::CommandWaitNotificationKind::Exit),
+                    exit_code: Some(0),
+                    wall_time_seconds: 1.25,
+                    wait_timeout_ms: 250,
+                    created_at_ms: 1234,
+                },
+            },
+        );
+    }
+
+    #[test]
     fn item_completed_preserves_context_compaction_replacement_history() {
         let replacement_history = vec![ResponseItem::Message {
             id: None,

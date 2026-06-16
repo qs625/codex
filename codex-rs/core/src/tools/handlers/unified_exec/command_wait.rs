@@ -83,7 +83,7 @@ impl ToolExecutor<ToolInvocation> for CommandWaitHandler {
             created_at_ms,
         });
         session
-            .emit_response_item_started(turn.as_ref(), started_item)
+            .emit_model_item_started_display_event(turn.as_ref(), &started_item)
             .await;
 
         let output = session

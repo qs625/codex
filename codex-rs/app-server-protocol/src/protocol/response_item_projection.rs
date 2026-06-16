@@ -125,7 +125,9 @@ where
     }
 }
 
-fn thread_goal_from_update_goal(goal: &ThreadGoalUpdateGoal) -> crate::protocol::v2::ThreadGoal {
+pub(crate) fn thread_goal_from_update_goal(
+    goal: &ThreadGoalUpdateGoal,
+) -> crate::protocol::v2::ThreadGoal {
     crate::protocol::v2::ThreadGoal {
         thread_id: goal.thread_id.to_string(),
         objective: goal.objective.clone(),
@@ -138,7 +140,7 @@ fn thread_goal_from_update_goal(goal: &ThreadGoalUpdateGoal) -> crate::protocol:
     }
 }
 
-fn thread_goal_status_from_update_status(
+pub(crate) fn thread_goal_status_from_update_status(
     status: ThreadGoalUpdateGoalStatus,
 ) -> crate::protocol::v2::ThreadGoalStatus {
     match status {

@@ -116,12 +116,20 @@ use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ItemStartedEvent;
+use codex_protocol::protocol::CommandExecutionNotificationDisplayEvent;
+use codex_protocol::protocol::CommandWaitDisplayEvent;
+use codex_protocol::protocol::CommandWriteStdinDisplayEvent;
+use codex_protocol::protocol::EventCommandDisplayEvent;
+use codex_protocol::protocol::EventDrivenToolDisplayEvent;
+use codex_protocol::protocol::InterAgentCommunicationDisplayEvent;
 use codex_protocol::protocol::ResponseItemCompletedEvent;
 use codex_protocol::protocol::ResponseItemStartedEvent;
 use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
+use codex_protocol::protocol::ThreadGoalUpdateDisplayEvent;
+use codex_protocol::protocol::WorkflowRunProgressDisplayEvent;
 use codex_protocol::protocol::ThreadContextUsage;
 use codex_protocol::protocol::ThreadContextUsageUpdatedEvent;
 use codex_protocol::protocol::ThreadSource;
@@ -1994,38 +2002,27 @@ impl Session {
         .await;
     }
 
-    pub(crate) async fn emit_response_item_completed(
+    pub(crate) async fn emit_model_item_started_display_event(
         &self,
         turn_context: &TurnContext,
-        item: ResponseItem,
+        item: &ResponseItem,
     ) {
-        self.send_event(
-            turn_context,
-            EventMsg::ResponseItemCompleted(ResponseItemCompletedEvent {
+        let now = now_unix_timestamp_ms();
+        let event = match started_display_event_from_model_item(
+            self.conversation_id,
+            turn_context.sub_id.clone(),
+            item,
+            now,
+        ) {
+            Some(event) => event,
+            None => EventMsg::ResponseItemStarted(ResponseItemStartedEvent {
                 thread_id: self.conversation_id,
                 turn_id: turn_context.sub_id.clone(),
-                item,
-                completed_at_ms: now_unix_timestamp_ms(),
+                item: item.clone(),
+                started_at_ms: now,
             }),
-        )
-        .await;
-    }
-
-    pub(crate) async fn emit_response_item_started(
-        &self,
-        turn_context: &TurnContext,
-        item: ResponseItem,
-    ) {
-        self.send_event(
-            turn_context,
-            EventMsg::ResponseItemStarted(ResponseItemStartedEvent {
-                thread_id: self.conversation_id,
-                turn_id: turn_context.sub_id.clone(),
-                item,
-                started_at_ms: now_unix_timestamp_ms(),
-            }),
-        )
-        .await;
+        };
+        self.send_event(turn_context, event).await;
     }
 
     /// Adds an execpolicy amendment to both the in-memory and on-disk policies so future
@@ -2913,16 +2910,32 @@ impl Session {
                 continue;
             }
 
-            if matches!(item, ResponseItem::InterAgentCommunication { .. }) {
-                self.emit_response_item_completed(turn_context, item.clone())
-                    .await;
-            } else if let Some(turn_item) = parse_turn_item(item) {
-                self.emit_turn_item_completed(turn_context, turn_item).await;
-            } else {
-                self.emit_response_item_completed(turn_context, item.clone())
-                    .await;
-            }
+            self.emit_completed_model_item_display_event(turn_context, item)
+                .await;
         }
+    }
+
+    async fn emit_completed_model_item_display_event(
+        &self,
+        turn_context: &TurnContext,
+        item: &ResponseItem,
+    ) {
+        let now = now_unix_timestamp_ms();
+        let event = match completed_display_event_from_model_item(
+            self.conversation_id,
+            turn_context.sub_id.clone(),
+            item,
+            now,
+        ) {
+            Some(event) => event,
+            None => EventMsg::ResponseItemCompleted(ResponseItemCompletedEvent {
+                thread_id: self.conversation_id,
+                turn_id: turn_context.sub_id.clone(),
+                item: item.clone(),
+                completed_at_ms: now,
+            }),
+        };
+        self.send_event(turn_context, event).await;
     }
 
     #[expect(
@@ -3830,6 +3843,178 @@ fn is_structured_display_response_item(item: &ResponseItem) -> bool {
                 ..
             }
     )
+}
+
+fn started_display_event_from_model_item(
+    thread_id: codex_protocol::ThreadId,
+    turn_id: String,
+    item: &ResponseItem,
+    started_at_ms: i64,
+) -> Option<EventMsg> {
+    match item {
+        ResponseItem::CommandWait {
+            id: Some(id),
+            command_id,
+            status,
+            notification,
+            exit_code,
+            wall_time_seconds,
+            wait_timeout_ms,
+            created_at_ms,
+        } => Some(EventMsg::CommandWaitStarted(CommandWaitDisplayEvent {
+            thread_id,
+            turn_id,
+            id: id.clone(),
+            command_id: command_id.clone(),
+            status: *status,
+            notification: *notification,
+            exit_code: *exit_code,
+            wall_time_seconds: *wall_time_seconds,
+            wait_timeout_ms: *wait_timeout_ms,
+            created_at_ms: *created_at_ms,
+            lifecycle_at_ms: started_at_ms,
+        })),
+        _ => None,
+    }
+}
+
+fn completed_display_event_from_model_item(
+    thread_id: codex_protocol::ThreadId,
+    turn_id: String,
+    item: &ResponseItem,
+    completed_at_ms: i64,
+) -> Option<EventMsg> {
+    match item {
+        ResponseItem::CommandWait {
+            id: Some(id),
+            command_id,
+            status,
+            notification,
+            exit_code,
+            wall_time_seconds,
+            wait_timeout_ms,
+            created_at_ms,
+        } => Some(EventMsg::CommandWaitCompleted(CommandWaitDisplayEvent {
+            thread_id,
+            turn_id,
+            id: id.clone(),
+            command_id: command_id.clone(),
+            status: *status,
+            notification: *notification,
+            exit_code: *exit_code,
+            wall_time_seconds: *wall_time_seconds,
+            wait_timeout_ms: *wait_timeout_ms,
+            created_at_ms: *created_at_ms,
+            lifecycle_at_ms: completed_at_ms,
+        })),
+        ResponseItem::CommandWriteStdin {
+            id: Some(id),
+            command_id,
+            bytes_written,
+            contains_newline,
+            created_at_ms,
+        } => Some(EventMsg::CommandWriteStdinCompleted(
+            CommandWriteStdinDisplayEvent {
+                thread_id,
+                turn_id,
+                id: id.clone(),
+                command_id: command_id.clone(),
+                bytes_written: *bytes_written,
+                contains_newline: *contains_newline,
+                created_at_ms: *created_at_ms,
+                completed_at_ms,
+            },
+        )),
+        ResponseItem::CommandExecutionNotification {
+            id: Some(id),
+            command_item_id,
+            kind,
+            message,
+            output,
+            exit_code,
+            created_at_ms,
+        } => Some(EventMsg::CommandExecutionNotificationCompleted(
+            CommandExecutionNotificationDisplayEvent {
+                thread_id,
+                turn_id,
+                id: id.clone(),
+                command_item_id: command_item_id.clone(),
+                kind: *kind,
+                message: message.clone(),
+                output: output.clone(),
+                exit_code: *exit_code,
+                created_at_ms: *created_at_ms,
+                completed_at_ms,
+            },
+        )),
+        ResponseItem::WorkflowRunProgress {
+            id: Some(id),
+            event,
+        } => Some(EventMsg::WorkflowRunProgressCompleted(
+            WorkflowRunProgressDisplayEvent {
+                thread_id,
+                turn_id,
+                id: id.clone(),
+                event: event.clone(),
+                completed_at_ms,
+            },
+        )),
+        ResponseItem::EventCommandEvent {
+            id: Some(id),
+            event,
+        } => Some(EventMsg::EventCommandEventCompleted(
+            EventCommandDisplayEvent {
+                thread_id,
+                turn_id,
+                id: id.clone(),
+                event: event.clone(),
+                completed_at_ms,
+            },
+        )),
+        ResponseItem::EventDrivenTool {
+            id: Some(id),
+            trigger,
+        } => Some(EventMsg::EventDrivenToolCompleted(
+            EventDrivenToolDisplayEvent {
+                thread_id,
+                turn_id,
+                id: id.clone(),
+                trigger: trigger.clone(),
+                completed_at_ms,
+            },
+        )),
+        ResponseItem::ThreadGoalUpdate {
+            id: Some(id),
+            goal,
+            action,
+            source,
+            previous_status,
+        } => Some(EventMsg::ThreadGoalUpdateCompleted(
+            ThreadGoalUpdateDisplayEvent {
+                thread_id,
+                turn_id,
+                id: id.clone(),
+                goal: goal.clone(),
+                action: *action,
+                source: *source,
+                previous_status: *previous_status,
+                completed_at_ms,
+            },
+        )),
+        ResponseItem::InterAgentCommunication {
+            id: Some(id),
+            communication,
+        } => Some(EventMsg::InterAgentCommunicationCompleted(
+            InterAgentCommunicationDisplayEvent {
+                thread_id,
+                turn_id,
+                id: id.clone(),
+                communication: communication.clone(),
+                completed_at_ms,
+            },
+        )),
+        _ => None,
+    }
 }
 
 pub(crate) fn emit_subagent_session_started(

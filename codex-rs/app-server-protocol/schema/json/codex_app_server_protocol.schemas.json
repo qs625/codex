@@ -5845,7 +5845,7 @@
           },
           "globScanMaxDepth": {
             "format": "uint",
-            "minimum": 1,
+            "minimum": 1.0,
             "type": [
               "integer",
               "null"
@@ -12249,7 +12249,7 @@
               },
               "globScanMaxDepth": {
                 "format": "uint",
-                "minimum": 1,
+                "minimum": 1.0,
                 "type": [
                   "integer",
                   "null"
@@ -14167,6 +14167,7 @@
       "ResponseItem": {
         "oneOf": [
           {
+            "description": "Model-context record for a `command_wait` tool result.\n\nUI display must be emitted as a display-capable `EventMsg` and projected to `ThreadItem` at the app-server protocol edge.",
             "properties": {
               "command_id": {
                 "type": "string"
@@ -14209,13 +14210,13 @@
                 "title": "CommandWaitResponseItemType",
                 "type": "string"
               },
-              "wall_time_seconds": {
-                "format": "double",
-                "type": "number"
-              },
               "wait_timeout_ms": {
                 "format": "int64",
                 "type": "integer"
+              },
+              "wall_time_seconds": {
+                "format": "double",
+                "type": "number"
               }
             },
             "required": [
@@ -14223,13 +14224,14 @@
               "created_at_ms",
               "status",
               "type",
-              "wall_time_seconds",
-            "wait_timeout_ms"
+              "wait_timeout_ms",
+              "wall_time_seconds"
             ],
             "title": "CommandWaitResponseItem",
             "type": "object"
           },
           {
+            "description": "Model-context record for a `command_write_stdin` tool result.",
             "properties": {
               "bytes_written": {
                 "format": "uint",
@@ -14272,6 +14274,7 @@
             "type": "object"
           },
           {
+            "description": "Model-context record for a command output/exit notification.",
             "properties": {
               "command_item_id": {
                 "type": "string"
@@ -14325,6 +14328,7 @@
             "type": "object"
           },
           {
+            "description": "Model-context record for workflow progress that should also be visible in clients through the EventMsg display projection.",
             "properties": {
               "event": {
                 "$ref": "#/definitions/v2/WorkflowRunProgressEvent"
@@ -14352,6 +14356,7 @@
             "type": "object"
           },
           {
+            "description": "Model-context record for event-command output.",
             "properties": {
               "event": {
                 "$ref": "#/definitions/v2/EventCommandEvent"
@@ -14379,6 +14384,7 @@
             "type": "object"
           },
           {
+            "description": "Model-context record for an event-driven tool notification.",
             "properties": {
               "id": {
                 "type": [
@@ -14406,6 +14412,7 @@
             "type": "object"
           },
           {
+            "description": "Model-context record for inter-agent communication.",
             "properties": {
               "communication": {
                 "$ref": "#/definitions/v2/InterAgentCommunication"
@@ -14433,6 +14440,7 @@
             "type": "object"
           },
           {
+            "description": "Model-context record for a goal lifecycle update.",
             "properties": {
               "action": {
                 "$ref": "#/definitions/v2/ThreadGoalUpdateEventAction"
@@ -14448,7 +14456,14 @@
                 "writeOnly": true
               },
               "previous_status": {
-                "$ref": "#/definitions/v2/ThreadGoalUpdateGoalStatus"
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/v2/ThreadGoalUpdateGoalStatus"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "source": {
                 "$ref": "#/definitions/v2/ThreadGoalUpdateEventSource"
@@ -16629,6 +16644,99 @@
         ],
         "type": "string"
       },
+      "ThreadGoalUpdateAction": {
+        "enum": [
+          "created",
+          "updated",
+          "paused",
+          "resumed",
+          "budgetLimited",
+          "completed"
+        ],
+        "type": "string"
+      },
+      "ThreadGoalUpdateEventAction": {
+        "enum": [
+          "created",
+          "updated",
+          "paused",
+          "resumed",
+          "budget_limited",
+          "completed"
+        ],
+        "type": "string"
+      },
+      "ThreadGoalUpdateEventSource": {
+        "enum": [
+          "model_tool",
+          "client",
+          "system"
+        ],
+        "type": "string"
+      },
+      "ThreadGoalUpdateGoal": {
+        "properties": {
+          "createdAt": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "objective": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/definitions/v2/ThreadGoalUpdateGoalStatus"
+          },
+          "threadId": {
+            "$ref": "#/definitions/v2/ThreadId"
+          },
+          "timeUsedSeconds": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "tokenBudget": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "tokensUsed": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "updatedAt": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "createdAt",
+          "objective",
+          "status",
+          "threadId",
+          "timeUsedSeconds",
+          "tokensUsed",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "ThreadGoalUpdateGoalStatus": {
+        "enum": [
+          "active",
+          "paused",
+          "budgetLimited",
+          "complete"
+        ],
+        "type": "string"
+      },
+      "ThreadGoalUpdateSource": {
+        "enum": [
+          "modelTool",
+          "client",
+          "system"
+        ],
+        "type": "string"
+      },
       "ThreadGoalUpdatedNotification": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
@@ -17073,13 +17181,13 @@
                 "title": "CommandWaitThreadItemType",
                 "type": "string"
               },
-              "wallTimeSeconds": {
-                "format": "double",
-                "type": "number"
-              },
               "waitTimeoutMs": {
                 "format": "int64",
                 "type": "integer"
+              },
+              "wallTimeSeconds": {
+                "format": "double",
+                "type": "number"
               }
             },
             "required": [
@@ -17088,8 +17196,8 @@
               "id",
               "status",
               "type",
-              "wallTimeSeconds",
-            "waitTimeoutMs"
+              "waitTimeoutMs",
+              "wallTimeSeconds"
             ],
             "title": "CommandWaitThreadItem",
             "type": "object"
@@ -17508,6 +17616,48 @@
               "type"
             ],
             "title": "WorkflowRunProgressThreadItem",
+            "type": "object"
+          },
+          {
+            "properties": {
+              "action": {
+                "$ref": "#/definitions/v2/ThreadGoalUpdateAction"
+              },
+              "goal": {
+                "$ref": "#/definitions/v2/ThreadGoal"
+              },
+              "id": {
+                "type": "string"
+              },
+              "previousStatus": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/v2/ThreadGoalStatus"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "source": {
+                "$ref": "#/definitions/v2/ThreadGoalUpdateSource"
+              },
+              "type": {
+                "enum": [
+                  "threadGoalUpdate"
+                ],
+                "title": "ThreadGoalUpdateThreadItemType",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "goal",
+              "id",
+              "source",
+              "type"
+            ],
+            "title": "ThreadGoalUpdateThreadItem",
             "type": "object"
           },
           {
@@ -20285,13 +20435,13 @@
             },
             "type": "object"
           },
+          "instructions": {
+            "type": "string"
+          },
           "name": {
             "type": "string"
           },
           "path": {
-            "type": "string"
-          },
-          "instructions": {
             "type": "string"
           },
           "source": {
@@ -20676,96 +20826,6 @@
           "okOverridden"
         ],
         "type": "string"
-      },
-      "ThreadGoalUpdateEventAction": {
-        "enum": [
-          "created",
-          "updated",
-          "paused",
-          "resumed",
-          "budget_limited",
-          "completed"
-        ],
-        "type": "string"
-      },
-      "ThreadGoalUpdateEventSource": {
-        "enum": [
-          "model_tool",
-          "client",
-          "system"
-        ],
-        "type": "string"
-      },
-      "ThreadGoalUpdateAction": {
-        "enum": [
-          "created",
-          "updated",
-          "paused",
-          "resumed",
-          "budgetLimited",
-          "completed"
-        ],
-        "type": "string"
-      },
-      "ThreadGoalUpdateSource": {
-        "enum": [
-          "modelTool",
-          "client",
-          "system"
-        ],
-        "type": "string"
-      },
-      "ThreadGoalUpdateGoalStatus": {
-        "enum": [
-          "active",
-          "paused",
-          "budgetLimited",
-          "complete"
-        ],
-        "type": "string"
-      },
-      "ThreadGoalUpdateGoal": {
-        "properties": {
-          "createdAt": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "objective": {
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/definitions/v2/ThreadGoalUpdateGoalStatus"
-          },
-          "threadId": {
-            "$ref": "#/definitions/v2/ThreadId"
-          },
-          "timeUsedSeconds": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "tokenBudget": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "tokensUsed": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "updatedAt": {
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "createdAt",
-          "objective",
-          "status",
-          "threadId",
-          "timeUsedSeconds",
-          "tokensUsed",
-          "updatedAt"
-        ],
-        "type": "object"
       }
     }
   },

@@ -33,11 +33,19 @@ use crate::mcp::RequestId;
 use crate::memory_citation::MemoryCitation;
 use crate::models::ActivePermissionProfile;
 use crate::models::BaseInstructions;
+use crate::models::CommandExecutionNotificationKind;
+use crate::models::CommandWaitNotificationKind;
+use crate::models::CommandWaitStatus;
 use crate::models::ContentItem;
 use crate::models::MessagePhase;
 use crate::models::PermissionProfile;
 use crate::models::ResponseInputItem;
 use crate::models::ResponseItem;
+use crate::models::ThreadGoalUpdateEventAction;
+use crate::models::ThreadGoalUpdateEventSource;
+use crate::models::ThreadGoalUpdateGoal;
+use crate::models::ThreadGoalUpdateGoalStatus;
+use crate::models::WorkflowRunProgressEvent;
 use crate::models::SandboxEnforcement;
 use crate::models::WebSearchAction;
 use crate::num_format::format_with_separators;
@@ -1480,6 +1488,15 @@ pub enum EventMsg {
     ItemCompleted(ItemCompletedEvent),
     ResponseItemStarted(ResponseItemStartedEvent),
     ResponseItemCompleted(ResponseItemCompletedEvent),
+    CommandWaitStarted(CommandWaitDisplayEvent),
+    CommandWaitCompleted(CommandWaitDisplayEvent),
+    CommandWriteStdinCompleted(CommandWriteStdinDisplayEvent),
+    CommandExecutionNotificationCompleted(CommandExecutionNotificationDisplayEvent),
+    WorkflowRunProgressCompleted(WorkflowRunProgressDisplayEvent),
+    EventCommandEventCompleted(EventCommandDisplayEvent),
+    EventDrivenToolCompleted(EventDrivenToolDisplayEvent),
+    InterAgentCommunicationCompleted(InterAgentCommunicationDisplayEvent),
+    ThreadGoalUpdateCompleted(ThreadGoalUpdateDisplayEvent),
     HookStarted(HookStartedEvent),
     HookCompleted(HookCompletedEvent),
 
@@ -1876,6 +1893,97 @@ pub struct ResponseItemStartedEvent {
     pub turn_id: String,
     pub item: ResponseItem,
     pub started_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
+pub struct CommandWaitDisplayEvent {
+    pub thread_id: ThreadId,
+    pub turn_id: String,
+    pub id: String,
+    pub command_id: String,
+    pub status: CommandWaitStatus,
+    pub notification: Option<CommandWaitNotificationKind>,
+    pub exit_code: Option<i32>,
+    pub wall_time_seconds: f64,
+    pub wait_timeout_ms: i64,
+    pub created_at_ms: i64,
+    pub lifecycle_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
+pub struct CommandWriteStdinDisplayEvent {
+    pub thread_id: ThreadId,
+    pub turn_id: String,
+    pub id: String,
+    pub command_id: String,
+    pub bytes_written: usize,
+    pub contains_newline: bool,
+    pub created_at_ms: i64,
+    pub completed_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
+pub struct CommandExecutionNotificationDisplayEvent {
+    pub thread_id: ThreadId,
+    pub turn_id: String,
+    pub id: String,
+    pub command_item_id: String,
+    pub kind: CommandExecutionNotificationKind,
+    pub message: String,
+    pub output: Option<String>,
+    pub exit_code: Option<i32>,
+    pub created_at_ms: i64,
+    pub completed_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
+pub struct WorkflowRunProgressDisplayEvent {
+    pub thread_id: ThreadId,
+    pub turn_id: String,
+    pub id: String,
+    pub event: WorkflowRunProgressEvent,
+    pub completed_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
+pub struct EventCommandDisplayEvent {
+    pub thread_id: ThreadId,
+    pub turn_id: String,
+    pub id: String,
+    pub event: crate::event_command::EventCommandEvent,
+    pub completed_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
+pub struct EventDrivenToolDisplayEvent {
+    pub thread_id: ThreadId,
+    pub turn_id: String,
+    pub id: String,
+    pub trigger: crate::event_driven_tool::EventDrivenToolTrigger,
+    pub completed_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
+pub struct InterAgentCommunicationDisplayEvent {
+    pub thread_id: ThreadId,
+    pub turn_id: String,
+    pub id: String,
+    pub communication: InterAgentCommunication,
+    pub completed_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
+pub struct ThreadGoalUpdateDisplayEvent {
+    pub thread_id: ThreadId,
+    pub turn_id: String,
+    pub id: String,
+    pub goal: ThreadGoalUpdateGoal,
+    pub action: ThreadGoalUpdateEventAction,
+    pub source: ThreadGoalUpdateEventSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub previous_status: Option<ThreadGoalUpdateGoalStatus>,
+    pub completed_at_ms: i64,
 }
 
 pub trait HasLegacyEvent {

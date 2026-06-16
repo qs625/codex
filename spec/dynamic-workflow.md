@@ -14,7 +14,7 @@ Dynamic Workflow 的目标是把外层流程变成可脚本化、可展示、可
 - 通过静态流程图展示预期流程，通过运行时图填充实际 agent/thread 节点。
 - 保留 workflow 创建的 subagent 与父 thread 的关系，兼容现有 `list_agents`、`followup_task`、child completion 语义。
 - 支持 resume：重新执行 workflow 脚本，并让 `Agent(id)` 绑定回已有 agent session。
-- 用 typed `EventMsg -> ThreadItem` lifecycle 展示 workflow 进展；当前迁移期可通过 `ResponseItem::WorkflowRunProgress -> EventMsg::ResponseItemCompleted` 兼容路径双写模型历史和 UI display，避免 raw message 和文本解析作为新链路。
+- 用 `EventMsg::WorkflowRunProgressCompleted -> ThreadItem::WorkflowRunProgress` lifecycle 展示 workflow 进展；`ResponseItem::WorkflowRunProgress -> EventMsg::ResponseItemCompleted` 只保留旧 rollout/history 兼容和模型历史双写，避免 raw message 和文本解析作为新链路。
 
 ## 非目标
 
@@ -220,13 +220,13 @@ Workflow 能力通过 agent session 可用的 tools 暴露：
 
 ## 展示模型
 
-新增 workflow 相关结构化语义时，应优先扩展 typed `ResponseItem`，再统一投影到 `ThreadItem`。当前已实现的最小展示项是：
+新增 workflow 相关展示语义时，应优先扩展 dedicated typed `EventMsg`，再统一投影到 `ThreadItem`。只有模型上下文或 provider history 需要感知时，才双写 typed `ResponseItem`。当前已实现的最小展示项是：
 
-- `ResponseItem::WorkflowRunProgress`
+- `EventMsg::WorkflowRunProgressCompleted`
 - `ThreadItem::WorkflowRunProgress`
 - `WorkflowRunProgressKind::{Started, Resumed, Completed, Failed, Aborted}`
 
-workflow tool 的 start/resume/abort 会写入 typed `ResponseItem::WorkflowRunProgress`，并通过显式 `item/completed` lifecycle 投影为 `ThreadItem::WorkflowRunProgress`。客户端 live 展示不得从 function output JSON、assistant 文本或 marker 反解 workflow progress。
+workflow tool 的 start/resume/abort 会写入模型历史所需的 typed `ResponseItem::WorkflowRunProgress`，并通过 dedicated `WorkflowRunProgressCompleted` lifecycle 投影为 `ThreadItem::WorkflowRunProgress`。客户端 live 展示不得从 function output JSON、assistant 文本或 marker 反解 workflow progress。
 runner 进入 completed/failed 终态时会通过同一 typed lifecycle 追加终态 progress；显式 abort 由 `workflow_abort` 路径负责记录 Aborted progress，避免 start/resume 的旧 turn 重复记录 abort。app-server v2 直连控制面通过 `workflow/run/updated` notification 广播 run 状态更新，abort notification 也只由 `workflow/abort` 路径发送。
 
 后续完整 runner 可能继续扩展：

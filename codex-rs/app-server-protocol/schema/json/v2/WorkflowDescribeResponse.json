@@ -18,13 +18,13 @@
           },
           "type": "object"
         },
+        "instructions": {
+          "type": "string"
+        },
         "name": {
           "type": "string"
         },
         "path": {
-          "type": "string"
-        },
-        "instructions": {
           "type": "string"
         },
         "source": {
