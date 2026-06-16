@@ -1,14 +1,24 @@
-use crate::protocol::response_item_projection::project_structured_response_item;
 use crate::protocol::response_item_projection::thread_goal_from_update_goal;
 use crate::protocol::response_item_projection::thread_goal_status_from_update_status;
 use crate::protocol::response_item_projection::thread_item_from_inter_agent_communication;
+use crate::protocol::item_builders::convert_patch_changes;
 use crate::protocol::v2::CommandExecutionNotificationKind;
 use crate::protocol::v2::CommandWaitNotificationKind;
 use crate::protocol::v2::CommandWaitStatus;
 use crate::protocol::v2::EventCommandEventKind;
+use crate::protocol::v2::HookPromptFragment;
+use crate::protocol::v2::McpToolCallError;
+use crate::protocol::v2::McpToolCallResult;
+use crate::protocol::v2::McpToolCallStatus;
+use crate::protocol::v2::PatchApplyStatus;
 use crate::protocol::v2::ThreadItem;
 use crate::protocol::v2::ThreadGoalUpdateAction;
 use crate::protocol::v2::ThreadGoalUpdateSource;
+use crate::protocol::v2::UserInput;
+use crate::protocol::v2::WebSearchAction;
+use crate::protocol::v2::assistant_message_thread_item;
+use codex_protocol::items::AgentMessageContent as CoreAgentMessageContent;
+use codex_protocol::items::TurnItem as CoreTurnItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::InterAgentOperation;
 
@@ -36,44 +46,14 @@ pub fn project_event_msg_item(event: &EventMsg) -> Option<ProjectedEventItem> {
     match event {
         EventMsg::ItemStarted(event) => Some(ProjectedEventItem::Started {
             turn_id: event.turn_id.clone(),
-            item: ThreadItem::from(event.item.clone()),
+            item: thread_item_from_turn_item(event.item.clone()),
             started_at_ms: event.started_at_ms,
         }),
         EventMsg::ItemCompleted(event) => Some(ProjectedEventItem::Completed {
             turn_id: event.turn_id.clone(),
-            item: ThreadItem::from(event.item.clone()),
+            item: thread_item_from_turn_item(event.item.clone()),
             completed_at_ms: event.completed_at_ms,
         }),
-        EventMsg::ResponseItemStarted(event) => {
-            let fallback_id = || {
-                format!(
-                    "{}-response-item-started-{}",
-                    event.turn_id, event.started_at_ms
-                )
-            };
-            project_structured_response_item(&event.item, fallback_id).map(|item| {
-                ProjectedEventItem::Started {
-                    turn_id: event.turn_id.clone(),
-                    item,
-                    started_at_ms: event.started_at_ms,
-                }
-            })
-        }
-        EventMsg::ResponseItemCompleted(event) => {
-            let fallback_id = || {
-                format!(
-                    "{}-response-item-completed-{}",
-                    event.turn_id, event.completed_at_ms
-                )
-            };
-            project_structured_response_item(&event.item, fallback_id).map(|item| {
-                ProjectedEventItem::Completed {
-                    turn_id: event.turn_id.clone(),
-                    item,
-                    completed_at_ms: event.completed_at_ms,
-                }
-            })
-        }
         EventMsg::CommandWaitStarted(event) => Some(ProjectedEventItem::Started {
             turn_id: event.turn_id.clone(),
             item: command_wait_thread_item(event),
@@ -177,6 +157,122 @@ pub fn project_event_msg_item(event: &EventMsg) -> Option<ProjectedEventItem> {
     }
 }
 
+fn thread_item_from_turn_item(value: CoreTurnItem) -> ThreadItem {
+    match value {
+        CoreTurnItem::UserMessage(user) => ThreadItem::UserMessage {
+            id: user.id,
+            content: user.content.into_iter().map(UserInput::from).collect(),
+        },
+        CoreTurnItem::HookPrompt(hook_prompt) => ThreadItem::HookPrompt {
+            id: hook_prompt.id,
+            fragments: hook_prompt
+                .fragments
+                .into_iter()
+                .map(HookPromptFragment::from)
+                .collect(),
+        },
+        CoreTurnItem::AgentMessage(agent) => {
+            let text = agent
+                .content
+                .into_iter()
+                .map(|entry| match entry {
+                    CoreAgentMessageContent::Text { text } => text,
+                })
+                .collect::<String>();
+            assistant_message_thread_item(
+                agent.id,
+                text,
+                agent.phase,
+                agent.memory_citation.map(Into::into),
+            )
+        }
+        CoreTurnItem::EventDrivenTool(event_driven_tool) => ThreadItem::EventDrivenTool {
+            id: event_driven_tool.id,
+            tool: event_driven_tool.tool,
+            title: event_driven_tool.title,
+            text: event_driven_tool.text,
+        },
+        CoreTurnItem::EventCommandEvent(event_command) => ThreadItem::EventCommandEvent {
+            id: event_command.id,
+            subscription_id: event_command.event.subscription_id,
+            kind: event_command.event.kind.into(),
+            label: event_command.event.label,
+            command: event_command.event.command,
+            cwd: event_command.event.cwd,
+            line: event_command.event.line,
+            sequence: event_command.event.sequence,
+            exit_code: event_command.event.exit_code,
+            signal: event_command.event.signal,
+            message: event_command.event.message,
+            truncated: event_command.event.truncated,
+            created_at: event_command.event.created_at,
+        },
+        CoreTurnItem::CollabAgentMessage(collab) => {
+            thread_item_from_inter_agent_communication(collab.id, collab.communication)
+        }
+        CoreTurnItem::Plan(plan) => ThreadItem::Plan {
+            id: plan.id,
+            text: plan.text,
+        },
+        CoreTurnItem::Reasoning(reasoning) => ThreadItem::Reasoning {
+            id: reasoning.id,
+            summary: reasoning.summary_text,
+            content: reasoning.raw_content,
+        },
+        CoreTurnItem::WebSearch(search) => ThreadItem::WebSearch {
+            id: search.id,
+            query: search.query,
+            action: Some(WebSearchAction::from(search.action)),
+        },
+        CoreTurnItem::ImageView(image) => ThreadItem::ImageView {
+            id: image.id,
+            path: image.path,
+        },
+        CoreTurnItem::ImageGeneration(image) => ThreadItem::ImageGeneration {
+            id: image.id,
+            status: image.status,
+            revised_prompt: image.revised_prompt,
+            result: image.result,
+            saved_path: image.saved_path,
+        },
+        CoreTurnItem::FileChange(file_change) => ThreadItem::FileChange {
+            id: file_change.id,
+            changes: convert_patch_changes(&file_change.changes),
+            status: file_change
+                .status
+                .as_ref()
+                .map(PatchApplyStatus::from)
+                .unwrap_or(PatchApplyStatus::InProgress),
+        },
+        CoreTurnItem::McpToolCall(mcp) => {
+            let duration_ms = mcp
+                .duration
+                .and_then(|duration| i64::try_from(duration.as_millis()).ok());
+
+            ThreadItem::McpToolCall {
+                id: mcp.id,
+                server: mcp.server,
+                tool: mcp.tool,
+                status: McpToolCallStatus::from(mcp.status),
+                arguments: mcp.arguments,
+                mcp_app_resource_uri: mcp.mcp_app_resource_uri,
+                result: mcp.result.map(McpToolCallResult::from).map(Box::new),
+                error: mcp.error.map(McpToolCallError::from),
+                duration_ms,
+            }
+        }
+        CoreTurnItem::ContextCompaction(compaction) => {
+            let replacement_history = compaction
+                .replacement_history
+                .and_then(|history| serde_json::to_value(history).ok());
+            ThreadItem::ContextCompaction {
+                id: compaction.id,
+                replacement_history,
+            }
+        }
+    }
+}
+
 fn command_wait_thread_item(
     event: &codex_protocol::protocol::CommandWaitDisplayEvent,
 ) -> ThreadItem {
@@ -200,85 +296,11 @@ mod tests {
     use codex_protocol::ThreadId;
     use codex_protocol::models::WorkflowRunProgressEvent;
     use codex_protocol::models::WorkflowRunProgressKind;
-    use codex_protocol::models::ResponseItem;
     use codex_protocol::protocol::CommandExecutionNotificationDisplayEvent;
     use codex_protocol::protocol::CommandWaitDisplayEvent;
     use codex_protocol::protocol::CommandWriteStdinDisplayEvent;
-    use codex_protocol::protocol::ResponseItemCompletedEvent;
-    use codex_protocol::protocol::ResponseItemStartedEvent;
     use codex_protocol::protocol::WorkflowRunProgressDisplayEvent;
     use pretty_assertions::assert_eq;
-
-    fn command_wait_response_item(
-        status: codex_protocol::models::CommandWaitStatus,
-    ) -> ResponseItem {
-        ResponseItem::CommandWait {
-            id: Some("wait-1".to_string()),
-            command_id: "cmd-1".to_string(),
-            status,
-            notification: Some(codex_protocol::models::CommandWaitNotificationKind::Exit),
-            exit_code: Some(0),
-            wall_time_seconds: 1.25,
-            wait_timeout_ms: 250,
-            created_at_ms: 1234,
-        }
-    }
-
-    #[test]
-    fn response_item_started_projects_command_wait_to_thread_item() {
-        let event = EventMsg::ResponseItemStarted(ResponseItemStartedEvent {
-            thread_id: ThreadId::new(),
-            turn_id: "turn-1".to_string(),
-            item: command_wait_response_item(codex_protocol::models::CommandWaitStatus::Running),
-            started_at_ms: 5678,
-        });
-
-        assert_eq!(
-            project_event_msg_item(&event),
-            Some(ProjectedEventItem::Started {
-                turn_id: "turn-1".to_string(),
-                item: ThreadItem::CommandWait {
-                    id: "wait-1".to_string(),
-                    command_id: "cmd-1".to_string(),
-                    status: CommandWaitStatus::Running,
-                    notification: Some(CommandWaitNotificationKind::Exit),
-                    exit_code: Some(0),
-                    wall_time_seconds: 1.25,
-                    wait_timeout_ms: 250,
-                    created_at_ms: 1234,
-                },
-                started_at_ms: 5678,
-            }),
-        );
-    }
-
-    #[test]
-    fn response_item_completed_projects_command_wait_to_thread_item() {
-        let event = EventMsg::ResponseItemCompleted(ResponseItemCompletedEvent {
-            thread_id: ThreadId::new(),
-            turn_id: "turn-1".to_string(),
-            item: command_wait_response_item(codex_protocol::models::CommandWaitStatus::Completed),
-            completed_at_ms: 5678,
-        });
-
-        assert_eq!(
-            project_event_msg_item(&event),
-            Some(ProjectedEventItem::Completed {
-                turn_id: "turn-1".to_string(),
-                item: ThreadItem::CommandWait {
-                    id: "wait-1".to_string(),
-                    command_id: "cmd-1".to_string(),
-                    status: CommandWaitStatus::Completed,
-                    notification: Some(CommandWaitNotificationKind::Exit),
-                    exit_code: Some(0),
-                    wall_time_seconds: 1.25,
-                    wait_timeout_ms: 250,
-                    created_at_ms: 1234,
-                },
-                completed_at_ms: 5678,
-            }),
-        );
-    }
 
     #[test]
     fn command_wait_completed_projects_without_response_item() {

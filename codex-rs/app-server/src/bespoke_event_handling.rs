@@ -84,8 +84,6 @@ use codex_app_server_protocol::build_command_execution_output_notification_item;
 use codex_app_server_protocol::build_item_from_guardian_event;
 use codex_app_server_protocol::guardian_auto_approval_review_notification;
 use codex_app_server_protocol::item_event_to_server_notification;
-use codex_app_server_protocol::project_tool_call_completion;
-use codex_app_server_protocol::project_tool_call_start;
 use codex_core::CodexThread;
 use codex_core::ThreadManager;
 use codex_core::review_format::format_review_findings_block;
@@ -1027,8 +1025,6 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .await;
         }
         msg @ (EventMsg::ItemStarted(_)
-        | EventMsg::ResponseItemStarted(_)
-        | EventMsg::ResponseItemCompleted(_)
         | EventMsg::CommandWaitStarted(_)
         | EventMsg::CommandWaitCompleted(_)
         | EventMsg::CommandWriteStdinCompleted(_)
@@ -1111,18 +1107,9 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .send_server_notification(ServerNotification::ItemCompleted(completed))
                 .await;
         }
-        EventMsg::RawResponseItem(event) => {
-            // Display items arrive through the semantic lifecycle events above.
-            // Raw response items are still consumed by history rebuild, but using
-            // them for live display here would duplicate completed items.
-            maybe_emit_hook_prompt_item_completed(
-                conversation_id,
-                &event_turn_id,
-                &event.item,
-                &outgoing,
-            )
-            .await;
-        }
+        EventMsg::ResponseItemStarted(_)
+        | EventMsg::ResponseItemCompleted(_)
+        | EventMsg::RawResponseItem(_) => {}
         EventMsg::PatchApplyBegin(_) | EventMsg::PatchApplyEnd(_) => {
             // Core still fans out these deprecated events for legacy clients;
             // v2 clients receive canonical item lifecycle notifications instead.
@@ -1528,71 +1515,6 @@ async fn complete_command_execution_item(
     outgoing
         .send_server_notification(ServerNotification::ItemCompleted(notification))
         .await;
-}
-
-pub(crate) async fn maybe_emit_projected_tool_call_notifications(
-    conversation_id: ThreadId,
-    turn_id: &str,
-    item: &codex_protocol::models::ResponseItem,
-    outgoing: &ThreadScopedOutgoingMessageSender,
-    thread_state: &Arc<Mutex<ThreadState>>,
-) {
-    match item {
-        codex_protocol::models::ResponseItem::FunctionCall {
-            name,
-            namespace,
-            arguments,
-            call_id,
-            ..
-        } => {
-            let Some(started_item) =
-                project_tool_call_start(name, namespace.as_deref(), arguments, call_id)
-            else {
-                return;
-            };
-            {
-                let mut state = thread_state.lock().await;
-                state
-                    .turn_summary
-                    .projected_tool_calls
-                    .insert(call_id.clone(), started_item.clone());
-            }
-            let started = ItemStartedNotification {
-                thread_id: conversation_id.to_string(),
-                turn_id: turn_id.to_string(),
-                started_at_ms: now_unix_timestamp_ms(),
-                item: started_item,
-            };
-            outgoing
-                .send_server_notification(ServerNotification::ItemStarted(started))
-                .await;
-        }
-        codex_protocol::models::ResponseItem::FunctionCallOutput { call_id, output } => {
-            let Some(started_item) = thread_state
-                .lock()
-                .await
-                .turn_summary
-                .projected_tool_calls
-                .remove(call_id)
-            else {
-                return;
-            };
-            let Some(completed_item) = project_tool_call_completion(&started_item, call_id, output)
-            else {
-                return;
-            };
-            let completed = ItemCompletedNotification {
-                thread_id: conversation_id.to_string(),
-                turn_id: turn_id.to_string(),
-                completed_at_ms: now_unix_timestamp_ms(),
-                item: completed_item,
-            };
-            outgoing
-                .send_server_notification(ServerNotification::ItemCompleted(completed))
-                .await;
-        }
-        _ => {}
-    }
 }
 
 pub(crate) async fn maybe_emit_hook_prompt_item_completed(
@@ -2270,7 +2192,6 @@ mod tests {
     use codex_protocol::items::HookPromptFragment;
     use codex_protocol::items::build_hook_prompt_message;
     use codex_protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
-    use codex_protocol::models::FunctionCallOutputPayload;
     use codex_protocol::models::NetworkPermissions as CoreNetworkPermissions;
     use codex_protocol::permissions::FileSystemAccessMode;
     use codex_protocol::permissions::FileSystemPath;
@@ -2804,332 +2725,6 @@ mod tests {
         assert!(
             rx.try_recv().is_err(),
             "completion should not emit after the pending item is cleared"
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn event_command_call_notifications_do_not_emit_projected_items() -> Result<()> {
-        let conversation_id = ThreadId::new();
-        let thread_state = new_thread_state();
-        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
-        let outgoing = ThreadScopedOutgoingMessageSender::new(
-            outgoing,
-            vec![ConnectionId(1)],
-            ThreadId::new(),
-        );
-
-        maybe_emit_projected_tool_call_notifications(
-            conversation_id,
-            "turn-1",
-            &codex_protocol::models::ResponseItem::FunctionCall {
-                id: None,
-                name: "event_command_subscribe".to_string(),
-                namespace: None,
-                arguments: r#"{"command":"tail -f /tmp/log","cwd":"/tmp","label":"build log"}"#
-                    .to_string(),
-                call_id: "call-1".to_string(),
-            },
-            &outgoing,
-            &thread_state,
-        )
-        .await;
-
-        assert!(
-            rx.try_recv().is_err(),
-            "event_command_subscribe should not emit legacy projected items"
-        );
-
-        maybe_emit_projected_tool_call_notifications(
-            conversation_id,
-            "turn-1",
-            &codex_protocol::models::ResponseItem::FunctionCallOutput {
-                call_id: "call-1".to_string(),
-                output: FunctionCallOutputPayload::from_text(
-                    r#"{"subscription_id":"sub-1","command":"tail -f /tmp/log","cwd":"/tmp","label":"build log"}"#
-                        .into(),
-                ),
-            },
-            &outgoing,
-            &thread_state,
-        )
-        .await;
-
-        assert!(
-            rx.try_recv().is_err(),
-            "event_command_subscribe output should not emit legacy projected items"
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn event_command_event_response_item_does_not_emit_projected_items() -> Result<()> {
-        let conversation_id = ThreadId::new();
-        let thread_state = new_thread_state();
-        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
-        let outgoing = ThreadScopedOutgoingMessageSender::new(
-            outgoing,
-            vec![ConnectionId(1)],
-            ThreadId::new(),
-        );
-
-        maybe_emit_projected_tool_call_notifications(
-            conversation_id,
-            "turn-1",
-            &codex_protocol::models::ResponseItem::EventCommandEvent {
-                id: None,
-                event: codex_protocol::event_command::EventCommandEvent {
-                    subscription_id: "sub-1".to_string(),
-                    kind: codex_protocol::event_command::EventCommandEventKind::Output,
-                    label: Some("build log".to_string()),
-                    command: "tail -f /tmp/log".to_string(),
-                    cwd: Some("/tmp".to_string()),
-                    line: Some("ready".to_string()),
-                    sequence: Some(1),
-                    exit_code: None,
-                    signal: None,
-                    message: None,
-                    truncated: false,
-                    created_at: 1_700_000_000,
-                },
-            },
-            &outgoing,
-            &thread_state,
-        )
-        .await;
-
-        assert!(
-            rx.try_recv().is_err(),
-            "event command events should not emit legacy projected items"
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn event_driven_tool_call_output_without_start_does_not_emit() -> Result<()> {
-        let conversation_id = ThreadId::new();
-        let thread_state = new_thread_state();
-        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
-        let outgoing = ThreadScopedOutgoingMessageSender::new(
-            outgoing,
-            vec![ConnectionId(1)],
-            ThreadId::new(),
-        );
-
-        maybe_emit_projected_tool_call_notifications(
-            conversation_id,
-            "turn-1",
-            &codex_protocol::models::ResponseItem::FunctionCallOutput {
-                call_id: "missing-call".to_string(),
-                output: FunctionCallOutputPayload::from_text("ignored".into()),
-            },
-            &outgoing,
-            &thread_state,
-        )
-        .await;
-
-        assert!(
-            rx.try_recv().is_err(),
-            "orphan builtin output should not emit"
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn event_command_write_stdin_emits_event_driven_tool_notifications() -> Result<()> {
-        let conversation_id = ThreadId::new();
-        let thread_state = new_thread_state();
-        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
-        let outgoing = ThreadScopedOutgoingMessageSender::new(
-            outgoing,
-            vec![ConnectionId(1)],
-            ThreadId::new(),
-        );
-
-        maybe_emit_projected_tool_call_notifications(
-            conversation_id,
-            "turn-1",
-            &codex_protocol::models::ResponseItem::FunctionCall {
-                id: None,
-                name: "event_command_write_stdin".to_string(),
-                namespace: None,
-                arguments: r#"{"subscription_id":"sub-1","chars":"\n"}"#.to_string(),
-                call_id: "call-1".to_string(),
-            },
-            &outgoing,
-            &thread_state,
-        )
-        .await;
-
-        let started = recv_broadcast_message(&mut rx).await?;
-        match started {
-            OutgoingMessage::AppServerNotification(ServerNotification::ItemStarted(payload)) => {
-                assert_eq!(
-                    payload.item,
-                    ThreadItem::EventDrivenToolCall {
-                        id: "call-1".to_string(),
-                        tool: "event_command_write_stdin".to_string(),
-                        arguments: json!({
-                            "subscription_id": "sub-1",
-                            "chars": "\n",
-                        }),
-                        status: DynamicToolCallStatus::InProgress,
-                        output: None,
-                    }
-                );
-            }
-            other => bail!("unexpected message: {other:?}"),
-        }
-
-        maybe_emit_projected_tool_call_notifications(
-            conversation_id,
-            "turn-1",
-            &codex_protocol::models::ResponseItem::FunctionCallOutput {
-                call_id: "call-1".to_string(),
-                output: FunctionCallOutputPayload::from_text(
-                    r#"{"subscription_id":"sub-1","bytes_written":1}"#.into(),
-                ),
-            },
-            &outgoing,
-            &thread_state,
-        )
-        .await;
-
-        let completed = recv_broadcast_message(&mut rx).await?;
-        match completed {
-            OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(payload)) => {
-                assert_eq!(
-                    payload.item,
-                    ThreadItem::EventDrivenToolCall {
-                        id: "call-1".to_string(),
-                        tool: "event_command_write_stdin".to_string(),
-                        arguments: json!({
-                            "subscription_id": "sub-1",
-                            "chars": "\n",
-                        }),
-                        status: DynamicToolCallStatus::Completed,
-                        output: Some(serde_json::Value::String(
-                            r#"{"subscription_id":"sub-1","bytes_written":1}"#.into(),
-                        )),
-                    }
-                );
-            }
-            other => bail!("unexpected message: {other:?}"),
-        }
-
-        assert!(
-            rx.try_recv().is_err(),
-            "event-driven tool call should emit exactly twice"
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn schedule_subscribe_emits_projected_tool_call_notifications() -> Result<()> {
-        let conversation_id = ThreadId::new();
-        let thread_state = new_thread_state();
-        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
-        let outgoing = ThreadScopedOutgoingMessageSender::new(
-            outgoing,
-            vec![ConnectionId(1)],
-            ThreadId::new(),
-        );
-
-        maybe_emit_projected_tool_call_notifications(
-            conversation_id,
-            "turn-1",
-            &codex_protocol::models::ResponseItem::FunctionCall {
-                id: None,
-                name: "schedule_subscribe".to_string(),
-                namespace: None,
-                arguments: r#"{"schedule":"every_day_at:09:00 Asia/Shanghai","label":"daily"}"#
-                    .to_string(),
-                call_id: "call-schedule".to_string(),
-            },
-            &outgoing,
-            &thread_state,
-        )
-        .await;
-
-        let started = recv_broadcast_message(&mut rx).await?;
-        match started {
-            OutgoingMessage::AppServerNotification(ServerNotification::ItemStarted(payload)) => {
-                assert_eq!(
-                    payload.item,
-                    ThreadItem::EventDrivenToolCall {
-                        id: "call-schedule".to_string(),
-                        tool: "schedule_subscribe".to_string(),
-                        arguments: json!({
-                            "schedule": "every_day_at:09:00 Asia/Shanghai",
-                            "label": "daily",
-                        }),
-                        status: DynamicToolCallStatus::InProgress,
-                        output: None,
-                    }
-                );
-            }
-            other => bail!("unexpected message: {other:?}"),
-        }
-
-        maybe_emit_projected_tool_call_notifications(
-            conversation_id,
-            "turn-1",
-            &codex_protocol::models::ResponseItem::FunctionCallOutput {
-                call_id: "call-schedule".to_string(),
-                output: FunctionCallOutputPayload::from_text(
-                    r#"{"subscription_id":"schedule-1"}"#.into(),
-                ),
-            },
-            &outgoing,
-            &thread_state,
-        )
-        .await;
-
-        let completed = recv_broadcast_message(&mut rx).await?;
-        match completed {
-            OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(payload)) => {
-                assert_eq!(
-                    payload.item,
-                    ThreadItem::EventDrivenToolCall {
-                        id: "call-schedule".to_string(),
-                        tool: "schedule_subscribe".to_string(),
-                        arguments: json!({
-                            "schedule": "every_day_at:09:00 Asia/Shanghai",
-                            "label": "daily",
-                        }),
-                        status: DynamicToolCallStatus::Completed,
-                        output: Some(serde_json::Value::String(
-                            r#"{"subscription_id":"schedule-1"}"#.into(),
-                        )),
-                    }
-                );
-            }
-            other => bail!("unexpected message: {other:?}"),
-        }
-
-        assert!(
-            rx.try_recv().is_err(),
-            "schedule tool call should emit exactly twice"
         );
         Ok(())
     }
@@ -3798,7 +3393,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn response_item_completed_emits_command_wait_thread_item() -> Result<()> {
+    async fn command_wait_completed_emits_command_wait_thread_item() -> Result<()> {
         let codex_home = TempDir::new()?;
         let config = load_default_config_for_test(&codex_home).await;
         let thread_manager = Arc::new(
@@ -3822,23 +3417,21 @@ mod tests {
         apply_bespoke_event_handling(
             Event {
                 id: "turn-1".to_string(),
-                msg: EventMsg::ResponseItemCompleted(
-                    codex_protocol::protocol::ResponseItemCompletedEvent {
+                msg: EventMsg::CommandWaitCompleted(
+                    codex_protocol::protocol::CommandWaitDisplayEvent {
                         thread_id: conversation_id.clone(),
                         turn_id: "turn-1".to_string(),
-                        item: codex_protocol::models::ResponseItem::CommandWait {
-                            id: Some("wait-1".to_string()),
-                            command_id: "cmd-1".to_string(),
-                            status: codex_protocol::models::CommandWaitStatus::Completed,
-                            notification: Some(
-                                codex_protocol::models::CommandWaitNotificationKind::Exit,
-                            ),
-                            exit_code: Some(0),
-                            wall_time_seconds: 1.25,
-                            wait_timeout_ms: 250,
-                            created_at_ms: 1234,
-                        },
-                        completed_at_ms: 5678,
+                        id: "wait-1".to_string(),
+                        command_id: "cmd-1".to_string(),
+                        status: codex_protocol::models::CommandWaitStatus::Completed,
+                        notification: Some(
+                            codex_protocol::models::CommandWaitNotificationKind::Exit,
+                        ),
+                        exit_code: Some(0),
+                        wall_time_seconds: 1.25,
+                        wait_timeout_ms: 250,
+                        created_at_ms: 1234,
+                        lifecycle_at_ms: 5678,
                     },
                 ),
             },

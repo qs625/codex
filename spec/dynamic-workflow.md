@@ -14,7 +14,7 @@ Dynamic Workflow 的目标是把外层流程变成可脚本化、可展示、可
 - 通过静态流程图展示预期流程，通过运行时图填充实际 agent/thread 节点。
 - 保留 workflow 创建的 subagent 与父 thread 的关系，兼容现有 `list_agents`、`followup_task`、child completion 语义。
 - 支持 resume：重新执行 workflow 脚本，并让 `Agent(id)` 绑定回已有 agent session。
-- 用 `EventMsg::WorkflowRunProgressCompleted -> ThreadItem::WorkflowRunProgress` lifecycle 展示 workflow 进展；`ResponseItem::WorkflowRunProgress -> EventMsg::ResponseItemCompleted` 只保留旧 rollout/history 兼容和模型历史双写，避免 raw message 和文本解析作为新链路。
+- 用 `EventMsg::WorkflowRunProgressCompleted -> ThreadItem::WorkflowRunProgress` lifecycle 展示 workflow 进展；`ResponseItem::WorkflowRunProgress` 只保留为模型历史双写，不通过 `ResponseItemCompleted` 或旧 rollout/history replay 生成展示，避免 raw message 和文本解析作为新链路。
 
 ## 非目标
 

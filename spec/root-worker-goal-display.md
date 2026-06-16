@@ -14,7 +14,7 @@
 - `/goal pause this migration` 这类非精确动作输入按 objective 处理。
 - 空 `/goal` / `/goal ` 显示 `Enter a goal objective.`，不发送给模型。
 - goal action pending、无 goal、失败都显示结构化反馈，不解析 assistant 文本、raw marker 或 legacy envelope。
-- 模型调用 `create_goal` / `update_goal` 改变 goal 时，conversation 中出现 typed goal item，明确说明目标已创建、已完成或已更新；该 item 来源于 `EventMsg::ThreadGoalUpdateCompleted -> ThreadItem::ThreadGoalUpdate` display lifecycle，不从 tool output JSON、assistant 文本或 legacy marker 反解。`ResponseItem::ThreadGoalUpdate -> EventMsg::ResponseItemCompleted` 只保留旧 rollout/history 兼容和模型上下文双写。客户端 goal API 仍以 `thread/goal/updated` / `thread/goal/cleared` 更新当前状态，未来如需要会话流事件也必须复用同一 typed item。
+- 模型调用 `create_goal` / `update_goal` 改变 goal 时，conversation 中出现 typed goal item，明确说明目标已创建、已完成或已更新；该 item 来源于 `EventMsg::ThreadGoalUpdateCompleted -> ThreadItem::ThreadGoalUpdate` display lifecycle，不从 tool output JSON、assistant 文本或 legacy marker 反解。`ResponseItem::ThreadGoalUpdate` 只保留为模型上下文双写，不通过 `ResponseItemCompleted` 或旧 rollout/history replay 生成展示。客户端 goal API 仍以 `thread/goal/updated` / `thread/goal/cleared` 更新当前状态，未来如需要会话流事件也必须复用同一 typed item。
 - `goal` 不混入 `ThreadStatus.activeFlags`；active state 继续只表达 thread 是否运行或等待外部输入。
 
 非目标：
@@ -32,7 +32,7 @@
 - `RightPanel` 的 Thread Analysis 渲染 `GoalDetailPanel`：显示完整 objective、token budget、elapsed time 和同一组 Pause/Resume/Cancel action。
 - `composerDraft.ts` 识别手动 `/goal <objective>`、精确 `/goal pause|resume|cancel|clear` 与 `/cancel-goal`，要求没有 image attachment 和 Skill chip，避免误拦截普通带上下文输入。
 - core 在模型工具触发的 `create_thread_goal` / `set_thread_goal` 成功持久化 goal 后，写入模型上下文所需的 `ResponseItem::ThreadGoalUpdate`，并通过 `record_model_items_and_emit_display_events` 发送 dedicated `EventMsg::ThreadGoalUpdateCompleted` display lifecycle，同时继续发送现有 `thread/goal/updated` state notification。
-- `app-server-protocol` 在 shared EventMsg projector 中把 `ThreadGoalUpdateCompleted` 映射为 `ThreadItem::ThreadGoalUpdate`；`ResponseItem::ThreadGoalUpdate` projector 只作为旧 rollout/history 兼容路径。
+- `app-server-protocol` 在 shared EventMsg projector 中把 `ThreadGoalUpdateCompleted` 映射为 `ThreadItem::ThreadGoalUpdate`；`ResponseItem::ThreadGoalUpdate` 不再作为 display projector 输入。
 - root-worker 的 `ThreadItem` 类型和 `buildConversationItemEntries` 消费 `threadGoalUpdate`，生成 `toolCategory: "goal"` 的系统 tool entry；展示为会话事件，不和连续 agent message 合并，也不参与 `ThreadItem.id` 去重以外的合并。
 
 ## 风险

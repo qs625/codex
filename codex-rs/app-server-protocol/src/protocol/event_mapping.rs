@@ -531,8 +531,6 @@ mod tests {
     use codex_protocol::protocol::InterAgentOperation;
     use codex_protocol::protocol::ItemCompletedEvent;
     use codex_protocol::protocol::ItemStartedEvent;
-    use codex_protocol::protocol::ResponseItemCompletedEvent;
-    use codex_protocol::protocol::ResponseItemStartedEvent;
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
@@ -745,94 +743,6 @@ mod tests {
                     text: "[Process exit subscription] Session 42 exited with code 0".to_string(),
                     phase: None,
                     memory_citation: None,
-                },
-            },
-        );
-    }
-
-    #[test]
-    fn response_item_completed_maps_command_wait_to_thread_item() {
-        let event = ResponseItemCompletedEvent {
-            thread_id: ThreadId::new(),
-            turn_id: "turn-ignored".to_string(),
-            item: ResponseItem::CommandWait {
-                id: Some("wait-1".to_string()),
-                command_id: "cmd-1".to_string(),
-                status: codex_protocol::models::CommandWaitStatus::Completed,
-                notification: Some(codex_protocol::models::CommandWaitNotificationKind::Exit),
-                exit_code: Some(0),
-                wall_time_seconds: 1.25,
-                wait_timeout_ms: 250,
-                created_at_ms: 1234,
-            },
-            completed_at_ms: 789,
-        };
-
-        let notification = item_event_to_server_notification(
-            EventMsg::ResponseItemCompleted(event.clone()),
-            "thread-4",
-            "turn-4",
-        );
-
-        assert_item_completed_server_notification(
-            notification,
-            ItemCompletedNotification {
-                thread_id: "thread-4".to_string(),
-                turn_id: "turn-4".to_string(),
-                completed_at_ms: event.completed_at_ms,
-                item: ThreadItem::CommandWait {
-                    id: "wait-1".to_string(),
-                    command_id: "cmd-1".to_string(),
-                    status: crate::protocol::v2::CommandWaitStatus::Completed,
-                    notification: Some(crate::protocol::v2::CommandWaitNotificationKind::Exit),
-                    exit_code: Some(0),
-                    wall_time_seconds: 1.25,
-                    wait_timeout_ms: 250,
-                    created_at_ms: 1234,
-                },
-            },
-        );
-    }
-
-    #[test]
-    fn response_item_started_maps_command_wait_to_thread_item() {
-        let event = ResponseItemStartedEvent {
-            thread_id: ThreadId::new(),
-            turn_id: "turn-ignored".to_string(),
-            item: ResponseItem::CommandWait {
-                id: Some("wait-1".to_string()),
-                command_id: "cmd-1".to_string(),
-                status: codex_protocol::models::CommandWaitStatus::Running,
-                notification: None,
-                exit_code: None,
-                wall_time_seconds: 0.0,
-                wait_timeout_ms: 500,
-                created_at_ms: 1234,
-            },
-            started_at_ms: 789,
-        };
-
-        let notification = item_event_to_server_notification(
-            EventMsg::ResponseItemStarted(event.clone()),
-            "thread-4",
-            "turn-4",
-        );
-
-        assert_item_started_server_notification(
-            notification,
-            ItemStartedNotification {
-                thread_id: "thread-4".to_string(),
-                turn_id: "turn-4".to_string(),
-                started_at_ms: event.started_at_ms,
-                item: ThreadItem::CommandWait {
-                    id: "wait-1".to_string(),
-                    command_id: "cmd-1".to_string(),
-                    status: crate::protocol::v2::CommandWaitStatus::Running,
-                    notification: None,
-                    exit_code: None,
-                    wall_time_seconds: 0.0,
-                    wait_timeout_ms: 500,
-                    created_at_ms: 1234,
                 },
             },
         );

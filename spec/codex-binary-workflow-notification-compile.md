@@ -27,7 +27,9 @@ Dynamic Workflow 在 app-server v2 增加了 `workflow/run/updated` notification
 WorkflowRunUpdatedNotification { run: WorkflowRun }
 ```
 
-它不携带 `thread_id`。线程内 workflow 进展展示已经通过 typed `ResponseItem::WorkflowRunProgress -> ThreadItem::WorkflowRunProgress` 投影链路表达，因此 TUI 不应从 `workflow/run/updated` 反推或解析 display item。
+它不携带 `thread_id`。线程内 workflow 进展展示已经通过
+`EventMsg::WorkflowRunProgressCompleted -> ThreadItem::WorkflowRunProgress`
+投影链路表达，因此 TUI 不应从 `workflow/run/updated` 反推或解析 display item。
 
 ## 技术设计
 

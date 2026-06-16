@@ -4305,10 +4305,9 @@ fn preview_from_rollout_items(items: &[RolloutItem]) -> String {
     items
         .iter()
         .find_map(|item| match item {
-            RolloutItem::ResponseItem(item) => match codex_core::parse_turn_item(item) {
-                Some(codex_protocol::items::TurnItem::UserMessage(user)) => Some(user.message()),
-                _ => None,
-            },
+            RolloutItem::EventMsg(codex_protocol::protocol::EventMsg::UserMessage(user)) => {
+                Some(user.message.clone())
+            }
             _ => None,
         })
         .map(|preview| match preview.find(USER_MESSAGE_BEGIN) {

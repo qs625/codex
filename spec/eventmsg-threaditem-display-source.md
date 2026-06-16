@@ -14,42 +14,39 @@
 - live `item/started` / `item/completed` 和 thread/read replay 共享 `EventMsg -> ThreadItem` adapter。
 - 同时需要模型可见和 UI 可见的业务动作通过 helper 双写：记录 model-visible `ResponseItem`，并 emit display-capable `EventMsg`。
 - 新增 display-only 语义优先新增专用 `EventMsg` variant，不再新增 display-only `ResponseItem` variant。
-- legacy `ResponseItem -> ThreadItem`、`TurnItem -> ThreadItem`、`RawResponseItem` 只保留为旧 rollout/history 兼容边界。
+- `ResponseItem -> ThreadItem`、公开 `TurnItem -> ThreadItem` adapter、`RawResponseItem` 展示回放路径已删除；需要 UI 展示的事实必须写成 display-capable `EventMsg`。
 
 非目标：
 
 - 不改变 provider wire formatting 的 marker 包装；marker 只能作为单向 provider formatting。
 - 不新增 app-server v1 API surface。
-- 不一次性删除所有 legacy rollout 兼容代码。
+- 不保留旧 rollout/history 的展示兼容；旧文件中只有 `ResponseItem` / `RawResponseItem` 的内容不会重建为 UI 展示。
 
 ## 当前主线事实
 
-### ResponseItem -> ThreadItem
+### ResponseItem
 
-`codex-rs/app-server-protocol/src/protocol/response_item_projection.rs` 仍是 legacy 兼容 projector，覆盖：
+`ResponseItem` 只用于模型交互、context manager/provider history、compact、guardian 和模型可见工具输出。app-server thread display 不再从以下来源投影 `ThreadItem`：
 
-- `CommandWait`
-- `CommandWriteStdin`
-- `CommandExecutionNotification`
-- `WorkflowRunProgress`
-- `EventCommandEvent`
-- `EventDrivenTool`
-- `ThreadGoalUpdate`
-- `InterAgentCommunication`
+- `RolloutItem::ResponseItem`
+- `EventMsg::RawResponseItem`
+- `EventMsg::ResponseItemStarted`
+- `EventMsg::ResponseItemCompleted`
+- live `ResponseItem::FunctionCall` / `FunctionCallOutput`
 
-这些 `ResponseItem` 变体暂时仍保留，因为当前 context/history/provider 边界还需要它们表达模型侧事实；但它们不再是新展示语义的扩展点。
+这些 `ResponseItem` 变体仍可存在于模型上下文和 provider history 中，但它们不是展示源，也不是新增展示语义的扩展点。
 
 ### EventMsg -> ThreadItem
 
 `codex-rs/app-server-protocol/src/protocol/event_item_projection.rs` 是共享 projection boundary：
 
-- `EventMsg::ItemStarted(TurnItem)` / `ItemCompleted(TurnItem)`：legacy lifecycle 兼容。
-- `EventMsg::ResponseItemStarted(ResponseItem)` / `ResponseItemCompleted(ResponseItem)`：旧 rollout/history 兼容，内部复用 structured `ResponseItem` projector，不作为新增展示语义主路径。
+- `EventMsg::ItemStarted(TurnItem)` / `ItemCompleted(TurnItem)`：作为 EventMsg lifecycle payload 由 `event_item_projection.rs` 显式投影；不再保留公开 `TurnItem -> ThreadItem` adapter。
+- `EventMsg::ResponseItemStarted(ResponseItem)` / `ResponseItemCompleted(ResponseItem)`：不产生 `ThreadItem`，仅作为非展示 runtime/model 历史事件保留。
 - `EventMsg::CommandWaitStarted` / `CommandWaitCompleted` / `CommandWriteStdinCompleted` / `CommandExecutionNotificationCompleted`：command session 展示主路径。
 - `EventMsg::WorkflowRunProgressCompleted` / `ThreadGoalUpdateCompleted` / `EventCommandEventCompleted` / `EventDrivenToolCompleted` / `InterAgentCommunicationCompleted`：workflow、goal、event command、event-driven tool 和协作展示主路径。
 - 输出 `ProjectedEventItem::{Started, Completed}`，由 live notification 和 thread history reducer 统一投影为 `ThreadItem`。
 
-`event_mapping.rs` 先调用 `project_event_msg_item`，再生成 v2 `ItemStartedNotification` / `ItemCompletedNotification`。`ThreadHistoryBuilder` 优先消费 dedicated display `EventMsg`；如果同一 history 中还存在 legacy structured `ResponseItem` fallback，则 dedicated event 会压过 fallback，避免重复展示。旧 rollout 没有 dedicated event 时，`ResponseItemStarted/Completed` 和 persisted `ResponseItem` 仍可通过 legacy projector 重建可读历史。
+`event_mapping.rs` 先调用 `project_event_msg_item`，再生成 v2 `ItemStartedNotification` / `ItemCompletedNotification`。`ThreadHistoryBuilder` 只从 persisted display-capable `EventMsg` 重建 `ThreadItem`；旧 rollout 没有 dedicated display event 时不会重建可读 UI 历史。
 
 ### 双写 helper
 
@@ -64,20 +61,21 @@
 1. command/wait family
    - `command_wait` started/completed 通过 `CommandWaitStarted` / `CommandWaitCompleted` 进入 EventMsg adapter。
    - `command_write_stdin`、command execution notification 通过 `CommandWriteStdinCompleted` / `CommandExecutionNotificationCompleted` 进入 EventMsg adapter。
-   - `ResponseItem::CommandWait`、`CommandWriteStdin` 和 `CommandExecutionNotification` 只在模型可见或旧 history replay 需要时保留。
+- `ResponseItem::CommandWait`、`CommandWriteStdin` 和 `CommandExecutionNotification` 只在模型可见时保留，不参与 history display replay。
+- `ResponseItem::FunctionCall` / `FunctionCallOutput` 不再作为 live tool-call display source；需要展示工具调用时必须发 dedicated display `EventMsg`。
    - raw tool output JSON 不得作为 UI display source。
 
 2. collaboration/child completion
    - `InterAgentCommunicationCompleted` 是 inter-agent display 的主路径。
-   - legacy `ResponseItem::InterAgentCommunication` 只保留旧 history/provider 兼容。
+   - `ResponseItem::InterAgentCommunication` 只保留为模型/provider history，不参与 display replay。
 
 3. goal/workflow/event-command
    - `ThreadGoalUpdateCompleted`、`WorkflowRunProgressCompleted`、`EventCommandEventCompleted`、`EventDrivenToolCompleted` 是对应展示主路径。
-   - `ResponseItem::ThreadGoalUpdate`、`WorkflowRunProgress`、`EventCommandEvent`、`EventDrivenTool` 保留为模型历史和旧 rollout/history 兼容，不再作为纯 UI 容器扩展。
+   - `ResponseItem::ThreadGoalUpdate`、`WorkflowRunProgress`、`EventCommandEvent`、`EventDrivenTool` 保留为模型历史，不参与 display replay。
 
 4. legacy cleanup
-   - 隔离 live `TurnItem -> ThreadItem` 到旧 lifecycle adapter。
-   - 保留 `RawResponseItem` 只用于旧 rollout/history rebuild 和 hook prompt 兼容。
+   - 删除公开 `TurnItem -> ThreadItem` adapter，只允许 `event_item_projection.rs` 在处理 `EventMsg::ItemStarted/Completed` 时显式转换。
+   - `RawResponseItem` 不再用于 live 或 thread/read display。
    - root-worker 只能消费 typed `ThreadItem`，不得从 raw marker、assistant JSON、legacy envelope 或 raw FunctionCallOutput 反解 display item。
 
 ## 验证策略
@@ -86,7 +84,7 @@
 
 - protocol projector 测试：`EventMsg -> ProjectedEventItem -> ThreadItem` payload 完整。
 - live app-server 测试：v2 `item/started` / `item/completed` 使用 typed `ThreadItem`。
-- thread/read replay 测试：persisted `EventMsg` 与 legacy `ResponseItem` 不重复展示。
+- thread/read replay 测试：persisted display-capable `EventMsg` 能重建展示，`ResponseItem` / `RawResponseItem` 不产生展示项。
 - provider/model 测试：模型上下文仍从 `ResponseItem` 获取 request input，不从 `EventMsg` 反推。
 
 Rust/Cargo 验证必须由固定 tester `/root/my_codex_pm/rust_cargo_tester` 串行执行。

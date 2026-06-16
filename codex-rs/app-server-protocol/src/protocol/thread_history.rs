@@ -9,16 +9,12 @@ use crate::protocol::item_builders::build_file_change_begin_item;
 use crate::protocol::item_builders::build_file_change_end_item;
 use crate::protocol::item_builders::build_item_from_guardian_event;
 use crate::protocol::response_item_projection::is_legacy_structured_assistant_message_text;
-use crate::protocol::response_item_projection::project_structured_response_item;
-use crate::protocol::response_item_projection::project_tool_call_completion;
-use crate::protocol::response_item_projection::project_tool_call_start;
 use crate::protocol::v2::CollabAgentState;
 use crate::protocol::v2::CollabAgentTool;
 use crate::protocol::v2::CollabAgentToolCallStatus;
 use crate::protocol::v2::CommandExecutionStatus;
 use crate::protocol::v2::DynamicToolCallOutputContentItem;
 use crate::protocol::v2::DynamicToolCallStatus;
-use crate::protocol::v2::InjectedContextSection;
 use crate::protocol::v2::McpToolCallError;
 use crate::protocol::v2::McpToolCallResult;
 use crate::protocol::v2::McpToolCallStatus;
@@ -31,23 +27,14 @@ use crate::protocol::v2::TurnStatus;
 use crate::protocol::v2::UserInput;
 use crate::protocol::v2::WebSearchAction;
 use crate::protocol::v2::assistant_message_thread_item;
-use codex_protocol::items::parse_hook_prompt_message;
-use codex_protocol::models::ContentItem;
 use codex_protocol::models::MessagePhase;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::APPS_INSTRUCTIONS_CLOSE_TAG;
-use codex_protocol::protocol::APPS_INSTRUCTIONS_OPEN_TAG;
 use codex_protocol::protocol::AgentReasoningEvent;
 use codex_protocol::protocol::AgentReasoningRawContentEvent;
 use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
-use codex_protocol::protocol::COLLABORATION_MODE_CLOSE_TAG;
-use codex_protocol::protocol::COLLABORATION_MODE_OPEN_TAG;
 use codex_protocol::protocol::CompactedItem;
 use codex_protocol::protocol::ContextCompactedEvent;
 use codex_protocol::protocol::DynamicToolCallResponseEvent;
-use codex_protocol::protocol::ENVIRONMENT_CONTEXT_CLOSE_TAG;
-use codex_protocol::protocol::ENVIRONMENT_CONTEXT_OPEN_TAG;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandBeginEvent;
@@ -57,21 +44,14 @@ use codex_protocol::protocol::GuardianAssessmentEvent;
 use codex_protocol::protocol::GuardianAssessmentStatus;
 use codex_protocol::protocol::ImageGenerationBeginEvent;
 use codex_protocol::protocol::ImageGenerationEndEvent;
-use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::McpToolCallBeginEvent;
 use codex_protocol::protocol::McpToolCallEndEvent;
-use codex_protocol::protocol::PLUGINS_INSTRUCTIONS_CLOSE_TAG;
-use codex_protocol::protocol::PLUGINS_INSTRUCTIONS_OPEN_TAG;
 use codex_protocol::protocol::PatchApplyBeginEvent;
 use codex_protocol::protocol::PatchApplyEndEvent;
-use codex_protocol::protocol::REALTIME_CONVERSATION_CLOSE_TAG;
-use codex_protocol::protocol::REALTIME_CONVERSATION_OPEN_TAG;
 use codex_protocol::protocol::ReviewOutputEvent;
 use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::SKILLS_INSTRUCTIONS_CLOSE_TAG;
-use codex_protocol::protocol::SKILLS_INSTRUCTIONS_OPEN_TAG;
 use codex_protocol::protocol::ThreadRolledBackEvent;
 use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnCompleteEvent;
@@ -100,9 +80,6 @@ use codex_protocol::protocol::ExecCommandStatus as CoreExecCommandStatus;
 #[cfg(test)]
 use codex_protocol::protocol::PatchApplyStatus as CorePatchApplyStatus;
 
-const INJECTED_CONTEXT_TITLE: &str = "Initial context injected";
-const MAX_INJECTED_CONTEXT_PREVIEW_SECTIONS: usize = 3;
-
 /// Convert persisted [`RolloutItem`] entries into a sequence of [`Turn`] values.
 ///
 /// When available, this uses `TurnContext.turn_id` as the canonical turn id so
@@ -122,7 +99,6 @@ pub struct ThreadHistoryBuilder {
     current_rollout_index: usize,
     next_rollout_index: usize,
     pending_agent_message_responses: Vec<PendingAgentMessageResponse>,
-    pending_legacy_agent_messages: Vec<PendingLegacyAgentMessage>,
 }
 
 impl Default for ThreadHistoryBuilder {
@@ -140,7 +116,6 @@ impl ThreadHistoryBuilder {
             current_rollout_index: 0,
             next_rollout_index: 0,
             pending_agent_message_responses: Vec::new(),
-            pending_legacy_agent_messages: Vec::new(),
         }
     }
 
@@ -253,16 +228,6 @@ impl ThreadHistoryBuilder {
             EventMsg::ExitedReviewMode(payload) => self.handle_exited_review_mode(payload),
             EventMsg::ItemStarted(payload) => self.handle_item_started(payload),
             EventMsg::ItemCompleted(payload) => self.handle_item_completed(payload),
-            EventMsg::ResponseItemStarted(payload)
-                if structured_response_item_id(&payload.item).is_some() =>
-            {
-                self.handle_projected_event_item(event);
-            }
-            EventMsg::ResponseItemCompleted(payload)
-                if structured_response_item_id(&payload.item).is_some() =>
-            {
-                self.handle_projected_event_item(event);
-            }
             EventMsg::ResponseItemStarted(_) | EventMsg::ResponseItemCompleted(_) => {}
             EventMsg::CommandWaitStarted(_)
             | EventMsg::CommandWaitCompleted(_)
@@ -275,7 +240,7 @@ impl ThreadHistoryBuilder {
             | EventMsg::ThreadGoalUpdateCompleted(_) => {
                 self.handle_projected_event_item(event);
             }
-            EventMsg::RawResponseItem(payload) => self.handle_response_item(&payload.item),
+            EventMsg::RawResponseItem(_) => {}
             EventMsg::HookStarted(_) | EventMsg::HookCompleted(_) => {}
             EventMsg::Error(payload) => self.handle_error(payload),
             EventMsg::TokenCount(_) => {}
@@ -293,178 +258,10 @@ impl ThreadHistoryBuilder {
         match item {
             RolloutItem::EventMsg(event) => self.handle_event(event),
             RolloutItem::Compacted(payload) => self.handle_compacted(payload),
-            RolloutItem::ResponseItem(item) => self.handle_response_item(item),
+            RolloutItem::ResponseItem(_) => {}
             RolloutItem::TurnContext(payload) => self.handle_turn_context(payload),
             RolloutItem::SessionMeta(_) => {}
         }
-    }
-
-    fn handle_response_item(&mut self, item: &codex_protocol::models::ResponseItem) {
-        match item {
-            ResponseItem::Message {
-                role,
-                content,
-                id,
-                phase,
-                ..
-            } => {
-                if self.try_handle_injected_context_message(role, content) {
-                    return;
-                }
-
-                if role == "assistant" {
-                    let Some(text) = single_text_message_content(content) else {
-                        return;
-                    };
-                    if is_legacy_structured_assistant_message_text(text) {
-                        return;
-                    }
-                    let id = id.clone().unwrap_or_else(|| self.next_item_id());
-                    if self.consume_duplicate_agent_message_response(text, phase.clone(), None) {
-                        return;
-                    }
-                    if self.consume_duplicate_legacy_agent_message_response(
-                        &id,
-                        text,
-                        phase.clone(),
-                    ) {
-                        return;
-                    }
-                    self.ensure_turn().items.push(assistant_message_thread_item(
-                        id.clone(),
-                        text.to_string(),
-                        phase.clone(),
-                        None,
-                    ));
-                    self.pending_agent_message_responses
-                        .push(PendingAgentMessageResponse {
-                            id,
-                            text: text.to_string(),
-                            phase: phase.clone(),
-                        });
-                    return;
-                }
-
-                if role != "user" {
-                    return;
-                }
-
-                let Some(hook_prompt) = parse_hook_prompt_message(id.as_ref(), content) else {
-                    return;
-                };
-
-                self.ensure_turn().items.push(ThreadItem::HookPrompt {
-                    id: hook_prompt.id,
-                    fragments: hook_prompt
-                        .fragments
-                        .into_iter()
-                        .map(crate::protocol::v2::HookPromptFragment::from)
-                        .collect(),
-                });
-            }
-            ResponseItem::CommandWait { .. }
-            | ResponseItem::CommandWriteStdin { .. }
-            | ResponseItem::CommandExecutionNotification { .. }
-            | ResponseItem::WorkflowRunProgress { .. }
-            | ResponseItem::EventCommandEvent { .. }
-            | ResponseItem::EventDrivenTool { .. }
-            | ResponseItem::ThreadGoalUpdate { .. }
-            | ResponseItem::InterAgentCommunication { .. } => {
-                let fallback_id = self.next_item_id();
-                if let Some(projected) =
-                    project_structured_response_item(item, || fallback_id.clone())
-                {
-                    self.ensure_turn()
-                        .legacy_structured_response_items
-                        .push(projected);
-                    return;
-                }
-
-                if let ResponseItem::InterAgentCommunication { id, communication } = item
-                    && matches!(communication.operation, InterAgentOperation::Unknown)
-                {
-                    let text = serde_json::to_string(communication)
-                        .unwrap_or_else(|_| communication.content.clone());
-                    self.ensure_turn().items.push(assistant_message_thread_item(
-                        id.clone().unwrap_or(fallback_id),
-                        text,
-                        None,
-                        None,
-                    ));
-                }
-            }
-            ResponseItem::FunctionCall {
-                name,
-                namespace,
-                arguments,
-                call_id,
-                ..
-            } => {
-                if let Some(item) =
-                    project_tool_call_start(name, namespace.as_deref(), arguments, call_id)
-                {
-                    self.upsert_event_driven_tool_call_in_current_turn(item);
-                }
-            }
-            ResponseItem::FunctionCallOutput { call_id, output } => {
-                let existing = self.find_event_driven_tool_call_in_current_turn(call_id);
-                if existing.is_none() {
-                    return;
-                }
-                if let Some(item) =
-                    existing.and_then(|item| project_tool_call_completion(item, call_id, output))
-                {
-                    self.upsert_event_driven_tool_call_in_current_turn(item);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn try_handle_injected_context_message(&mut self, role: &str, content: &[ContentItem]) -> bool {
-        if !self.is_initial_injected_context_window() {
-            return false;
-        }
-
-        let sections = parse_injected_context_sections(role, content);
-        if sections.is_empty() {
-            return false;
-        }
-
-        self.append_injected_context_sections(sections);
-        true
-    }
-
-    fn is_initial_injected_context_window(&self) -> bool {
-        self.turns.is_empty()
-            && self.current_turn.as_ref().is_none_or(|turn| {
-                (turn.items.is_empty() || turn.has_only_injected_context()) && !turn.saw_compaction
-            })
-    }
-
-    fn append_injected_context_sections(&mut self, mut sections: Vec<InjectedContextSection>) {
-        {
-            let turn = self.ensure_turn();
-            if let Some(ThreadItem::InjectedContext {
-                preview,
-                sections: existing_sections,
-                ..
-            }) = turn.items.last_mut()
-            {
-                existing_sections.append(&mut sections);
-                *preview = build_injected_context_preview(existing_sections);
-                return;
-            }
-        }
-
-        let id = self.next_item_id();
-        let preview = build_injected_context_preview(&sections);
-        self.ensure_turn().items.push(ThreadItem::InjectedContext {
-            id,
-            title: INJECTED_CONTEXT_TITLE.to_string(),
-            preview,
-            sections,
-        });
     }
 
     fn handle_user_message(&mut self, payload: &UserMessageEvent) {
@@ -511,12 +308,6 @@ impl ThreadHistoryBuilder {
         }
 
         let id = self.next_item_id();
-        self.pending_legacy_agent_messages
-            .push(PendingLegacyAgentMessage {
-                id: id.clone(),
-                text: text.clone(),
-                phase: phase.clone(),
-            });
         self.ensure_turn().items.push(assistant_message_thread_item(
             id,
             text,
@@ -561,47 +352,6 @@ impl ThreadHistoryBuilder {
         }
 
         true
-    }
-
-    fn consume_duplicate_legacy_agent_message_response(
-        &mut self,
-        response_id: &str,
-        text: &str,
-        phase: Option<MessagePhase>,
-    ) -> bool {
-        let Some(pending_index) = self
-            .pending_legacy_agent_messages
-            .iter()
-            .position(|pending| pending.matches(text, phase.as_ref()))
-        else {
-            return false;
-        };
-        let pending = self.pending_legacy_agent_messages.remove(pending_index);
-
-        let Some(existing_item) = self
-            .ensure_turn()
-            .items
-            .iter_mut()
-            .find(|item| item.id() == pending.id)
-        else {
-            return false;
-        };
-
-        match existing_item {
-            ThreadItem::AgentMessage {
-                id,
-                text: item_text,
-                phase: item_phase,
-                ..
-            } if item_text == text => {
-                *id = response_id.to_string();
-                if phase.is_some() {
-                    *item_phase = phase;
-                }
-                true
-            }
-            _ => false,
-        }
     }
 
     fn handle_agent_reasoning(&mut self, payload: &AgentReasoningEvent) {
@@ -650,10 +400,7 @@ impl ThreadHistoryBuilder {
                 if plan.text.is_empty() {
                     return;
                 }
-                self.upsert_item_in_turn_id(
-                    &payload.turn_id,
-                    ThreadItem::from(payload.item.clone()),
-                );
+                self.handle_projected_event_item(&EventMsg::ItemStarted(payload.clone()));
             }
             codex_protocol::items::TurnItem::UserMessage(_)
             | codex_protocol::items::TurnItem::HookPrompt(_)
@@ -677,38 +424,32 @@ impl ThreadHistoryBuilder {
                 if plan.text.is_empty() {
                     return;
                 }
-                self.upsert_item_in_turn_id(
-                    &payload.turn_id,
-                    ThreadItem::from(payload.item.clone()),
-                );
+                self.handle_projected_event_item(&EventMsg::ItemCompleted(payload.clone()));
             }
             codex_protocol::items::TurnItem::EventDrivenTool(_)
             | codex_protocol::items::TurnItem::EventCommandEvent(_) => {
-                self.upsert_item_in_turn_id(
-                    &payload.turn_id,
-                    ThreadItem::from(payload.item.clone()),
-                );
+                self.handle_projected_event_item(&EventMsg::ItemCompleted(payload.clone()));
             }
             codex_protocol::items::TurnItem::AgentMessage(_) => {
-                let item = ThreadItem::from(payload.item.clone());
-                if let ThreadItem::AgentMessage {
-                    id, text, phase, ..
-                } = &item
+                if let Some(ProjectedEventItem::Completed { item, .. }) =
+                    project_event_msg_item(&EventMsg::ItemCompleted(payload.clone()))
                 {
-                    self.pending_agent_message_responses
-                        .push(PendingAgentMessageResponse {
-                            id: id.clone(),
-                            text: text.clone(),
-                            phase: phase.clone(),
-                        });
+                    if let ThreadItem::AgentMessage {
+                        id, text, phase, ..
+                    } = &item
+                    {
+                        self.pending_agent_message_responses
+                            .push(PendingAgentMessageResponse {
+                                id: id.clone(),
+                                text: text.clone(),
+                                phase: phase.clone(),
+                            });
+                    }
+                    self.upsert_item_in_turn_id(&payload.turn_id, item);
                 }
-                self.upsert_item_in_turn_id(&payload.turn_id, item);
             }
             codex_protocol::items::TurnItem::CollabAgentMessage(_) => {
-                self.upsert_item_in_turn_id_or_create(
-                    &payload.turn_id,
-                    ThreadItem::from(payload.item.clone()),
-                );
+                self.handle_projected_event_item(&EventMsg::ItemCompleted(payload.clone()));
             }
             codex_protocol::items::TurnItem::UserMessage(_)
             | codex_protocol::items::TurnItem::HookPrompt(_)
@@ -729,7 +470,7 @@ impl ThreadHistoryBuilder {
         match projected {
             ProjectedEventItem::Started { turn_id, item, .. }
             | ProjectedEventItem::Completed { turn_id, item, .. } => {
-                self.upsert_projected_event_item_in_turn_id_or_create(&turn_id, item);
+                self.upsert_item_in_turn_id_or_create(&turn_id, item);
             }
         }
     }
@@ -1471,9 +1212,7 @@ impl ThreadHistoryBuilder {
 
     fn finish_current_turn(&mut self) {
         self.pending_agent_message_responses.clear();
-        self.pending_legacy_agent_messages.clear();
-        if let Some(mut turn) = self.current_turn.take() {
-            turn.items.append(&mut turn.legacy_structured_response_items);
+        if let Some(turn) = self.current_turn.take() {
             if turn.items.is_empty() && !turn.opened_explicitly && !turn.saw_compaction {
                 return;
             }
@@ -1499,7 +1238,6 @@ impl ThreadHistoryBuilder {
             duration_ms: None,
             opened_explicitly: false,
             saw_compaction: false,
-            legacy_structured_response_items: Vec::new(),
             rollout_start_index: self.current_rollout_index,
         }
     }
@@ -1563,50 +1301,9 @@ impl ThreadHistoryBuilder {
         self.current_turn = Some(turn);
     }
 
-    fn upsert_projected_event_item_in_turn_id_or_create(&mut self, turn_id: &str, item: ThreadItem) {
-        if let Some(turn) = self.current_turn.as_mut()
-            && turn.id == turn_id
-        {
-            suppress_legacy_structured_response_item(&mut turn.legacy_structured_response_items, &item);
-            upsert_turn_item(&mut turn.items, item);
-            return;
-        }
-
-        if let Some(turn) = self.turns.iter_mut().find(|turn| turn.id == turn_id) {
-            upsert_turn_item(&mut turn.items, item);
-            return;
-        }
-
-        if let Some(turn) = self.current_turn.as_mut()
-            && turn.opened_explicitly
-            && matches!(turn.status, TurnStatus::InProgress)
-        {
-            suppress_legacy_structured_response_item(&mut turn.legacy_structured_response_items, &item);
-            upsert_turn_item(&mut turn.items, item);
-            return;
-        }
-
-        self.finish_current_turn();
-        let mut turn = self.new_turn(Some(turn_id.to_string()));
-        suppress_legacy_structured_response_item(&mut turn.legacy_structured_response_items, &item);
-        upsert_turn_item(&mut turn.items, item);
-        self.current_turn = Some(turn);
-    }
-
     fn upsert_item_in_current_turn(&mut self, item: ThreadItem) {
         let turn = self.ensure_turn();
         upsert_turn_item(&mut turn.items, item);
-    }
-
-    fn upsert_event_driven_tool_call_in_current_turn(&mut self, item: ThreadItem) {
-        let turn = self.ensure_turn();
-        upsert_event_driven_tool_call(&mut turn.items, item);
-    }
-
-    fn find_event_driven_tool_call_in_current_turn(&self, item_id: &str) -> Option<&ThreadItem> {
-        self.current_turn
-            .as_ref()
-            .and_then(|turn| turn.items.iter().find(|item| item.id() == item_id))
     }
 
     fn next_item_id(&mut self) -> String {
@@ -1658,18 +1355,6 @@ impl PendingAgentMessageResponse {
     }
 }
 
-struct PendingLegacyAgentMessage {
-    id: String,
-    text: String,
-    phase: Option<MessagePhase>,
-}
-
-impl PendingLegacyAgentMessage {
-    fn matches(&self, text: &str, phase: Option<&MessagePhase>) -> bool {
-        self.text == text && phases_are_compatible(self.phase.as_ref(), phase)
-    }
-}
-
 fn phases_are_compatible(
     response_phase: Option<&MessagePhase>,
     event_phase: Option<&MessagePhase>,
@@ -1705,173 +1390,6 @@ fn convert_dynamic_tool_content_items(
         .collect()
 }
 
-fn single_text_message_content(content: &[ContentItem]) -> Option<&str> {
-    match content {
-        [ContentItem::InputText { text }] | [ContentItem::OutputText { text }] => Some(text),
-        _ => None,
-    }
-}
-
-fn parse_injected_context_sections(
-    role: &str,
-    content: &[ContentItem],
-) -> Vec<InjectedContextSection> {
-    content
-        .iter()
-        .filter_map(|item| match item {
-            ContentItem::InputText { text } => parse_injected_context_section(role, text),
-            ContentItem::InputImage { .. } | ContentItem::OutputText { .. } => None,
-        })
-        .collect()
-}
-
-fn parse_injected_context_section(role: &str, text: &str) -> Option<InjectedContextSection> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    let tagged_sections = [
-        (
-            "Permissions",
-            "<permissions instructions>",
-            "</permissions instructions>",
-        ),
-        ("Model", "<model_switch>", "</model_switch>"),
-        (
-            "Collaboration mode",
-            COLLABORATION_MODE_OPEN_TAG,
-            COLLABORATION_MODE_CLOSE_TAG,
-        ),
-        ("Personality", "<personality_spec>", "</personality_spec>"),
-        (
-            "Apps",
-            APPS_INSTRUCTIONS_OPEN_TAG,
-            APPS_INSTRUCTIONS_CLOSE_TAG,
-        ),
-        (
-            "Skills",
-            SKILLS_INSTRUCTIONS_OPEN_TAG,
-            SKILLS_INSTRUCTIONS_CLOSE_TAG,
-        ),
-        (
-            "Plugins",
-            PLUGINS_INSTRUCTIONS_OPEN_TAG,
-            PLUGINS_INSTRUCTIONS_CLOSE_TAG,
-        ),
-        (
-            "Environment",
-            ENVIRONMENT_CONTEXT_OPEN_TAG,
-            ENVIRONMENT_CONTEXT_CLOSE_TAG,
-        ),
-        (
-            "Multiagent",
-            "<multiagent_context>",
-            "</multiagent_context>",
-        ),
-        (
-            "Realtime",
-            REALTIME_CONVERSATION_OPEN_TAG,
-            REALTIME_CONVERSATION_CLOSE_TAG,
-        ),
-    ];
-
-    for (label, start, end) in tagged_sections {
-        if let Some(section) = build_injected_context_section(label, trimmed, start, end) {
-            return Some(section);
-        }
-    }
-
-    if let Some(section) = parse_skill_injected_context_section(trimmed) {
-        return Some(section);
-    }
-
-    if trimmed.starts_with("# AGENTS.md instructions for ") && trimmed.ends_with("</INSTRUCTIONS>")
-    {
-        return Some(InjectedContextSection {
-            label: "AGENTS.md instructions".to_string(),
-            text: trimmed.to_string(),
-        });
-    }
-
-    if role == "developer" {
-        return Some(InjectedContextSection {
-            label: "Developer instructions".to_string(),
-            text: trimmed.to_string(),
-        });
-    }
-
-    None
-}
-
-fn parse_skill_injected_context_section(text: &str) -> Option<InjectedContextSection> {
-    const SKILL_OPEN_TAG: &str = "<skill>";
-    const SKILL_CLOSE_TAG: &str = "</skill>";
-
-    let body = text
-        .strip_prefix(SKILL_OPEN_TAG)?
-        .strip_suffix(SKILL_CLOSE_TAG)?
-        .trim();
-    let (name, name_end) = extract_tag_value(body, "name")?;
-    let body_after_name = body.get(name_end..)?.trim_start();
-    let (path, path_end) = extract_tag_value(body_after_name, "path")?;
-    let concrete = body_after_name.get(path_end..)?.trim();
-
-    Some(InjectedContextSection {
-        label: format!("Skill: {name}"),
-        text: if concrete.is_empty() {
-            format!("Path: {path}")
-        } else {
-            format!("Path: {path}\n\n{concrete}")
-        },
-    })
-}
-
-fn extract_tag_value<'a>(body: &'a str, tag: &str) -> Option<(&'a str, usize)> {
-    let open = format!("<{tag}>");
-    let close = format!("</{tag}>");
-    let after_open = body.strip_prefix(open.as_str())?;
-    let value_end = after_open.find(close.as_str())?;
-    let value = after_open.get(..value_end)?;
-    let consumed = open
-        .len()
-        .saturating_add(value_end)
-        .saturating_add(close.len());
-    Some((value.trim(), consumed))
-}
-
-fn build_injected_context_section(
-    label: &str,
-    text: &str,
-    start_marker: &str,
-    end_marker: &str,
-) -> Option<InjectedContextSection> {
-    let body = text
-        .strip_prefix(start_marker)?
-        .strip_suffix(end_marker)?
-        .trim();
-    Some(InjectedContextSection {
-        label: label.to_string(),
-        text: body.to_string(),
-    })
-}
-
-fn build_injected_context_preview(sections: &[InjectedContextSection]) -> String {
-    let labels: Vec<&str> = sections
-        .iter()
-        .map(|section| section.label.as_str())
-        .take(MAX_INJECTED_CONTEXT_PREVIEW_SECTIONS)
-        .collect();
-    let remaining = sections
-        .len()
-        .saturating_sub(MAX_INJECTED_CONTEXT_PREVIEW_SECTIONS);
-    if remaining == 0 {
-        labels.join(" • ")
-    } else {
-        format!("{} • +{remaining} more", labels.join(" • "))
-    }
-}
-
 fn upsert_turn_item(items: &mut Vec<ThreadItem>, item: ThreadItem) {
     if let Some(existing_item) = items
         .iter_mut()
@@ -1883,328 +1401,9 @@ fn upsert_turn_item(items: &mut Vec<ThreadItem>, item: ThreadItem) {
     items.push(item);
 }
 
-fn suppress_legacy_structured_response_item(items: &mut Vec<ThreadItem>, item: &ThreadItem) {
-    if let Some(index) = items
-        .iter()
-        .position(|legacy_item| legacy_item.id() == item.id())
-    {
-        items.remove(index);
-        return;
-    }
-
-    if let Some(index) = items
-        .iter()
-        .position(|legacy_item| same_structured_display_item(legacy_item, item))
-    {
-        items.remove(index);
-    }
-}
-
-fn same_structured_display_item(left: &ThreadItem, right: &ThreadItem) -> bool {
-    match (left, right) {
-        (
-            ThreadItem::CommandExecutionNotification {
-                command_item_id: left_command_item_id,
-                kind: left_kind,
-                message: left_message,
-                output: left_output,
-                exit_code: left_exit_code,
-                created_at_ms: left_created_at_ms,
-                ..
-            },
-            ThreadItem::CommandExecutionNotification {
-                command_item_id: right_command_item_id,
-                kind: right_kind,
-                message: right_message,
-                output: right_output,
-                exit_code: right_exit_code,
-                created_at_ms: right_created_at_ms,
-                ..
-            },
-        ) => {
-            left_command_item_id == right_command_item_id
-                && left_kind == right_kind
-                && left_message == right_message
-                && left_output == right_output
-                && left_exit_code == right_exit_code
-                && left_created_at_ms == right_created_at_ms
-        }
-        (
-            ThreadItem::CommandWait {
-                command_id: left_command_id,
-                status: left_status,
-                notification: left_notification,
-                exit_code: left_exit_code,
-                wall_time_seconds: left_wall_time_seconds,
-                wait_timeout_ms: left_wait_timeout_ms,
-                created_at_ms: left_created_at_ms,
-                ..
-            },
-            ThreadItem::CommandWait {
-                command_id: right_command_id,
-                status: right_status,
-                notification: right_notification,
-                exit_code: right_exit_code,
-                wall_time_seconds: right_wall_time_seconds,
-                wait_timeout_ms: right_wait_timeout_ms,
-                created_at_ms: right_created_at_ms,
-                ..
-            },
-        ) => {
-            left_command_id == right_command_id
-                && left_status == right_status
-                && left_notification == right_notification
-                && left_exit_code == right_exit_code
-                && left_wall_time_seconds == right_wall_time_seconds
-                && left_wait_timeout_ms == right_wait_timeout_ms
-                && left_created_at_ms == right_created_at_ms
-        }
-        (
-            ThreadItem::CommandWriteStdin {
-                command_id: left_command_id,
-                bytes_written: left_bytes_written,
-                contains_newline: left_contains_newline,
-                created_at_ms: left_created_at_ms,
-                ..
-            },
-            ThreadItem::CommandWriteStdin {
-                command_id: right_command_id,
-                bytes_written: right_bytes_written,
-                contains_newline: right_contains_newline,
-                created_at_ms: right_created_at_ms,
-                ..
-            },
-        ) => {
-            left_command_id == right_command_id
-                && left_bytes_written == right_bytes_written
-                && left_contains_newline == right_contains_newline
-                && left_created_at_ms == right_created_at_ms
-        }
-        (
-            ThreadItem::EventDrivenTool {
-                tool: left_tool,
-                title: left_title,
-                text: left_text,
-                ..
-            },
-            ThreadItem::EventDrivenTool {
-                tool: right_tool,
-                title: right_title,
-                text: right_text,
-                ..
-            },
-        ) => left_tool == right_tool && left_title == right_title && left_text == right_text,
-        (
-            ThreadItem::EventCommandEvent {
-                subscription_id: left_subscription_id,
-                kind: left_kind,
-                label: left_label,
-                command: left_command,
-                cwd: left_cwd,
-                line: left_line,
-                sequence: left_sequence,
-                exit_code: left_exit_code,
-                signal: left_signal,
-                message: left_message,
-                truncated: left_truncated,
-                created_at: left_created_at,
-                ..
-            },
-            ThreadItem::EventCommandEvent {
-                subscription_id: right_subscription_id,
-                kind: right_kind,
-                label: right_label,
-                command: right_command,
-                cwd: right_cwd,
-                line: right_line,
-                sequence: right_sequence,
-                exit_code: right_exit_code,
-                signal: right_signal,
-                message: right_message,
-                truncated: right_truncated,
-                created_at: right_created_at,
-                ..
-            },
-        ) => {
-            left_subscription_id == right_subscription_id
-                && left_kind == right_kind
-                && left_label == right_label
-                && left_command == right_command
-                && left_cwd == right_cwd
-                && left_line == right_line
-                && left_sequence == right_sequence
-                && left_exit_code == right_exit_code
-                && left_signal == right_signal
-                && left_message == right_message
-                && left_truncated == right_truncated
-                && left_created_at == right_created_at
-        }
-        (
-            ThreadItem::WorkflowRunProgress {
-                event: left_event, ..
-            },
-            ThreadItem::WorkflowRunProgress {
-                event: right_event, ..
-            },
-        ) => left_event == right_event,
-        (
-            ThreadItem::ThreadGoalUpdate {
-                goal: left_goal,
-                action: left_action,
-                source: left_source,
-                previous_status: left_previous_status,
-                ..
-            },
-            ThreadItem::ThreadGoalUpdate {
-                goal: right_goal,
-                action: right_action,
-                source: right_source,
-                previous_status: right_previous_status,
-                ..
-            },
-        ) => {
-            left_goal == right_goal
-                && left_action == right_action
-                && left_source == right_source
-                && left_previous_status == right_previous_status
-        }
-        (
-            ThreadItem::CollabAgentMessage {
-                operation: left_operation,
-                sender_thread_id: left_sender_thread_id,
-                sender_path: left_sender_path,
-                recipient_thread_id: left_recipient_thread_id,
-                recipient_path: left_recipient_path,
-                other_recipient_paths: left_other_recipient_paths,
-                content: left_content,
-                trigger_turn: left_trigger_turn,
-                ..
-            },
-            ThreadItem::CollabAgentMessage {
-                operation: right_operation,
-                sender_thread_id: right_sender_thread_id,
-                sender_path: right_sender_path,
-                recipient_thread_id: right_recipient_thread_id,
-                recipient_path: right_recipient_path,
-                other_recipient_paths: right_other_recipient_paths,
-                content: right_content,
-                trigger_turn: right_trigger_turn,
-                ..
-            },
-        ) => {
-            left_operation == right_operation
-                && left_sender_thread_id == right_sender_thread_id
-                && left_sender_path == right_sender_path
-                && left_recipient_thread_id == right_recipient_thread_id
-                && left_recipient_path == right_recipient_path
-                && left_other_recipient_paths == right_other_recipient_paths
-                && left_content == right_content
-                && left_trigger_turn == right_trigger_turn
-        }
-        (
-            ThreadItem::CollabAgentToolCall {
-                tool: left_tool,
-                status: left_status,
-                sender_thread_id: left_sender_thread_id,
-                sender_path: left_sender_path,
-                receiver_thread_ids: left_receiver_thread_ids,
-                receiver_paths: left_receiver_paths,
-                timeout_ms: left_timeout_ms,
-                prompt: left_prompt,
-                model: left_model,
-                reasoning_effort: left_reasoning_effort,
-                agents_states: left_agents_states,
-                ..
-            },
-            ThreadItem::CollabAgentToolCall {
-                tool: right_tool,
-                status: right_status,
-                sender_thread_id: right_sender_thread_id,
-                sender_path: right_sender_path,
-                receiver_thread_ids: right_receiver_thread_ids,
-                receiver_paths: right_receiver_paths,
-                timeout_ms: right_timeout_ms,
-                prompt: right_prompt,
-                model: right_model,
-                reasoning_effort: right_reasoning_effort,
-                agents_states: right_agents_states,
-                ..
-            },
-        ) => {
-            left_tool == right_tool
-                && left_status == right_status
-                && left_sender_thread_id == right_sender_thread_id
-                && left_sender_path == right_sender_path
-                && left_receiver_thread_ids == right_receiver_thread_ids
-                && left_receiver_paths == right_receiver_paths
-                && left_timeout_ms == right_timeout_ms
-                && left_prompt == right_prompt
-                && left_model == right_model
-                && left_reasoning_effort == right_reasoning_effort
-                && left_agents_states == right_agents_states
-        }
-        (
-            ThreadItem::CollabAgentStatusUpdate {
-                sender_thread_id: left_sender_thread_id,
-                sender_path: left_sender_path,
-                recipient_thread_id: left_recipient_thread_id,
-                recipient_path: left_recipient_path,
-                status: left_status,
-                ..
-            },
-            ThreadItem::CollabAgentStatusUpdate {
-                sender_thread_id: right_sender_thread_id,
-                sender_path: right_sender_path,
-                recipient_thread_id: right_recipient_thread_id,
-                recipient_path: right_recipient_path,
-                status: right_status,
-                ..
-            },
-        ) => {
-            left_sender_thread_id == right_sender_thread_id
-                && left_sender_path == right_sender_path
-                && left_recipient_thread_id == right_recipient_thread_id
-                && left_recipient_path == right_recipient_path
-                && left_status == right_status
-        }
-        _ => false,
-    }
-}
-
-fn upsert_event_driven_tool_call(items: &mut Vec<ThreadItem>, item: ThreadItem) {
-    if let Some(existing_item) = items
-        .iter_mut()
-        .find(|existing_item| existing_item.id() == item.id())
-    {
-        if matches!(
-            existing_item,
-            ThreadItem::EventDrivenToolCall { .. } | ThreadItem::EventCommandCall { .. }
-        ) {
-            *existing_item = item;
-        }
-        return;
-    }
-    items.push(item);
-}
-
-fn structured_response_item_id(item: &ResponseItem) -> Option<&str> {
-    match item {
-        ResponseItem::CommandWait { id, .. }
-        | ResponseItem::CommandWriteStdin { id, .. }
-        | ResponseItem::CommandExecutionNotification { id, .. }
-        | ResponseItem::WorkflowRunProgress { id, .. }
-        | ResponseItem::EventCommandEvent { id, .. }
-        | ResponseItem::EventDrivenTool { id, .. }
-        | ResponseItem::ThreadGoalUpdate { id, .. }
-        | ResponseItem::InterAgentCommunication { id, .. } => id.as_deref(),
-        _ => None,
-    }
-}
-
 struct PendingTurn {
     id: String,
     items: Vec<ThreadItem>,
-    legacy_structured_response_items: Vec<ThreadItem>,
     error: Option<TurnError>,
     status: TurnStatus,
     started_at: Option<i64>,
@@ -2292,10 +1491,8 @@ mod tests {
     use codex_protocol::items::CollabAgentMessageItem as CoreCollabAgentMessageItem;
     use codex_protocol::items::EventCommandEventItem as CoreEventCommandEventItem;
     use codex_protocol::items::EventDrivenToolItem as CoreEventDrivenToolItem;
-    use codex_protocol::items::HookPromptFragment as CoreHookPromptFragment;
     use codex_protocol::items::TurnItem as CoreTurnItem;
     use codex_protocol::items::UserMessageItem as CoreUserMessageItem;
-    use codex_protocol::items::build_hook_prompt_message;
     use codex_protocol::mcp::CallToolResult;
     use codex_protocol::models::ContentItem;
     use codex_protocol::models::FunctionCallOutputPayload;
@@ -2882,14 +2079,11 @@ mod tests {
                 }),
                 completed_at_ms: 123,
             })),
-            RolloutItem::ResponseItem(ResponseItem::Message {
-                id: Some("msg-1".into()),
-                role: "assistant".into(),
-                content: vec![ContentItem::OutputText {
-                    text: "parent continues".into(),
-                }],
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "parent continues".into(),
                 phase: None,
-            }),
+                memory_citation: None,
+            })),
             RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
                 turn_id: "parent-turn".into(),
                 last_agent_message: None,
@@ -2919,7 +2113,7 @@ mod tests {
                     },
                 },
                 ThreadItem::AgentMessage {
-                    id: "msg-1".into(),
+                    id: "item-1".into(),
                     text: "parent continues".into(),
                     phase: None,
                     memory_citation: None,
@@ -4002,139 +3196,6 @@ mod tests {
     }
 
     #[test]
-    fn reconstructs_event_driven_tool_items_from_raw_response_history() {
-        let items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
-                turn_id: "turn-1".into(),
-                started_at: None,
-                model_context_window: None,
-                collaboration_mode_kind: Default::default(),
-            })),
-            RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
-                message: "remind me".into(),
-                images: None,
-                text_elements: Vec::new(),
-                local_images: Vec::new(),
-                skills: Vec::new(),
-            })),
-            RolloutItem::ResponseItem(ResponseItem::FunctionCall {
-                id: None,
-                name: "schedule_subscribe".into(),
-                namespace: None,
-                arguments: r#"{"schedule":{"once_after":{"seconds":60}},"label":"standup"}"#.into(),
-                call_id: "builtin-1".into(),
-            }),
-            RolloutItem::ResponseItem(ResponseItem::FunctionCallOutput {
-                call_id: "builtin-1".into(),
-                output: FunctionCallOutputPayload::from_text(
-                    r#"{"schedule_summary":"once after 60s"}"#.into(),
-                ),
-            }),
-        ];
-
-        let turns = build_turns_from_rollout_items(&items);
-        assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items.len(), 2);
-        assert_eq!(
-            turns[0].items[1],
-            ThreadItem::EventDrivenToolCall {
-                id: "builtin-1".into(),
-                tool: "schedule_subscribe".into(),
-                arguments: serde_json::json!({
-                    "schedule": {"once_after": {"seconds": 60}},
-                    "label": "standup",
-                }),
-                status: DynamicToolCallStatus::Completed,
-                output: Some(serde_json::Value::String(
-                    r#"{"schedule_summary":"once after 60s"}"#.into(),
-                )),
-            }
-        );
-    }
-
-    #[test]
-    fn event_command_write_stdin_history_replays_as_event_driven_tool() {
-        let items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
-                turn_id: "turn-1".into(),
-                started_at: None,
-                model_context_window: None,
-                collaboration_mode_kind: Default::default(),
-            })),
-            RolloutItem::ResponseItem(ResponseItem::FunctionCall {
-                id: None,
-                name: "event_command_write_stdin".into(),
-                namespace: None,
-                arguments: r#"{"subscription_id":"sub-1","chars":"\n"}"#.into(),
-                call_id: "builtin-1".into(),
-            }),
-            RolloutItem::ResponseItem(ResponseItem::FunctionCallOutput {
-                call_id: "builtin-1".into(),
-                output: FunctionCallOutputPayload::from_text(
-                    r#"{"subscription_id":"sub-1","bytes_written":1}"#.into(),
-                ),
-            }),
-        ];
-
-        let turns = build_turns_from_rollout_items(&items);
-
-        assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items.len(), 1);
-        assert_eq!(
-            turns[0].items[0],
-            ThreadItem::EventDrivenToolCall {
-                id: "builtin-1".into(),
-                tool: "event_command_write_stdin".into(),
-                arguments: serde_json::json!({
-                    "subscription_id": "sub-1",
-                    "chars": "\n",
-                }),
-                status: DynamicToolCallStatus::Completed,
-                output: Some(serde_json::Value::String(
-                    r#"{"subscription_id":"sub-1","bytes_written":1}"#.into(),
-                )),
-            }
-        );
-    }
-
-    #[test]
-    fn event_command_event_history_uses_stable_event_id() {
-        let event = EventCommandEvent {
-            subscription_id: "sub-1".into(),
-            kind: codex_protocol::event_command::EventCommandEventKind::Exited,
-            label: Some("tests".into()),
-            command: "cargo test".into(),
-            cwd: None,
-            line: None,
-            sequence: None,
-            exit_code: Some(0),
-            signal: None,
-            message: Some("done".into()),
-            truncated: false,
-            created_at: 1_700_000_000,
-        };
-        let expected_id = event.stable_item_id();
-        let items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
-                turn_id: "turn-1".into(),
-                started_at: None,
-                model_context_window: None,
-                collaboration_mode_kind: Default::default(),
-            })),
-            RolloutItem::ResponseItem(ResponseItem::EventCommandEvent { id: None, event }),
-        ];
-
-        let turns = build_turns_from_rollout_items(&items);
-
-        assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items.len(), 1);
-        let ThreadItem::EventCommandEvent { id, .. } = &turns[0].items[0] else {
-            panic!("expected event command event item");
-        };
-        assert_eq!(id, &expected_id);
-    }
-
-    #[test]
     fn typed_event_command_event_history_uses_typed_item_id() {
         let event = EventCommandEvent {
             subscription_id: "sub-1".into(),
@@ -4157,10 +3218,15 @@ mod tests {
                 model_context_window: None,
                 collaboration_mode_kind: Default::default(),
             })),
-            RolloutItem::ResponseItem(ResponseItem::EventCommandEvent {
-                id: Some("typed-event-command".into()),
-                event,
-            }),
+            RolloutItem::EventMsg(EventMsg::EventCommandEventCompleted(
+                codex_protocol::protocol::EventCommandDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "typed-event-command".into(),
+                    event,
+                    completed_at_ms: 123,
+                },
+            )),
         ];
 
         let turns = build_turns_from_rollout_items(&items);
@@ -4284,6 +3350,11 @@ mod tests {
 
     #[test]
     fn typed_event_driven_tool_history_rebuilds_trigger_item() {
+        let trigger = EventDrivenToolTrigger {
+            tool: "fs_subscribe".into(),
+            title: "File watch triggered".into(),
+            text: "build.log changed".into(),
+        };
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".into(),
@@ -4291,14 +3362,15 @@ mod tests {
                 model_context_window: None,
                 collaboration_mode_kind: Default::default(),
             })),
-            RolloutItem::ResponseItem(ResponseItem::EventDrivenTool {
-                id: Some("typed-trigger".into()),
-                trigger: EventDrivenToolTrigger {
-                    tool: "fs_subscribe".into(),
-                    title: "File watch triggered".into(),
-                    text: "build.log changed".into(),
+            RolloutItem::EventMsg(EventMsg::EventDrivenToolCompleted(
+                codex_protocol::protocol::EventDrivenToolDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "typed-trigger".into(),
+                    trigger,
+                    completed_at_ms: 123,
                 },
-            }),
+            )),
         ];
 
         let turns = build_turns_from_rollout_items(&items);
@@ -4317,6 +3389,15 @@ mod tests {
 
     #[test]
     fn typed_workflow_progress_history_rebuilds_thread_item() {
+        let event = codex_protocol::models::WorkflowRunProgressEvent {
+            run_id: "wf_1".into(),
+            workflow_id: "feature-dev".into(),
+            status: serde_json::json!("running"),
+            runner_status: "control_plane_started".into(),
+            kind: codex_protocol::models::WorkflowRunProgressKind::Started,
+            message: "workflow control run started".into(),
+            updated_at: 1_700_000_000,
+        };
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".into(),
@@ -4324,18 +3405,15 @@ mod tests {
                 model_context_window: None,
                 collaboration_mode_kind: Default::default(),
             })),
-            RolloutItem::ResponseItem(ResponseItem::WorkflowRunProgress {
-                id: None,
-                event: codex_protocol::models::WorkflowRunProgressEvent {
-                    run_id: "wf_1".into(),
-                    workflow_id: "feature-dev".into(),
-                    status: serde_json::json!("running"),
-                    runner_status: "control_plane_started".into(),
-                    kind: codex_protocol::models::WorkflowRunProgressKind::Started,
-                    message: "workflow control run started".into(),
-                    updated_at: 1_700_000_000,
+            RolloutItem::EventMsg(EventMsg::WorkflowRunProgressCompleted(
+                codex_protocol::protocol::WorkflowRunProgressDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "workflow-progress-1".into(),
+                    event,
+                    completed_at_ms: 123,
                 },
-            }),
+            )),
         ];
 
         let turns = build_turns_from_rollout_items(&items);
@@ -4344,7 +3422,7 @@ mod tests {
         assert_eq!(
             turns[0].items,
             vec![ThreadItem::WorkflowRunProgress {
-                id: "item-1".into(),
+                id: "workflow-progress-1".into(),
                 event: crate::protocol::v2::ThreadWorkflowRunProgressEvent {
                     run_id: "wf_1".into(),
                     workflow_id: "feature-dev".into(),
@@ -4377,10 +3455,15 @@ mod tests {
                 model_context_window: None,
                 collaboration_mode_kind: Default::default(),
             })),
-            RolloutItem::ResponseItem(ResponseItem::InterAgentCommunication {
-                id: Some("typed-collab".into()),
-                communication,
-            }),
+            RolloutItem::EventMsg(EventMsg::InterAgentCommunicationCompleted(
+                codex_protocol::protocol::InterAgentCommunicationDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "typed-collab".into(),
+                    communication,
+                    completed_at_ms: 123,
+                },
+            )),
         ];
 
         let turns = build_turns_from_rollout_items(&items);
@@ -4404,7 +3487,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_unknown_inter_agent_history_falls_back_to_agent_message() {
+    fn typed_unknown_inter_agent_history_is_ignored() {
         let communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
             AgentPath::root(),
@@ -4412,7 +3495,6 @@ mod tests {
             "raw json should not leak".into(),
             InterAgentOperation::Unknown,
         );
-        let expected_text = serde_json::to_string(&communication).expect("serialize communication");
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".into(),
@@ -4420,24 +3502,21 @@ mod tests {
                 model_context_window: None,
                 collaboration_mode_kind: Default::default(),
             })),
-            RolloutItem::ResponseItem(ResponseItem::InterAgentCommunication {
-                id: Some("typed-unknown-collab".into()),
-                communication,
-            }),
+            RolloutItem::EventMsg(EventMsg::InterAgentCommunicationCompleted(
+                codex_protocol::protocol::InterAgentCommunicationDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "typed-unknown-collab".into(),
+                    communication,
+                    completed_at_ms: 123,
+                },
+            )),
         ];
 
         let turns = build_turns_from_rollout_items(&items);
 
         assert_eq!(turns.len(), 1);
-        assert_eq!(
-            turns[0].items,
-            vec![ThreadItem::AgentMessage {
-                id: "typed-unknown-collab".into(),
-                text: expected_text,
-                phase: None,
-                memory_citation: None,
-            }]
-        );
+        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
     }
 
     #[test]
@@ -4506,157 +3585,7 @@ mod tests {
     }
 
     #[test]
-    fn reconstructs_typed_event_driven_tool_items_from_response_items() {
-        let items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
-                turn_id: "turn-1".into(),
-                started_at: None,
-                model_context_window: None,
-                collaboration_mode_kind: Default::default(),
-            })),
-            RolloutItem::ResponseItem(ResponseItem::EventDrivenTool {
-                id: Some("schedule-trigger-1".into()),
-                trigger: EventDrivenToolTrigger {
-                    tool: "schedule_subscribe".into(),
-                    title: "Schedule triggered".into(),
-                    text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
-                },
-            }),
-        ];
-
-        let turns = build_turns_from_rollout_items(&items);
-        assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items.len(), 1);
-        assert_eq!(
-            turns[0].items[0],
-            ThreadItem::EventDrivenTool {
-                id: "schedule-trigger-1".into(),
-                tool: "schedule_subscribe".into(),
-                title: "Schedule triggered".into(),
-                text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
-            }
-        );
-    }
-
-    #[test]
-    fn response_item_completed_event_does_not_duplicate_command_wait_history() {
-        let items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
-                turn_id: "turn-1".into(),
-                started_at: None,
-                model_context_window: None,
-                collaboration_mode_kind: Default::default(),
-            })),
-            RolloutItem::ResponseItem(ResponseItem::CommandWait {
-                id: None,
-                command_id: "cmd-1".into(),
-                status: codex_protocol::models::CommandWaitStatus::Completed,
-                notification: Some(codex_protocol::models::CommandWaitNotificationKind::Exit),
-                exit_code: Some(0),
-                wall_time_seconds: 1.25,
-                wait_timeout_ms: 250,
-                created_at_ms: 1234,
-            }),
-            RolloutItem::EventMsg(EventMsg::ResponseItemCompleted(
-                codex_protocol::protocol::ResponseItemCompletedEvent {
-                    thread_id: ThreadId::new(),
-                    turn_id: "turn-1".into(),
-                    item: ResponseItem::CommandWait {
-                        id: None,
-                        command_id: "cmd-1".into(),
-                        status: codex_protocol::models::CommandWaitStatus::Completed,
-                        notification: Some(
-                            codex_protocol::models::CommandWaitNotificationKind::Exit,
-                        ),
-                        exit_code: Some(0),
-                        wall_time_seconds: 1.25,
-                        wait_timeout_ms: 250,
-                        created_at_ms: 1234,
-                    },
-                    completed_at_ms: 5678,
-                },
-            )),
-        ];
-
-        let turns = build_turns_from_rollout_items(&items);
-
-        assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items.len(), 1);
-        let ThreadItem::CommandWait {
-            command_id,
-            status,
-            notification,
-            exit_code,
-            wall_time_seconds,
-            wait_timeout_ms,
-            created_at_ms,
-            ..
-        } = &turns[0].items[0]
-        else {
-            panic!("expected CommandWait item");
-        };
-        assert_eq!(command_id, "cmd-1");
-        assert_eq!(*status, crate::protocol::v2::CommandWaitStatus::Completed);
-        assert_eq!(
-            *notification,
-            Some(crate::protocol::v2::CommandWaitNotificationKind::Exit)
-        );
-        assert_eq!(*exit_code, Some(0));
-        assert_eq!(*wall_time_seconds, 1.25);
-        assert_eq!(*wait_timeout_ms, 250);
-        assert_eq!(*created_at_ms, 1234);
-    }
-
-    #[test]
-    fn response_item_completed_event_with_id_rebuilds_command_wait_history() {
-        let items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
-                turn_id: "turn-1".into(),
-                started_at: None,
-                model_context_window: None,
-                collaboration_mode_kind: Default::default(),
-            })),
-            RolloutItem::EventMsg(EventMsg::ResponseItemCompleted(
-                codex_protocol::protocol::ResponseItemCompletedEvent {
-                    thread_id: ThreadId::new(),
-                    turn_id: "turn-1".into(),
-                    item: ResponseItem::CommandWait {
-                        id: Some("wait-1".into()),
-                        command_id: "cmd-1".into(),
-                        status: codex_protocol::models::CommandWaitStatus::Completed,
-                        notification: Some(
-                            codex_protocol::models::CommandWaitNotificationKind::Exit,
-                        ),
-                        exit_code: Some(0),
-                        wall_time_seconds: 1.25,
-                        wait_timeout_ms: 250,
-                        created_at_ms: 1234,
-                    },
-                    completed_at_ms: 5678,
-                },
-            )),
-        ];
-
-        let turns = build_turns_from_rollout_items(&items);
-
-        assert_eq!(turns.len(), 1);
-        assert_eq!(
-            turns[0].items,
-            vec![ThreadItem::CommandWait {
-                id: "wait-1".into(),
-                command_id: "cmd-1".into(),
-                status: crate::protocol::v2::CommandWaitStatus::Completed,
-                notification: Some(crate::protocol::v2::CommandWaitNotificationKind::Exit),
-                exit_code: Some(0),
-                wall_time_seconds: 1.25,
-                wait_timeout_ms: 250,
-                created_at_ms: 1234,
-            }]
-        );
-    }
-
-    #[test]
-    fn dedicated_display_event_suppresses_legacy_response_item_fallback() {
+    fn dedicated_display_event_ignores_legacy_response_item_fallback() {
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".into(),
@@ -4710,7 +3639,7 @@ mod tests {
     }
 
     #[test]
-    fn dedicated_display_event_only_suppresses_matching_legacy_fallback() {
+    fn dedicated_display_event_ignores_all_legacy_response_item_fallbacks() {
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".into(),
@@ -4757,30 +3686,21 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
-            vec![
-                ThreadItem::CommandWait {
-                    id: "wait-1".into(),
-                    command_id: "cmd-1".into(),
-                    status: crate::protocol::v2::CommandWaitStatus::Completed,
-                    notification: Some(crate::protocol::v2::CommandWaitNotificationKind::Exit),
-                    exit_code: Some(0),
-                    wall_time_seconds: 1.25,
-                    wait_timeout_ms: 250,
-                    created_at_ms: 1234,
-                },
-                ThreadItem::CommandWriteStdin {
-                    id: "item-2".into(),
-                    command_id: "cmd-2".into(),
-                    bytes_written: 4,
-                    contains_newline: true,
-                    created_at_ms: 2234,
-                },
-            ]
+            vec![ThreadItem::CommandWait {
+                id: "wait-1".into(),
+                command_id: "cmd-1".into(),
+                status: crate::protocol::v2::CommandWaitStatus::Completed,
+                notification: Some(crate::protocol::v2::CommandWaitNotificationKind::Exit),
+                exit_code: Some(0),
+                wall_time_seconds: 1.25,
+                wait_timeout_ms: 250,
+                created_at_ms: 1234,
+            }]
         );
     }
 
     #[test]
-    fn dedicated_display_event_suppresses_only_one_semantic_legacy_fallback() {
+    fn dedicated_display_event_ignores_repeated_legacy_response_item_fallbacks() {
         let trigger = EventDrivenToolTrigger {
             tool: "fs_subscribe".into(),
             title: "File watch triggered".into(),
@@ -4817,20 +3737,12 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
-            vec![
-                ThreadItem::EventDrivenTool {
-                    id: "trigger-dedicated".into(),
-                    tool: "fs_subscribe".into(),
-                    title: "File watch triggered".into(),
-                    text: "build.log changed".into(),
-                },
-                ThreadItem::EventDrivenTool {
-                    id: "item-2".into(),
-                    tool: "fs_subscribe".into(),
-                    title: "File watch triggered".into(),
-                    text: "build.log changed".into(),
-                },
-            ]
+            vec![ThreadItem::EventDrivenTool {
+                id: "trigger-dedicated".into(),
+                tool: "fs_subscribe".into(),
+                title: "File watch triggered".into(),
+                text: "build.log changed".into(),
+            }]
         );
     }
 
@@ -4860,7 +3772,7 @@ mod tests {
     }
 
     #[test]
-    fn raw_assistant_response_item_updates_current_turn_history() {
+    fn raw_assistant_response_item_does_not_update_current_turn_display() {
         let events = [
             EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".into(),
@@ -4887,34 +3799,11 @@ mod tests {
         let turns = builder.finish();
 
         assert_eq!(turns.len(), 1);
-        assert_eq!(
-            turns[0].items,
-            vec![ThreadItem::AgentMessage {
-                id: "msg-1".into(),
-                text: "final answer".into(),
-                phase: Some(CoreMessagePhase::FinalAnswer),
-                memory_citation: None,
-            }]
-        );
+        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
     }
 
     #[test]
-    fn reconstructs_agent_message_envelopes_from_assistant_response_messages() {
-        let communication = InterAgentCommunication::new(
-            AgentPath::try_from("/root/worker").expect("agent path"),
-            AgentPath::try_from("/root").expect("agent path"),
-            Vec::new(),
-            "done".into(),
-            InterAgentOperation::SendMessage,
-        )
-        .with_trigger_turn(false);
-        let unknown_operation_json = serde_json::json!({
-            "author": "/root/worker",
-            "recipient": "/root",
-            "content": "plain assistant json",
-        })
-        .to_string();
-        let plain_response_text = "final answer".to_string();
+    fn rollout_response_items_do_not_rebuild_display_items() {
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".into(),
@@ -4926,81 +3815,24 @@ mod tests {
                 id: Some("msg-1".into()),
                 role: "assistant".into(),
                 content: vec![ContentItem::OutputText {
-                    text: serde_json::to_string(&communication).expect("serialize communication"),
-                }],
-                phase: None,
-            }),
-            RolloutItem::ResponseItem(ResponseItem::Message {
-                id: Some("msg-2".into()),
-                role: "assistant".into(),
-                content: vec![ContentItem::OutputText {
-                    text: unknown_operation_json.clone(),
-                }],
-                phase: Some(CoreMessagePhase::Commentary),
-            }),
-            RolloutItem::ResponseItem(ResponseItem::Message {
-                id: Some("msg-3".into()),
-                role: "assistant".into(),
-                content: vec![ContentItem::OutputText {
-                    text: plain_response_text.clone(),
-                }],
-                phase: Some(CoreMessagePhase::FinalAnswer),
-            }),
-            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
-                message: plain_response_text.clone(),
-                phase: Some(CoreMessagePhase::FinalAnswer),
-                memory_citation: None,
-            })),
-        ];
-
-        let turns = build_turns_from_rollout_items(&items);
-        assert_eq!(turns.len(), 1);
-        assert_eq!(
-            turns[0].items,
-            vec![
-                ThreadItem::AgentMessage {
-                    id: "msg-2".into(),
-                    text: unknown_operation_json,
-                    phase: Some(CoreMessagePhase::Commentary),
-                    memory_citation: None,
-                },
-                ThreadItem::AgentMessage {
-                    id: "msg-3".into(),
-                    text: plain_response_text,
-                    phase: Some(CoreMessagePhase::FinalAnswer),
-                    memory_citation: None,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn rollout_turn_context_restores_implicit_turn_id() {
-        let items = vec![
-            RolloutItem::TurnContext(turn_context_item_with_id("turn-from-context")),
-            RolloutItem::ResponseItem(ResponseItem::Message {
-                id: Some("msg-1".into()),
-                role: "assistant".into(),
-                content: vec![ContentItem::OutputText {
                     text: "hello from replay".into(),
                 }],
                 phase: Some(CoreMessagePhase::FinalAnswer),
             }),
+            RolloutItem::ResponseItem(ResponseItem::EventDrivenTool {
+                id: Some("trigger-1".into()),
+                trigger: EventDrivenToolTrigger {
+                    tool: "schedule_subscribe".into(),
+                    title: "Schedule triggered".into(),
+                    text: "tick".into(),
+                },
+            }),
         ];
 
         let turns = build_turns_from_rollout_items(&items);
 
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].id, "turn-from-context");
-        assert_eq!(
-            turns[0].items,
-            vec![ThreadItem::AgentMessage {
-                id: "msg-1".into(),
-                text: "hello from replay".into(),
-                phase: Some(CoreMessagePhase::FinalAnswer),
-                memory_citation: None,
-            }]
-        );
+        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
     }
 
     #[test]
@@ -5033,7 +3865,7 @@ mod tests {
     }
 
     #[test]
-    fn rollout_turn_context_restores_id_after_initial_injected_context() {
+    fn rollout_turn_context_ignores_initial_response_item_context() {
         let items = vec![
             RolloutItem::ResponseItem(ResponseItem::Message {
                 id: Some("developer-context".into()),
@@ -5058,108 +3890,8 @@ mod tests {
 
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].id, "turn-from-context");
-        assert_eq!(turns[0].items.len(), 2);
-        assert!(matches!(
-            turns[0].items[0],
-            ThreadItem::InjectedContext { .. }
-        ));
-        assert!(matches!(turns[0].items[1], ThreadItem::UserMessage { .. }));
-    }
-
-    #[test]
-    fn dedupes_response_agent_message_across_intervening_events() {
-        let items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
-                turn_id: "turn-a".into(),
-                started_at: None,
-                model_context_window: None,
-                collaboration_mode_kind: Default::default(),
-            })),
-            RolloutItem::ResponseItem(ResponseItem::Message {
-                id: Some("msg-1".into()),
-                role: "assistant".into(),
-                content: vec![ContentItem::OutputText {
-                    text: "final answer".into(),
-                }],
-                phase: Some(CoreMessagePhase::FinalAnswer),
-            }),
-            RolloutItem::EventMsg(EventMsg::AgentReasoning(AgentReasoningEvent {
-                text: "reasoning emitted later".into(),
-            })),
-            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
-                message: "final answer".into(),
-                phase: Some(CoreMessagePhase::FinalAnswer),
-                memory_citation: None,
-            })),
-        ];
-
-        let turns = build_turns_from_rollout_items(&items);
-
-        assert_eq!(turns.len(), 1);
-        assert_eq!(
-            turns[0].items,
-            vec![
-                ThreadItem::AgentMessage {
-                    id: "msg-1".into(),
-                    text: "final answer".into(),
-                    phase: Some(CoreMessagePhase::FinalAnswer),
-                    memory_citation: None,
-                },
-                ThreadItem::Reasoning {
-                    id: "item-1".into(),
-                    summary: vec!["reasoning emitted later".into()],
-                    content: Vec::new(),
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn dedupes_legacy_agent_message_when_response_item_arrives_later() {
-        let items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
-                turn_id: "turn-a".into(),
-                started_at: None,
-                model_context_window: None,
-                collaboration_mode_kind: Default::default(),
-            })),
-            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
-                message: "final answer".into(),
-                phase: None,
-                memory_citation: None,
-            })),
-            RolloutItem::EventMsg(EventMsg::AgentReasoning(AgentReasoningEvent {
-                text: "reasoning emitted later".into(),
-            })),
-            RolloutItem::ResponseItem(ResponseItem::Message {
-                id: Some("msg-1".into()),
-                role: "assistant".into(),
-                content: vec![ContentItem::OutputText {
-                    text: "final answer".into(),
-                }],
-                phase: Some(CoreMessagePhase::FinalAnswer),
-            }),
-        ];
-
-        let turns = build_turns_from_rollout_items(&items);
-
-        assert_eq!(turns.len(), 1);
-        assert_eq!(
-            turns[0].items,
-            vec![
-                ThreadItem::AgentMessage {
-                    id: "msg-1".into(),
-                    text: "final answer".into(),
-                    phase: Some(CoreMessagePhase::FinalAnswer),
-                    memory_citation: None,
-                },
-                ThreadItem::Reasoning {
-                    id: "item-2".into(),
-                    summary: vec!["reasoning emitted later".into()],
-                    content: Vec::new(),
-                },
-            ]
-        );
+        assert_eq!(turns[0].items.len(), 1);
+        assert!(matches!(turns[0].items[0], ThreadItem::UserMessage { .. }));
     }
 
     #[test]
@@ -5203,114 +3935,6 @@ mod tests {
                 },
             ]
         );
-    }
-
-    #[test]
-    fn duplicate_agent_message_response_updates_plain_agent_message() {
-        let trigger = EventDrivenToolTrigger {
-            tool: "schedule_subscribe".into(),
-            title: "Schedule triggered".into(),
-            text: "[Schedule subscription] Trigger fired: every 5 minutes".into(),
-        };
-        let text = trigger.render_message_text();
-        let items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
-                turn_id: "turn-a".into(),
-                started_at: None,
-                model_context_window: None,
-                collaboration_mode_kind: Default::default(),
-            })),
-            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
-                message: text.clone(),
-                phase: None,
-                memory_citation: None,
-            })),
-            RolloutItem::ResponseItem(ResponseItem::Message {
-                id: Some("msg-1".into()),
-                role: "assistant".into(),
-                content: vec![ContentItem::OutputText { text }],
-                phase: None,
-            }),
-        ];
-
-        let turns = build_turns_from_rollout_items(&items);
-
-        assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
-    }
-
-    #[test]
-    fn inter_agent_json_agent_message_does_not_leak_when_response_item_arrives_later() {
-        let mut communication = InterAgentCommunication::new(
-            AgentPath::try_from("/root/worker").expect("agent path"),
-            AgentPath::try_from("/root").expect("agent path"),
-            Vec::new(),
-            "done".into(),
-            InterAgentOperation::SendMessage,
-        );
-        communication.trigger_turn = false;
-        let text = serde_json::to_string(&communication).expect("serialize communication");
-        let items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
-                turn_id: "turn-a".into(),
-                started_at: None,
-                model_context_window: None,
-                collaboration_mode_kind: Default::default(),
-            })),
-            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
-                message: text.clone(),
-                phase: None,
-                memory_citation: None,
-            })),
-            RolloutItem::ResponseItem(ResponseItem::Message {
-                id: Some("msg-1".into()),
-                role: "assistant".into(),
-                content: vec![ContentItem::OutputText { text }],
-                phase: None,
-            }),
-        ];
-
-        let turns = build_turns_from_rollout_items(&items);
-
-        assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
-    }
-
-    #[test]
-    fn child_completion_json_agent_message_does_not_leak_when_response_item_arrives_later() {
-        let communication = InterAgentCommunication::new(
-            AgentPath::try_from("/root/worker").expect("agent path"),
-            AgentPath::try_from("/root").expect("agent path"),
-            Vec::new(),
-            "completed".into(),
-            InterAgentOperation::ChildCompletion,
-        )
-        .with_status(AgentStatus::Completed(Some("completed".into())));
-        let text = serde_json::to_string(&communication).expect("serialize communication");
-        let items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
-                turn_id: "turn-a".into(),
-                started_at: None,
-                model_context_window: None,
-                collaboration_mode_kind: Default::default(),
-            })),
-            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
-                message: text.clone(),
-                phase: None,
-                memory_citation: None,
-            })),
-            RolloutItem::ResponseItem(ResponseItem::Message {
-                id: Some("msg-1".into()),
-                role: "assistant".into(),
-                content: vec![ContentItem::OutputText { text }],
-                phase: None,
-            }),
-        ];
-
-        let turns = build_turns_from_rollout_items(&items);
-
-        assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
     }
 
     #[test]
@@ -6669,59 +5293,6 @@ mod tests {
     }
 
     #[test]
-    fn rebuilds_hook_prompt_items_from_rollout_response_items() {
-        let hook_prompt = build_hook_prompt_message(&[
-            CoreHookPromptFragment::from_single_hook("Retry with tests.", "hook-run-1"),
-            CoreHookPromptFragment::from_single_hook("Then summarize cleanly.", "hook-run-2"),
-        ])
-        .expect("hook prompt message");
-        let items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
-                turn_id: "turn-a".into(),
-                started_at: None,
-                model_context_window: None,
-                collaboration_mode_kind: Default::default(),
-            })),
-            RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
-                message: "hello".into(),
-                images: None,
-                text_elements: Vec::new(),
-                local_images: Vec::new(),
-                skills: Vec::new(),
-            })),
-            RolloutItem::ResponseItem(hook_prompt),
-            RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
-                turn_id: "turn-a".into(),
-                last_agent_message: None,
-                completed_at: None,
-                duration_ms: None,
-                time_to_first_token_ms: None,
-            })),
-        ];
-
-        let turns = build_turns_from_rollout_items(&items);
-
-        assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items.len(), 2);
-        assert_eq!(
-            turns[0].items[1],
-            ThreadItem::HookPrompt {
-                id: turns[0].items[1].id().to_string(),
-                fragments: vec![
-                    crate::protocol::v2::HookPromptFragment {
-                        text: "Retry with tests.".into(),
-                        hook_run_id: "hook-run-1".into(),
-                    },
-                    crate::protocol::v2::HookPromptFragment {
-                        text: "Then summarize cleanly.".into(),
-                        hook_run_id: "hook-run-2".into(),
-                    },
-                ],
-            }
-        );
-    }
-
-    #[test]
     fn ignores_plain_user_response_items_in_rollout_replay() {
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
@@ -6753,7 +5324,7 @@ mod tests {
     }
 
     #[test]
-    fn rebuilds_initial_injected_context_from_rollout_response_items() {
+    fn ignores_initial_injected_context_response_items() {
         let items = vec![
             RolloutItem::ResponseItem(ResponseItem::Message {
                 id: Some("developer-context".into()),
@@ -6764,9 +5335,8 @@ mod tests {
                             .into(),
                     },
                     ContentItem::InputText {
-                        text: format!(
-                            "{SKILLS_INSTRUCTIONS_OPEN_TAG}\n## Skills\n- skill-a\n{SKILLS_INSTRUCTIONS_CLOSE_TAG}"
-                        ),
+                        text: "<skills instructions>\n## Skills\n- skill-a\n</skills instructions>"
+                            .into(),
                     },
                 ],
                 phase: None,
@@ -6775,9 +5345,8 @@ mod tests {
                 id: Some("user-context".into()),
                 role: "user".into(),
                 content: vec![ContentItem::InputText {
-                    text: format!(
-                        "{ENVIRONMENT_CONTEXT_OPEN_TAG}\n  <cwd>/workspace</cwd>\n{ENVIRONMENT_CONTEXT_CLOSE_TAG}"
-                    ),
+                    text: "<environment_context>\n  <cwd>/workspace</cwd>\n</environment_context>"
+                        .into(),
                 }],
                 phase: None,
             }),
@@ -6793,34 +5362,12 @@ mod tests {
         let turns = build_turns_from_rollout_items(&items);
 
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items.len(), 2);
-        assert_eq!(
-            turns[0].items[0],
-            ThreadItem::InjectedContext {
-                id: turns[0].items[0].id().to_string(),
-                title: INJECTED_CONTEXT_TITLE.to_string(),
-                preview: "Permissions • Skills • Environment".to_string(),
-                sections: vec![
-                    InjectedContextSection {
-                        label: "Permissions".to_string(),
-                        text: "Sandbox: workspace-write".to_string(),
-                    },
-                    InjectedContextSection {
-                        label: "Skills".to_string(),
-                        text: "## Skills\n- skill-a".to_string(),
-                    },
-                    InjectedContextSection {
-                        label: "Environment".to_string(),
-                        text: "<cwd>/workspace</cwd>".to_string(),
-                    },
-                ],
-            }
-        );
-        assert!(matches!(turns[0].items[1], ThreadItem::UserMessage { .. }));
+        assert_eq!(turns[0].items.len(), 1);
+        assert!(matches!(turns[0].items[0], ThreadItem::UserMessage { .. }));
     }
 
     #[test]
-    fn rebuilds_initial_injected_context_after_explicit_turn_start() {
+    fn ignores_initial_injected_context_response_items_after_explicit_turn_start() {
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-a".into(),
@@ -6849,10 +5396,7 @@ mod tests {
         let turns = build_turns_from_rollout_items(&items);
 
         assert_eq!(turns.len(), 1);
-        assert!(matches!(
-            turns[0].items[0],
-            ThreadItem::InjectedContext { .. }
-        ));
-        assert!(matches!(turns[0].items[1], ThreadItem::UserMessage { .. }));
+        assert_eq!(turns[0].items.len(), 1);
+        assert!(matches!(turns[0].items[0], ThreadItem::UserMessage { .. }));
     }
 }

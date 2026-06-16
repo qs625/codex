@@ -16,8 +16,8 @@
   （即 handler 已解析出的 `initial_wait_ms.unwrap_or(yield_time_ms)`）。
 - timeout 后按 backoff 增长，命中 output / exit event 后 reset 到该 command session 的 initial window。
 - `command_wait` handler 在真正 await 前发 typed `CommandWaitStarted` display event，等待返回后用同一个
-  item id 记录并发 `CommandWaitCompleted` display event；`ResponseItem::CommandWait` 只在模型上下文和旧
-  rollout/history 兼容需要时保留。
+  item id 记录并发 `CommandWaitCompleted` display event；`ResponseItem::CommandWait` 只用于模型上下文，
+  不作为旧 rollout/history 展示兼容来源。
 - started 和 completed payload 的 `wait_timeout_ms` 都表示本次 current window，不展示 hard cap，也不回退到
   250ms。
 
@@ -40,4 +40,4 @@
 - unified exec manager：首个 `command_wait` window 等于 exec command initial wait，timeout 后递增，
   notification 后 reset 回 initial wait。
 - handler item 构造：started/completed 使用同一个 id，并保留本次 current window。
-- app-server-protocol：`CommandWaitStarted` / `CommandWaitCompleted` 映射为 v2 `ItemStarted/Completed(ThreadItem::CommandWait)`；`ResponseItemStarted/Completed(CommandWait)` 只作为旧 rollout/history 兼容路径继续覆盖。
+- app-server-protocol：`CommandWaitStarted` / `CommandWaitCompleted` 映射为 v2 `ItemStarted/Completed(ThreadItem::CommandWait)`；`ResponseItemStarted/Completed(CommandWait)` 不再生成 `ThreadItem`，旧 rollout/history 不再回放 command wait 展示。

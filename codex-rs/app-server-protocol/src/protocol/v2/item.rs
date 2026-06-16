@@ -10,16 +10,12 @@ use super::ThreadGoal;
 use super::ThreadGoalStatus;
 use super::UserInput;
 use super::shared::v2_enum_from_core;
-use crate::protocol::item_builders::convert_patch_changes;
-use crate::protocol::response_item_projection::thread_item_from_inter_agent_communication;
 use codex_experimental_api_macros::ExperimentalApi;
 use codex_protocol::approvals::GuardianAssessmentAction as CoreGuardianAssessmentAction;
 use codex_protocol::approvals::GuardianAssessmentDecisionSource as CoreGuardianAssessmentDecisionSource;
 use codex_protocol::approvals::GuardianCommandSource as CoreGuardianCommandSource;
 use codex_protocol::event_command::EventCommandEventKind as CoreEventCommandEventKind;
-use codex_protocol::items::AgentMessageContent as CoreAgentMessageContent;
 use codex_protocol::items::McpToolCallStatus as CoreMcpToolCallStatus;
-use codex_protocol::items::TurnItem as CoreTurnItem;
 use codex_protocol::memory_citation::MemoryCitation as CoreMemoryCitation;
 use codex_protocol::memory_citation::MemoryCitationEntry as CoreMemoryCitationEntry;
 use codex_protocol::models::MessagePhase;
@@ -1060,124 +1056,6 @@ impl From<codex_protocol::models::WebSearchAction> for WebSearchAction {
                 WebSearchAction::FindInPage { url, pattern }
             }
             codex_protocol::models::WebSearchAction::Other => WebSearchAction::Other,
-        }
-    }
-}
-
-impl From<CoreTurnItem> for ThreadItem {
-    fn from(value: CoreTurnItem) -> Self {
-        match value {
-            CoreTurnItem::UserMessage(user) => ThreadItem::UserMessage {
-                id: user.id,
-                content: user.content.into_iter().map(UserInput::from).collect(),
-            },
-            CoreTurnItem::HookPrompt(hook_prompt) => ThreadItem::HookPrompt {
-                id: hook_prompt.id,
-                fragments: hook_prompt
-                    .fragments
-                    .into_iter()
-                    .map(HookPromptFragment::from)
-                    .collect(),
-            },
-            CoreTurnItem::AgentMessage(agent) => {
-                let text = agent
-                    .content
-                    .into_iter()
-                    .map(|entry| match entry {
-                        CoreAgentMessageContent::Text { text } => text,
-                    })
-                    .collect::<String>();
-                assistant_message_thread_item(
-                    agent.id,
-                    text,
-                    agent.phase,
-                    agent.memory_citation.map(Into::into),
-                )
-            }
-            CoreTurnItem::EventDrivenTool(event_driven_tool) => ThreadItem::EventDrivenTool {
-                id: event_driven_tool.id,
-                tool: event_driven_tool.tool,
-                title: event_driven_tool.title,
-                text: event_driven_tool.text,
-            },
-            CoreTurnItem::EventCommandEvent(event_command) => ThreadItem::EventCommandEvent {
-                id: event_command.id,
-                subscription_id: event_command.event.subscription_id,
-                kind: event_command.event.kind.into(),
-                label: event_command.event.label,
-                command: event_command.event.command,
-                cwd: event_command.event.cwd,
-                line: event_command.event.line,
-                sequence: event_command.event.sequence,
-                exit_code: event_command.event.exit_code,
-                signal: event_command.event.signal,
-                message: event_command.event.message,
-                truncated: event_command.event.truncated,
-                created_at: event_command.event.created_at,
-            },
-            CoreTurnItem::CollabAgentMessage(collab) => {
-                thread_item_from_inter_agent_communication(collab.id, collab.communication)
-            }
-            CoreTurnItem::Plan(plan) => ThreadItem::Plan {
-                id: plan.id,
-                text: plan.text,
-            },
-            CoreTurnItem::Reasoning(reasoning) => ThreadItem::Reasoning {
-                id: reasoning.id,
-                summary: reasoning.summary_text,
-                content: reasoning.raw_content,
-            },
-            CoreTurnItem::WebSearch(search) => ThreadItem::WebSearch {
-                id: search.id,
-                query: search.query,
-                action: Some(WebSearchAction::from(search.action)),
-            },
-            CoreTurnItem::ImageView(image) => ThreadItem::ImageView {
-                id: image.id,
-                path: image.path,
-            },
-            CoreTurnItem::ImageGeneration(image) => ThreadItem::ImageGeneration {
-                id: image.id,
-                status: image.status,
-                revised_prompt: image.revised_prompt,
-                result: image.result,
-                saved_path: image.saved_path,
-            },
-            CoreTurnItem::FileChange(file_change) => ThreadItem::FileChange {
-                id: file_change.id,
-                changes: convert_patch_changes(&file_change.changes),
-                status: file_change
-                    .status
-                    .as_ref()
-                    .map(PatchApplyStatus::from)
-                    .unwrap_or(PatchApplyStatus::InProgress),
-            },
-            CoreTurnItem::McpToolCall(mcp) => {
-                let duration_ms = mcp
-                    .duration
-                    .and_then(|duration| i64::try_from(duration.as_millis()).ok());
-
-                ThreadItem::McpToolCall {
-                    id: mcp.id,
-                    server: mcp.server,
-                    tool: mcp.tool,
-                    status: McpToolCallStatus::from(mcp.status),
-                    arguments: mcp.arguments,
-                    mcp_app_resource_uri: mcp.mcp_app_resource_uri,
-                    result: mcp.result.map(McpToolCallResult::from).map(Box::new),
-                    error: mcp.error.map(McpToolCallError::from),
-                    duration_ms,
-                }
-            }
-            CoreTurnItem::ContextCompaction(compaction) => {
-                let replacement_history = compaction
-                    .replacement_history
-                    .and_then(|history| serde_json::to_value(history).ok());
-                ThreadItem::ContextCompaction {
-                    id: compaction.id,
-                    replacement_history,
-                }
-            }
         }
     }
 }
