@@ -28,6 +28,17 @@ Complete all Active Work recorded in this progress file.
   blockers: None.
   validation: pending
   commit: pending
+- id: wait-tool-backoff-semantics
+  owner: /root/my_codex_pm/wait_tool_backoff_owner
+  worktree: /Users/bytedance/Projects/my-codex/.worktrees/wait-tool-backoff
+  branch: agent/wait-tool-backoff
+  status: in_progress
+  objective: Align command_wait and wait_agent with per-call wait window semantics: timeout returns to model, subsequent calls use backoff, and events reset backoff.
+  last_update: 2026-06-16
+  next_action: Owner to change command_wait and wait_agent so each call waits one current window and returns timeout/running, with runtime backoff persisted across calls and reset on event.
+  blockers: None.
+  validation: pending
+  commit: pending
 
 ## Completed
 
