@@ -114,6 +114,19 @@ async fn notification_wait_after_ignores_existing_snapshot_and_returns_next_kind
 }
 
 #[test]
+fn wait_backoff_advances_to_max_and_resets_to_initial() {
+    let mut state = WaitBackoffState::new(Duration::from_millis(50), Duration::from_millis(120));
+
+    assert_eq!(state.current_window(), Duration::from_millis(50));
+    state.advance_after_timeout();
+    assert_eq!(state.current_window(), Duration::from_millis(100));
+    state.advance_after_timeout();
+    assert_eq!(state.current_window(), Duration::from_millis(120));
+    state.reset_after_event();
+    assert_eq!(state.current_window(), Duration::from_millis(50));
+}
+
+#[test]
 fn clamps_yield_time_to_supported_range() {
     assert_eq!(clamp_yield_time(1), MIN_YIELD_TIME_MS);
     assert_eq!(clamp_yield_time(10_000), 10_000);

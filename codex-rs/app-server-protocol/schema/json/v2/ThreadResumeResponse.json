@@ -2058,6 +2058,10 @@
             "wallTimeSeconds": {
               "format": "double",
               "type": "number"
+            },
+            "waitTimeoutMs": {
+              "format": "int64",
+              "type": "integer"
             }
           },
           "required": [
@@ -2066,7 +2070,8 @@
             "id",
             "status",
             "type",
-            "wallTimeSeconds"
+            "wallTimeSeconds",
+            "waitTimeoutMs"
           ],
           "title": "CommandWaitThreadItem",
           "type": "object"

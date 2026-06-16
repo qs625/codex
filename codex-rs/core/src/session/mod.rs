@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -438,6 +439,10 @@ pub(crate) const INITIAL_SUBMIT_ID: &str = "";
 pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
 const CYBER_VERIFY_URL: &str = "https://chatgpt.com/cyber";
 const CYBER_SAFETY_URL: &str = "https://developers.openai.com/codex/concepts/cyber-safety";
+
+fn duration_from_config_ms(ms: i64) -> Duration {
+    Duration::from_millis(ms.max(0) as u64)
+}
 
 impl Codex {
     /// Spawn a new [`Codex`] and initialize the session.
@@ -2879,7 +2884,10 @@ impl Session {
                 continue;
             }
 
-            if let Some(turn_item) = parse_turn_item(item) {
+            if matches!(item, ResponseItem::InterAgentCommunication { .. }) {
+                self.emit_response_item_completed(turn_context, item.clone())
+                    .await;
+            } else if let Some(turn_item) = parse_turn_item(item) {
                 self.emit_turn_item_completed(turn_context, turn_item).await;
             } else {
                 self.emit_response_item_completed(turn_context, item.clone())
@@ -3534,6 +3542,47 @@ impl Session {
 
     pub(crate) fn subscribe_mailbox_seq(&self) -> watch::Receiver<u64> {
         self.mailbox.subscribe()
+    }
+
+    pub(crate) async fn wait_agent_current_window(
+        &self,
+        sender_thread_id: ThreadId,
+        receiver_thread_id: ThreadId,
+        initial_timeout_ms: i64,
+        hard_cap_timeout_ms: i64,
+    ) -> Duration {
+        let mut guard = self.wait_agent_backoff.lock().await;
+        guard
+            .entry((sender_thread_id, receiver_thread_id))
+            .or_insert_with(|| {
+                codex_command_runtime::WaitBackoffState::new(
+                    duration_from_config_ms(initial_timeout_ms),
+                    duration_from_config_ms(hard_cap_timeout_ms),
+                )
+            })
+            .current_window()
+    }
+
+    pub(crate) async fn advance_wait_agent_backoff(
+        &self,
+        sender_thread_id: ThreadId,
+        receiver_thread_id: ThreadId,
+    ) {
+        let mut guard = self.wait_agent_backoff.lock().await;
+        if let Some(state) = guard.get_mut(&(sender_thread_id, receiver_thread_id)) {
+            state.advance_after_timeout();
+        }
+    }
+
+    pub(crate) async fn reset_wait_agent_backoff(
+        &self,
+        sender_thread_id: ThreadId,
+        receiver_thread_id: ThreadId,
+    ) {
+        let mut guard = self.wait_agent_backoff.lock().await;
+        if let Some(state) = guard.get_mut(&(sender_thread_id, receiver_thread_id)) {
+            state.reset_after_event();
+        }
     }
 
     pub(crate) fn enqueue_mailbox_communication(&self, communication: InterAgentCommunication) {

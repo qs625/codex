@@ -1267,6 +1267,166 @@ test("renders common replacement response item variants without dropping them", 
   );
 });
 
+test("hides structured wait function output when typed command wait is present", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "contextCompaction",
+        id: "compact-1",
+        replacementHistory: [
+          {
+            type: "function_call",
+            name: "command_wait",
+            arguments: '{"command_id":58732}',
+            call_id: "wait-call-1",
+          },
+          {
+            type: "function_call_output",
+            call_id: "wait-call-1",
+            output:
+              '{"command_id":58732,"status":"completed","notification":"exit","exit_code":0,"wall_time_seconds":277.557113958}',
+          },
+          {
+            type: "command_wait",
+            command_id: "58732",
+            status: "completed",
+            notification: "exit",
+            exit_code: 0,
+            wall_time_seconds: 277.557113958,
+            wait_timeout_ms: 300000,
+            created_at_ms: 1234,
+          },
+        ],
+      },
+    ]),
+  );
+
+  const replacementEntries = entries[0]?.replacementHistoryEntries ?? [];
+
+  assert.deepEqual(
+    replacementEntries.map((entry) => ({
+      text: entry.text,
+      toolName: entry.toolName,
+      toolDetails: entry.toolDetails,
+    })),
+    [
+      {
+        text: "Command wait completed",
+        toolName: "command wait",
+        toolDetails:
+          "Type\ncommand_wait\n\nCommand ID\n58732\n\nStatus\ncompleted\n\nNotification\nexit\n\nExit code\n0\n\nWall time seconds\n277.557113958\n\nWait timeout ms\n300000",
+      },
+    ],
+  );
+});
+
+test("keeps unmatched structured wait start visible when another wait has typed display", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "contextCompaction",
+        id: "compact-1",
+        replacementHistory: [
+          {
+            type: "function_call",
+            name: "command_wait",
+            arguments: '{"command_id":111}',
+            call_id: "wait-call-1",
+          },
+          {
+            type: "function_call_output",
+            call_id: "wait-call-1",
+            output: '{"command_id":111,"status":"running"}',
+          },
+          {
+            type: "function_call",
+            name: "command_wait",
+            arguments: '{"command_id":222}',
+            call_id: "wait-call-2",
+          },
+          {
+            type: "function_call_output",
+            call_id: "wait-call-2",
+            output: '{"command_id":222,"status":"completed"}',
+          },
+          {
+            type: "command_wait",
+            command_id: "111",
+            status: "running",
+            notification: null,
+            exit_code: null,
+            wall_time_seconds: 0.25,
+            wait_timeout_ms: 250,
+            created_at_ms: 1234,
+          },
+        ],
+      },
+    ]),
+  );
+
+  const replacementEntries = entries[0]?.replacementHistoryEntries ?? [];
+
+  assert.deepEqual(
+    replacementEntries.map((entry) => ({
+      text: entry.text,
+      toolName: entry.toolName,
+    })),
+    [
+      {
+        text: "command wait 222",
+        toolName: "command wait",
+      },
+      {
+        text: "Command wait running",
+        toolName: "command wait",
+      },
+    ],
+  );
+});
+
+test("renders wait agent replacement fallback without raw output json", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "contextCompaction",
+        id: "compact-1",
+        replacementHistory: [
+          {
+            type: "function_call",
+            name: "wait_agent",
+            arguments: '{"target":"worker"}',
+            call_id: "wait-agent-call-1",
+          },
+          {
+            type: "function_call_output",
+            call_id: "wait-agent-call-1",
+            output:
+              '{"target":"worker","agent_name":"/root/worker","reason":"timeout","timed_out":true}',
+          },
+        ],
+      },
+    ]),
+  );
+
+  const replacementEntries = entries[0]?.replacementHistoryEntries ?? [];
+
+  assert.deepEqual(
+    replacementEntries.map((entry) => ({
+      text: entry.text,
+      toolName: entry.toolName,
+      toolDetails: entry.toolDetails,
+    })),
+    [
+      {
+        text: "wait agent worker",
+        toolName: "wait agent",
+        toolDetails:
+          "Tool\nwait_agent\n\nTarget\nworker\n\nCall ID\nwait-agent-call-1",
+      },
+    ],
+  );
+});
+
 test("places replacement history into the main conversation after archived history", () => {
   const entries = buildConversationEntries(
     makeThread([

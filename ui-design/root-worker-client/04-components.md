@@ -82,6 +82,61 @@ ConversationEntry 映射：
 - 搜索跳转、RightPanel recent event 跳转和 archived compact 内部展示都要覆盖两行 goal event，避免定位后高亮错位。
 - RightPanel recent event 使用 typed item id 定位，控件语义为 button/link，支持 Enter/Space 与 focus ring。
 
+## CommandWaitReplacementEntry
+
+职责：在 compact / replacement history 中展示一次 `command_wait` 的语义结果，避免把普通 `function_call_output` JSON 暴露给用户。
+
+内容：
+
+- 标题：`Waited for command`。
+- 关联 command：短 command label 或可定位的 typed command reference。
+- 状态：`Completed`、`Output received`、`Still running`、`Timed out`、`Command unavailable`。
+- notification：`output`、`exit`、`completed` 或 `none`；只表达本次 wait window 的命中结果。
+- exit code：仅 command exit/completed 且字段存在时显示。
+- wall time：优先显示本次 wait 实际耗时；若只具备 command 总时长，字段名使用 `Command duration`。
+- wait timeout：显示本次 current window，例如 `Wait window 1s`，不得展示 hard cap。
+
+行为：
+
+- 不默认展示 stdout/stderr 全量内容。
+- 不展示 raw `command_id`、JSON 字段名、普通 tool output 或 `Function call <call_id>` start 行。
+- 可定位时通过 `ThreadItem.id` / `targetCommandItemId` 定位，禁止文本匹配。
+- typed item 缺失时显示低权重 fallback event，不回退到 JSON。
+
+## CommandWriteStdinReplacementEntry
+
+职责：在 replacement history 中展示 `command_write_stdin` 的语义动作。
+
+内容：
+
+- 标题：`Sent input to command`。
+- 摘要：`Wrote stdin to running command`。
+- 关联 command。
+- 输入摘要：行数或字符数；默认不展示完整 stdin。
+- 结果状态：`Sent`、`Command unavailable`、`Rejected`。
+
+安全：
+
+- stdin 内容可能包含 secret 或用户输入，默认只展示摘要。
+- 如未来提供 details/debug 展开，必须复用既有 redaction 策略。
+- 如果 typed payload 暂时没有异常结果状态，UI 默认只表达 `Sent`；异常状态必须来自后端 typed 字段，不从 raw output 推断。
+
+## CollabWaitReplacementEntry
+
+职责：在 replacement history 中展示 `wait_agent` 的语义等待结果。主路径应消费 `CollabWaitingBegin` / `CollabWaitingEnd` typed lifecycle item，不展示 raw tool JSON。
+
+内容：
+
+- 标题：`Waiting for subagent`、`Subagent update received`、`Subagent completed` 或 `No subagent update during this wait window`。
+- target agent label/path。
+- update 类型：message、child completion、status changed、timeout。
+- wait timeout：本次 current window。
+
+fallback：
+
+- 如果只有 `wait_agent` raw output 而没有 typed lifecycle item，展示 `Waited for subagent` + `No typed subagent wait event was recorded for this history entry.`。
+- fallback 仍不展示 JSON、tool name、call id 或 arguments。
+
 ## SlashCommandMenu
 
 职责：composer 输入 `/` 时提供内置命令和 Skills 的发现、过滤、补全和选择。

@@ -3825,6 +3825,7 @@ mod tests {
                             ),
                             exit_code: Some(0),
                             wall_time_seconds: 1.25,
+                            wait_timeout_ms: 250,
                             created_at_ms: 1234,
                         },
                         completed_at_ms: 5678,
@@ -3859,6 +3860,7 @@ mod tests {
                         ),
                         exit_code: Some(0),
                         wall_time_seconds: 1.25,
+                        wait_timeout_ms: 250,
                         created_at_ms: 1234,
                     }
                 );

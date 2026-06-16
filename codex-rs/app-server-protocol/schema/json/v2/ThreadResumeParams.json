@@ -701,6 +701,10 @@
             "wall_time_seconds": {
               "format": "double",
               "type": "number"
+            },
+            "wait_timeout_ms": {
+              "format": "int64",
+              "type": "integer"
             }
           },
           "required": [
@@ -708,7 +712,8 @@
             "created_at_ms",
             "status",
             "type",
-            "wall_time_seconds"
+            "wall_time_seconds",
+            "wait_timeout_ms"
           ],
           "title": "CommandWaitResponseItem",
           "type": "object"

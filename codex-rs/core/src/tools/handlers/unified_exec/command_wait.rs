@@ -82,6 +82,7 @@ impl ToolExecutor<ToolInvocation> for CommandWaitHandler {
             }),
             exit_code: output.exit_code,
             wall_time_seconds: output.wall_time.as_secs_f64(),
+            wait_timeout_ms: output.wait_timeout.as_millis() as i64,
             created_at_ms: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
@@ -106,6 +107,7 @@ impl ToolExecutor<ToolInvocation> for CommandWaitHandler {
             }),
             exit_code: output.exit_code,
             wall_time_seconds: output.wall_time.as_secs_f64(),
+            wait_timeout_ms: output.wait_timeout.as_millis() as i64,
         };
         let text = serde_json::to_string(&response)
             .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
@@ -132,4 +134,5 @@ struct CommandWaitResponse<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     exit_code: Option<i32>,
     wall_time_seconds: f64,
+    wait_timeout_ms: i64,
 }

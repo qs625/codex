@@ -28,6 +28,11 @@ type ConversationFlatItemState = {
 };
 
 const AGENT_STATUS_PREVIEW_MAX_CHARS = 120;
+const STRUCTURED_TOOL_OUTPUT_NAMES = new Set([
+  "command_wait",
+  "command_write_stdin",
+  "wait_agent",
+]);
 
 export function buildConversationEntries(
   thread: Thread | null,
@@ -553,7 +558,21 @@ function buildReplacementHistoryEntries(
     parentId: string;
   },
 ): ConversationEntry[] {
+  const hiddenFunctionOutputCallIds = collectStructuredToolOutputCallIds(items);
+  const hiddenFunctionCallIds = collectStructuredToolCallIdsWithTypedDisplay(items);
   return items.flatMap((item, index) => {
+    if (
+      item.type === "function_call" &&
+      hiddenFunctionCallIds.has(stringOrFallback(item.call_id, ""))
+    ) {
+      return [];
+    }
+    if (
+      item.type === "function_call_output" &&
+      hiddenFunctionOutputCallIds.has(stringOrFallback(item.call_id, ""))
+    ) {
+      return [];
+    }
     const entry = buildReplacementHistoryEntry(item, {
       author,
       timestamp,
@@ -614,6 +633,14 @@ function buildReplacementHistoryEntry(
         attachments: [],
       };
     case "function_call":
+      if (isStructuredToolOutputName(item.name)) {
+        return structuredToolCallReplacementEntry(item, {
+          id,
+          author,
+          timestamp,
+          index,
+        });
+      }
       return replacementToolEntry({
         id,
         author,
@@ -639,6 +666,37 @@ function buildReplacementHistoryEntry(
           ["Type", item.type],
           ["Call ID", item.call_id],
           ["Output", item.output],
+        ]),
+      });
+    case "command_wait":
+      return replacementToolEntry({
+        id,
+        author,
+        timestamp,
+        toolName: "command wait",
+        text: `Command wait ${stringOrFallback(item.status, `#${index + 1}`)}`,
+        details: formatResponseItemDetails([
+          ["Type", item.type],
+          ["Command ID", item.command_id],
+          ["Status", item.status],
+          ["Notification", item.notification],
+          ["Exit code", item.exit_code],
+          ["Wall time seconds", item.wall_time_seconds],
+          ["Wait timeout ms", item.wait_timeout_ms],
+        ]),
+      });
+    case "command_write_stdin":
+      return replacementToolEntry({
+        id,
+        author,
+        timestamp,
+        toolName: "command stdin",
+        text: `Command stdin ${stringOrFallback(item.command_id, `#${index + 1}`)}`,
+        details: formatResponseItemDetails([
+          ["Type", item.type],
+          ["Command ID", item.command_id],
+          ["Bytes written", item.bytes_written],
+          ["Contains newline", item.contains_newline],
         ]),
       });
     case "custom_tool_call":
@@ -726,6 +784,112 @@ function buildReplacementHistoryEntry(
         details: formatRawJson(item),
       });
   }
+}
+
+function collectStructuredToolOutputCallIds(items: ResponseItem[]) {
+  const callIds = new Set<string>();
+  for (const item of items) {
+    if (item.type !== "function_call") {
+      continue;
+    }
+    const name = stringOrNull(item.name);
+    const callId = stringOrNull(item.call_id);
+    if (name && callId && STRUCTURED_TOOL_OUTPUT_NAMES.has(name)) {
+      callIds.add(callId);
+    }
+  }
+  return callIds;
+}
+
+function collectStructuredToolCallIdsWithTypedDisplay(items: ResponseItem[]) {
+  const typedCommandWaitIds = new Set(
+    items
+      .filter((item) => item.type === "command_wait")
+      .map((item) => stringOrNumberId(item.command_id))
+      .filter((id): id is string => id !== null),
+  );
+  const typedCommandWriteStdinIds = new Set(
+    items
+      .filter((item) => item.type === "command_write_stdin")
+      .map((item) => stringOrNumberId(item.command_id))
+      .filter((id): id is string => id !== null),
+  );
+  const callIds = new Set<string>();
+  for (const item of items) {
+    if (item.type !== "function_call") {
+      continue;
+    }
+    const name = stringOrNull(item.name);
+    const callId = stringOrNull(item.call_id);
+    if (!callId) {
+      continue;
+    }
+    const commandId = commandIdFromFunctionCall(item);
+    if (
+      name === "command_wait" &&
+      commandId &&
+      typedCommandWaitIds.has(commandId)
+    ) {
+      callIds.add(callId);
+    }
+    if (
+      name === "command_write_stdin" &&
+      commandId &&
+      typedCommandWriteStdinIds.has(commandId)
+    ) {
+      callIds.add(callId);
+    }
+  }
+  return callIds;
+}
+
+function commandIdFromFunctionCall(item: ResponseItem) {
+  const args = parseMaybeJsonString(item.arguments);
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return null;
+  }
+  return stringOrNumberId((args as Record<string, unknown>).command_id);
+}
+
+function isStructuredToolOutputName(name: unknown) {
+  const value = stringOrNull(name);
+  return value !== null && STRUCTURED_TOOL_OUTPUT_NAMES.has(value);
+}
+
+function structuredToolCallReplacementEntry(
+  item: ResponseItem,
+  {
+    id,
+    author,
+    timestamp,
+    index,
+  }: {
+    id: string;
+    author: string;
+    timestamp: string;
+    index: number;
+  },
+) {
+  const name = stringOrFallback(item.name, "wait tool");
+  const args = parseMaybeJsonString(item.arguments);
+  const argsRecord =
+    args && typeof args === "object" && !Array.isArray(args)
+      ? (args as Record<string, unknown>)
+      : {};
+  const target = argsRecord.target ?? argsRecord.command_id;
+  const targetText = stringOrNumberId(target);
+  return replacementToolEntry({
+    id,
+    author,
+    timestamp,
+    toolName: name.replaceAll("_", " "),
+    text: `${formatResponseItemType(name)} ${targetText ?? `#${index + 1}`}`,
+    details: formatResponseItemDetails([
+      ["Tool", name],
+      ["Target", target],
+      ["Call ID", item.call_id],
+    ]),
+  });
 }
 
 function buildCollabAgentMessageEntry(
@@ -1732,6 +1896,13 @@ function stringOrNull(value: unknown) {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : null;
+}
+
+function stringOrNumberId(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return stringOrNull(value);
 }
 
 function stringOrFallback(value: unknown, fallback: string) {

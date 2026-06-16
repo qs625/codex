@@ -2,6 +2,7 @@ use super::*;
 use crate::config::ConstraintError;
 use crate::goals::GoalRuntimeState;
 use crate::workflow_runs::WorkflowRunManager;
+use codex_command_runtime::WaitBackoffState;
 use codex_config::RequirementSource;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
@@ -43,6 +44,8 @@ pub(crate) struct Session {
     pub(super) next_internal_sub_id: AtomicU64,
     pub(super) parent_child_completion_active: AtomicBool,
     pub(super) pending_direct_child_completions: Mutex<std::collections::HashMap<ThreadId, usize>>,
+    pub(super) wait_agent_backoff:
+        Mutex<std::collections::HashMap<(ThreadId, ThreadId), WaitBackoffState>>,
 }
 
 #[derive(Clone)]
@@ -1064,6 +1067,7 @@ impl Session {
                 next_internal_sub_id: AtomicU64::new(0),
                 parent_child_completion_active: AtomicBool::new(true),
                 pending_direct_child_completions: Mutex::new(std::collections::HashMap::new()),
+                wait_agent_backoff: Mutex::new(std::collections::HashMap::new()),
             });
             if let Some(network_policy_decider_session) = network_policy_decider_session {
                 let mut guard = network_policy_decider_session.write().await;

@@ -33,6 +33,7 @@ where
             notification,
             exit_code,
             wall_time_seconds,
+            wait_timeout_ms,
             created_at_ms,
         } => Some(ThreadItem::CommandWait {
             id: id.clone().unwrap_or_else(fallback_id),
@@ -41,6 +42,7 @@ where
             notification: notification.map(CommandWaitNotificationKind::from),
             exit_code: *exit_code,
             wall_time_seconds: *wall_time_seconds,
+            wait_timeout_ms: *wait_timeout_ms,
             created_at_ms: *created_at_ms,
         }),
         ResponseItem::CommandWriteStdin {

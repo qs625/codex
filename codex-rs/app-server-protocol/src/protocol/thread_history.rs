@@ -4182,6 +4182,7 @@ mod tests {
                 notification: Some(codex_protocol::models::CommandWaitNotificationKind::Exit),
                 exit_code: Some(0),
                 wall_time_seconds: 1.25,
+                wait_timeout_ms: 250,
                 created_at_ms: 1234,
             }),
             RolloutItem::EventMsg(EventMsg::ResponseItemCompleted(
@@ -4197,6 +4198,7 @@ mod tests {
                         ),
                         exit_code: Some(0),
                         wall_time_seconds: 1.25,
+                        wait_timeout_ms: 250,
                         created_at_ms: 1234,
                     },
                     completed_at_ms: 5678,
@@ -4214,6 +4216,7 @@ mod tests {
             notification,
             exit_code,
             wall_time_seconds,
+            wait_timeout_ms,
             created_at_ms,
             ..
         } = &turns[0].items[0]
@@ -4228,6 +4231,7 @@ mod tests {
         );
         assert_eq!(*exit_code, Some(0));
         assert_eq!(*wall_time_seconds, 1.25);
+        assert_eq!(*wait_timeout_ms, 250);
         assert_eq!(*created_at_ms, 1234);
     }
 

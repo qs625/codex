@@ -35,6 +35,8 @@ pub(crate) use codex_command_runtime::CommandWaitStatus;
 pub(crate) use codex_command_runtime::DEFAULT_COMMAND_OUTPUT_MAX_TOKENS as UNIFIED_EXEC_OUTPUT_MAX_TOKENS;
 pub(crate) use codex_command_runtime::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
 pub(crate) use codex_command_runtime::HeadTailBuffer;
+pub(crate) use codex_command_runtime::MIN_YIELD_TIME_MS;
+pub(crate) use codex_command_runtime::WaitBackoffState;
 pub(crate) use codex_command_runtime::WriteStdinOutput;
 pub(crate) use codex_command_runtime::WriteStdinRequest;
 pub(crate) use codex_command_runtime::clamp_yield_time;
@@ -223,6 +225,7 @@ struct ProcessEntry {
     last_used: tokio::time::Instant,
     transcript: Arc<Mutex<HeadTailBuffer>>,
     notification_state: Arc<CommandNotificationState>,
+    command_wait_backoff: WaitBackoffState,
 }
 
 struct CompletedProcessEntry {

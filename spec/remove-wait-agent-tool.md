@@ -20,10 +20,11 @@
 - 目标解析复用 V2 `resolve_agent_target`，支持 agent id、canonical task path 和当前 V2 已支持的相对 task path。
 - 调用开始先检查目标 agent status；若已 final，立即返回。
 - 再检查 parent active turn pending input 与 mailbox buffered input 中的 typed `PendingInputItem::InterAgentCommunication` / `ResponseItem::InterAgentCommunication`，匹配 `author` 或 `sender_thread_id` 指向目标 agent 的消息；若已有匹配消息，立即返回，不 drain。
-- 未命中时订阅目标 status watch 与 parent mailbox sequence watch，按 snapshot + notify 模式等待后续事件。
-- 收到相关 status/mailbox event 后重置 backoff/window 并返回摘要；如果 event 不相关，则继续等待并按 runtime backoff 延长无进展窗口。
+- 未命中时订阅目标 status watch 与 parent mailbox sequence watch，按 snapshot + notify 模式只等待当前 runtime window 内的后续事件。
+- 当前 window 超时后立即返回 `Timeout`，并推进该 sender/receiver target 的 backoff window；下一次同 target `wait_agent` 调用使用推进后的窗口。
+- 收到 pending mailbox、mailbox/status event、final status 或 child completion 等相关事件后重置 backoff/window 并返回摘要；如果 mailbox event 不包含匹配消息，本次调用继续等待 current window 的剩余时间，不 reset 也不推进 backoff。
 - `features.multi_agent_v2.default_wait_timeout_ms` 作为 initial window，默认 60 秒；`features.multi_agent_v2.max_wait_timeout_ms` 作为 hard cap，默认 30 分钟。工具不暴露 poll interval。
-- `CollabWaitingBegin/End.timeout_ms` 面向客户端 wait lifecycle 展示，只表达本次等待窗口（当前为 initial window），不能填入 hard cap；hard cap 仅保留在 `wait_agent` 工具结果的 `hard_cap_timeout_ms` 中，避免 UI 把总上限误显示为本次等待 timeout。
+- `CollabWaitingBegin/End.timeout_ms` 面向客户端 wait lifecycle 展示，只表达本次实际等待窗口（current backoff window），不能填入 hard cap；hard cap 仅保留在 `wait_agent` 工具结果的 `hard_cap_timeout_ms` 中，避免 UI 把总上限误显示为本次等待 timeout。工具结果同时返回 `initial_timeout_ms` 和 `current_timeout_ms`，便于模型和客户端区分初始窗口与本次窗口。
 
 ## 兼容性
 

@@ -35,6 +35,7 @@ use crate::unified_exec::CommandWaitRequest;
 use crate::unified_exec::CommandWaitStatus;
 use crate::unified_exec::ExecCommandRequest;
 use crate::unified_exec::HeadTailBuffer;
+use crate::unified_exec::MIN_YIELD_TIME_MS;
 use crate::unified_exec::MAX_UNIFIED_EXEC_PROCESSES;
 use crate::unified_exec::ProcessEntry;
 use crate::unified_exec::ProcessExitSubscription;
@@ -42,6 +43,7 @@ use crate::unified_exec::ProcessStore;
 use crate::unified_exec::UnifiedExecContext;
 use crate::unified_exec::UnifiedExecError;
 use crate::unified_exec::UnifiedExecProcessManager;
+use crate::unified_exec::WaitBackoffState;
 use crate::unified_exec::WriteStdinOutput;
 use crate::unified_exec::WriteStdinRequest;
 use crate::unified_exec::async_watcher::emit_exec_end_for_unified_exec;
@@ -727,6 +729,10 @@ impl UnifiedExecProcessManager {
             last_used: started_at,
             transcript: Arc::clone(&transcript),
             notification_state: Arc::clone(&notification_state),
+            command_wait_backoff: WaitBackoffState::new(
+                Duration::from_millis(MIN_YIELD_TIME_MS),
+                self.command_wait_hard_cap,
+            ),
         };
         let pruned_entry = {
             let mut store = self.process_store.lock().await;
@@ -763,7 +769,7 @@ impl UnifiedExecProcessManager {
     ) -> Result<CommandWaitOutput, UnifiedExecError> {
         let started_at = Instant::now();
         let process_id = request.process_id;
-        let (process, notification_state) = {
+        let (process, notification_state, wait_window) = {
             let mut store = self.process_store.lock().await;
             let Some(entry) = store.processes.get_mut(&process_id) else {
                 if let Some(entry) = store.completed_processes.get(&process_id) {
@@ -773,23 +779,28 @@ impl UnifiedExecProcessManager {
                         notification: Some(CommandNotificationKind::Exit),
                         exit_code: entry.exit_code,
                         wall_time: std::time::Duration::ZERO,
+                        wait_timeout: Duration::ZERO,
                     });
                 }
                 return Err(UnifiedExecError::UnknownProcessId { process_id });
             };
             entry.last_used = started_at;
+            let wait_window = entry.command_wait_backoff.current_window();
             if entry.process.has_exited() {
+                entry.command_wait_backoff.reset_after_event();
                 return Ok(CommandWaitOutput {
                     process_id,
                     status: CommandWaitStatus::Completed,
                     notification: Some(CommandNotificationKind::Exit),
                     exit_code: entry.process.exit_code(),
                     wall_time: std::time::Duration::ZERO,
+                    wait_timeout: wait_window,
                 });
             }
             (
                 Arc::clone(&entry.process),
                 Arc::clone(&entry.notification_state),
+                wait_window,
             )
         };
         let snapshot = notification_state.snapshot().await;
@@ -798,13 +809,15 @@ impl UnifiedExecProcessManager {
         let notification = tokio::select! {
             _ = cancellation_token.cancelled() => CommandNotificationKind::Exit,
             kind = notification_state.wait_after(snapshot) => kind,
-            _ = tokio::time::sleep(self.command_wait_hard_cap) => {
+            _ = tokio::time::sleep(wait_window) => {
+                self.advance_command_wait_backoff(process_id).await;
                 return Ok(CommandWaitOutput {
                     process_id,
                     status: CommandWaitStatus::Running,
                     notification: None,
                     exit_code: process.exit_code(),
                     wall_time: Instant::now().saturating_duration_since(started_at),
+                    wait_timeout: wait_window,
                 });
             }
         };
@@ -813,13 +826,29 @@ impl UnifiedExecProcessManager {
         } else {
             CommandWaitStatus::Running
         };
+        self.reset_command_wait_backoff(process_id).await;
         Ok(CommandWaitOutput {
             process_id,
             status,
             notification: Some(notification),
             exit_code: process.exit_code(),
             wall_time: Instant::now().saturating_duration_since(started_at),
+            wait_timeout: wait_window,
         })
+    }
+
+    async fn advance_command_wait_backoff(&self, process_id: i32) {
+        let mut store = self.process_store.lock().await;
+        if let Some(entry) = store.processes.get_mut(&process_id) {
+            entry.command_wait_backoff.advance_after_timeout();
+        }
+    }
+
+    async fn reset_command_wait_backoff(&self, process_id: i32) {
+        let mut store = self.process_store.lock().await;
+        if let Some(entry) = store.processes.get_mut(&process_id) {
+            entry.command_wait_backoff.reset_after_event();
+        }
     }
 
     pub(crate) async fn open_session_with_exec_env(

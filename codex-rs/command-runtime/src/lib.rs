@@ -14,6 +14,7 @@ pub const DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS: u64 = 300_000;
 pub const DEFAULT_MAX_OUTPUT_TOKENS: usize = 10_000;
 pub const DEFAULT_COMMAND_OUTPUT_MAX_BYTES: usize = 1024 * 1024; // 1 MiB
 pub const DEFAULT_COMMAND_OUTPUT_MAX_TOKENS: usize = DEFAULT_COMMAND_OUTPUT_MAX_BYTES / 4;
+pub const WAIT_BACKOFF_MULTIPLIER: u32 = 2;
 
 /// A capped buffer that preserves a stable prefix ("head") and suffix ("tail"),
 /// dropping the middle once it exceeds the configured maximum. The buffer is
@@ -252,6 +253,40 @@ pub struct CommandWaitOutput {
     pub notification: Option<CommandNotificationKind>,
     pub exit_code: Option<i32>,
     pub wall_time: Duration,
+    pub wait_timeout: Duration,
+}
+
+#[derive(Clone, Debug)]
+pub struct WaitBackoffState {
+    current_window: Duration,
+    initial_window: Duration,
+    max_window: Duration,
+}
+
+impl WaitBackoffState {
+    pub fn new(initial_window: Duration, max_window: Duration) -> Self {
+        let initial_window = initial_window.min(max_window);
+        Self {
+            current_window: initial_window,
+            initial_window,
+            max_window,
+        }
+    }
+
+    pub fn current_window(&self) -> Duration {
+        self.current_window
+    }
+
+    pub fn advance_after_timeout(&mut self) {
+        self.current_window = self
+            .current_window
+            .saturating_mul(WAIT_BACKOFF_MULTIPLIER)
+            .min(self.max_window);
+    }
+
+    pub fn reset_after_event(&mut self) {
+        self.current_window = self.initial_window;
+    }
 }
 
 #[derive(Default)]

@@ -129,6 +129,10 @@ async fn exec_command_with_tty(
             last_used: started_at,
             transcript: Arc::clone(&transcript),
             notification_state: Arc::new(CommandNotificationState::default()),
+            command_wait_backoff: WaitBackoffState::new(
+                Duration::from_millis(MIN_YIELD_TIME_MS),
+                manager.command_wait_hard_cap,
+            ),
         };
         manager
             .process_store
@@ -614,6 +618,121 @@ async fn reusing_completed_process_returns_unknown_process() -> anyhow::Result<(
             .processes
             .is_empty()
     );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn command_wait_times_out_after_current_window_and_backs_off() -> anyhow::Result<()> {
+    skip_if_sandbox!(Ok(()));
+
+    let (session, turn) = test_session_and_turn().await;
+    let result = exec_command(
+        &session,
+        &turn,
+        "sleep 2",
+        /*yield_time_ms*/ MIN_YIELD_TIME_MS,
+        /*workdir*/ None,
+    )
+    .await?;
+    let process_id = result.process_id.expect("expected running process");
+
+    let first = session
+        .services
+        .unified_exec_manager
+        .wait_for_command_notification(CommandWaitRequest { process_id })
+        .await?;
+    assert_eq!(first.status, CommandWaitStatus::Running);
+    assert_eq!(first.notification, None);
+    assert_eq!(first.wait_timeout, Duration::from_millis(MIN_YIELD_TIME_MS));
+
+    let second = session
+        .services
+        .unified_exec_manager
+        .wait_for_command_notification(CommandWaitRequest { process_id })
+        .await?;
+    assert_eq!(second.status, CommandWaitStatus::Running);
+    assert_eq!(second.notification, None);
+    assert_eq!(
+        second.wait_timeout,
+        Duration::from_millis(MIN_YIELD_TIME_MS * 2)
+    );
+
+    session
+        .services
+        .unified_exec_manager
+        .release_process_id(process_id)
+        .await;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn command_wait_resets_backoff_after_notification() -> anyhow::Result<()> {
+    skip_if_sandbox!(Ok(()));
+
+    let (session, turn) = test_session_and_turn().await;
+    let result = exec_command(
+        &session,
+        &turn,
+        "sleep 2",
+        /*yield_time_ms*/ MIN_YIELD_TIME_MS,
+        /*workdir*/ None,
+    )
+    .await?;
+    let process_id = result.process_id.expect("expected running process");
+
+    let first = session
+        .services
+        .unified_exec_manager
+        .wait_for_command_notification(CommandWaitRequest { process_id })
+        .await?;
+    assert_eq!(first.status, CommandWaitStatus::Running);
+    assert_eq!(first.notification, None);
+    assert_eq!(first.wait_timeout, Duration::from_millis(MIN_YIELD_TIME_MS));
+
+    let notification_state = {
+        let store = session
+            .services
+            .unified_exec_manager
+            .process_store
+            .lock()
+            .await;
+        Arc::clone(&store.processes[&process_id].notification_state)
+    };
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        notification_state
+            .notify(CommandNotificationKind::Output)
+            .await;
+    });
+
+    let second = session
+        .services
+        .unified_exec_manager
+        .wait_for_command_notification(CommandWaitRequest { process_id })
+        .await?;
+    assert_eq!(second.status, CommandWaitStatus::Running);
+    assert_eq!(second.notification, Some(CommandNotificationKind::Output));
+    assert_eq!(
+        second.wait_timeout,
+        Duration::from_millis(MIN_YIELD_TIME_MS * 2)
+    );
+
+    let third = session
+        .services
+        .unified_exec_manager
+        .wait_for_command_notification(CommandWaitRequest { process_id })
+        .await?;
+    assert_eq!(third.status, CommandWaitStatus::Running);
+    assert_eq!(third.notification, None);
+    assert_eq!(third.wait_timeout, Duration::from_millis(MIN_YIELD_TIME_MS));
+
+    session
+        .services
+        .unified_exec_manager
+        .release_process_id(process_id)
+        .await;
 
     Ok(())
 }

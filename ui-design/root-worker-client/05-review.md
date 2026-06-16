@@ -1,5 +1,35 @@
 # Review
 
+## Command Wait Replacement History review
+
+本轮待审范围：
+
+- `features/command-wait-replacement-history.md`
+- `04-components.md` 中 `CommandWaitReplacementEntry`、`CommandWriteStdinReplacementEntry`、`CollabWaitReplacementEntry`
+
+当前设计结论：
+
+- 等待类工具的 raw JSON output 不应作为默认用户可见历史展示。
+- `command_wait` replacement entry 需要显示 status、notification、exit code、wall time 或 command duration、wait timeout。
+- `wait_timeout_ms` 必须表达本次 current window，不能展示 hard cap。
+- `wait_agent` 主路径应依赖 CollabWaitingBegin/End；缺 typed item 时使用语义 fallback，不回退 JSON。
+- 已知等待类 raw function call start/output 都不得以 protocol/JSON 形式默认展示；未知 function call/output 仍按现有规则可见。
+- 本次为文字级 UI/UE handoff，不改变视觉布局，暂不新增原型资产。
+
+第一轮结论：未通过，需修正。
+
+已处理问题：
+
+- 补充等待类 `function_call` start 处理：默认隐藏并由 typed replacement entry 承担完整语义；缺 typed entry 时只能显示低权重语义 fallback，不显示 `Function call <call_id>`、tool name 或 arguments JSON。
+- 补充 `command_write_stdin` 异常状态约束：如果 typed payload 暂无异常结果字段，UI 默认只表达 `Sent`；不可从 raw output 推断 `Rejected` / `Command unavailable`。
+- 补充验收：已知等待类 raw start/output 均不得以 protocol/JSON 形式默认展示，未知 function call/output 保持既有可见规则。
+
+复审结论：通过，可进入开发。
+
+复审后同步修正：
+
+- 将剩余 UX 风险里的 raw start 表述改为实现遗漏风险，避免和已定稿的 raw start 默认不可见规则冲突。
+
 ## 历史 review 记录
 
 Composer Slash 菜单增量设计已完成独立 `@ui-ue-reviewer` 复审，通过。

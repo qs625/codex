@@ -19,8 +19,6 @@ use std::collections::HashMap;
 use std::time::Duration;
 use std::time::Instant;
 
-const BACKOFF_MULTIPLIER: u32 = 2;
-
 pub(crate) struct Handler;
 
 #[async_trait::async_trait]
@@ -64,6 +62,7 @@ pub(crate) struct WaitAgentResult {
     message_excerpt: Option<String>,
     waited_ms: i64,
     initial_timeout_ms: i64,
+    current_timeout_ms: i64,
     hard_cap_timeout_ms: i64,
 }
 
@@ -131,6 +130,15 @@ pub(crate) async fn handle_wait_agent(
         .unwrap_or_else(AgentPath::root);
     let initial_timeout_ms = turn.config.multi_agent_v2.default_wait_timeout_ms;
     let hard_cap_timeout_ms = turn.config.multi_agent_v2.max_wait_timeout_ms;
+    let current_timeout = session
+        .wait_agent_current_window(
+            session.conversation_id,
+            receiver_thread_id,
+            initial_timeout_ms,
+            hard_cap_timeout_ms,
+        )
+        .await;
+    let current_timeout_ms = duration_to_ms(current_timeout);
     let receiver_agents = vec![CollabAgentRef {
         thread_id: receiver_thread_id,
         agent_path: Some(receiver_agent_path.to_string()),
@@ -148,7 +156,7 @@ pub(crate) async fn handle_wait_agent(
                 sender_agent_path: sender_agent_path.to_string(),
                 receiver_thread_ids: vec![receiver_thread_id],
                 receiver_agents,
-                timeout_ms: wait_lifecycle_timeout_ms(initial_timeout_ms),
+                timeout_ms: wait_lifecycle_timeout_ms(current_timeout),
             }
             .into(),
         )
@@ -174,6 +182,7 @@ pub(crate) async fn handle_wait_agent(
             Some(message),
             started,
             initial_timeout_ms,
+            current_timeout_ms,
             hard_cap_timeout_ms,
         )
     } else if is_final(&snapshot_status) {
@@ -185,6 +194,7 @@ pub(crate) async fn handle_wait_agent(
             None,
             started,
             initial_timeout_ms,
+            current_timeout_ms,
             hard_cap_timeout_ms,
         )
     } else {
@@ -206,6 +216,7 @@ pub(crate) async fn handle_wait_agent(
                 Some(message),
                 started,
                 initial_timeout_ms,
+                current_timeout_ms,
                 hard_cap_timeout_ms,
             )
         } else if is_final(&initial_status) {
@@ -217,6 +228,7 @@ pub(crate) async fn handle_wait_agent(
                 None,
                 started,
                 initial_timeout_ms,
+                current_timeout_ms,
                 hard_cap_timeout_ms,
             )
         } else {
@@ -230,11 +242,21 @@ pub(crate) async fn handle_wait_agent(
                 status_rx,
                 started,
                 initial_timeout_ms,
+                current_timeout,
                 hard_cap_timeout_ms,
             )
             .await
         }
     };
+    if result.timed_out {
+        session
+            .advance_wait_agent_backoff(session.conversation_id, receiver_thread_id)
+            .await;
+    } else {
+        session
+            .reset_wait_agent_backoff(session.conversation_id, receiver_thread_id)
+            .await;
+    }
 
     let mut statuses = HashMap::new();
     statuses.insert(receiver_thread_id, result.status.clone());
@@ -246,7 +268,7 @@ pub(crate) async fn handle_wait_agent(
                 completed_at_ms: now_unix_timestamp_ms(),
                 sender_thread_id: session.conversation_id,
                 sender_agent_path: sender_agent_path.to_string(),
-                timeout_ms: wait_lifecycle_timeout_ms(initial_timeout_ms),
+                timeout_ms: wait_lifecycle_timeout_ms(current_timeout),
                 agent_statuses: vec![CollabAgentStatusEntry {
                     thread_id: receiver_thread_id,
                     agent_path: Some(receiver_agent_path.to_string()),
@@ -273,48 +295,48 @@ async fn wait_for_update(
     mut status_rx: tokio::sync::watch::Receiver<AgentStatus>,
     started: Instant,
     initial_timeout_ms: i64,
+    current_timeout: Duration,
     hard_cap_timeout_ms: i64,
 ) -> WaitAgentResult {
-    let hard_cap = duration_from_ms(hard_cap_timeout_ms);
-    let mut wait_window = non_zero_duration_from_ms(initial_timeout_ms);
-
+    let current_timeout_ms = duration_to_ms(current_timeout);
+    if let Some(result) = pending_message_result(
+        session,
+        receiver_thread_id,
+        &receiver_agent_path,
+        &mut status_rx,
+        &target,
+        &agent_name,
+        started,
+        initial_timeout_ms,
+        current_timeout_ms,
+        hard_cap_timeout_ms,
+    )
+    .await
+    {
+        return result;
+    }
+    let deadline = Instant::now() + current_timeout;
     loop {
-        if let Some(result) = pending_message_result(
-            session,
-            receiver_thread_id,
-            &receiver_agent_path,
-            &mut status_rx,
-            &target,
-            &agent_name,
-            started,
-            initial_timeout_ms,
-            hard_cap_timeout_ms,
-        )
-        .await
-        {
-            return result;
-        }
-        let elapsed = started.elapsed();
-        if elapsed >= hard_cap {
+        let now = Instant::now();
+        if now >= deadline {
             let status = session
                 .services
                 .agent_control
                 .get_status(receiver_thread_id)
                 .await;
             return build_result(
-                target.clone(),
-                agent_name.clone(),
+                target,
+                agent_name,
                 WaitAgentReason::Timeout,
                 status,
                 None,
                 started,
                 initial_timeout_ms,
+                current_timeout_ms,
                 hard_cap_timeout_ms,
             );
         }
-        let remaining = hard_cap.saturating_sub(elapsed);
-        let timeout_window = wait_window.min(remaining);
-        let event = tokio::time::timeout(timeout_window, async {
+        let event = tokio::time::timeout(deadline.saturating_duration_since(now), async {
             tokio::select! {
                 status_changed = status_rx.changed() => {
                     WaitEvent::Status(status_changed.is_ok())
@@ -338,6 +360,7 @@ async fn wait_for_update(
                     &agent_name,
                     started,
                     initial_timeout_ms,
+                    current_timeout_ms,
                     hard_cap_timeout_ms,
                 )
                 .await
@@ -350,13 +373,14 @@ async fn wait_for_update(
                     WaitAgentReason::StatusUpdate
                 };
                 return build_result(
-                    target.clone(),
-                    agent_name.clone(),
+                    target,
+                    agent_name,
                     reason,
                     status,
                     None,
                     started,
                     initial_timeout_ms,
+                    current_timeout_ms,
                     hard_cap_timeout_ms,
                 );
             }
@@ -375,6 +399,7 @@ async fn wait_for_update(
                     &agent_name,
                     started,
                     initial_timeout_ms,
+                    current_timeout_ms,
                     hard_cap_timeout_ms,
                 )
                 .await
@@ -382,13 +407,14 @@ async fn wait_for_update(
                     return result;
                 }
                 return build_result(
-                    target.clone(),
-                    agent_name.clone(),
+                    target,
+                    agent_name,
                     WaitAgentReason::StatusUpdate,
                     status,
                     None,
                     started,
                     initial_timeout_ms,
+                    current_timeout_ms,
                     hard_cap_timeout_ms,
                 );
             }
@@ -402,6 +428,7 @@ async fn wait_for_update(
                     &agent_name,
                     started,
                     initial_timeout_ms,
+                    current_timeout_ms,
                     hard_cap_timeout_ms,
                 )
                 .await
@@ -409,9 +436,23 @@ async fn wait_for_update(
                     return result;
                 }
             }
-            Ok(WaitEvent::Mailbox(false)) => {}
-            Err(_elapsed_without_event) => {
-                wait_window = wait_window.saturating_mul(BACKOFF_MULTIPLIER).min(hard_cap);
+            Ok(WaitEvent::Mailbox(false)) | Err(_) => {
+                let status = session
+                    .services
+                    .agent_control
+                    .get_status(receiver_thread_id)
+                    .await;
+                return build_result(
+                    target,
+                    agent_name,
+                    WaitAgentReason::Timeout,
+                    status,
+                    None,
+                    started,
+                    initial_timeout_ms,
+                    current_timeout_ms,
+                    hard_cap_timeout_ms,
+                );
             }
         }
     }
@@ -426,6 +467,7 @@ async fn pending_message_result(
     agent_name: &str,
     started: Instant,
     initial_timeout_ms: i64,
+    current_timeout_ms: i64,
     hard_cap_timeout_ms: i64,
 ) -> Option<WaitAgentResult> {
     let message =
@@ -438,6 +480,7 @@ async fn pending_message_result(
         message,
         started,
         initial_timeout_ms,
+        current_timeout_ms,
         hard_cap_timeout_ms,
     ))
 }
@@ -451,6 +494,7 @@ async fn pending_message_result_with_fallback_status(
     agent_name: &str,
     started: Instant,
     initial_timeout_ms: i64,
+    current_timeout_ms: i64,
     hard_cap_timeout_ms: i64,
 ) -> Option<WaitAgentResult> {
     let message =
@@ -462,6 +506,7 @@ async fn pending_message_result_with_fallback_status(
         message,
         started,
         initial_timeout_ms,
+        current_timeout_ms,
         hard_cap_timeout_ms,
     ))
 }
@@ -513,6 +558,7 @@ fn build_result(
     message: Option<InterAgentCommunication>,
     started: Instant,
     initial_timeout_ms: i64,
+    current_timeout_ms: i64,
     hard_cap_timeout_ms: i64,
 ) -> WaitAgentResult {
     WaitAgentResult {
@@ -528,6 +574,7 @@ fn build_result(
         message_excerpt: message.map(|message| excerpt(&message.content)),
         waited_ms: started.elapsed().as_millis() as i64,
         initial_timeout_ms,
+        current_timeout_ms,
         hard_cap_timeout_ms,
     }
 }
@@ -539,6 +586,7 @@ fn build_pending_message_result(
     message: InterAgentCommunication,
     started: Instant,
     initial_timeout_ms: i64,
+    current_timeout_ms: i64,
     hard_cap_timeout_ms: i64,
 ) -> WaitAgentResult {
     let status = message.status.clone().unwrap_or(fallback_status);
@@ -550,25 +598,17 @@ fn build_pending_message_result(
         Some(message),
         started,
         initial_timeout_ms,
+        current_timeout_ms,
         hard_cap_timeout_ms,
     )
 }
 
-fn duration_from_ms(ms: i64) -> Duration {
-    Duration::from_millis(ms.max(0) as u64)
+fn duration_to_ms(duration: Duration) -> i64 {
+    duration.as_millis() as i64
 }
 
-fn non_zero_duration_from_ms(ms: i64) -> Duration {
-    let duration = duration_from_ms(ms);
-    if duration.is_zero() {
-        Duration::from_millis(1)
-    } else {
-        duration
-    }
-}
-
-fn wait_lifecycle_timeout_ms(initial_timeout_ms: i64) -> i64 {
-    initial_timeout_ms
+fn wait_lifecycle_timeout_ms(current_timeout: Duration) -> i64 {
+    duration_to_ms(current_timeout)
 }
 
 fn operation_name(operation: InterAgentOperation) -> &'static str {
@@ -593,6 +633,7 @@ fn excerpt(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::tests::make_session_and_context;
     use codex_protocol::ThreadId;
     use pretty_assertions::assert_eq;
 
@@ -669,10 +710,12 @@ mod tests {
             message,
             started,
             60_000,
+            60_000,
             1_800_000,
         );
 
         assert_eq!(result.reason, WaitAgentReason::MailboxMessage);
+        assert_eq!(result.current_timeout_ms, 60_000);
         assert_eq!(
             result.status,
             AgentStatus::Completed(Some("final status".to_string()))
@@ -685,7 +728,117 @@ mod tests {
     }
 
     #[test]
-    fn wait_lifecycle_timeout_uses_initial_window_not_hard_cap() {
-        assert_eq!(wait_lifecycle_timeout_ms(60_000), 60_000);
+    fn wait_lifecycle_timeout_uses_current_window_not_hard_cap() {
+        assert_eq!(
+            wait_lifecycle_timeout_ms(Duration::from_millis(120_000)),
+            120_000
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_agent_backoff_advances_per_target_and_resets_after_event() {
+        let (session, _) = make_session_and_context().await;
+        let sender_thread_id = session.conversation_id;
+        let receiver_thread_id = ThreadId::new();
+
+        assert_eq!(
+            session
+                .wait_agent_current_window(
+                    sender_thread_id,
+                    receiver_thread_id,
+                    /*initial_timeout_ms*/ 10,
+                    /*hard_cap_timeout_ms*/ 25,
+                )
+                .await,
+            Duration::from_millis(10)
+        );
+
+        session
+            .advance_wait_agent_backoff(sender_thread_id, receiver_thread_id)
+            .await;
+        assert_eq!(
+            session
+                .wait_agent_current_window(
+                    sender_thread_id,
+                    receiver_thread_id,
+                    /*initial_timeout_ms*/ 10,
+                    /*hard_cap_timeout_ms*/ 25,
+                )
+                .await,
+            Duration::from_millis(20)
+        );
+
+        session
+            .advance_wait_agent_backoff(sender_thread_id, receiver_thread_id)
+            .await;
+        assert_eq!(
+            session
+                .wait_agent_current_window(
+                    sender_thread_id,
+                    receiver_thread_id,
+                    /*initial_timeout_ms*/ 10,
+                    /*hard_cap_timeout_ms*/ 25,
+                )
+                .await,
+            Duration::from_millis(25)
+        );
+
+        session
+            .reset_wait_agent_backoff(sender_thread_id, receiver_thread_id)
+            .await;
+        assert_eq!(
+            session
+                .wait_agent_current_window(
+                    sender_thread_id,
+                    receiver_thread_id,
+                    /*initial_timeout_ms*/ 10,
+                    /*hard_cap_timeout_ms*/ 25,
+                )
+                .await,
+            Duration::from_millis(10)
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_for_update_ignores_unmatched_mailbox_event_until_current_window_expires() {
+        let (session, _) = make_session_and_context().await;
+        let session = std::sync::Arc::new(session);
+        let receiver_thread_id = ThreadId::new();
+        let receiver_agent_path = AgentPath::try_from("/root/target").expect("target path");
+        let mailbox_seq_rx = session.subscribe_mailbox_seq();
+        let (_status_tx, status_rx) = tokio::sync::watch::channel(AgentStatus::Running);
+        let unrelated_session = std::sync::Arc::clone(&session);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            unrelated_session.enqueue_mailbox_communication(InterAgentCommunication::new(
+                AgentPath::try_from("/root/other").expect("other path"),
+                AgentPath::root(),
+                Vec::new(),
+                "unrelated".to_string(),
+                InterAgentOperation::SendMessage,
+            ));
+        });
+
+        let result = wait_for_update(
+            &session,
+            "target".to_string(),
+            receiver_agent_path.to_string(),
+            receiver_thread_id,
+            receiver_agent_path,
+            mailbox_seq_rx,
+            status_rx,
+            Instant::now(),
+            /*initial_timeout_ms*/ 30,
+            Duration::from_millis(30),
+            /*hard_cap_timeout_ms*/ 300,
+        )
+        .await;
+
+        assert_eq!(result.reason, WaitAgentReason::Timeout);
+        assert_eq!(result.current_timeout_ms, 30);
+        assert!(
+            result.waited_ms >= 20,
+            "unmatched mailbox event should not end the wait early: {result:?}"
+        );
     }
 }

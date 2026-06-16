@@ -97,7 +97,7 @@ createdAtMs: number, } | { "type": "commandWait", id: string,
 /**
  * Identifier of the command session being waited on.
  */
-commandId: string, status: CommandWaitStatus, notification: CommandWaitNotificationKind | null, exitCode: number | null, wallTimeSeconds: number, createdAtMs: number, } | { "type": "commandWriteStdin", id: string,
+commandId: string, status: CommandWaitStatus, notification: CommandWaitNotificationKind | null, exitCode: number | null, wallTimeSeconds: number, waitTimeoutMs: number, createdAtMs: number, } | { "type": "commandWriteStdin", id: string,
 /**
  * Identifier of the command session receiving stdin.
  */

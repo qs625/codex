@@ -4632,6 +4632,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         next_internal_sub_id: AtomicU64::new(0),
         parent_child_completion_active: std::sync::atomic::AtomicBool::new(true),
         pending_direct_child_completions: Mutex::new(std::collections::HashMap::new()),
+        wait_agent_backoff: Mutex::new(std::collections::HashMap::new()),
     };
 
     (session, turn_context)
@@ -6505,6 +6506,7 @@ where
         next_internal_sub_id: AtomicU64::new(0),
         parent_child_completion_active: std::sync::atomic::AtomicBool::new(true),
         pending_direct_child_completions: Mutex::new(std::collections::HashMap::new()),
+        wait_agent_backoff: Mutex::new(std::collections::HashMap::new()),
     });
 
     (session, turn_context, rx_event)
@@ -8371,6 +8373,7 @@ async fn explicit_record_conversation_items_emits_response_item_completed_for_co
             notification: Some(codex_protocol::models::CommandWaitNotificationKind::Exit),
             exit_code: Some(0),
             wall_time_seconds: 1.25,
+            wait_timeout_ms: 250,
             created_at_ms: 1234,
         }],
     )
@@ -8397,6 +8400,7 @@ async fn explicit_record_conversation_items_emits_response_item_completed_for_co
         notification,
         exit_code,
         wall_time_seconds,
+        wait_timeout_ms,
         created_at_ms,
     } = completed.item
     else {
@@ -8411,6 +8415,7 @@ async fn explicit_record_conversation_items_emits_response_item_completed_for_co
             notification,
             exit_code,
             wall_time_seconds,
+            wait_timeout_ms,
             created_at_ms,
         },
         ResponseItem::CommandWait {
@@ -8420,6 +8425,7 @@ async fn explicit_record_conversation_items_emits_response_item_completed_for_co
             notification: Some(codex_protocol::models::CommandWaitNotificationKind::Exit),
             exit_code: Some(0),
             wall_time_seconds: 1.25,
+            wait_timeout_ms: 250,
             created_at_ms: 1234,
         }
     );
@@ -8545,7 +8551,7 @@ async fn explicit_record_conversation_items_emits_item_completed_for_event_comma
 }
 
 #[tokio::test]
-async fn explicit_record_conversation_items_emits_item_completed_for_collab_message() {
+async fn explicit_record_conversation_items_emits_response_item_completed_for_collab_message() {
     let (sess, tc, rx) = make_session_and_context_with_rx().await;
     let communication = InterAgentCommunication::new(
         AgentPath::try_from("/root/worker").expect("worker path should parse"),
@@ -8568,24 +8574,23 @@ async fn explicit_record_conversation_items_emits_item_completed_for_collab_mess
     let completed = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             let event = rx.recv().await.expect("event");
-            if let EventMsg::ItemCompleted(completed) = event.msg {
+            if let EventMsg::ResponseItemCompleted(completed) = event.msg {
                 break completed;
             }
         }
     })
     .await
-    .expect("expected item completed event");
+    .expect("expected response item completed event");
 
-    let TurnItem::CollabAgentMessage(item) = completed.item else {
-        panic!("expected CollabAgentMessage item");
+    let ResponseItem::InterAgentCommunication {
+        id,
+        communication: completed_communication,
+    } = completed.item
+    else {
+        panic!("expected InterAgentCommunication response item");
     };
-    assert_eq!(
-        item,
-        codex_protocol::items::CollabAgentMessageItem {
-            id: "typed-collab".to_string(),
-            communication,
-        }
-    );
+    assert_eq!(id.as_deref(), Some("typed-collab"));
+    assert_eq!(completed_communication, communication);
 }
 
 #[tokio::test]

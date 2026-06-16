@@ -805,6 +805,7 @@ pub enum ResponseItem {
         notification: Option<CommandWaitNotificationKind>,
         exit_code: Option<i32>,
         wall_time_seconds: f64,
+        wait_timeout_ms: i64,
         created_at_ms: i64,
     },
     CommandWriteStdin {

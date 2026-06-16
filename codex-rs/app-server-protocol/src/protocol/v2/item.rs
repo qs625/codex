@@ -317,6 +317,8 @@ pub enum ThreadItem {
         exit_code: Option<i32>,
         wall_time_seconds: f64,
         #[ts(type = "number")]
+        wait_timeout_ms: i64,
+        #[ts(type = "number")]
         created_at_ms: i64,
     },
     #[serde(rename_all = "camelCase")]
