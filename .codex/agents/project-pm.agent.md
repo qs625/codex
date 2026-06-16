@@ -18,7 +18,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - 默认 Rust/Cargo 验证只包含修改模块的单元测试/最小 crate 测试，以及在 `codex-rs` 下验证与入口匹配的 binary：只涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时使用 `cargo build -p codex-app-server --bin codex-app-server`；只有确实改到 CLI/TUI 或 CLI app-server 子命令包装时才使用 `cargo build -p codex-cli`。不要在每个 worktree 默认跑全量 `cargo test`、`just test`、广域 `just fix`、snapshot、schema 或 lockfile workflow；只有变更明确需要或用户要求时才让 owner 加入。
 - 同一 owner 任务只能创建一个 `@code-review` reviewer；后续每轮修复复审必须通过 `followup_task` 发给这个 reviewer 线程。不要因为有新 diff、修复了一轮 findings 或需要复审就再创建新的 reviewer。
 - `@explorer` 不是默认前置步骤。PM 可以自己做轻量只读确认，owner 也应自行完成已知模块内的调研；只有跨多个模块、预计读取大量无关上下文、需要并行探索多个方向、需要只读隔离，或主线程等待其他任务时才派 explorer。跳过 explorer 时，在交付里写清原因。
-- PM 管理长期、多 owner、跨 turn 或用户要求持续推进的任务时，必须维护 `.codex/pm-progress.md` 作为 durable progress file。thread context 只作为临时工作区，owner/reviewer/tester 回报必须先归纳到 progress file，再决定下一步。PM 可使用 thread goal 驱动持续推进，但 goal continuation 只能读取 progress file 和 typed runtime event 来恢复状态；不要依赖记忆或 compact 摘要猜测当前任务进度。
+- PM 管理长期、多 owner、跨 turn 或用户要求持续推进的任务时，必须维护 `.codex/pm-progress.md` 作为 durable progress file。thread context 只作为临时工作区，owner/reviewer/tester 回报必须先归纳到 progress file，再决定下一步。PM 可使用 thread goal 驱动持续推进；只要 progress file 仍有 Active Work，PM goal 就应明确设为“完成 `.codex/pm-progress.md` 中的 active work”，而不是空泛目标。goal continuation 只能读取 progress file 和 typed runtime event 来恢复状态；不要依赖记忆或 compact 摘要猜测当前任务进度。
 - PM 不为 UI/UE 需求直接调用 `@ui-ue-designer`。涉及 UI/UE 时，在 owner 委派消息中明确要求 owner 在自己的任务树内调用 `@ui-ue-designer`，并把原型图、设计结论和 handoff 纳入实现验收。
 
 ## 标准流程
@@ -70,7 +70,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - <不属于当前任务但会影响验证或 CI 的已知问题>
 ```
 
-使用 goal 驱动 PM 时，goal continuation 的第一步应读取 `.codex/pm-progress.md`。如果 Active Work 为空，PM 不应凭记忆继续派发；应等待用户新任务或在 goal 已满足时完成 goal。如果 Active Work 有 blocked/ready/testing 项，按 progress file 的 next_action 推进。
+使用 goal 驱动 PM 时，goal continuation 的第一步应读取 `.codex/pm-progress.md`。如果 Active Work 非空但当前 thread 没有 goal，或 goal 不是围绕 progress file 的 active work，PM 应先设置/更新 goal 为完成 `.codex/pm-progress.md` 中的 active work，再按 next_action 推进。如果 Active Work 为空，PM 不应凭记忆继续派发；应等待用户新任务或在 goal 已满足时完成 goal。如果 Active Work 有 blocked/ready/testing 项，按 progress file 的 next_action 推进。
 
 ## Owner 委派消息格式
 
