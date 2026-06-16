@@ -6,15 +6,26 @@ Complete all Active Work recorded in this progress file.
 
 ## Active Work
 
+- id: thread-lifecycle-active-idle-complete
+  owner: /root/my_codex_pm/thread_lifecycle_owner
+  worktree: /Users/bytedance/Projects/my-codex
+  branch: feat/tool-callback
+  status: completed
+  objective: Refactor thread lifecycle scheduling around the simplified Active / Idle / Complete state model and child completion consumption ordering, and fix command_wait wait-window/display lifecycle defects.
+  last_update: 2026-06-16
+  next_action: Land or commit the completed implementation when requested; then resume EventMsg projection work.
+  blockers: None.
+  validation: passed via fixed tester: cargo test -p codex-core command_wait; cargo test -p codex-core goal_post_turn_state; cargo test -p codex-core turn_start_consumes_child_completion_before_parent_visible_complete; cargo test -p codex-app-server-protocol response_item_started_maps_command_wait_to_thread_item; cargo build -p codex-app-server --bin codex-app-server.
+  commit: pending user request
 - id: eventmsg-threaditem-architecture-plan
   owner: /root/my_codex_pm/eventmsg_threaditem_owner
   worktree: /Users/bytedance/Projects/my-codex/.worktrees/eventmsg-threaditem-display-source
   branch: agent/eventmsg-threaditem-display-source
-  status: in_progress
+  status: paused
   objective: Write and land the full architecture plan for EventMsg as runtime/UI display source and ResponseItem as model context/provider source.
   last_update: 2026-06-16
-  next_action: Owner to update specs and AGENTS with the complete migration roadmap, invariants, non-goals, and validation strategy before broad code migration.
-  blockers: None.
+  next_action: Resume after thread lifecycle state machine refactor lands, then run fixed tester validation and merge the already-reviewed architecture/projection-boundary work.
+  blockers: thread-lifecycle-active-idle-complete.
   validation: pending
   commit: pending
 - id: eventmsg-threaditem-projector-boundary
@@ -86,6 +97,16 @@ Complete all Active Work recorded in this progress file.
 
 ## Design Direction
 
+- Thread lifecycle is modeled as three top-level states: `Active`, `Idle`, and `Complete`.
+- `Active` means a turn is currently running, or a pending-input turn is being started immediately.
+- `Idle` means no turn is running, but direct children or wait_command state still prevent completion; schedule/event-tool recurring waits are out of scope for this lifecycle decision for now.
+- `Complete` means no active turn, no pending input, no incomplete direct child, no wait_command, and no active goal continuation to run.
+- Lifecycle evaluation order is fixed: pending input -> incomplete direct child -> wait_command -> active goal continuation -> complete.
+- The evaluator only needs direct-child status; recursive behavior is produced naturally because a child cannot notify its parent until its own direct children are complete.
+- Non-management subagents do not become parent-visible complete at their own turn finish. They first send a child completion message carrying their agent path; the parent marks that direct child complete when it starts a turn that consumes the completion message.
+- `agent_mode = management` is exempt from parent completion delivery and may transition directly to `Complete` when its own local lifecycle permits it.
+- The fixed Rust/Cargo tester path `/root/my_codex_pm/rust_cargo_tester` is created by PM as a management task. Owner and reviewer must not create tester threads; owner sends concrete validation JSON with `followup_task` to this fixed tester path. Tester returns raw command outputs directly to the requesting owner and does not need to notify PM when it completes.
+- `command_wait` display lifecycle should show a started ThreadItem at model tool-call start and a completed ThreadItem at return using the same item id; `CommandWait.wait_timeout_ms` must be the current window for that call, with the initial window derived from the originating `exec_command` effective `initial_wait_ms`.
 - `ResponseItem` is for model interaction, context manager history, provider wire history, compact, guardian, and model-visible tool outputs.
 - `EventMsg` is the runtime event log and canonical source for app-server/root-worker UI display.
 - `ThreadItem` is the app-server/client display projection, generated from display-capable `EventMsg` variants.
@@ -127,6 +148,10 @@ Complete all Active Work recorded in this progress file.
 
 ## Completed
 
+- worktree: dirty
+  summary: Thread lifecycle and command_wait fixes are implemented in the main checkout. Child completion is now parent-visible only when the parent starts a turn consuming the completion pending input; post-turn active checks use direct child state, running command state, pending input/mailbox, and active event subscriptions before active goal continuation; management agents bypass parent completion delivery. `command_wait` now uses the originating exec_command effective `initial_wait_ms` as its initial backoff window and emits typed started/completed lifecycle items with the same id and current wait window.
+  validation: Fixed tester `/root/my_codex_pm/rust_cargo_tester` reported all targeted commands passed: `rtk cargo test -p codex-core command_wait`, `rtk cargo test -p codex-core goal_post_turn_state`, `rtk cargo test -p codex-core turn_start_consumes_child_completion_before_parent_visible_complete`, `rtk cargo test -p codex-app-server-protocol response_item_started_maps_command_wait_to_thread_item`, `rtk cargo build -p codex-app-server --bin codex-app-server`.
+  residual_risk: Full workspace tests were not run; changes remain uncommitted pending user direction.
 - commit: `c2a93ce7b`
   summary: `command_wait` and `wait_agent` now use per-call backoff windows with reset-on-event behavior, typed wait timeout display, and root-worker filtering for raw wait tool output JSON.
   validation: `cargo test -p codex-command-runtime`, `cargo test -p codex-core command_wait_`, `cargo test -p codex-app-server response_item_completed_emits_command_wait_thread_item`, `cargo build -p codex-app-server --bin codex-app-server`, root-worker conversation tests, and `git diff --check` passed.

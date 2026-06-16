@@ -35,7 +35,6 @@ use crate::unified_exec::CommandWaitRequest;
 use crate::unified_exec::CommandWaitStatus;
 use crate::unified_exec::ExecCommandRequest;
 use crate::unified_exec::HeadTailBuffer;
-use crate::unified_exec::MIN_YIELD_TIME_MS;
 use crate::unified_exec::MAX_UNIFIED_EXEC_PROCESSES;
 use crate::unified_exec::ProcessEntry;
 use crate::unified_exec::ProcessExitSubscription;
@@ -57,10 +56,12 @@ use crate::unified_exec::process::OutputBuffer;
 use crate::unified_exec::process::OutputHandles;
 use crate::unified_exec::process::SpawnLifecycleHandle;
 use crate::unified_exec::process::UnifiedExecProcess;
+use codex_command_runtime::CommandNotificationSnapshot;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
 use codex_protocol::protocol::ExecCommandSource;
+use codex_protocol::ThreadId;
 use codex_tools::ToolName;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::approx_token_count;
@@ -89,6 +90,24 @@ static FORCE_DETERMINISTIC_PROCESS_IDS: AtomicBool = AtomicBool::new(false);
 
 pub(super) fn set_deterministic_process_ids_for_tests(enabled: bool) {
     FORCE_DETERMINISTIC_PROCESS_IDS.store(enabled, Ordering::Relaxed);
+}
+
+pub(crate) struct CommandWaitBegin {
+    pub(crate) process_id: i32,
+    pub(crate) wait_timeout: Duration,
+    started_at: Instant,
+    state: CommandWaitBeginState,
+}
+
+enum CommandWaitBeginState {
+    Completed {
+        exit_code: Option<i32>,
+    },
+    Pending {
+        process: Arc<UnifiedExecProcess>,
+        notification_state: Arc<CommandNotificationState>,
+        snapshot: CommandNotificationSnapshot,
+    },
 }
 
 fn deterministic_process_ids_forced_for_tests() -> bool {
@@ -312,6 +331,71 @@ fn terminate_process_on_network_denial(
 }
 
 impl UnifiedExecProcessManager {
+    pub(crate) async fn has_running_process_for_thread(&self, thread_id: ThreadId) -> bool {
+        let store = self.process_store.lock().await;
+        store.processes.values().any(|entry| {
+            !entry.process.has_exited()
+                && entry
+                    .session
+                    .upgrade()
+                    .is_some_and(|session| session.conversation_id == thread_id)
+        })
+    }
+
+    pub(crate) async fn begin_command_wait(
+        &self,
+        request: CommandWaitRequest,
+    ) -> Result<CommandWaitBegin, UnifiedExecError> {
+        let started_at = Instant::now();
+        let process_id = request.process_id;
+        let pending = {
+            let mut store = self.process_store.lock().await;
+            let Some(entry) = store.processes.get_mut(&process_id) else {
+                if let Some(entry) = store.completed_processes.get(&process_id) {
+                    return Ok(CommandWaitBegin {
+                        process_id,
+                        wait_timeout: Duration::ZERO,
+                        started_at,
+                        state: CommandWaitBeginState::Completed {
+                            exit_code: entry.exit_code,
+                        },
+                    });
+                }
+                return Err(UnifiedExecError::UnknownProcessId { process_id });
+            };
+            entry.last_used = started_at;
+            let wait_timeout = entry.command_wait_backoff.current_window();
+            if entry.process.has_exited() {
+                entry.command_wait_backoff.reset_after_event();
+                return Ok(CommandWaitBegin {
+                    process_id,
+                    wait_timeout,
+                    started_at,
+                    state: CommandWaitBeginState::Completed {
+                        exit_code: entry.process.exit_code(),
+                    },
+                });
+            }
+            (
+                wait_timeout,
+                Arc::clone(&entry.process),
+                Arc::clone(&entry.notification_state),
+            )
+        };
+        let (wait_timeout, process, notification_state) = pending;
+        let snapshot = notification_state.snapshot().await;
+        Ok(CommandWaitBegin {
+            process_id,
+            wait_timeout,
+            started_at,
+            state: CommandWaitBeginState::Pending {
+                process,
+                notification_state,
+                snapshot,
+            },
+        })
+    }
+
     pub async fn subscribe_process_exit(&self, process_id: i32) -> Option<ProcessExitSubscription> {
         let (process, transcript) = {
             let mut store = self.process_store.lock().await;
@@ -730,7 +814,7 @@ impl UnifiedExecProcessManager {
             transcript: Arc::clone(&transcript),
             notification_state: Arc::clone(&notification_state),
             command_wait_backoff: WaitBackoffState::new(
-                Duration::from_millis(MIN_YIELD_TIME_MS),
+                Duration::from_millis(initial_wait_ms),
                 self.command_wait_hard_cap,
             ),
         };
@@ -767,50 +851,42 @@ impl UnifiedExecProcessManager {
         &self,
         request: CommandWaitRequest,
     ) -> Result<CommandWaitOutput, UnifiedExecError> {
-        let started_at = Instant::now();
-        let process_id = request.process_id;
-        let (process, notification_state, wait_window) = {
-            let mut store = self.process_store.lock().await;
-            let Some(entry) = store.processes.get_mut(&process_id) else {
-                if let Some(entry) = store.completed_processes.get(&process_id) {
-                    return Ok(CommandWaitOutput {
-                        process_id,
-                        status: CommandWaitStatus::Completed,
-                        notification: Some(CommandNotificationKind::Exit),
-                        exit_code: entry.exit_code,
-                        wall_time: std::time::Duration::ZERO,
-                        wait_timeout: Duration::ZERO,
-                    });
-                }
-                return Err(UnifiedExecError::UnknownProcessId { process_id });
-            };
-            entry.last_used = started_at;
-            let wait_window = entry.command_wait_backoff.current_window();
-            if entry.process.has_exited() {
-                entry.command_wait_backoff.reset_after_event();
+        let wait = self.begin_command_wait(request).await?;
+        self.finish_command_wait(wait).await
+    }
+
+    pub(crate) async fn finish_command_wait(
+        &self,
+        wait: CommandWaitBegin,
+    ) -> Result<CommandWaitOutput, UnifiedExecError> {
+        let process_id = wait.process_id;
+        let wait_window = wait.wait_timeout;
+        let started_at = wait.started_at;
+        let (process, notification_state, snapshot) = match wait.state {
+            CommandWaitBeginState::Completed { exit_code } => {
                 return Ok(CommandWaitOutput {
                     process_id,
                     status: CommandWaitStatus::Completed,
                     notification: Some(CommandNotificationKind::Exit),
-                    exit_code: entry.process.exit_code(),
+                    exit_code,
                     wall_time: std::time::Duration::ZERO,
                     wait_timeout: wait_window,
                 });
             }
-            (
-                Arc::clone(&entry.process),
-                Arc::clone(&entry.notification_state),
-                wait_window,
-            )
+            CommandWaitBeginState::Pending {
+                process,
+                notification_state,
+                snapshot,
+            } => (process, notification_state, snapshot),
         };
-        let snapshot = notification_state.snapshot().await;
         let cancellation_token = process.cancellation_token();
 
         let notification = tokio::select! {
             _ = cancellation_token.cancelled() => CommandNotificationKind::Exit,
             kind = notification_state.wait_after(snapshot) => kind,
             _ = tokio::time::sleep(wait_window) => {
-                self.advance_command_wait_backoff(process_id).await;
+                self.advance_command_wait_backoff_for_process(process_id, &process)
+                    .await;
                 return Ok(CommandWaitOutput {
                     process_id,
                     status: CommandWaitStatus::Running,
@@ -826,7 +902,8 @@ impl UnifiedExecProcessManager {
         } else {
             CommandWaitStatus::Running
         };
-        self.reset_command_wait_backoff(process_id).await;
+        self.reset_command_wait_backoff_for_process(process_id, &process)
+            .await;
         Ok(CommandWaitOutput {
             process_id,
             status,
@@ -837,16 +914,28 @@ impl UnifiedExecProcessManager {
         })
     }
 
-    async fn advance_command_wait_backoff(&self, process_id: i32) {
+    async fn advance_command_wait_backoff_for_process(
+        &self,
+        process_id: i32,
+        process: &Arc<UnifiedExecProcess>,
+    ) {
         let mut store = self.process_store.lock().await;
-        if let Some(entry) = store.processes.get_mut(&process_id) {
+        if let Some(entry) = store.processes.get_mut(&process_id)
+            && Arc::ptr_eq(&entry.process, process)
+        {
             entry.command_wait_backoff.advance_after_timeout();
         }
     }
 
-    async fn reset_command_wait_backoff(&self, process_id: i32) {
+    async fn reset_command_wait_backoff_for_process(
+        &self,
+        process_id: i32,
+        process: &Arc<UnifiedExecProcess>,
+    ) {
         let mut store = self.process_store.lock().await;
-        if let Some(entry) = store.processes.get_mut(&process_id) {
+        if let Some(entry) = store.processes.get_mut(&process_id)
+            && Arc::ptr_eq(&entry.process, process)
+        {
             entry.command_wait_backoff.reset_after_event();
         }
     }

@@ -1519,6 +1519,7 @@ pub(super) fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
         | EventMsg::ExitedReviewMode(_)
         | EventMsg::RawResponseItem(_)
         | EventMsg::ItemStarted(_)
+        | EventMsg::ResponseItemStarted(_)
         | EventMsg::ResponseItemCompleted(_)
         | EventMsg::HookStarted(_)
         | EventMsg::HookCompleted(_)

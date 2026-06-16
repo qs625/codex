@@ -455,6 +455,24 @@ pub fn item_event_to_server_notification(
                 completed_at_ms: item_completed_event.completed_at_ms,
             })
         }
+        EventMsg::ResponseItemStarted(response_item_started_event) => {
+            let fallback_id = || {
+                format!(
+                    "{}-response-item-started-{}",
+                    response_item_started_event.turn_id,
+                    response_item_started_event.started_at_ms
+                )
+            };
+            let item =
+                project_structured_response_item(&response_item_started_event.item, fallback_id)
+                    .expect("response item started event must carry a structured display item");
+            ServerNotification::ItemStarted(ItemStartedNotification {
+                thread_id,
+                turn_id,
+                item,
+                started_at_ms: response_item_started_event.started_at_ms,
+            })
+        }
         EventMsg::ResponseItemCompleted(response_item_completed_event) => {
             let fallback_id = || {
                 format!(
@@ -549,6 +567,7 @@ mod tests {
     use codex_protocol::protocol::ItemCompletedEvent;
     use codex_protocol::protocol::ItemStartedEvent;
     use codex_protocol::protocol::ResponseItemCompletedEvent;
+    use codex_protocol::protocol::ResponseItemStartedEvent;
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
@@ -804,6 +823,50 @@ mod tests {
                     exit_code: Some(0),
                     wall_time_seconds: 1.25,
                     wait_timeout_ms: 250,
+                    created_at_ms: 1234,
+                },
+            },
+        );
+    }
+
+    #[test]
+    fn response_item_started_maps_command_wait_to_thread_item() {
+        let event = ResponseItemStartedEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-ignored".to_string(),
+            item: ResponseItem::CommandWait {
+                id: Some("wait-1".to_string()),
+                command_id: "cmd-1".to_string(),
+                status: codex_protocol::models::CommandWaitStatus::Running,
+                notification: None,
+                exit_code: None,
+                wall_time_seconds: 0.0,
+                wait_timeout_ms: 500,
+                created_at_ms: 1234,
+            },
+            started_at_ms: 789,
+        };
+
+        let notification = item_event_to_server_notification(
+            EventMsg::ResponseItemStarted(event.clone()),
+            "thread-4",
+            "turn-4",
+        );
+
+        assert_item_started_server_notification(
+            notification,
+            ItemStartedNotification {
+                thread_id: "thread-4".to_string(),
+                turn_id: "turn-4".to_string(),
+                started_at_ms: event.started_at_ms,
+                item: ThreadItem::CommandWait {
+                    id: "wait-1".to_string(),
+                    command_id: "cmd-1".to_string(),
+                    status: crate::protocol::v2::CommandWaitStatus::Running,
+                    notification: None,
+                    exit_code: None,
+                    wall_time_seconds: 0.0,
+                    wait_timeout_ms: 500,
                     created_at_ms: 1234,
                 },
             },

@@ -345,6 +345,10 @@ impl Session {
         }
         let queued_response_items = self.take_queued_response_items_for_next_turn().await;
         let mailbox_items = self.get_pending_input().await;
+        self.mark_direct_child_completions_received_from_pending_input(
+            queued_response_items.iter().chain(mailbox_items.iter()),
+        )
+        .await;
         let turn_state = {
             let mut active = self.active_turn.lock().await;
             let turn = active.get_or_insert_with(ActiveTurn::default);

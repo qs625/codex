@@ -34,7 +34,6 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::GuardianAssessmentEvent;
 use codex_protocol::protocol::GuardianAssessmentStatus;
 use codex_protocol::protocol::InterAgentCommunication;
-use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::RealtimeConversationListVoicesResponseEvent;
@@ -324,21 +323,7 @@ pub async fn inter_agent_communication(
     communication: InterAgentCommunication,
 ) {
     let trigger_turn = communication.trigger_turn;
-    let completion_child_thread_id = matches!(
-        communication.operation,
-        InterAgentOperation::ChildCompletion
-    )
-    .then_some(communication.sender_thread_id)
-    .flatten();
     sess.enqueue_mailbox_communication(communication);
-    if let Some(child_thread_id) = completion_child_thread_id
-        && sess
-            .mark_direct_child_completion_received(child_thread_id)
-            .await
-    {
-        sess.maybe_notify_parent_of_final_status_for_current_source()
-            .await;
-    }
     if trigger_turn {
         sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id)
             .await;

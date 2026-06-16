@@ -365,6 +365,7 @@ async fn run_codex_tool_session_inner(
                     | EventMsg::EnteredReviewMode(_)
                     | EventMsg::ItemStarted(_)
                     | EventMsg::ItemCompleted(_)
+                    | EventMsg::ResponseItemStarted(_)
                     | EventMsg::ResponseItemCompleted(_)
                     | EventMsg::HookStarted(_)
                     | EventMsg::HookCompleted(_)

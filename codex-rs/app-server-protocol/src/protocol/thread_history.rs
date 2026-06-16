@@ -251,6 +251,7 @@ impl ThreadHistoryBuilder {
             EventMsg::ExitedReviewMode(payload) => self.handle_exited_review_mode(payload),
             EventMsg::ItemStarted(payload) => self.handle_item_started(payload),
             EventMsg::ItemCompleted(payload) => self.handle_item_completed(payload),
+            EventMsg::ResponseItemStarted(_) => {}
             EventMsg::ResponseItemCompleted(_) => {}
             EventMsg::RawResponseItem(payload) => self.handle_response_item(&payload.item),
             EventMsg::HookStarted(_) | EventMsg::HookCompleted(_) => {}

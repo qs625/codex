@@ -1478,6 +1478,7 @@ pub enum EventMsg {
 
     ItemStarted(ItemStartedEvent),
     ItemCompleted(ItemCompletedEvent),
+    ResponseItemStarted(ResponseItemStartedEvent),
     ResponseItemCompleted(ResponseItemCompletedEvent),
     HookStarted(HookStartedEvent),
     HookCompleted(HookCompletedEvent),
@@ -1869,6 +1870,14 @@ pub struct ResponseItemCompletedEvent {
     pub completed_at_ms: i64,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
+pub struct ResponseItemStartedEvent {
+    pub thread_id: ThreadId,
+    pub turn_id: String,
+    pub item: ResponseItem,
+    pub started_at_ms: i64,
+}
+
 pub trait HasLegacyEvent {
     fn as_legacy_events(&self, show_raw_agent_reasoning: bool) -> Vec<EventMsg>;
 }
@@ -1946,6 +1955,7 @@ impl HasLegacyEvent for EventMsg {
         match self {
             EventMsg::ItemStarted(event) => event.as_legacy_events(show_raw_agent_reasoning),
             EventMsg::ItemCompleted(event) => event.as_legacy_events(show_raw_agent_reasoning),
+            EventMsg::ResponseItemStarted(_) => Vec::new(),
             EventMsg::ResponseItemCompleted(_) => Vec::new(),
             EventMsg::AgentMessageContentDelta(event) => {
                 event.as_legacy_events(show_raw_agent_reasoning)

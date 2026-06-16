@@ -117,6 +117,7 @@ use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::ResponseItemCompletedEvent;
+use codex_protocol::protocol::ResponseItemStartedEvent;
 use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionSource;
@@ -1793,10 +1794,14 @@ impl Session {
     }
 
     pub(crate) async fn has_active_child_completion_work(&self) -> bool {
-        self.prune_final_direct_child_completion_pending().await;
         if self.has_pending_direct_child_completions().await
             || self.has_queued_response_items_for_next_turn().await
             || self.has_pending_mailbox_items().await
+            || self
+                .services
+                .unified_exec_manager
+                .has_running_process_for_thread(self.conversation_id)
+                .await
         {
             return true;
         }
@@ -1810,7 +1815,6 @@ impl Session {
     }
 
     pub(crate) async fn has_active_post_turn_work(&self) -> bool {
-        self.prune_final_direct_child_completion_pending().await;
         if self
             .services
             .active_event_subscriptions
@@ -1819,6 +1823,11 @@ impl Session {
             || self.has_pending_direct_child_completions().await
             || self.has_queued_response_items_for_next_turn().await
             || self.has_pending_mailbox_items().await
+            || self
+                .services
+                .unified_exec_manager
+                .has_running_process_for_thread(self.conversation_id)
+                .await
         {
             return true;
         }
@@ -1826,40 +1835,9 @@ impl Session {
         Box::pin(
             self.services
                 .agent_control
-                .agent_descendants_are_active(self.conversation_id),
+                .direct_agent_children_are_active(self.conversation_id),
         )
         .await
-    }
-
-    async fn prune_final_direct_child_completion_pending(&self) {
-        let child_thread_ids = {
-            let pending = self.pending_direct_child_completions.lock().await;
-            pending.keys().copied().collect::<Vec<_>>()
-        };
-        if child_thread_ids.is_empty() {
-            return;
-        }
-
-        let mut final_child_thread_ids = Vec::new();
-        for child_thread_id in child_thread_ids {
-            if is_final(
-                &self
-                    .services
-                    .agent_control
-                    .get_status(child_thread_id)
-                    .await,
-            ) {
-                final_child_thread_ids.push(child_thread_id);
-            }
-        }
-        if final_child_thread_ids.is_empty() {
-            return;
-        }
-
-        let mut pending = self.pending_direct_child_completions.lock().await;
-        for child_thread_id in final_child_thread_ids {
-            pending.remove(&child_thread_id);
-        }
     }
 
     pub(crate) async fn mark_direct_child_completion_pending(&self, child_thread_id: ThreadId) {
@@ -1905,6 +1883,40 @@ impl Session {
             .lock()
             .await
             .is_empty()
+    }
+
+    pub(crate) async fn mark_direct_child_completions_received_from_pending_input<'a>(
+        &self,
+        pending_input: impl IntoIterator<Item = &'a PendingInputItem>,
+    ) {
+        let child_thread_ids = pending_input
+            .into_iter()
+            .filter_map(|item| match item {
+                PendingInputItem::InterAgentCommunication(communication)
+                    if matches!(
+                        communication.operation,
+                        InterAgentOperation::ChildCompletion
+                    ) =>
+                {
+                    communication.sender_thread_id
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if child_thread_ids.is_empty() {
+            return;
+        }
+        let mut pending = self.pending_direct_child_completions.lock().await;
+        for child_thread_id in child_thread_ids {
+            let Some(count) = pending.get_mut(&child_thread_id) else {
+                continue;
+            };
+            if *count > 1 {
+                *count -= 1;
+            } else {
+                pending.remove(&child_thread_id);
+            }
+        }
     }
 
     async fn maybe_mirror_event_text_to_realtime(&self, msg: &EventMsg) {
@@ -1994,6 +2006,23 @@ impl Session {
                 turn_id: turn_context.sub_id.clone(),
                 item,
                 completed_at_ms: now_unix_timestamp_ms(),
+            }),
+        )
+        .await;
+    }
+
+    pub(crate) async fn emit_response_item_started(
+        &self,
+        turn_context: &TurnContext,
+        item: ResponseItem,
+    ) {
+        self.send_event(
+            turn_context,
+            EventMsg::ResponseItemStarted(ResponseItemStartedEvent {
+                thread_id: self.conversation_id,
+                turn_id: turn_context.sub_id.clone(),
+                item,
+                started_at_ms: now_unix_timestamp_ms(),
             }),
         )
         .await;

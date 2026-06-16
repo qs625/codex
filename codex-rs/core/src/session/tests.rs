@@ -9815,6 +9815,48 @@ async fn inter_agent_child_completion_live_item_waits_for_typed_recording() -> a
 }
 
 #[tokio::test]
+async fn turn_start_consumes_child_completion_before_parent_visible_complete() {
+    let (sess, tc, _rx_event) = make_session_and_context_with_rx().await;
+    let child_thread_id = ThreadId::new();
+    sess.mark_direct_child_completion_pending(child_thread_id)
+        .await;
+    let communication = InterAgentCommunication::new(
+        AgentPath::try_from("/root/worker").expect("worker path should parse"),
+        AgentPath::root(),
+        Vec::new(),
+        "done".to_string(),
+        codex_protocol::protocol::InterAgentOperation::ChildCompletion,
+    )
+    .with_trigger_turn(true)
+    .with_thread_ids(child_thread_id, sess.thread_id())
+    .with_status(codex_protocol::protocol::AgentStatus::Completed(Some(
+        "done".to_string(),
+    )));
+    sess.enqueue_mailbox_communication(communication);
+    assert!(sess.has_pending_direct_child_completions().await);
+
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: true,
+        },
+    )
+    .await;
+
+    assert!(
+        !sess.has_pending_direct_child_completions().await,
+        "child completion should become parent-visible when the parent turn consumes mailbox input"
+    );
+    assert!(
+        !sess.has_pending_mailbox_items().await,
+        "turn start should drain the consumed child completion from the mailbox"
+    );
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+}
+
+#[tokio::test]
 async fn inter_agent_send_message_queue_only_does_not_emit_live_collab_item() -> anyhow::Result<()>
 {
     let parent_thread_id = ThreadId::new();

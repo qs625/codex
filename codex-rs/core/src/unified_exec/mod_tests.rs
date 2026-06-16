@@ -130,7 +130,7 @@ async fn exec_command_with_tty(
             transcript: Arc::clone(&transcript),
             notification_state: Arc::new(CommandNotificationState::default()),
             command_wait_backoff: WaitBackoffState::new(
-                Duration::from_millis(MIN_YIELD_TIME_MS),
+                Duration::from_millis(yield_time_ms),
                 manager.command_wait_hard_cap,
             ),
         };
@@ -627,11 +627,12 @@ async fn command_wait_times_out_after_current_window_and_backs_off() -> anyhow::
     skip_if_sandbox!(Ok(()));
 
     let (session, turn) = test_session_and_turn().await;
+    let initial_wait_ms = MIN_YIELD_TIME_MS + 100;
     let result = exec_command(
         &session,
         &turn,
         "sleep 2",
-        /*yield_time_ms*/ MIN_YIELD_TIME_MS,
+        /*yield_time_ms*/ initial_wait_ms,
         /*workdir*/ None,
     )
     .await?;
@@ -644,7 +645,7 @@ async fn command_wait_times_out_after_current_window_and_backs_off() -> anyhow::
         .await?;
     assert_eq!(first.status, CommandWaitStatus::Running);
     assert_eq!(first.notification, None);
-    assert_eq!(first.wait_timeout, Duration::from_millis(MIN_YIELD_TIME_MS));
+    assert_eq!(first.wait_timeout, Duration::from_millis(initial_wait_ms));
 
     let second = session
         .services
@@ -655,7 +656,7 @@ async fn command_wait_times_out_after_current_window_and_backs_off() -> anyhow::
     assert_eq!(second.notification, None);
     assert_eq!(
         second.wait_timeout,
-        Duration::from_millis(MIN_YIELD_TIME_MS * 2)
+        Duration::from_millis(initial_wait_ms * 2)
     );
 
     session
@@ -672,11 +673,12 @@ async fn command_wait_resets_backoff_after_notification() -> anyhow::Result<()> 
     skip_if_sandbox!(Ok(()));
 
     let (session, turn) = test_session_and_turn().await;
+    let initial_wait_ms = MIN_YIELD_TIME_MS + 100;
     let result = exec_command(
         &session,
         &turn,
         "sleep 2",
-        /*yield_time_ms*/ MIN_YIELD_TIME_MS,
+        /*yield_time_ms*/ initial_wait_ms,
         /*workdir*/ None,
     )
     .await?;
@@ -689,7 +691,7 @@ async fn command_wait_resets_backoff_after_notification() -> anyhow::Result<()> 
         .await?;
     assert_eq!(first.status, CommandWaitStatus::Running);
     assert_eq!(first.notification, None);
-    assert_eq!(first.wait_timeout, Duration::from_millis(MIN_YIELD_TIME_MS));
+    assert_eq!(first.wait_timeout, Duration::from_millis(initial_wait_ms));
 
     let notification_state = {
         let store = session
@@ -716,7 +718,7 @@ async fn command_wait_resets_backoff_after_notification() -> anyhow::Result<()> 
     assert_eq!(second.notification, Some(CommandNotificationKind::Output));
     assert_eq!(
         second.wait_timeout,
-        Duration::from_millis(MIN_YIELD_TIME_MS * 2)
+        Duration::from_millis(initial_wait_ms * 2)
     );
 
     let third = session
@@ -726,12 +728,125 @@ async fn command_wait_resets_backoff_after_notification() -> anyhow::Result<()> 
         .await?;
     assert_eq!(third.status, CommandWaitStatus::Running);
     assert_eq!(third.notification, None);
-    assert_eq!(third.wait_timeout, Duration::from_millis(MIN_YIELD_TIME_MS));
+    assert_eq!(third.wait_timeout, Duration::from_millis(initial_wait_ms));
 
     session
         .services
         .unified_exec_manager
         .release_process_id(process_id)
+        .await;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn command_wait_begin_keeps_window_if_process_is_released_before_finish()
+-> anyhow::Result<()> {
+    skip_if_sandbox!(Ok(()));
+
+    let (session, turn) = test_session_and_turn().await;
+    let initial_wait_ms = MIN_YIELD_TIME_MS + 100;
+    let result = exec_command(
+        &session,
+        &turn,
+        "sleep 2",
+        /*yield_time_ms*/ initial_wait_ms,
+        /*workdir*/ None,
+    )
+    .await?;
+    let process_id = result.process_id.expect("expected running process");
+    let wait = session
+        .services
+        .unified_exec_manager
+        .begin_command_wait(CommandWaitRequest { process_id })
+        .await?;
+    assert_eq!(wait.wait_timeout, Duration::from_millis(initial_wait_ms));
+
+    session
+        .services
+        .unified_exec_manager
+        .release_process_id(process_id)
+        .await;
+
+    let output = session
+        .services
+        .unified_exec_manager
+        .finish_command_wait(wait)
+        .await?;
+    assert_eq!(output.status, CommandWaitStatus::Running);
+    assert_eq!(output.wait_timeout, Duration::from_millis(initial_wait_ms));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn command_wait_begin_does_not_advance_reused_process_id() -> anyhow::Result<()> {
+    skip_if_sandbox!(Ok(()));
+
+    let (session, turn) = test_session_and_turn().await;
+    let initial_wait_ms = MIN_YIELD_TIME_MS + 100;
+    let first_result = exec_command(
+        &session,
+        &turn,
+        "sleep 2",
+        /*yield_time_ms*/ initial_wait_ms,
+        /*workdir*/ None,
+    )
+    .await?;
+    let process_id = first_result.process_id.expect("expected running process");
+    let first_wait = session
+        .services
+        .unified_exec_manager
+        .begin_command_wait(CommandWaitRequest { process_id })
+        .await?;
+    session
+        .services
+        .unified_exec_manager
+        .release_process_id(process_id)
+        .await;
+
+    let second_result = exec_command(
+        &session,
+        &turn,
+        "sleep 2",
+        /*yield_time_ms*/ initial_wait_ms,
+        /*workdir*/ None,
+    )
+    .await?;
+    let reused_process_id = second_result
+        .process_id
+        .expect("expected reused running process");
+    assert_eq!(reused_process_id, process_id);
+
+    let first_output = session
+        .services
+        .unified_exec_manager
+        .finish_command_wait(first_wait)
+        .await?;
+    assert_eq!(first_output.status, CommandWaitStatus::Running);
+    assert_eq!(
+        first_output.wait_timeout,
+        Duration::from_millis(initial_wait_ms)
+    );
+
+    let second_output = session
+        .services
+        .unified_exec_manager
+        .wait_for_command_notification(CommandWaitRequest {
+            process_id: reused_process_id,
+        })
+        .await?;
+    assert_eq!(second_output.status, CommandWaitStatus::Running);
+    assert_eq!(
+        second_output.wait_timeout,
+        Duration::from_millis(initial_wait_ms),
+        "old wait token must not advance the reused process id backoff"
+    );
+
+    session
+        .services
+        .unified_exec_manager
+        .release_process_id(reused_process_id)
         .await;
 
     Ok(())

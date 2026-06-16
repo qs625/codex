@@ -13,6 +13,7 @@ use crate::context::SubagentNotification;
 use crate::goals::SetGoalRequest;
 use crate::goals::ThreadPostTurnState;
 use crate::init_state_db;
+use crate::pending_input::PendingInputItem;
 use assert_matches::assert_matches;
 use codex_features::Feature;
 use codex_login::CodexAuth;
@@ -1619,6 +1620,28 @@ async fn goal_post_turn_state_waits_for_live_direct_child() {
     emit_turn_complete(&child_thread, "child done").await;
     assert_eq!(
         parent_thread.codex.session.thread_post_turn_state().await,
+        ThreadPostTurnState::ThreadActive
+    );
+
+    let child_completion = InterAgentCommunication::new(
+        AgentPath::root().join("child").expect("child path"),
+        AgentPath::root(),
+        Vec::new(),
+        "child complete".to_string(),
+        codex_protocol::protocol::InterAgentOperation::ChildCompletion,
+    )
+    .with_thread_ids(child_thread_id, parent_thread_id)
+    .with_status(codex_protocol::protocol::AgentStatus::Completed(Some(
+        "child done".to_string(),
+    )));
+    let pending_child_completion = PendingInputItem::from(child_completion);
+    parent_thread
+        .codex
+        .session
+        .mark_direct_child_completions_received_from_pending_input([&pending_child_completion])
+        .await;
+    assert_eq!(
+        parent_thread.codex.session.thread_post_turn_state().await,
         ThreadPostTurnState::GoContextContinuation {
             goal_id: harness
                 .state_db
@@ -2060,6 +2083,10 @@ async fn multi_agent_v2_management_agent_does_not_notify_parent_on_completion() 
         &worker_path,
         &AgentPath::root(),
     ));
+    assert_eq!(
+        worker_thread.codex.session.thread_post_turn_state().await,
+        ThreadPostTurnState::ThreadCompletion
+    );
 }
 
 #[tokio::test]

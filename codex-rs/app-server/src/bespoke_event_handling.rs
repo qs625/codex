@@ -1027,6 +1027,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .await;
         }
         msg @ (EventMsg::ItemStarted(_)
+        | EventMsg::ResponseItemStarted(_)
         | EventMsg::ResponseItemCompleted(_)
         | EventMsg::PatchApplyUpdated(_)
         | EventMsg::TerminalInteraction(_)) => {
