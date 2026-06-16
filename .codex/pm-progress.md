@@ -1,0 +1,25 @@
+# PM Progress
+
+## Current Goal
+
+None.
+
+## Active Work
+
+None.
+
+## Completed
+
+- commit: `0025152a0`
+  summary: Root-worker goal slash actions completed and merged.
+  validation: Targeted root-worker tests, `tsc --noEmit`, root-worker build, and `git diff --check` passed.
+  residual_risk: Full root-worker test suite still has the known `src/lib/contextUsage.test.ts` baseline failure.
+- commit: `c04240a98`
+  summary: Root-worker goal display, `/goal cancel`, and embedded `/init` system skill completed and merged.
+  validation: Targeted frontend tests, `tsc --noEmit`, root-worker build, `cargo test -p codex-skills`, and `cargo build -p codex-app-server --bin codex-app-server` passed.
+  residual_risk: No real Electron + app-server smoke was run.
+
+## Known Issues
+
+- `rtk pnpm --dir apps/root-worker-prototype test` has an existing failure in `src/lib/contextUsage.test.ts`, expected `19900` but got `3582`.
+- Broad `codex-core` test filters that include known stack overflow cases may still fail; user previously confirmed stack overflow failures are not blocking.
