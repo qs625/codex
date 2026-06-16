@@ -6,17 +6,6 @@ Complete all Active Work recorded in this progress file.
 
 ## Active Work
 
-- id: goal-threaditem-display
-  owner: /root/my_codex_pm/goal_threaditem_display_owner
-  worktree: /Users/bytedance/Projects/my-codex/.worktrees/goal-threaditem-display
-  branch: agent/goal-threaditem-display
-  status: in_progress
-  objective: Add typed ThreadItem/client display handling for goal tool create/update events so model-created goals appear in the client conversation.
-  last_update: 2026-06-16
-  next_action: Owner to trace goal tool events through ResponseItem/ThreadItem projection and root-worker display, then implement typed goal item support.
-  blockers: None.
-  validation: pending
-  commit: pending
 - id: wait-tool-backoff-semantics
   owner: /root/my_codex_pm/wait_tool_backoff_owner
   worktree: /Users/bytedance/Projects/my-codex/.worktrees/wait-tool-backoff
@@ -31,6 +20,10 @@ Complete all Active Work recorded in this progress file.
 
 ## Completed
 
+- commit: `a231dfc2c`
+  summary: Goal lifecycle updates now produce typed conversation items via `ResponseItem::ThreadGoalUpdate -> ThreadItem::ThreadGoalUpdate`, with root-worker rendering and schema fixtures updated.
+  validation: `cargo test -p codex-app-server-protocol --test schema_fixtures`, `cargo test -p codex-core goal_tool`, `cargo build -p codex-app-server --bin codex-app-server`, root-worker build, and targeted conversation tests passed.
+  residual_risk: Full root-worker test suite still has the known unrelated `contextUsage.test.ts` baseline failure.
 - commit: `56f781919`
   summary: Child completion live display deduplicated by removing the extra raw `ItemCompleted(CollabAgentMessage)` emission and keeping the typed `ResponseItem::InterAgentCommunication -> ThreadItem` path.
   validation: `cargo test -p codex-core inter_agent_child_completion_live_item_waits_for_typed_recording`, `cargo build -p codex-app-server --bin codex-app-server`, and `git diff --check` passed.
