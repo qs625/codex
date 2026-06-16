@@ -2,11 +2,21 @@
 
 ## Current Goal
 
-None.
+Implement Dynamic Workflow TypeScript SDK runtime bridge/RPC callbacks so `wf.Agent`, `agent.followup`, `agent.wait`, and `wf.shell` stop being no-op placeholders.
 
 ## Active Work
 
-None.
+- id: dynamic-workflow-sdk-runtime
+  owner: /root/my_codex_pm/workflow_sdk_runtime_owner
+  worktree: /Users/bytedance/Projects/my-codex/.worktrees/workflow-sdk-runtime
+  branch: agent/workflow-sdk-runtime
+  status: in_progress
+  objective: Implement the Dynamic Workflow runner-runtime bridge for TypeScript SDK calls, preserving app-server workflow RPC as control plane only.
+  last_update: 2026-06-16
+  next_action: Owner to investigate existing workflow runner and implement real TypeScript SDK runtime bridge.
+  blockers: None.
+  validation: pending
+  commit: pending
 
 ## Completed
 
