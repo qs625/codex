@@ -1952,6 +1952,7 @@ impl Session {
     }
 
     pub(crate) async fn send_event_raw(&self, event: Event) {
+        let status_update = agent_status_from_event(&event.msg);
         // Persist the event into rollout storage (the store filters as needed).
         let rollout_items = vec![RolloutItem::EventMsg(event.msg.clone())];
         self.persist_rollout_items(&rollout_items).await;
@@ -1959,6 +1960,9 @@ impl Session {
             .rollout_thread_trace
             .record_protocol_event(&event.msg);
         self.deliver_event_raw(event).await;
+        if status_update.as_ref().is_some_and(is_final) {
+            Box::pin(self.maybe_notify_parent_of_final_status_for_current_source()).await;
+        }
     }
 
     async fn deliver_event_raw(&self, event: Event) {

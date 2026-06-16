@@ -87,6 +87,11 @@ parent completion”的 gate 语义。
 5. parent turn finish 后再按 post-turn 顺序评估；此时若无 pending input/direct child/wait command 且 Goal
    `Active`，启动 goal continuation。
 
+final status 的来源可以是完整 `send_event` 路径，也可以是 runtime 边界已经持久化的 `send_event_raw` typed
+event。只要事件把 agent status 推进到 final，session 必须重新执行 current-source child completion 判定；这样
+直接子 agent 即使没有后续显式 `wait_agent` / `list_agents` 调用，也能把 `ChildCompletion` 投递到 direct parent，
+再由 parent 的 trigger-turn mailbox 启动消费和展示。重复 recheck 仍由 active 边沿 latch 去重。
+
 ## 测试
 
 - turn complete 但 direct child 未 parent-visible complete：不注入 Go context，不发送 child completion。
@@ -99,6 +104,8 @@ parent completion”的 gate 语义。
 - Goal `Complete` / `Paused` / `BudgetLimited` 且 thread idle：允许 child completion。
 - management agent 本地完成后不投递 parent completion，可直接进入 `ThreadCompletion`。
 - repeated final/status recheck：child completion 仍只发送一次。
+- raw final-status event：无需 parent 主动 `wait_agent` 或 `list_agents`，direct parent 会自动消费 typed child
+  completion。
 
 ## 风险
 

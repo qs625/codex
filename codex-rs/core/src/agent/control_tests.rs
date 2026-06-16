@@ -1387,6 +1387,81 @@ async fn multi_agent_v2_completion_ignores_dead_direct_parent() {
 }
 
 #[tokio::test]
+async fn raw_final_status_wakes_parent_with_child_completion() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, root_thread) = harness.start_thread().await;
+    let mut config = harness.config.clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    let worker_path = AgentPath::root()
+        .join("raw_status_worker")
+        .expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            config,
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("explorer".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+    worker_thread
+        .codex
+        .session
+        .abort_all_tasks(TurnAbortReason::Interrupted)
+        .await;
+    sleep(Duration::from_millis(100)).await;
+    let root_history_items = root_thread
+        .codex
+        .session
+        .clone_history()
+        .await
+        .raw_items()
+        .to_vec();
+    assert!(
+        !has_subagent_notification(&root_history_items),
+        "interrupted setup should not notify parent before the raw final status"
+    );
+    worker_thread.codex.session.mark_child_completion_active();
+    let worker_turn = worker_thread.codex.session.new_default_turn().await;
+
+    worker_thread
+        .codex
+        .session
+        .send_event_raw(Event {
+            id: worker_turn.sub_id.clone(),
+            msg: EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: worker_turn.sub_id.clone(),
+                last_agent_message: Some("done from raw status".to_string()),
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            }),
+        })
+        .await;
+
+    assert_eq!(wait_for_subagent_notification(&root_thread).await, true);
+    assert!(
+        !root_thread
+            .codex
+            .session
+            .has_pending_direct_child_completions()
+            .await,
+        "parent should consume the typed child completion during its automatic wakeup turn"
+    );
+}
+
+#[tokio::test]
 async fn multi_agent_v2_completion_waits_for_pending_mailbox_input() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;
