@@ -167,6 +167,7 @@ fn response_item_records_turn_ttft(item: &ResponseItem) -> bool {
         | ResponseItem::CommandExecutionNotification { .. }
         | ResponseItem::EventCommandEvent { .. }
         | ResponseItem::EventDrivenTool { .. }
+        | ResponseItem::ThreadGoalUpdate { .. }
         | ResponseItem::InterAgentCommunication { .. } => false,
         ResponseItem::Reasoning {
             summary, content, ..

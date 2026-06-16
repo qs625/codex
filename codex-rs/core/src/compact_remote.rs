@@ -319,6 +319,7 @@ fn should_keep_compacted_history_item(item: &ResponseItem) -> bool {
         | ResponseItem::CommandExecutionNotification { .. }
         | ResponseItem::EventCommandEvent { .. }
         | ResponseItem::EventDrivenTool { .. }
+        | ResponseItem::ThreadGoalUpdate { .. }
         | ResponseItem::Other => false,
     }
 }

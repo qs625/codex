@@ -345,6 +345,9 @@ fn fallback_transcript_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
             .dim()
             .into(),
         ],
+        ThreadItem::ThreadGoalUpdate { action, goal, .. } => {
+            vec![format!("goal: {:?} · {}", action, goal.objective).dim().into()]
+        }
         ThreadItem::WebSearch { query, .. } => {
             vec![vec!["web search: ".dim(), query.clone().into()].into()]
         }

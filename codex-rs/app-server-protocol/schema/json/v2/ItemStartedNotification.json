@@ -1383,6 +1383,48 @@
         },
         {
           "properties": {
+            "action": {
+              "$ref": "#/definitions/ThreadGoalUpdateAction"
+            },
+            "goal": {
+              "$ref": "#/definitions/ThreadGoal"
+            },
+            "id": {
+              "type": "string"
+            },
+            "previousStatus": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ThreadGoalStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "source": {
+              "$ref": "#/definitions/ThreadGoalUpdateSource"
+            },
+            "type": {
+              "enum": [
+                "threadGoalUpdate"
+              ],
+              "title": "ThreadGoalUpdateThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "action",
+            "goal",
+            "id",
+            "source",
+            "type"
+          ],
+          "title": "ThreadGoalUpdateThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
             "content": {
               "type": "string"
             },
@@ -2027,6 +2069,25 @@
           "type": "object"
         }
       ]
+    },
+    "ThreadGoalUpdateAction": {
+      "enum": [
+        "created",
+        "updated",
+        "paused",
+        "resumed",
+        "budgetLimited",
+        "completed"
+      ],
+      "type": "string"
+    },
+    "ThreadGoalUpdateSource": {
+      "enum": [
+        "modelTool",
+        "client",
+        "system"
+      ],
+      "type": "string"
     }
   },
   "properties": {

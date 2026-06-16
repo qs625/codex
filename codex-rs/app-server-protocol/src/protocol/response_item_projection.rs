@@ -5,11 +5,15 @@ use crate::protocol::v2::CommandWaitStatus;
 use crate::protocol::v2::DynamicToolCallStatus;
 use crate::protocol::v2::EventCommandEventKind;
 use crate::protocol::v2::ThreadItem;
+use crate::protocol::v2::ThreadGoalUpdateAction;
+use crate::protocol::v2::ThreadGoalUpdateSource;
 use codex_protocol::models::CommandExecutionNotificationKind as CoreCommandExecutionNotificationKind;
 use codex_protocol::models::CommandWaitNotificationKind as CoreCommandWaitNotificationKind;
 use codex_protocol::models::CommandWaitStatus as CoreCommandWaitStatus;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::models::ThreadGoalUpdateGoal;
+use codex_protocol::models::ThreadGoalUpdateGoalStatus;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::InterAgentOperation as CoreInterAgentOperation;
 
@@ -94,6 +98,19 @@ where
             title: trigger.title.clone(),
             text: trigger.text.clone(),
         }),
+        ResponseItem::ThreadGoalUpdate {
+            id,
+            goal,
+            action,
+            source,
+            previous_status,
+        } => Some(ThreadItem::ThreadGoalUpdate {
+            id: id.clone().unwrap_or_else(fallback_id),
+            goal: thread_goal_from_update_goal(goal),
+            action: ThreadGoalUpdateAction::from(*action),
+            source: ThreadGoalUpdateSource::from(*source),
+            previous_status: previous_status.map(thread_goal_status_from_update_status),
+        }),
         ResponseItem::InterAgentCommunication { id, communication }
             if !matches!(communication.operation, CoreInterAgentOperation::Unknown) =>
         {
@@ -103,6 +120,32 @@ where
             ))
         }
         _ => None,
+    }
+}
+
+fn thread_goal_from_update_goal(goal: &ThreadGoalUpdateGoal) -> crate::protocol::v2::ThreadGoal {
+    crate::protocol::v2::ThreadGoal {
+        thread_id: goal.thread_id.to_string(),
+        objective: goal.objective.clone(),
+        status: thread_goal_status_from_update_status(goal.status),
+        token_budget: goal.token_budget,
+        tokens_used: goal.tokens_used,
+        time_used_seconds: goal.time_used_seconds,
+        created_at: goal.created_at,
+        updated_at: goal.updated_at,
+    }
+}
+
+fn thread_goal_status_from_update_status(
+    status: ThreadGoalUpdateGoalStatus,
+) -> crate::protocol::v2::ThreadGoalStatus {
+    match status {
+        ThreadGoalUpdateGoalStatus::Active => crate::protocol::v2::ThreadGoalStatus::Active,
+        ThreadGoalUpdateGoalStatus::Paused => crate::protocol::v2::ThreadGoalStatus::Paused,
+        ThreadGoalUpdateGoalStatus::BudgetLimited => {
+            crate::protocol::v2::ThreadGoalStatus::BudgetLimited
+        }
+        ThreadGoalUpdateGoalStatus::Complete => crate::protocol::v2::ThreadGoalStatus::Complete,
     }
 }
 
@@ -277,6 +320,11 @@ mod tests {
     use super::*;
     use codex_protocol::event_command::EventCommandEvent;
     use codex_protocol::event_command::EventCommandEventKind;
+    use codex_protocol::models::ThreadGoalUpdateEventAction as CoreThreadGoalUpdateEventAction;
+    use codex_protocol::models::ThreadGoalUpdateEventSource as CoreThreadGoalUpdateEventSource;
+    use codex_protocol::models::ThreadGoalUpdateGoal;
+    use codex_protocol::models::ThreadGoalUpdateGoalStatus;
+    use codex_protocol::ThreadId;
 
     #[test]
     fn event_command_event_projects_to_thread_item() {
@@ -318,6 +366,51 @@ mod tests {
                 truncated: false,
                 created_at: 1,
             }),
+        );
+    }
+
+    #[test]
+    fn thread_goal_update_projects_to_thread_item() {
+        let thread_id = ThreadId::new();
+        let goal = ThreadGoalUpdateGoal {
+            thread_id: thread_id.clone(),
+            objective: "Ship goal display".to_string(),
+            status: ThreadGoalUpdateGoalStatus::Active,
+            token_budget: Some(50_000),
+            tokens_used: 1_250,
+            time_used_seconds: 75,
+            created_at: 1,
+            updated_at: 2,
+        };
+        let expected_goal = crate::protocol::v2::ThreadGoal {
+            thread_id: thread_id.to_string(),
+            objective: "Ship goal display".to_string(),
+            status: crate::protocol::v2::ThreadGoalStatus::Active,
+            token_budget: Some(50_000),
+            tokens_used: 1_250,
+            time_used_seconds: 75,
+            created_at: 1,
+            updated_at: 2,
+        };
+
+        assert_eq!(
+            project_structured_response_item(
+                &ResponseItem::ThreadGoalUpdate {
+                    id: Some("goal-item".to_string()),
+                    goal: goal.clone(),
+                    action: CoreThreadGoalUpdateEventAction::Created,
+                    source: CoreThreadGoalUpdateEventSource::ModelTool,
+                    previous_status: None,
+                },
+                || "fallback".to_string(),
+            ),
+            Some(ThreadItem::ThreadGoalUpdate {
+                id: "goal-item".to_string(),
+                goal: expected_goal,
+                action: crate::protocol::v2::ThreadGoalUpdateAction::Created,
+                source: crate::protocol::v2::ThreadGoalUpdateSource::ModelTool,
+                previous_status: None,
+            })
         );
     }
 }

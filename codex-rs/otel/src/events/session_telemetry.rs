@@ -1138,6 +1138,7 @@ impl SessionTelemetry {
             ResponseItem::WorkflowRunProgress { .. } => "workflow_run_progress".into(),
             ResponseItem::EventCommandEvent { .. } => "event_command_event".into(),
             ResponseItem::EventDrivenTool { .. } => "event_driven_tool".into(),
+            ResponseItem::ThreadGoalUpdate { .. } => "thread_goal_update".into(),
             ResponseItem::InterAgentCommunication { .. } => "inter_agent_communication".into(),
             ResponseItem::Reasoning { .. } => "reasoning".into(),
             ResponseItem::LocalShellCall { .. } => "local_shell_call".into(),

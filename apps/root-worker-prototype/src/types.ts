@@ -225,6 +225,14 @@ export type ThreadItem = ThreadItemTimestamps &
       savedPath: string | null;
     }
   | {
+      type: "threadGoalUpdate";
+      id: string;
+      goal: ThreadGoal;
+      action: ThreadGoalUpdateAction;
+      source: ThreadGoalUpdateSource;
+      previousStatus: ThreadGoalStatus | null;
+    }
+  | {
       type: "contextCompaction";
       id: string;
       replacementHistory?: ResponseItem[] | null;
@@ -324,6 +332,16 @@ export type ThreadGoalStatus =
   | "paused"
   | "budgetLimited"
   | "complete";
+
+export type ThreadGoalUpdateAction =
+  | "created"
+  | "updated"
+  | "paused"
+  | "resumed"
+  | "budgetLimited"
+  | "completed";
+
+export type ThreadGoalUpdateSource = "modelTool" | "client" | "system";
 
 export type ThreadGoal = {
   threadId: string;
@@ -524,6 +542,7 @@ export type ConversationEntry = {
     | "multiAgent"
     | "childCompletion"
     | "subagentNotification"
+    | "goal"
     | "external"
     | "context";
   replacementHistoryEntries?: ConversationEntry[] | null;

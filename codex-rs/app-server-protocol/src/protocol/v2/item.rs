@@ -6,6 +6,8 @@ use super::NetworkApprovalContext;
 use super::NetworkApprovalProtocol;
 use super::NetworkPolicyAmendment;
 use super::RequestPermissionProfile;
+use super::ThreadGoal;
+use super::ThreadGoalStatus;
 use super::UserInput;
 use super::shared::v2_enum_from_core;
 use crate::protocol::item_builders::convert_patch_changes;
@@ -21,6 +23,8 @@ use codex_protocol::items::TurnItem as CoreTurnItem;
 use codex_protocol::memory_citation::MemoryCitation as CoreMemoryCitation;
 use codex_protocol::memory_citation::MemoryCitationEntry as CoreMemoryCitationEntry;
 use codex_protocol::models::MessagePhase;
+use codex_protocol::models::ThreadGoalUpdateEventAction as CoreThreadGoalUpdateEventAction;
+use codex_protocol::models::ThreadGoalUpdateEventSource as CoreThreadGoalUpdateEventSource;
 use codex_protocol::models::WorkflowRunProgressEvent as CoreWorkflowRunProgressEvent;
 use codex_protocol::models::WorkflowRunProgressKind as CoreWorkflowRunProgressKind;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -422,6 +426,15 @@ pub enum ThreadItem {
     },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
+    ThreadGoalUpdate {
+        id: String,
+        goal: ThreadGoal,
+        action: ThreadGoalUpdateAction,
+        source: ThreadGoalUpdateSource,
+        previous_status: Option<ThreadGoalStatus>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
     CollabAgentMessage {
         id: String,
         operation: CollabAgentOperation,
@@ -567,6 +580,7 @@ impl ThreadItem {
             | ThreadItem::EventCommandCall { id, .. }
             | ThreadItem::EventCommandEvent { id, .. }
             | ThreadItem::WorkflowRunProgress { id, .. }
+            | ThreadItem::ThreadGoalUpdate { id, .. }
             | ThreadItem::CollabAgentMessage { id, .. }
             | ThreadItem::CollabAgentToolCall { id, .. }
             | ThreadItem::CollabAgentStatusUpdate { id, .. }
@@ -1219,6 +1233,52 @@ pub enum CommandWaitStatus {
 pub enum CommandWaitNotificationKind {
     Output,
     Exit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[ts(export_to = "v2/")]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum ThreadGoalUpdateAction {
+    Created,
+    Updated,
+    Paused,
+    Resumed,
+    BudgetLimited,
+    Completed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[ts(export_to = "v2/")]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum ThreadGoalUpdateSource {
+    ModelTool,
+    Client,
+    System,
+}
+
+impl From<CoreThreadGoalUpdateEventAction> for ThreadGoalUpdateAction {
+    fn from(value: CoreThreadGoalUpdateEventAction) -> Self {
+        match value {
+            CoreThreadGoalUpdateEventAction::Created => Self::Created,
+            CoreThreadGoalUpdateEventAction::Updated => Self::Updated,
+            CoreThreadGoalUpdateEventAction::Paused => Self::Paused,
+            CoreThreadGoalUpdateEventAction::Resumed => Self::Resumed,
+            CoreThreadGoalUpdateEventAction::BudgetLimited => Self::BudgetLimited,
+            CoreThreadGoalUpdateEventAction::Completed => Self::Completed,
+        }
+    }
+}
+
+impl From<CoreThreadGoalUpdateEventSource> for ThreadGoalUpdateSource {
+    fn from(value: CoreThreadGoalUpdateEventSource) -> Self {
+        match value {
+            CoreThreadGoalUpdateEventSource::ModelTool => Self::ModelTool,
+            CoreThreadGoalUpdateEventSource::Client => Self::Client,
+            CoreThreadGoalUpdateEventSource::System => Self::System,
+        }
+    }
 }
 
 impl From<CoreExecCommandStatus> for CommandExecutionStatus {

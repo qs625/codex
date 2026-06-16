@@ -72,6 +72,35 @@
 3. 成功后 Goal Strip 显示 2-3 秒 `Cancelled` inline feedback 后收起；如果后端保留 terminal goal state，则显示 `Cancelled` badge 且不显示 cancel button。
 4. 失败时在 strip 右侧显示 inline error，按钮恢复可用。
 
+## 主路径：模型 goal 工具写入 conversation
+
+1. 模型调用 `create_goal`、`get_goal` 或 `update_goal`。
+2. 后端将 user-visible goal lifecycle 写入 typed `ResponseItem`，并通过共享 projector 生成 typed `ThreadItem`。
+3. root-worker 只消费 typed item；live 模式下通过 `item/started` / `item/completed` 进入 cache，cold start 时通过 `thread/read` snapshot 进入。
+4. `buildConversationItemEntries` 将 goal typed item 转换为 `ConversationEntry(kind="event")`，保留 `ThreadItem.id` 作为 entry id。
+5. Conversation 渲染 `GoalLifecycleEventCell`：标题、状态 badge、目标摘要、时间。
+6. RightPanel Goal Detail 的 Recent event 指向同一个 `ThreadItem.id`，点击时滚动并高亮 conversation cell。
+
+## 主路径：create_goal 展示
+
+1. `create_goal` 成功完成。
+2. conversation 追加 `Goal created`；如果 typed payload 表达替换/更新已有 goal，显示 `Goal updated`。
+3. GoalStrip 显示当前 active goal，RightPanel 展示完整 objective。
+4. 如果 create 失败，conversation 可显示 `Goal action failed`，错误原因来自结构化字段；GoalStrip 不切换到新 goal。
+
+## 主路径：update_goal complete 展示
+
+1. `update_goal(status=complete)` 成功完成。
+2. conversation 追加 `Goal complete`，显示目标摘要和完成时间。
+3. GoalStrip 收起或短暂显示 complete terminal feedback。
+4. RightPanel 保留最近 complete event 和完整 objective，避免用户只看到 strip 消失。
+
+## 主路径：get_goal 展示
+
+1. `get_goal` 被模型调用。
+2. 如果后端没有投影 user-visible typed item，conversation 不显示，避免内部轮询噪音。
+3. 如果后端投影 `goalChecked` / `goalRead` typed item，conversation 显示 `Goal checked` 单行 event，只展示状态和短摘要，不重复完整 objective。
+
 ## 状态覆盖
 
 - 无 thread：不显示 Goal Strip；composer placeholder 保持 `Select an agent...`。
@@ -84,6 +113,7 @@
 - pausing/resuming：由本地 keyed action pending 或 typed lifecycle item 驱动，禁用同类重复 action，保留原 goal 内容。
 - cancelling：由本地 action pending 或 typed `cancelRequested` lifecycle item 驱动，禁用重复操作，保留原 goal 内容。
 - cancel failed：由 action error result 或 typed `cancelFailed` lifecycle item 驱动，保留原 goal 内容，显示短错误。
+- goal lifecycle item：created/updated/checked/paused/resumed/cancelled/complete/budgetLimited/failed 均以 typed event cell 展示；不同 `ThreadItem.id` 必须保留为不同 conversation entry。
 
 ## 键盘与可访问性
 
@@ -92,3 +122,5 @@
 - Disabled command row 仍可被屏幕阅读器理解：使用 `aria-disabled=true`，并在 meta 中给出原因；是否跳过键盘选中由实现决定，但不可执行。
 - Goal Strip 的 cancel button 使用图标按钮加 tooltip/aria-label：`Cancel goal`。
 - Goal 内容摘要使用文本，不只靠颜色表达状态。
+- Goal lifecycle event 的状态 badge 必须有文字；失败原因通过结构化字段进入 `aria-live` 可感知区域或 event 文本，不能只放在 tooltip。
+- RightPanel Recent event 的 `jump to item` 必须是 keyboard-accessible 控件：可 Tab 聚焦，Enter/Space 触发滚动定位，触发后 conversation cell 高亮且通过 `aria-live=polite` 提示已定位，不改变 composer draft 或焦点所有权。

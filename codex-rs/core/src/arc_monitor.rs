@@ -389,6 +389,7 @@ fn build_arc_monitor_message_item(
         | ResponseItem::CommandExecutionNotification { .. }
         | ResponseItem::EventCommandEvent { .. }
         | ResponseItem::EventDrivenTool { .. }
+        | ResponseItem::ThreadGoalUpdate { .. }
         | ResponseItem::InterAgentCommunication { .. }
         | ResponseItem::Compaction { .. }
         | ResponseItem::ContextCompaction { .. }

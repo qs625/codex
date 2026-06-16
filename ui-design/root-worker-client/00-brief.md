@@ -42,6 +42,17 @@ root-worker prototype 是面向 my-codex 多 agent 调试和协作执行的桌�
 
 交互目标是让用户在 composer 内完成低频 goal 管理，同时保持主界面高频扫描能力：GoalStrip 显示当前状态和关键操作，Thread Analysis 展示完整内容、预算和最近 action 反馈。
 
+### 2026-06-16 增量：Goal ThreadItem Display
+
+本次 handoff 补齐模型工具创建、读取、完成 goal 后在 conversation 中的 typed lifecycle 展示。它不是替代 GoalStrip 或 RightPanel 的 thread goal state，而是让用户能在时间线里回看“goal 什么时候被模型设置、读取、更新或完成”。
+
+目标：
+
+1. `create_goal` / `/goal <objective>` 成功后，conversation 追加 typed goal lifecycle item，显示 `Goal created` 或 `Goal updated`、目标摘要和时间。
+2. `get_goal` 只在工具调用被投影为可见 `ThreadItem` 时显示轻量 `Goal checked` 事件；不因为普通内部查询制造噪音。
+3. `update_goal(status=complete)` 成功后，conversation 追加 `Goal complete` item，并和 GoalStrip 收起/RightPanel terminal event 保持一致。
+4. 历史 snapshot、live item、compact replacement history 中的 goal item 都按 `ThreadItem.id` 保留，不按 goal 文本去重。
+
 ## 目标用户
 
 - 角色：使用 Goal/Go 持续推进长任务的 owner、PM agent、调试 root-worker prototype 的工程师。
@@ -77,6 +88,7 @@ root-worker prototype 是面向 my-codex 多 agent 调试和协作执行的桌�
 
 - [baseline-slash-goal-display.png](/Users/bytedance/Projects/my-codex/.worktrees/slash-goal-display/ui-design/root-worker-client/assets/baseline-slash-goal-display.png)
 - [baseline-goal-command-actions-2026-06-16.png](/Users/bytedance/Projects/my-codex/.worktrees/goal-command-actions/ui-design/root-worker-client/assets/baseline-goal-command-actions-2026-06-16.png)
+- [baseline-goal-threaditem-display-2026-06-16.png](/Users/bytedance/Projects/my-codex/.worktrees/goal-threaditem-display/ui-design/root-worker-client/assets/baseline-goal-threaditem-display-2026-06-16.png)
 
 截图环境使用 skill 默认隔离目录：
 
@@ -87,6 +99,8 @@ root-worker prototype 是面向 my-codex 多 agent 调试和协作执行的桌�
 
 2026-06-16 截图同样使用 `$root-worker-playwright-debug` 完整 Electron smoke 获取，`window.codexDesktop` 可用；由于本地 app-server binary 不可用，截图只作为真实 Electron shell 和布局基线，不作为 goal 数据状态截图。
 
+本次 Goal ThreadItem Display baseline 同样使用 `$root-worker-playwright-debug` 的完整 Electron smoke 脚本获取，`window.codexDesktop=true`。本地 `codex-app-server` 仍退出 `127 / null`，因此截图只作为 Electron shell、三栏布局、conversation 空态和 composer 位置基线；goal lifecycle 视觉由原型图表达。
+
 ## 验收标准
 
 - `/` 打开 slash menu 时，内置 command 以 Commands 分组显示，`/goal cancel` 能被搜索、键盘选中、点击执行；`/init` 作为 system skill 出现在 Skills 分组。
@@ -96,3 +110,4 @@ root-worker prototype 是面向 my-codex 多 agent 调试和协作执行的桌�
 - Cancel 入口在 `/goal cancel` 和 Goal Strip 内均可达；取消中禁用重复触发；取消成功、失败、无 goal 三类反馈明确。
 - 视觉保持当前 root-worker 工程工具风格：浅色、低装饰、高信息密度、8px 左右圆角、清晰 focus ring。
 - 设计进入开发前完成独立 UI/UE review，并在 `05-review.md` 记录结论。
+- 模型通过 goal 工具创建、更新、完成 goal 时，conversation 至少生成一个 typed `ConversationEntry`，视觉上与普通 agent message 分离，并可被搜索、定位和历史回放保留。

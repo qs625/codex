@@ -84,6 +84,7 @@ pub fn should_persist_response_item(item: &ResponseItem) -> bool {
         | ResponseItem::EventCommandEvent { .. }
         | ResponseItem::EventDrivenTool { .. }
         | ResponseItem::InterAgentCommunication { .. }
+        | ResponseItem::ThreadGoalUpdate { .. }
         | ResponseItem::Compaction { .. }
         | ResponseItem::ContextCompaction { .. } => true,
         ResponseItem::Other => false,
@@ -110,6 +111,7 @@ pub fn should_persist_response_item_for_memories(item: &ResponseItem) -> bool {
         | ResponseItem::CommandWriteStdin { .. }
         | ResponseItem::WorkflowRunProgress { .. }
         | ResponseItem::CommandExecutionNotification { .. }
+        | ResponseItem::ThreadGoalUpdate { .. }
         | ResponseItem::Reasoning { .. }
         | ResponseItem::ImageGenerationCall { .. }
         | ResponseItem::Compaction { .. }

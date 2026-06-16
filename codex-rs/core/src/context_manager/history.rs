@@ -219,6 +219,7 @@ impl ContextManager {
             | ResponseItem::CommandExecutionNotification { .. }
             | ResponseItem::EventCommandEvent { .. }
             | ResponseItem::EventDrivenTool { .. }
+            | ResponseItem::ThreadGoalUpdate { .. }
             | ResponseItem::InterAgentCommunication { .. } => false,
             _ => false,
         }
@@ -403,6 +404,7 @@ impl ContextManager {
             | ResponseItem::CommandExecutionNotification { .. }
             | ResponseItem::EventCommandEvent { .. }
             | ResponseItem::EventDrivenTool { .. }
+            | ResponseItem::ThreadGoalUpdate { .. }
             | ResponseItem::InterAgentCommunication { .. }
             | ResponseItem::Reasoning { .. }
             | ResponseItem::LocalShellCall { .. }
@@ -496,6 +498,7 @@ fn is_api_message(message: &ResponseItem) -> bool {
         | ResponseItem::CommandExecutionNotification { .. }
         | ResponseItem::EventCommandEvent { .. }
         | ResponseItem::EventDrivenTool { .. }
+        | ResponseItem::ThreadGoalUpdate { .. }
         | ResponseItem::InterAgentCommunication { .. } => true,
         ResponseItem::FunctionCallOutput { .. }
         | ResponseItem::FunctionCall { .. }
@@ -714,6 +717,7 @@ fn is_model_generated_item(item: &ResponseItem) -> bool {
         | ResponseItem::CommandExecutionNotification { .. }
         | ResponseItem::EventCommandEvent { .. }
         | ResponseItem::EventDrivenTool { .. }
+        | ResponseItem::ThreadGoalUpdate { .. }
         | ResponseItem::InterAgentCommunication { .. }
         | ResponseItem::ToolSearchOutput { .. }
         | ResponseItem::CustomToolCallOutput { .. }
@@ -736,7 +740,8 @@ pub(crate) fn is_user_turn_boundary(item: &ResponseItem) -> bool {
         | ResponseItem::CommandWriteStdin { .. }
         | ResponseItem::CommandExecutionNotification { .. }
         | ResponseItem::EventCommandEvent { .. }
-        | ResponseItem::EventDrivenTool { .. } => {
+        | ResponseItem::EventDrivenTool { .. }
+        | ResponseItem::ThreadGoalUpdate { .. } => {
             return true;
         }
         ResponseItem::InterAgentCommunication { communication, .. } => {

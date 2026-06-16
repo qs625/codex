@@ -2021,6 +2021,7 @@ async fn try_run_sampling_request(
                     | ResponseItem::CommandExecutionNotification { .. }
                     | ResponseItem::EventCommandEvent { .. }
                     | ResponseItem::EventDrivenTool { .. }
+                    | ResponseItem::ThreadGoalUpdate { .. }
                     | ResponseItem::InterAgentCommunication { .. }
                     | ResponseItem::Compaction { .. }
                     | ResponseItem::ContextCompaction { .. }

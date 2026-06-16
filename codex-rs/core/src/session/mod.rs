@@ -2744,6 +2744,7 @@ impl Session {
                     | ResponseItem::WorkflowRunProgress { id, .. }
                     | ResponseItem::EventCommandEvent { id, .. }
                     | ResponseItem::EventDrivenTool { id, .. }
+                    | ResponseItem::ThreadGoalUpdate { id, .. }
                     | ResponseItem::InterAgentCommunication { id, .. } => id,
                     _ => return item,
                 };
@@ -3739,6 +3740,7 @@ fn is_structured_display_response_item(item: &ResponseItem) -> bool {
             | ResponseItem::WorkflowRunProgress { .. }
             | ResponseItem::EventCommandEvent { .. }
             | ResponseItem::EventDrivenTool { .. }
+            | ResponseItem::ThreadGoalUpdate { .. }
             | ResponseItem::InterAgentCommunication {
                 communication: InterAgentCommunication {
                     operation: InterAgentOperation::SpawnAgent

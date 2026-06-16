@@ -345,6 +345,7 @@ impl ThreadHistoryBuilder {
             | ResponseItem::WorkflowRunProgress { .. }
             | ResponseItem::EventCommandEvent { .. }
             | ResponseItem::EventDrivenTool { .. }
+            | ResponseItem::ThreadGoalUpdate { .. }
             | ResponseItem::InterAgentCommunication { .. } => {
                 let fallback_id = self.next_item_id();
                 if let Some(projected) =

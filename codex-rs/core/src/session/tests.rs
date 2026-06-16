@@ -10333,7 +10333,7 @@ async fn sample_rollout(
 
 #[tokio::test]
 async fn create_goal_tool_rejects_existing_goal() {
-    let (session, turn_context, _rx, _codex_home) = make_goal_session_and_context_with_rx().await;
+    let (session, turn_context, mut rx, _codex_home) = make_goal_session_and_context_with_rx().await;
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
     let handler = CreateGoalHandler;
 
@@ -10356,6 +10356,41 @@ async fn create_goal_tool_rejects_existing_goal() {
         })
         .await
         .expect("initial create_goal should succeed");
+
+    let completed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let event = rx.recv().await.expect("event");
+            if let EventMsg::ResponseItemCompleted(completed) = event.msg
+                && matches!(&completed.item, ResponseItem::ThreadGoalUpdate { .. })
+            {
+                break completed;
+            }
+        }
+    })
+    .await
+    .expect("expected goal response item completed event");
+    assert_eq!(completed.thread_id, session.conversation_id);
+    assert_eq!(completed.turn_id, turn_context.sub_id);
+    let ResponseItem::ThreadGoalUpdate {
+        action,
+        source,
+        previous_status,
+        goal,
+        ..
+    } = completed.item
+    else {
+        panic!("expected ThreadGoalUpdate item");
+    };
+    assert_eq!(
+        action,
+        codex_protocol::models::ThreadGoalUpdateEventAction::Created
+    );
+    assert_eq!(
+        source,
+        codex_protocol::models::ThreadGoalUpdateEventSource::ModelTool
+    );
+    assert_eq!(previous_status, None);
+    assert_eq!(goal.objective, "Keep the watcher alive");
 
     let response = handler
         .handle(ToolInvocation {
@@ -10456,7 +10491,7 @@ async fn update_goal_tool_rejects_pausing_goal() {
 
 #[tokio::test]
 async fn update_goal_tool_marks_goal_complete() {
-    let (session, turn_context, _rx, _codex_home) = make_goal_session_and_context_with_rx().await;
+    let (session, turn_context, mut rx, _codex_home) = make_goal_session_and_context_with_rx().await;
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
     let create_handler = CreateGoalHandler;
     let update_handler = UpdateGoalHandler;
@@ -10499,6 +10534,48 @@ async fn update_goal_tool_marks_goal_complete() {
         })
         .await
         .expect("update_goal should mark the goal complete");
+
+    let completed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let event = rx.recv().await.expect("event");
+            if let EventMsg::ResponseItemCompleted(completed) = event.msg
+                && matches!(&completed.item, ResponseItem::ThreadGoalUpdate {
+                    action: codex_protocol::models::ThreadGoalUpdateEventAction::Completed,
+                    ..
+                })
+            {
+                break completed;
+            }
+        }
+    })
+    .await
+    .expect("expected completed goal response item");
+    let ResponseItem::ThreadGoalUpdate {
+        action,
+        source,
+        previous_status,
+        goal,
+        ..
+    } = completed.item
+    else {
+        panic!("expected ThreadGoalUpdate item");
+    };
+    assert_eq!(
+        action,
+        codex_protocol::models::ThreadGoalUpdateEventAction::Completed
+    );
+    assert_eq!(
+        source,
+        codex_protocol::models::ThreadGoalUpdateEventSource::ModelTool
+    );
+    assert_eq!(
+        previous_status,
+        Some(codex_protocol::models::ThreadGoalUpdateGoalStatus::Active)
+    );
+    assert_eq!(
+        goal.status,
+        codex_protocol::models::ThreadGoalUpdateGoalStatus::Complete
+    );
 
     let goal = session
         .get_thread_goal()

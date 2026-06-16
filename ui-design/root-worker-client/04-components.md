@@ -33,6 +33,55 @@
 - exit notification：标题 `Command exit notification`，摘要显示 `Exit N` 或 `Completed`。
 - 必须携带 `targetCommandItemId` 或等价 typed reference。
 
+## GoalLifecycleEventCell
+
+职责：展示模型 goal 工具或 goal runtime 产生的 user-visible typed lifecycle item，作为 conversation 的可回溯事实记录。
+
+数据来源：
+
+- typed `ThreadItem.goalLifecycle` / `ThreadItem.goalEvent` 或等价 v2 typed payload。
+- 不从 `agentMessage.text`、raw marker、legacy envelope、tool output JSON 或 `<goal_context>` 反解。
+
+推荐字段：
+
+- `id`: typed item id，同时作为 `ConversationEntry.id`。
+- `action`: `create` | `update` | `read` | `pause` | `resume` | `cancel` | `complete` | `budgetLimited` | `failed`。
+- `status`: `active` | `paused` | `complete` | `budgetLimited` | `cancelled` | `failed` | `checked`。
+- `objectivePreview`: 120-160 字符摘要。
+- `objective`: 可选完整内容；默认只给 RightPanel 使用。
+- `reason`: 可选结构化失败原因。
+- `goalId`: 可选，用于 RightPanel/状态关联，不用于 conversation 去重。
+- `createdAtMs` / `completedAtMs`: 用于时间。
+
+ConversationEntry 映射：
+
+- `kind`: 复用 `event`。
+- `role`: `system`。
+- `text`: 标题 + 摘要，例如 `Goal created: Add typed goal ThreadItem display...`。
+- 建议新增 `eventCategory: "goal"` 和 `eventStatus`，让 `EventRow` 切换图标、badge、两行布局；如果短期不扩类型，至少不能把 goal lifecycle 映射为普通 agent message。
+
+视觉：
+
+- 左侧 goal/target/check 图标，使用现有 icon button 体系或新增简洁 line icon。
+- 主体 pill 保持 event row 低噪音尺寸；标题和 badge 第一行，objective preview 第二行。
+- created/updated 使用 amber accent；complete 使用 green badge；paused/checked 使用 neutral；failed 使用 red badge 和结构化原因文本。
+- 长 objective 两行截断，完整内容进入 `GoalDetailPanel`。
+- 布局收缩优先级：badge 不压缩；title 使用 `min-width: 0` 单行截断；time 可下移到 meta 行，窄宽度可隐藏到 `aria-label` / tooltip；objective preview 使用两行 clamp。
+- 圆角和阴影跟随现有 event row，不做独立大 card。
+
+状态与合并：
+
+- 同一 `ThreadItem.id` 的 started/completed 更新可合并为同一 cell。
+- 不同 id 必须保留为不同 entry，即使 objective 和 status 相同。
+- 连续 goal events 不合并成一条 summary；视觉可以相邻，但 entry 边界必须保留。
+- compact replacement history 中按 archive 内 event row 展示，不丢弃 terminal item。
+
+虚拟列表与定位：
+
+- 如果 `EventRow` 从单行扩展为 goal 两行布局，必须更新 `conversationVirtualization` 的 event/goal event 高度估算，或确保测量后稳定修正。
+- 搜索跳转、RightPanel recent event 跳转和 archived compact 内部展示都要覆盖两行 goal event，避免定位后高亮错位。
+- RightPanel recent event 使用 typed item id 定位，控件语义为 button/link，支持 Enter/Space 与 focus ring。
+
 ## SlashCommandMenu
 
 职责：composer 输入 `/` 时提供内置命令和 Skills 的发现、过滤、补全和选择。

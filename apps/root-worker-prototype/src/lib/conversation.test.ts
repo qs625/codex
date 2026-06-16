@@ -114,6 +114,55 @@ test("separates command, event subscriptions, event notifications, and multi-age
   assert.equal(cells.length, 4);
 });
 
+test("builds a conversation event for typed goal updates", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "threadGoalUpdate",
+        id: "goal-1",
+        action: "created",
+        source: "modelTool",
+        previousStatus: null,
+        goal: {
+          threadId: "thread-1",
+          objective: "Ship goal ThreadItem display",
+          status: "active",
+          tokenBudget: 50_000,
+          tokensUsed: 1_250,
+          timeUsedSeconds: 75,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      },
+    ]),
+  );
+
+  assert.deepEqual(entries, [
+    {
+      id: "goal-1",
+      kind: "event",
+      author: "root",
+      role: "system",
+      text: "Goal created: Ship goal ThreadItem display",
+      timestamp: formatClockTime(1),
+      attachments: [],
+      toolName: "Goal",
+      toolStatus: "active",
+      toolDetails:
+        "Objective\nShip goal ThreadItem display\n\nStatus\nActive\n\nSource\nModel tool\n\nToken Usage\n1,250 / 50,000\n\nTime Used\n1m 15s",
+      toolCategory: "goal",
+    },
+  ]);
+
+  assert.deepEqual(buildConversationCells(entries), [
+    {
+      id: "goal-1",
+      kind: "event",
+      entries,
+    },
+  ]);
+});
+
 test("keeps consecutive ordinary tools grouped in one visible cell", () => {
   const entries = buildConversationEntries(
     makeThread([

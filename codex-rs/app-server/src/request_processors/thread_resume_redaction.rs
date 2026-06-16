@@ -49,6 +49,7 @@ pub(super) fn redact_thread_resume_payloads(thread: &mut Thread) {
             | ThreadItem::EventDrivenTool { .. }
             | ThreadItem::EventCommandCall { .. }
             | ThreadItem::EventCommandEvent { .. }
+            | ThreadItem::ThreadGoalUpdate { .. }
             | ThreadItem::CollabAgentMessage { .. }
             | ThreadItem::CollabAgentToolCall { .. }
             | ThreadItem::CollabAgentStatusUpdate { .. }

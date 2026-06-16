@@ -290,7 +290,8 @@ fn build_thread_context_usage_inner(
             | ResponseItem::WorkflowRunProgress { .. }
             | ResponseItem::CommandExecutionNotification { .. }
             | ResponseItem::EventCommandEvent { .. }
-            | ResponseItem::EventDrivenTool { .. } => {
+            | ResponseItem::EventDrivenTool { .. }
+            | ResponseItem::ThreadGoalUpdate { .. } => {
                 categories.tools_metadata = categories
                     .tools_metadata
                     .saturating_add(estimate_response_item_model_visible_bytes(item));

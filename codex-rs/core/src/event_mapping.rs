@@ -138,7 +138,8 @@ pub fn parse_turn_item(item: &ResponseItem) -> Option<TurnItem> {
     match item {
         ResponseItem::CommandWait { .. }
         | ResponseItem::CommandWriteStdin { .. }
-        | ResponseItem::CommandExecutionNotification { .. } => None,
+        | ResponseItem::CommandExecutionNotification { .. }
+        | ResponseItem::ThreadGoalUpdate { .. } => None,
         ResponseItem::EventCommandEvent { id, event } => Some(TurnItem::EventCommandEvent(
             codex_protocol::items::EventCommandEventItem {
                 id: id.clone().unwrap_or_else(|| event.stable_item_id()),

@@ -370,6 +370,7 @@ impl TurnToolCounts {
             | ThreadItem::EventCommandCall { .. }
             | ThreadItem::EventCommandEvent { .. }
             | ThreadItem::WorkflowRunProgress { .. }
+            | ThreadItem::ThreadGoalUpdate { .. }
             | ThreadItem::CollabAgentMessage { .. }
             | ThreadItem::CollabAgentStatusUpdate { .. }
             | ThreadItem::ImageView { .. }
@@ -1610,6 +1611,7 @@ fn tracked_tool_item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::EventCommandCall { .. }
         | ThreadItem::EventCommandEvent { .. }
         | ThreadItem::WorkflowRunProgress { .. }
+        | ThreadItem::ThreadGoalUpdate { .. }
         | ThreadItem::CollabAgentMessage { .. }
         | ThreadItem::CollabAgentStatusUpdate { .. }
         | ThreadItem::ImageView { .. }

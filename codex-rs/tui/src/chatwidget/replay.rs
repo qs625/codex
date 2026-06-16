@@ -245,6 +245,7 @@ impl ChatWidget {
             }),
             ThreadItem::CollabAgentStatusUpdate { .. } => {}
             ThreadItem::WorkflowRunProgress { .. } => {}
+            ThreadItem::ThreadGoalUpdate { .. } => {}
             ThreadItem::EventDrivenToolCall { .. } => {}
             ThreadItem::EventDrivenTool { .. } => {}
             ThreadItem::EventCommandCall { .. } => {}

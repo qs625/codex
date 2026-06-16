@@ -111,6 +111,7 @@ fn keep_forked_rollout_item(item: &RolloutItem) -> bool {
             | ResponseItem::CommandExecutionNotification { .. }
             | ResponseItem::EventCommandEvent { .. }
             | ResponseItem::EventDrivenTool { .. }
+            | ResponseItem::ThreadGoalUpdate { .. }
             | ResponseItem::InterAgentCommunication { .. },
         ) => true,
         RolloutItem::ResponseItem(

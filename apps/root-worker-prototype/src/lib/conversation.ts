@@ -413,6 +413,24 @@ function buildConversationItemEntries(
     ];
   }
 
+  if (item.type === "threadGoalUpdate") {
+    return [
+      {
+        id: item.id,
+        kind: "event" as const,
+        author,
+        role: "system" as const,
+        text: summarizeThreadGoalUpdate(item),
+        timestamp,
+        attachments: [],
+        toolName: "Goal",
+        toolStatus: item.goal.status,
+        toolDetails: formatThreadGoalUpdateDetails(item),
+        toolCategory: "goal",
+      },
+    ];
+  }
+
   if (item.type === "webSearch") {
     return [
       {
@@ -1171,6 +1189,103 @@ function formatEventDrivenToolDetails(
   }
 
   return sections.join("\n\n");
+}
+
+function summarizeThreadGoalUpdate(
+  item: Extract<ThreadItem, { type: "threadGoalUpdate" }>,
+) {
+  const objective = firstNonEmptyLine(item.goal.objective) ?? "thread goal";
+  switch (item.action) {
+    case "created":
+      return `Goal created: ${objective}`;
+    case "updated":
+      return `Goal updated: ${objective}`;
+    case "paused":
+      return `Goal paused: ${objective}`;
+    case "resumed":
+      return `Goal resumed: ${objective}`;
+    case "budgetLimited":
+      return `Goal budget reached: ${objective}`;
+    case "completed":
+      return `Goal completed: ${objective}`;
+    default:
+      return `Goal changed: ${objective}`;
+  }
+}
+
+function formatThreadGoalUpdateDetails(
+  item: Extract<ThreadItem, { type: "threadGoalUpdate" }>,
+) {
+  const sections = [
+    `Objective\n${item.goal.objective}`,
+    `Status\n${formatThreadGoalStatus(item.goal.status)}`,
+    `Source\n${formatThreadGoalUpdateSource(item.source)}`,
+  ];
+
+  if (item.previousStatus) {
+    sections.push(`Previous Status\n${formatThreadGoalStatus(item.previousStatus)}`);
+  }
+
+  if (item.goal.tokenBudget !== null && item.goal.tokenBudget !== undefined) {
+    sections.push(
+      `Token Usage\n${formatThreadGoalNumber(item.goal.tokensUsed)} / ${formatThreadGoalNumber(item.goal.tokenBudget)}`,
+    );
+  } else if (item.goal.tokensUsed > 0) {
+    sections.push(`Token Usage\n${formatThreadGoalNumber(item.goal.tokensUsed)}`);
+  }
+
+  if (item.goal.timeUsedSeconds > 0) {
+    sections.push(`Time Used\n${formatThreadGoalDuration(item.goal.timeUsedSeconds)}`);
+  }
+
+  return sections.join("\n\n");
+}
+
+function formatThreadGoalStatus(status: string) {
+  switch (status) {
+    case "active":
+      return "Active";
+    case "paused":
+      return "Paused";
+    case "budgetLimited":
+      return "Budget limited";
+    case "complete":
+      return "Complete";
+    default:
+      return status;
+  }
+}
+
+function formatThreadGoalUpdateSource(source: string) {
+  switch (source) {
+    case "modelTool":
+      return "Model tool";
+    case "client":
+      return "Client";
+    case "system":
+      return "System";
+    default:
+      return source;
+  }
+}
+
+function formatThreadGoalNumber(value: number) {
+  return new Intl.NumberFormat("en-US").format(value);
+}
+
+function formatThreadGoalDuration(totalSeconds: number) {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes <= 0) {
+    return `${remainingSeconds}s`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (hours <= 0) {
+    return `${minutes}m ${remainingSeconds}s`;
+  }
+  return `${hours}h ${remainingMinutes}m`;
 }
 
 const CAPTURED_OUTPUT_MARKER = "\nCaptured output:\n";

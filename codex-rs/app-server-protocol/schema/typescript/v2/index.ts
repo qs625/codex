@@ -375,6 +375,8 @@ export type { ThreadForkResponse } from "./ThreadForkResponse";
 export type { ThreadGoal } from "./ThreadGoal";
 export type { ThreadGoalClearedNotification } from "./ThreadGoalClearedNotification";
 export type { ThreadGoalStatus } from "./ThreadGoalStatus";
+export type { ThreadGoalUpdateAction } from "./ThreadGoalUpdateAction";
+export type { ThreadGoalUpdateSource } from "./ThreadGoalUpdateSource";
 export type { ThreadGoalUpdatedNotification } from "./ThreadGoalUpdatedNotification";
 export type { ThreadInjectItemsParams } from "./ThreadInjectItemsParams";
 export type { ThreadInjectItemsResponse } from "./ThreadInjectItemsResponse";

@@ -55,3 +55,23 @@ Composer Slash 菜单增量设计已完成独立 `@ui-ue-reviewer` 复审，通�
 复审后同步修正：
 
 - 将 `components/goal-state.md` 的可访问性要求从“错误反馈使用 live region”扩展为“所有 action feedback 使用 `role=status` 或 `aria-live=polite`”。
+
+## Goal ThreadItem Display review
+
+第一轮结论：未通过，需修正。
+
+本轮待审范围：
+
+- `features/goal-threaditem-display.md`
+- `assets/goal-threaditem-display-prototype.svg`
+- `00-brief.md`、`01-research.md`、`02-ue-flow.md`、`03-information-architecture.md`、`04-components.md`
+
+已处理问题：
+
+- 补充 `GoalLifecycleEventCell` 的响应式收缩规则：badge 不压缩，title 单行截断，time 可下移到 meta 或隐藏到 `aria-label` / tooltip，objective preview 两行 clamp。
+- 补充虚拟列表 handoff：实现两行 goal event 时需要更新 `conversationVirtualization` 高度估算或确保测量稳定修正，并覆盖搜索跳转、RightPanel recent event 跳转和 compact archive 内展示。
+- 补充 RightPanel Recent event 的 keyboard 语义：button/link、Tab 聚焦、Enter/Space 触发、focus ring 和跳转后的 `aria-live=polite` 状态反馈。
+- 补充 internal/bulk `get_goal` 不生成 visible conversation item 的噪音验收场景。
+- 原型补充 responsive rules callout，并移除容易造成行尾重叠误解的长时间文案。
+
+复审结论：通过，可进入开发。

@@ -24,6 +24,11 @@ use codex_otel::GOAL_TOKEN_COUNT_METRIC;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
+use codex_protocol::models::ResponseItem;
+use codex_protocol::models::ThreadGoalUpdateEventAction;
+use codex_protocol::models::ThreadGoalUpdateGoal;
+use codex_protocol::models::ThreadGoalUpdateGoalStatus;
+use codex_protocol::models::ThreadGoalUpdateEventSource;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ThreadGoal;
@@ -562,6 +567,8 @@ impl Session {
             }),
         )
         .await;
+        self.record_thread_goal_update_item(turn_context, goal.clone(), previous_status_for_goal)
+            .await;
         if goal_status != codex_state::ThreadGoalStatus::Active {
             self.maybe_notify_parent_of_final_status_for_current_source()
                 .await;
@@ -630,7 +637,29 @@ impl Session {
             }),
         )
         .await;
+        self.record_thread_goal_update_item(turn_context, goal.clone(), None)
+            .await;
         Ok(goal)
+    }
+
+    async fn record_thread_goal_update_item(
+        &self,
+        turn_context: &TurnContext,
+        goal: ThreadGoal,
+        previous_status: Option<codex_state::ThreadGoalStatus>,
+    ) {
+        let item = ResponseItem::ThreadGoalUpdate {
+            id: None,
+            action: thread_goal_update_action(&goal, previous_status),
+            source: ThreadGoalUpdateEventSource::ModelTool,
+            previous_status: previous_status.map(thread_goal_update_status_from_state),
+            goal: thread_goal_update_goal_from_protocol(goal),
+        };
+        self.record_conversation_items_and_emit_item_completed(
+            turn_context,
+            std::slice::from_ref(&item),
+        )
+        .await;
     }
 
     async fn apply_external_thread_goal_status(self: &Arc<Self>, external_set: ExternalGoalSet) {
@@ -1613,6 +1642,41 @@ pub(crate) fn protocol_goal_status_from_state(
     }
 }
 
+fn thread_goal_update_goal_from_protocol(goal: ThreadGoal) -> ThreadGoalUpdateGoal {
+    ThreadGoalUpdateGoal {
+        thread_id: goal.thread_id,
+        objective: goal.objective,
+        status: thread_goal_update_status_from_protocol(goal.status),
+        token_budget: goal.token_budget,
+        tokens_used: goal.tokens_used,
+        time_used_seconds: goal.time_used_seconds,
+        created_at: goal.created_at,
+        updated_at: goal.updated_at,
+    }
+}
+
+fn thread_goal_update_status_from_protocol(
+    status: ThreadGoalStatus,
+) -> ThreadGoalUpdateGoalStatus {
+    match status {
+        ThreadGoalStatus::Active => ThreadGoalUpdateGoalStatus::Active,
+        ThreadGoalStatus::Paused => ThreadGoalUpdateGoalStatus::Paused,
+        ThreadGoalStatus::BudgetLimited => ThreadGoalUpdateGoalStatus::BudgetLimited,
+        ThreadGoalStatus::Complete => ThreadGoalUpdateGoalStatus::Complete,
+    }
+}
+
+fn thread_goal_update_status_from_state(
+    status: codex_state::ThreadGoalStatus,
+) -> ThreadGoalUpdateGoalStatus {
+    match status {
+        codex_state::ThreadGoalStatus::Active => ThreadGoalUpdateGoalStatus::Active,
+        codex_state::ThreadGoalStatus::Paused => ThreadGoalUpdateGoalStatus::Paused,
+        codex_state::ThreadGoalStatus::BudgetLimited => ThreadGoalUpdateGoalStatus::BudgetLimited,
+        codex_state::ThreadGoalStatus::Complete => ThreadGoalUpdateGoalStatus::Complete,
+    }
+}
+
 pub(crate) fn state_goal_status_from_protocol(
     status: ThreadGoalStatus,
 ) -> codex_state::ThreadGoalStatus {
@@ -1621,6 +1685,24 @@ pub(crate) fn state_goal_status_from_protocol(
         ThreadGoalStatus::Paused => codex_state::ThreadGoalStatus::Paused,
         ThreadGoalStatus::BudgetLimited => codex_state::ThreadGoalStatus::BudgetLimited,
         ThreadGoalStatus::Complete => codex_state::ThreadGoalStatus::Complete,
+    }
+}
+
+fn thread_goal_update_action(
+    goal: &ThreadGoal,
+    previous_status: Option<codex_state::ThreadGoalStatus>,
+) -> ThreadGoalUpdateEventAction {
+    match (previous_status, goal.status) {
+        (None, _) => ThreadGoalUpdateEventAction::Created,
+        (_, ThreadGoalStatus::Paused) => ThreadGoalUpdateEventAction::Paused,
+        (_, ThreadGoalStatus::BudgetLimited) => ThreadGoalUpdateEventAction::BudgetLimited,
+        (_, ThreadGoalStatus::Complete) => ThreadGoalUpdateEventAction::Completed,
+        (Some(status), ThreadGoalStatus::Active)
+            if status != codex_state::ThreadGoalStatus::Active =>
+        {
+            ThreadGoalUpdateEventAction::Resumed
+        }
+        (Some(_), ThreadGoalStatus::Active) => ThreadGoalUpdateEventAction::Updated,
     }
 }
 

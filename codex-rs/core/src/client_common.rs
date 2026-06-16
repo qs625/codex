@@ -92,7 +92,8 @@ fn format_typed_response_item_for_provider(item: ResponseItem) -> Option<Respons
         ResponseItem::CommandWait { .. }
         | ResponseItem::CommandWriteStdin { .. }
         | ResponseItem::CommandExecutionNotification { .. }
-        | ResponseItem::WorkflowRunProgress { .. } => None,
+        | ResponseItem::WorkflowRunProgress { .. }
+        | ResponseItem::ThreadGoalUpdate { .. } => None,
         ResponseItem::EventCommandEvent { event, .. } => Some(event.to_response_item()),
         ResponseItem::EventDrivenTool { trigger, .. } => Some(trigger.to_response_item()),
         ResponseItem::InterAgentCommunication { communication, .. } => {

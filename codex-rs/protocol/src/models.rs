@@ -748,6 +748,51 @@ pub enum MessagePhase {
     FinalAnswer,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ThreadGoalUpdateEventAction {
+    Created,
+    Updated,
+    Paused,
+    Resumed,
+    BudgetLimited,
+    Completed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ThreadGoalUpdateEventSource {
+    ModelTool,
+    Client,
+    System,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum ThreadGoalUpdateGoalStatus {
+    Active,
+    Paused,
+    BudgetLimited,
+    Complete,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadGoalUpdateGoal {
+    pub thread_id: crate::ThreadId,
+    pub objective: String,
+    pub status: ThreadGoalUpdateGoalStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub token_budget: Option<i64>,
+    pub tokens_used: i64,
+    pub time_used_seconds: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseItem {
@@ -805,6 +850,17 @@ pub enum ResponseItem {
         #[ts(skip)]
         id: Option<String>,
         communication: InterAgentCommunication,
+    },
+    ThreadGoalUpdate {
+        #[serde(default, skip_serializing)]
+        #[ts(skip)]
+        id: Option<String>,
+        goal: ThreadGoalUpdateGoal,
+        action: ThreadGoalUpdateEventAction,
+        source: ThreadGoalUpdateEventSource,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        previous_status: Option<ThreadGoalUpdateGoalStatus>,
     },
     Message {
         #[serde(default, skip_serializing)]

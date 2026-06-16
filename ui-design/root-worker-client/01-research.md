@@ -57,3 +57,22 @@ Baseline 截图：[baseline-slash-goal-display.png](/Users/bytedance/Projects/my
 - Goal action 可用性必须由 typed goal state 和本地 action pending state 派生：active 可 pause/cancel/clear，paused 可 resume/cancel/clear，complete/budgetLimited 是否可 cancel 由后端能力决定，缺失 goal 时 action row 显示 disabled reason。
 
 只读查看发现当前实现已具备 `ThreadGoal`、GoalStrip、GoalDetailPanel、`thread/goal/updated` / `thread/goal/cleared` notification 和 `/goal cancel` / `/cancel-goal` 拦截。缺口主要是 command id 粒度、draft parser、二级 slash query、pause/resume/create/update action 反馈，以及 menu 文案从单个 command 扩展为 command family。
+
+## 2026-06-16 Goal ThreadItem Display 调研
+
+本次仍不做外部竞品调研，原因是问题集中在 root-worker 自身的 typed timeline 语义：goal lifecycle item 应如何进入现有 `ThreadItem -> ConversationEntry -> ConversationCell` 展示链路。外部产品的任务/目标 UI 对本问题帮助有限，反而容易引入和 app-server v2 typed display 边界不一致的模式。
+
+只读观察：
+
+- `apps/root-worker-prototype/src/types.ts` 中 `ConversationEntry.kind` 目前包含 `message`、`event`、`tool`、`compact`、`archive`；goal lifecycle 更接近 `event`，不是普通 agent message，也不是 command/tool row。
+- `apps/root-worker-prototype/src/lib/conversation.ts` 的 `buildConversationItemEntries` 已经按 typed `ThreadItem.type` 分支生成 entry；新增 goal 展示应在这里接 typed item，不应从 `agentMessage.text` 反解。
+- `buildConversationCells` 只合并 agent message 和同类 tool；event 默认不合并，适合保留每个 goal lifecycle item 的独立边界。
+- `EventRow` 当前统一使用 `ShareIcon` 和单行 pill；goal event 需要在不扩展大面积视觉的前提下增加 event category、状态 badge 和第二行摘要。
+- 当前搜索、虚拟列表和 archived history 都基于 `ConversationEntry` / `ConversationCell`；goal item 只要进入该链路，就能自然参与搜索、定位和 compact archive。
+
+设计推论：
+
+- goal lifecycle 最小可复用 event cell，而不是新增完整 card。它应该像 command notification 一样低噪音，但有更明确的 goal 图标和状态 badge。
+- `get_goal` 是潜在噪音源。默认不应因为每次内部读取都显示历史项；只有后端明确投影 user-visible typed read/check item 时才展示。
+- GoalStrip 和 RightPanel 已承担当前状态和详情，不应在 conversation 再重复完整 objective、预算表和 action button。
+- 如果后端只提供 `builtinToolCall` / `eventDrivenToolCall` 的泛型工具项，短期可以展示工具 row；但最终 goal lifecycle 应有专门 typed item 或足够明确的 typed payload，避免 UI 从工具名和 output JSON 中猜语义。
