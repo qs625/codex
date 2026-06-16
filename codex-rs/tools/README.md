@@ -12,6 +12,8 @@ crate 复用的 model-visible tool 定义、适配、规划和基础执行契约
   discoverable-tool 模型，以及 request-plugin-install helpers
 - host adapters，例如 schema sanitization、MCP/dynamic conversion、
   code-mode augmentation 和 image-detail normalization
+- 纯 tool planning，例如 agent tool pattern 过滤、hosted model tool specs、
+  namespace 合并，以及 code-mode exec prompt plan
 - 共享的 executable-tool 契约，例如 `ToolExecutor`、`ToolCall` 和 `ToolOutput`
 
 这次提取是长期迁移的第一步。目标不是一次性把整个 `core/src/tools` 搬进这个

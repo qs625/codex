@@ -63,6 +63,7 @@ use codex_tools::ToolEnvironmentMode;
 use codex_tools::ToolName;
 use codex_tools::ToolsConfigParams;
 use codex_tools::create_image_generation_tool;
+use codex_tools::hosted_model_tool_specs;
 use codex_tools::mcp_call_tool_result_output_schema;
 use codex_tools::request_user_input_available_modes;
 use pretty_assertions::assert_eq;
