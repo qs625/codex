@@ -17,6 +17,17 @@ Complete all Active Work recorded in this progress file.
   blockers: None.
   validation: pending
   commit: pending
+- id: goal-threaditem-display
+  owner: /root/my_codex_pm/goal_threaditem_display_owner
+  worktree: /Users/bytedance/Projects/my-codex/.worktrees/goal-threaditem-display
+  branch: agent/goal-threaditem-display
+  status: in_progress
+  objective: Add typed ThreadItem/client display handling for goal tool create/update events so model-created goals appear in the client conversation.
+  last_update: 2026-06-16
+  next_action: Owner to trace goal tool events through ResponseItem/ThreadItem projection and root-worker display, then implement typed goal item support.
+  blockers: None.
+  validation: pending
+  commit: pending
 
 ## Completed
 
