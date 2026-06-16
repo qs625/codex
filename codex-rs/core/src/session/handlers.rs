@@ -25,8 +25,6 @@ use crate::tasks::CompactTask;
 use crate::tasks::UserShellCommandMode;
 use crate::tasks::UserShellCommandTask;
 use crate::tasks::execute_user_shell_command;
-use codex_protocol::items::CollabAgentMessageItem;
-use codex_protocol::items::TurnItem;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::protocol::CodexErrorInfo;
@@ -37,7 +35,6 @@ use codex_protocol::protocol::GuardianAssessmentEvent;
 use codex_protocol::protocol::GuardianAssessmentStatus;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::InterAgentOperation;
-use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::RealtimeConversationListVoicesResponseEvent;
@@ -333,27 +330,7 @@ pub async fn inter_agent_communication(
     )
     .then_some(communication.sender_thread_id)
     .flatten();
-    let live_item_communication = matches!(
-        communication.operation,
-        InterAgentOperation::ChildCompletion
-    )
-    .then(|| communication.clone());
     sess.enqueue_mailbox_communication(communication);
-    if let Some(communication) = live_item_communication {
-        sess.send_event_raw(Event {
-            id: sub_id.clone(),
-            msg: EventMsg::ItemCompleted(ItemCompletedEvent {
-                thread_id: sess.thread_id(),
-                turn_id: sub_id.clone(),
-                item: TurnItem::CollabAgentMessage(CollabAgentMessageItem {
-                    id: sub_id.clone(),
-                    communication,
-                }),
-                completed_at_ms: chrono::Utc::now().timestamp_millis(),
-            }),
-        })
-        .await;
-    }
     if let Some(child_thread_id) = completion_child_thread_id
         && sess
             .mark_direct_child_completion_received(child_thread_id)

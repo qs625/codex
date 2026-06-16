@@ -9727,20 +9727,10 @@ async fn inter_agent_unknown_communication_does_not_emit_live_collab_item() -> a
 }
 
 #[tokio::test]
-async fn inter_agent_communication_emits_live_collab_item() -> anyhow::Result<()> {
-    let parent_thread_id = ThreadId::new();
+async fn inter_agent_child_completion_live_item_waits_for_typed_recording() -> anyhow::Result<()> {
+    let (session, turn_context, rx_event) = make_session_and_context_with_rx().await;
+    let parent_thread_id = session.thread_id();
     let child_thread_id = ThreadId::new();
-    let (session, rx_event) = make_session_with_history_source_and_agent_control_and_rx(
-        InitialHistory::Resumed(ResumedHistory {
-            conversation_id: parent_thread_id,
-            history: Vec::new(),
-            rollout_path: None,
-        }),
-        SessionSource::Exec,
-        AgentControl::default(),
-    )
-    .await?;
-    let _configured = rx_event.recv().await?;
     let communication = InterAgentCommunication::new(
         AgentPath::try_from("/root/worker").expect("worker path should parse"),
         AgentPath::root(),
@@ -9762,6 +9752,29 @@ async fn inter_agent_communication_emits_live_collab_item() -> anyhow::Result<()
     .await;
     assert!(session.has_pending_mailbox_items().await);
 
+    let immediate_completed = timeout(Duration::from_millis(200), async {
+        loop {
+            let event = rx_event.recv().await?;
+            if let EventMsg::ItemCompleted(completed) = event.msg {
+                return anyhow::Ok(completed);
+            }
+        }
+    })
+    .await;
+    assert!(
+        immediate_completed.is_err(),
+        "child completion should not emit a raw live collab item before typed pending input is recorded"
+    );
+
+    crate::hook_runtime::record_pending_input(
+        &session,
+        &turn_context,
+        crate::hook_runtime::PendingInputRecord::InterAgentCommunication {
+            pending_input: PendingInputItem::from(communication.clone()),
+        },
+    )
+    .await;
+
     let completed = timeout(Duration::from_secs(2), async {
         loop {
             let event = rx_event.recv().await?;
@@ -9772,13 +9785,26 @@ async fn inter_agent_communication_emits_live_collab_item() -> anyhow::Result<()
     })
     .await??;
     assert_eq!(completed.thread_id, parent_thread_id);
-    assert_eq!(completed.turn_id, "child-completion-turn");
+    assert_eq!(completed.turn_id, turn_context.sub_id.clone());
     assert!(completed.completed_at_ms > 0);
     let codex_protocol::items::TurnItem::CollabAgentMessage(item) = completed.item else {
         panic!("expected completed collab agent message item");
     };
-    assert_eq!(item.id, "child-completion-turn");
     assert_eq!(item.communication, communication);
+
+    let duplicate_completed = timeout(Duration::from_millis(200), async {
+        loop {
+            let event = rx_event.recv().await?;
+            if let EventMsg::ItemCompleted(completed) = event.msg {
+                return anyhow::Ok(completed);
+            }
+        }
+    })
+    .await;
+    assert!(
+        duplicate_completed.is_err(),
+        "recording one typed child completion should emit exactly one live collab item"
+    );
 
     Ok(())
 }
