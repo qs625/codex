@@ -21,35 +21,35 @@ Complete all Active Work recorded in this progress file.
   owner: /root/my_codex_pm/eventmsg_full_refactor_owner
   worktree: /Users/bytedance/Projects/my-codex
   branch: feat/tool-callback
-  status: in_progress
+  status: completed
   objective: Write and land the full architecture plan for EventMsg as runtime/UI display source and ResponseItem as model context/provider source.
   last_update: 2026-06-16
-  next_action: Architecture/spec/AGENTS updates implemented, independently reviewed, and fixed tester validation passed for this landing step.
+  next_action: Done.
   blockers: None.
   validation: passed via fixed tester request eventmsg-full-refactor-20260616-01.
-  commit: pending
+  commit: 1f4e54e
 - id: eventmsg-threaditem-projector-boundary
   owner: /root/my_codex_pm/eventmsg_full_refactor_owner
   worktree: /Users/bytedance/Projects/my-codex
   branch: feat/tool-callback
-  status: in_progress
+  status: completed
   objective: Add a shared EventMsg -> ThreadItem adapter boundary in app-server/protocol while preserving existing behavior.
   last_update: 2026-06-16
-  next_action: Adapter implemented for ItemStarted, ItemCompleted, ResponseItemStarted, and ResponseItemCompleted; live mapping uses it, and thread history replays id-bearing ResponseItem lifecycle events through it. Reviewed and validation passed.
+  next_action: Done. Adapter implemented for ItemStarted, ItemCompleted, ResponseItemStarted, and ResponseItemCompleted; live mapping uses it, and thread history replays id-bearing ResponseItem lifecycle events through it.
   blockers: eventmsg-threaditem-architecture-plan.
   validation: passed via fixed tester request eventmsg-full-refactor-20260616-01.
-  commit: pending
+  commit: 1f4e54e
 - id: eventmsg-dual-write-helpers
   owner: /root/my_codex_pm/eventmsg_full_refactor_owner
   worktree: /Users/bytedance/Projects/my-codex
   branch: feat/tool-callback
-  status: in_progress
+  status: completed
   objective: Introduce semantic helpers for actions that need both model ResponseItem context and UI/runtime EventMsg display.
   last_update: 2026-06-16
-  next_action: Existing helper renamed to `record_model_items_and_emit_display_events`; command_wait, write_stdin, workflow, goal, and inter-agent call sites updated. Reviewed and validation passed.
+  next_action: Done. Existing helper renamed to `record_model_items_and_emit_display_events`; command_wait, write_stdin, workflow, goal, and inter-agent call sites updated.
   blockers: eventmsg-threaditem-projector-boundary.
   validation: passed via fixed tester request eventmsg-full-refactor-20260616-01.
-  commit: pending
+  commit: 1f4e54e
 - id: migrate-wait-command-display-events
   owner: /root/my_codex_pm/eventmsg_full_refactor_owner
   worktree: /Users/bytedance/Projects/my-codex
@@ -57,7 +57,7 @@ Complete all Active Work recorded in this progress file.
   status: in_progress
   objective: Move command_wait, command_write_stdin, and command execution notification display semantics toward dedicated EventMsg variants.
   last_update: 2026-06-16
-  next_action: First migration step implemented: command_wait/write_stdin display now flows through the EventMsg projection boundary and dual-write helper naming reflects model/display split. Dedicated command EventMsg variants remain follow-up work.
+  next_action: Complete the dedicated command EventMsg variants for command_wait, command_write_stdin, and command execution notifications so live/read no longer depend on display-only ResponseItem variants except legacy replay compatibility.
   blockers: eventmsg-dual-write-helpers.
   validation: passed via fixed tester request eventmsg-full-refactor-20260616-01.
   commit: pending
@@ -68,7 +68,7 @@ Complete all Active Work recorded in this progress file.
   status: in_progress
   objective: Move inter-agent/child completion, goal lifecycle, workflow progress, event command, and event-driven tool display semantics toward EventMsg variants.
   last_update: 2026-06-16
-  next_action: Current compatibility path documented and routed through EventMsg projection boundary; dedicated EventMsg variants for collab/goal/workflow/event-command remain follow-up work.
+  next_action: Complete dedicated EventMsg variants for inter-agent/child completion, goal lifecycle, workflow progress, event command, and event-driven tool display; keep ResponseItem only where model-visible context is required.
   blockers: eventmsg-dual-write-helpers.
   validation: passed via fixed tester request eventmsg-full-refactor-20260616-01.
   commit: pending
@@ -79,7 +79,7 @@ Complete all Active Work recorded in this progress file.
   status: in_progress
   objective: Tighten ResponseItem so new variants are model-context/provider-facing only, not UI display-only.
   last_update: 2026-06-16
-  next_action: AGENTS/spec/code comments updated to forbid new display-only ResponseItem variants; reviewed and validation passed.
+  next_action: Add stronger code/test guardrails after dedicated EventMsg variants exist, then mark display-only ResponseItem variants as legacy/model-only or remove them from primary display paths.
   blockers: migrate-wait-command-display-events, migrate-collab-goal-workflow-display-events.
   validation: passed via fixed tester request eventmsg-full-refactor-20260616-01.
   commit: pending
@@ -90,7 +90,7 @@ Complete all Active Work recorded in this progress file.
   status: in_progress
   objective: Remove or quarantine legacy display paths after EventMsg projection covers live/read.
   last_update: 2026-06-16
-  next_action: Legacy paths documented as compatibility only; no broad deletion in this first landing step. Further cleanup remains follow-up work after dedicated EventMsg variants land.
+  next_action: Remove/quarantine remaining primary live display dependencies on display-only ResponseItem, TurnItem, raw marker/JSON, and raw FunctionCallOutput fallback after dedicated EventMsg variants land.
   blockers: eventmsg-threaditem-projector-boundary, migrate-wait-command-display-events, migrate-collab-goal-workflow-display-events.
   validation: passed via fixed tester request eventmsg-full-refactor-20260616-01.
   commit: pending
@@ -148,6 +148,10 @@ Complete all Active Work recorded in this progress file.
 
 ## Completed
 
+- commit: `1f4e54e`
+  summary: EventMsg display projection boundary landed. app-server protocol now has a shared `EventMsg -> ThreadItem` adapter for `ItemStarted`, `ItemCompleted`, `ResponseItemStarted`, and `ResponseItemCompleted`; live event mapping uses the adapter; thread history replays id-bearing ResponseItem lifecycle events through the same projection; core helper naming now separates model items from display events; AGENTS/spec/UI handoff updated to treat ResponseItem display projection as legacy compatibility.
+  validation: Fixed tester `/root/my_codex_pm/rust_cargo_tester` reported all targeted commands passed: `rtk cargo test -p codex-app-server-protocol response_item_`, `rtk cargo test -p codex-core explicit_record_conversation_items_emits_response_item_completed_for_command_wait`, `rtk cargo build -p codex-app-server --bin codex-app-server`; `rtk git diff --check` also passed.
+  residual_risk: Dedicated semantic EventMsg variants for command notifications, collab/goal/workflow/event-command remain active follow-up work; full workspace tests were not run.
 - commit: `4044884cb`
   summary: Thread lifecycle and command_wait fixes are implemented in the main checkout. Child completion is now parent-visible only when the parent starts a turn consuming the completion pending input; post-turn active checks use direct child state, running command state, pending input/mailbox, and active event subscriptions before active goal continuation; management agents bypass parent completion delivery. `command_wait` now uses the originating exec_command effective `initial_wait_ms` as its initial backoff window and emits typed started/completed lifecycle items with the same id and current wait window.
   validation: Fixed tester `/root/my_codex_pm/rust_cargo_tester` reported all targeted commands passed: `rtk cargo test -p codex-core command_wait`, `rtk cargo test -p codex-core goal_post_turn_state`, `rtk cargo test -p codex-core turn_start_consumes_child_completion_before_parent_visible_complete`, `rtk cargo test -p codex-app-server-protocol response_item_started_maps_command_wait_to_thread_item`, `rtk cargo build -p codex-app-server --bin codex-app-server`.
