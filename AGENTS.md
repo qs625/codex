@@ -76,6 +76,7 @@ In the codex-rs folder where the rust code lives:
 - 项目唯一 Rust/Cargo tester 的 canonical path 固定为 `/root/my_codex_pm/rust_cargo_tester`。不要为每个 owner/reviewer/worktree 新建测试 agent；PM 首次需要 Rust/Cargo 验证时用 `task_name=rust_cargo_tester`、`agent_type=test_agent`、`fork_turns=none` 创建这个 tester，后续所有 Rust/Cargo 验证请求都由 owner 复用该线程。
 - owner followup 给固定 tester 时必须提供 JSON 请求，包含 `type: "rust_cargo_validation_request"`、`request_id`、`requested_by`、`report_to`、`worktree`、`branch` 和按顺序排列的 `commands`；每个 command 必须包含 `id` 和完整 `exec_command` 参数（至少包含带 `rtk` 前缀的 `cmd`、`workdir`、`initial_wait_ms`、`notify_on`、`max_output_tokens`）。tester 只按清单串行执行收到的 `exec_command`，并把每条命令的退出码和 stdout/stderr 原文回传给请求方；不要总结、压缩或改写命令输出，不做测试设计、补充命令、风险判断、失败归因、修复建议或范围扩展。
 - 同一 owner 任务只创建一个 `@code-review` reviewer；首次独立 review 后必须记录 reviewer 线程，后续所有修复复审都通过 `followup_task` 发给同一个 reviewer。不要因为新 diff、修复了一轮 findings 或需要复审就再创建新的 reviewer，除非 reviewer 线程不可用或用户明确要求更换。
+- `@explorer` 不是默认前置步骤。轻量代码查找、少量文件阅读、已知模块内的依赖盘点应由主 agent 或 owner 自己完成，依靠自动 compact 管理上下文。只有在调研范围跨多个模块、预计会读取大量无关上下文、需要并行探索多个方向、需要明确只读隔离，或主线程正在等待其他 owner/tester 且可以并行准备下一步时，才创建 `@explorer`。派发 explorer 时必须写清只读范围、问题清单和期望输出；交付时说明 explorer 已调用或跳过的原因。
 - 仅修改 agent 指令、协作规则、spec 或 README 等文档时，如果用户明确允许简化流程，可以直接做文本级修改和验证，不强制创建 owner/reviewer/tester 流程；该例外不适用于产品代码、测试代码、构建配置、schema 或运行时行为改动。
 - 验证 Rust 编译和测试时，不要为当前 worktree 配置独立的 `TARGET_DIR`；使用项目默认的共享 target 目录，避免把验证环境和常规开发/CI 环境分叉。
 - 如果多个 Rust 测试或构建命令出现文件锁竞争，使用 `exec_command` 启动命令并通过 `command_wait` 等待通知；不要通过反复轮询、sleep 循环或持续检查进程状态来等待锁释放。

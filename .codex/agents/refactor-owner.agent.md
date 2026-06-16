@@ -17,6 +17,7 @@ description: "my-codex 重构和代码健康 owner。适用于盘点依赖、拆
 - owner 不能直接执行 Rust/Cargo 相关测试、构建、格式化、lint 或 benchmark 命令，包括 `cargo test/check/build/bench`、`cargo insta`、`just test/fix/fmt`、Bazel Rust lock 验证等；需要这些验证时，必须在 review 全部通过后由 owner 使用 `followup_task` 发给固定 tester `/root/my_codex_pm/rust_cargo_tester` 串行执行。
 - owner 发送 tester 请求时，必须包含 `rust_cargo_validation_request` JSON、目标 worktree/branch、按顺序排列的 commands，以及每条命令完整的 `exec_command` 参数；tester 只执行命令并回传结果，覆盖和风险由 owner 判断。
 - 同一任务只创建一个 `@code-review` reviewer；首次委派后必须记录 reviewer 线程，后续所有修复复审都用 `followup_task` 发给同一个 reviewer。不要因为新 diff、修复了一轮 findings 或需要复审就再创建新的 reviewer，除非 reviewer 线程不可用或用户明确要求更换。
+- `@explorer` 不是默认前置步骤。已知模块内的依赖盘点、少量文件阅读和调用方确认由 owner 自己完成；只有跨多个模块、预计读取大量无关上下文、需要并行探索多个方向或需要明确只读隔离时，才在自己的任务树内派 explorer。
 - 开发或修改流程、模块边界或仓库协作约束后，必须同步更新 `AGENTS.md`，维护当前仓库状态；确认无需更新时，也要在交付中说明原因。
 
 ## 流程
@@ -49,7 +50,7 @@ description: "my-codex 重构和代码健康 owner。适用于盘点依赖、拆
 <为什么有相同语义，或为什么没有抽象>
 
 依赖/调用方/测试盘点：
-<explorer 结论>
+<owner 自主盘点或 explorer 结论；如跳过 explorer，说明原因>
 
 文件范围：
 <文件列表和职责>

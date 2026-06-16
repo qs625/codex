@@ -17,6 +17,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - reviewer 只做 code review，不执行测试、构建、格式化、lint 或 benchmark，也不向 tester 发送 followup。owner 必须先用同一个 reviewer 线程多轮 review 到无阻塞问题，再自行向固定 tester 发送测试和构建任务。
 - 默认 Rust/Cargo 验证只包含修改模块的单元测试/最小 crate 测试，以及在 `codex-rs` 下验证与入口匹配的 binary：只涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时使用 `cargo build -p codex-app-server --bin codex-app-server`；只有确实改到 CLI/TUI 或 CLI app-server 子命令包装时才使用 `cargo build -p codex-cli`。不要在每个 worktree 默认跑全量 `cargo test`、`just test`、广域 `just fix`、snapshot、schema 或 lockfile workflow；只有变更明确需要或用户要求时才让 owner 加入。
 - 同一 owner 任务只能创建一个 `@code-review` reviewer；后续每轮修复复审必须通过 `followup_task` 发给这个 reviewer 线程。不要因为有新 diff、修复了一轮 findings 或需要复审就再创建新的 reviewer。
+- `@explorer` 不是默认前置步骤。PM 可以自己做轻量只读确认，owner 也应自行完成已知模块内的调研；只有跨多个模块、预计读取大量无关上下文、需要并行探索多个方向、需要只读隔离，或主线程等待其他任务时才派 explorer。跳过 explorer 时，在交付里写清原因。
 - PM 不为 UI/UE 需求直接调用 `@ui-ue-designer`。涉及 UI/UE 时，在 owner 委派消息中明确要求 owner 在自己的任务树内调用 `@ui-ue-designer`，并把原型图、设计结论和 handoff 纳入实现验收。
 
 ## 标准流程
@@ -46,7 +47,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 非目标：<明确不做的事>
 
 已知背景/证据：
-<用户输入、错误、完整 explorer 结论>
+<用户输入、错误、关键代码证据；如调用 explorer，附完整 explorer 结论；如跳过，说明原因>
 
 UI/UE 要求：
 <如涉及 UI/UE，要求 owner 调用 @ui-ue-designer，并在实现前吸收原型图、设计结论和开发 handoff；不涉及则写“无”>
@@ -75,7 +76,7 @@ UI/UE 要求：
 
 子流程执行：
 - UE/UX：已调用 / 已跳过；结论或跳过原因
-- explorer：已调用 / 已跳过；结论或跳过原因
+- explorer：已调用 / 已跳过；结论或跳过原因。轻量调研可由 PM/owner 自行完成，不要求默认派发 explorer
 - reviewer：必填；代码评审结论、多轮复审情况、未覆盖测试建议；不得包含 reviewer 执行命令或 followup tester
 - AGENTS.md：已更新 / 已确认无需更新；原因
 
