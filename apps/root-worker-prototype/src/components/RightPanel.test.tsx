@@ -62,10 +62,12 @@ function renderRightPanel(
       onSetActiveView={() => {}}
       onSetTaskFilter={() => {}}
       onCancelGoal={() => {}}
+      onPauseGoal={() => {}}
+      onResumeGoal={() => {}}
       planUpdate={planUpdate}
       goal={null}
-      goalCancelError={null}
-      goalCanceling={false}
+      goalAction={null}
+      goalActionError={null}
       preview={null}
       previewError={null}
       previewLoading={false}
@@ -99,6 +101,8 @@ test("renders thread goal details in thread analysis", () => {
       onSetActiveView={() => {}}
       onSetTaskFilter={() => {}}
       onCancelGoal={() => {}}
+      onPauseGoal={() => {}}
+      onResumeGoal={() => {}}
       planUpdate={null}
       goal={{
         threadId: "thread-1",
@@ -110,8 +114,8 @@ test("renders thread goal details in thread analysis", () => {
         createdAt: 1,
         updatedAt: 2,
       }}
-      goalCancelError={null}
-      goalCanceling={false}
+      goalAction={null}
+      goalActionError={null}
       preview={null}
       previewError={null}
       previewLoading={false}
@@ -125,6 +129,7 @@ test("renders thread goal details in thread analysis", () => {
 
   assert.match(markup, /Thread Goal/);
   assert.match(markup, /Goal active/);
+  assert.match(markup, /Pause/);
   assert.match(markup, /Ship the slash goal display\./);
   assert.match(markup, /12K \/ 50K tokens/);
 });

@@ -550,6 +550,12 @@ svg {
   padding: 5px 8px;
 }
 
+.goal-strip-primary-action,
+.goal-detail-primary-action {
+  border-color: rgba(37, 99, 235, 0.2);
+  color: #1d4ed8;
+}
+
 .goal-strip-cancel:disabled,
 .goal-detail-cancel:disabled {
   cursor: default;
@@ -2377,6 +2383,12 @@ svg {
   display: flex;
   flex-direction: column;
   gap: 9px;
+}
+
+.goal-detail-actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
 }
 
 .goal-detail-cancel {

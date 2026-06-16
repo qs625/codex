@@ -220,6 +220,17 @@ ipcMain.handle("codex:getThreadGoal", async (_event, threadId) => {
   };
 });
 
+ipcMain.handle("codex:setThreadGoal", async (_event, payload) => {
+  const response = await appServerClient.request("thread/goal/set", {
+    threadId: payload.threadId,
+    objective: payload.objective,
+    status: payload.status,
+  });
+  return {
+    goal: normalizeThreadGoal(response.goal),
+  };
+});
+
 ipcMain.handle("codex:clearThreadGoal", async (_event, threadId) => {
   return appServerClient.request("thread/goal/clear", {
     threadId,

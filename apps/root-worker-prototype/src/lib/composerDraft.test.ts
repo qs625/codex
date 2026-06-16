@@ -6,6 +6,7 @@ import {
   getComposerDraft,
   isClearComposerCommand,
   isGoalCancelComposerCommand,
+  parseGoalComposerCommand,
   updateComposerDraft,
   type ComposerDraftsByThreadId,
 } from "./composerDraft";
@@ -135,5 +136,100 @@ test("detects goal cancel command only when the draft has no attachments", () =>
       images: [],
     }),
     false,
+  );
+});
+
+test("parses goal commands before sending", () => {
+  assert.deepEqual(
+    parseGoalComposerCommand({
+      text: "/goal Ship goal command actions",
+      skills: [],
+      images: [],
+    }),
+    {
+      type: "set",
+      objective: "Ship goal command actions",
+      status: "active",
+    },
+  );
+  assert.deepEqual(
+    parseGoalComposerCommand({
+      text: "/goal pause",
+      skills: [],
+      images: [],
+    }),
+    {
+      type: "status",
+      status: "paused",
+    },
+  );
+  assert.deepEqual(
+    parseGoalComposerCommand({
+      text: "/goal resume",
+      skills: [],
+      images: [],
+    }),
+    {
+      type: "status",
+      status: "active",
+    },
+  );
+  assert.deepEqual(
+    parseGoalComposerCommand({
+      text: "/goal clear",
+      skills: [],
+      images: [],
+    }),
+    {
+      type: "clear",
+    },
+  );
+});
+
+test("parses only exact goal action commands as actions", () => {
+  assert.deepEqual(
+    parseGoalComposerCommand({
+      text: "/goal pause this migration",
+      skills: [],
+      images: [],
+    }),
+    {
+      type: "set",
+      objective: "pause this migration",
+      status: "active",
+    },
+  );
+  assert.equal(
+    parseGoalComposerCommand({
+      text: "/goal pause",
+      skills: [{ name: "review", path: "skills/review.md" }],
+      images: [],
+    }),
+    null,
+  );
+});
+
+test("parses empty goal objective as invalid command", () => {
+  assert.deepEqual(
+    parseGoalComposerCommand({
+      text: "/goal",
+      skills: [],
+      images: [],
+    }),
+    {
+      type: "invalid",
+      message: "Enter a goal objective.",
+    },
+  );
+  assert.deepEqual(
+    parseGoalComposerCommand({
+      text: "/goal ",
+      skills: [],
+      images: [],
+    }),
+    {
+      type: "invalid",
+      message: "Enter a goal objective.",
+    },
   );
 });

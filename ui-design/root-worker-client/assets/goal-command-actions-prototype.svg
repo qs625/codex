@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <rect width="1440" height="900" fill="#f7f6f3"/>
+  <rect x="0" y="0" width="240" height="900" fill="#fbfaf8" stroke="#dedbd5"/>
+  <rect x="240" y="0" width="860" height="900" fill="#ffffff" stroke="#dedbd5"/>
+  <rect x="1100" y="0" width="300" height="900" fill="#fbfaf8" stroke="#dedbd5"/>
+  <rect x="1400" y="0" width="40" height="900" fill="#f2f1ee"/>
+  <text x="24" y="42" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="700" fill="#222">Agent Tree</text>
+  <rect x="20" y="76" width="196" height="54" rx="8" fill="#ffffff" stroke="#d8d5cf"/>
+  <text x="36" y="108" font-family="Inter, Arial, sans-serif" font-size="14" fill="#222">/root</text>
+  <circle cx="196" cy="103" r="5" fill="#8f8a83"/>
+  <text x="270" y="42" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="700" fill="#202020">/root</text>
+  <text x="330" y="42" font-family="Inter, Arial, sans-serif" font-size="13" fill="#77716b">Root Agent · Idle · default</text>
+  <rect x="268" y="66" width="800" height="58" rx="8" fill="#fffaf1" stroke="#dcc58a"/>
+  <rect x="284" y="84" width="92" height="24" rx="12" fill="#f3dfaa" stroke="#d3b25f"/>
+  <text x="300" y="101" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#4f3a00">Goal active</text>
+  <text x="392" y="101" font-family="Inter, Arial, sans-serif" font-size="14" fill="#282520">Ship goal command actions handoff and keep slash menu scoped to /goal...</text>
+  <text x="850" y="101" font-family="Inter, Arial, sans-serif" font-size="12" fill="#6f675d">12.4K / 40K tokens</text>
+  <rect x="972" y="78" width="40" height="34" rx="7" fill="#ffffff" stroke="#d7d2c8"/>
+  <text x="984" y="100" font-family="Inter, Arial, sans-serif" font-size="12" fill="#514b45">Pause</text>
+  <rect x="1018" y="78" width="34" height="34" rx="7" fill="#ffffff" stroke="#d7d2c8"/>
+  <text x="1028" y="100" font-family="Inter, Arial, sans-serif" font-size="12" fill="#514b45">×</text>
+  <rect x="270" y="154" width="760" height="92" rx="8" fill="#f8f8f7" stroke="#e0ded9" stroke-dasharray="5 4"/>
+  <text x="298" y="200" font-family="Inter, Arial, sans-serif" font-size="18" fill="#746f69">Conversation timeline continues here.</text>
+  <rect x="270" y="650" width="800" height="220" rx="12" fill="#ffffff" stroke="#d9d6d0"/>
+  <text x="292" y="682" font-family="Inter, Arial, sans-serif" font-size="14" fill="#8a837c">Composer</text>
+  <text x="292" y="724" font-family="Inter, Arial, sans-serif" font-size="22" fill="#222">/goal p</text>
+  <rect x="292" y="430" width="520" height="198" rx="10" fill="#ffffff" stroke="#cfcac2"/>
+  <text x="312" y="462" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#8a837c">COMMANDS</text>
+  <rect x="304" y="519" width="496" height="36" rx="7" fill="#eef4ff" stroke="#aebfe6"/>
+  <text x="322" y="501" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" fill="#1f2b45">/goal &lt;objective&gt;</text>
+  <text x="488" y="501" font-family="Inter, Arial, sans-serif" font-size="12" fill="#6f6a64">Set or update the current thread goal</text>
+  <text x="322" y="543" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" fill="#1f2b45">/goal pause</text>
+  <text x="488" y="543" font-family="Inter, Arial, sans-serif" font-size="12" fill="#6f6a64">Pause the active thread goal</text>
+  <text x="322" y="584" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" fill="#1f2b45">/goal resume</text>
+  <text x="488" y="584" font-family="Inter, Arial, sans-serif" font-size="12" fill="#6f6a64">Resume the paused thread goal</text>
+  <text x="322" y="617" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" fill="#1f2b45">/goal cancel</text>
+  <text x="488" y="617" font-family="Inter, Arial, sans-serif" font-size="12" fill="#6f6a64">Alias: /goal clear, /cancel-goal</text>
+  <text x="1130" y="42" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#8a837c">THREAD ANALYSIS</text>
+  <rect x="1124" y="74" width="250" height="262" rx="10" fill="#ffffff" stroke="#dedbd5"/>
+  <text x="1144" y="108" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#8a837c">THREAD GOAL</text>
+  <text x="1144" y="134" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="700" fill="#222">Goal active</text>
+  <text x="1144" y="168" font-family="Inter, Arial, sans-serif" font-size="13" fill="#46413c">Ship goal command actions handoff and keep slash menu scoped to /goal subcommands.</text>
+  <text x="1144" y="220" font-family="Inter, Arial, sans-serif" font-size="12" fill="#6f6a64">12.4K / 40K tokens · 18m used</text>
+  <text x="1144" y="254" font-family="Inter, Arial, sans-serif" font-size="12" fill="#6f6a64">Recent event: updated just now</text>
+  <rect x="1144" y="282" width="62" height="32" rx="7" fill="#ffffff" stroke="#d7d2c8"/>
+  <text x="1160" y="302" font-family="Inter, Arial, sans-serif" font-size="12" fill="#222">Pause</text>
+  <rect x="1216" y="282" width="70" height="32" rx="7" fill="#ffffff" stroke="#d7d2c8"/>
+  <text x="1230" y="302" font-family="Inter, Arial, sans-serif" font-size="12" fill="#222">Cancel</text>
+  <rect x="1296" y="282" width="54" height="32" rx="7" fill="#ffffff" stroke="#d7d2c8"/>
+  <text x="1310" y="302" font-family="Inter, Arial, sans-serif" font-size="12" fill="#222">Edit</text>
+</svg>

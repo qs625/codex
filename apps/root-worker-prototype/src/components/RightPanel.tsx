@@ -32,6 +32,8 @@ import type {
   TodoCardItem,
 } from "../types";
 
+type GoalActionKind = "set" | "pause" | "resume" | "clear";
+
 function formatByteSize(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) {
     return "0 B";
@@ -70,10 +72,12 @@ export function RightPanel({
   onSetActiveView,
   onSetTaskFilter,
   onCancelGoal,
+  onPauseGoal,
+  onResumeGoal,
   planUpdate,
   goal,
-  goalCancelError,
-  goalCanceling,
+  goalAction,
+  goalActionError,
   preview,
   previewError,
   previewLoading,
@@ -94,10 +98,12 @@ export function RightPanel({
   onSetActiveView: (value: RightPanelView) => void;
   onSetTaskFilter: (value: TaskFilter) => void;
   onCancelGoal: () => void;
+  onPauseGoal: () => void;
+  onResumeGoal: () => void;
   planUpdate: ThreadPlanUpdate | null;
   goal: ThreadGoal | null;
-  goalCancelError: string | null;
-  goalCanceling: boolean;
+  goalAction: GoalActionKind | null;
+  goalActionError: string | null;
   preview: FilePreview | null;
   previewError: string | null;
   previewLoading: boolean;
@@ -135,9 +141,11 @@ export function RightPanel({
             <ThreadAnalysisPanel
               analysis={threadAnalysis}
               goal={goal}
-              goalCancelError={goalCancelError}
-              goalCanceling={goalCanceling}
+              goalAction={goalAction}
+              goalActionError={goalActionError}
               onCancelGoal={onCancelGoal}
+              onPauseGoal={onPauseGoal}
+              onResumeGoal={onResumeGoal}
               onSelectCommandMonitor={onSelectCommandMonitor}
             />
           ) : (
@@ -227,16 +235,20 @@ export function RightPanel({
 function ThreadAnalysisPanel({
   analysis,
   goal,
-  goalCancelError,
-  goalCanceling,
+  goalAction,
+  goalActionError,
   onCancelGoal,
+  onPauseGoal,
+  onResumeGoal,
   onSelectCommandMonitor,
 }: {
   analysis: ThreadAnalysis;
   goal: ThreadGoal | null;
-  goalCancelError: string | null;
-  goalCanceling: boolean;
+  goalAction: GoalActionKind | null;
+  goalActionError: string | null;
   onCancelGoal: () => void;
+  onPauseGoal: () => void;
+  onResumeGoal: () => void;
   onSelectCommandMonitor?: (commandItemId: string) => void;
 }) {
   const { contextUsage, monitors } = analysis;
@@ -275,9 +287,11 @@ function ThreadAnalysisPanel({
 
         <GoalDetailPanel
           goal={goal}
-          cancelError={goalCancelError}
-          canceling={goalCanceling}
+          action={goalAction}
+          actionError={goalActionError}
           onCancel={onCancelGoal}
+          onPause={onPauseGoal}
+          onResume={onResumeGoal}
         />
 
         <section className="context-budget-card">
@@ -420,16 +434,22 @@ function ThreadAnalysisPanel({
 }
 
 function GoalDetailPanel({
-  cancelError,
-  canceling,
+  action,
+  actionError,
   goal,
   onCancel,
+  onPause,
+  onResume,
 }: {
-  cancelError: string | null;
-  canceling: boolean;
+  action: GoalActionKind | null;
+  actionError: string | null;
   goal: ThreadGoal | null;
   onCancel: () => void;
+  onPause: () => void;
+  onResume: () => void;
 }) {
+  const primaryAction = getGoalPrimaryAction(goal);
+
   return (
     <section className="context-section-card goal-detail-card">
       <div className="context-section-header">
@@ -437,15 +457,30 @@ function GoalDetailPanel({
           <span className="context-section-eyebrow">Thread Goal</span>
           <strong>{goal ? formatGoalStatus(goal.status) : "No active goal"}</strong>
         </div>
-        <button
-          type="button"
-          className="goal-detail-cancel"
-          disabled={!goal || canceling}
-          title={goal ? "Cancel goal" : "No active goal"}
-          onClick={onCancel}
-        >
-          {canceling ? "Cancelling" : "Cancel"}
-        </button>
+        <div className="goal-detail-actions">
+          {primaryAction ? (
+            <button
+              type="button"
+              className="goal-detail-cancel goal-detail-primary-action"
+              disabled={!!action}
+              title={primaryAction.title}
+              onClick={primaryAction.kind === "pause" ? onPause : onResume}
+            >
+              {action === primaryAction.kind
+                ? formatGoalActionProgress(action)
+                : primaryAction.label}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="goal-detail-cancel"
+            disabled={!goal || !!action}
+            title={goal ? "Cancel goal" : "No active goal"}
+            onClick={onCancel}
+          >
+            {action === "clear" ? "Cancelling" : "Cancel"}
+          </button>
+        </div>
       </div>
       {goal ? (
         <>
@@ -460,13 +495,50 @@ function GoalDetailPanel({
           No active goal.
         </p>
       )}
-      {cancelError ? (
+      {actionError ? (
         <p className="goal-detail-error" role="status">
-          Could not cancel goal: {cancelError}
+          Could not update goal: {actionError}
         </p>
       ) : null}
     </section>
   );
+}
+
+function getGoalPrimaryAction(goal: ThreadGoal | null) {
+  if (!goal) {
+    return null;
+  }
+
+  switch (goal.status) {
+    case "active":
+      return {
+        kind: "pause" as const,
+        label: "Pause",
+        title: "Pause goal",
+      };
+    case "paused":
+      return {
+        kind: "resume" as const,
+        label: "Resume",
+        title: "Resume goal",
+      };
+    case "budgetLimited":
+    case "complete":
+      return null;
+  }
+}
+
+function formatGoalActionProgress(action: GoalActionKind) {
+  switch (action) {
+    case "set":
+      return "Setting";
+    case "pause":
+      return "Pausing";
+    case "resume":
+      return "Resuming";
+    case "clear":
+      return "Cancelling";
+  }
 }
 
 function formatGoalStatus(status: ThreadGoal["status"]) {

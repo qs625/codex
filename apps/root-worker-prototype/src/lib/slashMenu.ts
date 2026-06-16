@@ -1,6 +1,11 @@
 import type { DraftSkill, ThreadSkill } from "../types";
 
-export type ComposerSlashCommandId = "clear" | "goalCancel";
+export type ComposerSlashCommandId =
+  | "clear"
+  | "goalCreate"
+  | "goalPause"
+  | "goalResume"
+  | "goalCancel";
 
 export type BuiltInSlashCommand = {
   type: "command";
@@ -9,6 +14,7 @@ export type BuiltInSlashCommand = {
   label: string;
   description: string;
   aliases: string[];
+  draftText?: string;
 };
 
 export type SkillSlashSuggestion = {
@@ -29,20 +35,81 @@ export const BUILT_IN_SLASH_COMMANDS: BuiltInSlashCommand[] = [
   },
   {
     type: "command",
+    commandId: "goalCreate",
+    token: "goal objective",
+    label: "/goal <objective>",
+    description: "Create or update this thread goal",
+    aliases: ["goal", "objective", "create goal", "set goal"],
+    draftText: "/goal ",
+  },
+  {
+    type: "command",
+    commandId: "goalPause",
+    token: "goal pause",
+    label: "/goal pause",
+    description: "Pause the current thread goal",
+    aliases: ["pause goal", "goal"],
+    draftText: "/goal pause",
+  },
+  {
+    type: "command",
+    commandId: "goalResume",
+    token: "goal resume",
+    label: "/goal resume",
+    description: "Resume the current thread goal",
+    aliases: ["resume goal", "goal"],
+    draftText: "/goal resume",
+  },
+  {
+    type: "command",
     commandId: "goalCancel",
     token: "goal cancel",
     label: "/goal cancel",
     description: "Cancel the current thread goal",
-    aliases: ["cancel-goal", "goal", "cancel"],
+    aliases: ["cancel-goal", "goal clear", "clear goal", "goal", "cancel"],
+    draftText: "/goal cancel",
   },
 ];
 
 export function getActiveComposerSlashQuery(draft: string) {
   const firstLine = draft.trimStart().split("\n", 1)[0] ?? "";
-  if (!firstLine.startsWith("/") || firstLine.includes(" ")) {
+  if (!firstLine.startsWith("/")) {
+    return null;
+  }
+  const goalSubcommandQuery = getGoalSubcommandSlashQuery(firstLine);
+  if (goalSubcommandQuery !== null) {
+    return goalSubcommandQuery;
+  }
+  if (firstLine.includes(" ")) {
     return null;
   }
   return firstLine.slice(1);
+}
+
+function getGoalSubcommandSlashQuery(firstLine: string) {
+  const lowerFirstLine = firstLine.toLowerCase();
+  if (!lowerFirstLine.startsWith("/goal ")) {
+    return null;
+  }
+
+  const query = lowerFirstLine.slice("/goal ".length);
+  if (query.includes(" ")) {
+    return null;
+  }
+  if (!query) {
+    return "goal ";
+  }
+  if (["pause", "resume", "cancel", "clear"].includes(query)) {
+    return null;
+  }
+  if (
+    ["pause", "resume", "cancel", "clear"].some((subcommand) =>
+      subcommand.startsWith(query),
+    )
+  ) {
+    return `goal ${query}`;
+  }
+  return null;
 }
 
 export function buildComposerSlashSuggestions({

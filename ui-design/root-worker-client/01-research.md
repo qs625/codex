@@ -45,3 +45,15 @@ Baseline 截图：[baseline-slash-goal-display.png](/Users/bytedance/Projects/my
 - `/goal cancel` 在无 active goal 时仍可显示，但应 disabled 或执行后给 “No active goal” 的轻量反馈；推荐 disabled，因为 command list 能提前解释不可用原因。
 - Goal 状态应有两个层级：header strip 用于高频扫描，Right Panel detail 用于完整内容和最近事件。
 - 取消反馈应尽量靠近触发点：从 slash menu 执行后 composer status 显示短反馈；从 Goal Strip button 触发后 button 进入 cancelling 状态，同时 typed goal event 进入 history/detail。
+
+## 2026-06-16 Goal Command Actions 轻量调研
+
+本次不新增外部竞品调研，原因是范围是现有 composer command grammar 和 GoalStrip/RightPanel action 的增量，不是新页面或大幅视觉改造。采用仓库内既有模式即可覆盖主要风险：
+
+- Slash menu 主展示继续使用一条 `/goal <subcommand>` command family，避免扩散 `/goal-cancel`、`/goal-pause` 这类顶层主命令。
+- `/cancel-goal` 只作为输入兼容别名：可被 parser 识别，可作为搜索 alias 命中 `/goal cancel`，但菜单 label 不展示为主命令。
+- `/goal <objective>` 不应在用户只输入 `/goal` 时立即执行；它是带参数 command，需要在 composer 中继续输入 objective 后通过 send 执行。
+- `pause`、`resume`、`cancel|clear` 是有副作用的无参数 action command。为降低误触，slash menu 的 Enter/鼠标点击只补全完整 token 并保持 composer focus；用户再按 Enter 执行该完整 command。
+- Goal action 可用性必须由 typed goal state 和本地 action pending state 派生：active 可 pause/cancel/clear，paused 可 resume/cancel/clear，complete/budgetLimited 是否可 cancel 由后端能力决定，缺失 goal 时 action row 显示 disabled reason。
+
+只读查看发现当前实现已具备 `ThreadGoal`、GoalStrip、GoalDetailPanel、`thread/goal/updated` / `thread/goal/cleared` notification 和 `/goal cancel` / `/cancel-goal` 拦截。缺口主要是 command id 粒度、draft parser、二级 slash query、pause/resume/create/update action 反馈，以及 menu 文案从单个 command 扩展为 command family。

@@ -58,28 +58,39 @@ Header Goal Strip：
 - 状态：`Active` / `Paused` / `Complete` / `Budget limited` / `Cancelling` / `Cancelled`
 - 摘要：goal 内容前 120-160 字符，两行截断。
 - 预算：剩余 token/time/turn budget，字段不存在时不显示。
-- 操作：Cancel goal。
+- 操作：Pause / Resume / Cancel goal，按 canonical goal status 和后端能力显示。
 
 Thread Analysis Goal Detail：
 
 - 完整 goal 内容。
 - 状态、创建/更新时间、预算使用、remaining budget。
 - 最近 lifecycle event：created、updated、continued、cancel requested、cancelled、failed。
-- 操作区：Cancel goal、Copy goal text。
+- 操作区：Pause / Resume / Cancel goal、Copy goal text、Edit goal。
 
 Slash Menu：
 
 - Commands 分组显示：
-  - `/init`：system skill。由 Skills discovery 提供，不属于 runtime goal command。
+  - `/goal <objective>`：创建或更新当前 thread goal；带参数，选择后应补全 token 并让用户继续输入。
+  - `/goal pause`：暂停当前 active goal。
+  - `/goal resume`：恢复当前 paused goal。
   - `/goal cancel`：Cancel the current thread goal。
   - `/clear`：Archive this root session and start a fresh root。
-- Skills 分组保持现状。
+- Skills 分组显示：
+  - `/init`：system skill。由 Skills discovery 提供，不属于 runtime goal command。
+- 其他 Skills 分组内容保持现状。
+
+Goal action feedback：
+
+- Composer status 承载从 slash command 发起的 set/pause/resume/cancel 结果。
+- GoalStrip 承载当前 goal 的 live 状态与最近 action error，不展示完整事件历史。
+- Thread Analysis Goal Detail 承载完整 objective、预算、最近 lifecycle event 和 action 区。
+- Conversation 只有在后端提供 typed goal lifecycle `ThreadItem` 时展示事件；不得从普通 agent message 或 raw marker 反解。
 
 ## 响应式策略
 
 - 宽屏：Goal Strip 位于 header 下方，占中间 panel 宽度；Right Panel Goal Detail 正常显示。
 - 中等宽度：Goal Strip 仍显示，但按优先级折叠：先隐藏 secondary budget detail，只保留 `Budget limited` 等状态语义；目标摘要一行截断；完整预算进入 Goal Detail。
-- 窄宽度：Right Panel 可关闭；Goal Strip 保留状态 badge、单行摘要和固定 32px icon cancel button。Cancel button 命中区域不小于 32x32，strip 最小高度 44px，预算文本全部隐藏到 detail/tooltip，不能挤压 composer 或最右 rail。
+- 窄宽度：Right Panel 可关闭；Goal Strip 保留状态 badge、单行摘要和固定 32px primary action。操作按钮命中区域不小于 32x32，strip 最小高度 44px，预算文本全部隐藏到 detail/tooltip，不能挤压 composer 或最右 rail。
 - 长 goal 内容：summary 区域使用 `min-width: 0` 和 text overflow；不能让 button 或 badge 被压缩。
 
 ## 不应改变的边界

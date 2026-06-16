@@ -44,6 +44,11 @@ declare global {
         threadId: string,
       ) => Promise<{ thread?: unknown | null }>;
       getThreadGoal: (threadId: string) => Promise<{ goal: unknown | null }>;
+      setThreadGoal: (payload: {
+        threadId: string;
+        objective?: string;
+        status?: "active" | "paused" | "budgetLimited" | "complete";
+      }) => Promise<{ goal: unknown }>;
       clearThreadGoal: (threadId: string) => Promise<{ cleared: boolean }>;
       readLocalImage: (target: string) => Promise<{
         path: string;

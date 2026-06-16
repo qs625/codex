@@ -1,4 +1,5 @@
 import type { ComposerImage, DraftSkill } from "../types";
+import type { ThreadGoalStatus } from "../types";
 
 export type ComposerDraft = {
   text: string;
@@ -7,6 +8,24 @@ export type ComposerDraft = {
 };
 
 export type ComposerDraftsByThreadId = Record<string, ComposerDraft>;
+
+export type GoalComposerCommand =
+  | {
+      type: "set";
+      objective: string;
+      status: Extract<ThreadGoalStatus, "active">;
+    }
+  | {
+      type: "status";
+      status: Extract<ThreadGoalStatus, "active" | "paused">;
+    }
+  | {
+      type: "clear";
+    }
+  | {
+      type: "invalid";
+      message: string;
+    };
 
 export const EMPTY_COMPOSER_DRAFT: ComposerDraft = {
   text: "",
@@ -64,10 +83,54 @@ export function isClearComposerCommand(draft: ComposerDraft) {
 }
 
 export function isGoalCancelComposerCommand(draft: ComposerDraft) {
-  const command = draft.text.trim().toLowerCase();
+  return parseGoalComposerCommand(draft)?.type === "clear";
+}
+
+export function parseGoalComposerCommand(
+  draft: ComposerDraft,
+): GoalComposerCommand | null {
+  if (draft.skills.length > 0 || draft.images.length > 0) {
+    return null;
+  }
+
+  const text = draft.text.trim();
+  const command = text.toLowerCase();
+  if (command === "/goal") {
+    return { type: "invalid", message: "Enter a goal objective." };
+  }
+  if (command === "/cancel-goal") {
+    return { type: "clear" };
+  }
+
   return (
-    (command === "/goal cancel" || command === "/cancel-goal") &&
-    draft.skills.length === 0 &&
-    draft.images.length === 0
+    parseExactGoalAction(command) ??
+    parseGoalObjective(text)
   );
+}
+
+function parseExactGoalAction(command: string): GoalComposerCommand | null {
+  switch (command) {
+    case "/goal pause":
+      return { type: "status", status: "paused" };
+    case "/goal resume":
+      return { type: "status", status: "active" };
+    case "/goal cancel":
+    case "/goal clear":
+      return { type: "clear" };
+    default:
+      return null;
+  }
+}
+
+function parseGoalObjective(text: string): GoalComposerCommand | null {
+  if (!text.toLowerCase().startsWith("/goal ")) {
+    return null;
+  }
+
+  const objective = text.slice("/goal ".length).trim();
+  if (!objective) {
+    return null;
+  }
+
+  return { type: "set", objective, status: "active" };
 }

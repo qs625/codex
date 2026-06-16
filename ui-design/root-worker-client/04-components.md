@@ -50,9 +50,9 @@
 
 新增字段建议：
 
-- `commandId`: `clear` | `goalInit` | `goalCancel`
-- `token`: `clear` | `goal cancel`
-- `label`: `/clear` | `/goal cancel`
+- `commandId`: `clear` | `goalSet` | `goalPause` | `goalResume` | `goalCancel`
+- `token`: `clear` | `goal` | `goal pause` | `goal resume` | `goal cancel`
+- `label`: `/clear` | `/goal <objective>` | `/goal pause` | `/goal resume` | `/goal cancel`
 - `description`: 一句短说明。
 - `aliases`: 支持 `goal`, `init`, `cancel`, `stop goal` 等搜索。
 - `disabledReason`: 可选，展示在 meta；有值时不可执行。
@@ -62,12 +62,17 @@
 - default：白底透明，hover/selected 使用现有 amber selected 背景。
 - selected：保留 `.composer-slash-option.selected`。
 - disabled：降低文字对比但保持可读，鼠标 cursor default，`aria-disabled=true`。
-- empty：复用 `No commands or skills match...`，当 query 为 `/goal` 时显示 `/goal cancel`。
+- empty：复用 `No commands or skills match...`；当 query 为 `/goal` 时应显示 goal command family，而不是进入 empty。
 
 行为：
 
 - `/init` 不进入 command metadata；它来自 system skill。
-- `/goal cancel`：选择后直接执行取消；若无 active goal，不执行并显示 disabled reason。
+- `/goal <objective>`：选择后补全 `/goal ` 并保持 composer focus，不立即执行；Enter 仅在 objective 非空时调用 typed goal set/update action。
+- `/goal pause` / `/goal resume`：无参数 action command。菜单 Enter 或鼠标点击只补全完整 token 并保持 composer focus；用户再按 Enter 执行。
+- `/goal cancel`：菜单 Enter 或鼠标点击只补全 `/goal cancel` 并保持 composer focus；用户再按 Enter 执行。若无 active/paused/budgetLimited goal，候选不可执行补全并显示 disabled reason。
+- `Tab`：补全 active candidate，不执行任何 goal action。
+- `/goal clear`：作为 `/goal cancel` 的 parser alias；可显示在 `/goal cancel` meta 中，不建议作为独立主行。
+- `/cancel-goal`：兼容别名；可搜索命中 `/goal cancel`，不作为菜单 label。
 
 ## GoalStrip
 
@@ -98,6 +103,8 @@
 
 - 点击 strip 非按钮区域打开 Thread Analysis 并定位到 Goal Detail。
 - Cancel icon button 有 tooltip 和 aria-label。
+- Paused goal 可显示 Resume action；active goal 可显示 Pause action。空间不足时 GoalStrip 只保留一个 primary action 和 overflow，完整 action 进入 Goal Detail。
+- Paused goal 的 GoalStrip primary action 是 Resume，Cancel 作为 secondary/overflow；active/budgetLimited goal 的 primary action 是 Pause，Cancel 作为 secondary/overflow。
 - 长内容截断，完整内容进入 detail panel；不要把 `title` 当作 disabled/error 原因的唯一承载。
 
 ## GoalDetailPanel
@@ -111,7 +118,16 @@
 - 完整 goal 内容。
 - Budget rows：`Turns`、`Tokens`、`Time`，仅展示后端提供的字段。
 - Recent event：最近 typed goal lifecycle item。
-- 操作：Cancel goal、Copy goal。
+- 操作：Pause goal、Resume goal、Cancel goal、Copy goal、Edit goal。
+
+Goal actions：
+
+- Set/update goal 不放在 detail panel 的主操作里，避免和 composer 输入目标内容的路径冲突；detail panel 可提供 `Edit goal`，点击后把 `/goal <current objective>` 填入 composer 并聚焦。
+- Pause：active/budgetLimited 可用，pending 文案 `Pausing...`。
+- Resume：paused 可用，pending 文案 `Resuming...`。
+- Cancel/Clear：active/paused/budgetLimited 可用，pending 文案 `Cancelling...`。
+- Complete 状态只保留 Copy，不提供 pause/resume/cancel，除非后端显式支持 reopen。
+- Action feedback 容器使用 `role=status` 或 `aria-live=polite`，确保键盘和屏幕阅读器用户能感知 pending、success 和 failure。
 
 取消 action 字段：
 
@@ -129,6 +145,15 @@
 
 Composer status：
 
+- `Setting goal...`
+- `Goal updated.`
+- `Could not set goal: <reason>`
+- `Pausing goal...`
+- `Goal paused.`
+- `Could not pause goal: <reason>`
+- `Resuming goal...`
+- `Goal resumed.`
+- `Could not resume goal: <reason>`
 - `Cancelling goal...`
 - `Goal cancelled.`
 - `No active goal to cancel.`

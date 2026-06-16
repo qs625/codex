@@ -30,3 +30,28 @@ Composer Slash 菜单增量设计已完成独立 `@ui-ue-reviewer` 复审，通�
 复审后同步修正：
 
 - 原型中移除 `/goal init` runtime command 表达，保留 `/goal cancel`。
+
+## Goal Command Actions review
+
+第一轮结论：未通过，需修正。
+
+本轮待审范围：
+
+- `features/goal-command-actions.md`
+- `assets/goal-command-actions-prototype.svg`
+- `00-brief.md`、`01-research.md`、`02-ue-flow.md`、`03-information-architecture.md`、`04-components.md`
+- `components/goal-state.md`
+
+已处理问题：
+
+- 修正 `/goal p` 场景：空 subquery 时 `/goal <objective>` 第一；subquery 命中保留 subcommand 前缀时，优先选中对应 subcommand；SVG prototype 改为高亮 `/goal pause`。
+- 定稿无参数 goal action 的触发模型：slash menu 的 Enter、Tab、鼠标点击只补全 command，不执行副作用；用户再次 Enter 后执行完整 `/goal pause`、`/goal resume`、`/goal cancel` 或 `/goal clear`。
+- 统一 paused 状态：GoalStrip 至少展示 Resume 作为 primary action，Cancel 作为 secondary/overflow；GoalDetailPanel 展示 Resume 与 Cancel，并由 backend capability 控制 disabled reason。
+- 补充 composer action feedback 的 `role=status` / `aria-live=polite` 要求。
+- 补充 `/clear goal` 只作为搜索 alias 命中 `/goal cancel`，不改变 `/clear` 自身 root session clear 语义。
+
+复审结论：通过，可进入开发。
+
+复审后同步修正：
+
+- 将 `components/goal-state.md` 的可访问性要求从“错误反馈使用 live region”扩展为“所有 action feedback 使用 `role=status` 或 `aria-live=polite`”。

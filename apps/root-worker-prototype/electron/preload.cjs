@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   subscribeThread: (threadId) =>
     ipcRenderer.invoke("codex:subscribeThread", threadId),
   getThreadGoal: (threadId) => ipcRenderer.invoke("codex:getThreadGoal", threadId),
+  setThreadGoal: (payload) => ipcRenderer.invoke("codex:setThreadGoal", payload),
   clearThreadGoal: (threadId) =>
     ipcRenderer.invoke("codex:clearThreadGoal", threadId),
   readLocalFile: (target) => ipcRenderer.invoke("codex:readLocalFile", target),

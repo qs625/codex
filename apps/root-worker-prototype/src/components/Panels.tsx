@@ -62,6 +62,8 @@ import type {
   VoiceCaptureStatus,
 } from "../types";
 
+type GoalActionKind = "set" | "pause" | "resume" | "clear";
+
 export function SidebarPanel({
   agentTree,
   collapsedSet,
@@ -155,8 +157,8 @@ export function ConversationPanel({
   isSending,
   isStoppingTurn,
   goal,
-  goalCancelError,
-  goalCanceling,
+  goalAction,
+  goalActionError,
   onAddDraftSkill,
   onCancelGoal,
   onConversationScroll,
@@ -164,8 +166,10 @@ export function ConversationPanel({
   onHandleComposerPaste,
   onHandleImageSelection,
   onOpenLocalFile,
+  onPauseGoal,
   onRemoveDraftImage,
   onRemoveDraftSkill,
+  onResumeGoal,
   onRunSlashCommand,
   onUpdateRunConfig,
   onSendMessage,
@@ -188,8 +192,8 @@ export function ConversationPanel({
   isSending: boolean;
   isStoppingTurn: boolean;
   goal: ThreadGoal | null;
-  goalCancelError: string | null;
-  goalCanceling: boolean;
+  goalAction: GoalActionKind | null;
+  goalActionError: string | null;
   onAddDraftSkill: (skill: DraftSkill) => void;
   onCancelGoal: () => void;
   onConversationScroll: () => void;
@@ -197,8 +201,10 @@ export function ConversationPanel({
   onHandleComposerPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
   onHandleImageSelection: (event: ChangeEvent<HTMLInputElement>) => void;
   onOpenLocalFile: (target: string) => void;
+  onPauseGoal: () => void;
   onRemoveDraftImage: (imageId: string) => void;
   onRemoveDraftSkill: (path: string) => void;
+  onResumeGoal: () => void;
   onRunSlashCommand: (commandId: ComposerSlashCommandId) => void;
   onUpdateRunConfig: (selection: RunConfigSelection) => void;
   onSendMessage: () => void;
@@ -378,7 +384,12 @@ export function ConversationPanel({
   function selectSlashSuggestion(suggestion: ComposerSlashSuggestion) {
     switch (suggestion.type) {
       case "command":
-        onDraftChange("");
+        onDraftChange(suggestion.draftText ?? "");
+        if (suggestion.draftText) {
+          setDismissedSlashQuery(null);
+          setSelectedSlashIndex(0);
+          return;
+        }
         onRunSlashCommand(suggestion.commandId);
         setDismissedSlashQuery(null);
         setSelectedSlashIndex(0);
@@ -509,9 +520,11 @@ export function ConversationPanel({
 
       <GoalStrip
         goal={goal}
-        cancelError={goalCancelError}
-        canceling={goalCanceling}
+        action={goalAction}
+        actionError={goalActionError}
         onCancel={onCancelGoal}
+        onPause={onPauseGoal}
+        onResume={onResumeGoal}
       />
 
       <div
@@ -760,51 +773,106 @@ export function ConversationPanel({
 }
 
 function GoalStrip({
-  cancelError,
-  canceling,
+  action,
+  actionError,
   goal,
   onCancel,
+  onPause,
+  onResume,
 }: {
-  cancelError: string | null;
-  canceling: boolean;
+  action: GoalActionKind | null;
+  actionError: string | null;
   goal: ThreadGoal | null;
   onCancel: () => void;
+  onPause: () => void;
+  onResume: () => void;
 }) {
-  if (!goal && !cancelError) {
+  if (!goal && !actionError) {
     return null;
   }
 
   const label = goal ? formatGoalStatus(goal.status) : "Goal";
   const objective = goal?.objective ?? "No active goal.";
   const usage = goal ? formatGoalUsage(goal) : "";
+  const primaryAction = getGoalPrimaryAction(goal);
 
   return (
     <section className="goal-strip" aria-label="Thread goal">
       <div className="goal-strip-main">
         <span className={`goal-status-badge ${goal?.status ?? "none"}`}>
-          {canceling ? "Cancelling" : label}
+          {action ? formatGoalActionProgress(action) : label}
         </span>
         <span className="goal-strip-objective" title={objective}>
           {objective}
         </span>
         {usage ? <span className="goal-strip-usage">{usage}</span> : null}
       </div>
-      {cancelError ? (
+      {actionError ? (
         <span className="goal-strip-error" role="status">
-          {cancelError}
+          {actionError}
         </span>
+      ) : null}
+      {primaryAction ? (
+        <button
+          type="button"
+          className="goal-strip-cancel goal-strip-primary-action"
+          disabled={!!action}
+          title={primaryAction.title}
+          onClick={primaryAction.kind === "pause" ? onPause : onResume}
+        >
+          {action === primaryAction.kind
+            ? formatGoalActionProgress(action)
+            : primaryAction.label}
+        </button>
       ) : null}
       <button
         type="button"
         className="goal-strip-cancel"
-        disabled={!goal || canceling}
+        disabled={!goal || !!action}
         title={goal ? "Cancel goal" : "No active goal"}
         onClick={onCancel}
       >
-        {canceling ? "Cancelling" : "Cancel"}
+        {action === "clear" ? "Cancelling" : "Cancel"}
       </button>
     </section>
   );
+}
+
+function getGoalPrimaryAction(goal: ThreadGoal | null) {
+  if (!goal) {
+    return null;
+  }
+
+  switch (goal.status) {
+    case "active":
+      return {
+        kind: "pause" as const,
+        label: "Pause",
+        title: "Pause goal",
+      };
+    case "paused":
+      return {
+        kind: "resume" as const,
+        label: "Resume",
+        title: "Resume goal",
+      };
+    case "budgetLimited":
+    case "complete":
+      return null;
+  }
+}
+
+function formatGoalActionProgress(action: GoalActionKind) {
+  switch (action) {
+    case "set":
+      return "Setting";
+    case "pause":
+      return "Pausing";
+    case "resume":
+      return "Resuming";
+    case "clear":
+      return "Cancelling";
+  }
 }
 
 function formatGoalStatus(status: ThreadGoal["status"]) {

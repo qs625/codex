@@ -31,6 +31,17 @@ root-worker prototype 是面向 my-codex 多 agent 调试和协作执行的桌�
 2. thread 页面显示当前 thread 的 goal 状态和 goal 内容。
 3. 用户可通过 slash command 取消当前 thread goal。
 
+### 2026-06-16 增量：Goal Command Actions
+
+本次轻量 handoff 在既有 goal 展示与 `/goal cancel` 基线上，补齐 goal slash command 的动作族：
+
+1. `/goal <objective>`：创建或更新当前 thread 的 active goal。
+2. `/goal pause`：暂停当前 active goal。
+3. `/goal resume`：恢复 paused goal。
+4. `/goal cancel` / `/goal clear`：取消或清除当前 goal；`/cancel-goal` 仅作为兼容别名，不进入 slash menu 主展示。
+
+交互目标是让用户在 composer 内完成低频 goal 管理，同时保持主界面高频扫描能力：GoalStrip 显示当前状态和关键操作，Thread Analysis 展示完整内容、预算和最近 action 反馈。
+
 ## 目标用户
 
 - 角色：使用 Goal/Go 持续推进长任务的 owner、PM agent、调试 root-worker prototype 的工程师。
@@ -65,6 +76,7 @@ root-worker prototype 是面向 my-codex 多 agent 调试和协作执行的桌�
 本任务涉及现有 root-worker prototype 客户端 UI，已使用 `$root-worker-playwright-debug` 的完整 Electron smoke 脚本获取 baseline：
 
 - [baseline-slash-goal-display.png](/Users/bytedance/Projects/my-codex/.worktrees/slash-goal-display/ui-design/root-worker-client/assets/baseline-slash-goal-display.png)
+- [baseline-goal-command-actions-2026-06-16.png](/Users/bytedance/Projects/my-codex/.worktrees/goal-command-actions/ui-design/root-worker-client/assets/baseline-goal-command-actions-2026-06-16.png)
 
 截图环境使用 skill 默认隔离目录：
 
@@ -72,6 +84,8 @@ root-worker prototype 是面向 my-codex 多 agent 调试和协作执行的桌�
 - `ROOT_WORKER_WORKSPACE=/tmp/my-codex-root-worker-debug/workspace`
 
 限制：截图顶部显示 app-server bootstrap 失败 `app-server exited (127 / null)`，因此未捕获真实已有 thread 内容；但 Electron shell、三栏布局、composer、右侧 rail、empty state 和 slash command 所在位置可作为本次 UI 基线。
+
+2026-06-16 截图同样使用 `$root-worker-playwright-debug` 完整 Electron smoke 获取，`window.codexDesktop` 可用；由于本地 app-server binary 不可用，截图只作为真实 Electron shell 和布局基线，不作为 goal 数据状态截图。
 
 ## 验收标准
 

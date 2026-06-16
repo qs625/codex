@@ -23,6 +23,14 @@ test("detects active composer slash query at the start of the draft", () => {
   assert.equal(getActiveComposerSlashQuery("Use /clear"), null);
 });
 
+test("detects goal subcommand slash query before complete commands", () => {
+  assert.equal(getActiveComposerSlashQuery("/goal "), "goal ");
+  assert.equal(getActiveComposerSlashQuery("/goal p"), "goal p");
+  assert.equal(getActiveComposerSlashQuery("/goal pause"), null);
+  assert.equal(getActiveComposerSlashQuery("/goal pause this migration"), null);
+  assert.equal(getActiveComposerSlashQuery("/goal ship"), null);
+});
+
 test("shows built-in commands and skills for an empty slash query", () => {
   const suggestions = buildComposerSlashSuggestions({
     availableSkills: [makeSkill()],
@@ -36,7 +44,14 @@ test("shows built-in commands and skills for an empty slash query", () => {
         ? `${suggestion.type}:${suggestion.commandId}`
         : `${suggestion.type}:${suggestion.skill.name}`,
     ),
-    ["command:clear", "command:goalCancel", "skill:review"],
+    [
+      "command:clear",
+      "command:goalCreate",
+      "command:goalPause",
+      "command:goalResume",
+      "command:goalCancel",
+      "skill:review",
+    ],
   );
 });
 
@@ -58,11 +73,39 @@ test("keeps built-in commands visible when no skills are available", () => {
     },
     {
       type: "command",
+      commandId: "goalCreate",
+      token: "goal objective",
+      label: "/goal <objective>",
+      description: "Create or update this thread goal",
+      aliases: ["goal", "objective", "create goal", "set goal"],
+      draftText: "/goal ",
+    },
+    {
+      type: "command",
+      commandId: "goalPause",
+      token: "goal pause",
+      label: "/goal pause",
+      description: "Pause the current thread goal",
+      aliases: ["pause goal", "goal"],
+      draftText: "/goal pause",
+    },
+    {
+      type: "command",
+      commandId: "goalResume",
+      token: "goal resume",
+      label: "/goal resume",
+      description: "Resume the current thread goal",
+      aliases: ["resume goal", "goal"],
+      draftText: "/goal resume",
+    },
+    {
+      type: "command",
       commandId: "goalCancel",
       token: "goal cancel",
       label: "/goal cancel",
       description: "Cancel the current thread goal",
-      aliases: ["cancel-goal", "goal", "cancel"],
+      aliases: ["cancel-goal", "goal clear", "clear goal", "goal", "cancel"],
+      draftText: "/goal cancel",
     },
   ]);
 });
@@ -103,7 +146,14 @@ test("does not suggest skills already attached to the draft", () => {
         ? `${suggestion.type}:${suggestion.commandId}`
         : `${suggestion.type}:${suggestion.skill.name}`,
     ),
-    ["command:clear", "command:goalCancel", "skill:test"],
+    [
+      "command:clear",
+      "command:goalCreate",
+      "command:goalPause",
+      "command:goalResume",
+      "command:goalCancel",
+      "skill:test",
+    ],
   );
 });
 
@@ -153,4 +203,34 @@ test("goal cancel is modeled as a command and can be found by alias", () => {
   } else {
     assert.equal(suggestion.commandId, "goalCancel");
   }
+});
+
+test("goal family commands are displayed as subcommands", () => {
+  const suggestions = buildComposerSlashSuggestions({
+    availableSkills: [],
+    draftSkills: [],
+    query: "goal",
+  });
+
+  assert.deepEqual(
+    suggestions.map((suggestion) =>
+      suggestion.type === "command" ? suggestion.label : suggestion.skill.name,
+    ),
+    ["/goal <objective>", "/goal pause", "/goal resume", "/goal cancel"],
+  );
+});
+
+test("filters goal subcommands from a secondary query", () => {
+  const suggestions = buildComposerSlashSuggestions({
+    availableSkills: [],
+    draftSkills: [],
+    query: getActiveComposerSlashQuery("/goal p"),
+  });
+
+  assert.deepEqual(
+    suggestions.map((suggestion) =>
+      suggestion.type === "command" ? suggestion.label : suggestion.skill.name,
+    ),
+    ["/goal pause"],
+  );
 });
