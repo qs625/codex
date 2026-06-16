@@ -22,15 +22,19 @@ Complete all Active Work recorded in this progress file.
   worktree: /Users/bytedance/Projects/my-codex/.worktrees/wait-tool-backoff
   branch: agent/wait-tool-backoff
   status: in_progress
-  objective: Align command_wait and wait_agent with per-call wait window semantics: timeout returns to model, subsequent calls use backoff, and events reset backoff.
+  objective: Align command_wait and wait_agent with per-call wait window semantics and typed ThreadItem visibility for each wait tool call/return.
   last_update: 2026-06-16
-  next_action: Owner to change command_wait and wait_agent so each call waits one current window and returns timeout/running, with runtime backoff persisted across calls and reset on event.
+  next_action: Owner to change command_wait and wait_agent so each call waits one current window and returns timeout/running, with runtime backoff persisted across calls and reset on event; tool call started/returned display must go through typed ResponseItem -> ThreadItem and show the current wait window, not the hard cap.
   blockers: None.
   validation: pending
   commit: pending
 
 ## Completed
 
+- commit: `56f781919`
+  summary: Child completion live display deduplicated by removing the extra raw `ItemCompleted(CollabAgentMessage)` emission and keeping the typed `ResponseItem::InterAgentCommunication -> ThreadItem` path.
+  validation: `cargo test -p codex-core inter_agent_child_completion_live_item_waits_for_typed_recording`, `cargo build -p codex-app-server --bin codex-app-server`, and `git diff --check` passed.
+  residual_risk: Coverage is focused on core live event emission; app-server projection relies on existing typed projector behavior.
 - commit: `b41bdda04`
   summary: Dynamic Workflow TypeScript SDK runtime bridge completed and merged; `wf.Agent`, `agent.followup`, and `agent.wait` now bind to the current workflow tool runtime context, while `wf.shell` is an explicit unsupported structured response.
   validation: `cargo test -p codex-workflow`, `cargo build -p codex-app-server --bin codex-app-server`, `RUST_MIN_STACK=16777216 cargo test -p codex-core --test all workflow_tools -- --test-threads=1`, and `git diff --check` passed.
