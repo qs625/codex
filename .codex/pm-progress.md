@@ -2,7 +2,7 @@
 
 ## Current Goal
 
-Implement Dynamic Workflow TypeScript SDK runtime bridge/RPC callbacks so `wf.Agent`, `agent.followup`, `agent.wait`, and `wf.shell` stop being no-op placeholders.
+Complete all Active Work recorded in this progress file.
 
 ## Active Work
 
