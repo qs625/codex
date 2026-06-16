@@ -404,6 +404,7 @@ impl ThreadHistoryBuilder {
             }
             codex_protocol::items::TurnItem::UserMessage(_)
             | codex_protocol::items::TurnItem::HookPrompt(_)
+            | codex_protocol::items::TurnItem::InjectedContext(_)
             | codex_protocol::items::TurnItem::AgentMessage(_)
             | codex_protocol::items::TurnItem::EventDrivenTool(_)
             | codex_protocol::items::TurnItem::EventCommandEvent(_)
@@ -427,7 +428,8 @@ impl ThreadHistoryBuilder {
                 self.handle_projected_event_item(&EventMsg::ItemCompleted(payload.clone()));
             }
             codex_protocol::items::TurnItem::EventDrivenTool(_)
-            | codex_protocol::items::TurnItem::EventCommandEvent(_) => {
+            | codex_protocol::items::TurnItem::EventCommandEvent(_)
+            | codex_protocol::items::TurnItem::InjectedContext(_) => {
                 self.handle_projected_event_item(&EventMsg::ItemCompleted(payload.clone()));
             }
             codex_protocol::items::TurnItem::AgentMessage(_) => {
@@ -1481,6 +1483,7 @@ mod tests {
     use crate::protocol::v2::CommandExecutionNotificationKind;
     use crate::protocol::v2::CommandExecutionNotifyOn;
     use crate::protocol::v2::CommandExecutionSource;
+    use crate::protocol::v2::InjectedContextSection;
     use codex_protocol::AgentPath;
     use codex_protocol::ThreadId;
     use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
@@ -1491,6 +1494,8 @@ mod tests {
     use codex_protocol::items::CollabAgentMessageItem as CoreCollabAgentMessageItem;
     use codex_protocol::items::EventCommandEventItem as CoreEventCommandEventItem;
     use codex_protocol::items::EventDrivenToolItem as CoreEventDrivenToolItem;
+    use codex_protocol::items::InjectedContextItem as CoreInjectedContextItem;
+    use codex_protocol::items::InjectedContextSection as CoreInjectedContextSection;
     use codex_protocol::items::TurnItem as CoreTurnItem;
     use codex_protocol::items::UserMessageItem as CoreUserMessageItem;
     use codex_protocol::mcp::CallToolResult;
@@ -5364,6 +5369,42 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].items.len(), 1);
         assert!(matches!(turns[0].items[0], ThreadItem::UserMessage { .. }));
+    }
+
+    #[test]
+    fn replays_typed_injected_context_with_agent_file_instructions() {
+        let items = vec![RolloutItem::EventMsg(EventMsg::ItemCompleted(
+            ItemCompletedEvent {
+                thread_id: ThreadId::default(),
+                turn_id: "turn-a".into(),
+                item: CoreTurnItem::InjectedContext(CoreInjectedContextItem {
+                    id: "ctx-1".into(),
+                    title: "Init Context".into(),
+                    preview: "Developer".into(),
+                    sections: vec![CoreInjectedContextSection {
+                        label: "Developer".into(),
+                        text: "Agent type file body".into(),
+                    }],
+                }),
+                completed_at_ms: 1_000,
+            },
+        ))];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::InjectedContext {
+                id: "ctx-1".into(),
+                title: "Init Context".into(),
+                preview: "Developer".into(),
+                sections: vec![InjectedContextSection {
+                    label: "Developer".into(),
+                    text: "Agent type file body".into(),
+                }],
+            }]
+        );
     }
 
     #[test]

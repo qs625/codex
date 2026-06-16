@@ -44,6 +44,7 @@ use ts_rs::TS;
 pub enum TurnItem {
     UserMessage(UserMessageItem),
     HookPrompt(HookPromptItem),
+    InjectedContext(InjectedContextItem),
     AgentMessage(AgentMessageItem),
     EventDrivenTool(EventDrivenToolItem),
     EventCommandEvent(EventCommandEventItem),
@@ -76,6 +77,24 @@ pub struct HookPromptItem {
 pub struct HookPromptFragment {
     pub text: String,
     pub hook_run_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct InjectedContextItem {
+    pub id: String,
+    pub title: String,
+    pub preview: String,
+    pub sections: Vec<InjectedContextSection>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct InjectedContextSection {
+    pub label: String,
+    pub text: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -574,6 +593,7 @@ impl TurnItem {
         match self {
             TurnItem::UserMessage(item) => item.id.clone(),
             TurnItem::HookPrompt(item) => item.id.clone(),
+            TurnItem::InjectedContext(item) => item.id.clone(),
             TurnItem::AgentMessage(item) => item.id.clone(),
             TurnItem::EventDrivenTool(item) => item.id.clone(),
             TurnItem::EventCommandEvent(item) => item.id.clone(),
@@ -593,6 +613,7 @@ impl TurnItem {
         match self {
             TurnItem::UserMessage(item) => vec![item.as_legacy_event()],
             TurnItem::HookPrompt(_) => Vec::new(),
+            TurnItem::InjectedContext(_) => Vec::new(),
             TurnItem::AgentMessage(item) => item.as_legacy_events(),
             TurnItem::EventDrivenTool(_) => Vec::new(),
             TurnItem::EventCommandEvent(_) => Vec::new(),

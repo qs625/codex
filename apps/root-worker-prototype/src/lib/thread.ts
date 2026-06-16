@@ -888,16 +888,9 @@ export function isThreadThinking(
     return true;
   }
 
-  const lastTurn = thread?.turns.at(-1) ?? null;
-  if (!lastTurn || !isTurnInFlight(lastTurn)) {
-    return false;
-  }
-  if (lastTurn.items.length === 0) {
-    return true;
-  }
-
-  return lastTurn.items.some(
-    (item) => item.type !== "userMessage" && item.type !== "injectedContext",
+  return (
+    thread?.status.type === "active" &&
+    thread.status.activeFlags.includes("running")
   );
 }
 

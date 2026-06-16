@@ -681,8 +681,11 @@ function buildReplacementHistoryEntry(
           ["Status", item.status],
           ["Notification", item.notification],
           ["Exit code", item.exit_code],
-          ["Wall time seconds", item.wall_time_seconds],
-          ["Wait timeout ms", item.wait_timeout_ms],
+          ["Wall time", formatSecondsDuration(Number(item.wall_time_seconds))],
+          [
+            "Wait timeout",
+            formatMillisecondsDuration(Number(item.wait_timeout_ms)),
+          ],
         ]),
       });
     case "command_write_stdin":
@@ -1788,9 +1791,51 @@ function summarizeCommandWait(item: Extract<ThreadItem, { type: "commandWait" }>
       ? ""
       : `, exit ${item.exitCode}`;
   const seconds = Number.isFinite(item.wallTimeSeconds)
-    ? ` in ${item.wallTimeSeconds.toFixed(3)}s`
+    ? ` in ${formatSecondsDuration(item.wallTimeSeconds)}`
     : "";
-  return `Waited for command ${item.commandId}${notification}: ${item.status}${exitCode}${seconds}.`;
+  const timeout = Number.isFinite(item.waitTimeoutMs)
+    ? ` with timeout ${formatMillisecondsDuration(item.waitTimeoutMs)}`
+    : "";
+  return `Waited for command ${item.commandId}${timeout}${notification}: ${item.status}${exitCode}${seconds}.`;
+}
+
+function formatSecondsDuration(totalSeconds: number) {
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+    return "0s";
+  }
+
+  const totalMilliseconds = Math.round(totalSeconds * 1000);
+  return formatMillisecondsDuration(totalMilliseconds);
+}
+
+function formatMillisecondsDuration(totalMilliseconds: number) {
+  if (!Number.isFinite(totalMilliseconds) || totalMilliseconds <= 0) {
+    return "0ms";
+  }
+
+  if (totalMilliseconds < 1000) {
+    return `${Math.round(totalMilliseconds)}ms`;
+  }
+
+  const roundedSeconds = Math.round(totalMilliseconds / 1000);
+  if (roundedSeconds >= 60) {
+    const minutes = Math.floor(roundedSeconds / 60);
+    const remainingSeconds = roundedSeconds % 60;
+    if (remainingSeconds === 0) {
+      return `${minutes}m`;
+    }
+    return `${minutes}m ${remainingSeconds}s`;
+  }
+
+  const seconds = totalMilliseconds / 1000;
+  return `${formatDurationNumber(seconds)}s`;
+}
+
+function formatDurationNumber(value: number) {
+  if (Number.isInteger(value)) {
+    return value.toString();
+  }
+  return value.toFixed(2).replace(/\.?0+$/u, "");
 }
 
 function summarizeCommandWriteStdin(
