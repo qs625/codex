@@ -47,7 +47,7 @@ impl ToolExecutor<ToolInvocation> for Handler {
     }
 }
 
-async fn handle_spawn_agent(
+pub(crate) async fn handle_spawn_agent(
     invocation: ToolInvocation,
 ) -> Result<SpawnAgentResult, FunctionCallError> {
     let ToolInvocation {

@@ -37,3 +37,30 @@ mod list_agents;
 mod message_tool;
 mod spawn;
 mod wait_agent;
+
+pub(crate) async fn handle_workflow_spawn_agent(
+    invocation: ToolInvocation,
+) -> Result<JsonValue, FunctionCallError> {
+    let result = spawn::handle_spawn_agent(invocation).await?;
+    serde_json::to_value(result).map_err(|err| {
+        FunctionCallError::Fatal(format!("failed to serialize workflow spawn result: {err}"))
+    })
+}
+
+pub(crate) async fn handle_workflow_followup_task(
+    invocation: ToolInvocation,
+    target: String,
+    message: String,
+) -> Result<JsonValue, FunctionCallError> {
+    message_tool::handle_message_string_tool(invocation, target, message).await?;
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+pub(crate) async fn handle_workflow_wait_agent(
+    invocation: ToolInvocation,
+) -> Result<JsonValue, FunctionCallError> {
+    let result = wait_agent::handle_wait_agent(invocation).await?;
+    serde_json::to_value(result).map_err(|err| {
+        FunctionCallError::Fatal(format!("failed to serialize workflow wait result: {err}"))
+    })
+}

@@ -50,7 +50,7 @@ workflow 会创建长期 agent session：
 
 `Agent(id)` 应在 resume 时绑定回已有 agent session，不重复 spawn。
 
-当前 Rust runner 已能执行该 TypeScript entry，并会把 `Agent`、`followup`、`shell` 请求记录到 run output events 中；真实 subagent spawn/followup/shell 执行仍未接入。这个 workflow 目前可作为 durable runner、snapshot、resume、abort 和静态图 authoring 的端到端示例，不代表已经会自动完成真实工程开发。
+当前 Rust runner 已能执行该 TypeScript entry，并在通过 `workflow_start` / `workflow_resume` model tool 启动时把 `Agent`、`followup`、`wait` 请求桥接到真实 MultiAgent V2 runtime。`Agent(id)` 的 binding 会持久化到 workflow run snapshot，resume 后同 id 返回已有 session，不重复 spawn。`wf.shell` 尚未安全接入 unified exec，调用时会返回明确 unsupported error。
 
 ## Static Graph
 
@@ -86,4 +86,4 @@ Dynamic Workflow runner 已支持：
 - 持久化 `run.json`，支持 status/resume/abort 查询和恢复。
 - 通过 typed `WorkflowRunProgress` 展示 start/resume/abort 进度。
 
-尚未支持真实 MultiAgent runtime callback，因此 `wf.Agent` 和 `wf.shell` 在当前 runner 中是结构化占位 API。
+已支持 `wf.Agent`、`agent.followup()` 和 `agent.wait()` 的真实 MultiAgent runtime callback；`wf.shell` 仍是明确 unsupported，后续接入前不得绕过 exec permission、hook 或 typed command lifecycle。

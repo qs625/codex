@@ -1,6 +1,11 @@
+pub mod runner_bridge;
 pub mod workflow_runs;
 pub mod workflows;
 
+pub use runner_bridge::WorkflowAgentBinding;
+pub use runner_bridge::WorkflowRuntimeBridge;
+pub use runner_bridge::WorkflowRuntimeError;
+pub use runner_bridge::WorkflowRuntimeRequest;
 pub use workflow_runs::WorkflowRun;
 pub use workflow_runs::WorkflowRunManager;
 pub use workflow_runs::WorkflowRunStatus;

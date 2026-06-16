@@ -95,7 +95,7 @@ impl ToolOutput for WaitAgentResult {
     }
 }
 
-async fn handle_wait_agent(
+pub(crate) async fn handle_wait_agent(
     invocation: ToolInvocation,
 ) -> Result<WaitAgentResult, FunctionCallError> {
     let ToolInvocation {

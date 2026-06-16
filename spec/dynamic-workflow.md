@@ -114,22 +114,22 @@ Workflow 图分两层：
 
 ### 进程模型
 
-app-server 创建 durable `WorkflowRun`，然后启动 Node runner 子进程：
+Rust host 创建 durable `WorkflowRun`，然后启动 Node runner 子进程：
 
 ```text
-app-server
+Rust host
   -> node workflow-runner.mjs --mode run --bundle workflow.bundle.mjs --run-id wf_123
 ```
 
-runner 与 app-server 通过父子进程 stdio 管道进行 NDJSON RPC：
+runner 与 Rust host 通过父子进程 stdio 管道进行 NDJSON RPC：
 
 ```text
-Node stdout -> app-server 读取 RPC request
-Node stdin  <- app-server 写入 RPC response
+Node stdout -> Rust host 读取 RPC request
+Node stdin  <- Rust host 写入 RPC response
 Node stderr -> 普通日志
 ```
 
-workflow 脚本不能直接调用真实系统能力。`wf.Agent`、`wf.shell`、`wf.emit` 等方法都通过 RPC 回调 app-server，由 app-server 执行已有 agent、tool、shell、permission 逻辑。
+workflow 脚本不能直接调用真实系统能力。`wf.Agent`、`wf.shell`、`wf.emit` 等方法都通过 RPC 回调 Rust host；只有 `workflow_start` / `workflow_resume` model tool 启动的 runner 会绑定当前 tool turn 的 runtime bridge，并由该 bridge 执行已有 agent、tool、shell、permission 逻辑。app-server v2 `workflow/*` 客户端控制面不绑定这层 bridge。
 
 ### TypeScript 支持
 
@@ -210,7 +210,7 @@ Workflow 能力通过 agent session 可用的 tools 暴露：
 - resume：对未 abort 的 run 更新 inputs/revision，并基于 snapshot entry 重新执行 runner。
 - abort：向 live runner 发送 abort 信号，停止子进程并持久化 aborted 状态；如果没有 live runner，也会把 durable run 标记为 aborted。
 
-当前 runner 已能通过 Node 加载 workflow `.ts` module，并提供最小 `@codex/workflow` shim 支持 `defineWorkflow()`。workflow 目录内的相对 import 会随 snapshot 一起保留；仍不提供独立 TypeScript bundler/transpiler，脚本必须是当前 Node 运行时可加载的 `.ts`。第一版 runtime API 仍是薄实现：`wf.emit` 写入 runtime events，`wf.Agent`/`wf.shell` 记录请求并返回结构化占位结果，不直接驱动 MultiAgent runtime 或真实 shell。真实 agent binding、durable shell step 和跨进程 RPC callback 是后续扩展点。
+当前 runner 已能通过 Node 加载 workflow `.ts` module，并提供最小 `@codex/workflow` shim 支持 `defineWorkflow()`。workflow 目录内的相对 import 会随 snapshot 一起保留；仍不提供独立 TypeScript bundler/transpiler，脚本必须是当前 Node 运行时可加载的 `.ts`。通过 `workflow_start` / `workflow_resume` model tool 启动的 runner 会绑定当前 turn 的 runtime bridge：`wf.Agent` 通过 stdio NDJSON RPC 调用 host spawn/bind agent session，`agent.followup()` 和 `agent.wait()` 复用 MultiAgent V2 的 typed followup/wait 语义；同一 run 内的 agent binding 会持久化到 run snapshot，resume 时同 id 返回已有 binding。app-server v2 `workflow/*` 控制面仍只是客户端控制面，不绑定 runner-runtime bridge。`wf.shell` 第一阶段返回明确 unsupported RPC error，不继续静默占位，也不绕过 exec permission、hook 或 typed command lifecycle。
 
 后续可以增加：
 
@@ -284,7 +284,7 @@ thread 状态能表示 agent 是否 running/completed，但不能表达：
 
 ## 开放问题
 
-- `wf.shell` 后续是否接入现有 command/session 工具并提供 durable resume。
+- `wf.shell` 后续是否接入现有 command/session 工具并提供 durable resume；接入前必须继续返回明确 unsupported error。
 - workflow run state 当前存储在独立 `$CODEX_HOME/workflow-runs`，后续是否迁移到 thread-store/state DB。
 - workflow typed `ResponseItem` 的粒度：单一 `WorkflowEvent` 还是多个具体 variant。
 - 客户端是否使用 React Flow + ELK.js 实现 DAG 展示。

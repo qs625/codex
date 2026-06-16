@@ -1,7 +1,10 @@
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
+use crate::tools::context::ToolCallSource;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
+use crate::tools::context::SharedTurnDiffTracker;
+use crate::tools::handlers::multi_agents_v2;
 use crate::tools::handlers::parse_arguments;
 use codex_tools::WORKFLOW_ABORT_TOOL_NAME;
 use codex_tools::WORKFLOW_DESCRIBE_TOOL_NAME;
@@ -17,8 +20,12 @@ use codex_tools::create_workflow_start_tool;
 use codex_tools::create_workflow_status_tool;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
+use crate::workflow_runs::WorkflowAgentBinding;
 use crate::workflow_runs::WorkflowRun;
 use crate::workflow_runs::WorkflowRunStatus;
+use crate::workflow_runs::WorkflowRuntimeBridge;
+use crate::workflow_runs::WorkflowRuntimeError;
+use crate::workflow_runs::WorkflowRuntimeRequest;
 use crate::workflows::load_workflow_registry;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::models::WorkflowRunProgressEvent;
@@ -27,6 +34,10 @@ use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use serde::Deserialize;
 use serde_json::Value;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 pub struct WorkflowListHandler;
 pub struct WorkflowDescribeHandler;
@@ -64,6 +75,170 @@ struct WorkflowAbortArgs {
     run_id: String,
     #[serde(default)]
     reason: Option<String>,
+}
+
+struct CodexWorkflowRuntimeBridge {
+    session: Arc<crate::session::session::Session>,
+    turn: Arc<crate::session::turn_context::TurnContext>,
+    cancellation_token: CancellationToken,
+    tracker: SharedTurnDiffTracker,
+}
+
+impl WorkflowRuntimeBridge for CodexWorkflowRuntimeBridge {
+    fn call(
+        &self,
+        request: WorkflowRuntimeRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, WorkflowRuntimeError>> + Send + '_>> {
+        Box::pin(async move { self.handle_request(request).await })
+    }
+}
+
+impl CodexWorkflowRuntimeBridge {
+    async fn handle_request(
+        &self,
+        request: WorkflowRuntimeRequest,
+    ) -> Result<Value, WorkflowRuntimeError> {
+        match request.method.as_str() {
+            "agent.spawn" => self.spawn_agent(request).await,
+            "agent.followup" => self.followup_agent(request).await,
+            "agent.wait" => self.wait_agent(request).await,
+            "shell.exec" => Err(WorkflowRuntimeError::unsupported(
+                "wf.shell is not connected to exec_command in this phase; use an agent to request shell work",
+            )),
+            method => Err(WorkflowRuntimeError::unsupported(format!(
+                "unsupported workflow runtime method `{method}`"
+            ))),
+        }
+    }
+
+    async fn spawn_agent(
+        &self,
+        request: WorkflowRuntimeRequest,
+    ) -> Result<Value, WorkflowRuntimeError> {
+        let agent_id = required_string(&request.params, "id")?;
+        let options = request.params.get("options").cloned().unwrap_or(Value::Null);
+        let message = required_string(&options, "message")?;
+        let mut args = serde_json::json!({
+            "message": message,
+            "task_name": agent_id.clone(),
+        });
+        copy_option_string(&mut args, "agent_type", &options, &["type", "agent_type"]);
+        copy_option_string(&mut args, "cwd", &options, &["cwd"]);
+        copy_option_string(&mut args, "model", &options, &["model"]);
+        copy_option_string(
+            &mut args,
+            "reasoning_effort",
+            &options,
+            &["reasoningEffort", "reasoning_effort"],
+        );
+        copy_option_string(
+            &mut args,
+            "service_tier",
+            &options,
+            &["serviceTier", "service_tier"],
+        );
+        copy_option_string(&mut args, "agent_mode", &options, &["agentMode", "agent_mode"]);
+        copy_option_string(&mut args, "fork_turns", &options, &["forkTurns", "fork_turns"]);
+
+        let invocation = self.invocation("spawn_agent", &request, args)?;
+        let result = multi_agents_v2::handle_workflow_spawn_agent(invocation)
+            .await
+            .map_err(runtime_error_from_tool_error)?;
+        let agent_path = required_string(&result, "task_name")?;
+        serde_json::to_value(WorkflowAgentBinding {
+            agent_id,
+            agent_path,
+            thread_id: None,
+            status: None,
+            options,
+        })
+        .map_err(|err| WorkflowRuntimeError::invalid_request(err.to_string()))
+    }
+
+    async fn followup_agent(
+        &self,
+        request: WorkflowRuntimeRequest,
+    ) -> Result<Value, WorkflowRuntimeError> {
+        let target = required_string(&request.params, "target")?;
+        let message = required_string(&request.params, "message")?;
+        let args = serde_json::json!({
+            "target": target.clone(),
+            "message": message.clone(),
+        });
+        multi_agents_v2::handle_workflow_followup_task(
+            self.invocation("followup_task", &request, args)?,
+            target,
+            message,
+        )
+        .await
+        .map_err(runtime_error_from_tool_error)
+    }
+
+    async fn wait_agent(
+        &self,
+        request: WorkflowRuntimeRequest,
+    ) -> Result<Value, WorkflowRuntimeError> {
+        let target = required_string(&request.params, "target")?;
+        let args = serde_json::json!({ "target": target.clone() });
+        multi_agents_v2::handle_workflow_wait_agent(self.invocation("wait_agent", &request, args)?)
+            .await
+            .map_err(runtime_error_from_tool_error)
+    }
+
+    fn invocation(
+        &self,
+        tool_name: &str,
+        request: &WorkflowRuntimeRequest,
+        arguments: Value,
+    ) -> Result<ToolInvocation, WorkflowRuntimeError> {
+        let arguments = serde_json::to_string(&arguments)
+            .map_err(|err| WorkflowRuntimeError::invalid_request(err.to_string()))?;
+        Ok(ToolInvocation {
+            session: Arc::clone(&self.session),
+            turn: Arc::clone(&self.turn),
+            cancellation_token: self.cancellation_token.clone(),
+            tracker: Arc::clone(&self.tracker),
+            call_id: format!(
+                "workflow:{}:{}:{}",
+                request.run_id, request.rpc_id, tool_name
+            ),
+            tool_name: ToolName::plain(tool_name),
+            source: ToolCallSource::Direct,
+            payload: ToolPayload::Function { arguments },
+        })
+    }
+}
+
+fn required_string(value: &Value, field: &str) -> Result<String, WorkflowRuntimeError> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| WorkflowRuntimeError::invalid_request(format!("missing `{field}`")))
+}
+
+fn copy_option_string(target: &mut Value, target_field: &str, source: &Value, fields: &[&str]) {
+    let Some(value) = fields
+        .iter()
+        .find_map(|field| source.get(*field).and_then(Value::as_str))
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return;
+    };
+    target[target_field] = Value::String(value.to_string());
+}
+
+fn runtime_error_from_tool_error(error: FunctionCallError) -> WorkflowRuntimeError {
+    match error {
+        FunctionCallError::RespondToModel(message) => {
+            WorkflowRuntimeError::invalid_request(message)
+        }
+        FunctionCallError::Fatal(message) => WorkflowRuntimeError {
+            code: "runtime_error".to_string(),
+            message,
+        },
+    }
 }
 
 #[async_trait::async_trait]
@@ -158,6 +333,8 @@ impl ToolExecutor<ToolInvocation> for WorkflowStartHandler {
         let ToolInvocation {
             session,
             turn,
+            cancellation_token,
+            tracker,
             payload,
             ..
         } = invocation;
@@ -172,9 +349,15 @@ impl ToolExecutor<ToolInvocation> for WorkflowStartHandler {
 
         let registry = load_workflow_registry(&turn.config);
         let updates = session.workflow_runs.subscribe();
+        let bridge: Arc<dyn WorkflowRuntimeBridge> = Arc::new(CodexWorkflowRuntimeBridge {
+            session: Arc::clone(&session),
+            turn: Arc::clone(&turn),
+            cancellation_token: cancellation_token.clone(),
+            tracker: Arc::clone(&tracker),
+        });
         let run = session
             .workflow_runs
-            .start(&registry, workflow, args.inputs.unwrap_or(Value::Null))
+            .start_with_bridge(&registry, workflow, args.inputs.unwrap_or(Value::Null), bridge)
             .await
             .map_err(FunctionCallError::RespondToModel)?;
         record_workflow_progress(&session, &turn, &run, WorkflowRunProgressKind::Started).await;
@@ -241,6 +424,8 @@ impl ToolExecutor<ToolInvocation> for WorkflowResumeHandler {
         let ToolInvocation {
             session,
             turn,
+            cancellation_token,
+            tracker,
             payload,
             ..
         } = invocation;
@@ -254,9 +439,15 @@ impl ToolExecutor<ToolInvocation> for WorkflowResumeHandler {
         }
 
         let updates = session.workflow_runs.subscribe();
+        let bridge: Arc<dyn WorkflowRuntimeBridge> = Arc::new(CodexWorkflowRuntimeBridge {
+            session: Arc::clone(&session),
+            turn: Arc::clone(&turn),
+            cancellation_token: cancellation_token.clone(),
+            tracker: Arc::clone(&tracker),
+        });
         let run = session
             .workflow_runs
-            .resume(run_id, args.inputs)
+            .resume_with_bridge(run_id, args.inputs, bridge)
             .await
             .map_err(FunctionCallError::RespondToModel)?;
         record_workflow_progress(&session, &turn, &run, WorkflowRunProgressKind::Resumed).await;

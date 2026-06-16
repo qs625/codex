@@ -132,7 +132,7 @@ Dynamic Workflow 需要明确区分三层入口，避免把 client RPC、模型 
 
 其中 `workflow_list`、`workflow_describe` 和 init context 使用同一套 registry 数据。`workflow_start/status/resume/abort` 当前管理 durable `WorkflowRun`，会返回 `runId`、workflow metadata、状态、runnerStatus、inputs、revision、时间戳和 snapshot path。`start/resume/abort` 会记录 typed `WorkflowRunProgress`，并通过共享 `ResponseItem -> ThreadItem` projector 投影为客户端 `ThreadItem::WorkflowRunProgress`。
 
-当前 runner 会 snapshot workflow 目录到 `$CODEX_HOME/workflow-runs/<runId>`，写入 `@codex/workflow` shim，并启动 Node 子进程执行 TypeScript entry。`runnerStatus` 使用 `runner_starting`、`runner_active`、`runner_resuming`、`completed`、`failed`、`aborted` 表达当前能力边界。真实 agent binding、shell 执行和 app-server v2 直连 RPC 仍是后续阶段。
+当前 runner 会 snapshot workflow 目录到 `$CODEX_HOME/workflow-runs/<runId>`，写入 `@codex/workflow` shim，并启动 Node 子进程执行 TypeScript entry。`runnerStatus` 使用 `runner_starting`、`runner_active`、`runner_resuming`、`completed`、`failed`、`aborted` 表达当前能力边界。通过 `workflow_start` / `workflow_resume` model tool 启动时，runner 会绑定当前 turn 的 runtime bridge；app-server v2 直连 workflow RPC 不绑定这层 bridge。
 
 ## TypeScript Runner
 
@@ -150,7 +150,7 @@ runner 负责：
 - 调用 `definition.run(wf)`。
 - 将最终 `{ output }` JSON 写到 stdout，Rust 从 stdout 最后一条可解析输出中读取结果。
 
-当前 `wf.Agent`、`agent.wait()`、`agent.followup()` 和 `wf.shell()` 仍是结构化占位 API，只写入 runner output events，不调用真实 MultiAgent runtime 或 unified exec。
+当前 `wf.Agent`、`agent.wait()` 和 `agent.followup()` 已通过 runner-runtime bridge 调用真实 MultiAgent V2 runtime。`wf.shell()` 仍不调用 unified exec：第一阶段会返回明确 unsupported RPC error，避免绕过 exec permission、hook、environment 和 typed command item lifecycle。
 
 用户 workflow 只导出 definition：
 
@@ -163,9 +163,9 @@ export default defineWorkflow({
 });
 ```
 
-## Runner-runtime Bridge（后续设计草案）
+## Runner-runtime Bridge
 
-后续将 `wf.Agent`、`agent.wait()`、`agent.followup()` 和 `wf.shell()` 接入真实 runtime 时，第一阶段使用父子进程 stdio line-delimited JSON。该 bridge 只由 `workflow_start`/`workflow_resume` tool 启动的 runner 绑定当前 `Session`、`TurnContext` 和当前 agent path；app-server `workflow/*` RPC 不绑定这层 bridge。
+`wf.Agent`、`agent.wait()` 和 `agent.followup()` 接入真实 runtime 时，第一阶段使用父子进程 stdio line-delimited JSON。该 bridge 只由 `workflow_start`/`workflow_resume` tool 启动的 runner 绑定当前 `Session`、`TurnContext` 和当前 agent path；app-server `workflow/*` RPC 不绑定这层 bridge。
 
 ```text
 Node stdout -> Rust host 读取 runner frames
@@ -201,10 +201,10 @@ shell.exec
 
 第一阶段能力边界：
 
-- `agent.spawn` 映射到 MultiAgent V2 `spawn_agent`，复用 canonical typed spawn lifecycle，返回 canonical agent path、thread id 和 status。
+- `agent.spawn` 映射到 MultiAgent V2 `spawn_agent`，复用 canonical typed spawn lifecycle，返回 canonical agent path。绑定会写入 `WorkflowRun.bindings`，同一 run 内重复 `Agent(id)` 和 resume 后同 id 会返回已有 binding，不重复 spawn。
 - `agent.followup` 映射到 MultiAgent V2 `followup_task`，复用 typed inter-agent communication，不从 raw marker、assistant text 或 legacy envelope 解析。
-- `agent.wait` 暂不要求父模型调用 `wait_agent`，也不通过模型 tool 轮询。若第一阶段尚未接入 runner 内部的 typed child completion/status subscription，必须返回明确 unsupported typed error。
-- `wf.shell` 后续应映射到真实 `exec_command`/unified exec 能力，并沿用权限、hook、environment 和 typed command item lifecycle。若第一阶段尚未安全接入，必须返回明确 unsupported typed error，不得继续无效果占位。
+- `agent.wait` 复用 MultiAgent V2 wait 的 pending mailbox/status watch 语义，不通过 raw marker、assistant text 或 legacy envelope 解析。
+- `wf.shell` 后续应映射到真实 `exec_command`/unified exec 能力，并沿用权限、hook、environment 和 typed command item lifecycle。第一阶段尚未安全接入时返回明确 unsupported typed error，不得继续无效果占位。
 
 真实权限、cwd、approval、agent primitive 都在 Rust host 中执行，workflow 脚本不直接绕过现有策略。workflow run progress 继续通过 typed `ResponseItem -> ThreadItem` live/history 路径展示，不新增 raw marker 或 assistant message JSON 解析路径。
 
