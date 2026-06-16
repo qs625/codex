@@ -6,20 +6,14 @@ Complete all Active Work recorded in this progress file.
 
 ## Active Work
 
-- id: wait-tool-backoff-semantics
-  owner: /root/my_codex_pm/wait_tool_backoff_owner
-  worktree: /Users/bytedance/Projects/my-codex/.worktrees/wait-tool-backoff
-  branch: agent/wait-tool-backoff
-  status: in_progress
-  objective: Align command_wait and wait_agent with per-call wait window semantics and typed ThreadItem visibility for each wait tool call/return.
-  last_update: 2026-06-16
-  next_action: Owner to change command_wait and wait_agent so each call waits one current window and returns timeout/running, with runtime backoff persisted across calls and reset on event; tool call started/returned display must go through typed ResponseItem -> ThreadItem and show the current wait window, not the hard cap.
-  blockers: None.
-  validation: pending
-  commit: pending
+None.
 
 ## Completed
 
+- commit: `c2a93ce7b`
+  summary: `command_wait` and `wait_agent` now use per-call backoff windows with reset-on-event behavior, typed wait timeout display, and root-worker filtering for raw wait tool output JSON.
+  validation: `cargo test -p codex-command-runtime`, `cargo test -p codex-core command_wait_`, `cargo test -p codex-app-server response_item_completed_emits_command_wait_thread_item`, `cargo build -p codex-app-server --bin codex-app-server`, root-worker conversation tests, and `git diff --check` passed.
+  residual_risk: Full workspace tests were not run; `wait_agent` broader integration coverage can still be expanded later.
 - commit: `a231dfc2c`
   summary: Goal lifecycle updates now produce typed conversation items via `ResponseItem::ThreadGoalUpdate -> ThreadItem::ThreadGoalUpdate`, with root-worker rendering and schema fixtures updated.
   validation: `cargo test -p codex-app-server-protocol --test schema_fixtures`, `cargo test -p codex-core goal_tool`, `cargo build -p codex-app-server --bin codex-app-server`, root-worker build, and targeted conversation tests passed.
