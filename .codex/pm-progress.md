@@ -6,17 +6,6 @@ Complete all Active Work recorded in this progress file.
 
 ## Active Work
 
-- id: dynamic-workflow-sdk-runtime
-  owner: /root/my_codex_pm/workflow_sdk_runtime_owner
-  worktree: /Users/bytedance/Projects/my-codex/.worktrees/workflow-sdk-runtime
-  branch: agent/workflow-sdk-runtime
-  status: in_progress
-  objective: Implement the Dynamic Workflow runner-runtime bridge for TypeScript SDK calls, preserving app-server workflow RPC as control plane only.
-  last_update: 2026-06-16
-  next_action: Owner to investigate existing workflow runner and implement real TypeScript SDK runtime bridge.
-  blockers: None.
-  validation: pending
-  commit: pending
 - id: goal-threaditem-display
   owner: /root/my_codex_pm/goal_threaditem_display_owner
   worktree: /Users/bytedance/Projects/my-codex/.worktrees/goal-threaditem-display
@@ -42,6 +31,10 @@ Complete all Active Work recorded in this progress file.
 
 ## Completed
 
+- commit: `b41bdda04`
+  summary: Dynamic Workflow TypeScript SDK runtime bridge completed and merged; `wf.Agent`, `agent.followup`, and `agent.wait` now bind to the current workflow tool runtime context, while `wf.shell` is an explicit unsupported structured response.
+  validation: `cargo test -p codex-workflow`, `cargo build -p codex-app-server --bin codex-app-server`, `RUST_MIN_STACK=16777216 cargo test -p codex-core --test all workflow_tools -- --test-threads=1`, and `git diff --check` passed.
+  residual_risk: Default-stack `codex-core` workflow_tools run still stack-overflows in the known broad test path; user said stack overflow failures are non-blocking.
 - commit: `0025152a0`
   summary: Root-worker goal slash actions completed and merged.
   validation: Targeted root-worker tests, `tsc --noEmit`, root-worker build, and `git diff --check` passed.
