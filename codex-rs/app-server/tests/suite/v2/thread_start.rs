@@ -21,6 +21,7 @@ use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::ThreadStartedNotification;
 use codex_app_server_protocol::ThreadStatus;
 use codex_app_server_protocol::ThreadStatusChangedNotification;
+use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::TurnEnvironmentParams;
 use codex_config::loader::project_trust_key;
 use codex_config::types::AuthCredentialsStoreMode;
@@ -107,6 +108,9 @@ async fn thread_start_creates_thread_and_emits_started() -> Result<()> {
     let req_id = mcp
         .send_thread_start_request(ThreadStartParams {
             model: Some("gpt-5.2".to_string()),
+            developer_instructions: Some(
+                "Agent type file body: always inspect the active task.".to_string(),
+            ),
             thread_source: Some(ThreadSource::User),
             ..Default::default()
         })
@@ -144,6 +148,31 @@ async fn thread_start_creates_thread_and_emits_started() -> Result<()> {
     );
     assert_eq!(thread.status, ThreadStatus::Idle);
     assert_eq!(thread.thread_source, Some(ThreadSource::User));
+    let ThreadItem::InjectedContext {
+        title,
+        preview,
+        sections,
+        ..
+    } = thread
+        .turns
+        .first()
+        .and_then(|turn| turn.items.first())
+        .expect("thread/start response should include initial context item")
+    else {
+        anyhow::bail!("thread/start response should include an injected context item");
+    };
+    assert_eq!(title, "Init Context");
+    assert!(
+        preview.contains("Developer"),
+        "initial context preview should mention Developer, got {preview}"
+    );
+    assert!(
+        sections.iter().any(|section| section.label == "Developer"
+            && section
+                .text
+                .contains("Agent type file body: always inspect the active task.")),
+        "initial context should include developer instructions, got {sections:?}"
+    );
     let thread_path = thread.path.clone().expect("thread path should be present");
     assert!(thread_path.is_absolute(), "thread path should be absolute");
     assert!(
@@ -231,7 +260,37 @@ async fn thread_start_creates_thread_and_emits_started() -> Result<()> {
     );
     let started: ThreadStartedNotification =
         serde_json::from_value(notif.params.expect("params must be present"))?;
-    assert_eq!(started.thread, thread);
+    let mut expected_started_thread = thread.clone();
+    expected_started_thread.turns.clear();
+    assert_eq!(started.thread, expected_started_thread);
+
+    let item_completed = loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let message = timeout(remaining, mcp.read_next_message()).await??;
+        let JSONRPCMessage::Notification(notif) = message else {
+            continue;
+        };
+        if notif.method == "item/completed" {
+            break notif;
+        }
+    };
+    let item_completed_params = item_completed
+        .params
+        .expect("item/completed params must be present");
+    assert_eq!(
+        item_completed_params
+            .get("threadId")
+            .and_then(Value::as_str),
+        Some(thread.id.as_str())
+    );
+    assert_eq!(
+        item_completed_params
+            .get("item")
+            .and_then(|item| item.get("type"))
+            .and_then(Value::as_str),
+        Some("injectedContext"),
+        "thread/start should replay initial context as a typed item/completed notification"
+    );
 
     Ok(())
 }

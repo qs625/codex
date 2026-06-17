@@ -5,6 +5,7 @@ pub(super) const THREAD_UNLOADING_DELAY: Duration = Duration::from_secs(30 * 60)
 #[derive(Clone)]
 pub(super) struct ListenerTaskContext {
     pub(super) thread_manager: Arc<ThreadManager>,
+    pub(super) thread_store: Option<Arc<dyn ThreadStore>>,
     pub(super) thread_state_manager: ThreadStateManager,
     pub(super) outgoing: Arc<OutgoingMessageSender>,
     pub(super) pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,

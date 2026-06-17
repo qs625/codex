@@ -711,6 +711,45 @@ test("mergeThreadSnapshot preserves an in-flight turn missing from a stale snaps
   assert.deepEqual(merged.turns, existing.turns);
 });
 
+test("mergeThreadSnapshot preserves init context when a started snapshot omits turns", () => {
+  const initContextTurn: Turn = {
+    id: "turn-init",
+    items: [
+      {
+        type: "injectedContext",
+        id: "ctx-1",
+        title: "Init Context",
+        preview: "Developer",
+        sections: [
+          {
+            label: "Developer",
+            text: "Agent type file body: always inspect the active task.",
+          },
+        ],
+      },
+    ],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 1,
+    completedAt: 2,
+    durationMs: 1000,
+  };
+  const existing = {
+    ...makeThread(),
+    turns: [initContextTurn],
+  };
+
+  const merged = mergeThreadSnapshot(existing, {
+    ...makeThread(),
+    turns: [],
+  });
+
+  assert.deepEqual(buildConversationEntries(merged).map((entry) => entry.id), [
+    "ctx-1",
+  ]);
+});
+
 test("mergeThreadSnapshot preserves same-content in-flight items with different ids", () => {
   const restoredTurn = {
     id: "restored-turn",
