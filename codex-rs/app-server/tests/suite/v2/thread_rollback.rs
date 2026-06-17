@@ -131,7 +131,7 @@ async fn thread_rollback_drops_last_turns_and_persists_to_rollout() -> Result<()
     );
 
     assert_eq!(rolled_back_thread.turns.len(), 2);
-    assert_eq!(rolled_back_thread.status, ThreadStatus::Idle);
+    assert_eq!(rolled_back_thread.status, ThreadStatus::Complete);
     assert_eq!(
         rolled_back_thread
             .turns
@@ -174,7 +174,7 @@ async fn thread_rollback_drops_last_turns_and_persists_to_rollout() -> Result<()
     let ThreadResumeResponse { thread, .. } = to_response::<ThreadResumeResponse>(resume_resp)?;
 
     assert_eq!(thread.turns.len(), 2);
-    assert_eq!(thread.status, ThreadStatus::Idle);
+    assert_eq!(thread.status, ThreadStatus::Complete);
     assert_eq!(
         thread
             .turns

@@ -53,6 +53,7 @@ mod thread_processor_behavior_tests {
     use chrono::Utc;
     use codex_app_server_protocol::ServerRequestPayload;
     use codex_app_server_protocol::ThreadActiveFlag;
+    use codex_app_server_protocol::ThreadIdleReason;
     use codex_app_server_protocol::ThreadItem;
     use codex_app_server_protocol::ToolRequestUserInputParams;
     use codex_config::CloudRequirementsLoader;
@@ -228,8 +229,8 @@ mod thread_processor_behavior_tests {
             .await;
         assert_eq!(
             status,
-            ThreadStatus::Active {
-                active_flags: vec![ThreadActiveFlag::WaitingOnEventTool],
+            ThreadStatus::Idle {
+                reason: ThreadIdleReason::WaitCommand,
             }
         );
 
@@ -246,7 +247,7 @@ mod thread_processor_behavior_tests {
             thread_watch_manager
                 .loaded_status_for_thread(&thread_id.to_string())
                 .await,
-            ThreadStatus::Idle
+            ThreadStatus::Complete
         );
     }
 
@@ -341,7 +342,7 @@ mod thread_processor_behavior_tests {
 
         let turns = reconstruct_thread_turns_for_turns_list(
             &persisted_items,
-            ThreadStatus::Idle,
+            ThreadStatus::Complete,
             /*has_live_running_thread*/ false,
             Some(active_turn.clone()),
         );

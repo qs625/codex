@@ -142,7 +142,7 @@ async fn thread_start_creates_thread_and_emits_started() -> Result<()> {
         !thread.ephemeral,
         "new persistent threads should not be ephemeral"
     );
-    assert_eq!(thread.status, ThreadStatus::Idle);
+    assert_eq!(thread.status, ThreadStatus::Complete);
     assert_eq!(thread.thread_source, Some(ThreadSource::User));
     let thread_path = thread.path.clone().expect("thread path should be present");
     assert!(thread_path.is_absolute(), "thread path should be absolute");

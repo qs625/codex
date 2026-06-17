@@ -5,6 +5,7 @@ use crate::agent::registry::AgentRegistry;
 use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::resolve_role_config;
 use crate::agent::status::is_final;
+use crate::codex_thread::CodexThread;
 use crate::codex_thread::ThreadConfigSnapshot;
 use crate::session::emit_subagent_session_started;
 use crate::shell_snapshot::ShellSnapshot;
@@ -792,7 +793,9 @@ impl AgentControl {
         let Ok(thread) = state.get_thread(agent_id).await else {
             return AgentStatus::NotFound;
         };
-        thread.agent_status().await
+        let status = thread.agent_status().await;
+        maybe_notify_parent_if_final(&thread, &status).await;
+        status
     }
 
     /// Returns whether the live agent thread has `feature` enabled.
@@ -991,9 +994,11 @@ impl AgentControl {
             && let Some(root_thread_id) = self.state.agent_id_for_path(&root_path)
             && let Ok(root_thread) = state.get_thread(root_thread_id).await
         {
+            let agent_status = root_thread.agent_status().await;
+            maybe_notify_parent_if_final(&root_thread, &agent_status).await;
             agents.push(ListedAgent {
                 agent_name: root_path.to_string(),
-                agent_status: root_thread.agent_status().await,
+                agent_status,
                 last_task_message: Some(ROOT_LAST_TASK_MESSAGE.to_string()),
             });
         }
@@ -1018,9 +1023,11 @@ impl AgentControl {
                 .map(ToString::to_string)
                 .unwrap_or_else(|| thread_id.to_string());
             let last_task_message = metadata.last_task_message.clone();
+            let agent_status = thread.agent_status().await;
+            maybe_notify_parent_if_final(&thread, &agent_status).await;
             agents.push(ListedAgent {
                 agent_name,
-                agent_status: thread.agent_status().await,
+                agent_status,
                 last_task_message,
             });
         }
@@ -1241,6 +1248,16 @@ fn agent_matches_prefix(agent_path: Option<&AgentPath>, prefix: &AgentPath) -> b
                 .strip_prefix(prefix.as_str())
                 .is_some_and(|suffix| suffix.starts_with('/'))
     })
+}
+
+async fn maybe_notify_parent_if_final(thread: &Arc<CodexThread>, status: &AgentStatus) {
+    if is_final(status) {
+        thread
+            .codex
+            .session
+            .maybe_notify_parent_of_final_status_for_current_source()
+            .await;
+    }
 }
 
 pub(crate) fn render_input_preview(initial_operation: &Op) -> String {

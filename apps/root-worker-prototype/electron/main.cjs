@@ -747,6 +747,11 @@ function normalizeStatusValue(status) {
 
 function normalizeThreadStatus(status) {
   if (status && typeof status === "object" && typeof status.type === "string") {
+    if (status.type === "idle") {
+      return status.reason === "waitChild" || status.reason === "waitCommand"
+        ? { type: "idle", reason: status.reason }
+        : { type: "complete" };
+    }
     return {
       type: status.type,
       ...(status.type === "active"
@@ -760,7 +765,7 @@ function normalizeThreadStatus(status) {
   }
 
   if (typeof status === "string") {
-    return { type: status };
+    return status === "idle" ? { type: "complete" } : { type: status };
   }
 
   return { type: "notLoaded" };

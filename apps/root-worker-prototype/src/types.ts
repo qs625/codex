@@ -315,13 +315,14 @@ export type ThreadUsage = {
 export type ThreadActiveFlag =
   | "running"
   | "waitingOnApproval"
-  | "waitingOnUserInput"
-  | "waitingOnSubagent"
-  | "waitingOnEventTool";
+  | "waitingOnUserInput";
+
+export type ThreadIdleReason = "waitCommand" | "waitChild";
 
 export type ThreadStatus =
   | { type: "notLoaded" }
-  | { type: "idle" }
+  | { type: "idle"; reason: ThreadIdleReason }
+  | { type: "complete" }
   | { type: "systemError" }
   | {
       type: "active";

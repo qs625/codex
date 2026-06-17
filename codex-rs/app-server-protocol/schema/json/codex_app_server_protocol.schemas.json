@@ -6807,14 +6807,14 @@
         "type": "string"
       },
       "CollabAgentTool": {
-        "enum": [
-          "spawnAgent",
-          "sendInput",
-          "resumeAgent",
-          "wait",
-          "listAgents",
-          "closeAgent"
-        ],
+      "enum": [
+        "closeAgent",
+        "listAgents",
+        "resumeAgent",
+        "sendInput",
+        "spawnAgent",
+        "wait"
+      ],
         "type": "string"
       },
       "CollabAgentToolCallStatus": {
@@ -16152,9 +16152,7 @@
         "enum": [
           "running",
           "waitingOnApproval",
-          "waitingOnUserInput",
-          "waitingOnSubagent",
-          "waitingOnEventTool"
+          "waitingOnUserInput"
         ],
         "type": "string"
       },
@@ -16762,6 +16760,13 @@
         "type": "object"
       },
       "ThreadId": {
+        "type": "string"
+      },
+      "ThreadIdleReason": {
+        "enum": [
+          "waitCommand",
+          "waitChild"
+        ],
         "type": "string"
       },
       "ThreadInjectItemsParams": {
@@ -19152,6 +19157,9 @@
           },
           {
             "properties": {
+              "reason": {
+                "$ref": "#/definitions/v2/ThreadIdleReason"
+              },
               "type": {
                 "enum": [
                   "idle"
@@ -19161,9 +19169,26 @@
               }
             },
             "required": [
+              "reason",
               "type"
             ],
             "title": "IdleThreadStatus",
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "complete"
+                ],
+                "title": "CompleteThreadStatusType",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "CompleteThreadStatus",
             "type": "object"
           },
           {

@@ -10,6 +10,7 @@ use crate::thread_state::TurnSummary;
 use crate::thread_state::resolve_server_request_on_thread_listener;
 use crate::thread_status::ThreadWatchActiveGuard;
 use crate::thread_status::ThreadWatchManager;
+use codex_core::ThreadRuntimeStatus;
 use codex_app_server_protocol::AccountRateLimitsUpdatedNotification;
 use codex_app_server_protocol::AdditionalPermissionProfile as V2AdditionalPermissionProfile;
 use codex_app_server_protocol::CodexErrorInfo as V2CodexErrorInfo;
@@ -213,6 +214,15 @@ pub(crate) async fn apply_bespoke_event_handling(
             let turn_failed = thread_state.lock().await.turn_summary.last_error.is_some();
             thread_watch_manager
                 .note_turn_completed(&conversation_id.to_string(), turn_failed)
+                .await;
+            let runtime_status = conversation.runtime_thread_status().await;
+            thread_watch_manager
+                .note_post_turn_runtime_status(
+                    &conversation_id.to_string(),
+                    matches!(runtime_status, ThreadRuntimeStatus::Active),
+                    matches!(runtime_status, ThreadRuntimeStatus::IdleWaitChild),
+                    matches!(runtime_status, ThreadRuntimeStatus::IdleWaitCommand),
+                )
                 .await;
             handle_turn_complete(
                 conversation_id,

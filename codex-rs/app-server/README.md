@@ -365,7 +365,7 @@ When `nextCursor` is `null`, you’ve reached the final page.
 `thread/status/changed` is emitted whenever a loaded thread's status changes after it has already been introduced to the client:
 
 - Includes `threadId` and the new `status`.
-- Status can be `notLoaded`, `idle`, `systemError`, or `active`; active threads carry `activeFlags` such as `running`, `waitingOnSubagent`, `waitingOnEventTool`, `waitingOnApproval`, or `waitingOnUserInput`.
+- Status can be `notLoaded`, `active`, `idle`, `complete`, or `systemError`; active threads carry `activeFlags` such as `running`, `waitingOnApproval`, or `waitingOnUserInput`, while idle threads carry a `reason` such as `waitChild` or `waitCommand`.
 - `thread/start`, `thread/fork`, and detached review threads do not emit a separate initial `thread/status/changed`; their `thread/started` notification already carries the current `thread.status`.
 
 ```json

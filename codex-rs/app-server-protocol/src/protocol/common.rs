@@ -2312,7 +2312,7 @@ mod tests {
                     model_provider: "openai".to_string(),
                     created_at: 1,
                     updated_at: 2,
-                    status: v2::ThreadStatus::Idle,
+                    status: v2::ThreadStatus::Complete,
                     path: None,
                     cwd: cwd.clone(),
                     cli_version: "0.0.0".to_string(),
@@ -2896,7 +2896,7 @@ mod tests {
         let notification =
             ServerNotification::ThreadStatusChanged(v2::ThreadStatusChangedNotification {
                 thread_id: "thr_123".to_string(),
-                status: v2::ThreadStatus::Idle,
+                status: v2::ThreadStatus::Complete,
             });
         assert_eq!(
             json!({

@@ -6,6 +6,7 @@ use crate::outgoing_message::OutgoingMessageSender;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::Thread;
 use codex_app_server_protocol::ThreadActiveFlag;
+use codex_app_server_protocol::ThreadIdleReason;
 use codex_app_server_protocol::ThreadStatus;
 use codex_app_server_protocol::ThreadStatusChangedNotification;
 use codex_protocol::ThreadId;
@@ -149,6 +150,8 @@ impl ThreadWatchManager {
         self.update_runtime_for_thread(thread_id, |runtime| {
             runtime.is_loaded = true;
             runtime.running = true;
+            runtime.post_turn_wait_child = false;
+            runtime.post_turn_wait_command = false;
             runtime.pending_subagent_wait_count = 0;
             runtime.deferred_subagent_wait_completion_count = 0;
             runtime.has_system_error = false;
@@ -158,6 +161,21 @@ impl ThreadWatchManager {
 
     pub(crate) async fn note_turn_completed(&self, thread_id: &str, _failed: bool) {
         self.clear_active_state(thread_id).await;
+    }
+
+    pub(crate) async fn note_post_turn_runtime_status(
+        &self,
+        thread_id: &str,
+        active: bool,
+        wait_child: bool,
+        wait_command: bool,
+    ) {
+        self.update_runtime_for_thread(thread_id, move |runtime| {
+            runtime.running = active;
+            runtime.post_turn_wait_child = wait_child;
+            runtime.post_turn_wait_command = wait_command;
+        })
+        .await;
     }
 
     pub(crate) async fn note_turn_interrupted(&self, thread_id: &str) {
@@ -172,6 +190,8 @@ impl ThreadWatchManager {
             runtime.pending_event_subscription_count = 0;
             runtime.pending_subagent_wait_count = 0;
             runtime.deferred_subagent_wait_completion_count = 0;
+            runtime.post_turn_wait_child = false;
+            runtime.post_turn_wait_command = false;
             runtime.is_loaded = false;
         })
         .await;
@@ -182,8 +202,11 @@ impl ThreadWatchManager {
             runtime.running = false;
             runtime.pending_permission_requests = 0;
             runtime.pending_user_input_requests = 0;
+            runtime.pending_event_subscription_count = 0;
             runtime.pending_subagent_wait_count = 0;
             runtime.deferred_subagent_wait_completion_count = 0;
+            runtime.post_turn_wait_child = false;
+            runtime.post_turn_wait_command = false;
             runtime.has_system_error = true;
         })
         .await;
@@ -275,6 +298,8 @@ impl ThreadWatchManager {
             if trigger_turn {
                 runtime.is_loaded = true;
                 runtime.running = true;
+                runtime.post_turn_wait_child = false;
+                runtime.post_turn_wait_command = false;
                 runtime.has_system_error = false;
             }
         })
@@ -419,7 +444,12 @@ pub(crate) fn resolve_thread_status(
     // Running-turn events can arrive before the watch runtime state is observed by
     // the listener loop. In that window we prefer to reflect a real active turn as
     // `Active` instead of `Idle`/`NotLoaded`.
-    if has_in_progress_turn && matches!(status, ThreadStatus::Idle | ThreadStatus::NotLoaded) {
+    if has_in_progress_turn
+        && matches!(
+            status,
+            ThreadStatus::Idle { .. } | ThreadStatus::Complete | ThreadStatus::NotLoaded
+        )
+    {
         return ThreadStatus::Active {
             active_flags: vec![ThreadActiveFlag::Running],
         };
@@ -578,6 +608,8 @@ struct RuntimeFacts {
     pending_event_subscription_count: u32,
     pending_subagent_wait_count: u32,
     deferred_subagent_wait_completion_count: u32,
+    post_turn_wait_command: bool,
+    post_turn_wait_child: bool,
     has_system_error: bool,
 }
 
@@ -596,14 +628,8 @@ fn loaded_thread_status(runtime: &RuntimeFacts) -> ThreadStatus {
     if runtime.pending_user_input_requests > 0 {
         active_flags.push(ThreadActiveFlag::WaitingOnUserInput);
     }
-    if runtime.pending_subagent_wait_count > 0 {
-        active_flags.push(ThreadActiveFlag::WaitingOnSubagent);
-    }
-    if runtime.pending_event_subscription_count > 0 {
-        active_flags.push(ThreadActiveFlag::WaitingOnEventTool);
-    }
 
-    if runtime.running || runtime.pending_event_subscription_count > 0 || !active_flags.is_empty() {
+    if runtime.running || !active_flags.is_empty() {
         return ThreadStatus::Active { active_flags };
     }
 
@@ -611,7 +637,18 @@ fn loaded_thread_status(runtime: &RuntimeFacts) -> ThreadStatus {
         return ThreadStatus::SystemError;
     }
 
-    ThreadStatus::Idle
+    if runtime.pending_subagent_wait_count > 0 || runtime.post_turn_wait_child {
+        return ThreadStatus::Idle {
+            reason: ThreadIdleReason::WaitChild,
+        };
+    }
+    if runtime.pending_event_subscription_count > 0 || runtime.post_turn_wait_command {
+        return ThreadStatus::Idle {
+            reason: ThreadIdleReason::WaitCommand,
+        };
+    }
+
+    ThreadStatus::Complete
 }
 
 #[cfg(test)]
@@ -741,7 +778,7 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Idle,
+            ThreadStatus::Complete,
         );
     }
 
@@ -767,8 +804,8 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Active {
-                active_flags: vec![ThreadActiveFlag::WaitingOnEventTool],
+            ThreadStatus::Idle {
+                reason: ThreadIdleReason::WaitCommand,
             },
         );
 
@@ -779,7 +816,50 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Idle,
+            ThreadStatus::Complete,
+        );
+    }
+
+    #[tokio::test]
+    async fn post_turn_active_runtime_status_keeps_thread_active() {
+        let manager = ThreadWatchManager::new();
+        manager
+            .upsert_thread(test_thread(
+                INTERACTIVE_THREAD_ID,
+                codex_app_server_protocol::SessionSource::Cli,
+            ))
+            .await;
+
+        manager.note_turn_started(INTERACTIVE_THREAD_ID).await;
+        manager
+            .note_turn_completed(INTERACTIVE_THREAD_ID, false)
+            .await;
+        manager
+            .note_post_turn_runtime_status(
+                INTERACTIVE_THREAD_ID,
+                /*active*/ true,
+                /*wait_child*/ false,
+                /*wait_command*/ false,
+            )
+            .await;
+
+        assert_eq!(
+            manager
+                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
+                .await,
+            ThreadStatus::Active {
+                active_flags: vec![ThreadActiveFlag::Running],
+            },
+        );
+
+        manager.note_turn_started(INTERACTIVE_THREAD_ID).await;
+        assert_eq!(
+            manager
+                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
+                .await,
+            ThreadStatus::Active {
+                active_flags: vec![ThreadActiveFlag::Running],
+            },
         );
     }
 
@@ -805,8 +885,8 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Active {
-                active_flags: vec![ThreadActiveFlag::WaitingOnSubagent],
+            ThreadStatus::Idle {
+                reason: ThreadIdleReason::WaitChild,
             },
         );
 
@@ -817,8 +897,8 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Active {
-                active_flags: vec![ThreadActiveFlag::WaitingOnSubagent],
+            ThreadStatus::Idle {
+                reason: ThreadIdleReason::WaitChild,
             },
         );
 
@@ -870,13 +950,13 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Idle,
+            ThreadStatus::Complete,
         );
     }
 
     #[test]
     fn resolves_in_progress_turn_to_active_status() {
-        let status = resolve_thread_status(ThreadStatus::Idle, /*has_in_progress_turn*/ true);
+        let status = resolve_thread_status(ThreadStatus::Complete, /*has_in_progress_turn*/ true);
         assert_eq!(
             status,
             ThreadStatus::Active {
@@ -897,8 +977,8 @@ mod tests {
     #[test]
     fn keeps_status_when_no_in_progress_turn() {
         assert_eq!(
-            resolve_thread_status(ThreadStatus::Idle, /*has_in_progress_turn*/ false),
-            ThreadStatus::Idle
+            resolve_thread_status(ThreadStatus::Complete, /*has_in_progress_turn*/ false),
+            ThreadStatus::Complete
         );
         assert_eq!(
             resolve_thread_status(
@@ -937,6 +1017,37 @@ mod tests {
             ThreadStatus::Active {
                 active_flags: vec![ThreadActiveFlag::Running],
             },
+        );
+    }
+
+    #[tokio::test]
+    async fn system_error_overrides_active_event_subscription_wait() {
+        let manager = ThreadWatchManager::new();
+        manager
+            .upsert_thread(test_thread(
+                INTERACTIVE_THREAD_ID,
+                codex_app_server_protocol::SessionSource::Cli,
+            ))
+            .await;
+
+        manager
+            .note_active_event_subscriptions(INTERACTIVE_THREAD_ID, 1)
+            .await;
+        assert_eq!(
+            manager
+                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
+                .await,
+            ThreadStatus::Idle {
+                reason: ThreadIdleReason::WaitCommand,
+            },
+        );
+
+        manager.note_system_error(INTERACTIVE_THREAD_ID).await;
+        assert_eq!(
+            manager
+                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
+                .await,
+            ThreadStatus::SystemError,
         );
     }
 
@@ -1035,7 +1146,7 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Idle,
+                status: ThreadStatus::Complete,
             },
         );
 
@@ -1078,7 +1189,7 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Idle,
+                status: ThreadStatus::Complete,
             },
         );
 
@@ -1089,8 +1200,8 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Active {
-                    active_flags: vec![ThreadActiveFlag::WaitingOnEventTool],
+                status: ThreadStatus::Idle {
+                    reason: ThreadIdleReason::WaitCommand,
                 },
             },
         );
@@ -1102,7 +1213,7 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Idle,
+                status: ThreadStatus::Complete,
             },
         );
     }
@@ -1125,7 +1236,7 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Idle,
+                status: ThreadStatus::Complete,
             },
         );
 
@@ -1148,10 +1259,7 @@ mod tests {
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
                 status: ThreadStatus::Active {
-                    active_flags: vec![
-                        ThreadActiveFlag::Running,
-                        ThreadActiveFlag::WaitingOnSubagent,
-                    ],
+                    active_flags: vec![ThreadActiveFlag::Running],
                 },
             },
         );
@@ -1163,8 +1271,8 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Active {
-                    active_flags: vec![ThreadActiveFlag::WaitingOnSubagent],
+                status: ThreadStatus::Idle {
+                    reason: ThreadIdleReason::WaitChild,
                 },
             },
         );
@@ -1217,7 +1325,7 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Idle,
+                status: ThreadStatus::Complete,
             },
         );
 
@@ -1240,10 +1348,7 @@ mod tests {
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
                 status: ThreadStatus::Active {
-                    active_flags: vec![
-                        ThreadActiveFlag::Running,
-                        ThreadActiveFlag::WaitingOnSubagent,
-                    ],
+                    active_flags: vec![ThreadActiveFlag::Running],
                 },
             },
         );
@@ -1255,8 +1360,8 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Active {
-                    active_flags: vec![ThreadActiveFlag::WaitingOnSubagent],
+                status: ThreadStatus::Idle {
+                    reason: ThreadIdleReason::WaitChild,
                 },
             },
         );
@@ -1269,10 +1374,7 @@ mod tests {
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
                 status: ThreadStatus::Active {
-                    active_flags: vec![
-                        ThreadActiveFlag::Running,
-                        ThreadActiveFlag::WaitingOnSubagent,
-                    ],
+                    active_flags: vec![ThreadActiveFlag::Running],
                 },
             },
         );
@@ -1309,7 +1411,7 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Idle,
+                status: ThreadStatus::Complete,
             },
         );
 
@@ -1332,10 +1434,7 @@ mod tests {
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
                 status: ThreadStatus::Active {
-                    active_flags: vec![
-                        ThreadActiveFlag::Running,
-                        ThreadActiveFlag::WaitingOnSubagent,
-                    ],
+                    active_flags: vec![ThreadActiveFlag::Running],
                 },
             },
         );
@@ -1347,8 +1446,8 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Active {
-                    active_flags: vec![ThreadActiveFlag::WaitingOnSubagent],
+                status: ThreadStatus::Idle {
+                    reason: ThreadIdleReason::WaitChild,
                 },
             },
         );
@@ -1373,7 +1472,7 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Idle,
+                status: ThreadStatus::Complete,
             },
         );
     }
@@ -1396,7 +1495,7 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Idle,
+                status: ThreadStatus::Complete,
             },
         );
 
@@ -1419,10 +1518,7 @@ mod tests {
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
                 status: ThreadStatus::Active {
-                    active_flags: vec![
-                        ThreadActiveFlag::Running,
-                        ThreadActiveFlag::WaitingOnSubagent,
-                    ],
+                    active_flags: vec![ThreadActiveFlag::Running],
                 },
             },
         );
@@ -1434,8 +1530,8 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Active {
-                    active_flags: vec![ThreadActiveFlag::WaitingOnSubagent],
+                status: ThreadStatus::Idle {
+                    reason: ThreadIdleReason::WaitChild,
                 },
             },
         );
@@ -1457,7 +1553,7 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Idle,
+                status: ThreadStatus::Complete,
             },
         );
     }
@@ -1481,7 +1577,7 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Idle,
+            ThreadStatus::Complete,
         );
         assert!(
             timeout(Duration::from_millis(100), outgoing_rx.recv())
@@ -1548,7 +1644,7 @@ mod tests {
                 .is_err(),
             "unrelated thread watcher should not receive an update"
         );
-        assert_eq!(*non_interactive_rx.borrow(), ThreadStatus::Idle);
+        assert_eq!(*non_interactive_rx.borrow(), ThreadStatus::Complete);
     }
 
     async fn wait_for_status(

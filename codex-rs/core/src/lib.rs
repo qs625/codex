@@ -22,6 +22,7 @@ mod compact_remote_v2;
 mod config_lock;
 pub use codex_thread::CodexThread;
 pub use codex_thread::CodexThreadTurnContextOverrides;
+pub use codex_thread::ThreadRuntimeStatus;
 pub use codex_thread::ThreadConfigSnapshot;
 pub use session::turn_context::TurnContext;
 mod agent;

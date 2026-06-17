@@ -388,6 +388,7 @@ class CollabAgentTool(Enum):
     send_input = "sendInput"
     resume_agent = "resumeAgent"
     wait = "wait"
+    list_agents = "listAgents"
     close_agent = "closeAgent"
 
 
@@ -3554,8 +3555,14 @@ class TextRange(BaseModel):
 
 
 class ThreadActiveFlag(Enum):
+    running = "running"
     waiting_on_approval = "waitingOnApproval"
     waiting_on_user_input = "waitingOnUserInput"
+
+
+class ThreadIdleReason(Enum):
+    wait_command = "waitCommand"
+    wait_child = "waitChild"
 
 
 class ThreadApproveGuardianDeniedActionParams(BaseModel):
@@ -4143,7 +4150,15 @@ class IdleThreadStatus(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
+    reason: ThreadIdleReason
     type: Annotated[Literal["idle"], Field(title="IdleThreadStatusType")]
+
+
+class CompleteThreadStatus(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Annotated[Literal["complete"], Field(title="CompleteThreadStatusType")]
 
 
 class SystemErrorThreadStatus(BaseModel):
@@ -4163,13 +4178,23 @@ class ActiveThreadStatus(BaseModel):
 
 class ThreadStatus(
     RootModel[
-        NotLoadedThreadStatus | IdleThreadStatus | SystemErrorThreadStatus | ActiveThreadStatus
+        NotLoadedThreadStatus
+        | IdleThreadStatus
+        | CompleteThreadStatus
+        | SystemErrorThreadStatus
+        | ActiveThreadStatus
     ]
 ):
     model_config = ConfigDict(
         populate_by_name=True,
     )
-    root: NotLoadedThreadStatus | IdleThreadStatus | SystemErrorThreadStatus | ActiveThreadStatus
+    root: (
+        NotLoadedThreadStatus
+        | IdleThreadStatus
+        | CompleteThreadStatus
+        | SystemErrorThreadStatus
+        | ActiveThreadStatus
+    )
 
 
 class ThreadStatusChangedNotification(BaseModel):
