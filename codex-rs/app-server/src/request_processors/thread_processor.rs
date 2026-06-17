@@ -816,6 +816,7 @@ impl ThreadRequestProcessor {
     fn listener_task_context(&self) -> ListenerTaskContext {
         ListenerTaskContext {
             thread_manager: Arc::clone(&self.thread_manager),
+            thread_store: Some(Arc::clone(&self.thread_store)),
             thread_state_manager: self.thread_state_manager.clone(),
             outgoing: Arc::clone(&self.outgoing),
             pending_thread_unloads: Arc::clone(&self.pending_thread_unloads),
@@ -913,6 +914,7 @@ impl ThreadRequestProcessor {
         typesafe_overrides.ephemeral = ephemeral;
         let listener_task_context = ListenerTaskContext {
             thread_manager: Arc::clone(&self.thread_manager),
+            thread_store: Some(Arc::clone(&self.thread_store)),
             thread_state_manager: self.thread_state_manager.clone(),
             outgoing: Arc::clone(&self.outgoing),
             pending_thread_unloads: Arc::clone(&self.pending_thread_unloads),
@@ -1232,6 +1234,23 @@ impl ThreadRequestProcessor {
             request_id.connection_id,
             "thread",
         );
+        let initial_display_turns = match load_initial_injected_context_turns(
+            listener_task_context.thread_store.as_ref(),
+            thread_id,
+        )
+        .instrument(tracing::info_span!(
+            "app_server.thread_start.load_initial_display_turns",
+            otel.name = "app_server.thread_start.load_initial_display_turns",
+        ))
+        .await
+        {
+            Ok(turns) => turns,
+            Err(err) => {
+                warn!("failed to load initial injected context display turns: {err:?}");
+                Vec::new()
+            }
+        };
+        thread.turns = initial_display_turns.clone();
 
         listener_task_context
             .thread_watch_manager
@@ -1276,7 +1295,8 @@ impl ThreadRequestProcessor {
             active_permission_profile,
             reasoning_effort: config_snapshot.reasoning_effort,
         };
-        let notif = thread_started_notification(thread);
+        let notif = thread_started_notification(thread.clone());
+        let request_connection_id = request_id.connection_id;
         listener_task_context
             .outgoing
             .send_response(request_id, response)
@@ -1294,6 +1314,17 @@ impl ThreadRequestProcessor {
                 otel.name = "app_server.thread_start.notify_started",
             ))
             .await;
+        emit_initial_injected_context_items(
+            &listener_task_context,
+            request_connection_id,
+            &thread.id,
+            &initial_display_turns,
+        )
+        .instrument(tracing::info_span!(
+            "app_server.thread_start.emit_initial_display_items",
+            otel.name = "app_server.thread_start.emit_initial_display_items",
+        ))
+        .await;
         session_telemetry.record_startup_phase(
             "thread_start_total",
             thread_start_started_at.elapsed(),
@@ -2296,23 +2327,8 @@ impl ThreadRequestProcessor {
         &self,
         thread_id: ThreadId,
     ) -> Result<Vec<RolloutItem>, ThreadReadViewError> {
-        match self
-            .thread_store
-            .read_thread(StoreReadThreadParams {
-                thread_id,
-                include_archived: true,
-                include_history: true,
-            })
-            .await
-        {
-            Ok(stored_thread) => {
-                let history = stored_thread.history.ok_or_else(|| {
-                    ThreadReadViewError::Internal(format!(
-                        "thread store did not return history for thread {thread_id}"
-                    ))
-                })?;
-                return Ok(history.items);
-            }
+        match read_thread_history_items(self.thread_store.as_ref(), thread_id).await {
+            Ok(items) => return Ok(items),
             Err(ThreadStoreError::InvalidRequest { message })
                 if message == format!("no rollout found for thread id {thread_id}") => {}
             Err(ThreadStoreError::ThreadNotFound {
@@ -3853,6 +3869,99 @@ fn reconstruct_thread_turns_for_turns_list(
         merge_turn_history_with_active_turn(&mut turns, active_turn);
     }
     turns
+}
+
+async fn load_initial_injected_context_turns(
+    thread_store: Option<&Arc<dyn ThreadStore>>,
+    thread_id: ThreadId,
+) -> Result<Vec<Turn>, JSONRPCErrorError> {
+    let Some(thread_store) = thread_store else {
+        return Ok(Vec::new());
+    };
+    let items = match read_thread_history_items(thread_store.as_ref(), thread_id).await {
+        Ok(items) => items,
+        Err(ThreadStoreError::InvalidRequest { message })
+            if message == format!("no rollout found for thread id {thread_id}") =>
+        {
+            return Ok(Vec::new());
+        }
+        Err(ThreadStoreError::ThreadNotFound {
+            thread_id: missing_thread_id,
+        }) if missing_thread_id == thread_id => return Ok(Vec::new()),
+        Err(ThreadStoreError::InvalidRequest { message }) => return Err(invalid_request(message)),
+        Err(err) => {
+            return Err(internal_error(format!(
+                "failed to read initial thread history: {err}"
+            )));
+        }
+    };
+    Ok(initial_injected_context_turns_from_items(&items))
+}
+
+fn initial_injected_context_turns_from_items(items: &[RolloutItem]) -> Vec<Turn> {
+    let mut turns =
+        reconstruct_thread_turns_for_turns_list(items, ThreadStatus::Idle, false, None);
+    for turn in &mut turns {
+        turn.items
+            .retain(|item| matches!(item, ThreadItem::InjectedContext { .. }));
+        if !turn.items.is_empty() {
+            turn.items_view = TurnItemsView::Full;
+        }
+    }
+    turns.retain(|turn| !turn.items.is_empty());
+    turns
+}
+
+async fn read_thread_history_items(
+    thread_store: &dyn ThreadStore,
+    thread_id: ThreadId,
+) -> Result<Vec<RolloutItem>, ThreadStoreError> {
+    let stored_thread = thread_store
+        .read_thread(StoreReadThreadParams {
+            thread_id,
+            include_archived: true,
+            include_history: true,
+        })
+        .await?;
+    let history = stored_thread.history.ok_or_else(|| ThreadStoreError::Internal {
+        message: format!("thread store did not return history for thread {thread_id}"),
+    })?;
+    Ok(history.items)
+}
+
+async fn emit_initial_injected_context_items(
+    listener_task_context: &ListenerTaskContext,
+    connection_id: ConnectionId,
+    thread_id: &str,
+    turns: &[Turn],
+) {
+    for turn in turns {
+        for item in &turn.items {
+            if !matches!(item, ThreadItem::InjectedContext { .. }) {
+                continue;
+            }
+            let notification = ItemCompletedNotification {
+                item: item.clone(),
+                thread_id: thread_id.to_string(),
+                turn_id: turn.id.clone(),
+                completed_at_ms: turn
+                    .completed_at
+                    .map(|completed_at| completed_at * 1000)
+                    .unwrap_or_else(current_unix_timestamp_ms),
+            };
+            listener_task_context
+                .outgoing
+                .send_server_notification_to_connections(
+                    &[connection_id],
+                    ServerNotification::ItemCompleted(notification),
+                )
+                .await;
+        }
+    }
+}
+
+fn current_unix_timestamp_ms() -> i64 {
+    time::OffsetDateTime::now_utc().unix_timestamp() * 1000
 }
 
 fn normalize_thread_turns_status(

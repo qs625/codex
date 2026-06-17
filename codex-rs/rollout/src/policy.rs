@@ -189,10 +189,13 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::WebSearchEnd(_)
         | EventMsg::ImageGenerationEnd(_) => Some(EventPersistenceMode::Limited),
         EventMsg::ItemCompleted(event) => {
-            // Plan items are derived from streaming tags and are not part of the
-            // raw ResponseItem history, so we persist their completion to replay
-            // them on resume without bloating rollouts with every item lifecycle.
-            if matches!(event.item, codex_protocol::items::TurnItem::Plan(_)) {
+            // Plan and injected context items are display-capable typed items
+            // that are not recoverable from raw ResponseItem replay.
+            if matches!(
+                event.item,
+                codex_protocol::items::TurnItem::Plan(_)
+                    | codex_protocol::items::TurnItem::InjectedContext(_)
+            ) {
                 Some(EventPersistenceMode::Limited)
             } else {
                 None
@@ -255,6 +258,9 @@ mod tests {
     use super::EventPersistenceMode;
     use super::should_persist_event_msg;
     use codex_protocol::ThreadId;
+    use codex_protocol::items::InjectedContextItem;
+    use codex_protocol::items::InjectedContextSection;
+    use codex_protocol::items::TurnItem;
     use codex_protocol::openai_models::ReasoningEffort;
     use codex_protocol::protocol::AgentStatus;
     use codex_protocol::protocol::CollabAgentInteractionBeginEvent;
@@ -268,6 +274,7 @@ mod tests {
     use codex_protocol::protocol::CollabWaitingBeginEvent;
     use codex_protocol::protocol::CollabWaitingEndEvent;
     use codex_protocol::protocol::EventMsg;
+    use codex_protocol::protocol::ItemCompletedEvent;
     use codex_protocol::protocol::ThreadContextUsage;
     use codex_protocol::protocol::ThreadContextUsageCategoryBreakdown;
     use codex_protocol::protocol::ThreadContextUsageLoadedSkills;
@@ -295,6 +302,30 @@ mod tests {
                     skills: Vec::new(),
                 },
             },
+        });
+
+        assert_eq!(
+            should_persist_event_msg(&event, EventPersistenceMode::Limited),
+            true
+        );
+    }
+
+    #[test]
+    fn limited_mode_persists_injected_context_item_completed() {
+        let event = EventMsg::ItemCompleted(ItemCompletedEvent {
+            thread_id: ThreadId::from_string("00000000-0000-0000-0000-000000000001")
+                .expect("valid thread"),
+            turn_id: "turn-init".to_string(),
+            completed_at_ms: 1_000,
+            item: TurnItem::InjectedContext(InjectedContextItem {
+                id: "ctx-1".to_string(),
+                title: "Init Context".to_string(),
+                preview: "Developer".to_string(),
+                sections: vec![InjectedContextSection {
+                    label: "Developer".to_string(),
+                    text: "Agent type file body: always inspect the active task.".to_string(),
+                }],
+            }),
         });
 
         assert_eq!(
