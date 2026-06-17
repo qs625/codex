@@ -19,7 +19,7 @@ description: "my-codex 新功能、错误修复和现有功能修改 owner。适
 - 同一任务只创建一个 `@code-review` reviewer；首次委派后必须记录 reviewer 线程，后续所有修复复审都用 `followup_task` 发给同一个 reviewer。不要因为新 diff、修复了一轮 findings 或需要复审就再创建新的 reviewer，除非 reviewer 线程不可用或用户明确要求更换。
 - `@explorer` 不是默认前置步骤。已知模块内的轻量查找、少量文件阅读和调用方确认由 owner 自己完成；只有跨多个模块、预计读取大量无关上下文、需要并行探索多个方向或需要明确只读隔离时，才在自己的任务树内派 explorer。
 - 开发或修改功能后，必须同步更新 `AGENTS.md`，维护当前仓库规则和协作流程状态；确认无需更新时，也要在交付中说明原因。
-- 涉及 app-server/root-worker 对话、线程、tool、event-command、schedule、collab 或 workflow 展示时，必须遵守 `AGENTS.md` 的 typed `ResponseItem -> ThreadItem` 架构：live 展示走显式 typed lifecycle 和 shared projector，不要新增或扩展 `RawResponseItem`、message marker、assistant message JSON、legacy envelope 解析作为展示或修复路径。
+- 涉及 app-server/root-worker 对话、线程、tool、event-command、schedule、collab、workflow 或 init context 展示时，必须遵守 `AGENTS.md` 的 item 架构：`ResponseItem` 只负责模型交互、模型可见 history/context、compact、guardian 和 provider 输入；客户端可见的 conversation display 必须先形成 display-capable typed `EventMsg`，再通过共享 `EventMsg -> ThreadItem` projector 生成 `ThreadItem`。需要同时模型可见和客户端可见时使用 dual-write helper；不要新增 display-only `ResponseItem`，不要新增或扩展 `RawResponseItem`、message marker、assistant message JSON、legacy envelope 解析作为展示或修复路径。
 
 ## 流程
 
