@@ -10,6 +10,7 @@ use codex_app_server_protocol::JSONRPCNotification;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadActiveFlag;
+use codex_app_server_protocol::ThreadIdleReason;
 use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadListResponse;
 use codex_app_server_protocol::ThreadLoadedListParams;
@@ -94,7 +95,8 @@ async fn thread_status_changed_emits_runtime_updates() -> Result<()> {
                     ThreadStatus::Active { .. } => {
                         saw_active_running = true;
                     }
-                    ThreadStatus::Idle => {
+                    ThreadStatus::Idle { .. } => {}
+                    ThreadStatus::Complete => {
                         if saw_active_running {
                             saw_idle_after_turn = true;
                         }
@@ -299,9 +301,9 @@ async fn thread_read_stays_active_while_event_subscription_is_pending() -> Resul
 
     assert_eq!(
         thread.status,
-        ThreadStatus::Active {
-            active_flags: vec![ThreadActiveFlag::WaitingOnEventTool],
-        },
+        ThreadStatus::Idle {
+                reason: ThreadIdleReason::WaitCommand,
+            },
     );
 
     Ok(())
@@ -416,9 +418,9 @@ async fn startup_restores_threads_with_persisted_event_subscriptions() -> Result
         .expect("thread/list should include the restored thread");
     assert_eq!(
         restored_thread.status,
-        ThreadStatus::Active {
-            active_flags: vec![ThreadActiveFlag::WaitingOnEventTool],
-        },
+        ThreadStatus::Idle {
+                reason: ThreadIdleReason::WaitCommand,
+            },
     );
 
     Ok(())

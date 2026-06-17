@@ -531,7 +531,7 @@ async fn thread_archive_clears_stale_subscriptions_before_resume() -> Result<()>
     )
     .await??;
     let resume: ThreadResumeResponse = to_response::<ThreadResumeResponse>(resume_resp)?;
-    assert_eq!(resume.thread.status, ThreadStatus::Idle);
+    assert_eq!(resume.thread.status, ThreadStatus::Complete);
     primary.clear_message_buffer();
     secondary.clear_message_buffer();
 

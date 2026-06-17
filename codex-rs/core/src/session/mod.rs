@@ -1715,7 +1715,7 @@ impl Session {
         match Box::pin(self.thread_post_turn_state()).await {
             ThreadPostTurnState::ThreadCompletion => {}
             ThreadPostTurnState::ThreadActive
-            | ThreadPostTurnState::ThreadIdle
+            | ThreadPostTurnState::ThreadIdle(_)
             | ThreadPostTurnState::GoContextContinuation { .. } => {
                 self.parent_child_completion_active
                     .store(true, Ordering::SeqCst);
@@ -1825,20 +1825,17 @@ impl Session {
     }
 
     pub(crate) async fn has_active_post_turn_work(&self) -> bool {
-        if self
-            .services
-            .active_event_subscriptions
-            .active_count(self.conversation_id)
-            > 0
-            || self.has_pending_direct_child_completions().await
-            || self.has_queued_response_items_for_next_turn().await
-            || self.has_pending_mailbox_items().await
-            || self
-                .services
-                .unified_exec_manager
-                .has_running_process_for_thread(self.conversation_id)
-                .await
-        {
+        self.has_pending_turn_input().await
+            || Box::pin(self.has_incomplete_direct_child()).await
+            || Box::pin(self.has_wait_command()).await
+    }
+
+    pub(crate) async fn has_pending_turn_input(&self) -> bool {
+        self.has_queued_response_items_for_next_turn().await || self.has_pending_mailbox_items().await
+    }
+
+    pub(crate) async fn has_incomplete_direct_child(&self) -> bool {
+        if self.has_pending_direct_child_completions().await {
             return true;
         }
 
@@ -1848,6 +1845,18 @@ impl Session {
                 .direct_agent_children_are_active(self.conversation_id),
         )
         .await
+    }
+
+    pub(crate) async fn has_wait_command(&self) -> bool {
+        self.services
+            .active_event_subscriptions
+            .active_count(self.conversation_id)
+            > 0
+            || self
+                .services
+                .unified_exec_manager
+                .has_running_process_for_thread(self.conversation_id)
+                .await
     }
 
     pub(crate) async fn mark_direct_child_completion_pending(&self, child_thread_id: ThreadId) {

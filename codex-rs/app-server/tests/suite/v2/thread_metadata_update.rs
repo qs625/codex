@@ -86,7 +86,7 @@ async fn thread_metadata_update_patches_git_branch_and_returns_updated_thread() 
             origin_url: None,
         })
     );
-    assert_eq!(updated.status, ThreadStatus::Idle);
+    assert_eq!(updated.status, ThreadStatus::Complete);
     let updated_thread_json = update_result
         .get("thread")
         .and_then(Value::as_object)
@@ -125,7 +125,7 @@ async fn thread_metadata_update_patches_git_branch_and_returns_updated_thread() 
             origin_url: None,
         })
     );
-    assert_eq!(read.status, ThreadStatus::Idle);
+    assert_eq!(read.status, ThreadStatus::Complete);
 
     Ok(())
 }

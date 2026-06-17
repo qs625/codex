@@ -20,7 +20,7 @@ function makeThread(items: Thread["turns"][number]["items"]): Thread {
     reasoningEffort: null,
     createdAt: 1,
     updatedAt: 1,
-    status: { type: "idle" },
+    status: { type: "complete" },
     path: null,
     cwd: "/tmp",
     cliVersion: "test",

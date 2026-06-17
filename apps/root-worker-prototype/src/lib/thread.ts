@@ -278,6 +278,15 @@ export function getPresenceLabel(status: ThreadStatus) {
     case "notLoaded":
       return "Not Loaded";
     case "idle":
+      if (status.reason === "waitCommand") {
+        return "Waiting on Event Tool";
+      }
+      if (status.reason === "waitChild") {
+        return "Waiting on Subagent";
+      }
+      return "Complete";
+    case "complete":
+      return "Complete";
     default:
       return "Idle";
   }
@@ -1128,6 +1137,14 @@ export function threadStatusClass(status: ThreadStatus) {
   switch (status.type) {
     case "active":
       return "doing";
+    case "idle":
+      if (status.reason === "waitCommand") {
+        return "waiting-eventtool";
+      }
+      if (status.reason === "waitChild") {
+        return "waiting-subagent";
+      }
+      return "todo";
     case "systemError":
       return "blocked";
     default:
@@ -1144,33 +1161,7 @@ export type TreeThreadStatusClass =
   | "waiting-eventtool";
 
 export function treeThreadStatusClass(node: TreeNode): TreeThreadStatusClass {
-  const selfClass = node.thread
-    ? selfTreeThreadStatusClass(node.thread)
-    : "todo";
-
-  if (selfClass !== "todo") {
-    return selfClass;
-  }
-
-  let hasBlocked = false;
-  for (const child of node.children) {
-    const childClass = treeThreadStatusClass(child);
-    if (
-      childClass === "doing" ||
-      childClass === "waiting-subagent" ||
-      childClass === "waiting-eventtool"
-    ) {
-      return "waiting-subagent";
-    }
-    if (childClass === "blocked") {
-      hasBlocked = true;
-    }
-  }
-
-  if (hasBlocked) {
-    return "blocked";
-  }
-  return "todo";
+  return node.thread ? selfTreeThreadStatusClass(node.thread) : "todo";
 }
 
 export function treeThreadStatusLabel(statusClass: TreeThreadStatusClass) {
@@ -1194,18 +1185,19 @@ function selfTreeThreadStatusClass(thread: Thread): TreeThreadStatusClass {
   if (thread.status.type === "systemError") {
     return "blocked";
   }
-  if (thread.status.type !== "active") {
+  if (thread.status.type === "idle") {
+    if (thread.status.reason === "waitCommand") {
+      return "waiting-eventtool";
+    }
+    if (thread.status.reason === "waitChild") {
+      return "waiting-subagent";
+    }
     return "todo";
   }
-
-  const flags = thread.status.activeFlags;
-  if (flags.includes("waitingOnEventTool")) {
-    return "waiting-eventtool";
+  if (thread.status.type === "active") {
+    return "doing";
   }
-  if (flags.includes("waitingOnSubagent")) {
-    return "waiting-subagent";
-  }
-  return "doing";
+  return "todo";
 }
 
 export function countDescendants(node: TreeNode): number {
@@ -1259,12 +1251,6 @@ function mapTaskStatus(status: ThreadStatus): Exclude<TaskFilter, "all"> {
 }
 
 function getActivePresenceLabel(activeFlags: ThreadActiveFlag[]) {
-  if (activeFlags.includes("waitingOnEventTool")) {
-    return "Waiting on Event Tool";
-  }
-  if (activeFlags.includes("waitingOnSubagent")) {
-    return "Waiting on Subagent";
-  }
   if (activeFlags.includes("waitingOnApproval")) {
     return "Waiting on Approval";
   }

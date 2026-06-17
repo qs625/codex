@@ -186,9 +186,15 @@ struct GoalContinuationCandidate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ThreadPostTurnState {
     ThreadActive,
-    ThreadIdle,
+    ThreadIdle(ThreadIdleReason),
     GoContextContinuation { goal_id: String },
     ThreadCompletion,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ThreadIdleReason {
+    WaitCommand,
+    WaitChild,
 }
 
 impl GoalRuntimeState {
@@ -1402,49 +1408,50 @@ impl Session {
     }
 
     pub(crate) async fn thread_post_turn_state(&self) -> ThreadPostTurnState {
-        if self.active_turn.lock().await.is_some()
-            || Box::pin(self.has_active_post_turn_work()).await
-        {
+        if self.active_turn.lock().await.is_some() || self.has_pending_turn_input().await {
             return ThreadPostTurnState::ThreadActive;
         }
-        let idle_state = ThreadPostTurnState::ThreadIdle;
         if !self.enabled(Feature::Goals) {
-            return ThreadPostTurnState::ThreadCompletion;
+            return self.thread_idle_or_completion().await;
         }
         if should_ignore_goal_for_mode(self.collaboration_mode().await.mode) {
             tracing::debug!("skipping active goal continuation while plan mode is active");
-            return ThreadPostTurnState::ThreadCompletion;
+            return self.thread_idle_or_completion().await;
         }
         let state_db = match self.state_db_for_thread_goals().await {
             Ok(Some(state_db)) => state_db,
-            Ok(None) => return ThreadPostTurnState::ThreadCompletion,
+            Ok(None) => return self.thread_idle_or_completion().await,
             Err(err) => {
                 tracing::warn!("failed to open state db for post-turn goal state: {err}");
-                return ThreadPostTurnState::ThreadCompletion;
+                return self.thread_idle_or_completion().await;
             }
         };
         let goal = match state_db.get_thread_goal(self.conversation_id).await {
             Ok(Some(goal)) => goal,
-            Ok(None) => return ThreadPostTurnState::ThreadCompletion,
+            Ok(None) => return self.thread_idle_or_completion().await,
             Err(err) => {
                 tracing::warn!("failed to read thread goal for post-turn state: {err}");
-                return ThreadPostTurnState::ThreadCompletion;
+                return self.thread_idle_or_completion().await;
             }
         };
-        let state = match goal.status {
+        match goal.status {
             codex_state::ThreadGoalStatus::Active => ThreadPostTurnState::GoContextContinuation {
                 goal_id: goal.goal_id,
             },
             codex_state::ThreadGoalStatus::Complete
             | codex_state::ThreadGoalStatus::Paused
-            | codex_state::ThreadGoalStatus::BudgetLimited => idle_state,
-        };
-        match state {
-            ThreadPostTurnState::ThreadIdle => ThreadPostTurnState::ThreadCompletion,
-            ThreadPostTurnState::ThreadActive
-            | ThreadPostTurnState::GoContextContinuation { .. }
-            | ThreadPostTurnState::ThreadCompletion => state,
+            | codex_state::ThreadGoalStatus::BudgetLimited => self.thread_idle_or_completion().await,
         }
+    }
+
+    async fn thread_idle_or_completion(&self) -> ThreadPostTurnState {
+        if Box::pin(self.has_incomplete_direct_child()).await {
+            return ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitChild);
+        }
+        if Box::pin(self.has_wait_command()).await {
+            return ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitCommand);
+        }
+        ThreadPostTurnState::ThreadCompletion
     }
 }
 

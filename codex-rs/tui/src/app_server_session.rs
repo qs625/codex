@@ -2063,7 +2063,7 @@ mod tests {
                 model_provider: "openai".to_string(),
                 created_at: 1,
                 updated_at: 2,
-                status: ThreadStatus::Idle,
+                status: ThreadStatus::Complete,
                 path: None,
                 cwd: test_path_buf("/tmp/project").abs(),
                 cli_version: "0.0.0".to_string(),

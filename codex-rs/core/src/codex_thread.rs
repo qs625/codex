@@ -2,6 +2,8 @@ use crate::agent::AgentStatus;
 use crate::config::ConstraintResult;
 use crate::goals::ExternalGoalSet;
 use crate::goals::GoalRuntimeEvent;
+use crate::goals::ThreadIdleReason;
+use crate::goals::ThreadPostTurnState;
 use crate::pending_input::PendingInputItem;
 use crate::session::Codex;
 use crate::session::SessionSettingsUpdate;
@@ -111,6 +113,14 @@ pub struct CodexThread {
     out_of_band_elicitation_count: Mutex<u64>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThreadRuntimeStatus {
+    Active,
+    IdleWaitCommand,
+    IdleWaitChild,
+    Complete,
+}
+
 /// Conduit for the bidirectional stream of messages that compose a thread
 /// (formerly called a conversation) in Codex.
 impl CodexThread {
@@ -126,6 +136,20 @@ impl CodexThread {
             session_configured,
             rollout_path,
             out_of_band_elicitation_count: Mutex::new(0),
+        }
+    }
+
+    pub async fn runtime_thread_status(&self) -> ThreadRuntimeStatus {
+        match self.codex.session.thread_post_turn_state().await {
+            ThreadPostTurnState::ThreadActive
+            | ThreadPostTurnState::GoContextContinuation { .. } => ThreadRuntimeStatus::Active,
+            ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitCommand) => {
+                ThreadRuntimeStatus::IdleWaitCommand
+            }
+            ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitChild) => {
+                ThreadRuntimeStatus::IdleWaitChild
+            }
+            ThreadPostTurnState::ThreadCompletion => ThreadRuntimeStatus::Complete,
         }
     }
 

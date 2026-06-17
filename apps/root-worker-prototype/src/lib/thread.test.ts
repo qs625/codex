@@ -41,7 +41,7 @@ function makeThread(): Thread {
     reasoningEffort: null,
     createdAt: 1,
     updatedAt: 1,
-    status: { type: "idle" },
+    status: { type: "complete" },
     path: null,
     cwd: "/tmp",
     cliVersion: "test",
@@ -2315,9 +2315,7 @@ test("direct collab status completion notifications create completed synthetic t
 test("terminal child status does not hide restored conversation history or keep loaded thread active", () => {
   const restoredThread: Thread = {
     ...makeThread(),
-    status: {
-      type: "idle",
-    },
+    status: { type: "complete" },
     turns: [
       {
         id: "turn-user",
@@ -2371,7 +2369,7 @@ test("terminal child status does not hide restored conversation history or keep 
       "/root/worker/tester • shutdown • completed",
     ],
   );
-  assert.equal(getThreadPresenceLabel(updated), "Idle");
+  assert.equal(getThreadPresenceLabel(updated), "Complete");
   assert.equal(threadDisplayStatusClass(updated), "todo");
 });
 
@@ -2966,8 +2964,8 @@ test("treeThreadStatusClass shows subagent waiting separately", () => {
   const thread = {
     ...makeThread(),
     status: {
-      type: "active" as const,
-      activeFlags: ["waitingOnSubagent"],
+      type: "idle" as const,
+      reason: "waitChild" as const,
     },
   } satisfies Thread;
 
@@ -3028,8 +3026,8 @@ test("treeThreadStatusClass shows event tool waiting separately", () => {
   const thread = {
     ...makeThread(),
     status: {
-      type: "active" as const,
-      activeFlags: ["waitingOnEventTool"],
+      type: "idle" as const,
+      reason: "waitCommand" as const,
     },
   } satisfies Thread;
 
@@ -3043,8 +3041,8 @@ test("treeThreadStatusClass prioritizes backend event tool flags over subagent f
   const thread = {
     ...makeThread(),
     status: {
-      type: "active" as const,
-      activeFlags: ["waitingOnSubagent", "waitingOnEventTool"],
+      type: "idle" as const,
+      reason: "waitCommand" as const,
     },
   } satisfies Thread;
 
@@ -3058,7 +3056,7 @@ test("treeThreadStatusClass ignores process exit restore failures when backend s
   const thread = {
     ...makeThread(),
     status: {
-      type: "idle" as const,
+      type: "complete" as const,
     },
     turns: [
       {
@@ -3097,7 +3095,7 @@ test("treeThreadStatusClass ignores event tool subscriptions after unsubscribe w
   const thread = {
     ...makeThread(),
     status: {
-      type: "idle" as const,
+      type: "complete" as const,
     },
     turns: [
       {
@@ -3133,10 +3131,14 @@ test("treeThreadStatusClass ignores event tool subscriptions after unsubscribe w
   assert.equal(treeThreadStatusClass(makeTreeNode(thread)), "todo");
 });
 
-test("treeThreadStatusClass rolls descendant active into parent waiting", () => {
+test("treeThreadStatusClass uses backend parent wait-child status directly", () => {
   const parent = {
     ...makeThread(),
     id: "parent",
+    status: {
+      type: "idle" as const,
+      reason: "waitChild" as const,
+    },
   };
   const child = {
     ...makeThread(),
@@ -3153,19 +3155,11 @@ test("treeThreadStatusClass rolls descendant active into parent waiting", () => 
   );
 });
 
-test("treeThreadStatusClass prioritizes active descendants over event tool waits", () => {
+test("treeThreadStatusClass does not infer parent status from active descendants", () => {
   const parent = {
     ...makeThread(),
     id: "parent",
   };
-  const eventToolChild = {
-    ...makeThread(),
-    id: "event-tool-child",
-    status: {
-      type: "active" as const,
-      activeFlags: ["waitingOnEventTool"],
-    },
-  } satisfies Thread;
   const activeChild = {
     ...makeThread(),
     id: "active-child",
@@ -3176,17 +3170,12 @@ test("treeThreadStatusClass prioritizes active descendants over event tool waits
   };
 
   assert.equal(
-    treeThreadStatusClass(
-      makeTreeNode(parent, [
-        makeTreeNode(eventToolChild),
-        makeTreeNode(activeChild),
-      ]),
-    ),
-    "waiting-subagent",
+    treeThreadStatusClass(makeTreeNode(parent, [makeTreeNode(activeChild)])),
+    "todo",
   );
 });
 
-test("treeThreadStatusClass rolls descendant event tool waits into parent subagent wait", () => {
+test("treeThreadStatusClass does not infer parent status from descendant waits", () => {
   const parent = {
     ...makeThread(),
     id: "parent",
@@ -3195,18 +3184,18 @@ test("treeThreadStatusClass rolls descendant event tool waits into parent subage
     ...makeThread(),
     id: "child",
     status: {
-      type: "active" as const,
-      activeFlags: ["waitingOnEventTool"],
+      type: "idle" as const,
+      reason: "waitCommand" as const,
     },
   } satisfies Thread;
 
   assert.equal(
     treeThreadStatusClass(makeTreeNode(parent, [makeTreeNode(child)])),
-    "waiting-subagent",
+    "todo",
   );
 });
 
-test("treeThreadStatusClass rolls descendant system errors into parent blocked", () => {
+test("treeThreadStatusClass does not infer parent status from descendant errors", () => {
   const parent = {
     ...makeThread(),
     id: "parent",
@@ -3221,7 +3210,7 @@ test("treeThreadStatusClass rolls descendant system errors into parent blocked",
 
   assert.equal(
     treeThreadStatusClass(makeTreeNode(parent, [makeTreeNode(child)])),
-    "blocked",
+    "todo",
   );
 });
 
@@ -3361,18 +3350,18 @@ test("buildCurrentThreadTodoItems only returns direct child threads", () => {
   );
 });
 
-test("getPresenceLabel surfaces active thread flags", () => {
+test("getPresenceLabel surfaces canonical thread status", () => {
   assert.equal(
     getPresenceLabel({
-      type: "active",
-      activeFlags: ["waitingOnEventTool"],
+      type: "idle",
+      reason: "waitCommand",
     }),
     "Waiting on Event Tool",
   );
   assert.equal(
     getPresenceLabel({
-      type: "active",
-      activeFlags: ["waitingOnSubagent"],
+      type: "idle",
+      reason: "waitChild",
     }),
     "Waiting on Subagent",
   );
@@ -3404,10 +3393,16 @@ test("getPresenceLabel surfaces active thread flags", () => {
     }),
     "Running",
   );
+  assert.equal(
+    getPresenceLabel({
+      type: "idle",
+    } as Thread["status"]),
+    "Complete",
+  );
 });
 
 test("isThreadThinking stays false while a turn only injects init context", () => {
-  const thread = {
+  const thread: Thread = {
     ...makeThread(),
     status: {
       type: "active" as const,
@@ -3453,7 +3448,7 @@ test("isThreadThinking ignores item-derived running state when backend status is
   const thread = {
     ...makeThread(),
     status: {
-      type: "idle" as const,
+      type: "complete" as const,
     },
     turns: [
       {
@@ -3490,7 +3485,7 @@ test("isThreadThinking ignores item-derived running state when backend status is
 });
 
 test("isThreadThinking follows backend running active flag", () => {
-  const thread = {
+  const thread: Thread = {
     ...makeThread(),
     status: {
       type: "active" as const,

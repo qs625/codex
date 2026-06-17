@@ -11,6 +11,7 @@ use crate::config::ConfigBuilder;
 use crate::context::ContextualUserFragment;
 use crate::context::SubagentNotification;
 use crate::goals::SetGoalRequest;
+use crate::goals::ThreadIdleReason;
 use crate::goals::ThreadPostTurnState;
 use crate::init_state_db;
 use crate::pending_input::PendingInputItem;
@@ -1285,7 +1286,7 @@ async fn spawn_child_completion_notifies_parent_history() {
 #[tokio::test]
 async fn multi_agent_v2_completion_ignores_dead_direct_parent() {
     let harness = AgentControlHarness::new().await;
-    let (root_thread_id, root_thread) = harness.start_thread().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
     let mut config = harness.config.clone();
     let _ = config.features.enable(Feature::MultiAgentV2);
     let worker_path = AgentPath::root().join("worker_a").expect("worker path");
@@ -1527,14 +1528,19 @@ async fn multi_agent_v2_completion_waits_for_pending_mailbox_input() {
     ));
 
     let _ = worker_thread.codex.session.get_pending_input().await;
-    harness
-        .manager
-        .maybe_notify_parent_of_final_status(worker_thread_id)
+    let listed_agents = harness
+        .control
+        .list_agents(root_thread_id, &SessionSource::Exec, None)
         .await;
-    harness
-        .manager
-        .maybe_notify_parent_of_final_status(worker_thread_id)
-        .await;
+    assert_eq!(
+        listed_agents
+            .expect("list agents should succeed")
+            .into_iter()
+            .find(|agent| agent.agent_name == worker_path.to_string())
+            .expect("worker should be listed")
+            .agent_status,
+        AgentStatus::Completed(Some("done".to_string())),
+    );
     let captured_ops = harness.manager.captured_ops();
     assert_eq!(
         count_captured_child_completions(
@@ -1662,7 +1668,7 @@ async fn multi_agent_v2_completion_waits_for_active_event_subscription() {
 }
 
 #[tokio::test]
-async fn goal_post_turn_state_waits_for_live_direct_child() {
+async fn goal_post_turn_state_continues_despite_live_direct_child() {
     let harness = AgentControlHarness::new().await;
     let mut config = harness.config.clone();
     let _ = config.features.enable(Feature::Goals);
@@ -1687,15 +1693,29 @@ async fn goal_post_turn_state_waits_for_live_direct_child() {
         .mark_direct_child_completion_pending(child_thread_id)
         .await;
 
+    let goal_id = harness
+        .state_db
+        .as_ref()
+        .expect("state db should exist")
+        .get_thread_goal(parent_thread_id)
+        .await
+        .expect("goal query should succeed")
+        .expect("goal should exist")
+        .goal_id;
+
     assert_eq!(
         parent_thread.codex.session.thread_post_turn_state().await,
-        ThreadPostTurnState::ThreadActive
+        ThreadPostTurnState::GoContextContinuation {
+            goal_id: goal_id.clone(),
+        }
     );
 
     emit_turn_complete(&child_thread, "child done").await;
     assert_eq!(
         parent_thread.codex.session.thread_post_turn_state().await,
-        ThreadPostTurnState::ThreadActive
+        ThreadPostTurnState::GoContextContinuation {
+            goal_id: goal_id.clone(),
+        }
     );
 
     let child_completion = InterAgentCommunication::new(
@@ -1718,21 +1738,36 @@ async fn goal_post_turn_state_waits_for_live_direct_child() {
     assert_eq!(
         parent_thread.codex.session.thread_post_turn_state().await,
         ThreadPostTurnState::GoContextContinuation {
-            goal_id: harness
-                .state_db
-                .as_ref()
-                .expect("state db should exist")
-                .get_thread_goal(parent_thread_id)
-                .await
-                .expect("goal query should succeed")
-                .expect("goal should exist")
-                .goal_id,
+            goal_id,
         }
     );
 }
 
 #[tokio::test]
-async fn goal_post_turn_state_waits_for_active_event_subscription() {
+async fn post_turn_state_waits_for_live_direct_child_without_active_goal() {
+    let harness = AgentControlHarness::new().await;
+    let parent = harness
+        .manager
+        .start_thread(harness.config.clone())
+        .await
+        .expect("parent thread should start");
+    let parent_thread = parent.thread;
+    let (child_thread_id, _) = harness.start_thread().await;
+    emit_turn_complete(&parent_thread, "parent turn done").await;
+    parent_thread
+        .codex
+        .session
+        .mark_direct_child_completion_pending(child_thread_id)
+        .await;
+
+    assert_eq!(
+        parent_thread.codex.session.thread_post_turn_state().await,
+        ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitChild)
+    );
+}
+
+#[tokio::test]
+async fn goal_post_turn_state_continues_despite_active_event_subscription() {
     let harness = AgentControlHarness::new().await;
     let mut config = harness.config.clone();
     let _ = config.features.enable(Feature::Goals);
@@ -1755,15 +1790,6 @@ async fn goal_post_turn_state_waits_for_active_event_subscription() {
 
     assert_eq!(
         thread.thread.codex.session.thread_post_turn_state().await,
-        ThreadPostTurnState::ThreadActive
-    );
-
-    harness
-        .manager
-        .active_event_subscriptions()
-        .set_active_count(thread.thread_id, 0);
-    assert_eq!(
-        thread.thread.codex.session.thread_post_turn_state().await,
         ThreadPostTurnState::GoContextContinuation {
             goal_id: harness
                 .state_db
@@ -1775,6 +1801,26 @@ async fn goal_post_turn_state_waits_for_active_event_subscription() {
                 .expect("goal should exist")
                 .goal_id,
         }
+    );
+}
+
+#[tokio::test]
+async fn post_turn_state_waits_for_active_event_subscription_without_active_goal() {
+    let harness = AgentControlHarness::new().await;
+    let thread = harness
+        .manager
+        .start_thread(harness.config.clone())
+        .await
+        .expect("thread should start");
+    emit_turn_complete(&thread.thread, "turn done").await;
+    harness
+        .manager
+        .active_event_subscriptions()
+        .set_active_count(thread.thread_id, 1);
+
+    assert_eq!(
+        thread.thread.codex.session.thread_post_turn_state().await,
+        ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitCommand)
     );
 }
 

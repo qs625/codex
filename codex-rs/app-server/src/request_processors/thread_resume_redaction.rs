@@ -198,7 +198,7 @@ mod tests {
             model_provider: "mock_provider".to_string(),
             created_at: 0,
             updated_at: 0,
-            status: ThreadStatus::Idle,
+            status: ThreadStatus::Complete,
             path: None,
             cwd: test_path_buf("/tmp").abs(),
             cli_version: "0.0.0".to_string(),

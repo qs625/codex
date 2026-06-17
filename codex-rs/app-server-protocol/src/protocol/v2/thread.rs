@@ -974,7 +974,10 @@ pub struct ThreadLoadedListResponse {
 #[ts(export_to = "v2/")]
 pub enum ThreadStatus {
     NotLoaded,
-    Idle,
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    Idle { reason: ThreadIdleReason },
+    Complete,
     SystemError,
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
@@ -986,12 +989,18 @@ pub enum ThreadStatus {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
+pub enum ThreadIdleReason {
+    WaitCommand,
+    WaitChild,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
 pub enum ThreadActiveFlag {
     Running,
     WaitingOnApproval,
     WaitingOnUserInput,
-    WaitingOnSubagent,
-    WaitingOnEventTool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

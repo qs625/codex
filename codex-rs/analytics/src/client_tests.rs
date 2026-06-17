@@ -128,7 +128,7 @@ fn sample_thread(thread_id: &str) -> Thread {
         model_provider: "openai".to_string(),
         created_at: 1,
         updated_at: 2,
-        status: AppServerThreadStatus::Idle,
+        status: AppServerThreadStatus::Complete,
         path: None,
         cwd: test_path_buf("/tmp").abs(),
         cli_version: "0.0.0".to_string(),
