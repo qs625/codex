@@ -110,6 +110,7 @@ import type {
   TreeMenuState,
   Turn,
   VoiceCaptureStatus,
+  WorkflowSummary,
 } from "./types";
 
 let initialRootThreadPromise: Promise<Thread> | null = null;
@@ -142,6 +143,9 @@ function App() {
     Record<string, ThreadPlanUpdate>
   >({});
   const [availableSkills, setAvailableSkills] = useState<ThreadSkill[]>([]);
+  const [availableWorkflows, setAvailableWorkflows] = useState<
+    WorkflowSummary[]
+  >([]);
   const [goalsByThreadId, setGoalsByThreadId] = useState<
     Record<string, ThreadGoal | null>
   >({});
@@ -393,6 +397,7 @@ function App() {
 
   useEffect(() => {
     setAvailableSkills([]);
+    setAvailableWorkflows([]);
   }, [selectedThreadId]);
 
   useEffect(() => {
@@ -414,10 +419,19 @@ function App() {
     return payload.skills;
   }
 
+  async function loadAvailableWorkflows(cwd: string) {
+    const payload = (await window.codexDesktop.listWorkflows(cwd)) as {
+      workflows: WorkflowSummary[];
+      diagnostics: unknown[];
+    };
+    return payload.workflows;
+  }
+
   useEffect(() => {
     const cwd = selectedThread?.cwd ?? null;
     if (!cwd) {
       setAvailableSkills([]);
+      setAvailableWorkflows([]);
       return;
     }
     const threadCwd = cwd;
@@ -425,18 +439,26 @@ function App() {
     let cancelled = false;
 
     async function refreshAvailableSkills() {
-      try {
-        const skills = await loadAvailableSkills(threadCwd);
-        if (cancelled) {
-          return;
-        }
-        setAvailableSkills(skills);
-      } catch (loadError) {
-        if (cancelled) {
-          return;
-        }
+      const [skillsResult, workflowsResult] = await Promise.allSettled([
+        loadAvailableSkills(threadCwd),
+        loadAvailableWorkflows(threadCwd),
+      ]);
+      if (cancelled) {
+        return;
+      }
+
+      if (skillsResult.status === "fulfilled") {
+        setAvailableSkills(skillsResult.value);
+      } else {
         setAvailableSkills([]);
-        setError(toErrorMessage(loadError));
+        setError(toErrorMessage(skillsResult.reason));
+      }
+
+      if (workflowsResult.status === "fulfilled") {
+        setAvailableWorkflows(workflowsResult.value);
+      } else {
+        setAvailableWorkflows([]);
+        setError(toErrorMessage(workflowsResult.reason));
       }
     }
 
@@ -445,7 +467,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedThread?.cwd]);
+  }, [selectedThread?.cwd, selectedThreadId]);
 
   useEffect(() => {
     const unsubscribe = window.codexDesktop.subscribe((payload) => {
@@ -1716,6 +1738,9 @@ function App() {
             });
           break;
         }
+        case "workflow/run/updated": {
+          break;
+        }
         case "thread/name/updated":
         case "thread/archived":
         case "thread/closed": {
@@ -2103,6 +2128,7 @@ function App() {
         />
         <ConversationPanel
           availableSkills={availableSkills}
+          availableWorkflows={availableWorkflows}
           conversationCells={conversationCells}
           conversationScrollRef={conversationScrollRef}
           draft={draft}

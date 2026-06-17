@@ -1,4 +1,4 @@
-import type { DraftSkill, ThreadSkill } from "../types";
+import type { DraftSkill, ThreadSkill, WorkflowSummary } from "../types";
 
 export type ComposerSlashCommandId =
   | "clear"
@@ -22,7 +22,16 @@ export type SkillSlashSuggestion = {
   skill: ThreadSkill;
 };
 
-export type ComposerSlashSuggestion = BuiltInSlashCommand | SkillSlashSuggestion;
+export type WorkflowSlashSuggestion = {
+  type: "workflow";
+  workflow: WorkflowSummary;
+  draftText: string;
+};
+
+export type ComposerSlashSuggestion =
+  | BuiltInSlashCommand
+  | SkillSlashSuggestion
+  | WorkflowSlashSuggestion;
 
 export const BUILT_IN_SLASH_COMMANDS: BuiltInSlashCommand[] = [
   {
@@ -114,11 +123,13 @@ function getGoalSubcommandSlashQuery(firstLine: string) {
 
 export function buildComposerSlashSuggestions({
   availableSkills,
+  availableWorkflows = [],
   commandsEnabled = true,
   draftSkills,
   query,
 }: {
   availableSkills: ThreadSkill[];
+  availableWorkflows?: WorkflowSummary[];
   commandsEnabled?: boolean;
   draftSkills: DraftSkill[];
   query: string | null;
@@ -129,6 +140,13 @@ export function buildComposerSlashSuggestions({
 
   return [
     ...(commandsEnabled ? filterBuiltInSlashCommands(query) : []),
+    ...filterWorkflowSlashSuggestions(availableWorkflows, query).map(
+      (workflow) => ({
+        type: "workflow" as const,
+        workflow,
+        draftText: buildWorkflowDraftText(workflow),
+      }),
+    ),
     ...filterSkillSlashSuggestions(availableSkills, draftSkills, query).map(
       (skill) => ({
         type: "skill" as const,
@@ -155,6 +173,43 @@ function filterBuiltInSlashCommands(query: string) {
       .toLowerCase();
     return searchable.includes(normalizedQuery);
   });
+}
+
+function filterWorkflowSlashSuggestions(
+  availableWorkflows: WorkflowSummary[],
+  query: string,
+) {
+  const normalizedQuery = query.trim().toLowerCase();
+
+  return availableWorkflows.filter((workflow) => {
+    if (!normalizedQuery) {
+      return true;
+    }
+
+    const searchable = [
+      `workflow ${workflow.id}`,
+      workflow.id,
+      workflow.name,
+      workflow.description,
+      workflow.source,
+      workflow.path,
+      ...workflow.whenToUse,
+      ...Object.keys(workflow.inputs),
+    ]
+      .join(" ")
+      .toLowerCase();
+    return searchable.includes(normalizedQuery);
+  });
+}
+
+function buildWorkflowDraftText(workflow: WorkflowSummary) {
+  const inputNames = Object.keys(workflow.inputs);
+  if (inputNames.length === 0) {
+    return `Use the ${workflow.id} workflow.`;
+  }
+
+  const inputList = inputNames.map((name) => `${name}: `).join(", ");
+  return `Use the ${workflow.id} workflow with ${inputList}`;
 }
 
 function filterSkillSlashSuggestions(

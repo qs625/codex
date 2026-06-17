@@ -122,3 +122,27 @@ Composer Slash 菜单增量设计已完成独立 `@ui-ue-reviewer` 复审，通�
 - 在 `00-brief.md` 的范围与验收中补充 EventMsg display source 迁移、typed fallback 和 root-worker 不新增 raw parser 的约束。
 
 复审结论：通过，可进入开发。
+
+## Workflow Progress Display review
+
+本轮待审范围：
+
+- `features/workflow-progress-display.md`
+- `assets/workflow-progress-prototype.svg`
+- `00-brief.md`、`01-research.md`、`02-ue-flow.md`、`03-information-architecture.md`、`04-components.md` 中 2026-06-17 workflow progress / workflow thread badge 增量。
+
+第一轮结论：通过，可进入开发。
+
+已确认：
+
+- 设计明确遵守 `EventMsg::WorkflowRunProgressCompleted -> ThreadItem::WorkflowRunProgress` typed 展示路径，不允许 root-worker 从 raw marker、assistant JSON、legacy envelope 或 workflow tool output 反解。
+- Slash workflow 候选只生成草稿；模型调用 `workflow_start` 后，进度通过 typed progress item 出现在 conversation。
+- `WorkflowProgressCell` 展示 run 进展；`WorkflowThreadBadge` 只消费 thread metadata workflow binding 展示所属关系。
+- Agent Tree 保持 root/subagent 树结构，不改成 workflow graph。
+- 状态覆盖 queued、running、waiting、completed、failed、aborted、无 stages、缺 metadata、same id update / different id append、虚拟列表和开发 handoff。
+
+review 后同步修正：
+
+- 在测试 handoff 中补充 `waiting` stage 与 `skipped` stage 的可见文字覆盖。
+- 补充实现前/实现中需要一次约 560px 以下窄屏截图，确认 stage label、badge、header chip 不重叠。
+- 明确 Header chip 有 typed progress item id 时才使用 button/link 视觉；无定位目标时必须是只读 chip。

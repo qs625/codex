@@ -65,6 +65,7 @@ const TOOL_BLOCKED_STATUSES = new Set([
   "failed",
   "error",
   "errored",
+  "aborted",
   "cancelled",
   "canceled",
   "timed_out",
@@ -947,6 +948,8 @@ function getToolIcon(category: NonNullable<ConversationEntry["toolCategory"]>) {
       return <BranchIcon />;
     case "context":
       return <ShareIcon />;
+    case "workflow":
+      return <BranchIcon />;
     case "external":
     default:
       return <CodeIcon />;

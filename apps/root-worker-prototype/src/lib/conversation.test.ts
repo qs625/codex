@@ -163,6 +163,51 @@ test("builds a conversation event for typed goal updates", () => {
   ]);
 });
 
+test("builds a workflow progress tool entry from typed thread items", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "workflowRunProgress",
+        id: "workflow-1",
+        event: {
+          runId: "wf_123",
+          workflowId: "feature-dev",
+          status: "running",
+          runnerStatus: "runner_active",
+          kind: "started",
+          message: "workflow runner is executing TypeScript entry",
+          updatedAt: 1,
+        },
+      },
+    ]),
+  );
+
+  assert.deepEqual(entries, [
+    {
+      id: "workflow-1",
+      kind: "tool",
+      author: "root",
+      role: "system",
+      text: "workflow runner is executing TypeScript entry",
+      timestamp: formatClockTime(1),
+      attachments: [],
+      toolName: "Workflow · feature-dev",
+      toolStatus: "running",
+      toolDetails:
+        "Workflow\nfeature-dev\n\nRun\nwf_123\n\nProgress\nWorkflow started\n\nRunner Status\nrunner_active\n\nMessage\nworkflow runner is executing TypeScript entry\n\nRun Status\nrunning\n\nGraph\nNo graph details in this update.",
+      toolCategory: "workflow",
+    },
+  ]);
+
+  assert.deepEqual(buildConversationCells(entries), [
+    {
+      id: "workflow-1",
+      kind: "tool",
+      entries,
+    },
+  ]);
+});
+
 test("keeps consecutive ordinary tools grouped in one visible cell", () => {
   const entries = buildConversationEntries(
     makeThread([

@@ -124,3 +124,38 @@
 - Goal 内容摘要使用文本，不只靠颜色表达状态。
 - Goal lifecycle event 的状态 badge 必须有文字；失败原因通过结构化字段进入 `aria-live` 可感知区域或 event 文本，不能只放在 tooltip。
 - RightPanel Recent event 的 `jump to item` 必须是 keyboard-accessible 控件：可 Tab 聚焦，Enter/Space 触发滚动定位，触发后 conversation cell 高亮且通过 `aria-live=polite` 提示已定位，不改变 composer draft 或焦点所有权。
+
+## 主路径：通过 slash menu 启动 workflow 并看到进度
+
+1. 用户在 composer 输入 `/`，slash menu 从 app-server v2 `workflow/list` discovery 展示 Dynamic Workflow 候选。
+2. 用户选择某个 workflow 候选时，客户端只把可编辑草稿写入 composer，例如“使用 Feature Development workflow 完成……”，不直接调用 app-server `workflow/start`。
+3. 用户补齐目标后发送消息，模型在当前 turn 中按 init context 调用 `workflow_start`。
+4. 后端 workflow runner 产生 `workflow/run/updated` notification，并在 conversation display path 中发出 `EventMsg::WorkflowRunProgressCompleted`。
+5. app-server projector 生成 typed `ThreadItem::WorkflowRunProgress`；root-worker live cache 通过 typed `item/completed` 接收，cold start 通过 `thread/read` snapshot 接收。
+6. Conversation 渲染 `WorkflowProgressCell`，显示 workflow 名称、run id 短标识、状态、当前 stage、static graph/progress rail。
+7. 后续 `workflow_resume` 或 runner 更新到达时，如果 item id 相同则更新同一 progress cell；如果是新的 typed progress item，则按时间线追加，不能按 run id 或文本内容自行合并。
+
+## 主路径：识别 thread / agent 的 workflow 所属关系
+
+1. 用户在 Agent Tree 看到 workflow 创建的 agent/thread。
+2. 如果 thread metadata 提供 workflow binding，Agent Tree 在 agent 行第二行或右侧显示 `WF · <stage>` 小 badge；conversation header 显示更完整 chip：`<workflowName> · <stageLabel> · run <shortRunId>`。
+3. 用户查看 run 进度时，仍阅读 conversation 中的 `WorkflowProgressCell`；badge/chip 不承担进度图职责。
+4. 如果 chip 有最近 progress item id，点击 chip 可滚动定位到对应 `WorkflowProgressCell`；没有 typed item id 时 chip 只读。
+5. 如果没有 workflow binding metadata，UI 不显示 badge，也不从 progress card、thread path、agent name 或消息文本反推所属关系。
+
+## Workflow Progress 状态覆盖
+
+- empty / queued：显示 `Workflow queued`，stage rail 全部为 `Pending`，当前 stage 可为空。
+- running：显示 `Workflow running`，当前 stage badge 为 `In progress`，已完成 stage 为 success，未开始 stage 为 neutral。
+- waiting：显示 `Waiting for <stage>` 或 `Waiting for agent update`，不把等待原因解析自 raw message；必须来自 typed `message` / `waitingReason`。
+- completed：显示 `Workflow completed`，所有完成 stage 为 success，terminal summary 可显示 `Completed just now` 或 typed time。
+- failed：显示 `Workflow failed`，失败 stage 为 danger badge；错误原因来自 typed `errorMessage` / `failureReason`，不可从 tool output JSON 提取。
+- aborted / cancelled：显示 `Workflow aborted`，已完成 stage 保留，当前/后续 stage 为 muted；如果 payload 无 aborted 状态，先用 `failed` 的 terminal 样式并文案区分。
+- unknown payload：显示 `Workflow updated` + `Progress details unavailable`，仍必须是 typed fallback item；不展示 raw JSON。
+
+## Workflow Progress 键盘与可访问性
+
+- `WorkflowProgressCell` 本身是 timeline event，不默认抢焦点。
+- 如果 stage rail 中 stage 可展开详情，stage item 必须是 button，支持 Tab、Enter、Space 和 visible focus ring；最小版本可以不提供展开。
+- 状态不只靠颜色表达：每个 stage 需要文字 `Done`、`Running`、`Pending`、`Failed` 或等价 aria-label。
+- 横向 rail 在窄屏改为纵向 list，避免 stage 名和 badge 重叠；stage label 单行截断，完整名称进入 `aria-label` 或 tooltip。
