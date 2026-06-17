@@ -5,13 +5,39 @@ import {
   buildComposerSlashSuggestions,
   getActiveComposerSlashQuery,
 } from "./slashMenu";
-import type { ThreadSkill } from "../types";
+import type { ThreadSkill, WorkflowSummary } from "../types";
 
 function makeSkill(overrides: Partial<ThreadSkill> = {}): ThreadSkill {
   return {
     name: "review",
     path: "/skills/review/SKILL.md",
     kind: "explicit",
+    ...overrides,
+  };
+}
+
+function makeWorkflow(
+  overrides: Partial<WorkflowSummary> = {},
+): WorkflowSummary {
+  return {
+    id: "feature-dev",
+    name: "Feature Development",
+    description: "Develop a feature with review and verification",
+    source: "project",
+    path: "/repo/.codex/workflows/feature-dev",
+    entry: "workflow.ts",
+    version: null,
+    whenToUse: ["new feature development"],
+    inputs: {
+      objective: {
+        type: "string",
+        description: "Development objective",
+      },
+      cwd: {
+        type: "string",
+        description: "Worktree path",
+      },
+    },
     ...overrides,
   };
 }
@@ -34,6 +60,7 @@ test("detects goal subcommand slash query before complete commands", () => {
 test("shows built-in commands and skills for an empty slash query", () => {
   const suggestions = buildComposerSlashSuggestions({
     availableSkills: [makeSkill()],
+    availableWorkflows: [makeWorkflow()],
     draftSkills: [],
     query: "",
   });
@@ -42,7 +69,9 @@ test("shows built-in commands and skills for an empty slash query", () => {
     suggestions.map((suggestion) =>
       suggestion.type === "command"
         ? `${suggestion.type}:${suggestion.commandId}`
-        : `${suggestion.type}:${suggestion.skill.name}`,
+        : suggestion.type === "workflow"
+          ? `${suggestion.type}:${suggestion.workflow.id}`
+          : `${suggestion.type}:${suggestion.skill.name}`,
     ),
     [
       "command:clear",
@@ -50,6 +79,7 @@ test("shows built-in commands and skills for an empty slash query", () => {
       "command:goalPause",
       "command:goalResume",
       "command:goalCancel",
+      "workflow:feature-dev",
       "skill:review",
     ],
   );
@@ -116,6 +146,38 @@ test("filters commands and skills from the same query", () => {
       makeSkill({ name: "review" }),
       makeSkill({ name: "openai-docs", path: "/skills/openai-docs/SKILL.md" }),
     ],
+    availableWorkflows: [
+      makeWorkflow(),
+      makeWorkflow({
+        id: "release-triage",
+        name: "Release Triage",
+        path: "/repo/.codex/workflows/release-triage",
+        whenToUse: ["release stabilization"],
+      }),
+    ],
+    draftSkills: [],
+    query: "release",
+  });
+
+  assert.deepEqual(
+    suggestions.map((suggestion) =>
+      suggestion.type === "command"
+        ? `${suggestion.type}:${suggestion.commandId}`
+        : suggestion.type === "workflow"
+          ? `${suggestion.type}:${suggestion.workflow.id}`
+          : `${suggestion.type}:${suggestion.skill.name}`,
+    ),
+    ["workflow:release-triage"],
+  );
+});
+
+test("filters skills from the same query when no workflow matches", () => {
+  const suggestions = buildComposerSlashSuggestions({
+    availableSkills: [
+      makeSkill({ name: "review" }),
+      makeSkill({ name: "openai-docs", path: "/skills/openai-docs/SKILL.md" }),
+    ],
+    availableWorkflows: [makeWorkflow()],
     draftSkills: [],
     query: "doc",
   });
@@ -124,10 +186,39 @@ test("filters commands and skills from the same query", () => {
     suggestions.map((suggestion) =>
       suggestion.type === "command"
         ? `${suggestion.type}:${suggestion.commandId}`
-        : `${suggestion.type}:${suggestion.skill.name}`,
+        : suggestion.type === "workflow"
+          ? `${suggestion.type}:${suggestion.workflow.id}`
+          : `${suggestion.type}:${suggestion.skill.name}`,
     ),
     ["skill:openai-docs"],
   );
+});
+
+test("builds workflow suggestions from discovered workflows", () => {
+  const [suggestion] = buildComposerSlashSuggestions({
+    availableSkills: [],
+    availableWorkflows: [makeWorkflow()],
+    draftSkills: [],
+    query: "feature",
+  });
+
+  assert.deepEqual(suggestion, {
+    type: "workflow",
+    workflow: makeWorkflow(),
+    draftText: "Use the feature-dev workflow with objective: , cwd: ",
+  });
+});
+
+test("does not show workflow suggestions when no workflows are discovered", () => {
+  const suggestions = buildComposerSlashSuggestions({
+    availableSkills: [],
+    availableWorkflows: [],
+    commandsEnabled: false,
+    draftSkills: [],
+    query: "workflow",
+  });
+
+  assert.deepEqual(suggestions, []);
 });
 
 test("does not suggest skills already attached to the draft", () => {
@@ -144,7 +235,9 @@ test("does not suggest skills already attached to the draft", () => {
     suggestions.map((suggestion) =>
       suggestion.type === "command"
         ? `${suggestion.type}:${suggestion.commandId}`
-        : `${suggestion.type}:${suggestion.skill.name}`,
+        : suggestion.type === "workflow"
+          ? `${suggestion.type}:${suggestion.workflow.id}`
+          : `${suggestion.type}:${suggestion.skill.name}`,
     ),
     [
       "command:clear",
@@ -171,7 +264,9 @@ test("can suppress built-in commands when draft attachments would block executio
     suggestions.map((suggestion) =>
       suggestion.type === "command"
         ? `${suggestion.type}:${suggestion.commandId}`
-        : `${suggestion.type}:${suggestion.skill.name}`,
+        : suggestion.type === "workflow"
+          ? `${suggestion.type}:${suggestion.workflow.id}`
+          : `${suggestion.type}:${suggestion.skill.name}`,
     ),
     ["skill:test"],
   );

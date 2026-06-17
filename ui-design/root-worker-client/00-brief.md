@@ -64,6 +64,23 @@ root-worker prototype 是面向 my-codex 多 agent 调试和协作执行的桌�
 3. command、collab/child completion、goal、workflow、event-command 等系统事实继续作为 typed event 展示，不退化成普通 agent message 或 raw JSON。
 4. 本次为文字级迁移 handoff，不改变 UI 视觉形态，因此不新增 baseline screenshot 或原型资产；如实现改变布局或组件视觉，需重新获取完整 Electron baseline。
 
+### 2026-06-17 增量：Workflow Progress Display
+
+本次 handoff 补齐 Dynamic Workflow 启动后在 root-worker conversation 中的图与进度展示。它承接 slash workflow discovery：slash menu 只负责生成可编辑草稿，模型在当前 turn 中调用 `workflow_start` / `workflow_resume` 后，进度必须由 typed display path 进入线程时间线。
+
+目标：
+
+1. 当后端发出 `EventMsg::WorkflowRunProgressCompleted -> ThreadItem::WorkflowRunProgress` 时，conversation 插入低噪音但可扫描的 workflow progress cell。
+2. cell 以 static graph 的 stage 列表表达 workflow 结构，以状态 badge / progress rail 表达当前 stage、完成、失败或取消。
+3. root-worker 只消费 typed `ThreadItem` / v2 payload；不得从 raw marker、assistant JSON、workflow tool output 或 legacy envelope 反解进度。
+4. 如果 typed `ThreadItem` 暂缺 workflow progress variant，协议层应补齐 typed payload；UI 只接受 typed fallback，不新增 raw parser。
+5. workflow 创建的 thread / agent 通过 thread metadata workflow binding 显示轻量所属 badge；progress cell 展示 run 进展，badge 只展示所属关系。
+
+本次属于现有 conversation event 体系的小幅视觉增量，已重新获取完整 Electron baseline：
+
+- [baseline-workflow-progress-2026-06-17.png](/Users/bytedance/Projects/my-codex/.worktrees/workflow-slash-commands-client-display/ui-design/root-worker-client/assets/baseline-workflow-progress-2026-06-17.png)
+- 原型图：[workflow-progress-prototype.svg](/Users/bytedance/Projects/my-codex/.worktrees/workflow-slash-commands-client-display/ui-design/root-worker-client/assets/workflow-progress-prototype.svg)
+
 ## 目标用户
 
 - 角色：使用 Goal/Go 持续推进长任务的 owner、PM agent、调试 root-worker prototype 的工程师。

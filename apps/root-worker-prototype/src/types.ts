@@ -191,6 +191,11 @@ export type ThreadItem = ThreadItemTimestamps &
       text: string;
     }
   | {
+      type: "workflowRunProgress";
+      id: string;
+      event: ThreadWorkflowRunProgressEvent;
+    }
+  | {
       type: "mcpToolCall";
       id: string;
       server: string;
@@ -262,6 +267,42 @@ export type ThreadSkill = {
   name: string;
   path: string;
   kind: ThreadSkillKind;
+};
+
+export type WorkflowSource = "home" | "project";
+
+export type WorkflowInputSpec = {
+  type: string;
+  description?: string | null;
+};
+
+export type WorkflowSummary = {
+  id: string;
+  name: string;
+  description: string;
+  source: WorkflowSource;
+  path: string;
+  entry: string;
+  version?: string | null;
+  whenToUse: string[];
+  inputs: Record<string, WorkflowInputSpec>;
+};
+
+export type ThreadWorkflowRunProgressKind =
+  | "started"
+  | "resumed"
+  | "completed"
+  | "failed"
+  | "aborted";
+
+export type ThreadWorkflowRunProgressEvent = {
+  runId: string;
+  workflowId: string;
+  status: unknown;
+  runnerStatus: string;
+  kind: ThreadWorkflowRunProgressKind;
+  message: string;
+  updatedAt: number;
 };
 
 export type ThreadContextUsageCategoryBreakdown = {
@@ -543,6 +584,7 @@ export type ConversationEntry = {
     | "multiAgent"
     | "childCompletion"
     | "subagentNotification"
+    | "workflow"
     | "goal"
     | "external"
     | "context";

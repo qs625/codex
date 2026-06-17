@@ -60,6 +60,7 @@ import type {
   TreeMenuState,
   TreeNode,
   VoiceCaptureStatus,
+  WorkflowSummary,
 } from "../types";
 
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
@@ -146,6 +147,7 @@ export function SidebarPanel({
 
 export function ConversationPanel({
   availableSkills,
+  availableWorkflows,
   conversationCells,
   conversationScrollRef,
   draft,
@@ -181,6 +183,7 @@ export function ConversationPanel({
   voiceCaptureStatus,
 }: {
   availableSkills: ThreadSkill[];
+  availableWorkflows: WorkflowSummary[];
   conversationCells: ConversationCell[];
   conversationScrollRef: RefObject<HTMLDivElement | null>;
   draft: string;
@@ -240,11 +243,18 @@ export function ConversationPanel({
     () =>
       buildComposerSlashSuggestions({
         availableSkills,
+        availableWorkflows,
         commandsEnabled: draftImages.length === 0 && draftSkills.length === 0,
         draftSkills,
         query: slashQuery,
       }),
-    [availableSkills, draftImages.length, draftSkills, slashQuery],
+    [
+      availableSkills,
+      availableWorkflows,
+      draftImages.length,
+      draftSkills,
+      slashQuery,
+    ],
   );
   const conversationSearchResults = useMemo(
     () =>
@@ -282,6 +292,9 @@ export function ConversationPanel({
   );
   const skillSlashSuggestions = slashSuggestions.filter(
     (suggestion) => suggestion.type === "skill",
+  );
+  const workflowSlashSuggestions = slashSuggestions.filter(
+    (suggestion) => suggestion.type === "workflow",
   );
   const voiceCaptureActive =
     voiceCaptureStatus === "requesting" ||
@@ -396,6 +409,11 @@ export function ConversationPanel({
         return;
       case "skill":
         selectSkill(suggestion.skill);
+        return;
+      case "workflow":
+        onDraftChange(suggestion.draftText);
+        setDismissedSlashQuery(null);
+        setSelectedSlashIndex(0);
         return;
     }
   }
@@ -677,6 +695,17 @@ export function ConversationPanel({
                       onSelectIndex={setSelectedSlashIndex}
                     />
                   ) : null}
+                  {workflowSlashSuggestions.length > 0 ? (
+                    <SlashMenuGroup
+                      allSuggestions={slashSuggestions}
+                      selectedIndex={selectedSlashIndex}
+                      selectedOptionRef={selectedSlashOptionRef}
+                      suggestions={workflowSlashSuggestions}
+                      title="Workflows"
+                      onSelect={selectSlashSuggestion}
+                      onSelectIndex={setSelectedSlashIndex}
+                    />
+                  ) : null}
                   {skillSlashSuggestions.length > 0 ? (
                     <SlashMenuGroup
                       allSuggestions={slashSuggestions}
@@ -691,7 +720,7 @@ export function ConversationPanel({
                 </>
               ) : (
                 <div className="composer-slash-empty">
-                  No commands or skills match “/{slashQuery ?? ""}”
+                  No commands, workflows, or skills match “/{slashQuery ?? ""}”
                 </div>
               )}
             </div>
@@ -996,6 +1025,8 @@ function getSlashSuggestionKey(suggestion: ComposerSlashSuggestion) {
       return `command:${suggestion.commandId}`;
     case "skill":
       return `skill:${suggestion.skill.path}`;
+    case "workflow":
+      return `workflow:${suggestion.workflow.id}`;
   }
 }
 
@@ -1067,6 +1098,18 @@ function renderSlashSuggestion(suggestion: ComposerSlashSuggestion) {
           </span>
         </>
       );
+    case "workflow":
+      return (
+        <>
+          <span className="composer-slash-option-name">
+            /workflow {suggestion.workflow.id}
+          </span>
+          <span className="composer-slash-option-meta">
+            Workflow · {suggestion.workflow.name} ·{" "}
+            {formatWorkflowSourceLabel(suggestion.workflow.source)}
+          </span>
+        </>
+      );
   }
 }
 
@@ -1080,6 +1123,17 @@ function formatSkillKindLabel(kind: ThreadSkill["kind"]) {
       return "all";
     default:
       return "skill";
+  }
+}
+
+function formatWorkflowSourceLabel(source: WorkflowSummary["source"]) {
+  switch (source) {
+    case "home":
+      return "home";
+    case "project":
+      return "project";
+    default:
+      return "workflow";
   }
 }
 

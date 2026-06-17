@@ -154,6 +154,11 @@ ipcMain.handle("codex:listSkills", async (_event, cwd = defaultWorkspace) => {
   return listSkills(cwd);
 });
 
+ipcMain.handle("codex:listWorkflows", async (_event, cwd = defaultWorkspace) => {
+  await ensureDefaultWorkspace();
+  return appServerClient.request("workflow/list", { cwd });
+});
+
 ipcMain.handle("codex:createThread", async (_event, payload) => {
   await ensureDefaultWorkspace();
   const params = withRealtimeConversationFeature({

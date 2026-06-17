@@ -418,6 +418,24 @@ function buildConversationItemEntries(
     ];
   }
 
+  if (item.type === "workflowRunProgress") {
+    return [
+      {
+        id: item.id,
+        kind: "tool" as const,
+        author,
+        role: "system" as const,
+        text: summarizeWorkflowRunProgress(item),
+        timestamp,
+        attachments: [],
+        toolName: `Workflow · ${item.event.workflowId}`,
+        toolStatus: workflowRunProgressStatus(item),
+        toolDetails: formatWorkflowRunProgressDetails(item),
+        toolCategory: "workflow",
+      },
+    ];
+  }
+
   if (item.type === "threadGoalUpdate") {
     return [
       {
@@ -538,6 +556,13 @@ function formatItemTimestamp(item: ThreadItem) {
     Number.isFinite(item.createdAtMs)
   ) {
     return formatClockTime(item.createdAtMs / 1000);
+  }
+
+  if (
+    item.type === "workflowRunProgress" &&
+    Number.isFinite(item.event.updatedAt)
+  ) {
+    return formatClockTime(item.event.updatedAt);
   }
 
   const timestampMs = item.completedAtMs ?? item.startedAtMs;
@@ -1382,6 +1407,64 @@ function summarizeThreadGoalUpdate(
       return `Goal completed: ${objective}`;
     default:
       return `Goal changed: ${objective}`;
+  }
+}
+
+function summarizeWorkflowRunProgress(
+  item: Extract<ThreadItem, { type: "workflowRunProgress" }>,
+) {
+  return (
+    firstNonEmptyLine(item.event.message) ??
+    formatWorkflowRunProgressKind(item.event.kind)
+  );
+}
+
+function workflowRunProgressStatus(
+  item: Extract<ThreadItem, { type: "workflowRunProgress" }>,
+) {
+  switch (item.event.kind) {
+    case "started":
+    case "resumed":
+      return "running";
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "aborted":
+      return "aborted";
+    default:
+      return "unknown";
+  }
+}
+
+function formatWorkflowRunProgressDetails(
+  item: Extract<ThreadItem, { type: "workflowRunProgress" }>,
+) {
+  return formatResponseItemDetails([
+    ["Workflow", item.event.workflowId],
+    ["Run", item.event.runId],
+    ["Progress", formatWorkflowRunProgressKind(item.event.kind)],
+    ["Runner Status", item.event.runnerStatus],
+    ["Message", item.event.message],
+    ["Run Status", item.event.status],
+    ["Graph", "No graph details in this update."],
+  ]);
+}
+
+function formatWorkflowRunProgressKind(kind: string) {
+  switch (kind) {
+    case "started":
+      return "Workflow started";
+    case "resumed":
+      return "Workflow resumed";
+    case "completed":
+      return "Workflow completed";
+    case "failed":
+      return "Workflow failed";
+    case "aborted":
+      return "Workflow aborted";
+    default:
+      return "Workflow updated";
   }
 }
 

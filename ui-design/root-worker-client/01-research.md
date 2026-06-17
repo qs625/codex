@@ -76,3 +76,21 @@ Baseline 截图：[baseline-slash-goal-display.png](/Users/bytedance/Projects/my
 - `get_goal` 是潜在噪音源。默认不应因为每次内部读取都显示历史项；只有后端明确投影 user-visible typed read/check item 时才展示。
 - GoalStrip 和 RightPanel 已承担当前状态和详情，不应在 conversation 再重复完整 objective、预算表和 action button。
 - 如果后端只提供 `builtinToolCall` / `eventDrivenToolCall` 的泛型工具项，短期可以展示工具 row；但最终 goal lifecycle 应有专门 typed item 或足够明确的 typed payload，避免 UI 从工具名和 output JSON 中猜语义。
+
+## 2026-06-17 Workflow Progress Display 调研
+
+本次不做外部竞品调研，原因是范围不是新 workflow 产品，而是在 root-worker 现有 typed timeline 内展示已经存在的 Dynamic Workflow runtime progress。最重要的设计约束来自本仓库协议边界：workflow progress 的 conversation 展示必须走 `EventMsg::WorkflowRunProgressCompleted -> ThreadItem::WorkflowRunProgress`，root-worker 不能从 raw marker、assistant JSON、workflow tool output 或 legacy envelope 反解。
+
+现有 UI 模式可复用：
+
+- Goal lifecycle 已定义 typed lifecycle event cell：适合复用“icon + 标题 + badge + 二级摘要”的低噪音形态。
+- Command notification event 已定义“独立 typed notification，不塞回原 command cell”的时间线原则；workflow progress 也应作为独立 timeline item 出现。
+- Slash menu 的 Dynamic Workflow 候选来自 `workflow/list` discovery；选择后只生成可编辑用户请求草稿，不由客户端直接调用 `workflow/start`。
+- Conversation 的合并、定位、搜索和 archived compact 展示都以 `ThreadItem.id` 为唯一键；workflow progress item 不应按 run id、stage 名或文本内容去重。
+
+设计推论：
+
+- 最小可实现形式不是复杂 DAG canvas，而是一条 workflow progress cell：顶部显示 workflow 名称、run 状态、当前 stage；下方用横向 stage rail 或窄屏纵向列表显示 static graph 和每个 stage 状态。
+- 对 `feature-dev` 这类线性 workflow，stage rail 足够表达 `Research -> Implement -> Review/Fix -> Verify`；未来非线性图可以先降级为有序 stage list，并在 payload 中暴露 `edges` 后再增强。
+- progress cell 只展示 workflow 运行事实，不提供 start/resume/abort 操作按钮；这些控制仍通过模型工具、slash 草稿或后续明确 command 设计进入。
+- 如果同一 run 多次发 progress update，UI 以 typed lifecycle item 的 `id` 更新同一 entry；不同 `ThreadItem.id` 的历史进度必须保留，避免 timeline 丢事件。

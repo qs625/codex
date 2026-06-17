@@ -82,6 +82,108 @@ ConversationEntry 映射：
 - 搜索跳转、RightPanel recent event 跳转和 archived compact 内部展示都要覆盖两行 goal event，避免定位后高亮错位。
 - RightPanel recent event 使用 typed item id 定位，控件语义为 button/link，支持 Enter/Space 与 focus ring。
 
+## WorkflowProgressCell
+
+职责：展示 Dynamic Workflow 运行图和进度，作为 conversation 中的 typed workflow timeline item。
+
+数据来源：
+
+- typed `ThreadItem.workflowRunProgress` / `ThreadItem::WorkflowRunProgress` 或等价 v2 typed payload。
+- primary display path：`EventMsg::WorkflowRunProgressCompleted -> ThreadItem::WorkflowRunProgress`。
+- 不从 `agentMessage.text`、raw marker、assistant JSON、workflow tool output、`workflow/run/updated` debug text 或 legacy envelope 反解。
+
+推荐字段：
+
+- `id`: typed item id，同时作为 `ConversationEntry.id`。
+- `runId`: workflow run id；显示可截短，例如 `run abc123`，不用于 conversation 去重。
+- `workflowId`: stable workflow id，例如 `feature-dev`。
+- `workflowName`: 用户可读名称，例如 `Feature Development`。
+- `status`: `queued` | `running` | `waiting` | `completed` | `failed` | `aborted`。
+- `currentStageId`: 可选，当前 stage。
+- `message`: 可选 typed summary，例如 `Implement stage running`。
+- `stages`: 有序数组，包含 `id`、`label`、`status`、`agentLabel`、`startedAtMs`、`completedAtMs`、`errorMessage`。
+- `edges`: 可选 static graph edge；最小版本可忽略复杂布局，只按 stage 顺序展示。
+- `updatedAtMs`: 用于时间。
+
+视觉：
+
+- Header 左侧使用流程/节点类 line icon；标题显示 workflow name，副信息显示短 run id 和更新时间。
+- 状态 badge：queued/waiting 使用 neutral，running 使用 accent，completed 使用 success，failed 使用 danger，aborted 使用 muted warning。
+- Stage rail：桌面横向，每个 stage 为固定最小宽度 segment，包含短 label 和状态 chip；segment 之间用细线连接。
+- 窄屏纵向 list：每个 stage 一行，左侧状态点，右侧 label + 状态，避免横向滚动。
+- 当前 stage 可用更深边框或轻背景强调；不要使用动画作为唯一进行中信号。
+- 错误原因显示在失败 stage 下方一行，最多两行截断；完整内容进入 tooltip/aria-label 或 future detail。
+
+状态文案：
+
+- queued：`Workflow queued`
+- running：`Workflow running`
+- waiting：`Workflow waiting`
+- completed：`Workflow completed`
+- failed：`Workflow failed`
+- aborted：`Workflow aborted`
+- typed fallback：`Workflow updated` + `Progress details unavailable`
+
+空/缺字段处理：
+
+- 无 `stages`：显示 header + summary + `No graph details in this update.`，但仍保留 typed item。
+- 无 `workflowName`：使用 `workflowId`；都缺失时显示 `Workflow run`。
+- 无 `currentStageId`：running 状态显示第一条 `running` stage；仍找不到时只显示 run status。
+- 无 `message`：根据 status 和 current stage 合成短摘要，但不能解析 raw output。
+
+行为与合并：
+
+- 同一 `ThreadItem.id` 的 started/completed 更新可合并为同一 cell。
+- 不同 `ThreadItem.id` 必须保留为不同 entry，即使 `runId` 相同。
+- 如果实现希望展示“最新 run progress”聚合，必须放在 RightPanel summary；conversation timeline 不做 destructive merge。
+- compact replacement history 中按 typed id 和 server 顺序保留 workflow progress item。
+
+可访问性：
+
+- cell 的整体 aria-label 包含 workflow name、status、current stage 和 stage 总数。
+- 每个 stage 的状态有文字和 aria-label，例如 `Research, Done`、`Review/Fix, Running`。
+- Stage rail 不依赖颜色区分完成/失败；badge 文本必须可见。
+- 如支持 stage 详情展开，stage control 使用 button 语义；最小版本只读，无需把每个 stage 加入 Tab 顺序。
+
+## WorkflowThreadBadge
+
+职责：在 Agent Tree 或 conversation header 中轻量标识当前 thread / agent 属于哪个 workflow run，不改变树的主结构。
+
+数据来源：
+
+- 优先消费 thread metadata 中的 workflow binding，例如 `workflowId`、`workflowName`、`runId`、`stageId`、`stageLabel`、`role`。
+- 可从 typed thread/session metadata、`ThreadStatus` 附带 metadata 或 thread read payload 获取；具体字段名由后端协议定稿。
+- 不从 thread path、agent message、subagent name、workflow progress card 文案或 raw envelope 反解所属关系。
+
+推荐字段：
+
+- `workflowId`: stable workflow id。
+- `workflowName`: 用户可读名称。
+- `runId`: workflow run id，UI 截短。
+- `stageId` / `stageLabel`: 当前 thread 对应 stage，例如 `Review/Fix`。
+- `bindingRole`: `root` | `stageAgent` | `reviewer` | `tester` | `worker` | `unknown`。
+- `bindingStatus`: `active` | `waiting` | `complete` | `failed` | `unknown`。
+
+Agent Tree 形态：
+
+- 在 agent label 的第二行或右侧显示小 badge，例如 `Workflow · feature-dev · Review/Fix`。
+- badge 文本优先使用 `stageLabel`，tooltip/aria-label 显示完整 `workflowName` 和截短 run id。
+- 不新增 workflow 分组，不把树改成 graph，不把同一 run 的 agents 重新排序。
+- 多个 workflow binding 时只显示当前 active / latest binding；完整列表留给未来 Thread Analysis。
+
+Conversation Header 形态：
+
+- 在 path / role / run config 附近显示一枚低权重 chip，例如 `Feature Development · Review/Fix · run wf_42a9`。
+- chip 点击可定位到最近 `WorkflowProgressCell`，前提是有 typed item id；没有定位目标时只读，不表现为按钮。
+- 可点击和只读状态必须视觉区分：有定位目标时才显示 button hover/focus 样式；没有定位目标时保持静态 chip，不使用 pointer cursor。
+- chip 只表达所属关系，不展示进度百分比，也不替代 progress cell。
+
+缺 metadata 处理：
+
+- 无 workflow binding metadata 时不显示 badge，避免误判。
+- 如果当前 conversation 已有 workflow progress card，但 thread metadata 无 binding，可在设计/开发验收中记录断点：`Progress is visible, but thread-to-workflow binding metadata is unavailable.`；UI 不从 progress card 反推当前 thread 所属关系。
+- Debug 模式或 Thread Analysis 可显示低权重提示 `No workflow binding metadata for this thread.`；默认主界面不制造噪音。
+
 ## CommandWaitReplacementEntry
 
 职责：在 compact / replacement history 中展示一次 `command_wait` 的语义结果，避免把普通 `function_call_output` JSON 暴露给用户。

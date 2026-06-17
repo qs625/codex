@@ -25,6 +25,10 @@ declare global {
         skills: unknown[];
         errors: string[];
       }>;
+      listWorkflows: (cwd?: string) => Promise<{
+        workflows: unknown[];
+        diagnostics: unknown[];
+      }>;
       createThread: (payload: {
         cwd?: string;
         name?: string;
