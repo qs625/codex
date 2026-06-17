@@ -539,14 +539,14 @@ test("keeps ordinary multi-agent tool entries grouped in one visible cell", () =
         kind: "tool",
         entries: [
           ["multiAgent", "spawn agent"],
-          ["multiAgent", "send message"],
+          ["multiAgent", "followup task"],
         ],
       },
     ],
   );
 });
 
-test("keeps typed sendMessage collab messages visible", () => {
+test("shows legacy sendMessage collab messages as follow-up messages", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
@@ -570,10 +570,46 @@ test("keeps typed sendMessage collab messages visible", () => {
       [
         "multiAgent",
         "received from /root/worker",
-        "Received message from /root/worker.",
+        "Received follow-up from /root/worker.",
       ],
     ],
   );
+  assert.match(entries[0]?.toolDetails ?? "", /Operation\nfollowupTask/);
+});
+
+test("shows typed list_agents collab tool calls", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "collabAgentToolCall",
+        id: "list-agents-1",
+        tool: "listAgents",
+        status: "completed",
+        senderThreadId: "thread-1",
+        senderPath: "/root",
+        receiverThreadIds: ["/root/worker"],
+        receiverPaths: ["/root/worker"],
+        timeoutMs: null,
+        prompt: "/root",
+        model: null,
+        reasoningEffort: null,
+        agentsStates: {
+          "/root/worker": {
+            path: "/root/worker",
+            status: "completed",
+            message: "done",
+          },
+        },
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.toolCategory, entry.toolName, entry.text]),
+    [["multiAgent", "list agents", "listed 1 agents"]],
+  );
+  assert.match(entries[0]?.toolDetails ?? "", /Tool\nlist_agents/);
+  assert.match(entries[0]?.toolDetails ?? "", /Agent States\n\/root\/worker • completed • done/);
 });
 
 test("keeps child completions and subagent notifications as visible cells", () => {

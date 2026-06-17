@@ -1311,6 +1311,11 @@ function summarizeCollabAgentToolCall(
         return `wait on ${receiverLabel}`;
       }
       return "wait_agent";
+    case "listAgents":
+    case "list_agents":
+      return item.receiverPaths.length > 0
+        ? `listed ${item.receiverPaths.length} agents`
+        : "list_agents";
     case "closeAgent":
       return `Closed ${receiverLabel}.`;
     default:
@@ -1505,11 +1510,13 @@ function formatCollabAgentToolName(
     case "spawnAgent":
       return "spawn_agent";
     case "sendInput":
-      return "send_message";
     case "resumeAgent":
       return "followup_task";
     case "wait":
       return "wait_agent";
+    case "listAgents":
+    case "list_agents":
+      return "list_agents";
     case "closeAgent":
       return "close_agent";
     default:
@@ -1524,11 +1531,13 @@ function formatCollabAgentToolTitle(
     case "spawnAgent":
       return "spawn agent";
     case "sendInput":
-      return "send message";
     case "resumeAgent":
       return "followup task";
     case "wait":
       return "wait for agent";
+    case "listAgents":
+    case "list_agents":
+      return "list agents";
     case "closeAgent":
       return "close agent";
     default:
@@ -1615,7 +1624,7 @@ function summarizeCollabAgentMessage(
     case "spawnAgent":
       return `Received initial task from ${senderPath}.`;
     case "sendMessage":
-      return `Received message from ${senderPath}.`;
+    case "send_message":
     case "followupTask":
       return `Received follow-up from ${senderPath}.`;
     case "childCompletion": {
@@ -1652,7 +1661,7 @@ function formatCollabAgentMessageDetails(
 ) {
   const message = stringOrNull(item.content) ?? "…";
   const sections = [
-    `Operation\n${item.operation}`,
+    `Operation\n${formatCollabAgentMessageOperation(item.operation)}`,
     `From\n${stringOrFallback(item.senderPath, "unknown")}`,
     `To\n${stringOrFallback(item.recipientPath, "unknown")}`,
     `Message\n${message}`,
@@ -1668,6 +1677,12 @@ function formatCollabAgentMessageDetails(
   }
 
   return sections.join("\n\n");
+}
+
+function formatCollabAgentMessageOperation(operation: string) {
+  return operation === "sendMessage" || operation === "send_message"
+    ? "followupTask"
+    : operation;
 }
 
 function summarizeCollabAgentStatusUpdate(

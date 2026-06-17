@@ -218,6 +218,71 @@ pub fn item_event_to_server_notification(
                 completed_at_ms: end_event.completed_at_ms,
             })
         }
+        EventMsg::CollabListAgentsBegin(begin_event) => {
+            let item = ThreadItem::CollabAgentToolCall {
+                id: begin_event.call_id,
+                tool: CollabAgentTool::ListAgents,
+                status: CollabAgentToolCallStatus::InProgress,
+                sender_thread_id: begin_event.sender_thread_id.to_string(),
+                sender_path: begin_event.sender_agent_path,
+                receiver_thread_ids: Vec::new(),
+                receiver_paths: Vec::new(),
+                timeout_ms: None,
+                prompt: begin_event.path_prefix,
+                model: None,
+                reasoning_effort: None,
+                agents_states: HashMap::new(),
+            };
+            ServerNotification::ItemStarted(ItemStartedNotification {
+                thread_id,
+                turn_id,
+                item,
+                started_at_ms: begin_event.started_at_ms,
+            })
+        }
+        EventMsg::CollabListAgentsEnd(end_event) => {
+            let receiver_paths: Vec<String> = end_event
+                .agents
+                .iter()
+                .map(|agent| agent.agent_path.clone())
+                .collect();
+            let agents_states = end_event
+                .agents
+                .into_iter()
+                .map(|agent| {
+                    let mut state = CollabAgentState::from(agent.status);
+                    state.path = Some(agent.agent_path.clone());
+                    if state.message.is_none() {
+                        state.message = agent.last_task_message;
+                    }
+                    (agent.agent_path, state)
+                })
+                .collect();
+            let item = ThreadItem::CollabAgentToolCall {
+                id: end_event.call_id,
+                tool: CollabAgentTool::ListAgents,
+                status: if end_event.success {
+                    CollabAgentToolCallStatus::Completed
+                } else {
+                    CollabAgentToolCallStatus::Failed
+                },
+                sender_thread_id: end_event.sender_thread_id.to_string(),
+                sender_path: end_event.sender_agent_path,
+                receiver_thread_ids: Vec::new(),
+                receiver_paths,
+                timeout_ms: None,
+                prompt: end_event.path_prefix,
+                model: None,
+                reasoning_effort: None,
+                agents_states,
+            };
+            ServerNotification::ItemCompleted(ItemCompletedNotification {
+                thread_id,
+                turn_id,
+                item,
+                completed_at_ms: end_event.completed_at_ms,
+            })
+        }
         EventMsg::CollabWaitingBegin(begin_event) => {
             let receiver_thread_ids = begin_event
                 .receiver_thread_ids

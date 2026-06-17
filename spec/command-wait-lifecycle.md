@@ -55,3 +55,7 @@
 - root-worker Thread 状态：presence label、tree 状态和 thinking indicator 都以 backend canonical
   `ThreadStatus` / `thread/status/changed` 为源；thinking indicator 只响应 `activeFlags` 中的 `running`，
   不从 turn status、conversation items、raw marker 或 legacy envelope 推导。
+- MultiAgent V2 display：`list_agents` 通过 typed `CollabListAgentsBegin/End` 投影为
+  `ThreadItem::CollabAgentToolCall(tool=listAgents)`，live 和 thread/read replay 都不得依赖 raw
+  FunctionCallOutput。旧历史里的 `sendMessage` / `send_message` operation 只作为兼容输入保留，root-worker
+  展示归一为 follow-up task 语义，不再把 obsolete `SendMessage` 当作用户可见 tool/item 名称。

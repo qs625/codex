@@ -1,5 +1,6 @@
 use super::*;
 use crate::agent::control::ListedAgent;
+use crate::turn_timing::now_unix_timestamp_ms;
 use codex_tools::create_list_agents_tool;
 use codex_tools::ToolSpec;
 
@@ -22,10 +23,29 @@ impl ToolExecutor<ToolInvocation> for Handler {
             session,
             turn,
             payload,
+            call_id,
             ..
         } = invocation;
         let arguments = function_arguments(payload)?;
         let args: ListAgentsArgs = parse_arguments(&arguments)?;
+        let sender_agent_path = turn
+            .session_source
+            .get_agent_path()
+            .unwrap_or_else(AgentPath::root)
+            .to_string();
+        session
+            .send_event(
+                &turn,
+                CollabListAgentsBeginEvent {
+                    call_id: call_id.clone(),
+                    started_at_ms: now_unix_timestamp_ms(),
+                    sender_thread_id: session.conversation_id,
+                    sender_agent_path: sender_agent_path.clone(),
+                    path_prefix: args.path_prefix.clone(),
+                }
+                .into(),
+            )
+            .await;
         session
             .services
             .agent_control
@@ -39,9 +59,39 @@ impl ToolExecutor<ToolInvocation> for Handler {
                 args.path_prefix.as_deref(),
             )
             .await
-            .map_err(collab_spawn_error)?;
+            .map_err(collab_spawn_error);
 
-        Ok(ListAgentsResult { agents })
+        let listed_agents = agents.as_ref().map_or_else(
+            |_| Vec::new(),
+            |agents| {
+                agents
+                    .iter()
+                    .map(|agent| CollabListedAgent {
+                        agent_path: agent.agent_name.clone(),
+                        status: agent.agent_status.clone(),
+                        last_task_message: agent.last_task_message.clone(),
+                    })
+                    .collect()
+            },
+        );
+
+        session
+            .send_event(
+                &turn,
+                CollabListAgentsEndEvent {
+                    call_id,
+                    completed_at_ms: now_unix_timestamp_ms(),
+                    sender_thread_id: session.conversation_id,
+                    sender_agent_path,
+                    path_prefix: args.path_prefix,
+                    success: agents.is_ok(),
+                    agents: listed_agents,
+                }
+                .into(),
+            )
+            .await;
+
+        Ok(ListAgentsResult { agents: agents? })
     }
 }
 

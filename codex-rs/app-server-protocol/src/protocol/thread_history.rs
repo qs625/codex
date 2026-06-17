@@ -217,6 +217,10 @@ impl ThreadHistoryBuilder {
             EventMsg::CollabAgentInteractionEnd(payload) => {
                 self.handle_collab_agent_interaction_end(payload)
             }
+            EventMsg::CollabListAgentsBegin(payload) => {
+                self.handle_collab_list_agents_begin(payload)
+            }
+            EventMsg::CollabListAgentsEnd(payload) => self.handle_collab_list_agents_end(payload),
             EventMsg::CollabWaitingBegin(payload) => self.handle_collab_waiting_begin(payload),
             EventMsg::CollabWaitingEnd(payload) => self.handle_collab_waiting_end(payload),
             EventMsg::CollabCloseBegin(payload) => self.handle_collab_close_begin(payload),
@@ -805,6 +809,68 @@ impl ThreadHistoryBuilder {
             model: None,
             reasoning_effort: None,
             agents_states: [(receiver_id, received_status)].into_iter().collect(),
+        });
+    }
+
+    fn handle_collab_list_agents_begin(
+        &mut self,
+        payload: &codex_protocol::protocol::CollabListAgentsBeginEvent,
+    ) {
+        let item = ThreadItem::CollabAgentToolCall {
+            id: payload.call_id.clone(),
+            tool: CollabAgentTool::ListAgents,
+            status: CollabAgentToolCallStatus::InProgress,
+            sender_thread_id: payload.sender_thread_id.to_string(),
+            sender_path: payload.sender_agent_path.clone(),
+            receiver_thread_ids: Vec::new(),
+            receiver_paths: Vec::new(),
+            timeout_ms: None,
+            prompt: payload.path_prefix.clone(),
+            model: None,
+            reasoning_effort: None,
+            agents_states: HashMap::new(),
+        };
+        self.upsert_item_in_current_turn(item);
+    }
+
+    fn handle_collab_list_agents_end(
+        &mut self,
+        payload: &codex_protocol::protocol::CollabListAgentsEndEvent,
+    ) {
+        let receiver_paths: Vec<String> = payload
+            .agents
+            .iter()
+            .map(|agent| agent.agent_path.clone())
+            .collect();
+        let agents_states = payload
+            .agents
+            .iter()
+            .map(|agent| {
+                let mut state = CollabAgentState::from(agent.status.clone());
+                state.path = Some(agent.agent_path.clone());
+                if state.message.is_none() {
+                    state.message = agent.last_task_message.clone();
+                }
+                (agent.agent_path.clone(), state)
+            })
+            .collect();
+        self.upsert_item_in_current_turn(ThreadItem::CollabAgentToolCall {
+            id: payload.call_id.clone(),
+            tool: CollabAgentTool::ListAgents,
+            status: if payload.success {
+                CollabAgentToolCallStatus::Completed
+            } else {
+                CollabAgentToolCallStatus::Failed
+            },
+            sender_thread_id: payload.sender_thread_id.to_string(),
+            sender_path: payload.sender_agent_path.clone(),
+            receiver_thread_ids: Vec::new(),
+            receiver_paths,
+            timeout_ms: None,
+            prompt: payload.path_prefix.clone(),
+            model: None,
+            reasoning_effort: None,
+            agents_states,
         });
     }
 
@@ -4852,6 +4918,133 @@ mod tests {
                 )]
                 .into_iter()
                 .collect(),
+            }
+        );
+    }
+
+    #[test]
+    fn reconstructs_list_agents_call() {
+        let sender = ThreadId::try_from("00000000-0000-0000-0000-000000000001")
+            .expect("valid sender thread id");
+        let events = vec![
+            EventMsg::UserMessage(UserMessageEvent {
+                message: "list agents".into(),
+                images: None,
+                text_elements: Vec::new(),
+                local_images: Vec::new(),
+                skills: Vec::new(),
+            }),
+            EventMsg::CollabListAgentsBegin(codex_protocol::protocol::CollabListAgentsBeginEvent {
+                call_id: "list-agents-1".into(),
+                started_at_ms: 0,
+                sender_thread_id: sender,
+                sender_agent_path: "/root".into(),
+                path_prefix: Some("/root".into()),
+            }),
+            EventMsg::CollabListAgentsEnd(codex_protocol::protocol::CollabListAgentsEndEvent {
+                call_id: "list-agents-1".into(),
+                completed_at_ms: 1,
+                sender_thread_id: sender,
+                sender_agent_path: "/root".into(),
+                path_prefix: Some("/root".into()),
+                success: true,
+                agents: vec![codex_protocol::protocol::CollabListedAgent {
+                    agent_path: "/root/scout".into(),
+                    status: AgentStatus::Completed(Some("done".into())),
+                    last_task_message: Some("last task".into()),
+                }],
+            }),
+        ];
+
+        let items = events
+            .into_iter()
+            .map(RolloutItem::EventMsg)
+            .collect::<Vec<_>>();
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 2);
+        assert_eq!(
+            turns[0].items[1],
+            ThreadItem::CollabAgentToolCall {
+                id: "list-agents-1".into(),
+                tool: CollabAgentTool::ListAgents,
+                status: CollabAgentToolCallStatus::Completed,
+                sender_thread_id: sender.to_string(),
+                sender_path: "/root".into(),
+                receiver_thread_ids: Vec::new(),
+                receiver_paths: vec!["/root/scout".into()],
+                timeout_ms: None,
+                prompt: Some("/root".into()),
+                model: None,
+                reasoning_effort: None,
+                agents_states: [(
+                    "/root/scout".into(),
+                    CollabAgentState {
+                        path: Some("/root/scout".into()),
+                        status: crate::protocol::v2::CollabAgentStatus::Completed,
+                        message: Some("done".into()),
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            }
+        );
+    }
+
+    #[test]
+    fn reconstructs_failed_list_agents_call() {
+        let sender = ThreadId::try_from("00000000-0000-0000-0000-000000000001")
+            .expect("valid sender thread id");
+        let events = vec![
+            EventMsg::UserMessage(UserMessageEvent {
+                message: "list agents".into(),
+                images: None,
+                text_elements: Vec::new(),
+                local_images: Vec::new(),
+                skills: Vec::new(),
+            }),
+            EventMsg::CollabListAgentsBegin(codex_protocol::protocol::CollabListAgentsBeginEvent {
+                call_id: "list-agents-1".into(),
+                started_at_ms: 0,
+                sender_thread_id: sender,
+                sender_agent_path: "/root".into(),
+                path_prefix: None,
+            }),
+            EventMsg::CollabListAgentsEnd(codex_protocol::protocol::CollabListAgentsEndEvent {
+                call_id: "list-agents-1".into(),
+                completed_at_ms: 1,
+                sender_thread_id: sender,
+                sender_agent_path: "/root".into(),
+                path_prefix: None,
+                success: false,
+                agents: Vec::new(),
+            }),
+        ];
+
+        let items = events
+            .into_iter()
+            .map(RolloutItem::EventMsg)
+            .collect::<Vec<_>>();
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 2);
+        assert_eq!(
+            turns[0].items[1],
+            ThreadItem::CollabAgentToolCall {
+                id: "list-agents-1".into(),
+                tool: CollabAgentTool::ListAgents,
+                status: CollabAgentToolCallStatus::Failed,
+                sender_thread_id: sender.to_string(),
+                sender_path: "/root".into(),
+                receiver_thread_ids: Vec::new(),
+                receiver_paths: Vec::new(),
+                timeout_ms: None,
+                prompt: None,
+                model: None,
+                reasoning_effort: None,
+                agents_states: HashMap::new(),
             }
         );
     }

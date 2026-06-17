@@ -106,6 +106,8 @@ pub(crate) enum ToolRuntimePayload<'a> {
     CollabAgentSpawnEnd(&'a codex_protocol::protocol::CollabAgentSpawnEndEvent),
     CollabAgentInteractionBegin(&'a codex_protocol::protocol::CollabAgentInteractionBeginEvent),
     CollabAgentInteractionEnd(&'a codex_protocol::protocol::CollabAgentInteractionEndEvent),
+    CollabListAgentsBegin(&'a codex_protocol::protocol::CollabListAgentsBeginEvent),
+    CollabListAgentsEnd(&'a codex_protocol::protocol::CollabListAgentsEndEvent),
     CollabWaitingBegin(&'a codex_protocol::protocol::CollabWaitingBeginEvent),
     CollabWaitingEnd(&'a codex_protocol::protocol::CollabWaitingEndEvent),
     CollabCloseBegin(&'a codex_protocol::protocol::CollabCloseBeginEvent),
@@ -128,6 +130,8 @@ impl Serialize for ToolRuntimePayload<'_> {
             ToolRuntimePayload::CollabAgentSpawnEnd(event) => event.serialize(serializer),
             ToolRuntimePayload::CollabAgentInteractionBegin(event) => event.serialize(serializer),
             ToolRuntimePayload::CollabAgentInteractionEnd(event) => event.serialize(serializer),
+            ToolRuntimePayload::CollabListAgentsBegin(event) => event.serialize(serializer),
+            ToolRuntimePayload::CollabListAgentsEnd(event) => event.serialize(serializer),
             ToolRuntimePayload::CollabWaitingBegin(event) => event.serialize(serializer),
             ToolRuntimePayload::CollabWaitingEnd(event) => event.serialize(serializer),
             ToolRuntimePayload::CollabCloseBegin(event) => event.serialize(serializer),
@@ -196,6 +200,19 @@ pub(crate) fn tool_runtime_trace_event(event: &EventMsg) -> Option<ToolRuntimeTr
             tool_call_id: &event.call_id,
             status: ExecutionStatus::Completed,
             payload: ToolRuntimePayload::CollabAgentInteractionEnd(event),
+        }),
+        EventMsg::CollabListAgentsBegin(event) => Some(ToolRuntimeTraceEvent::Started {
+            tool_call_id: &event.call_id,
+            payload: ToolRuntimePayload::CollabListAgentsBegin(event),
+        }),
+        EventMsg::CollabListAgentsEnd(event) => Some(ToolRuntimeTraceEvent::Ended {
+            tool_call_id: &event.call_id,
+            status: if event.success {
+                ExecutionStatus::Completed
+            } else {
+                ExecutionStatus::Failed
+            },
+            payload: ToolRuntimePayload::CollabListAgentsEnd(event),
         }),
         EventMsg::CollabWaitingBegin(event) => Some(ToolRuntimeTraceEvent::Started {
             tool_call_id: &event.call_id,
@@ -373,6 +390,8 @@ pub(crate) fn wrapped_protocol_event_type(event: &EventMsg) -> Option<&'static s
         | EventMsg::CollabAgentSpawnEnd(_)
         | EventMsg::CollabAgentInteractionBegin(_)
         | EventMsg::CollabAgentInteractionEnd(_)
+        | EventMsg::CollabListAgentsBegin(_)
+        | EventMsg::CollabListAgentsEnd(_)
         | EventMsg::CollabWaitingBegin(_)
         | EventMsg::CollabWaitingEnd(_)
         | EventMsg::CollabCloseBegin(_)
@@ -413,5 +432,32 @@ fn execution_status_for_abort_reason(reason: &TurnAbortReason) -> ExecutionStatu
         | TurnAbortReason::Replaced
         | TurnAbortReason::ReviewEnded
         | TurnAbortReason::BudgetLimited => ExecutionStatus::Cancelled,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_protocol::ThreadId;
+    use codex_protocol::protocol::CollabListAgentsEndEvent;
+
+    #[test]
+    fn failed_list_agents_end_maps_to_failed_trace_status() {
+        let event = EventMsg::CollabListAgentsEnd(CollabListAgentsEndEvent {
+            call_id: "list-agents-1".into(),
+            completed_at_ms: 1,
+            sender_thread_id: ThreadId::default(),
+            sender_agent_path: "/root".into(),
+            path_prefix: None,
+            success: false,
+            agents: Vec::new(),
+        });
+
+        let trace_event = tool_runtime_trace_event(&event).expect("trace event");
+        let ToolRuntimeTraceEvent::Ended { status, .. } = trace_event else {
+            panic!("expected ended trace event");
+        };
+
+        assert_eq!(status, ExecutionStatus::Failed);
     }
 }

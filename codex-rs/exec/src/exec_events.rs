@@ -221,6 +221,7 @@ pub enum CollabTool {
     SpawnAgent,
     SendInput,
     Wait,
+    ListAgents,
     CloseAgent,
 }
 

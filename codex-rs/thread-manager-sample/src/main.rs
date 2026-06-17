@@ -170,6 +170,7 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         model_auto_compact_token_limit: None,
         model_provider_id,
         model_provider,
+        model_options: Vec::new(),
         personality: None,
         permissions: Permissions::from_approval_and_profile(
             Constrained::allow_any(AskForApproval::Never),
@@ -223,6 +224,8 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         agent_interrupt_message_enabled: false,
         agent_max_depth: 1,
         agent_roles: BTreeMap::new(),
+        agent_tool_patterns: None,
+        agent_skill_patterns: None,
         memories: MemoriesConfig::default(),
         sqlite_home: codex_home.to_path_buf(),
         log_dir: codex_home.join("log").to_path_buf(),
@@ -312,6 +315,8 @@ async fn run_turn(thread: &CodexThread, thread_id: &str, prompt: String) -> anyh
             | EventMsg::CollabAgentSpawnEnd(_)
             | EventMsg::CollabAgentInteractionBegin(_)
             | EventMsg::CollabAgentInteractionEnd(_)
+            | EventMsg::CollabListAgentsBegin(_)
+            | EventMsg::CollabListAgentsEnd(_)
             | EventMsg::CollabWaitingBegin(_)
             | EventMsg::CollabWaitingEnd(_)
             | EventMsg::CollabCloseBegin(_)
