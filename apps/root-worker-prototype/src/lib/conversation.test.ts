@@ -278,6 +278,7 @@ test("renders command wait and stdin actions as standalone event entries", () =>
         notification: "exit",
         exitCode: 0,
         wallTimeSeconds: 1.25,
+        waitTimeoutMs: 300_000,
         createdAtMs: 2_000,
       },
       {
@@ -296,7 +297,7 @@ test("renders command wait and stdin actions as standalone event entries", () =>
     [
       [
         "event",
-        "Waited for command 7 after exit notification: completed, exit 0 in 1.250s.",
+        "Waited for command 7 with timeout 5m after exit notification: completed, exit 0 in 1.25s.",
         formatClockTime(2),
       ],
       [
@@ -324,6 +325,48 @@ test("renders command wait and stdin actions as standalone event entries", () =>
         id: "stdin-1",
         kind: "event",
         entries: ["stdin-1"],
+      },
+    ],
+  );
+});
+
+test("renders injected init context as a conversation context entry", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "injectedContext",
+        id: "ctx-1",
+        title: "Init Context",
+        preview: "Workspace • Instructions",
+        sections: [
+          { label: "Workspace", text: "/tmp/project" },
+          { label: "Instructions", text: "全程使用中文" },
+        ],
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      role: entry.role,
+      text: entry.text,
+      toolName: entry.toolName,
+      toolStatus: entry.toolStatus,
+      toolCategory: entry.toolCategory,
+      toolDetails: entry.toolDetails,
+    })),
+    [
+      {
+        id: "ctx-1",
+        kind: "tool",
+        role: "system",
+        text: "Workspace • Instructions",
+        toolName: "Init Context",
+        toolStatus: "completed",
+        toolCategory: "context",
+        toolDetails: "Workspace\n/tmp/project\n\nInstructions\n全程使用中文",
       },
     ],
   );
@@ -496,14 +539,14 @@ test("keeps ordinary multi-agent tool entries grouped in one visible cell", () =
         kind: "tool",
         entries: [
           ["multiAgent", "spawn agent"],
-          ["multiAgent", "send message"],
+          ["multiAgent", "followup task"],
         ],
       },
     ],
   );
 });
 
-test("keeps typed sendMessage collab messages visible", () => {
+test("shows legacy sendMessage collab messages as follow-up messages", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
@@ -527,10 +570,46 @@ test("keeps typed sendMessage collab messages visible", () => {
       [
         "multiAgent",
         "received from /root/worker",
-        "Received message from /root/worker.",
+        "Received follow-up from /root/worker.",
       ],
     ],
   );
+  assert.match(entries[0]?.toolDetails ?? "", /Operation\nfollowupTask/);
+});
+
+test("shows typed list_agents collab tool calls", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "collabAgentToolCall",
+        id: "list-agents-1",
+        tool: "listAgents",
+        status: "completed",
+        senderThreadId: "thread-1",
+        senderPath: "/root",
+        receiverThreadIds: ["/root/worker"],
+        receiverPaths: ["/root/worker"],
+        timeoutMs: null,
+        prompt: "/root",
+        model: null,
+        reasoningEffort: null,
+        agentsStates: {
+          "/root/worker": {
+            path: "/root/worker",
+            status: "completed",
+            message: "done",
+          },
+        },
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.toolCategory, entry.toolName, entry.text]),
+    [["multiAgent", "list agents", "listed 1 agents"]],
+  );
+  assert.match(entries[0]?.toolDetails ?? "", /Tool\nlist_agents/);
+  assert.match(entries[0]?.toolDetails ?? "", /Agent States\n\/root\/worker • completed • done/);
 });
 
 test("keeps child completions and subagent notifications as visible cells", () => {
@@ -1292,8 +1371,8 @@ test("hides structured wait function output when typed command wait is present",
             status: "completed",
             notification: "exit",
             exit_code: 0,
-            wall_time_seconds: 277.557113958,
-            wait_timeout_ms: 300000,
+            wall_time_seconds: 119.6,
+            wait_timeout_ms: 59_999,
             created_at_ms: 1234,
           },
         ],
@@ -1314,7 +1393,7 @@ test("hides structured wait function output when typed command wait is present",
         text: "Command wait completed",
         toolName: "command wait",
         toolDetails:
-          "Type\ncommand_wait\n\nCommand ID\n58732\n\nStatus\ncompleted\n\nNotification\nexit\n\nExit code\n0\n\nWall time seconds\n277.557113958\n\nWait timeout ms\n300000",
+          "Type\ncommand_wait\n\nCommand ID\n58732\n\nStatus\ncompleted\n\nNotification\nexit\n\nExit code\n0\n\nWall time\n2m\n\nWait timeout\n1m",
       },
     ],
   );

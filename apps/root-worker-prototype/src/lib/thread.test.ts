@@ -271,6 +271,7 @@ test("command wait item notifications create visible conversation entries", () =
       notification: "exit",
       exitCode: 0,
       wallTimeSeconds: 0.25,
+      waitTimeoutMs: 1_000,
       createdAtMs: 2_000,
     },
     { completedAtMs: 2_000 },
@@ -284,8 +285,44 @@ test("command wait item notifications create visible conversation entries", () =
       [
         "wait-1",
         "event",
-        "Waited for command 7 after exit notification: completed, exit 0 in 0.250s.",
+        "Waited for command 7 with timeout 1s after exit notification: completed, exit 0 in 250ms.",
       ],
+    ],
+  );
+});
+
+test("injected init context item notifications create visible conversation entries", () => {
+  const updated = updateThreadItem(
+    makeThread(),
+    "turn-1",
+    {
+      type: "injectedContext",
+      id: "ctx-1",
+      title: "Init Context",
+      preview: "Workspace • Instructions",
+      sections: [{ label: "Workspace", text: "/tmp/project" }],
+    },
+    { completedAtMs: 2_000 },
+  );
+
+  const entries = buildConversationEntries(updated);
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      text: entry.text,
+      toolName: entry.toolName,
+      toolCategory: entry.toolCategory,
+    })),
+    [
+      {
+        id: "ctx-1",
+        kind: "tool",
+        text: "Workspace • Instructions",
+        toolName: "Init Context",
+        toolCategory: "context",
+      },
     ],
   );
 });
@@ -3335,7 +3372,7 @@ test("isThreadThinking stays false while a turn only injects init context", () =
     ...makeThread(),
     status: {
       type: "active" as const,
-      activeFlags: [],
+      activeFlags: ["waitingOnUserInput"],
     },
     turns: [
       {
@@ -3373,32 +3410,33 @@ test("isThreadThinking stays false while a turn only injects init context", () =
   );
 });
 
-test("isThreadThinking stays false when thread is only active for subscriptions", () => {
+test("isThreadThinking ignores item-derived running state when backend status is idle", () => {
   const thread = {
     ...makeThread(),
     status: {
-      type: "active" as const,
-      activeFlags: [],
+      type: "idle" as const,
     },
     turns: [
       {
         id: "turn-1",
         items: [
           {
-            type: "eventDrivenToolCall" as const,
-            id: "sub-1",
-            tool: "schedule_subscribe",
-            arguments: { delay_ms: 60000 },
-            status: "completed",
-            output: { ok: true },
+            type: "commandExecution" as const,
+            id: "cmd-1",
+            command: "rtk git status --short",
+            cwd: "/tmp",
+            status: "running",
+            aggregatedOutput: null,
+            exitCode: null,
+            durationMs: null,
           },
         ],
         itemsView: "full" as const,
-        status: "completed" as const,
+        status: "inProgress" as const,
         error: null,
         startedAt: 1,
-        completedAt: 2,
-        durationMs: 1000,
+        completedAt: null,
+        durationMs: null,
       },
     ],
   };
@@ -3412,12 +3450,12 @@ test("isThreadThinking stays false when thread is only active for subscriptions"
   );
 });
 
-test("isThreadThinking turns true once non-context output begins", () => {
+test("isThreadThinking follows backend running active flag", () => {
   const thread = {
     ...makeThread(),
     status: {
       type: "active" as const,
-      activeFlags: [],
+      activeFlags: ["running"],
     },
     turns: [
       {

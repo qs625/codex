@@ -246,6 +246,7 @@ impl EventProcessorWithJsonOutput {
                         CollabAgentTool::SendInput => CollabTool::SendInput,
                         CollabAgentTool::ResumeAgent => CollabTool::Wait,
                         CollabAgentTool::Wait => CollabTool::Wait,
+                        CollabAgentTool::ListAgents => CollabTool::ListAgents,
                         CollabAgentTool::CloseAgent => CollabTool::CloseAgent,
                     },
                     sender_thread_id,

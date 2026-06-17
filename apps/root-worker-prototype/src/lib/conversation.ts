@@ -681,8 +681,11 @@ function buildReplacementHistoryEntry(
           ["Status", item.status],
           ["Notification", item.notification],
           ["Exit code", item.exit_code],
-          ["Wall time seconds", item.wall_time_seconds],
-          ["Wait timeout ms", item.wait_timeout_ms],
+          ["Wall time", formatSecondsDuration(Number(item.wall_time_seconds))],
+          [
+            "Wait timeout",
+            formatMillisecondsDuration(Number(item.wait_timeout_ms)),
+          ],
         ]),
       });
     case "command_write_stdin":
@@ -1308,6 +1311,11 @@ function summarizeCollabAgentToolCall(
         return `wait on ${receiverLabel}`;
       }
       return "wait_agent";
+    case "listAgents":
+    case "list_agents":
+      return item.receiverPaths.length > 0
+        ? `listed ${item.receiverPaths.length} agents`
+        : "list_agents";
     case "closeAgent":
       return `Closed ${receiverLabel}.`;
     default:
@@ -1502,11 +1510,13 @@ function formatCollabAgentToolName(
     case "spawnAgent":
       return "spawn_agent";
     case "sendInput":
-      return "send_message";
     case "resumeAgent":
       return "followup_task";
     case "wait":
       return "wait_agent";
+    case "listAgents":
+    case "list_agents":
+      return "list_agents";
     case "closeAgent":
       return "close_agent";
     default:
@@ -1521,11 +1531,13 @@ function formatCollabAgentToolTitle(
     case "spawnAgent":
       return "spawn agent";
     case "sendInput":
-      return "send message";
     case "resumeAgent":
       return "followup task";
     case "wait":
       return "wait for agent";
+    case "listAgents":
+    case "list_agents":
+      return "list agents";
     case "closeAgent":
       return "close agent";
     default:
@@ -1612,7 +1624,7 @@ function summarizeCollabAgentMessage(
     case "spawnAgent":
       return `Received initial task from ${senderPath}.`;
     case "sendMessage":
-      return `Received message from ${senderPath}.`;
+    case "send_message":
     case "followupTask":
       return `Received follow-up from ${senderPath}.`;
     case "childCompletion": {
@@ -1649,7 +1661,7 @@ function formatCollabAgentMessageDetails(
 ) {
   const message = stringOrNull(item.content) ?? "…";
   const sections = [
-    `Operation\n${item.operation}`,
+    `Operation\n${formatCollabAgentMessageOperation(item.operation)}`,
     `From\n${stringOrFallback(item.senderPath, "unknown")}`,
     `To\n${stringOrFallback(item.recipientPath, "unknown")}`,
     `Message\n${message}`,
@@ -1665,6 +1677,12 @@ function formatCollabAgentMessageDetails(
   }
 
   return sections.join("\n\n");
+}
+
+function formatCollabAgentMessageOperation(operation: string) {
+  return operation === "sendMessage" || operation === "send_message"
+    ? "followupTask"
+    : operation;
 }
 
 function summarizeCollabAgentStatusUpdate(
@@ -1788,9 +1806,51 @@ function summarizeCommandWait(item: Extract<ThreadItem, { type: "commandWait" }>
       ? ""
       : `, exit ${item.exitCode}`;
   const seconds = Number.isFinite(item.wallTimeSeconds)
-    ? ` in ${item.wallTimeSeconds.toFixed(3)}s`
+    ? ` in ${formatSecondsDuration(item.wallTimeSeconds)}`
     : "";
-  return `Waited for command ${item.commandId}${notification}: ${item.status}${exitCode}${seconds}.`;
+  const timeout = Number.isFinite(item.waitTimeoutMs)
+    ? ` with timeout ${formatMillisecondsDuration(item.waitTimeoutMs)}`
+    : "";
+  return `Waited for command ${item.commandId}${timeout}${notification}: ${item.status}${exitCode}${seconds}.`;
+}
+
+function formatSecondsDuration(totalSeconds: number) {
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+    return "0s";
+  }
+
+  const totalMilliseconds = Math.round(totalSeconds * 1000);
+  return formatMillisecondsDuration(totalMilliseconds);
+}
+
+function formatMillisecondsDuration(totalMilliseconds: number) {
+  if (!Number.isFinite(totalMilliseconds) || totalMilliseconds <= 0) {
+    return "0ms";
+  }
+
+  if (totalMilliseconds < 1000) {
+    return `${Math.round(totalMilliseconds)}ms`;
+  }
+
+  const roundedSeconds = Math.round(totalMilliseconds / 1000);
+  if (roundedSeconds >= 60) {
+    const minutes = Math.floor(roundedSeconds / 60);
+    const remainingSeconds = roundedSeconds % 60;
+    if (remainingSeconds === 0) {
+      return `${minutes}m`;
+    }
+    return `${minutes}m ${remainingSeconds}s`;
+  }
+
+  const seconds = totalMilliseconds / 1000;
+  return `${formatDurationNumber(seconds)}s`;
+}
+
+function formatDurationNumber(value: number) {
+  if (Number.isInteger(value)) {
+    return value.toString();
+  }
+  return value.toFixed(2).replace(/\.?0+$/u, "");
 }
 
 function summarizeCommandWriteStdin(

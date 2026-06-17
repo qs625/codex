@@ -2331,6 +2331,7 @@ fn collab_agent_tool_name(tool: &CollabAgentTool) -> &'static str {
         CollabAgentTool::SendInput => "send_input",
         CollabAgentTool::ResumeAgent => "resume_agent",
         CollabAgentTool::Wait => "wait_agent",
+        CollabAgentTool::ListAgents => "list_agents",
         CollabAgentTool::CloseAgent => "close_agent",
     }
 }

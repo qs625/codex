@@ -174,6 +174,8 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::CollabAgentSpawnEnd(_)
         | EventMsg::CollabAgentInteractionBegin(_)
         | EventMsg::CollabAgentInteractionEnd(_)
+        | EventMsg::CollabListAgentsBegin(_)
+        | EventMsg::CollabListAgentsEnd(_)
         | EventMsg::CollabWaitingBegin(_)
         | EventMsg::CollabWaitingEnd(_)
         | EventMsg::CollabCloseBegin(_)

@@ -859,6 +859,8 @@ pub(crate) async fn apply_bespoke_event_handling(
         | EventMsg::CollabAgentSpawnEnd(_)
         | EventMsg::CollabAgentInteractionBegin(_)
         | EventMsg::CollabAgentInteractionEnd(_)
+        | EventMsg::CollabListAgentsBegin(_)
+        | EventMsg::CollabListAgentsEnd(_)
         | EventMsg::CollabCloseBegin(_)
         | EventMsg::CollabResumeBegin(_)
         | EventMsg::CollabResumeEnd(_)

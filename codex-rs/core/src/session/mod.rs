@@ -98,6 +98,8 @@ use codex_protocol::config_types::Settings;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::dynamic_tools::DynamicToolResponse;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
+use codex_protocol::items::InjectedContextItem;
+use codex_protocol::items::InjectedContextSection;
 use codex_protocol::items::TurnItem;
 use codex_protocol::items::UserMessageItem;
 use codex_protocol::mcp::CallToolResult;
@@ -3250,6 +3252,11 @@ impl Session {
         if !context_items.is_empty() {
             self.record_conversation_items(turn_context, &context_items)
                 .await;
+            if should_inject_full_context
+                && let Some(item) = injected_context_item_from_response_items(&context_items)
+            {
+                self.emit_turn_item_completed(turn_context, item).await;
+            }
         }
         // Persist one `TurnContextItem` per real user turn so resume/lazy replay can recover the
         // latest durable baseline even when this turn emitted no model-visible context diffs.
@@ -3847,6 +3854,65 @@ fn is_structured_display_response_item(item: &ResponseItem) -> bool {
                 ..
             }
     )
+}
+
+fn injected_context_item_from_response_items(items: &[ResponseItem]) -> Option<TurnItem> {
+    let sections: Vec<InjectedContextSection> = items
+        .iter()
+        .filter_map(|item| match item {
+            ResponseItem::Message { role, content, .. }
+                if role == "developer" || role == "user" =>
+            {
+                Some((role.as_str(), content))
+            }
+            _ => None,
+        })
+        .flat_map(|(role, content)| {
+            content.iter().filter_map(move |item| match item {
+                ContentItem::InputText { text } if !text.trim().is_empty() => {
+                    Some(InjectedContextSection {
+                        label: injected_context_section_label(role, text).to_string(),
+                        text: text.clone(),
+                    })
+                }
+                _ => None,
+            })
+        })
+        .collect();
+
+    if sections.is_empty() {
+        return None;
+    }
+
+    let mut preview_labels = Vec::new();
+    for section in &sections {
+        if !preview_labels.contains(&section.label) {
+            preview_labels.push(section.label.clone());
+        }
+        if preview_labels.len() == 3 {
+            break;
+        }
+    }
+
+    Some(TurnItem::InjectedContext(InjectedContextItem {
+        id: uuid::Uuid::new_v4().to_string(),
+        title: "Init Context".to_string(),
+        preview: preview_labels.join(" • "),
+        sections,
+    }))
+}
+
+fn injected_context_section_label(role: &str, text: &str) -> &'static str {
+    if text.contains("# AGENTS.md instructions") {
+        return "AGENTS.md";
+    }
+    if text.contains("<environment_context>") {
+        return "Environment";
+    }
+    if role == "developer" {
+        return "Developer";
+    }
+    "Context"
 }
 
 fn started_display_event_from_model_item(

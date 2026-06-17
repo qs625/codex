@@ -7,6 +7,7 @@ use crate::protocol::v2::CommandWaitNotificationKind;
 use crate::protocol::v2::CommandWaitStatus;
 use crate::protocol::v2::EventCommandEventKind;
 use crate::protocol::v2::HookPromptFragment;
+use crate::protocol::v2::InjectedContextSection;
 use crate::protocol::v2::McpToolCallError;
 use crate::protocol::v2::McpToolCallResult;
 use crate::protocol::v2::McpToolCallStatus;
@@ -169,6 +170,19 @@ fn thread_item_from_turn_item(value: CoreTurnItem) -> ThreadItem {
                 .fragments
                 .into_iter()
                 .map(HookPromptFragment::from)
+                .collect(),
+        },
+        CoreTurnItem::InjectedContext(context) => ThreadItem::InjectedContext {
+            id: context.id,
+            title: context.title,
+            preview: context.preview,
+            sections: context
+                .sections
+                .into_iter()
+                .map(|section| InjectedContextSection {
+                    label: section.label,
+                    text: section.text,
+                })
                 .collect(),
         },
         CoreTurnItem::AgentMessage(agent) => {

@@ -7692,6 +7692,50 @@ async fn record_context_updates_and_set_reference_context_item_injects_full_cont
 }
 
 #[tokio::test]
+async fn record_context_updates_emits_injected_context_with_agent_file_instructions() {
+    let agent_file_instructions = "Agent type file body: always inspect the active task.";
+    let (session, turn_context, rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("test-api-key"),
+        Vec::new(),
+        |config| {
+            config.developer_instructions = Some(agent_file_instructions.to_string());
+        },
+    )
+    .await;
+
+    session
+        .record_context_updates_and_set_reference_context_item(turn_context.as_ref())
+        .await;
+
+    let mut injected_context = None;
+    for _ in 0..10 {
+        let event = tokio::time::timeout(StdDuration::from_secs(1), rx.recv())
+            .await
+            .expect("timeout waiting for injected context event")
+            .expect("event");
+        if let EventMsg::ItemCompleted(ItemCompletedEvent {
+            item: TurnItem::InjectedContext(item),
+            ..
+        }) = event.msg
+        {
+            injected_context = Some(item);
+            break;
+        }
+    }
+    let injected_context = injected_context.expect("expected injected context display item");
+
+    assert_eq!(injected_context.title, "Init Context");
+    assert!(
+        injected_context
+            .sections
+            .iter()
+            .any(|section| section.label == "Developer"
+                && section.text.contains(agent_file_instructions)),
+        "expected injected context to include agent file instructions, got {injected_context:?}"
+    );
+}
+
+#[tokio::test]
 async fn record_context_updates_and_set_reference_context_item_reinjects_full_context_after_clear()
 {
     let (session, turn_context) = make_session_and_context().await;

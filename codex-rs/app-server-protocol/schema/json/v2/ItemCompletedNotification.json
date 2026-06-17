@@ -75,6 +75,7 @@
         "sendInput",
         "resumeAgent",
         "wait",
+        "listAgents",
         "closeAgent"
       ],
       "type": "string"

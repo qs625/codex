@@ -1451,6 +1451,7 @@ pub(super) fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
             TurnItem::AgentMessage(item) => Some(agent_message_text(item)),
             TurnItem::UserMessage(_)
             | TurnItem::HookPrompt(_)
+            | TurnItem::InjectedContext(_)
             | TurnItem::EventDrivenTool(_)
             | TurnItem::EventCommandEvent(_)
             | TurnItem::CollabAgentMessage(_)
@@ -1540,6 +1541,8 @@ pub(super) fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
         | EventMsg::CollabAgentSpawnEnd(_)
         | EventMsg::CollabAgentInteractionBegin(_)
         | EventMsg::CollabAgentInteractionEnd(_)
+        | EventMsg::CollabListAgentsBegin(_)
+        | EventMsg::CollabListAgentsEnd(_)
         | EventMsg::CollabWaitingBegin(_)
         | EventMsg::CollabWaitingEnd(_)
         | EventMsg::CollabCloseBegin(_)

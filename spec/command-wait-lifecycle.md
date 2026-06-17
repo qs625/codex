@@ -20,6 +20,12 @@
   不作为旧 rollout/history 展示兼容来源。
 - started 和 completed payload 的 `wait_timeout_ms` 都表示本次 current window，不展示 hard cap，也不回退到
   250ms。
+- root-worker Conversation 消费 v2 `ThreadItem::CommandWait.waitTimeoutMs`，把 timeout window 和 wall time
+  格式化为稳定、可读的 duration（如 `250ms`、`1.25s`、`5m`），避免把裸毫秒或高精度浮点秒数暴露给用户。
+- Init Context 继续以 typed `TurnItem::InjectedContext -> ThreadItem::InjectedContext` 进入 Conversation
+  context entry；其中必须包含 Agent type 对应 agent 文件注入的 developer instructions。客户端不得从 raw
+  marker、assistant JSON 或裸 `ResponseItem::Message` 反解 Init Context，也不得在 live item 合并时丢弃该
+  typed item。
 
 ## 数据流
 
@@ -41,3 +47,15 @@
   notification 后 reset 回 initial wait。
 - handler item 构造：started/completed 使用同一个 id，并保留本次 current window。
 - app-server-protocol：`CommandWaitStarted` / `CommandWaitCompleted` 映射为 v2 `ItemStarted/Completed(ThreadItem::CommandWait)`；`ResponseItemStarted/Completed(CommandWait)` 不再生成 `ThreadItem`，旧 rollout/history 不再回放 command wait 展示。
+- root-worker Conversation：`commandWait` live item 展示当前 timeout window；compact replacement history 中的
+  typed `command_wait` 使用同一 duration formatter 展示 wall time 和 timeout。
+- root-worker Init Context：后端 full initial context 注入时发出 typed `InjectedContext` item；live item 和
+  snapshot/reload item 均生成 context 类型 `ConversationEntry`，并保留 Agent file/developer instructions
+  section。
+- root-worker Thread 状态：presence label、tree 状态和 thinking indicator 都以 backend canonical
+  `ThreadStatus` / `thread/status/changed` 为源；thinking indicator 只响应 `activeFlags` 中的 `running`，
+  不从 turn status、conversation items、raw marker 或 legacy envelope 推导。
+- MultiAgent V2 display：`list_agents` 通过 typed `CollabListAgentsBegin/End` 投影为
+  `ThreadItem::CollabAgentToolCall(tool=listAgents)`，live 和 thread/read replay 都不得依赖 raw
+  FunctionCallOutput。旧历史里的 `sendMessage` / `send_message` operation 只作为兼容输入保留，root-worker
+  展示归一为 follow-up task 语义，不再把 obsolete `SendMessage` 当作用户可见 tool/item 名称。

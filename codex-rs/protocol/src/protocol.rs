@@ -1525,6 +1525,10 @@ pub enum EventMsg {
     CollabResumeBegin(CollabResumeBeginEvent),
     /// Collab interaction: resume end.
     CollabResumeEnd(CollabResumeEndEvent),
+    /// Collab interaction: list agents begin.
+    CollabListAgentsBegin(CollabListAgentsBeginEvent),
+    /// Collab interaction: list agents end.
+    CollabListAgentsEnd(CollabListAgentsEndEvent),
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS, EnumIter)]
@@ -1738,6 +1742,18 @@ impl From<CollabResumeBeginEvent> for EventMsg {
 impl From<CollabResumeEndEvent> for EventMsg {
     fn from(event: CollabResumeEndEvent) -> Self {
         EventMsg::CollabResumeEnd(event)
+    }
+}
+
+impl From<CollabListAgentsBeginEvent> for EventMsg {
+    fn from(event: CollabListAgentsBeginEvent) -> Self {
+        EventMsg::CollabListAgentsBegin(event)
+    }
+}
+
+impl From<CollabListAgentsEndEvent> for EventMsg {
+    fn from(event: CollabListAgentsEndEvent) -> Self {
+        EventMsg::CollabListAgentsEnd(event)
     }
 }
 
@@ -4196,6 +4212,49 @@ pub struct CollabAgentInteractionEndEvent {
     pub prompt: String,
     /// Last known status of the receiver agent reported to the sender agent.
     pub status: AgentStatus,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
+pub struct CollabListAgentsBeginEvent {
+    /// Identifier for the collab tool call.
+    pub call_id: String,
+    #[serde(default)]
+    pub started_at_ms: i64,
+    /// Thread ID of the sender.
+    pub sender_thread_id: ThreadId,
+    /// Canonical path of the sender.
+    pub sender_agent_path: String,
+    /// Optional path prefix filter passed to list_agents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_prefix: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct CollabListedAgent {
+    /// Canonical path of the listed agent.
+    pub agent_path: String,
+    /// Last known status of the listed agent.
+    pub status: AgentStatus,
+    /// Last task message recorded for the listed agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_task_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
+pub struct CollabListAgentsEndEvent {
+    /// Identifier for the collab tool call.
+    pub call_id: String,
+    #[serde(default)]
+    pub completed_at_ms: i64,
+    /// Thread ID of the sender.
+    pub sender_thread_id: ThreadId,
+    /// Canonical path of the sender.
+    pub sender_agent_path: String,
+    /// Optional path prefix filter passed to list_agents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_prefix: Option<String>,
+    pub success: bool,
+    pub agents: Vec<CollabListedAgent>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]

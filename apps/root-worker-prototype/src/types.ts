@@ -99,6 +99,7 @@ export type ThreadItem = ThreadItemTimestamps &
       notification: "output" | "exit" | string | null;
       exitCode: number | null;
       wallTimeSeconds: number;
+      waitTimeoutMs: number;
       createdAtMs: number;
     }
   | {
