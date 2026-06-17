@@ -624,6 +624,7 @@ mod tests {
     #[derive(Default)]
     struct FakeBridge {
         methods: TestMutex<Vec<String>>,
+        params: TestMutex<Vec<Value>>,
     }
 
     impl WorkflowRuntimeBridge for FakeBridge {
@@ -636,6 +637,10 @@ mod tests {
                     .lock()
                     .expect("fake bridge methods lock")
                     .push(request.method.clone());
+                self.params
+                    .lock()
+                    .expect("fake bridge params lock")
+                    .push(request.params.clone());
                 match request.method.as_str() {
                     "agent.spawn" => {
                         let agent_id = request
@@ -646,6 +651,9 @@ mod tests {
                         serde_json::to_value(WorkflowAgentBinding {
                             agent_id: agent_id.to_string(),
                             agent_path: format!("/root/{agent_id}"),
+                            workflow_id: Some(request.workflow_id.clone()),
+                            run_id: Some(request.run_id.clone()),
+                            stage_id: Some(agent_id.to_string()),
                             thread_id: Some(format!("thread-{agent_id}")),
                             status: Some(serde_json::json!("running")),
                             options: request
@@ -690,6 +698,9 @@ mod tests {
                         serde_json::to_value(WorkflowAgentBinding {
                             agent_id: agent_id.to_string(),
                             agent_path: format!("/root/{agent_id}"),
+                            workflow_id: Some(request.workflow_id.clone()),
+                            run_id: Some(request.run_id.clone()),
+                            stage_id: Some(agent_id.to_string()),
                             thread_id: None,
                             status: None,
                             options: Value::Null,
@@ -813,6 +824,13 @@ export default defineWorkflow({
                 "agent.wait".to_string()
             ]
         );
+        let params = bridge
+            .params
+            .lock()
+            .expect("fake bridge params lock")
+            .clone();
+        assert_eq!(params[1].get("target").and_then(Value::as_str), Some("/root/owner"));
+        assert_eq!(params[2].get("target").and_then(Value::as_str), Some("/root/owner"));
     }
 
     #[tokio::test]

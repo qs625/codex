@@ -73,11 +73,15 @@ await owner.followup("修复 review findings");
 await owner.wait();
 ```
 
+`agent.wait()` 不是“等待到完成”的 RPC，而是复用 MultiAgent V2 `wait_agent` 的短窗口等待语义。一次返回可能只是 `timeout`、`status_update` 或 mailbox 更新；workflow 如果要把前一阶段产物传给下一阶段，必须循环调用 `agent.wait()`，直到收到 child completion 或 final status，再使用 final status 中的完成文本作为阶段结果。workflow 脚本不得假设 `agent.wait()` 返回自定义的 `summary`、`blockingFindings` 等结构化字段，除非对应 runtime bridge 已明确提供该契约。
+
 `Agent(id)` 是幂等的：
 
-- 首次运行时创建 subagent，并记录 `workflowRunId + agentId -> agentPath`。
+- 首次运行时创建 subagent，并记录 `workflowRunId + stageId -> agentPath`。
 - resume 时返回已有 agent session handle，不重复 spawn。
 - agent 仍然是普通 subagent，保留父子 thread 关系。
+
+`Agent(id)` 中的 `id` 是 workflow logical binding/stage id，不是 agent canonical path 或用户可见 name。runtime bridge 会为底层 `spawn_agent` 生成 path-safe 的内部 task name，并在 `WorkflowAgentBinding` 中记录 `workflowId`、`runId`、`stageId` 和实际 `agentPath`。客户端后续展示“该 thread 属于哪个 workflow/run/stage”时，应消费 workflow run binding metadata，不应从脚本里的 logical id 或 agent path 字符串反推。
 
 workflow 脚本如果需要指定 `type` / `agent_type`、`model` 或 `reasoningEffort` / `reasoning_effort`，必须显式选择非 full-history fork，例如 `fork_turns: "none"`。MultiAgent V2 的默认 `fork_turns` 是 `all`；full-history fork 只能继承父 thread 的 agent type、model 和 reasoning effort，runtime 会拒绝同时传这些覆盖字段。
 
@@ -213,7 +217,7 @@ Workflow 能力通过 agent session 可用的 tools 暴露：
 - resume：对未 abort 的 run 更新 inputs/revision，并基于 snapshot entry 重新执行 runner。
 - abort：向 live runner 发送 abort 信号，停止子进程并持久化 aborted 状态；如果没有 live runner，也会把 durable run 标记为 aborted。
 
-当前 runner 已能通过 Node 加载 workflow `.ts` module，并提供最小 `@codex/workflow` shim 支持 `defineWorkflow()`。workflow 目录内的相对 import 会随 snapshot 一起保留；仍不提供独立 TypeScript bundler/transpiler，脚本必须是当前 Node 运行时可加载的 `.ts`。通过 `workflow_start` / `workflow_resume` model tool 启动的 runner 会绑定当前 turn 的 runtime bridge：`wf.Agent` 通过 stdio NDJSON RPC 调用 host spawn/bind agent session，`agent.followup()` 和 `agent.wait()` 复用 MultiAgent V2 的 typed followup/wait 语义；同一 run 内的 agent binding 会持久化到 run snapshot，resume 时同 id 返回已有 binding。app-server v2 `workflow/*` 控制面仍只是客户端控制面，不绑定 runner-runtime bridge。`wf.shell` 第一阶段返回明确 unsupported RPC error，不继续静默占位，也不绕过 exec permission、hook 或 typed command lifecycle。
+当前 runner 已能通过 Node 加载 workflow `.ts` module，并提供最小 `@codex/workflow` shim 支持 `defineWorkflow()`。workflow 目录内的相对 import 会随 snapshot 一起保留；仍不提供独立 TypeScript bundler/transpiler，脚本必须是当前 Node 运行时可加载的 `.ts`。通过 `workflow_start` / `workflow_resume` model tool 启动的 runner 会绑定当前 turn 的 runtime bridge：`wf.Agent` 通过 stdio NDJSON RPC 调用 host spawn/bind agent session，`agent.followup()` 和 `agent.wait()` 复用 MultiAgent V2 的 typed followup/wait 语义；同一 run 内的 agent binding 会持久化到 run snapshot，resume 时同 id 返回已有 binding；binding 记录 logical stage id、workflow/run id 和实际 agent path。app-server v2 `workflow/*` 控制面仍只是客户端控制面，不绑定 runner-runtime bridge。项目级 Rust/Cargo 验证不得由 workflow 创建临时 tester agent；应由 owner 使用固定 `/root/my_codex_pm/rust_cargo_tester` 线程并发送 `rust_cargo_validation_request` JSON。`wf.shell` 第一阶段返回明确 unsupported RPC error，不继续静默占位，也不绕过 exec permission、hook 或 typed command lifecycle。
 
 后续可以增加：
 

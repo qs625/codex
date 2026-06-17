@@ -16,6 +16,12 @@ pub struct WorkflowAgentBinding {
     pub agent_id: String,
     pub agent_path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<Value>,
@@ -472,6 +478,9 @@ export interface WorkflowAgent {
 export interface WorkflowAgentBinding {
   agentId: string;
   agentPath: string;
+  workflowId?: string;
+  runId?: string;
+  stageId?: string;
   threadId?: string;
   status?: unknown;
   options: unknown;
@@ -484,3 +493,24 @@ export interface WorkflowShellResult {
 
 export function defineWorkflow<T extends WorkflowDefinition>(definition: T): T;
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workflow_agent_binding_deserializes_legacy_snapshot_without_metadata() {
+        let binding: WorkflowAgentBinding = serde_json::from_value(serde_json::json!({
+            "agentId": "owner",
+            "agentPath": "/root/workflow_wf_1_owner",
+            "options": { "message": "implement" }
+        }))
+        .expect("legacy binding should deserialize");
+
+        assert_eq!(binding.agent_id, "owner");
+        assert_eq!(binding.agent_path, "/root/workflow_wf_1_owner");
+        assert_eq!(binding.workflow_id, None);
+        assert_eq!(binding.run_id, None);
+        assert_eq!(binding.stage_id, None);
+    }
+}

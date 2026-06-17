@@ -120,7 +120,7 @@ impl CodexWorkflowRuntimeBridge {
         let message = required_string(&options, "message")?;
         let mut args = serde_json::json!({
             "message": message,
-            "task_name": agent_id.clone(),
+            "task_name": workflow_agent_task_name(&request.run_id, &agent_id),
         });
         copy_option_string(&mut args, "agent_type", &options, &["type", "agent_type"]);
         copy_option_string(&mut args, "cwd", &options, &["cwd"]);
@@ -146,8 +146,11 @@ impl CodexWorkflowRuntimeBridge {
             .map_err(runtime_error_from_tool_error)?;
         let agent_path = required_string(&result, "task_name")?;
         serde_json::to_value(WorkflowAgentBinding {
+            stage_id: Some(agent_id.clone()),
             agent_id,
             agent_path,
+            workflow_id: Some(request.workflow_id),
+            run_id: Some(request.run_id),
             thread_id: None,
             status: None,
             options,
@@ -227,6 +230,50 @@ fn copy_option_string(target: &mut Value, target_field: &str, source: &Value, fi
         return;
     };
     target[target_field] = Value::String(value.to_string());
+}
+
+fn workflow_agent_task_name(run_id: &str, stage_id: &str) -> String {
+    format!(
+        "workflow_{}_{}_{}",
+        path_safe_segment(run_id),
+        path_safe_segment(stage_id),
+        stable_hex_hash(stage_id)
+    )
+}
+
+fn path_safe_segment(value: &str) -> String {
+    let mut output = String::new();
+    let mut previous_was_underscore = false;
+    for ch in value.chars().flat_map(char::to_lowercase) {
+        let safe = if ch.is_ascii_lowercase() || ch.is_ascii_digit() {
+            previous_was_underscore = false;
+            Some(ch)
+        } else if !previous_was_underscore {
+            previous_was_underscore = true;
+            Some('_')
+        } else {
+            None
+        };
+        if let Some(ch) = safe {
+            output.push(ch);
+        }
+    }
+
+    let trimmed = output.trim_matches('_');
+    if trimmed.is_empty() {
+        "agent".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn stable_hex_hash(value: &str) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
 }
 
 fn runtime_error_from_tool_error(error: FunctionCallError) -> WorkflowRuntimeError {
@@ -569,5 +616,38 @@ fn workflow_progress_kind_for_terminal_status(
         WorkflowRunStatus::Completed => Some(WorkflowRunProgressKind::Completed),
         WorkflowRunStatus::Failed => Some(WorkflowRunProgressKind::Failed),
         WorkflowRunStatus::Aborted => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workflow_agent_task_name_uses_runtime_owned_safe_name() {
+        assert_eq!(
+            workflow_agent_task_name("wf_1781667698_3", "review/fix Stage"),
+            "workflow_wf_1781667698_3_review_fix_stage_6a50e610f22115e3"
+        );
+        assert_eq!(
+            workflow_agent_task_name("wf_1", "../root"),
+            "workflow_wf_1_root_fcf22ea2feead752"
+        );
+        assert_eq!(
+            workflow_agent_task_name("wf_1", "!!!"),
+            "workflow_wf_1_agent_bbe43c17ca866be2"
+        );
+    }
+
+    #[test]
+    fn workflow_agent_task_name_keeps_colliding_slugs_distinct() {
+        assert_ne!(
+            workflow_agent_task_name("wf_1", "review/fix"),
+            workflow_agent_task_name("wf_1", "review_fix")
+        );
+        assert_ne!(
+            workflow_agent_task_name("wf_1", "review fix"),
+            workflow_agent_task_name("wf_1", "review_fix")
+        );
     }
 }
