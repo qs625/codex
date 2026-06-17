@@ -52,6 +52,8 @@ workflow 会创建长期 agent session：
 
 当前 Rust runner 已能执行该 TypeScript entry，并在通过 `workflow_start` / `workflow_resume` model tool 启动时把 `Agent`、`followup`、`wait` 请求桥接到真实 MultiAgent V2 runtime。`Agent(id)` 的 binding 会持久化到 workflow run snapshot，resume 后同 id 返回已有 session，不重复 spawn。`wf.shell` 尚未安全接入 unified exec，调用时会返回明确 unsupported error。
 
+`feature-dev` 的四个 agent stage 都需要显式 agent type，因此脚本使用 `fork_turns: "none"` 创建独立上下文的 subagent。MultiAgent V2 默认 `fork_turns` 是 full history；full-history fork 必须继承父 thread 的 agent type、model 和 reasoning effort，不能同时传 `type` / `agent_type`、`model` 或 `reasoning_effort`。
+
 ## Static Graph
 
 静态图只展示高层骨架：

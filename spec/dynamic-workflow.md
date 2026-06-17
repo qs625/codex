@@ -63,6 +63,7 @@ Workflow 中的 agent 是长期 session handle：
 const owner = await wf.Agent("owner", {
   parent: "implement",
   type: "refactor-owner",
+  fork_turns: "none",
   cwd,
   message: initialPrompt
 });
@@ -77,6 +78,8 @@ await owner.wait();
 - 首次运行时创建 subagent，并记录 `workflowRunId + agentId -> agentPath`。
 - resume 时返回已有 agent session handle，不重复 spawn。
 - agent 仍然是普通 subagent，保留父子 thread 关系。
+
+workflow 脚本如果需要指定 `type` / `agent_type`、`model` 或 `reasoningEffort` / `reasoning_effort`，必须显式选择非 full-history fork，例如 `fork_turns: "none"`。MultiAgent V2 的默认 `fork_turns` 是 `all`；full-history fork 只能继承父 thread 的 agent type、model 和 reasoning effort，runtime 会拒绝同时传这些覆盖字段。
 
 重复 followup 不由 workflow runtime 做严格去重。agent session 自身应能根据上下文判断任务已完成，避免重复执行无意义动作。对于 shell、发布、删除、发邮件等非 agent 副作用，仍需要显式 durable step 或 approval。
 

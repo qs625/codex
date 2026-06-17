@@ -20,6 +20,7 @@ export default defineWorkflow({
     const explorer = await wf.Agent("explorer", {
       parent: "research",
       type: "explorer",
+      fork_turns: "none",
       cwd: wf.inputs.cwd,
       message: `只读调研任务：${wf.inputs.objective}`
     });
@@ -29,6 +30,7 @@ export default defineWorkflow({
     const owner = await wf.Agent("owner", {
       parent: "implement",
       type: "feature-owner",
+      fork_turns: "none",
       cwd: wf.inputs.cwd,
       message: `根据调研结果实现任务：${wf.inputs.objective}\n\n调研结果：${research.summary}`
     });
@@ -38,6 +40,7 @@ export default defineWorkflow({
     const reviewer = await wf.Agent("reviewer", {
       parent: "review_fix",
       type: "code-review",
+      fork_turns: "none",
       cwd: wf.inputs.cwd,
       message: `审查 owner 的实现，优先找阻塞问题、行为回归和测试缺口。\n\n实现结果：${implementation.summary}`
     });
@@ -69,6 +72,7 @@ export default defineWorkflow({
     const tester = await wf.Agent("tester", {
       parent: "verify",
       type: "test_agent",
+      fork_turns: "none",
       cwd: wf.inputs.cwd,
       message: `根据 reviewer 最终结论执行必要验证；Rust/Cargo 命令必须按 AGENTS.md 串行执行，并回传命令结果、失败摘要和未覆盖范围。\n\n最终 review 结论：${JSON.stringify(finalReview, null, 2)}`
     });
