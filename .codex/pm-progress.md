@@ -34,14 +34,16 @@
     - 已新增 `codex-utils-backoff`，`codex-core::util::backoff` 保留为 re-export。
     - `codex-cloud-requirements` 已移除 `codex-core` 依赖；`cargo tree -p codex-app-server --invert codex-core --edges normal` 中该 crate 已消失。
     - `codex-app-server-transport` 的 backoff 调用已迁移，并把生产代码的 `find_codex_home` 改为 `codex-utils-home-dir`；`codex-core` 仅保留为 dev-dependency 供测试支持 API 使用。
-    - 当前 `cargo tree -p codex-app-server --invert codex-core --edges normal` 剩余路径为 `codex-app-server`、`codex-chatgpt`、`codex-file-subscription`、`codex-guardian`、`codex-memories-write`。其中 `chatgpt`/`guardian` 主要卡 `Config` 仍在 core，`file-subscription`/`memories-write` 牵涉 thread/runtime handle，应作为后续较大拆分处理。
+    - `codex-guardian` 的 thread lifecycle contributor 已改为配置泛型，移除 `codex-core` 依赖。
+    - 当前 `cargo tree -p codex-app-server --invert codex-core --edges normal` 剩余路径为 `codex-app-server`、`codex-chatgpt`、`codex-file-subscription`、`codex-memories-write`。其中 `chatgpt` 仍卡 `Config`/auth/connectors 边界，`file-subscription`/`memories-write` 牵涉 thread/runtime handle，应作为后续较大拆分处理。
   validation:
     - `rtk cargo check -p codex-utils-backoff -p codex-cloud-requirements -p codex-app-server-transport` 通过。
     - `rtk cargo test -p codex-utils-backoff` 通过，2 个测试通过。
     - `rtk cargo check -p codex-app-server --bin codex-app-server` 通过。
+    - `rtk cargo check -p codex-guardian -p codex-app-server --bin codex-app-server` 通过。
     - `rtk cargo build --timings -p codex-app-server --bin codex-app-server` 通过，warm-target wall time 约 100s；最新 timing 为 `target/cargo-timings/cargo-timing-20260618T062735.642709Z.html`。
     - `rtk rustfmt --check ...` 对本次触碰的 Rust 文件通过；全 workspace `cargo fmt --check` 仍被既有未格式化文件阻断。
-  next_action: 更大收益的下一阶段应优先设计 `Config` 从 core 拆出的边界，再处理 runtime handle；本阶段改动可先独立提交。
+  next_action: 更大收益的下一阶段应优先设计 `chatgpt` 的 `Config`/auth/connectors 边界，再处理 runtime handle。
 
 ## Completed
 
