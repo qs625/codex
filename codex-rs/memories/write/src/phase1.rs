@@ -4,10 +4,10 @@ use crate::metrics::MEMORY_PHASE_ONE_JOBS;
 use crate::metrics::MEMORY_PHASE_ONE_OUTPUT;
 use crate::metrics::MEMORY_PHASE_ONE_TOKEN_USAGE;
 use crate::runtime::MemoryStartupContext;
+use crate::runtime::MemoryStartupSettings;
+use crate::runtime::StageOnePromptRequest;
 use crate::runtime::StageOneRequestContext;
 use codex_config::types::MemoriesConfig;
-use codex_core::Prompt;
-use codex_core::config::Config;
 use codex_protocol::error::CodexErr;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
@@ -67,17 +67,17 @@ struct StageOneOutput {
 /// 2) build one stage-1 request context
 /// 3) run stage-1 extraction jobs in parallel
 /// 4) emit metrics and logs
-pub async fn run(context: Arc<MemoryStartupContext>, config: Arc<Config>) {
-    let stage_one_context = build_request_context(context.as_ref(), config.as_ref()).await;
-    let _phase_one_e2e_timer = stage_one_context.start_timer(MEMORY_PHASE_ONE_E2E_MS);
+pub async fn run(context: Arc<MemoryStartupContext>, settings: Arc<MemoryStartupSettings>) {
+    let stage_one_context = build_request_context(context.as_ref(), settings.as_ref()).await;
+    let _phase_one_e2e_timer = context.start_timer(MEMORY_PHASE_ONE_E2E_MS);
 
     // 1. Claim startup job.
-    let Some(claimed_candidates) = claim_startup_jobs(context.as_ref(), &config.memories).await
+    let Some(claimed_candidates) = claim_startup_jobs(context.as_ref(), &settings.memories).await
     else {
         return;
     };
     if claimed_candidates.is_empty() {
-        stage_one_context.counter(
+        context.counter(
             MEMORY_PHASE_ONE_JOBS,
             /*inc*/ 1,
             &[("status", "skipped_no_candidates")],
@@ -87,8 +87,8 @@ pub async fn run(context: Arc<MemoryStartupContext>, config: Arc<Config>) {
 
     // 3. Run the parallel sampling.
     let outcomes = run_jobs(
-        context,
-        config,
+        Arc::clone(&context),
+        settings,
         claimed_candidates,
         stage_one_context.clone(),
     )
@@ -96,7 +96,7 @@ pub async fn run(context: Arc<MemoryStartupContext>, config: Arc<Config>) {
 
     // 4. Metrics and logs.
     let counts = aggregate_stats(outcomes);
-    emit_metrics(&stage_one_context, &counts);
+    emit_metrics(context.as_ref(), &counts);
     info!(
         "memory stage-1 extraction complete: {} job(s) claimed, {} succeeded ({} with output, {} no output), {} failed",
         counts.claimed,
@@ -108,9 +108,9 @@ pub async fn run(context: Arc<MemoryStartupContext>, config: Arc<Config>) {
 }
 
 /// Prune old un-used "dead" raw memories.
-pub async fn prune(context: &MemoryStartupContext, config: &Config) {
+pub async fn prune(context: &MemoryStartupContext, settings: &MemoryStartupSettings) {
     if let Some(db) = context.state_db() {
-        let max_unused_days = config.memories.max_unused_days;
+        let max_unused_days = settings.memories.max_unused_days;
         match db
             .prune_stage1_outputs_for_retention(max_unused_days, crate::stage_one::PRUNE_BATCH_SIZE)
             .await
@@ -184,31 +184,37 @@ async fn claim_startup_jobs(
 
 async fn build_request_context(
     context: &MemoryStartupContext,
-    config: &Config,
+    settings: &MemoryStartupSettings,
 ) -> StageOneRequestContext {
-    let model_name = config
+    let model_name = settings
         .memories
         .extract_model
         .clone()
         .unwrap_or(crate::stage_one::MODEL.to_string());
     context
-        .stage_one_request_context(config, &model_name, crate::stage_one::REASONING_EFFORT)
+        .stage_one_request_context(&model_name, crate::stage_one::REASONING_EFFORT)
         .await
 }
 
 async fn run_jobs(
     context: Arc<MemoryStartupContext>,
-    config: Arc<Config>,
+    settings: Arc<MemoryStartupSettings>,
     claimed_candidates: Vec<codex_state::Stage1JobClaim>,
     stage_one_context: StageOneRequestContext,
 ) -> Vec<JobResult> {
     futures::stream::iter(claimed_candidates.into_iter())
         .map(|claim| {
             let context = Arc::clone(&context);
-            let config = Arc::clone(&config);
+            let settings = Arc::clone(&settings);
             let stage_one_context = stage_one_context.clone();
             async move {
-                job::run(context.as_ref(), config.as_ref(), claim, &stage_one_context).await
+                job::run(
+                    context.as_ref(),
+                    settings.as_ref(),
+                    claim,
+                    &stage_one_context,
+                )
+                .await
             }
         })
         .buffer_unordered(crate::stage_one::CONCURRENCY_LIMIT)
@@ -221,14 +227,14 @@ mod job {
 
     pub(crate) async fn run(
         context: &MemoryStartupContext,
-        config: &Config,
+        settings: &MemoryStartupSettings,
         claim: codex_state::Stage1JobClaim,
         stage_one_context: &StageOneRequestContext,
     ) -> JobResult {
         let claimed_thread = claim.thread;
         let (stage_one_output, token_usage) = match sample(
             context,
-            config,
+            settings,
             &claimed_thread.rollout_path,
             &claimed_thread.cwd,
             stage_one_context,
@@ -277,7 +283,7 @@ mod job {
     /// Extract the rollout and perform the actual sampling.
     async fn sample(
         context: &MemoryStartupContext,
-        config: &Config,
+        _settings: &MemoryStartupSettings,
         rollout_path: &Path,
         rollout_cwd: &Path,
         stage_one_context: &StageOneRequestContext,
@@ -285,28 +291,29 @@ mod job {
         let (rollout_items, _, _) = RolloutRecorder::load_rollout_items(rollout_path).await?;
         let rollout_contents = serialize_filtered_rollout_response_items(&rollout_items)?;
 
-        let mut prompt = Prompt::default();
-        prompt.input = vec![ResponseItem::Message {
-            id: None,
-            role: "user".to_string(),
-            content: vec![ContentItem::InputText {
-                text: build_stage_one_input_message(
-                    &stage_one_context.model_info,
-                    rollout_path,
-                    rollout_cwd,
-                    &rollout_contents,
-                )?,
+        let prompt = StageOnePromptRequest {
+            input: vec![ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: build_stage_one_input_message(
+                        &stage_one_context.model_info,
+                        rollout_path,
+                        rollout_cwd,
+                        &rollout_contents,
+                    )?,
+                }],
+                phase: None,
             }],
-            phase: None,
-        }];
-        prompt.base_instructions = BaseInstructions {
-            text: crate::stage_one::PROMPT.to_string(),
+            base_instructions: BaseInstructions {
+                text: crate::stage_one::PROMPT.to_string(),
+            },
+            output_schema: Some(output_schema()),
+            output_schema_strict: true,
         };
-        prompt.output_schema = Some(output_schema());
-        prompt.output_schema_strict = true;
 
         let (result, token_usage) = context
-            .stream_stage_one_prompt(config, &prompt, stage_one_context)
+            .stream_stage_one_prompt(prompt, stage_one_context)
             .await?;
 
         let mut output: StageOneOutput = serde_json::from_str(&result)?;
@@ -578,7 +585,7 @@ fn aggregate_stats(outcomes: Vec<JobResult>) -> Stats {
     }
 }
 
-fn emit_metrics(context: &StageOneRequestContext, counts: &Stats) {
+fn emit_metrics(context: &MemoryStartupContext, counts: &Stats) {
     if counts.claimed > 0 {
         context.counter(
             MEMORY_PHASE_ONE_JOBS,

@@ -549,13 +549,24 @@ impl TurnRequestProcessor {
 
         if turn_has_input {
             let config_snapshot = thread.config_snapshot().await;
-            codex_memories_write::start_memories_startup_task(
+            let thread_config = thread.config().await;
+            let runtime = Arc::new(crate::memories_runtime::CoreMemoryStartupRuntime::new(
                 Arc::clone(&self.thread_manager),
                 Arc::clone(&self.auth_manager),
                 thread_id,
                 Arc::clone(&thread),
-                thread.config().await,
-                &config_snapshot.session_source,
+                Arc::clone(&thread_config),
+                config_snapshot.session_source.clone(),
+            ));
+            let settings = crate::memories_runtime::memory_startup_settings(
+                thread_config.as_ref(),
+                config_snapshot.session_source,
+            );
+            codex_memories_write::start_memories_startup_task(
+                runtime,
+                Arc::clone(&self.auth_manager),
+                thread_id,
+                settings,
             );
         }
 

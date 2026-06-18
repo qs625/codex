@@ -5,13 +5,10 @@ use crate::metrics::MEMORY_STARTUP;
 use crate::phase1;
 use crate::phase2;
 use crate::runtime::MemoryStartupContext;
-use codex_core::CodexThread;
-use codex_core::ThreadManager;
-use codex_core::config::Config;
-use codex_features::Feature;
+use crate::runtime::MemoryStartupRuntime;
+use crate::runtime::MemoryStartupSettings;
 use codex_login::AuthManager;
 use codex_protocol::ThreadId;
-use codex_protocol::protocol::SessionSource;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -20,28 +17,19 @@ use tracing::warn;
 /// The pipeline is skipped for ephemeral sessions, disabled feature flags, and
 /// subagent sessions.
 pub fn start_memories_startup_task(
-    thread_manager: Arc<ThreadManager>,
+    runtime: Arc<dyn MemoryStartupRuntime>,
     auth_manager: Arc<AuthManager>,
     thread_id: ThreadId,
-    thread: Arc<CodexThread>,
-    config: Arc<Config>,
-    source: &SessionSource,
+    settings: Arc<MemoryStartupSettings>,
 ) {
-    if config.ephemeral
-        || !config.features.enabled(Feature::MemoryTool)
-        || source.is_non_root_agent()
+    if settings.ephemeral
+        || !settings.memory_tool_enabled
+        || settings.session_source.is_non_root_agent()
     {
         return;
     }
 
-    let context = Arc::new(MemoryStartupContext::new(
-        thread_manager,
-        Arc::clone(&auth_manager),
-        thread_id,
-        thread,
-        config.as_ref(),
-        source.clone(),
-    ));
+    let context = Arc::new(MemoryStartupContext::new(thread_id, runtime));
 
     if context.state_db().is_none() {
         warn!("state db unavailable for memories startup pipeline; skipping");
@@ -49,16 +37,16 @@ pub fn start_memories_startup_task(
     }
 
     tokio::spawn(async move {
-        let root = memory_root(&config.codex_home);
+        let root = memory_root(&settings.codex_home);
         if let Err(err) = seed_extension_instructions(&root).await {
             warn!("failed seeding memory extension instructions: {err}");
         }
 
         // Clean memories to make preserve DB size. This does not consume tokens so can be
         // done before the quota check.
-        phase1::prune(context.as_ref(), &config).await;
+        phase1::prune(context.as_ref(), settings.as_ref()).await;
 
-        if !guard::rate_limits_ok(&auth_manager, &config).await {
+        if !guard::rate_limits_ok(&auth_manager, settings.as_ref()).await {
             context.counter(
                 MEMORY_STARTUP,
                 /*inc*/ 1,
@@ -68,8 +56,8 @@ pub fn start_memories_startup_task(
         }
 
         // Run phase 1.
-        phase1::run(Arc::clone(&context), Arc::clone(&config)).await;
+        phase1::run(Arc::clone(&context), Arc::clone(&settings)).await;
         // Run phase 2.
-        phase2::run(context, config).await;
+        phase2::run(context, settings).await;
     });
 }

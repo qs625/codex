@@ -1,24 +1,31 @@
 use codex_backend_client::Client as BackendClient;
-use codex_core::config::Config;
 use codex_login::AuthManager;
 use codex_protocol::protocol::RateLimitSnapshot;
 use codex_protocol::protocol::RateLimitWindow;
 use tracing::info;
 use tracing::warn;
 
-pub(crate) async fn rate_limits_ok(auth_manager: &AuthManager, config: &Config) -> bool {
-    rate_limits_check(auth_manager, config)
+use crate::runtime::MemoryStartupSettings;
+
+pub(crate) async fn rate_limits_ok(
+    auth_manager: &AuthManager,
+    settings: &MemoryStartupSettings,
+) -> bool {
+    rate_limits_check(auth_manager, settings)
         .await
         .unwrap_or(true)
 }
 
-async fn rate_limits_check(auth_manager: &AuthManager, config: &Config) -> Option<bool> {
+async fn rate_limits_check(
+    auth_manager: &AuthManager,
+    settings: &MemoryStartupSettings,
+) -> Option<bool> {
     let auth = auth_manager.auth().await?;
     if !auth.uses_codex_backend() {
         return None;
     }
 
-    let client = BackendClient::from_auth(config.chatgpt_base_url.clone(), &auth)
+    let client = BackendClient::from_auth(settings.chatgpt_base_url.clone(), &auth)
         .map_err(|err| warn!(%err, "failed to construct backend client"))
         .ok()?;
 
@@ -33,7 +40,7 @@ async fn rate_limits_check(auth_manager: &AuthManager, config: &Config) -> Optio
         .find(|s| s.limit_id.as_deref() == Some(crate::guard_limits::CODEX_LIMIT_ID))
         .or_else(|| snapshots.first())?;
 
-    let min_remaining_percent = config.memories.min_rate_limit_remaining_percent;
+    let min_remaining_percent = settings.memories.min_rate_limit_remaining_percent;
     let allowed = snapshot_allows_startup(snapshot, min_remaining_percent);
 
     if !allowed {

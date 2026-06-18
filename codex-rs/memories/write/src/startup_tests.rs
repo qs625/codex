@@ -1,13 +1,35 @@
+use crate::MemoryConsolidationAgent;
+use crate::MemoryRuntimeFuture;
+use crate::MemoryStartupRuntime;
+use crate::MemoryStartupSettings;
+use crate::StageOnePromptRequest;
+use crate::StageOneRequestContext;
 use crate::start_memories_startup_task;
+use codex_api::ResponseEvent;
+use codex_core::CodexThread;
+use codex_core::ModelClient;
+use codex_core::Prompt;
+use codex_core::ThreadManager;
+use codex_core::config::Config;
+use codex_core::resolve_installation_id;
 use codex_features::Feature;
 use codex_git_utils::diff_since_latest_init;
 use codex_git_utils::reset_git_repository;
+use codex_login::AuthManager;
+use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ServiceTier;
+use codex_protocol::models::ContentItem;
+use codex_protocol::models::ResponseInputItem;
+use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::TokenUsage;
+use codex_protocol::user_input::UserInput;
+use codex_rollout_trace::InferenceTraceContext;
 use core_test_support::responses::ResponseMock;
 use core_test_support::responses::ResponsesRequest;
 use core_test_support::responses::ev_assistant_message;
@@ -19,15 +41,43 @@ use core_test_support::responses::start_mock_server;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
+use futures::StreamExt;
 use pretty_assertions::assert_eq;
+use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
+use std::thread;
 use tempfile::TempDir;
+use tokio::sync::Mutex;
+use tokio::sync::watch;
 use tokio::time::Duration;
 use tokio::time::Instant;
 
-#[tokio::test]
-async fn memories_startup_phase2_tracks_workspace_diff_across_runs() -> anyhow::Result<()> {
+fn run_startup_test<F>(future: F) -> anyhow::Result<()>
+where
+    F: Future<Output = anyhow::Result<()>> + Send + 'static,
+{
+    thread::Builder::new()
+        .name("memories-startup-test".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("startup test runtime should build")
+                .block_on(future)
+        })?
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+#[test]
+fn memories_startup_phase2_tracks_workspace_diff_across_runs() -> anyhow::Result<()> {
+    run_startup_test(memories_startup_phase2_tracks_workspace_diff_across_runs_impl())
+}
+
+async fn memories_startup_phase2_tracks_workspace_diff_across_runs_impl() -> anyhow::Result<()> {
     let server = start_mock_server().await;
     let home = Arc::new(TempDir::new()?);
     let db = init_state_db(&home).await?;
@@ -114,8 +164,12 @@ async fn memories_startup_phase2_tracks_workspace_diff_across_runs() -> anyhow::
     Ok(())
 }
 
-#[tokio::test]
-async fn memories_startup_phase2_prunes_old_extension_resources() -> anyhow::Result<()> {
+#[test]
+fn memories_startup_phase2_prunes_old_extension_resources() -> anyhow::Result<()> {
+    run_startup_test(memories_startup_phase2_prunes_old_extension_resources_impl())
+}
+
+async fn memories_startup_phase2_prunes_old_extension_resources_impl() -> anyhow::Result<()> {
     let server = start_mock_server().await;
     let home = Arc::new(TempDir::new()?);
     let db = init_state_db(&home).await?;
@@ -184,8 +238,15 @@ async fn memories_startup_phase2_prunes_old_extension_resources() -> anyhow::Res
     Ok(())
 }
 
-#[tokio::test]
-async fn memories_startup_phase2_prunes_old_extension_resources_without_stage1_input()
+#[test]
+fn memories_startup_phase2_prunes_old_extension_resources_without_stage1_input()
+-> anyhow::Result<()> {
+    run_startup_test(
+        memories_startup_phase2_prunes_old_extension_resources_without_stage1_input_impl(),
+    )
+}
+
+async fn memories_startup_phase2_prunes_old_extension_resources_without_stage1_input_impl()
 -> anyhow::Result<()> {
     let server = start_mock_server().await;
     let home = Arc::new(TempDir::new()?);
@@ -235,8 +296,12 @@ async fn memories_startup_phase2_prunes_old_extension_resources_without_stage1_i
     Ok(())
 }
 
-#[tokio::test]
-async fn memories_startup_phase1_uses_live_thread_service_tier() -> anyhow::Result<()> {
+#[test]
+fn memories_startup_phase1_uses_live_thread_service_tier() -> anyhow::Result<()> {
+    run_startup_test(memories_startup_phase1_uses_live_thread_service_tier_impl())
+}
+
+async fn memories_startup_phase1_uses_live_thread_service_tier_impl() -> anyhow::Result<()> {
     let server = start_mock_server().await;
     let home = Arc::new(TempDir::new()?);
     let test = build_test_codex(&server, home).await?;
@@ -266,17 +331,11 @@ async fn memories_startup_phase1_uses_live_thread_service_tier() -> anyhow::Resu
         Some(ServiceTier::Fast.request_value().to_string())
     );
 
-    let context = crate::runtime::MemoryStartupContext::new(
-        Arc::clone(&test.thread_manager),
-        test.thread_manager.auth_manager(),
-        test.session_configured.thread_id,
-        Arc::clone(&test.codex),
-        &test.config,
-        config_snapshot.session_source.clone(),
-    );
+    let runtime = memory_runtime_for_test(&test, config_snapshot.session_source.clone());
+    let context =
+        crate::runtime::MemoryStartupContext::new(test.session_configured.thread_id, runtime);
     let request_context = context
         .stage_one_request_context(
-            &test.config,
             test.config.model.as_deref().unwrap_or("gpt-5.4-mini"),
             ReasoningEffort::Low,
         )
@@ -321,14 +380,440 @@ async fn trigger_memories_startup(test: &TestCodex) {
         .features
         .enable(Feature::MemoryTool)
         .expect("test config should allow feature update");
+    let settings = memory_startup_settings_for_test(&config, config_snapshot.session_source);
     start_memories_startup_task(
+        memory_runtime_for_config(test, Arc::new(config), settings.session_source.clone()),
+        test.thread_manager.auth_manager(),
+        test.session_configured.thread_id,
+        settings,
+    );
+}
+
+fn memory_runtime_for_test(
+    test: &TestCodex,
+    session_source: SessionSource,
+) -> Arc<dyn MemoryStartupRuntime> {
+    memory_runtime_for_config(test, Arc::new(test.config.clone()), session_source)
+}
+
+fn memory_runtime_for_config(
+    test: &TestCodex,
+    config: Arc<Config>,
+    session_source: SessionSource,
+) -> Arc<dyn MemoryStartupRuntime> {
+    Arc::new(TestMemoryStartupRuntime::new(
         Arc::clone(&test.thread_manager),
         test.thread_manager.auth_manager(),
         test.session_configured.thread_id,
         Arc::clone(&test.codex),
-        Arc::new(config),
-        &config_snapshot.session_source,
+        config,
+        session_source,
+    ))
+}
+
+fn memory_startup_settings_for_test(
+    config: &Config,
+    session_source: SessionSource,
+) -> Arc<MemoryStartupSettings> {
+    Arc::new(MemoryStartupSettings {
+        codex_home: config.codex_home.clone(),
+        memories: config.memories.clone(),
+        chatgpt_base_url: config.chatgpt_base_url.clone(),
+        ephemeral: config.ephemeral,
+        memory_tool_enabled: config.features.enabled(Feature::MemoryTool),
+        session_source,
+    })
+}
+
+struct TestMemoryStartupRuntime {
+    thread_manager: Arc<ThreadManager>,
+    auth_manager: Arc<AuthManager>,
+    thread_id: ThreadId,
+    thread: Arc<CodexThread>,
+    config: Arc<Config>,
+    session_telemetry: SessionTelemetry,
+}
+
+impl TestMemoryStartupRuntime {
+    fn new(
+        thread_manager: Arc<ThreadManager>,
+        auth_manager: Arc<AuthManager>,
+        thread_id: ThreadId,
+        thread: Arc<CodexThread>,
+        config: Arc<Config>,
+        session_source: SessionSource,
+    ) -> Self {
+        let model = config.model.as_deref().unwrap_or("unknown");
+        let session_telemetry = SessionTelemetry::new(
+            thread_id,
+            model,
+            model,
+            /*account_id*/ None,
+            /*account_email*/ None,
+            /*auth_mode*/ None,
+            "test".to_string(),
+            config.otel.log_user_prompt,
+            "test".to_string(),
+            session_source,
+        );
+
+        Self {
+            thread_manager,
+            auth_manager,
+            thread_id,
+            thread,
+            config,
+            session_telemetry,
+        }
+    }
+}
+
+impl MemoryStartupRuntime for TestMemoryStartupRuntime {
+    fn state_db(&self) -> Option<Arc<codex_state::StateRuntime>> {
+        self.thread.state_db()
+    }
+
+    fn counter(&self, name: &str, inc: i64, tags: &[(&str, &str)]) {
+        self.session_telemetry.counter(name, inc, tags);
+    }
+
+    fn histogram(&self, name: &str, value: i64, tags: &[(&str, &str)]) {
+        self.session_telemetry.histogram(name, value, tags);
+    }
+
+    fn start_timer(&self, name: &str) -> Option<codex_otel::Timer> {
+        self.session_telemetry.start_timer(name, &[]).ok()
+    }
+
+    fn stage_one_request_context<'a>(
+        &'a self,
+        model_name: &'a str,
+        reasoning_effort: ReasoningEffort,
+    ) -> MemoryRuntimeFuture<'a, StageOneRequestContext> {
+        Box::pin(async move {
+            let config_snapshot = self.thread.config_snapshot().await;
+            let model_info = self
+                .thread_manager
+                .get_models_manager()
+                .get_model_info(model_name, &self.config.to_models_manager_config())
+                .await;
+
+            StageOneRequestContext {
+                model_info,
+                reasoning_effort: Some(reasoning_effort),
+                service_tier: config_snapshot.service_tier,
+            }
+        })
+    }
+
+    fn stream_stage_one_prompt<'a>(
+        &'a self,
+        request: StageOnePromptRequest,
+        context: &'a StageOneRequestContext,
+    ) -> MemoryRuntimeFuture<'a, anyhow::Result<(String, Option<TokenUsage>)>> {
+        Box::pin(async move {
+            let mut prompt = Prompt::default();
+            prompt.input = request.input;
+            prompt.base_instructions = request.base_instructions;
+            prompt.output_schema = request.output_schema;
+            prompt.output_schema_strict = request.output_schema_strict;
+
+            let installation_id = resolve_installation_id(&self.config.codex_home).await?;
+            let session_source = self.thread.config_snapshot().await.session_source;
+            let model_client = ModelClient::new(
+                Some(Arc::clone(&self.auth_manager)),
+                codex_protocol::SessionId::from(self.thread_id),
+                self.thread_id,
+                installation_id,
+                self.config.model_provider.clone(),
+                session_source,
+                self.config.model_verbosity,
+                self.config
+                    .model_options
+                    .iter()
+                    .filter(|model_option| model_option.provider == self.config.model_provider_id)
+                    .filter_map(|model_option| {
+                        model_option
+                            .max_tokens
+                            .map(|max_tokens| (model_option.model.clone(), max_tokens))
+                    })
+                    .collect(),
+                self.config
+                    .features
+                    .enabled(Feature::EnableRequestCompression),
+                self.config.features.enabled(Feature::RuntimeMetrics),
+                /*beta_features_header*/ None,
+                /*attestation_provider*/ None,
+            );
+            let reasoning_summary = self
+                .config
+                .model_reasoning_summary
+                .unwrap_or(context.model_info.default_reasoning_summary);
+            let turn_metadata_header =
+                codex_core::build_turn_metadata_header(&self.config.cwd, /*sandbox*/ None).await;
+            let mut client_session = model_client.new_session();
+            let mut stream = client_session
+                .stream(
+                    &prompt,
+                    &context.model_info,
+                    &self.session_telemetry.clone().with_model(
+                        context.model_info.slug.as_str(),
+                        context.model_info.slug.as_str(),
+                    ),
+                    context.reasoning_effort,
+                    reasoning_summary,
+                    context.service_tier.clone(),
+                    turn_metadata_header.as_deref(),
+                    &InferenceTraceContext::disabled(),
+                )
+                .await?;
+
+            let mut result = String::new();
+            let mut token_usage = None;
+            while let Some(message) = stream.next().await.transpose()? {
+                match message {
+                    ResponseEvent::OutputTextDelta(delta) => result.push_str(&delta),
+                    ResponseEvent::OutputItemDone(item) => {
+                        if result.is_empty()
+                            && let ResponseItem::Message { content, .. } = item
+                            && let Some(text) = content_items_to_text(content.as_slice())
+                        {
+                            result.push_str(&text);
+                        }
+                    }
+                    ResponseEvent::Completed {
+                        token_usage: usage, ..
+                    } => {
+                        token_usage = usage;
+                        break;
+                    }
+                    ResponseEvent::Created
+                    | ResponseEvent::OutputItemAdded(_)
+                    | ResponseEvent::ServerModel(_)
+                    | ResponseEvent::ModelVerifications(_)
+                    | ResponseEvent::ServerReasoningIncluded(_)
+                    | ResponseEvent::ToolCallInputDelta { .. }
+                    | ResponseEvent::ReasoningSummaryDelta { .. }
+                    | ResponseEvent::ReasoningContentDelta { .. }
+                    | ResponseEvent::ReasoningSummaryPartAdded { .. }
+                    | ResponseEvent::RateLimits(_)
+                    | ResponseEvent::ModelsEtag(_) => {}
+                }
+            }
+
+            Ok((result, token_usage))
+        })
+    }
+
+    fn spawn_consolidation_agent<'a>(
+        &'a self,
+        user_input: Vec<UserInput>,
+        model: String,
+        reasoning_effort: ReasoningEffort,
+    ) -> MemoryRuntimeFuture<'a, anyhow::Result<Box<dyn MemoryConsolidationAgent>>> {
+        Box::pin(async move {
+            let thread_id = ThreadId::new();
+            let (status_tx, status_rx) = watch::channel(AgentStatus::Running);
+            let token_usage = Arc::new(Mutex::new(None));
+            let token_usage_for_task = Arc::clone(&token_usage);
+            let config = Arc::clone(&self.config);
+            let auth_manager = Arc::clone(&self.auth_manager);
+            let session_telemetry = self.session_telemetry.clone();
+            let thread = Arc::clone(&self.thread);
+            let thread_manager = Arc::clone(&self.thread_manager);
+
+            tokio::spawn(async move {
+                let result = stream_consolidation_prompt(
+                    thread_manager,
+                    thread,
+                    auth_manager,
+                    config,
+                    thread_id,
+                    user_input,
+                    model,
+                    reasoning_effort,
+                    session_telemetry,
+                )
+                .await;
+
+                match result {
+                    Ok((final_message, usage)) => {
+                        *token_usage_for_task.lock().await = usage;
+                        let _ = status_tx.send(AgentStatus::Completed(final_message));
+                    }
+                    Err(err) => {
+                        let _ = status_tx.send(AgentStatus::Errored(err.to_string()));
+                    }
+                }
+            });
+
+            let agent: Box<dyn MemoryConsolidationAgent> = Box::new(TestMemoryConsolidationAgent {
+                thread_id,
+                status_rx,
+                token_usage,
+            });
+            Ok(agent)
+        })
+    }
+}
+
+struct TestMemoryConsolidationAgent {
+    thread_id: ThreadId,
+    status_rx: watch::Receiver<AgentStatus>,
+    token_usage: Arc<Mutex<Option<TokenUsage>>>,
+}
+
+impl MemoryConsolidationAgent for TestMemoryConsolidationAgent {
+    fn thread_id(&self) -> ThreadId {
+        self.thread_id
+    }
+
+    fn agent_status<'a>(&'a self) -> MemoryRuntimeFuture<'a, AgentStatus> {
+        Box::pin(async move { self.status_rx.borrow().clone() })
+    }
+
+    fn wait_until_terminated<'a>(&'a self) -> MemoryRuntimeFuture<'a, ()> {
+        Box::pin(async move {
+            let mut status_rx = self.status_rx.clone();
+            loop {
+                if is_final_agent_status(&status_rx.borrow()) {
+                    return;
+                }
+                if status_rx.changed().await.is_err() {
+                    return;
+                }
+            }
+        })
+    }
+
+    fn total_token_usage<'a>(&'a self) -> MemoryRuntimeFuture<'a, Option<TokenUsage>> {
+        Box::pin(async move { self.token_usage.lock().await.clone() })
+    }
+
+    fn shutdown<'a>(self: Box<Self>) -> MemoryRuntimeFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move { Ok(()) })
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn stream_consolidation_prompt(
+    thread_manager: Arc<ThreadManager>,
+    thread: Arc<CodexThread>,
+    auth_manager: Arc<AuthManager>,
+    config: Arc<Config>,
+    thread_id: ThreadId,
+    user_input: Vec<UserInput>,
+    model: String,
+    reasoning_effort: ReasoningEffort,
+    session_telemetry: SessionTelemetry,
+) -> anyhow::Result<(Option<String>, Option<TokenUsage>)> {
+    let model_info = thread_manager
+        .get_models_manager()
+        .get_model_info(&model, &config.to_models_manager_config())
+        .await;
+    let input_item: ResponseItem = ResponseInputItem::from(user_input).into();
+    let mut prompt = Prompt::default();
+    prompt.input = vec![input_item];
+
+    let installation_id = resolve_installation_id(&config.codex_home).await?;
+    let session_source = thread.config_snapshot().await.session_source;
+    let model_client = ModelClient::new(
+        Some(auth_manager),
+        codex_protocol::SessionId::from(thread_id),
+        thread_id,
+        installation_id,
+        config.model_provider.clone(),
+        session_source,
+        config.model_verbosity,
+        config
+            .model_options
+            .iter()
+            .filter(|model_option| model_option.provider == config.model_provider_id)
+            .filter_map(|model_option| {
+                model_option
+                    .max_tokens
+                    .map(|max_tokens| (model_option.model.clone(), max_tokens))
+            })
+            .collect(),
+        config.features.enabled(Feature::EnableRequestCompression),
+        config.features.enabled(Feature::RuntimeMetrics),
+        /*beta_features_header*/ None,
+        /*attestation_provider*/ None,
     );
+    let reasoning_summary = config
+        .model_reasoning_summary
+        .unwrap_or(model_info.default_reasoning_summary);
+    let turn_metadata_header =
+        codex_core::build_turn_metadata_header(&config.cwd, /*sandbox*/ None).await;
+    let mut client_session = model_client.new_session();
+    let mut stream = client_session
+        .stream(
+            &prompt,
+            &model_info,
+            &session_telemetry.with_model(model_info.slug.as_str(), model_info.slug.as_str()),
+            Some(reasoning_effort),
+            reasoning_summary,
+            thread.config_snapshot().await.service_tier,
+            turn_metadata_header.as_deref(),
+            &InferenceTraceContext::disabled(),
+        )
+        .await?;
+
+    let mut result = String::new();
+    let mut token_usage = None;
+    while let Some(message) = stream.next().await.transpose()? {
+        match message {
+            ResponseEvent::OutputTextDelta(delta) => result.push_str(&delta),
+            ResponseEvent::OutputItemDone(item) => {
+                if result.is_empty()
+                    && let ResponseItem::Message { content, .. } = item
+                    && let Some(text) = content_items_to_text(content.as_slice())
+                {
+                    result.push_str(&text);
+                }
+            }
+            ResponseEvent::Completed {
+                token_usage: usage, ..
+            } => {
+                token_usage = usage;
+                break;
+            }
+            ResponseEvent::Created
+            | ResponseEvent::OutputItemAdded(_)
+            | ResponseEvent::ServerModel(_)
+            | ResponseEvent::ModelVerifications(_)
+            | ResponseEvent::ServerReasoningIncluded(_)
+            | ResponseEvent::ToolCallInputDelta { .. }
+            | ResponseEvent::ReasoningSummaryDelta { .. }
+            | ResponseEvent::ReasoningContentDelta { .. }
+            | ResponseEvent::ReasoningSummaryPartAdded { .. }
+            | ResponseEvent::RateLimits(_)
+            | ResponseEvent::ModelsEtag(_) => {}
+        }
+    }
+
+    let final_message = (!result.is_empty()).then_some(result);
+    Ok((final_message, token_usage))
+}
+
+fn is_final_agent_status(status: &AgentStatus) -> bool {
+    !matches!(
+        status,
+        AgentStatus::PendingInit | AgentStatus::Running | AgentStatus::Interrupted
+    )
+}
+
+fn content_items_to_text(content: &[ContentItem]) -> Option<String> {
+    let pieces = content
+        .iter()
+        .filter_map(|item| match item {
+            ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+                (!text.is_empty()).then_some(text.as_str())
+            }
+            ContentItem::InputImage { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    (!pieces.is_empty()).then(|| pieces.join("\n"))
 }
 
 async fn seed_stage1_output(

@@ -6,25 +6,19 @@ use crate::metrics::MEMORY_PHASE_TWO_JOBS;
 use crate::metrics::MEMORY_PHASE_TWO_TOKEN_USAGE;
 use crate::prune_old_extension_resources;
 use crate::rebuild_raw_memories_file_from_memories;
+use crate::runtime::MemoryConsolidationAgent;
 use crate::runtime::MemoryStartupContext;
-use crate::runtime::SpawnedConsolidationAgent;
+use crate::runtime::MemoryStartupSettings;
 use crate::sync_rollout_summaries_from_memories;
 use crate::workspace::memory_workspace_diff;
 use crate::workspace::prepare_memory_workspace;
 use crate::workspace::reset_memory_workspace_baseline;
 use crate::workspace::write_workspace_diff;
-use codex_config::Constrained;
-use codex_core::config::Config;
-use codex_features::Feature;
-use codex_protocol::ThreadId;
 use codex_protocol::protocol::AgentStatus;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::user_input::UserInput;
 use codex_state::Stage1Output;
 use codex_state::StateRuntime;
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,16 +36,16 @@ struct Counters {
 
 /// Runs memory phase 2 (aka consolidation) in strict order. The method represents the linear
 /// flow of the consolidation phase.
-pub async fn run(context: Arc<MemoryStartupContext>, config: Arc<Config>) {
+pub async fn run(context: Arc<MemoryStartupContext>, settings: Arc<MemoryStartupSettings>) {
     let phase_two_e2e_timer = context.start_timer(MEMORY_PHASE_TWO_E2E_MS);
 
     let Some(db) = context.state_db() else {
         // This should not happen.
         return;
     };
-    let root = memory_root(&config.codex_home);
-    let max_raw_memories = config.memories.max_raw_memories_for_consolidation;
-    let max_unused_days = config.memories.max_unused_days;
+    let root = memory_root(&settings.codex_home);
+    let max_raw_memories = settings.memories.max_raw_memories_for_consolidation;
+    let max_unused_days = settings.memories.max_unused_days;
 
     // 1. Claim the global Phase 2 lock before touching the memory workspace.
     let claim = match job::claim(context.as_ref(), db.as_ref()).await {
@@ -75,21 +69,7 @@ pub async fn run(context: Arc<MemoryStartupContext>, config: Arc<Config>) {
         return;
     }
 
-    // 3. Build the locked-down config used by the consolidation agent.
-    let Some(agent_config) = agent::get_config(config.as_ref()) else {
-        // If we can't get the config, we can't consolidate.
-        tracing::error!("failed to get agent config");
-        job::failed(
-            context.as_ref(),
-            db.as_ref(),
-            &claim,
-            "failed_sandbox_policy",
-        )
-        .await;
-        return;
-    };
-
-    // 4. Load current DB-backed Phase 2 inputs.
+    // 3. Load current DB-backed Phase 2 inputs.
     let raw_memories = match db
         .get_phase2_input_selection(max_raw_memories, max_unused_days)
         .await
@@ -110,7 +90,7 @@ pub async fn run(context: Arc<MemoryStartupContext>, config: Arc<Config>) {
     let raw_memory_count = raw_memories.len();
     let new_watermark = get_watermark(claim.watermark, &raw_memories);
 
-    // 5. Sync the current inputs into the memory workspace.
+    // 4. Sync the current inputs into the memory workspace.
     if let Err(err) = sync_phase2_workspace_inputs(&root, &raw_memories).await {
         tracing::error!("failed syncing phase2 workspace inputs: {err}");
         job::failed(
@@ -153,7 +133,7 @@ pub async fn run(context: Arc<MemoryStartupContext>, config: Arc<Config>) {
         return;
     }
 
-    // 7. Persist the diff for the consolidation agent to inspect.
+    // 5. Persist the diff for the consolidation agent to inspect.
     if let Err(err) = write_workspace_diff(&root, &workspace_diff).await {
         tracing::error!("failed writing memory workspace diff file: {err}");
         job::failed(
@@ -166,10 +146,18 @@ pub async fn run(context: Arc<MemoryStartupContext>, config: Arc<Config>) {
         return;
     }
 
-    // 8. Spawn the consolidation agent.
+    // 6. Spawn the consolidation agent.
     let prompt = agent::get_prompt(&root);
     let agent = match context
-        .spawn_consolidation_agent(agent_config, prompt)
+        .spawn_consolidation_agent(
+            prompt,
+            settings
+                .memories
+                .consolidation_model
+                .clone()
+                .unwrap_or(crate::stage_two::MODEL.to_string()),
+            crate::stage_two::REASONING_EFFORT,
+        )
         .await
     {
         Ok(agent) => agent,
@@ -180,7 +168,7 @@ pub async fn run(context: Arc<MemoryStartupContext>, config: Arc<Config>) {
         }
     };
 
-    // 9. Hand off completion handling, heartbeats, and baseline reset.
+    // 7. Hand off completion handling, heartbeats, and baseline reset.
     agent::handle(
         Arc::clone(&context),
         claim,
@@ -191,7 +179,7 @@ pub async fn run(context: Arc<MemoryStartupContext>, config: Arc<Config>) {
         phase_two_e2e_timer,
     );
 
-    // 10. Emit dispatch metrics.
+    // 8. Emit dispatch metrics.
     let counters = Counters {
         input: raw_memory_count as i64,
     };
@@ -292,55 +280,6 @@ mod agent {
     use super::*;
     use tracing::warn;
 
-    pub(super) fn get_config(config: &Config) -> Option<Config> {
-        let root = memory_root(&config.codex_home);
-        let mut agent_config = config.clone();
-
-        agent_config.cwd = root.clone();
-        // Consolidation threads must never feed back into phase-1 memory generation.
-        agent_config.ephemeral = true;
-        agent_config.memories.generate_memories = false;
-        agent_config.memories.use_memories = false;
-        agent_config.include_apps_instructions = false;
-        agent_config.mcp_servers = Constrained::allow_only(HashMap::new());
-        // Approval policy
-        agent_config.permissions.approval_policy = Constrained::allow_only(AskForApproval::Never);
-        // Consolidation runs as an internal worker and must not recursively delegate.
-        let _ = agent_config.features.disable(Feature::SpawnCsv);
-        let _ = agent_config.features.disable(Feature::Collab);
-        let _ = agent_config.features.disable(Feature::MemoryTool);
-        let _ = agent_config.features.disable(Feature::Apps);
-        let _ = agent_config.features.disable(Feature::Plugins);
-        let _ = agent_config
-            .features
-            .disable(Feature::SkillMcpDependencyInstall);
-
-        // Sandbox policy
-        let writable_roots = vec![root];
-        // The consolidation agent only needs local memory-root write access and no network.
-        let consolidation_sandbox_policy = SandboxPolicy::WorkspaceWrite {
-            writable_roots,
-            network_access: false,
-            exclude_tmpdir_env_var: true,
-            exclude_slash_tmp: true,
-        };
-        agent_config
-            .permissions
-            .set_legacy_sandbox_policy(consolidation_sandbox_policy, agent_config.cwd.as_path())
-            .ok()?;
-
-        agent_config.model = Some(
-            config
-                .memories
-                .consolidation_model
-                .clone()
-                .unwrap_or(crate::stage_two::MODEL.to_string()),
-        );
-        agent_config.model_reasoning_effort = Some(crate::stage_two::REASONING_EFFORT);
-
-        Some(agent_config)
-    }
-
     pub(super) fn get_prompt(root: &Path) -> Vec<UserInput> {
         let prompt = build_consolidation_prompt(root);
         vec![UserInput::Text {
@@ -357,7 +296,7 @@ mod agent {
         new_watermark: i64,
         selected_outputs: Vec<codex_state::Stage1Output>,
         memory_root: codex_utils_absolute_path::AbsolutePathBuf,
-        agent: SpawnedConsolidationAgent,
+        agent: Box<dyn MemoryConsolidationAgent>,
         phase_two_e2e_timer: Option<codex_otel::Timer>,
     ) {
         let Some(db) = context.state_db() else {
@@ -366,18 +305,13 @@ mod agent {
 
         tokio::spawn(async move {
             let _phase_two_e2e_timer = phase_two_e2e_timer;
-            let SpawnedConsolidationAgent { thread_id, thread } = agent;
+            let thread_id = agent.thread_id();
 
             // Loop the agent until we have the final status.
-            let final_status =
-                loop_agent(db.clone(), claim.token.clone(), thread_id, &thread).await;
+            let final_status = loop_agent(db.clone(), claim.token.clone(), agent.as_ref()).await;
 
             if matches!(final_status, AgentStatus::Completed(_)) {
-                if let Some(token_usage) = thread
-                    .token_usage_info()
-                    .await
-                    .map(|info| info.total_token_usage)
-                {
+                if let Some(token_usage) = agent.total_token_usage().await {
                     emit_token_usage_metrics(context.as_ref(), &token_usage);
                 }
                 // Do not reset the workspace baseline if we lost the lock.
@@ -430,10 +364,8 @@ mod agent {
 
             let cleanup_context = Arc::clone(&context);
             tokio::spawn(async move {
-                if let Err(err) = cleanup_context
-                    .shutdown_consolidation_agent(SpawnedConsolidationAgent { thread_id, thread })
-                    .await
-                {
+                let _ = cleanup_context;
+                if let Err(err) = agent.shutdown().await {
                     warn!(
                         "failed to auto-close global memory consolidation agent {thread_id}: {err}"
                     );
@@ -445,26 +377,26 @@ mod agent {
     async fn loop_agent(
         db: Arc<StateRuntime>,
         token: String,
-        thread_id: ThreadId,
-        thread: &codex_core::CodexThread,
+        agent: &dyn MemoryConsolidationAgent,
     ) -> AgentStatus {
+        let thread_id = agent.thread_id();
         let mut heartbeat_interval =
             tokio::time::interval(Duration::from_secs(crate::stage_two::JOB_HEARTBEAT_SECONDS));
         heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut status_poll_interval = tokio::time::interval(Duration::from_secs(1));
         status_poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let session_termination = thread.wait_until_terminated();
+        let session_termination = agent.wait_until_terminated();
         tokio::pin!(session_termination);
 
         loop {
-            let status = thread.agent_status().await;
+            let status = agent.agent_status().await;
             if is_final_agent_status(&status) {
                 break status;
             }
 
             tokio::select! {
                 _ = &mut session_termination => {
-                    let status = thread.agent_status().await;
+                    let status = agent.agent_status().await;
                     if is_final_agent_status(&status) {
                         break status;
                     }

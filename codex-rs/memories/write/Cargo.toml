@@ -16,8 +16,6 @@ workspace = true
 anyhow = { workspace = true }
 chrono = { workspace = true }
 codex-backend-client = { workspace = true }
-codex-api = { workspace = true }
-codex-core = { workspace = true }
 codex-config = { workspace = true }
 codex-features = { workspace = true }
 codex-git-utils = { workspace = true }
@@ -25,10 +23,8 @@ codex-login = { workspace = true }
 codex-otel = { workspace = true }
 codex-protocol = { workspace = true }
 codex-rollout = { workspace = true }
-codex-rollout-trace = { workspace = true }
 codex-secrets = { workspace = true }
 codex-state = { workspace = true }
-codex-terminal-detection = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-output-truncation = { workspace = true }
 codex-utils-template = { workspace = true }
@@ -40,9 +36,12 @@ tracing = { workspace = true, features = ["log"] }
 uuid = { workspace = true, features = ["v4", "v5"] }
 
 [dev-dependencies]
+codex-api = { workspace = true }
+codex-core = { workspace = true }
 codex-models-manager = { workspace = true }
+codex-rollout-trace = { workspace = true }
 core_test_support = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["fs", "macros"] }
+tokio = { workspace = true, features = ["fs", "macros", "rt-multi-thread"] }
 wiremock = { workspace = true }

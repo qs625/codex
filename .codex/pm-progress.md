@@ -43,13 +43,13 @@
       status: completed
       description: 对 `file-subscription` 阶段做最小验证：`rtk cargo check -p codex-file-subscription -p codex-app-server --bin codex-app-server`，并用 `rtk cargo tree -p codex-app-server --invert codex-core --edges normal` 确认该路径已脱离 core；通过后提交小阶段。
     - step: 9
-      status: in_progress
+      status: completed
       description: 单独盘点 `codex-memories-write` 对 core runtime 的依赖，设计 thread/model/runtime facade；该阶段涉及 `CodexThread`、`ModelClient`、`Prompt`、`ResponseEvent`、`RolloutRecorder` 等较大边界，不能和 `file-subscription` patch 混合。
     - step: 10
-      status: pending
+      status: completed
       description: 在 `memories-write` facade 方案明确后实施拆分、验证 app-server 编译路径和 timing 变化；若风险或改动体量过大，先提交设计记录或中间 adapter，再继续实现。
     - step: 11
-      status: pending
+      status: in_progress
       description: 完成所有可行拆分后重新运行 `rtk cargo build --timings -p codex-app-server --bin codex-app-server`，比较 `codex-core` 是否仍在 app-server 必要路径、warm build wall time 和 unit seconds，并更新最终结论。
   findings:
     - 已新增 `codex-utils-backoff`，`codex-core::util::backoff` 保留为 re-export。
@@ -68,6 +68,11 @@
     - 下一步 facade 形状应让 `memories-write` 暴露 `MemoryStartupRuntime` / `MemoryConsolidationAgent` 这类 host runtime trait，而不是继续接受 `ThreadManager`、`CodexThread`、`Config`。app-server/core adapter 捕获现有 `ThreadManager`、foreground `CodexThread` 和 `Config`，实现 state-db 访问、stage-one request context、stage-one prompt streaming、consolidation agent spawn/submit、status/token usage/shutdown。
     - `memories-write` 自身应只保留业务配置子集，例如 `codex_home`、`MemoriesConfig`、telemetry 所需的 model/provider/log_user_prompt 字段和 feature eligibility 的布尔结果；`phase1`/`phase2` 不应直接 clone 或 mutate core `Config`。phase2 的 consolidation locked-down config 构造可以下沉到 app-server/core adapter，`memories-write` 只传 root、prompt 和期望 model/reasoning effort。
     - stage-one prompt 应在 `memories-write` 内表示为轻量 `StageOnePromptRequest`（base instructions、user text、output schema、strict flag），由 adapter 转成 core `Prompt` 并调用 `ModelClient`；这样 `Prompt`、`ModelClient`、`resolve_installation_id`、`build_turn_metadata_header` 都留在 core adapter 侧。
+    - `codex-memories-write` 已新增 `MemoryStartupRuntime` / `MemoryConsolidationAgent` facade 和 `MemoryStartupSettings` 配置子集；生产代码不再接受 `ThreadManager`、`CodexThread` 或 core `Config`，phase1 stage-one sampling 通过 `StageOnePromptRequest` 交给 host adapter。
+    - app-server 侧新增 `CoreMemoryStartupRuntime` adapter，负责 state db、telemetry、model info、stage-one `ModelClient` streaming、phase2 consolidation internal thread spawn/submit/shutdown；core-specific `Prompt`、`ModelClient`、`build_turn_metadata_header`、locked-down consolidation `Config` 构造都留在 app-server/core 边界。
+    - `codex-memories-write` 的 `codex-core` 已移到 dev-dependency，仅用于 startup tests；`codex-api` 和 `codex-rollout-trace` 也只保留为 dev-dependency，`codex-terminal-detection` 从 memories-write 移除。app-server 明确声明 adapter 需要的 direct dependencies。
+    - startup tests 改为 test-only core-backed runtime adapter；phase2 测试不再启动完整 internal core thread，而是直接通过 `ModelClient` 向 mock Responses API 发送 consolidation prompt 并返回 fake `MemoryConsolidationAgent` 状态句柄，避免测试 runtime 递归和默认测试线程 stack overflow。
+    - `rtk cargo tree -p codex-app-server --invert codex-core --edges normal` 已确认剩余路径只剩 `codex-app-server -> codex-core`，`codex-memories-write` 不再出现在 app-server 到 core 的 normal 反向路径中。
   validation:
     - `rtk cargo check -p codex-utils-backoff -p codex-cloud-requirements -p codex-app-server-transport` 通过。
     - `rtk cargo test -p codex-utils-backoff` 通过，2 个测试通过。
@@ -83,7 +88,10 @@
     - `memories-write` re-export 清理后执行 `rtk cargo check -p codex-memories-write` 通过，退出码 0。
     - `memories-write` re-export 清理后对触碰文件执行 `rtk rustfmt --check memories/write/src/runtime.rs memories/write/src/phase1.rs` 通过；命令仍打印 workspace rustfmt 配置中 nightly-only `imports_granularity = Item` warning。
     - `rtk rustfmt --check ...` 对本次触碰的 Rust 文件通过；全 workspace `cargo fmt --check` 仍被既有未格式化文件阻断。
-  next_action: 实施 `memories-write` runtime facade：先新增 trait/settings/request 类型并把 phase1/phase2 改成不接收 core `Config`；再在 app-server 侧实现 core adapter；最后移除 `codex-memories-write` 的 normal `codex-core` 依赖并验证 app-server 反向依赖树。
+    - `memories-write` runtime facade 实施后执行 `rtk cargo test -p codex-memories-write` 通过，29 个测试通过；命令只打印既有 core unused/dead_code warning。
+    - `memories-write` runtime facade 实施后执行 `rtk cargo check -p codex-memories-write -p codex-app-server --bin codex-app-server` 通过，0 errors，42 warnings（既有 unused/dead_code 风格警告）。
+    - `memories-write` runtime facade 实施后执行 `rtk cargo tree -p codex-app-server --invert codex-core --edges normal`，确认 `codex-memories-write` 已不在 `codex-core` normal 反向路径中，剩余路径只剩 `codex-app-server` 自身。
+  next_action: 提交 `memories-write` runtime facade 阶段后，运行最终 `rtk cargo build --timings -p codex-app-server --bin codex-app-server`，比较拆分后 app-server warm build wall time、`codex-core` unit 是否仍被触发，以及剩余 direct core 边界是否还值得继续拆。
 
 ## Completed
 
