@@ -15,7 +15,7 @@ inputs:
     description: 要完成的开发目标
   cwd:
     type: string
-    description: 执行 workflow 的 checkout 路径，只能是当前主 checkout 或 ~/Projects/my-codex-dev
+    description: 执行 workflow 的 checkout 路径，只能是四个固定 checkout 之一：~/Projects/my-codex、~/Projects/my-codex-dev、~/Projects/my-codex-dev-2、~/Projects/my-codex-dev-3
 ---
 # Feature Development Workflow
 
@@ -37,7 +37,7 @@ Research -> Implement -> Review/Fix -> Verify
 ## 输入
 
 - `objective`：要完成的开发目标。
-- `cwd`：执行 workflow 的 checkout 路径，只能是当前主 checkout 或固定开发目录 `~/Projects/my-codex-dev`；不要为 workflow 创建第三份 checkout 或开发目录。
+- `cwd`：执行 workflow 的 checkout 路径，只能是四个固定 checkout 之一：`~/Projects/my-codex`、`~/Projects/my-codex-dev`、`~/Projects/my-codex-dev-2`、`~/Projects/my-codex-dev-3`；不要为 workflow 创建额外 checkout 或开发目录。
 
 ## Agent Session
 

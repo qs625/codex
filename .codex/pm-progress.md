@@ -14,6 +14,10 @@ None
   summary: 更新 agent/workflow 协作规则，改为当前主 checkout 与固定开发 checkout `~/Projects/my-codex-dev` 双目录协作；删除旧固定 tester agent 文档；创建并初始化固定开发 checkout。
   validation: `rtk node --check .codex/workflows/feature-dev/workflow.ts` 通过；确认开发目录只保留主 checkout 和 `~/Projects/my-codex-dev`。
   residual_risk: GPT auth settings 仍是未完成设计方向，不在本次合并范围内。
+- commit: pending
+  summary: 将 PM 协作规则扩展为四个固定 checkout：`~/Projects/my-codex`、`~/Projects/my-codex-dev`、`~/Projects/my-codex-dev-2`、`~/Projects/my-codex-dev-3`，并明确任务依赖判断、合并顺序和空闲 checkout 同步策略。
+  validation: pending
+  residual_risk: pending
 
 ## Known Issues
 
