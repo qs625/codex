@@ -37,6 +37,8 @@
     - `codex-guardian` 的 thread lifecycle contributor 已改为配置泛型，移除 `codex-core` 依赖。
     - `codex-chatgpt` 默认 feature 已改为不依赖 `codex-core`；CLI-only `apply_command` / `get_task` 放入 `apply-command` feature，`codex-cli` 显式启用该 feature。app-server/TUI 调用 ChatGPT connector/settings API 时先构造轻量 `ChatGptConfig`，accessible/enabled connector 状态直接走 core connector API。
     - 当前 `cargo tree -p codex-app-server --invert codex-core --edges normal` 剩余路径为 `codex-app-server`、`codex-file-subscription`、`codex-memories-write`。其中 `file-subscription`/`memories-write` 牵涉 thread/runtime handle，应作为后续较大拆分处理。
+    - `codex-file-subscription` 的 core 依赖不再是单纯 config 类型：生产代码使用 `ThreadManager`、`UnifiedExecManagerHandle` 和 `UnifiedExecProcessManager` 来恢复订阅、注入事件和提供 event-command 工具；下一步需要先在 extension/runtime 边界定义稳定 trait/handle，再让 core adapter 实现。
+    - `codex-memories-write` 同样直接使用 `CodexThread`、`ThreadManager`、`ModelClient`、`Prompt`、`ResponseEvent`、`RolloutRecorder` 等 core runtime 类型；这应作为 thread runtime facade 的较大拆分，不能和低风险 util/config 拆分混在一个小 patch。
   validation:
     - `rtk cargo check -p codex-utils-backoff -p codex-cloud-requirements -p codex-app-server-transport` 通过。
     - `rtk cargo test -p codex-utils-backoff` 通过，2 个测试通过。
@@ -46,7 +48,7 @@
     - `rtk cargo build --timings -p codex-app-server --bin codex-app-server` 通过，warm-target wall time 约 100s；最新 timing 为 `target/cargo-timings/cargo-timing-20260618T062735.642709Z.html`。
     - `codex-chatgpt` 拆分后重新执行 `rtk cargo build --timings -p codex-app-server --bin codex-app-server` 通过，warm-target wall time 约 22s；最新 timing 为 `target/cargo-timings/cargo-timing-20260618T065116.613751Z.html`，本次只重编 `codex-app-server`、bin、`codex-chatgpt`、`codex-guardian`，未重编 `codex-core`。
     - `rtk rustfmt --check ...` 对本次触碰的 Rust 文件通过；全 workspace `cargo fmt --check` 仍被既有未格式化文件阻断。
-  next_action: 提交 `codex-chatgpt` 拆分；后续继续处理 `file-subscription` 和 `memories-write` 的 runtime handle。
+  next_action: 先为 `file-subscription` 设计 runtime trait/handle 边界，再处理 `memories-write` 的 thread runtime facade；不要直接把 core runtime 类型搬进小 crate。
 
 ## Completed
 
