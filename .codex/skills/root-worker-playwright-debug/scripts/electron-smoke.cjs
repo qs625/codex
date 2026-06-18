@@ -124,8 +124,8 @@ function loadPlaywright(requireFromApp) {
   }
 
   throw new Error(
-    "Cannot find playwright from apps/root-worker-prototype. Run `pnpm install` in the main checkout, " +
-      "then bootstrap linked worktrees so apps/root-worker-prototype/node_modules is reused.",
+    "Cannot find playwright from apps/root-worker-prototype. Run `pnpm install` in this checkout " +
+      "so apps/root-worker-prototype/node_modules is available locally.",
   );
 }
 
