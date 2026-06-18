@@ -49,7 +49,7 @@
       status: completed
       description: 在 `memories-write` facade 方案明确后实施拆分、验证 app-server 编译路径和 timing 变化；若风险或改动体量过大，先提交设计记录或中间 adapter，再继续实现。
     - step: 11
-      status: in_progress
+      status: completed
       description: 完成所有可行拆分后重新运行 `rtk cargo build --timings -p codex-app-server --bin codex-app-server`，比较 `codex-core` 是否仍在 app-server 必要路径、warm build wall time 和 unit seconds，并更新最终结论。
   findings:
     - 已新增 `codex-utils-backoff`，`codex-core::util::backoff` 保留为 re-export。
@@ -73,6 +73,7 @@
     - `codex-memories-write` 的 `codex-core` 已移到 dev-dependency，仅用于 startup tests；`codex-api` 和 `codex-rollout-trace` 也只保留为 dev-dependency，`codex-terminal-detection` 从 memories-write 移除。app-server 明确声明 adapter 需要的 direct dependencies。
     - startup tests 改为 test-only core-backed runtime adapter；phase2 测试不再启动完整 internal core thread，而是直接通过 `ModelClient` 向 mock Responses API 发送 consolidation prompt 并返回 fake `MemoryConsolidationAgent` 状态句柄，避免测试 runtime 递归和默认测试线程 stack overflow。
     - `rtk cargo tree -p codex-app-server --invert codex-core --edges normal` 已确认剩余路径只剩 `codex-app-server -> codex-core`，`codex-memories-write` 不再出现在 app-server 到 core 的 normal 反向路径中。
+    - 最终 timing 显示 warm app-server build total time 20.1s，unit 为 `codex-app-server` 11.5s、bin 5.0s、`codex-memories-write` 2.3s、`codex-file-subscription` 1.7s；`codex-core` 未出现在本次重编 unit 中。相比初始 warm-target 约 100s/冷测约 106.67s 且 core 单 unit 202.58s 的状态，当前 app-server 小范围改动已不再因 file-subscription/memories-write normal core 依赖牵动 core。
   validation:
     - `rtk cargo check -p codex-utils-backoff -p codex-cloud-requirements -p codex-app-server-transport` 通过。
     - `rtk cargo test -p codex-utils-backoff` 通过，2 个测试通过。
@@ -91,7 +92,8 @@
     - `memories-write` runtime facade 实施后执行 `rtk cargo test -p codex-memories-write` 通过，29 个测试通过；命令只打印既有 core unused/dead_code warning。
     - `memories-write` runtime facade 实施后执行 `rtk cargo check -p codex-memories-write -p codex-app-server --bin codex-app-server` 通过，0 errors，42 warnings（既有 unused/dead_code 风格警告）。
     - `memories-write` runtime facade 实施后执行 `rtk cargo tree -p codex-app-server --invert codex-core --edges normal`，确认 `codex-memories-write` 已不在 `codex-core` normal 反向路径中，剩余路径只剩 `codex-app-server` 自身。
-  next_action: 提交 `memories-write` runtime facade 阶段后，运行最终 `rtk cargo build --timings -p codex-app-server --bin codex-app-server`，比较拆分后 app-server warm build wall time、`codex-core` unit 是否仍被触发，以及剩余 direct core 边界是否还值得继续拆。
+    - 最终执行 `rtk cargo build --timings -p codex-app-server --bin codex-app-server` 通过，0 errors，42 warnings；timing 文件为 `target/cargo-timings/cargo-timing-20260618T075028.067232Z.html`，total time 20.1s。
+  next_action: 本轮 app-server 编译拓扑优化已完成并提交；如继续优化，应另起任务评估 app-server 自身 direct `codex-core` 依赖是否能拆出更小 service registry/adapter 边界。
 
 ## Completed
 

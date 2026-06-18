@@ -26,6 +26,7 @@ In the codex-rs folder where the rust code lives:
   - Implementations may still use `async fn foo(&self, ...) -> T` when they satisfy that contract.
   - Do not use `#[allow(async_fn_in_trait)]` as a shortcut around spelling the future contract explicitly.
 - When writing tests, prefer comparing the equality of entire objects over fields one by one.
+- 如果 Rust async/integration 测试在默认 test harness 线程上因为 future 或 core-heavy mock 路径过大触发 stack overflow，不要要求调用者手工设置 `RUST_MIN_STACK` 作为唯一修复。优先把该测试改成普通 `#[test]` wrapper，用 `std::thread::Builder::stack_size(...)` 启动明确大栈线程，并在该线程内创建 `tokio::runtime::Builder` 后 `block_on` 原 async 测试主体；这样 `cargo test -p <crate>` 默认路径稳定且不依赖外部环境变量。只有确认是无限递归或真实 bug 时才按逻辑 bug 修复。
 - Do not add general product or user-facing documentation to the `docs/` folder. The official Codex documentation lives elsewhere. The exception is app-server API documentation, which is covered by the app-server guidance below.
 - Prefer private modules and explicitly exported public crate API.
 - If you change `ConfigToml` or nested config types, update `codex-rs/core/config.schema.json` when needed; use `just write-config-schema` when regenerating it.
@@ -112,6 +113,8 @@ Particularly when introducing a new concept/feature/API, before adding to `codex
   `codex-rs/command-runtime`（`codex-command-runtime`）。`ExecCommandHandler`、
   `CommandWaitHandler`、`WriteStdinHandler`、approval/sandbox/spawn、async watcher event
   emission、`Session`/`TurnContext` 编排继续留在 `codex-core`。
+- 当小 crate 只需要 core/app-server 的少量运行时能力时，优先定义轻量 service facade/trait crate-local 边界，再由 app-server 或 core-adapter 侧通过 constructor injection 显式注入实现。小 crate 暴露业务请求/配置子集和 trait（例如 runtime、agent handle、prompt request），不要直接依赖 `ThreadManager`、`CodexThread`、`Config`、`ModelClient`、`Prompt` 或整套 session/turn loop。需要多个服务时可以在 host 侧组合成 `RuntimeServices` / service registry，但注册表应只是显式持有和传递 typed services，不要引入宏驱动或反射式 IoC 框架，除非有清晰的维护和编译收益。
+- service facade 的实现方应放在拥有重依赖的 host crate，例如 app-server adapter 负责把轻量 request 转成 core `Prompt`、创建 `ModelClient`、构造 locked-down `Config`、spawn/shutdown internal thread；业务 crate 只表达“要做什么”。测试需要 core-backed 行为时，把 core adapter 放在 `#[cfg(test)]` 或 dev-dependency 路径，不能为了测试便利把 `codex-core` 拉回 normal dependencies。
 
 Likewise, when reviewing code, do not hesitate to push back on PRs that would unnecessarily add code to `codex-core`.
 
