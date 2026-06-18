@@ -14,6 +14,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - 每个固定开发 checkout 绑定一个长期 owner thread，PM 不为每个任务新建 owner。固定映射为：`~/Projects/my-codex-dev` -> `/root/my_codex_pm/owner_dev`，`~/Projects/my-codex-dev-2` -> `/root/my_codex_pm/owner_dev_2`，`~/Projects/my-codex-dev-3` -> `/root/my_codex_pm/owner_dev_3`。如果固定 owner thread 不存在或已不可用，PM 只按该固定 task_name 重新创建一次，`fork_turns=none`，`cwd` 设为对应 checkout。
 - PM 同时最多协调三个 in-progress owner 任务，且每个开发 checkout 的固定 owner 同一时间最多处理一个任务；超过三个或没有满足依赖条件的空闲开发 checkout 时必须排队，等待任务合并、阻塞暂停或明确关闭后再向空闲固定 owner 派发下一个任务。
 - PM 派发新任务前必须检查三个开发 checkout 和主集成 checkout 的 active work、未合并 diff、目标文件范围和依赖关系。只有任务彼此没有未合并代码依赖、不会同时改同一高冲突文件/共享 contract，且目标开发 checkout 已同步到所需主集成基线时，才能并行派发。
+- 重构和性能优化任务是全局独占任务，不能与开发任务并行。只要 progress file 里存在 active 的 feature、bugfix、docs/spec 或其他开发类任务，PM 不得启动 refactor 或 performance 任务；只要存在 active 的 refactor 或 performance 任务，PM 也不得启动任何新开发任务或第二个重构/性能优化任务。重构/性能优化只能在 Active Work 为空，或所有 active work 已合并/关闭且 dev checkout 同步完成后派发。
 - 如果新任务依赖另一个 checkout 中尚未完成或尚未合并的代码，不能派发到缺少依赖代码的空闲 checkout；必须先合并依赖改动并同步目标 checkout，或把新任务排队到依赖所在 checkout 在前序任务完成后继续。任何 checkout 中尚未完成的改动都不能被其他 checkout 中的新任务隐式依赖。
 - PM 必须在 progress file 里为每个 active work 记录 `checkout`、`branch`、`depends_on`、主要文件范围、当前基线 commit 和 next action。派发前如果依赖关系不清楚，先要求 owner 或 explorer 澄清依赖，不要用并行度换取不确定的返工风险。
 - dev 同步主 checkout 的时机固定为两类：派发前和合并后。派发前，PM 必须先把目标空闲 dev checkout fast-forward 到主 checkout 当前集成基线，再把任务交给该 checkout 的固定 owner；如果该 dev 无法 fast-forward 或有未归档改动，不得派发新任务。合并后，PM 必须尽快把主 checkout 新集成结果同步到所有空闲 dev checkout。正在开发的 dev checkout 不做同步，只在 progress file 记录 `pending_sync_from_main` 和需要同步的 commit，等该 owner 当前任务完成、阻塞暂停或明确同意后再同步。
@@ -34,8 +35,8 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 1. 澄清目标、范围、验收标准和非目标；缺少关键范围信息时最多问三个阻塞问题。
 2. 可以阅读一些代码来明确需求或约束, 但是不要面向实现做大量代码细节探查。
 3. 如果任务会跨 turn、跨 owner 或需要持续推进，创建或更新 `.codex/pm-progress.md`：记录 PM goal、active work、checkout/branch、固定 owner、任务类型、状态、下一步、阻塞、验证和已合并结果；短小单次任务可跳过，但交付时说明原因。修改 progress file 后，如果 Active Work 仍有未完成项，立即确保当前 thread goal 是完成 `.codex/pm-progress.md` 中的 Active Work。
-4. 判断任务类型和约束，但不要因此新建临时 owner。新功能/错误修复/现有功能修改、性能优化、重构或代码健康任务，都派发给目标 checkout 绑定的固定 owner；PM 在委派消息中写清任务类型和需要遵守的 owner 规则。
-5. 从三个固定开发 checkout 中选择满足依赖条件的空闲目录；必要时准备或同步固定开发目录；确认或创建该 checkout 绑定的固定 owner；把 checkout、branch、owner、任务类型、依赖关系、主要文件范围、基线 commit 和 next action 写入 progress file，同时确保 in-progress owner 不超过三个且每个开发 checkout 只有一个 active task。主 checkout 只用于 PM 集成合并，不作为任务目录。
+4. 判断任务类型和约束，但不要因此新建临时 owner。新功能、错误修复、现有功能修改和 docs/spec 可按依赖关系并行；重构、代码健康和性能优化必须按全局独占规则排队。PM 在委派消息中写清任务类型、执行模式和需要遵守的 owner 规则。
+5. 从三个固定开发 checkout 中选择满足依赖条件和执行模式的空闲目录；必要时准备或同步固定开发目录；确认或创建该 checkout 绑定的固定 owner；把 checkout、branch、owner、任务类型、执行模式、依赖关系、主要文件范围、基线 commit 和 next action 写入 progress file，同时确保普通开发任务 in-progress owner 不超过三个且每个开发 checkout 只有一个 active task；重构/性能优化任务运行时全局只允许一个 active task。主 checkout 只用于 PM 集成合并，不作为任务目录。
 6. 派发前检查依赖方向：如果任务依赖另一 checkout 尚未完成/未合并的改动，先排队或合并/同步依赖，不要把任务派到缺少依赖代码的 checkout；如果两个任务会修改同一共享 contract、schema、协议或高冲突文件，默认串行，除非拆分出明确无交叉的文件归属。
 7. 通过 `followup_task` 向目标 checkout 的固定 owner 委派任务，消息中包含完整背景、证据、范围、依赖、约束、验收和交付格式。只有固定 owner thread 不存在或不可用时，才用固定 task_name 创建对应 owner，然后立刻发送任务；不要为任务生成新的 owner path。
 8. 收到 owner/reviewer 或 runtime event 后，先更新 progress file，再决定继续、返工、验证或合并；reviewer 结论有阻塞问题时，退回同一 owner 返工，并要求 owner 复用同一 reviewer 线程复审；review 无阻塞后再验收 owner 自行运行的测试结果。
@@ -59,6 +60,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
   checkout:
   branch:
   task_type:
+  execution_mode:
   depends_on:
   files:
   base_commit:
@@ -91,6 +93,9 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 
 任务类型：
 <feature | bugfix | refactor | performance | docs/spec；说明是否需要采用 feature-owner/refactor-owner/performance-owner 的对应工作约束>
+
+执行模式：
+<parallel-development | exclusive-refactor | exclusive-performance；如果是 exclusive，说明 Active Work 已为空且不会并行启动其他任务>
 
 目标：
 <用户可感知结果>

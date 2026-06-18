@@ -26,6 +26,10 @@ None
   summary: 将主 checkout `~/Projects/my-codex` 改为仅用于 PM 集成合并；开发任务只派发到三个固定开发 checkout，对应长期 owner 为 `owner_dev`、`owner_dev_2`、`owner_dev_3`。owner 只在开发 checkout 提交和验证，最终合并、冲突处理和同步由 PM 在主 checkout 完成。
   validation: `rtk node --check .codex/workflows/feature-dev/workflow.ts` 通过；文档搜索确认主 checkout 不再作为开发目录，dev 同步主 checkout 的时机已明确为派发前、合并后和 active dev 延后同步。
   residual_risk: active dev 延后同步期间，依赖该 commit 的新任务不能派发到该 dev，必须等待同步或选择已同步的空闲 dev。
+- commit: current
+  summary: 补充 PM 调度规则：refactor、代码健康和 performance 任务为全局独占，只有没有 active 开发任务且 dev checkout 同步完成后才能启动；独占任务运行时不得并行启动开发任务或第二个独占任务。
+  validation: `rtk node --check .codex/workflows/feature-dev/workflow.ts` 通过；文档搜索确认 PM 工作规则、标准流程和 progress 模板都包含 execution_mode 与独占约束。
+  residual_risk: 独占规则依赖 PM 按 progress file 判断 active work；后续派发前必须先更新 progress。
 
 ## Known Issues
 
