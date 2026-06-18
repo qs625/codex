@@ -15,7 +15,7 @@ inputs:
     description: 要完成的开发目标
   cwd:
     type: string
-    description: 执行 workflow 的仓库或 worktree 路径
+    description: 执行 workflow 的 checkout 路径，只能是当前主 checkout 或 ~/Projects/my-codex-dev
 ---
 # Feature Development Workflow
 
@@ -37,7 +37,7 @@ Research -> Implement -> Review/Fix -> Verify
 ## 输入
 
 - `objective`：要完成的开发目标。
-- `cwd`：执行 workflow 的仓库或 worktree 路径。
+- `cwd`：执行 workflow 的 checkout 路径，只能是当前主 checkout 或固定开发目录 `~/Projects/my-codex-dev`；不要为 workflow 创建第三份 checkout/worktree。
 
 ## Agent Session
 
@@ -46,7 +46,7 @@ workflow 会创建长期 agent session：
 - `explorer`：只读调研。
 - `owner`：负责实现和修复 review findings。
 - `reviewer`：同一 workflow run 内复用一个 reviewer session；修复后通过 followup 请求同一 reviewer 复审。
-- Verify 阶段不创建新的 tester agent。review 通过后，workflow 把固定 tester JSON 模板交给 `owner`，由 `owner` 按 `AGENTS.md` 通过 `followup_task` 发送到 `/root/my_codex_pm/rust_cargo_tester` 并等待结果。
+- Verify 阶段不创建或复用 tester agent。review 通过后，workflow 把验证要求交给 `owner`，由 `owner` 按 `AGENTS.md` 在所属 checkout 内自行串行运行必要测试和构建，并等待 owner 最终交付。
 
 `Agent(id)` 应在 resume 时绑定回已有 agent session，不重复 spawn。
 这里的 `id` 是 workflow logical stage/binding id，不是 agent canonical path 或 name。runner 会把 `workflowRunId + stageId` 映射到实际 spawned agent path 并持久化 binding；workflow 脚本只引用 `explorer`、`owner`、`reviewer` 这类稳定 stage id，不手写或推导 canonical path。
@@ -69,7 +69,7 @@ Research -> Implement -> Review/Fix -> Verify
 research: explorer
 implement: owner
 review_fix: reviewer
-verify: tester
+verify: owner self-test
 ```
 
 ## Resume
@@ -89,4 +89,4 @@ Dynamic Workflow runner 已支持：
 - 持久化 `run.json`，支持 status/resume/abort 查询和恢复。
 - 通过 typed `WorkflowRunProgress` 展示 start/resume/abort 进度。
 
-已支持 `wf.Agent`、`agent.followup()` 和 `agent.wait()` 的真实 MultiAgent runtime callback；`agent.wait()` 复用 MultiAgent V2 的短窗口等待语义，一次返回可能只是 timeout 或 status update，不代表 agent 已完成。需要把一个阶段的结果交给下一阶段时，workflow 必须循环等待 child completion 或 final status，并从 final status 文本中提取阶段结果，不能读取不存在的 `summary`、`blockingFindings` 等临时字段。`wf.shell` 仍是明确 unsupported，后续接入前不得绕过 exec permission、hook 或 typed command lifecycle。
+已支持 `wf.Agent`、`agent.followup()` 和 `agent.wait()` 的真实 MultiAgent runtime callback；`agent.wait()` 复用 MultiAgent V2 的短窗口等待语义，一次返回可能只是 timeout 或 status update，不代表 agent 已完成。需要把一个阶段的结果交给下一阶段时，workflow 必须循环等待 child completion 或 final status，并从 final status 文本中提取阶段结果，不能读取不存在的 `summary`、`blockingFindings` 等临时字段。Verify 阶段由 owner 在所属 checkout 自行运行命令，workflow 不创建共享 tester。`wf.shell` 仍是明确 unsupported，后续接入前不得绕过 exec permission、hook 或 typed command lifecycle。

@@ -16,7 +16,7 @@ In the codex-rs folder where the rust code lives:
   - Use an exact `/*param_name*/` comment before opaque literal arguments such as `None`, booleans, and numeric literals when passing them by position.
   - Do not add these comments for string or char literals unless the comment adds real clarity; those literals are intentionally exempt from the lint.
   - The parameter name in the comment must exactly match the callee signature.
-- If local lint verification is specifically needed, owner may include `just argument-comment-lint` in the fixed tester `/root/my_codex_pm/rust_cargo_tester` followup request after code review passes. This is powered by Bazel, so running it the first time can be slow if Bazel is not warmed up, though incremental invocations should take <15s. Most of the time, it is best to update the PR and let CI take responsibility for checking this. Note CI checks all three platforms, which the local run does not.
+- If local lint verification is specifically needed, run `just argument-comment-lint`. This is powered by Bazel, so running it the first time can be slow if Bazel is not warmed up, though incremental invocations should take <15s. Most of the time, it is best to update the PR and let CI take responsibility for checking this. Note CI checks all three platforms, which the local run does not.
 - When possible, make `match` statements exhaustive and avoid wildcard arms.
 - Newly added traits should include doc comments that explain their role and how implementations are expected to use them.
 - Discourage both `#[async_trait]` and `#[allow(async_fn_in_trait)]` in Rust traits.
@@ -28,9 +28,9 @@ In the codex-rs folder where the rust code lives:
 - When writing tests, prefer comparing the equality of entire objects over fields one by one.
 - Do not add general product or user-facing documentation to the `docs/` folder. The official Codex documentation lives elsewhere. The exception is app-server API documentation, which is covered by the app-server guidance below.
 - Prefer private modules and explicitly exported public crate API.
-- If you change `ConfigToml` or nested config types, update `codex-rs/core/config.schema.json` when needed; owner may include `just write-config-schema` in the fixed tester `/root/my_codex_pm/rust_cargo_tester` followup request after code review passes.
+- If you change `ConfigToml` or nested config types, update `codex-rs/core/config.schema.json` when needed; use `just write-config-schema` when regenerating it.
 - When working with MCP tool calls, prefer using `codex-rs/codex-mcp/src/mcp_connection_manager.rs` to handle mutation of tools and tool calls. Aim to minimize the footprint of changes and leverage existing abstractions rather than plumbing code through multiple levels of function calls.
-- 对话/线程展示相关的结构化语义以 typed `EventMsg` 为 runtime/UI display source；`ResponseItem` 只作为模型交互、context manager/provider history、compact、guardian 和模型可见工具输出的 source；`ThreadItem` 应通过共享 `EventMsg -> ThreadItem` projector 统一生成。新增或修改 event-command、schedule、collab、workflow、goal、command session 这类展示项时，必须新增 display-capable `EventMsg` variant，并复用 `codex-rs/app-server-protocol/src/protocol/event_item_projection.rs` 的边界；不要新增 display-only `ResponseItem` variant，不要新增 raw response item 展示分支，也不要从 message marker 文本、assistant message JSON、`RolloutItem::ResponseItem`、`RawResponseItem`、`ResponseItemStarted/Completed`、live `ResponseItem::FunctionCall` / `FunctionCallOutput` 或旧 `TurnItem -> ThreadItem` adapter 重建展示。provider 请求侧为了 wire/model 输入需要保留 marker 包装时，只能作为单向 formatting，不得作为展示或 history 重建的解析来源。schedule subscribe/unsubscribe 仍属于 typed projection，不要作为旧 generic event-driven 兼容路径移除。
+- 对话/线程展示相关的结构化语义以 typed `EventMsg` 为 runtime/UI display source；`ResponseItem` 只作为模型交互、context manager/provider history、compact、guardian 和模型可见工具输出的 source；`ThreadItem` 应通过共享 `EventMsg -> ThreadItem` projector 统一生成。新增或修改 event-command、schedule、collab、goal、command session 这类展示项时，必须新增 display-capable `EventMsg` variant，并复用 `codex-rs/app-server-protocol/src/protocol/event_item_projection.rs` 的边界；不要新增 display-only `ResponseItem` variant，不要新增 raw response item 展示分支，也不要从 message marker 文本、assistant message JSON、`RolloutItem::ResponseItem`、`RawResponseItem`、`ResponseItemStarted/Completed`、live `ResponseItem::FunctionCall` / `FunctionCallOutput` 或旧 `TurnItem -> ThreadItem` adapter 重建展示。provider 请求侧为了 wire/model 输入需要保留 marker 包装时，只能作为单向 formatting，不得作为展示或 history 重建的解析来源。schedule subscribe/unsubscribe 仍属于 typed projection，不要作为旧 generic event-driven 兼容路径移除。
 - 工具执行完成后的纯历史记录路径应尽早 canonicalize 为 typed `ResponseItem`；pending user-hook 路径使用 `PendingInputItem::HookInspectable(ResponseItem)` 表达“需要 hook 检查的对话项”。`ResponseInputItem` 只保留在 Responses API request 输入和 client/request 输入适配层，不要作为工具输出、pending history 或 hook history 的核心中转类型继续扩散。
 - active turn 注入需要经过 pending/user prompt hook 检查的输入时，使用语义明确的 `inject_hook_inspectable_items`；直接写入 model-visible history 的 typed `ResponseItem` 使用 `inject_conversation_items` 或 `record_conversation_items`。不要新增模糊的 `inject_response_items` 入口。
 - `record_conversation_items` 只负责 typed `ResponseItem` 写入 history/rollout/context usage，不得顺带发送 live `RawResponseItem`；需要同时写模型上下文和客户端可见 live item 时，使用 `record_model_items_and_emit_display_events` 这类 dual-write helper，由 helper 记录 model-visible `ResponseItem` 并 emit display-capable `EventMsg`，再通过 shared projector 生成 `ThreadItem`。
@@ -38,15 +38,15 @@ In the codex-rs folder where the rust code lives:
 - live `item/started` 和 `item/completed` payload 在 app-server v2 边界以 typed `ThreadItem` 为 canonical display payload；core `ItemStarted/ItemCompleted(TurnItem)` 只能由 `event_item_projection.rs` 作为 `EventMsg` lifecycle payload 显式投影，不再保留公开 `TurnItem -> ThreadItem` adapter。thread/read replay 只从 persisted `EventMsg` 生成展示，不从 `RolloutItem::ResponseItem` 或 `RawResponseItem` 回放旧展示。
 - root-worker prototype、SDK 示例或其他非 TUI 客户端展示 app-server v2 thread/live 内容时，只能消费 typed `ThreadItem` / v2 payload；不要从 `agentMessage.text`、`eventDrivenTool.text`、compact replacement raw `ResponseItem`、`<event_driven_tool>`、`<event_command>`、`<subagent_notification>` 或 inter-agent JSON envelope 反解 display item。旧 raw structured message 不再作为 conversation display 兼容输入；需要展示的事实必须由后端发出 typed `ThreadItem`。
 - root-worker composer slash 菜单中，能表达为 Skill 的命令应来自 Skills discovery；例如 `/init` 由 embedded system skill 提供，不要作为 root-worker builtin command 硬编码。只有依赖 runtime/thread state 或客户端本地动作的命令（例如 `/clear`、`/goal <objective|pause|resume|cancel|clear>`）才放入 root-worker builtin slash command registry，并且执行时不得作为普通 user message 发送给模型；`/cancel-goal` 只能作为兼容别名，不作为主展示命令。
-- root-worker composer slash 菜单中的 Dynamic Workflow 候选必须来自 app-server v2 `workflow/list` discovery，不要硬编码具体 workflow id。选择 workflow 时只生成可编辑的用户请求草稿，让模型按 init context 调用 `workflow_start` 等 tool；客户端不得直接调用 app-server `workflow/start` 来绕过缺少当前 turn runner-runtime bridge 的边界。
-- root-worker 展示 Dynamic Workflow 进度时只消费 typed `ThreadItem::WorkflowRunProgress` / `EventMsg::WorkflowRunProgressCompleted` 投影结果。workflow-created thread/agent 的所属 badge 只能消费后端提供的 typed thread workflow binding metadata；没有 metadata 时不显示 badge，不得从 workflow progress item、workflow tool output、runner output、assistant 文本或 legacy envelope 反推。
+- root-worker composer slash 菜单中的动态候选必须来自后端 discovery，不要硬编码具体 id。需要当前 turn/runtime bridge 的动作应由模型在 turn 内调用对应 tool，客户端不得直接绕过边界。
+- root-worker 展示进度类内容时只消费 typed `ThreadItem` / typed display event 投影结果；相关归属 metadata 只能消费后端提供的 typed metadata，不得从 progress item、tool output、runner output、assistant 文本或 legacy envelope 反推。
 - command session 的 output/exit notification 必须作为独立 typed display-capable `EventMsg` 并投影为 `ThreadItem`，并通过 typed command item id 关联原 `CommandExecution`；`command_wait` 和 `command_write_stdin` 的等待/写 stdin 行为也必须记录为独立 typed display event，确实需要模型可见时再双写 `ResponseItem`。`command_wait` 每次只等待当前 backoff window，timeout 后返回 running 并推进同 command 的下一次窗口；output/exit 或 completed 命中时 reset。`CommandWait.wait_timeout_ms` 必须展示本次 current window，不能展示 hard cap。`ExecCommandOutputDelta` 只用于更新 command cell live tail，不得作为 raw marker、assistant 文本或按 output 内容反解出的 conversation event。
 - `command_wait` 调用开始时必须发 typed started lifecycle item，等待结束后用同一个 typed item id 发 completed lifecycle item；started/completed payload 都必须使用同一次 current wait window，不能用 hard cap、默认 250ms 或重新生成的 id。
 - root-worker Agent Tree 的主状态必须消费后端 canonical `ThreadStatus` / `thread/status/changed`，例如 `Active.activeFlags` 中的 `running`、`waitingOnApproval`、`waitingOnUserInput`，以及 `Idle.reason` 中的 `waitChild`、`waitCommand`；不要从 turn/items/raw marker/legacy JSON envelope 或 children 递归自行推导 running、waiting 或 complete。
 - Go/Goal post-turn 流程必须按 `ThreadActive -> GoContextContinuation / ThreadIdle(WaitChild | WaitCommand) / ThreadCompletion` 状态模型推进；`ThreadActive` 只表示当前 thread turn 正在运行或 pending input 正在启动新 turn，`ThreadIdle(WaitChild)` 表示无 turn 运行且没有 active goal continuation，但 direct child 尚未 parent-visible complete，`ThreadIdle(WaitCommand)` 表示无 turn 运行且没有 active goal continuation，但仍等待 command/event-command 外部唤醒。Goal `Active` 且无 pending input 时立即注入 `<goal_context>` 并启动 continuation，不因 incomplete direct child、running command 或 event subscription 被阻止；Goal `Complete` / `Paused` / `BudgetLimited` / 不存在时才按 wait child / wait command / completion 推进。不要用 grandchild/descendant recursive scan 替代 direct-child completion 协议，也不要只用当前 turn complete 近似判断；root-worker 也不得递归 children 推导父 thread 状态，父状态必须来自后端 canonical `ThreadStatus`。
 - thread lifecycle 完成顺序固定为 pending input -> active goal continuation -> incomplete direct child -> wait command -> complete；child completion 只对 direct parent 生效，递归等待由各级 child completion 协议逐层传递。普通 non-management subagent 本地完成后必须向 parent 投递 typed child completion pending input，并唤醒 parent turn；parent 启动 turn 消费该 pending input 时才把 direct child 标记为 parent-visible complete。`list_agents` / status read 能看到 child lifecycle `Completed` 不等于 parent-visible complete；读到 final lifecycle status 时只能触发幂等 typed delivery recheck，不得用 raw marker、assistant text 或 list 结果反解/伪造 completion。`agent_mode = management` 不参与 parent completion delivery，可在本地完成条件满足时直接 complete。
 - goal 创建、更新、暂停、恢复、预算耗尽和完成的 conversation 展示必须走 dedicated typed display lifecycle；primary path 是 `EventMsg::ThreadGoalUpdateCompleted -> ThreadItem::ThreadGoalUpdate`。`ResponseItem::ThreadGoalUpdate` 只用于模型上下文双写，不得通过 `EventMsg::ResponseItemCompleted` 或 history replay 投影为 `ThreadItem`。`thread/goal/updated` / `thread/goal/cleared` 仍只表达当前 goal state，不可从 goal tool output JSON、assistant 文本、`<goal_context>` 或 legacy marker 反解会话展示项。
-- 外部工作唤醒必须采用 typed runtime event + active state evaluator + goal scheduler 的分层模型：runtime event 表达“发生了什么”（child completed/failed/interrupted、command output/exit/stdin、schedule fired、workflow updated 等），active state 表达“现在能不能继续”（local turn、active child、active command/event tool、queued input、pending external event），goal 只表达“thread idle 后是否继续”。不要让 goal 轮询 child/command 状态，也不要把长期 subagent/command 等待改成阻塞 turn；外部事实变化必须写入 typed `EventMsg`/`ThreadItem`，需要模型可见时再双写 `ResponseItem`，并唤醒 scheduler。`wait_agent` 和 `command_wait` 只是显式短窗口等待/用户可见等待动作，不是系统调度主机制。subagent 异常、丢失或中断必须作为 typed child lifecycle event 传回 parent，不能静默依赖 parent goal continuation 猜测。
+- 外部工作唤醒必须采用 typed runtime event + active state evaluator + goal scheduler 的分层模型：runtime event 表达“发生了什么”（child completed/failed/interrupted、command output/exit/stdin、schedule fired 等），active state 表达“现在能不能继续”（local turn、active child、active command/event tool、queued input、pending external event），goal 只表达“thread idle 后是否继续”。不要让 goal 轮询 child/command 状态，也不要把长期 subagent/command 等待改成阻塞 turn；外部事实变化必须写入 typed `EventMsg`/`ThreadItem`，需要模型可见时再双写 `ResponseItem`，并唤醒 scheduler。`wait_agent` 和 `command_wait` 只是显式短窗口等待/用户可见等待动作，不是系统调度主机制。subagent 异常、丢失或中断必须作为 typed child lifecycle event 传回 parent，不能静默依赖 parent goal continuation 猜测。
 - root-worker prototype 的 `ThreadItem` 写入、snapshot normalization 和 pending/live 合并只能按 `ThreadItem.id` 判断同一个 item；不同 id 必须作为不同 item 保留，不得根据 text/content/status/semantic key/raw marker/legacy JSON envelope 合并或丢弃。每个 typed `ThreadItem` 至少生成一个 `ConversationEntry`；`ConversationCell` 只能做视觉分组，不能丢 entry。
 - root-worker live 模式下，已经进入本地 live cache 的 thread 在切换展示时只能使用持续接收的 live `ThreadItem`，不要触发 `thread/read` 或用 snapshot/history rebuild 对 item 做 destructive/non-destructive merge；`thread/read` 仅用于 cold start、缺失本地 thread 或显式恢复路径。
 - root-worker 已初始化 thread 的 live `turn/started` / `turn/completed` 只能更新 turn lifecycle metadata，不得把通知中的 `turn.items` 当作 snapshot 覆盖本地 items；conversation item 内容必须通过 typed `item/started` / `item/completed` 或 agent delta 增量进入 cache。
@@ -55,11 +55,9 @@ In the codex-rs folder where the rust code lives:
 - MultiAgent 运行时只保留 V2 工具和 typed child completion 路径；不要重新引入 V1 `send_input`/`resume_agent` 工具、legacy completion watcher、raw `inject_user_message_without_turn` child completion fallback，或通过配置在 V1/V2 之间切换。
 - MultiAgent V2 的 `wait_agent` 只能等待 canonical typed subagent 更新：调用开始必须先非消费式检查 parent pending input/mailbox 中已有的 typed `InterAgentCommunication` / child completion / status，然后再通过 status watch 与 mailbox sequence notify 进入 runtime backoff；不得 drain mailbox，不得从 raw marker、assistant text 或 legacy JSON envelope 反解唤醒条件。`features.multi_agent_v2.default_wait_timeout_ms` 表示 initial window，`max_wait_timeout_ms` 表示 hard cap。每次 `wait_agent` 调用只等待当前 backoff window，timeout 后返回给模型并推进同 sender/receiver target 的下一次窗口；pending mailbox、status/final 或 child completion 等相关事件命中时 reset。`CollabWaitingBegin/End.timeout_ms` 必须展示本次 current window，不能展示 hard cap。
 - Compact 当前用户可见和默认路径是 Local Compact：手动 `/compact`、`thread/compact/start` 和自动 context-limit compact 都应走 `codex-rs/core/src/compact.rs` 的本地 summarization 流程，并把 `CompactedItem.replacement_history` 持久化到 rollout 以便 thread/history 和 app-server 展示检查；compact 完成的 live `item/completed` 也必须携带同一份 replacement history，已 live/loaded 的 root-worker thread 不得依赖 `thread/read` 回填。Local Compact summary 在 active history 中是带 `SUMMARY_PREFIX` 的 user message，context usage 分类必须把它计入 compact 类别，不能当作普通 user message 导致 compact ratio 丢失。`compact_remote.rs` / `compact_remote_v2.rs` 只保留为未路由的历史兼容实现，不要重新接到默认入口、用户触发入口或模型请求 beta header。
-- Dynamic Workflow 已实现 registry/init context、`workflow_list`、`workflow_describe`、TypeScript 子进程 runner、`$CODEX_HOME/workflow-runs/<runId>` snapshot 持久化、`workflow_start/status/resume/abort` run control，以及 app-server v2 `workflow/list|describe|start|status|resume|abort` 控制面和 `workflow/run/updated` notification；home workflow 位于 `$CODEX_HOME/workflows/<workflow-id>/`，project workflow 位于各 active project `.codex/workflows/<workflow-id>/`，project 同 id 覆盖 home；`WORKFLOW.md` 是 canonical workflow manifest 与说明文件，frontmatter 必须包含 `id`、`name`、`description`、`entry`，其中 `id` 必须等于目录名，`entry` 必须指向同目录内存在的 TypeScript 文件；init context 会注入发现到的 workflow 的 name、description 和 `WORKFLOW.md` 正文说明截断内容。通过 `workflow_start` / `workflow_resume` model tool 启动的 TS runner 会绑定当前 turn 的 runner-runtime bridge，`wf.Agent`、`agent.followup()` 和 `agent.wait()` 复用 MultiAgent V2 typed spawn/followup/wait 语义，agent binding 持久化在 run snapshot 中以支持 resume 同 id 绑定；`wf.Agent(id)` 的 `id` 是 workflow logical stage/binding id，不是 agent canonical path/name，runtime bridge 负责生成内部 task name，并在 binding 中记录 `workflowId`、`runId`、`stageId` 和实际 `agentPath`，客户端展示 workflow ownership metadata 时消费 binding，不从 path 或脚本文本反解；`agent.wait()` 是短窗口等待，不保证一次调用等到 agent 完成，workflow 若要把阶段结果传给下一阶段，必须循环等待 child completion 或 final status，不能读取未定义的 `summary`、`blockingFindings` 等临时字段；workflow 脚本若需要显式指定 `type` / `agent_type`、`model` 或 `reasoningEffort` / `reasoning_effort`，必须同时显式使用非 full-history fork（例如 `fork_turns: "none"`），不要依赖默认 full-history fork 携带当前 turn；app-server v2 workflow 控制面不绑定当前 turn/runtime bridge，不得伪造 Session/TurnContext 来执行 agent 或 shell。项目级 Rust/Cargo 验证只能由 owner followup 固定 `/root/my_codex_pm/rust_cargo_tester` 并发送 `rust_cargo_validation_request` JSON，workflow 不得为每次 run 创建临时 tester agent 或发送自由文本测试请求。`wf.shell` 仍为明确 unsupported，接入前不得绕过 exec permission、hook、environment 或 typed command lifecycle。workflow progress 展示 primary path 是 `EventMsg::WorkflowRunProgressCompleted -> ThreadItem::WorkflowRunProgress`；`ResponseItem::WorkflowRunProgress` 只保留为模型历史，不得通过 ResponseItem lifecycle 或 history replay 作为 display source。不要新增 raw marker、assistant message JSON 或 legacy envelope 解析。
 - If you change Rust dependencies (`Cargo.toml` or `Cargo.lock`), update `MODULE.bazel.lock`
-  when needed. Owner may include `just bazel-lock-update` and `just bazel-lock-check` in the
-  fixed tester `/root/my_codex_pm/rust_cargo_tester` followup request, but these are not part of
-  the default worktree validation set.
+  when needed. Use `just bazel-lock-update` and `just bazel-lock-check` when the change requires
+  Bazel lockfile validation, but these are not part of the default validation set.
 - Bazel does not automatically make source-tree files available to compile-time Rust file access. If
   you add `include_str!`, `include_bytes!`, `sqlx::migrate!`, or similar build-time file or
   directory reads, update the crate's `BUILD.bazel` (`compile_data`, `build_script_data`, or test
@@ -79,25 +77,17 @@ In the codex-rs folder where the rust code lives:
   - Avoid adding new standalone methods to `codex-rs/tui/src/chatwidget.rs` unless the change is
     trivial; prefer new modules/files and keep `chatwidget.rs` focused on orchestration.
 - When running Rust commands (e.g. `just fix` or `cargo test`) be patient with the command and never try to kill them using the PID. Rust lock can make the execution slow, this is expected.
-- owner 在完成开发、功能修改、重构或性能优化后，必须检查并更新 `AGENTS.md`，维护当前仓库规则、协作流程和约束；如果确认无需更新，也要在交付中明确说明原因。
-- owner 和 reviewer 都不能直接执行 Rust/Cargo 相关测试、构建、格式化、lint 或 benchmark 命令，包括 `cargo test/check/build/bench`、`cargo insta`、`just test/fix/fmt`、Bazel Rust lock 验证等；reviewer 只做 code review，不执行命令也不 followup tester。需要这些命令时，owner 必须先让同一个 reviewer 线程多轮 review 到无阻塞问题，再自行通过 `followup_task` 发送给项目唯一固定 tester `/root/my_codex_pm/rust_cargo_tester` 串行执行。
-- 项目唯一 Rust/Cargo tester 的 canonical path 固定为 `/root/my_codex_pm/rust_cargo_tester`。不要为每个 owner/reviewer/worktree 新建测试 agent；PM 首次需要 Rust/Cargo 验证时用 `task_name=rust_cargo_tester`、`agent_type=test_agent`、`fork_turns=none` 创建这个 tester，后续所有 Rust/Cargo 验证请求都由 owner 复用该线程。
-- owner followup 给固定 tester 时必须提供 JSON 请求，包含 `type: "rust_cargo_validation_request"`、`request_id`、`requested_by`、`report_to`、`worktree`、`branch` 和按顺序排列的 `commands`；每个 command 必须包含 `id` 和完整 `exec_command` 参数（至少包含带 `rtk` 前缀的 `cmd`、`workdir`、`initial_wait_ms`、`notify_on`、`max_output_tokens`）。tester 只按清单串行执行收到的 `exec_command`，并把每条命令的退出码和 stdout/stderr 原文回传给请求方；不要总结、压缩或改写命令输出，不做测试设计、补充命令、风险判断、失败归因、修复建议或范围扩展。
-- 同一 owner 任务只创建一个 `@code-review` reviewer；首次独立 review 后必须记录 reviewer 线程，后续所有修复复审都通过 `followup_task` 发给同一个 reviewer。不要因为新 diff、修复了一轮 findings 或需要复审就再创建新的 reviewer，除非 reviewer 线程不可用或用户明确要求更换。
-- `@explorer` 不是默认前置步骤。轻量代码查找、少量文件阅读、已知模块内的依赖盘点应由主 agent 或 owner 自己完成，依靠自动 compact 管理上下文。只有在调研范围跨多个模块、预计会读取大量无关上下文、需要并行探索多个方向、需要明确只读隔离，或主线程正在等待其他 owner/tester 且可以并行准备下一步时，才创建 `@explorer`。派发 explorer 时必须写清只读范围、问题清单和期望输出；交付时说明 explorer 已调用或跳过的原因。
-- PM 管理长期、多 owner、跨 turn 或用户要求持续推进的任务时，必须维护 `.codex/pm-progress.md` 作为 durable progress file。owner/reviewer/tester 回报和 runtime event 先归纳到该文件，再决定下一步；thread context 和 compact 摘要不能作为唯一任务状态来源。使用 goal 驱动 PM 时，goal continuation 应先读取 progress file：Active Work 非空且当前 goal 缺失或不匹配时，应先设置/更新 goal 为完成 `.codex/pm-progress.md` 中的 active work，再按 next_action 推进；Active Work 为空则等待新任务或完成 goal。
-- 仅修改 agent 指令、协作规则、spec 或 README 等文档时，如果用户明确允许简化流程，可以直接做文本级修改和验证，不强制创建 owner/reviewer/tester 流程；该例外不适用于产品代码、测试代码、构建配置、schema 或运行时行为改动。
-- 验证 Rust 编译和测试时，不要为当前 worktree 配置独立的 `TARGET_DIR`；使用项目默认的共享 target 目录，避免把验证环境和常规开发/CI 环境分叉。
+- 验证 Rust 编译和测试时，不要为当前 checkout 配置独立的 `TARGET_DIR`；使用项目默认的共享 target 目录，避免把验证环境和常规开发/CI 环境分叉。
 - 如果多个 Rust 测试或构建命令出现文件锁竞争，使用 `exec_command` 启动命令并通过 `command_wait` 等待通知；不要通过反复轮询、sleep 循环或持续检查进程状态来等待锁释放。
-- Rust/Cargo/`just` 长时间验证命令一旦使用 `command_wait` 等待完成事件，当前验证流程必须进入静默等待：不要查询该命令状态、不要查看日志、不要启动替代测试、不要派发额外 reviewer/tester 重复验证同一结果。
+- Rust/Cargo/`just` 长时间验证命令一旦使用 `command_wait` 等待完成事件，当前验证流程必须进入静默等待：不要查询该命令状态、不要查看日志、不要启动替代测试、不要重复验证同一结果。
 - 同一任务中同一时间只允许一个会竞争 Rust 共享 target 或 Cargo 文件锁的长命令运行；在它完成前，不要连续启动新的 `cargo test`、`cargo check`、`cargo build`、`just fix` 或其他 Rust 验证命令。可以继续处理不依赖该命令结果、且不竞争 Rust/Cargo 资源的前端、文档或只读设计工作。
 
-Rust 代码变更完成并通过 code review 后，默认只让固定 tester `/root/my_codex_pm/rust_cargo_tester` 串行执行两类验证；不要让 owner 或 reviewer 直接运行：
+Rust 代码变更完成后，默认串行执行两类验证：
 
 1. 修改模块的单元测试或最小 crate 测试。例如改 `codex-rs/tui` 时，include `cargo test -p codex-tui`；更窄的单测命令可用时优先用更窄命令。
 2. 验证与入口匹配的 binary 能编译：只涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时，include `cargo build -p codex-app-server --bin codex-app-server` from `codex-rs`；只有确实改到 CLI/TUI 或 CLI app-server 子命令包装时，才 include `cargo build -p codex-cli` from `codex-rs`.
 
-Do not run full workspace `cargo test`, `just test`, broad `just fix`, or snapshot/schema/lockfile workflows by default in every worktree. Add those commands only when the change specifically requires them or the user asks for broader validation.
+Do not run full workspace `cargo test`, `just test`, broad `just fix`, or snapshot/schema/lockfile commands by default in every checkout. Add those commands only when the change specifically requires them or the user asks for broader validation.
 
 ## The `codex-core` crate
 
@@ -168,9 +158,8 @@ corresponding `insta` snapshot coverage (add a new snapshot test if one doesn't 
 update the existing snapshot). Review and accept snapshot updates as part of the PR so UI impact
 is easy to review and future diffs stay visual.
 
-When UI or text output changes intentionally, snapshot coverage may be needed. Owner can include the
-snapshot workflow in the fixed tester `/root/my_codex_pm/rust_cargo_tester` followup request when the
-change requires it; do not run it by default for every worktree:
+When UI or text output changes intentionally, snapshot coverage may be needed. Run snapshot
+commands only when the change requires it; do not run them by default for every checkout:
 
 - Generate any updated snapshots:
   - `cargo test -p codex-tui`
@@ -178,12 +167,12 @@ change requires it; do not run it by default for every worktree:
   - `cargo insta pending-snapshots -p codex-tui`
 - Review changes by reading the generated `*.snap.new` files directly in the repo, or preview a specific file:
   - `cargo insta show -p codex-tui path/to/file.snap.new`
-- Only if you intend to accept all new snapshots in this crate, have tester run:
+- Only if you intend to accept all new snapshots in this crate, run:
   - `cargo insta accept -p codex-tui`
 
-If tester doesn’t have the tool:
+If the tool is missing:
 
-- Include `cargo install --locked cargo-insta` in the tester command list before snapshot commands.
+- Run `cargo install --locked cargo-insta` before snapshot commands.
 
 ### Test assertions
 
@@ -261,15 +250,15 @@ These guidelines apply to app-server protocol work in `codex-rs`, especially:
   request fields `pub cursor: Option<String>` and `pub limit: Option<u32>`,
   response fields `pub data: Vec<...>` and `pub next_cursor: Option<String>`.
 
-### Development Workflow
+### App-Server API Validation
 
 - Update app-server docs/examples when API behavior changes (at minimum `app-server/README.md`).
-- Regenerate schema fixtures when API shapes change if the change requires it. Owner can include:
+- Regenerate schema fixtures when API shapes change if the change requires it:
   `just write-app-server-schema`
   (and `just write-app-server-schema --experimental` when experimental API fixtures are affected).
 - For app-server protocol/runtime/root-worker backend startup changes, the default binary validation is
   `cargo build -p codex-app-server --bin codex-app-server`; use `cargo build -p codex-cli` only when
-  the CLI/TUI entrypoint or `codex app-server` subcommand wrapper changed. Owner may add
+  the CLI/TUI entrypoint or `codex app-server` subcommand wrapper changed. Add
   `cargo test -p codex-app-server-protocol` when protocol coverage is specifically needed.
 - Avoid boilerplate tests that only assert experimental field markers for individual
   request fields in `common.rs`; rely on schema generation/tests and behavioral coverage instead.

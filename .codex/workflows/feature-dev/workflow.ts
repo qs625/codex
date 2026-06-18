@@ -72,34 +72,6 @@ function reviewHasBlockingFindings(reviewText) {
   );
 }
 
-function testerRequestTemplate(wf, finalReviewText) {
-  return JSON.stringify(
-    {
-      type: "rust_cargo_validation_request",
-      request_id: `${wf.runId}-verify`,
-      requested_by: "<owner canonical path>",
-      report_to: "<owner canonical path>",
-      worktree: wf.inputs.cwd,
-      branch: "<当前分支>",
-      commands: [
-        {
-          id: "<最小验证命令 id>",
-          exec_command: {
-            cmd: "rtk <需要执行的 Rust/Cargo 命令>",
-            workdir: `${wf.inputs.cwd}/codex-rs`,
-            initial_wait_ms: 30000,
-            notify_on: "exit",
-            max_output_tokens: 20000
-          }
-        }
-      ],
-      notes: `reviewer 最终结论：${finalReviewText}`
-    },
-    null,
-    2
-  );
-}
-
 export default defineWorkflow({
   id: "feature-dev",
   version: "0.1.0",
@@ -142,7 +114,7 @@ export default defineWorkflow({
       type: "code-review",
       fork_turns: "none",
       cwd: wf.inputs.cwd,
-      message: `审查 owner 的实现，优先找阻塞问题、行为回归和测试缺口。只做代码评审，不执行命令，也不 followup tester。\n\n实现结果：${implementation.text}`
+      message: `审查 owner 的实现，优先找阻塞问题、行为回归和测试缺口。只做代码评审，不执行命令，也不委派 tester。\n\n实现结果：${implementation.text}`
     });
 
     const maxReviewIterations = 3;
@@ -161,21 +133,21 @@ export default defineWorkflow({
       }
 
       await owner.followup(
-        `修复 reviewer 发现的问题。修复后按 owner 交付格式总结改动、文件范围和验证计划；不要直接执行 Rust/Cargo 测试、构建、格式化或 lint。\n\nreview 结论：\n${review.text}`,
+        `修复 reviewer 发现的问题。修复后按 owner 交付格式总结改动、文件范围和验证计划；review 通过前不要执行 Rust/Cargo 测试、构建、格式化或 lint。\n\nreview 结论：\n${review.text}`,
       );
       implementation = await waitForAgentResult(owner, "Implement fix");
       await reviewer.followup(
-        `复审 owner 修复后的实现，继续优先找阻塞问题、行为回归和测试缺口。只做代码评审，不执行命令，也不 followup tester。\n\n最新实现结果：${implementation.text}`,
+        `复审 owner 修复后的实现，继续优先找阻塞问题、行为回归和测试缺口。只做代码评审，不执行命令，也不委派 tester。\n\n最新实现结果：${implementation.text}`,
       );
     }
 
     wf.emit({
       type: "verifyHandoff",
-      tester: "/root/my_codex_pm/rust_cargo_tester",
+      checkout: wf.inputs.cwd,
       owner: owner.binding?.agentPath ?? null
     });
     await owner.followup(
-      `reviewer 已无阻塞问题。现在进入 Verify 阶段：请你作为 owner 按项目固定 tester 协议，自行通过 followup_task 向 /root/my_codex_pm/rust_cargo_tester 发送 rust_cargo_validation_request JSON，等待 tester 回传结果后再完成最终交付。\n\n不得创建新的 tester agent，不得发送自由文本测试请求。请求模板如下，请替换 requested_by、report_to、branch 和 commands：\n\n${testerRequestTemplate(wf, finalReview.text)}\n\n最终 review 结论：\n${finalReview.text}`,
+      `reviewer 已无阻塞问题。现在进入 Verify 阶段：请你作为 owner 在当前 checkout 自行串行运行必要验证命令，并在最终交付中写清命令、工作目录、退出状态和关键输出。\n\n默认验证只包含修改模块的单元测试/最小 crate 测试，以及与入口匹配的 binary 编译验证；只涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时使用 ${wf.inputs.cwd}/codex-rs 下的 cargo build -p codex-app-server --bin codex-app-server，只有确实改到 CLI/TUI 或 CLI app-server 子命令包装时才使用 cargo build -p codex-cli。所有 shell 命令必须带 rtk 前缀；长命令用 command_wait 等待完成通知。不得创建或复用 tester agent。\n\n最终 review 结论：\n${finalReview.text}`,
     );
     const verification = await waitForAgentResult(owner, "Verify");
     return {

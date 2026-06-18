@@ -18,7 +18,7 @@ skills: [imagegen, root-worker-playwright-debug]
 - Electron/Playwright 调试优先使用 `$root-worker-playwright-debug` 的固定脚本：`scripts/run-electron-smoke.sh` 获取 baseline/smoke 截图，`scripts/launch-electron-dev.sh` 打开可手动调试的完整 Electron dev 实例。脚本路径均按 skill 目录的相对路径使用。
 - 只有 `$root-worker-playwright-debug` 的完整 Electron 自动化不可用时才使用 Computer Use 作为 fallback，并在设计文档说明原因。
 - 如果 Electron/Playwright 和 Computer Use 都卡住，但 root-worker 窗口已经可见，可以使用 macOS `screencapture` 作为最后 fallback 获取当前屏幕截图；截图仍必须保存到 `ui-design/root-worker-client/assets/`，并在设计文档记录已尝试的 Electron/Playwright、Computer Use 路径和 fallback 原因。
-- root-worker prototype 截图测试必须使用专用共享 `CODEX_HOME`，可以在多个 worktree 调试间共享，但不要和当前正在运行的 Codex 客户端混用。默认遵循 `$root-worker-playwright-debug` skill 中的专用路径：
+- root-worker prototype 截图测试必须使用专用共享 `CODEX_HOME`，可以在当前目录和复制开发目录之间共享，但不要和当前正在运行的 Codex 客户端混用。默认遵循 `$root-worker-playwright-debug` skill 中的专用路径：
   - `CODEX_HOME=/tmp/my-codex-root-worker-debug/codex-home`
   - `ROOT_WORKER_WORKSPACE=/tmp/my-codex-root-worker-debug/workspace`
 - 当前 UI baseline screenshot、视觉稿、原型截图和状态截图必须放入 `ui-design/root-worker-client/assets/`，并在对应设计文档中引用。
