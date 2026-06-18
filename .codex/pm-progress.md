@@ -22,6 +22,10 @@ None
   summary: 将 PM 派发规则改为四个 checkout 各绑定一个长期 owner thread，PM 复用固定 owner 串行处理该 checkout 的任务，不再为每个任务新建 owner；同时标明 dynamic workflow 的 owner 绑定范围是单个 run，不作为 PM 固定 owner 池入口。
   validation: `rtk node --check .codex/workflows/feature-dev/workflow.ts` 通过；文档搜索确认固定 owner 映射已写入 PM 规则，workflow 文档已标明 run-scoped owner 绑定限制。
   residual_risk: 当前 workflow SDK 仍按 workflow run 绑定 `Agent(id)`；PM 常规派发应直接复用固定 owner thread，不通过 `feature-dev` workflow 入口。
+- commit: current
+  summary: 将主 checkout `~/Projects/my-codex` 改为仅用于 PM 集成合并；开发任务只派发到三个固定开发 checkout，对应长期 owner 为 `owner_dev`、`owner_dev_2`、`owner_dev_3`。owner 只在开发 checkout 提交和验证，最终合并、冲突处理和同步由 PM 在主 checkout 完成。
+  validation: `rtk node --check .codex/workflows/feature-dev/workflow.ts` 通过；文档搜索确认主 checkout 不再作为开发目录，dev 同步主 checkout 的时机已明确为派发前、合并后和 active dev 延后同步。
+  residual_risk: active dev 延后同步期间，依赖该 commit 的新任务不能派发到该 dev，必须等待同步或选择已同步的空闲 dev。
 
 ## Known Issues
 
