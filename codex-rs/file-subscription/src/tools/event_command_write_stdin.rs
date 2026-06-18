@@ -85,9 +85,7 @@ impl ToolExecutor<ToolCall> for EventCommandWriteStdinTool {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-    use std::sync::Weak;
 
-    use codex_core::ThreadManager;
     use codex_extension_api::ToolOutput;
     use codex_extension_api::ToolPayload;
     use codex_file_watcher::FileWatcher;
@@ -96,6 +94,7 @@ mod tests {
 
     use super::super::event_command_subscribe::EventCommandSubscribeTool;
     use super::*;
+    use crate::runtime::UnavailableFileSubscriptionThreadRuntime;
 
     fn tool_call(arguments: serde_json::Value) -> ToolCall {
         ToolCall {
@@ -110,7 +109,7 @@ mod tests {
     fn test_registry() -> Arc<FsSubscriptionRegistry> {
         Arc::new(FsSubscriptionRegistry::new(
             Arc::new(FileWatcher::noop()),
-            Weak::<ThreadManager>::new(),
+            Arc::new(UnavailableFileSubscriptionThreadRuntime),
             None,
         ))
     }

@@ -1,9 +1,5 @@
 use std::sync::Arc;
-use std::sync::Weak;
 
-use codex_core::ThreadManager;
-use codex_core::UnifiedExecManagerHandle;
-use codex_core::config::Config;
 use codex_extension_api::ExtensionData;
 use codex_extension_api::ThreadLifecycleContributor;
 use codex_extension_api::ThreadStartInput;
@@ -14,6 +10,7 @@ use codex_protocol::ThreadId;
 
 use crate::SubscriptionActivityObserver;
 use crate::registry::FsSubscriptionRegistry;
+use crate::runtime::FileSubscriptionThreadRuntime;
 use crate::tools;
 
 /// Per-thread state stored in the thread extension store.
@@ -31,21 +28,21 @@ pub struct FsSubscriptionExtension {
 impl FsSubscriptionExtension {
     pub(crate) fn new(
         file_watcher: Arc<FileWatcher>,
-        thread_manager: Weak<ThreadManager>,
+        thread_runtime: Arc<dyn FileSubscriptionThreadRuntime>,
         activity_observer: Option<Arc<dyn SubscriptionActivityObserver>>,
     ) -> Self {
         Self {
             registry: Arc::new(FsSubscriptionRegistry::new(
                 file_watcher,
-                thread_manager,
+                thread_runtime,
                 activity_observer,
             )),
         }
     }
 }
 
-impl ThreadLifecycleContributor<Config> for FsSubscriptionExtension {
-    fn on_thread_start(&self, input: ThreadStartInput<'_, Config>) {
+impl<C> ThreadLifecycleContributor<C> for FsSubscriptionExtension {
+    fn on_thread_start(&self, input: ThreadStartInput<'_, C>) {
         if let Ok(thread_id) = ThreadId::from_string(input.thread_store.level_id()) {
             input.thread_store.insert(ThreadSubscriptionState {
                 thread_id,
@@ -68,14 +65,8 @@ impl ThreadLifecycleContributor<Config> for FsSubscriptionExtension {
             return;
         };
         let registry = Arc::clone(&self.registry);
-        let unified_exec_manager = input
-            .session_store
-            .get::<UnifiedExecManagerHandle>()
-            .and_then(|handle| handle.upgrade());
         tokio::spawn(async move {
-            registry
-                .restore_thread_subscriptions(thread_id, unified_exec_manager)
-                .await;
+            registry.restore_thread_subscriptions(thread_id).await;
         });
     }
 }
@@ -89,13 +80,7 @@ impl ToolContributor for FsSubscriptionExtension {
         let Some(state) = thread_store.get::<ThreadSubscriptionState>() else {
             return Vec::new();
         };
-        let unified_exec_manager = session_store
-            .get::<UnifiedExecManagerHandle>()
-            .and_then(|handle| handle.upgrade());
-        tools::subscription_tools(
-            state.thread_id,
-            Arc::clone(&state.registry),
-            unified_exec_manager,
-        )
+        let _ = session_store;
+        tools::subscription_tools(state.thread_id, Arc::clone(&state.registry))
     }
 }

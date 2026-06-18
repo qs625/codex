@@ -1,18 +1,14 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::Weak;
 use std::time::Duration;
 
-use codex_core::ThreadManager;
-use codex_core::UnifiedExecProcessManager;
 use codex_file_watcher::FileWatcher;
 use codex_protocol::ThreadId;
 use codex_protocol::event_command::EventCommandEvent;
 use codex_protocol::event_command::EventCommandEventKind;
 use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::subscriptions::PersistedSubscription;
-use codex_thread_store::ThreadMetadataPatch;
 #[cfg(unix)]
 use codex_utils_pty::process_group::kill_process_group;
 #[cfg(unix)]
@@ -28,6 +24,7 @@ use tracing::warn;
 
 use crate::SubscriptionActivityObserver;
 use crate::event_command_stdin::EventCommandRuntime;
+use crate::runtime::FileSubscriptionThreadRuntime;
 use crate::tools::schedule::CompiledSchedule;
 
 const MAX_EVENT_COMMAND_OUTPUT_CHUNK_BYTES: usize = 16 * 1024;
@@ -41,7 +38,7 @@ struct SubscriptionEntry {
 }
 
 struct EventCommandRun {
-    thread_manager: Weak<ThreadManager>,
+    thread_runtime: Arc<dyn FileSubscriptionThreadRuntime>,
     thread_id: ThreadId,
     subscription_id: String,
     command: String,
@@ -71,7 +68,7 @@ struct SubscriptionKey {
 /// stops via `cancel_all_for_thread`.
 pub(crate) struct FsSubscriptionRegistry {
     _file_watcher: Arc<FileWatcher>,
-    thread_manager: Weak<ThreadManager>,
+    thread_runtime: Arc<dyn FileSubscriptionThreadRuntime>,
     state: Arc<AsyncMutex<HashMap<SubscriptionKey, SubscriptionEntry>>>,
     activity_observer: Option<Arc<dyn SubscriptionActivityObserver>>,
 }
@@ -79,12 +76,12 @@ pub(crate) struct FsSubscriptionRegistry {
 impl FsSubscriptionRegistry {
     pub(crate) fn new(
         file_watcher: Arc<FileWatcher>,
-        thread_manager: Weak<ThreadManager>,
+        thread_runtime: Arc<dyn FileSubscriptionThreadRuntime>,
         activity_observer: Option<Arc<dyn SubscriptionActivityObserver>>,
     ) -> Self {
         Self {
             _file_watcher: file_watcher,
-            thread_manager,
+            thread_runtime,
             state: Arc::new(AsyncMutex::new(HashMap::new())),
             activity_observer,
         }
@@ -104,7 +101,7 @@ impl FsSubscriptionRegistry {
 
     async fn notify_active_subscription_count(&self, thread_id: ThreadId) {
         Self::notify_active_subscription_count_for(
-            &self.thread_manager,
+            self.thread_runtime.as_ref(),
             &self.state,
             self.activity_observer.as_ref(),
             thread_id,
@@ -113,46 +110,28 @@ impl FsSubscriptionRegistry {
     }
 
     async fn notify_active_subscription_count_for(
-        thread_manager: &Weak<ThreadManager>,
+        thread_runtime: &dyn FileSubscriptionThreadRuntime,
         state: &AsyncMutex<HashMap<SubscriptionKey, SubscriptionEntry>>,
         activity_observer: Option<&Arc<dyn SubscriptionActivityObserver>>,
         thread_id: ThreadId,
     ) {
         let active_count = Self::active_subscription_count_for_state(state, thread_id).await;
-        if let Some(thread_manager) = thread_manager.upgrade() {
-            let active_event_subscriptions = thread_manager.active_event_subscriptions();
-            let previous_count = active_event_subscriptions.active_count(thread_id);
-            active_event_subscriptions.set_active_count(thread_id, active_count);
-            if previous_count > 0 && active_count == 0 {
-                thread_manager
-                    .maybe_notify_parent_of_final_status(thread_id)
-                    .await;
-            }
-        }
+        thread_runtime
+            .update_active_subscription_count(thread_id, active_count)
+            .await;
         if let Some(observer) = activity_observer {
             observer.active_subscription_count_changed(thread_id, active_count);
         }
     }
 
     async fn send_trigger_to_thread(
-        thread_manager: &Weak<ThreadManager>,
+        thread_runtime: &dyn FileSubscriptionThreadRuntime,
         thread_id: ThreadId,
         trigger: EventDrivenToolTrigger,
     ) -> Result<(), String> {
-        let Some(thread_manager) = thread_manager.upgrade() else {
-            return Err("thread manager unavailable".to_string());
-        };
-        let thread = thread_manager
-            .get_thread(thread_id)
+        thread_runtime
+            .append_event_driven_tool(thread_id, trigger)
             .await
-            .map_err(|err| err.to_string())?;
-        let _ = thread
-            .append_message(codex_protocol::models::ResponseItem::EventDrivenTool {
-                id: None,
-                trigger,
-            })
-            .await;
-        Ok(())
     }
 
     fn subscription_entry(
@@ -179,7 +158,7 @@ impl FsSubscriptionRegistry {
     }
 
     async fn persist_thread_subscriptions(
-        thread_manager: &Weak<ThreadManager>,
+        thread_runtime: &dyn FileSubscriptionThreadRuntime,
         state: &AsyncMutex<HashMap<SubscriptionKey, SubscriptionEntry>>,
         thread_id: ThreadId,
     ) -> Result<(), String> {
@@ -193,28 +172,13 @@ impl FsSubscriptionRegistry {
             subscriptions.sort_by(|left, right| subscription_id(left).cmp(subscription_id(right)));
             subscriptions
         };
-        let Some(thread_manager) = thread_manager.upgrade() else {
-            return Err("thread manager unavailable".to_string());
-        };
-        let thread = thread_manager
-            .get_thread(thread_id)
+        thread_runtime
+            .persist_subscriptions(thread_id, subscriptions)
             .await
-            .map_err(|err| err.to_string())?;
-        thread
-            .update_thread_metadata(
-                ThreadMetadataPatch {
-                    subscriptions: Some(subscriptions),
-                    ..Default::default()
-                },
-                /*include_archived*/ true,
-            )
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
     }
 
     async fn remove_subscription_and_persist(
-        thread_manager: &Weak<ThreadManager>,
+        thread_runtime: &dyn FileSubscriptionThreadRuntime,
         state: &AsyncMutex<HashMap<SubscriptionKey, SubscriptionEntry>>,
         thread_id: ThreadId,
         subscription_id: &str,
@@ -228,7 +192,7 @@ impl FsSubscriptionRegistry {
             return Ok(false);
         };
 
-        if let Err(err) = Self::persist_thread_subscriptions(thread_manager, state, thread_id).await
+        if let Err(err) = Self::persist_thread_subscriptions(thread_runtime, state, thread_id).await
         {
             state.lock().await.insert(key, entry);
             return Err(err);
@@ -241,31 +205,9 @@ impl FsSubscriptionRegistry {
         &self,
         thread_id: ThreadId,
     ) -> Result<Vec<PersistedSubscription>, String> {
-        let Some(thread_manager) = self.thread_manager.upgrade() else {
-            return Err("thread manager unavailable".to_string());
-        };
-        let thread = thread_manager
-            .get_thread(thread_id)
+        self.thread_runtime
+            .load_persisted_subscriptions(thread_id)
             .await
-            .map_err(|err| err.to_string())?;
-        let stored = thread
-            .read_thread(
-                /*include_archived*/ true, /*include_history*/ true,
-            )
-            .await
-            .map_err(|err| err.to_string())?;
-        let subscriptions = stored
-            .history
-            .and_then(|history| {
-                history.items.iter().rev().find_map(|item| match item {
-                    codex_protocol::protocol::RolloutItem::SessionMeta(meta_line) => {
-                        meta_line.meta.subscriptions.clone()
-                    }
-                    _ => None,
-                })
-            })
-            .unwrap_or_default();
-        Ok(subscriptions)
     }
 
     pub(crate) async fn subscribe_event_command(
@@ -297,7 +239,7 @@ impl FsSubscriptionRegistry {
         persist_after: bool,
     ) {
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
-        let thread_manager = self.thread_manager.clone();
+        let thread_runtime = Arc::clone(&self.thread_runtime);
         let sub_id_for_log = subscription_id.clone();
         let state = Arc::clone(&self.state);
         let activity_observer = self.activity_observer.clone();
@@ -322,16 +264,19 @@ impl FsSubscriptionRegistry {
         );
         self.notify_active_subscription_count(thread_id).await;
         if persist_after
-            && let Err(err) =
-                Self::persist_thread_subscriptions(&self.thread_manager, &self.state, thread_id)
-                    .await
+            && let Err(err) = Self::persist_thread_subscriptions(
+                self.thread_runtime.as_ref(),
+                &self.state,
+                thread_id,
+            )
+            .await
         {
             warn!("failed to persist event command subscription {subscription_id}: {err}");
         }
 
         tokio::spawn(async move {
             if let Err(err) = run_event_command(EventCommandRun {
-                thread_manager: thread_manager.clone(),
+                thread_runtime: Arc::clone(&thread_runtime),
                 thread_id,
                 subscription_id: sub_id_for_log.clone(),
                 command: command.clone(),
@@ -346,7 +291,7 @@ impl FsSubscriptionRegistry {
                 warn!("event command {sub_id_for_log}: thread {thread_id} unavailable: {err}");
             }
             if let Err(err) = Self::remove_subscription_and_persist(
-                &thread_manager,
+                thread_runtime.as_ref(),
                 &state,
                 thread_id,
                 &sub_id_for_log,
@@ -356,7 +301,7 @@ impl FsSubscriptionRegistry {
                 warn!("failed to persist completed event command {sub_id_for_log}: {err}");
             } else {
                 Self::notify_active_subscription_count_for(
-                    &thread_manager,
+                    thread_runtime.as_ref(),
                     &state,
                     activity_observer.as_ref(),
                     thread_id,
@@ -433,7 +378,7 @@ impl FsSubscriptionRegistry {
         persist_after: bool,
     ) {
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
-        let thread_manager = self.thread_manager.clone();
+        let thread_runtime = Arc::clone(&self.thread_runtime);
         let state = Arc::clone(&self.state);
         let activity_observer = self.activity_observer.clone();
         let sub_id_for_log = subscription_id.clone();
@@ -477,7 +422,7 @@ impl FsSubscriptionRegistry {
                     text,
                 };
                 if let Err(err) =
-                    Self::send_trigger_to_thread(&thread_manager, thread_id, trigger).await
+                    Self::send_trigger_to_thread(thread_runtime.as_ref(), thread_id, trigger).await
                 {
                     if err != "thread manager unavailable" {
                         warn!(
@@ -488,7 +433,7 @@ impl FsSubscriptionRegistry {
                 }
                 if schedule.is_one_shot() {
                     if let Err(err) = Self::remove_subscription_and_persist(
-                        &thread_manager,
+                        thread_runtime.as_ref(),
                         &state,
                         thread_id,
                         &sub_id_for_log,
@@ -500,7 +445,7 @@ impl FsSubscriptionRegistry {
                         );
                     } else {
                         Self::notify_active_subscription_count_for(
-                            &thread_manager,
+                            thread_runtime.as_ref(),
                             &state,
                             activity_observer.as_ref(),
                             thread_id,
@@ -521,9 +466,12 @@ impl FsSubscriptionRegistry {
         );
         self.notify_active_subscription_count(thread_id).await;
         if persist_after
-            && let Err(err) =
-                Self::persist_thread_subscriptions(&self.thread_manager, &self.state, thread_id)
-                    .await
+            && let Err(err) = Self::persist_thread_subscriptions(
+                self.thread_runtime.as_ref(),
+                &self.state,
+                thread_id,
+            )
+            .await
         {
             warn!("failed to persist schedule subscription {subscription_id}: {err}");
         }
@@ -532,7 +480,7 @@ impl FsSubscriptionRegistry {
     /// Cancels a specific subscription. Returns `true` if the subscription existed.
     pub(crate) async fn unsubscribe(&self, thread_id: ThreadId, subscription_id: &str) -> bool {
         match Self::remove_subscription_and_persist(
-            &self.thread_manager,
+            self.thread_runtime.as_ref(),
             &self.state,
             thread_id,
             subscription_id,
@@ -563,11 +511,7 @@ impl FsSubscriptionRegistry {
         self.notify_active_subscription_count(thread_id).await;
     }
 
-    pub(crate) async fn restore_thread_subscriptions(
-        &self,
-        thread_id: ThreadId,
-        _unified_exec_manager: Option<Arc<UnifiedExecProcessManager>>,
-    ) {
+    pub(crate) async fn restore_thread_subscriptions(&self, thread_id: ThreadId) {
         let subscriptions = match self.subscription_snapshot_from_history(thread_id).await {
             Ok(subscriptions) => subscriptions,
             Err(err) => {
@@ -616,7 +560,7 @@ impl FsSubscriptionRegistry {
                             "[Schedule subscription restore] Failed to restore subscription {subscription_id}: {err}"
                         );
                         let _ = Self::send_trigger_to_thread(
-                            &self.thread_manager,
+                            self.thread_runtime.as_ref(),
                             thread_id,
                             EventDrivenToolTrigger {
                                 tool: "schedule_subscribe".to_string(),
@@ -641,9 +585,12 @@ impl FsSubscriptionRegistry {
             }
         }
         if changed
-            && let Err(err) =
-                Self::persist_thread_subscriptions(&self.thread_manager, &self.state, thread_id)
-                    .await
+            && let Err(err) = Self::persist_thread_subscriptions(
+                self.thread_runtime.as_ref(),
+                &self.state,
+                thread_id,
+            )
+            .await
         {
             warn!("failed to persist restored subscription snapshot for {thread_id}: {err}");
         }
@@ -669,7 +616,7 @@ fn subscription_id(subscription: &PersistedSubscription) -> &str {
 
 async fn run_event_command(run: EventCommandRun) -> Result<(), String> {
     let EventCommandRun {
-        thread_manager,
+        thread_runtime,
         thread_id,
         subscription_id,
         command,
@@ -687,7 +634,7 @@ async fn run_event_command(run: EventCommandRun) -> Result<(), String> {
         Ok(child) => child,
         Err(err) => {
             send_event_command_event(
-                &thread_manager,
+                thread_runtime.as_ref(),
                 thread_id,
                 EventCommandEvent {
                     subscription_id,
@@ -713,7 +660,7 @@ async fn run_event_command(run: EventCommandRun) -> Result<(), String> {
 
     let Some(stdout) = child.stdout.take() else {
         send_event_command_event(
-            &thread_manager,
+            thread_runtime.as_ref(),
             thread_id,
             EventCommandEvent {
                 subscription_id,
@@ -745,7 +692,7 @@ async fn run_event_command(run: EventCommandRun) -> Result<(), String> {
                 output_task.abort();
                 terminate_event_command_process_tree(&mut child, process_group_id).await;
                 send_event_command_event(
-                    &thread_manager,
+                    thread_runtime.as_ref(),
                     thread_id,
                     EventCommandEvent {
                         subscription_id,
@@ -783,7 +730,7 @@ async fn run_event_command(run: EventCommandRun) -> Result<(), String> {
                         EventCommandOutputRead::Chunk { chunk, truncated } => {
                             sequence = sequence.saturating_add(1);
                             send_event_command_output_event(
-                                &thread_manager,
+                                thread_runtime.as_ref(),
                                 thread_id,
                                 &subscription_id,
                                 &label,
@@ -803,7 +750,7 @@ async fn run_event_command(run: EventCommandRun) -> Result<(), String> {
                 }
                 output_task.abort();
                 send_event_command_event(
-                    &thread_manager,
+                    thread_runtime.as_ref(),
                     thread_id,
                     EventCommandEvent {
                         subscription_id,
@@ -827,7 +774,7 @@ async fn run_event_command(run: EventCommandRun) -> Result<(), String> {
                     Some(EventCommandOutputRead::Chunk { chunk, truncated }) => {
                         sequence = sequence.saturating_add(1);
                         send_event_command_output_event(
-                            &thread_manager,
+                            thread_runtime.as_ref(),
                             thread_id,
                             &subscription_id,
                             &label,
@@ -960,7 +907,7 @@ async fn terminate_event_command_process_tree(
 }
 
 async fn send_event_command_output_event(
-    thread_manager: &Weak<ThreadManager>,
+    thread_runtime: &dyn FileSubscriptionThreadRuntime,
     thread_id: ThreadId,
     subscription_id: &str,
     label: &Option<String>,
@@ -971,7 +918,7 @@ async fn send_event_command_output_event(
     truncated: bool,
 ) -> Result<(), String> {
     send_event_command_event(
-        thread_manager,
+        thread_runtime,
         thread_id,
         EventCommandEvent {
             subscription_id: subscription_id.to_string(),
@@ -992,31 +939,21 @@ async fn send_event_command_output_event(
 }
 
 async fn send_event_command_event(
-    thread_manager: &Weak<ThreadManager>,
+    thread_runtime: &dyn FileSubscriptionThreadRuntime,
     thread_id: ThreadId,
     event: EventCommandEvent,
 ) -> Result<(), String> {
-    let Some(thread_manager) = thread_manager.upgrade() else {
-        return Err("thread manager unavailable".to_string());
-    };
-    let thread = thread_manager
-        .get_thread(thread_id)
+    thread_runtime
+        .append_event_command_event(thread_id, event)
         .await
-        .map_err(|err| err.to_string())?;
-    let _ = thread
-        .append_message(codex_protocol::models::ResponseItem::EventCommandEvent { id: None, event })
-        .await;
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::Path;
     use std::sync::Arc;
-    use std::sync::Weak;
     use std::time::Duration;
 
-    use codex_core::ThreadManager;
     use codex_file_watcher::FileWatcher;
     use codex_protocol::ThreadId;
     use codex_protocol::subscriptions::ScheduleSpec;
@@ -1038,17 +975,19 @@ mod tests {
     #[cfg(unix)]
     use super::terminate_event_command_process_tree;
     use super::truncate_event_command_chunk;
+    use crate::runtime::UnavailableFileSubscriptionThreadRuntime;
     use crate::tools::schedule::CompiledSchedule;
+
+    fn unavailable_runtime() -> Arc<UnavailableFileSubscriptionThreadRuntime> {
+        Arc::new(UnavailableFileSubscriptionThreadRuntime)
+    }
 
     #[tokio::test]
     async fn failed_subscription_removal_keeps_event_command_active() {
         let temp_dir = tempfile::tempdir().unwrap();
         let output_path = temp_dir.path().join("stdin-after-failed-remove.out");
-        let registry = FsSubscriptionRegistry::new(
-            Arc::new(FileWatcher::noop()),
-            Weak::<ThreadManager>::new(),
-            None,
-        );
+        let registry =
+            FsSubscriptionRegistry::new(Arc::new(FileWatcher::noop()), unavailable_runtime(), None);
         let thread_id = ThreadId::new();
         let subscription_id = "sub-remove-fails".to_string();
         registry
@@ -1078,11 +1017,8 @@ mod tests {
     async fn writes_event_command_stdin_by_subscription_id() {
         let temp_dir = tempfile::tempdir().unwrap();
         let output_path = temp_dir.path().join("stdin.out");
-        let registry = FsSubscriptionRegistry::new(
-            Arc::new(FileWatcher::noop()),
-            Weak::<ThreadManager>::new(),
-            None,
-        );
+        let registry =
+            FsSubscriptionRegistry::new(Arc::new(FileWatcher::noop()), unavailable_runtime(), None);
         let thread_id = ThreadId::new();
         let subscription_id = "sub-stdin".to_string();
         registry
@@ -1106,11 +1042,8 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_empty_event_command_stdin() {
-        let registry = FsSubscriptionRegistry::new(
-            Arc::new(FileWatcher::noop()),
-            Weak::<ThreadManager>::new(),
-            None,
-        );
+        let registry =
+            FsSubscriptionRegistry::new(Arc::new(FileWatcher::noop()), unavailable_runtime(), None);
 
         let err = registry
             .write_event_command_stdin(ThreadId::new(), "sub-stdin", "")
@@ -1122,11 +1055,8 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_unknown_event_command_stdin_subscription() {
-        let registry = FsSubscriptionRegistry::new(
-            Arc::new(FileWatcher::noop()),
-            Weak::<ThreadManager>::new(),
-            None,
-        );
+        let registry =
+            FsSubscriptionRegistry::new(Arc::new(FileWatcher::noop()), unavailable_runtime(), None);
 
         let err = registry
             .write_event_command_stdin(ThreadId::new(), "missing-sub", "input\n")
@@ -1138,11 +1068,8 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_non_event_command_stdin_subscription() {
-        let registry = FsSubscriptionRegistry::new(
-            Arc::new(FileWatcher::noop()),
-            Weak::<ThreadManager>::new(),
-            None,
-        );
+        let registry =
+            FsSubscriptionRegistry::new(Arc::new(FileWatcher::noop()), unavailable_runtime(), None);
         let thread_id = ThreadId::new();
         let subscription_id = "schedule-sub".to_string();
         let schedule_spec = ScheduleSpec::EveryInterval {

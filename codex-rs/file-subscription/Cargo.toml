@@ -16,7 +16,6 @@ workspace = true
 async-trait = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = "0.10.4"
-codex-core = { workspace = true }
 codex-extension-api = { workspace = true }
 codex-file-watcher = { workspace = true }
 codex-protocol = { workspace = true }

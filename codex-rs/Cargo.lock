@@ -2944,7 +2944,6 @@ dependencies = [
  "async-trait",
  "chrono",
  "chrono-tz",
- "codex-core",
  "codex-extension-api",
  "codex-file-watcher",
  "codex-protocol",

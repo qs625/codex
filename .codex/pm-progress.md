@@ -30,6 +30,27 @@
     - step: 4
       status: completed
       description: 若第 1 阶段收益明确且验证通过，提交本阶段改动；更大拆分另开后续步骤，避免一次改动过大。
+    - step: 5
+      status: completed
+      description: 完整盘点 `codex-file-subscription` 对 `codex-core` 的生产依赖调用面，确认哪些能力属于 thread runtime、event-command 注入、订阅 metadata 持久化，以及哪些 unified exec 参数当前只是透传或未使用。
+    - step: 6
+      status: completed
+      description: 设计并落地 `file-subscription` 的轻量 runtime trait/handle 边界；由 core/app-server 侧 adapter 实现具体 `ThreadManager` 调用，避免把 `ThreadManager`、`CodexThread` 或 unified exec runtime 类型继续暴露给小 crate。
+    - step: 7
+      status: completed
+      description: 将 `codex-file-subscription` 迁移到新 runtime 边界，移除 normal `codex-core` 依赖；保持事件注入、订阅恢复、metadata 更新和 final-status notify 行为不变。
+    - step: 8
+      status: completed
+      description: 对 `file-subscription` 阶段做最小验证：`rtk cargo check -p codex-file-subscription -p codex-app-server --bin codex-app-server`，并用 `rtk cargo tree -p codex-app-server --invert codex-core --edges normal` 确认该路径已脱离 core；通过后提交小阶段。
+    - step: 9
+      status: pending
+      description: 单独盘点 `codex-memories-write` 对 core runtime 的依赖，设计 thread/model/runtime facade；该阶段涉及 `CodexThread`、`ModelClient`、`Prompt`、`ResponseEvent`、`RolloutRecorder` 等较大边界，不能和 `file-subscription` patch 混合。
+    - step: 10
+      status: pending
+      description: 在 `memories-write` facade 方案明确后实施拆分、验证 app-server 编译路径和 timing 变化；若风险或改动体量过大，先提交设计记录或中间 adapter，再继续实现。
+    - step: 11
+      status: pending
+      description: 完成所有可行拆分后重新运行 `rtk cargo build --timings -p codex-app-server --bin codex-app-server`，比较 `codex-core` 是否仍在 app-server 必要路径、warm build wall time 和 unit seconds，并更新最终结论。
   findings:
     - 已新增 `codex-utils-backoff`，`codex-core::util::backoff` 保留为 re-export。
     - `codex-cloud-requirements` 已移除 `codex-core` 依赖；`cargo tree -p codex-app-server --invert codex-core --edges normal` 中该 crate 已消失。
@@ -38,6 +59,8 @@
     - `codex-chatgpt` 默认 feature 已改为不依赖 `codex-core`；CLI-only `apply_command` / `get_task` 放入 `apply-command` feature，`codex-cli` 显式启用该 feature。app-server/TUI 调用 ChatGPT connector/settings API 时先构造轻量 `ChatGptConfig`，accessible/enabled connector 状态直接走 core connector API。
     - 当前 `cargo tree -p codex-app-server --invert codex-core --edges normal` 剩余路径为 `codex-app-server`、`codex-file-subscription`、`codex-memories-write`。其中 `file-subscription`/`memories-write` 牵涉 thread/runtime handle，应作为后续较大拆分处理。
     - `codex-file-subscription` 的 core 依赖不再是单纯 config 类型：生产代码使用 `ThreadManager`、`UnifiedExecManagerHandle` 和 `UnifiedExecProcessManager` 来恢复订阅、注入事件和提供 event-command 工具；下一步需要先在 extension/runtime 边界定义稳定 trait/handle，再让 core adapter 实现。
+    - `codex-file-subscription` 已新增 `FileSubscriptionThreadRuntime` 边界，订阅 active count、event-driven trigger、event-command event、订阅 metadata 持久化和历史恢复都通过 host adapter 执行；app-server 侧用 `CoreFileSubscriptionThreadRuntime` 适配 `ThreadManager`。原先透传但未使用的 unified exec manager 参数已从该扩展路径移除。
+    - `codex-file-subscription` 已移除 normal `codex-core` 依赖；当前 `cargo tree -p codex-app-server --invert codex-core --edges normal` 剩余路径为 `codex-app-server` 自身和 `codex-memories-write`。
     - `codex-memories-write` 同样直接使用 `CodexThread`、`ThreadManager`、`ModelClient`、`Prompt`、`ResponseEvent`、`RolloutRecorder` 等 core runtime 类型；这应作为 thread runtime facade 的较大拆分，不能和低风险 util/config 拆分混在一个小 patch。
   validation:
     - `rtk cargo check -p codex-utils-backoff -p codex-cloud-requirements -p codex-app-server-transport` 通过。
@@ -47,8 +70,12 @@
     - `rtk cargo check -p codex-chatgpt -p codex-chatgpt --features apply-command -p codex-app-server --bin codex-app-server -p codex-tui -p codex-cli` 通过。
     - `rtk cargo build --timings -p codex-app-server --bin codex-app-server` 通过，warm-target wall time 约 100s；最新 timing 为 `target/cargo-timings/cargo-timing-20260618T062735.642709Z.html`。
     - `codex-chatgpt` 拆分后重新执行 `rtk cargo build --timings -p codex-app-server --bin codex-app-server` 通过，warm-target wall time 约 22s；最新 timing 为 `target/cargo-timings/cargo-timing-20260618T065116.613751Z.html`，本次只重编 `codex-app-server`、bin、`codex-chatgpt`、`codex-guardian`，未重编 `codex-core`。
+    - `file-subscription` 拆分后执行 `rtk cargo test -p codex-file-subscription` 通过，退出码 0。
+    - `file-subscription` 拆分后执行 `rtk cargo check -p codex-file-subscription -p codex-app-server --bin codex-app-server` 通过，0 errors，42 warnings（均为既有 unused/dead_code 风格警告）。
+    - `file-subscription` 拆分后执行 `rtk cargo tree -p codex-app-server --invert codex-core --edges normal`，确认 `codex-file-subscription` 已不在 `codex-core` normal 反向路径中。
+    - 对本阶段触碰的 Rust 文件执行 `rtk rustfmt --check ...` 通过；命令仍打印 workspace rustfmt 配置中 nightly-only `imports_granularity = Item` warning。
     - `rtk rustfmt --check ...` 对本次触碰的 Rust 文件通过；全 workspace `cargo fmt --check` 仍被既有未格式化文件阻断。
-  next_action: 先为 `file-subscription` 设计 runtime trait/handle 边界，再处理 `memories-write` 的 thread runtime facade；不要直接把 core runtime 类型搬进小 crate。
+  next_action: 进入 `memories-write` 阶段，先盘点 `CodexThread`、`ThreadManager`、`ModelClient`、`Prompt`、`ResponseEvent`、`RolloutRecorder` 等调用面，再设计 thread/model/runtime facade；不要把该较大拆分和已完成的 `file-subscription` patch 混合。
 
 ## Completed
 

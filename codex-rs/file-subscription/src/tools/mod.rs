@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use codex_core::UnifiedExecProcessManager;
 use codex_extension_api::ExtensionToolExecutor;
 use codex_extension_api::FunctionCallError;
 use codex_extension_api::ResponsesApiTool;
@@ -22,7 +21,6 @@ mod schedule_unsubscribe;
 pub(crate) fn subscription_tools(
     thread_id: ThreadId,
     registry: Arc<FsSubscriptionRegistry>,
-    _unified_exec_manager: Option<Arc<UnifiedExecProcessManager>>,
 ) -> Vec<Arc<dyn ExtensionToolExecutor>> {
     let shared_registry = Arc::clone(&registry);
     vec![

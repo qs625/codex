@@ -152,22 +152,21 @@ impl ToolExecutor<ToolCall> for EventCommandSubscribeTool {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-    use std::sync::Weak;
 
-    use codex_core::ThreadManager;
     use codex_extension_api::ResponsesApiTool;
     use codex_extension_api::ToolSpec;
     use codex_file_watcher::FileWatcher;
     use pretty_assertions::assert_eq;
 
     use super::*;
+    use crate::runtime::UnavailableFileSubscriptionThreadRuntime;
 
     fn test_tool() -> EventCommandSubscribeTool {
         EventCommandSubscribeTool {
             thread_id: ThreadId::new(),
             registry: Arc::new(FsSubscriptionRegistry::new(
                 Arc::new(FileWatcher::noop()),
-                Weak::<ThreadManager>::new(),
+                Arc::new(UnavailableFileSubscriptionThreadRuntime),
                 None,
             )),
         }
