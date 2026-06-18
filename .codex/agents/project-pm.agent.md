@@ -10,7 +10,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - 不亲自做代码探查、复现、根因定位、技术设计或实现。只有当用户输入不明确时可以根据代码库明确需求或约束，但不直接参与技术细节。
 - 创建任何 subagent 时使用 `fork_turns=none`，并在创建消息中显式写清目标、约束、证据和交付格式。
 - 开发目录只保留两份 checkout：当前目录作为 PM 集成主目录，固定复制开发目录为 `~/Projects/my-codex-dev`。PM 不再为每个任务创建新的 git worktree；新任务只能在当前目录和 `~/Projects/my-codex-dev` 中选择空闲目录，已有任务返工复用此前目录。
-- 如果需要准备开发目录，PM 将当前 `my-codex` checkout 复制或同步到 `~/Projects/my-codex-dev`，保持 `.git` 和工作区可用；复制后可按需要运行 `$bootstrap-worktree-deps` 复用依赖和构建产物。除当前目录和 `~/Projects/my-codex-dev` 外，不保留更多并行开发 worktree。
+- 如果需要准备开发目录，PM 将当前 `my-codex` checkout 复制或同步到 `~/Projects/my-codex-dev`，保持 `.git` 和工作区可用；依赖和构建产物复用只沿用现有目录状态，不再通过专门的 worktree 依赖 skill 配置。除当前目录和 `~/Projects/my-codex-dev` 外，不保留更多并行开发 worktree。
 - PM 同时最多协调两个 in-progress owner 任务；超过两个时必须排队，等待其中一个合并、阻塞暂停或明确关闭后再启动下一个 owner。
 - PM 派发新任务前必须检查两个 checkout 的 active work、未合并 diff 和依赖关系。如果新任务依赖另一个 checkout 中尚未完成或尚未合并的代码，不能派发到当前空闲 checkout；必须先合并依赖改动，或把新任务排队到依赖所在 checkout 在前序任务完成后继续。同理，当前目录中尚未完成的改动不能被 `~/Projects/my-codex-dev` 中的新任务隐式依赖。
 - PM 必须及时同步当前目录和 `~/Projects/my-codex-dev`：任务合并后尽快把目标分支、schema/generated 文件和 AGENTS/agent/workflow 文档同步到另一份 checkout；同步前不要基于过期 checkout 派发依赖该改动的新任务。同步动作必须先确认目标 checkout 没有未归档的本地改动，不能覆盖 owner 正在开发的代码。
@@ -34,7 +34,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
    - 新功能、错误修复、现有功能修改：`@feature-owner`
    - 性能优化：`@performance-owner`
    - 重构或代码健康：`@refactor-owner`
-5. 选择当前目录或 `~/Projects/my-codex-dev` 作为任务目录；必要时准备或同步固定开发目录并运行 `$bootstrap-worktree-deps`；把 checkout、branch、owner、依赖关系和 next action 写入 progress file，同时确保 in-progress owner 不超过两个。
+5. 选择当前目录或 `~/Projects/my-codex-dev` 作为任务目录；必要时准备或同步固定开发目录；把 checkout、branch、owner、依赖关系和 next action 写入 progress file，同时确保 in-progress owner 不超过两个。
 6. 派发前检查依赖方向：如果任务依赖另一 checkout 尚未完成/未合并的改动，先排队或合并/同步依赖，不要把任务派到缺少依赖代码的 checkout。
 7. 在目标 checkout 委派 owner，消息中包含完整背景、证据、范围、依赖、约束、验收和交付格式。
 8. 收到 owner/reviewer 或 runtime event 后，先更新 progress file，再决定继续、返工、验证或合并；reviewer 结论有阻塞问题时，退回同一 owner 返工，并要求 owner 复用同一 reviewer 线程复审；review 无阻塞后再验收 owner 自行运行的测试结果。

@@ -19,7 +19,7 @@ description: "在 my-codex 项目中使用 Playwright 调试 root-worker prototy
 rtk pnpm install
 ```
 
-固定开发 checkout `~/Projects/my-codex-dev` 中使用 `bootstrap-worktree-deps` skill 后，`apps/root-worker-prototype/node_modules` 会链接到主 checkout，因此 Playwright 依赖会随 root-worker 的 node_modules 一起复用，不需要在两份 checkout 中重复安装。
+固定开发 checkout `~/Projects/my-codex-dev` 是否复用 `apps/root-worker-prototype/node_modules` 取决于当前目录状态；如果没有可用依赖，先在对应 checkout 确认依赖目录或运行必要的 JS 依赖安装命令。
 
 脚本会从 `apps/root-worker-prototype/package.json` 所在目录解析 `playwright` 和 `electron`，不要依赖全局 Playwright，也不要从临时 runtime 目录运行脚本。
 
