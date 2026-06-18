@@ -1,7 +1,7 @@
-use codex_core::config::Config;
 use codex_login::AuthManager;
 use codex_login::default_client::create_client;
 
+use crate::ChatGptConfig;
 use anyhow::Context;
 use serde::de::DeserializeOwned;
 use std::time::Duration;
@@ -10,15 +10,16 @@ const OAI_PRODUCT_SKU_HEADER: &str = "OAI-Product-Sku";
 const CODEX_PRODUCT_SKU: &str = "codex";
 
 /// Make a GET request to the ChatGPT backend API.
+#[cfg(feature = "apply-command")]
 pub(crate) async fn chatgpt_get_request<T: DeserializeOwned>(
-    config: &Config,
+    config: &ChatGptConfig,
     path: String,
 ) -> anyhow::Result<T> {
     chatgpt_get_request_with_timeout(config, path, /*timeout*/ None).await
 }
 
 pub(crate) async fn chatgpt_get_request_with_timeout<T: DeserializeOwned>(
-    config: &Config,
+    config: &ChatGptConfig,
     path: String,
     timeout: Option<Duration>,
 ) -> anyhow::Result<T> {

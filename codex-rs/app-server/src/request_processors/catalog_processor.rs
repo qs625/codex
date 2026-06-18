@@ -204,7 +204,7 @@ impl CatalogRequestProcessor {
         auth: Option<&CodexAuth>,
     ) -> bool {
         match workspace_settings::codex_plugins_enabled_for_workspace(
-            config,
+            &chatgpt_config_from_core(config),
             auth,
             Some(&self.workspace_settings_cache),
         )

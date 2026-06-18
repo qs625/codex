@@ -112,9 +112,10 @@ impl AppsRequestProcessor {
             None => 0,
         };
 
+        let chatgpt_config = chatgpt_config_from_core(&config);
         let (mut accessible_connectors, mut all_connectors) = tokio::join!(
-            connectors::list_cached_accessible_connectors_from_mcp_tools(&config),
-            connectors::list_cached_all_connectors(&config)
+            core_connectors::list_cached_accessible_connectors_from_mcp_tools(&config),
+            chatgpt_connectors::list_cached_all_connectors(&chatgpt_config)
         );
         let cached_all_connectors = all_connectors.clone();
 
@@ -123,23 +124,23 @@ impl AppsRequestProcessor {
         let accessible_config = config.clone();
         let accessible_tx = tx.clone();
         tokio::spawn(async move {
-            let result =
-                connectors::list_accessible_connectors_from_mcp_tools_with_environment_manager(
-                    &accessible_config,
-                    force_refetch,
-                    &environment_manager,
-                )
-                .await
-                .map(|status| status.connectors)
-                .map_err(|err| format!("failed to load accessible apps: {err}"));
+            let result = core_connectors::list_accessible_connectors_from_mcp_tools_with_environment_manager(
+                &accessible_config,
+                force_refetch,
+                &environment_manager,
+            )
+            .await
+            .map(|status| status.connectors)
+            .map_err(|err| format!("failed to load accessible apps: {err}"));
             let _ = accessible_tx.send(AppListLoadResult::Accessible(result));
         });
 
-        let all_config = config.clone();
+        let all_config = chatgpt_config.clone();
         tokio::spawn(async move {
-            let result = connectors::list_all_connectors_with_options(&all_config, force_refetch)
-                .await
-                .map_err(|err| format!("failed to list apps: {err}"));
+            let result =
+                chatgpt_connectors::list_all_connectors_with_options(&all_config, force_refetch)
+                    .await
+                    .map_err(|err| format!("failed to list apps: {err}"));
             let _ = tx.send(AppListLoadResult::Directory(result));
         });
 
@@ -149,7 +150,7 @@ impl AppsRequestProcessor {
         let mut last_notified_apps = None;
 
         if accessible_connectors.is_some() || all_connectors.is_some() {
-            let merged = connectors::with_app_enabled_state(
+            let merged = core_connectors::with_app_enabled_state(
                 merge_loaded_apps(all_connectors.as_deref(), accessible_connectors.as_deref()),
                 &config,
             );
@@ -207,7 +208,7 @@ impl AppsRequestProcessor {
                 } else {
                     accessible_connectors.as_deref()
                 };
-            let merged = connectors::with_app_enabled_state(
+            let merged = core_connectors::with_app_enabled_state(
                 merge_loaded_apps(all_connectors_for_update, accessible_connectors_for_update),
                 &config,
             );
@@ -259,7 +260,7 @@ impl AppsRequestProcessor {
         auth: Option<&CodexAuth>,
     ) -> bool {
         match workspace_settings::codex_plugins_enabled_for_workspace(
-            config,
+            &chatgpt_config_from_core(config),
             auth,
             Some(&self.workspace_settings_cache),
         )
@@ -290,7 +291,7 @@ fn merge_loaded_apps(
     let all_connectors_loaded = all_connectors.is_some();
     let all = all_connectors.map_or_else(Vec::new, <[AppInfo]>::to_vec);
     let accessible = accessible_connectors.map_or_else(Vec::new, <[AppInfo]>::to_vec);
-    connectors::merge_connectors_with_accessible(all, accessible, all_connectors_loaded)
+    chatgpt_connectors::merge_connectors_with_accessible(all, accessible, all_connectors_loaded)
 }
 
 fn should_send_app_list_updated_notification(

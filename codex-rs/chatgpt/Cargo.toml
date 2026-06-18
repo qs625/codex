@@ -9,18 +9,27 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
+clap = { workspace = true, features = ["derive"], optional = true }
 codex-app-server-protocol = { workspace = true }
 codex-connectors = { workspace = true }
-codex-core = { workspace = true }
+codex-core = { workspace = true, optional = true }
 codex-core-plugins = { workspace = true }
-codex-git-utils = { workspace = true }
+codex-git-utils = { workspace = true, optional = true }
 codex-login = { workspace = true }
 codex-model-provider = { workspace = true }
 codex-plugin = { workspace = true }
-codex-utils-cli = { workspace = true }
+codex-utils-cli = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }
+
+[features]
+default = []
+apply-command = ["clap", "codex-core", "codex-git-utils", "codex-utils-cli"]
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+required-features = ["apply-command"]
 
 [dev-dependencies]
 codex-utils-cargo-bin = { workspace = true }

@@ -6,6 +6,7 @@ use codex_git_utils::ApplyGitRequest;
 use codex_git_utils::apply_git_patch;
 use codex_utils_cli::CliConfigOverrides;
 
+use crate::ChatGptConfig;
 use crate::get_task::GetTaskResponse;
 use crate::get_task::OutputItem;
 use crate::get_task::PrOutputItem;
@@ -31,7 +32,15 @@ pub async fn run_apply_command(
     )
     .await?;
 
-    let task_response = get_task(&config, apply_cli.task_id).await?;
+    let chatgpt_config = ChatGptConfig {
+        codex_home: config.codex_home.to_path_buf(),
+        cli_auth_credentials_store_mode: config.cli_auth_credentials_store_mode,
+        forced_chatgpt_workspace_id: config.forced_chatgpt_workspace_id.clone(),
+        chatgpt_base_url: config.chatgpt_base_url.clone(),
+        apps_feature_enabled: false,
+        plugins_config_input: config.plugins_config_input(),
+    };
+    let task_response = get_task(&chatgpt_config, apply_cli.task_id).await?;
     apply_diff_from_task(task_response, cwd).await
 }
 

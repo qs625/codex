@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::chatgpt_config::chatgpt_config_from_core;
 use crate::config_manager::ConfigManager;
 use crate::config_manager_service::ConfigManagerError;
 use crate::error_code::internal_error;
@@ -29,7 +30,7 @@ use codex_app_server_protocol::NetworkRequirements;
 use codex_app_server_protocol::NetworkUnixSocketPermission;
 use codex_app_server_protocol::SandboxMode;
 use codex_app_server_protocol::ServerNotification;
-use codex_chatgpt::connectors;
+use codex_chatgpt::connectors as chatgpt_connectors;
 use codex_config::ConfigRequirementsToml;
 use codex_config::HookEventsToml;
 use codex_config::HookHandlerConfig as CoreHookHandlerConfig;
@@ -38,6 +39,7 @@ use codex_config::MatcherGroup as CoreMatcherGroup;
 use codex_config::ResidencyRequirement as CoreResidencyRequirement;
 use codex_config::SandboxModeRequirement as CoreSandboxModeRequirement;
 use codex_core::ThreadManager;
+use codex_core::connectors as core_connectors;
 use codex_features::canonical_feature_for_key;
 use codex_features::feature_for_key;
 use codex_login::AuthManager;
@@ -215,9 +217,13 @@ impl ConfigRequestProcessor {
         let outgoing = Arc::clone(&self.outgoing);
         let environment_manager = self.thread_manager.environment_manager();
         tokio::spawn(async move {
+            let chatgpt_config = chatgpt_config_from_core(&config);
             let (all_connectors_result, accessible_connectors_result) = tokio::join!(
-                connectors::list_all_connectors_with_options(&config, /*force_refetch*/ true),
-                connectors::list_accessible_connectors_from_mcp_tools_with_environment_manager(
+                chatgpt_connectors::list_all_connectors_with_options(
+                    &chatgpt_config,
+                    /*force_refetch*/ true,
+                ),
+                core_connectors::list_accessible_connectors_from_mcp_tools_with_environment_manager(
                     &config,
                     /*force_refetch*/ true,
                     &environment_manager,
@@ -242,8 +248,8 @@ impl ConfigRequestProcessor {
                 }
             };
 
-            let data = connectors::with_app_enabled_state(
-                connectors::merge_connectors_with_accessible(
+            let data = core_connectors::with_app_enabled_state(
+                chatgpt_connectors::merge_connectors_with_accessible(
                     all_connectors,
                     accessible_connectors,
                     /*all_connectors_loaded*/ true,

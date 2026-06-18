@@ -10,31 +10,24 @@ use codex_connectors::DirectoryListResponse;
 use codex_connectors::filter::filter_disallowed_connectors;
 use codex_connectors::merge::merge_connectors;
 use codex_connectors::merge::merge_plugin_connectors;
-use codex_core::config::Config;
-pub use codex_core::connectors::list_accessible_connectors_from_mcp_tools;
-pub use codex_core::connectors::list_accessible_connectors_from_mcp_tools_with_environment_manager;
-pub use codex_core::connectors::list_accessible_connectors_from_mcp_tools_with_options;
-pub use codex_core::connectors::list_accessible_connectors_from_mcp_tools_with_options_and_status;
-pub use codex_core::connectors::list_cached_accessible_connectors_from_mcp_tools;
-pub use codex_core::connectors::with_app_enabled_state;
 use codex_core_plugins::PluginsManager;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::default_client::originator;
 use codex_plugin::AppConnectorId;
 
+use crate::ChatGptConfig;
+
 const DIRECTORY_CONNECTORS_TIMEOUT: Duration = Duration::from_secs(60);
 
-async fn apps_enabled(config: &Config) -> bool {
+async fn apps_enabled(config: &ChatGptConfig) -> bool {
     let auth_manager =
         AuthManager::shared_from_config(config, /*enable_codex_api_key_env*/ false).await;
     let auth = auth_manager.auth().await;
-    config
-        .features
-        .apps_enabled_for_auth(auth.as_ref().is_some_and(CodexAuth::uses_codex_backend))
+    config.apps_enabled_for_auth(auth.as_ref())
 }
 
-async fn connector_auth(config: &Config) -> anyhow::Result<CodexAuth> {
+async fn connector_auth(config: &ChatGptConfig) -> anyhow::Result<CodexAuth> {
     let auth_manager =
         AuthManager::shared_from_config(config, /*enable_codex_api_key_env*/ false).await;
     let auth = auth_manager
@@ -48,29 +41,11 @@ async fn connector_auth(config: &Config) -> anyhow::Result<CodexAuth> {
     Ok(auth)
 }
 
-pub async fn list_connectors(config: &Config) -> anyhow::Result<Vec<AppInfo>> {
-    if !apps_enabled(config).await {
-        return Ok(Vec::new());
-    }
-    let (connectors_result, accessible_result) = tokio::join!(
-        list_all_connectors(config),
-        list_accessible_connectors_from_mcp_tools(config),
-    );
-    let connectors = connectors_result?;
-    let accessible = accessible_result?;
-    Ok(with_app_enabled_state(
-        merge_connectors_with_accessible(
-            connectors, accessible, /*all_connectors_loaded*/ true,
-        ),
-        config,
-    ))
-}
-
-pub async fn list_all_connectors(config: &Config) -> anyhow::Result<Vec<AppInfo>> {
+pub async fn list_all_connectors(config: &ChatGptConfig) -> anyhow::Result<Vec<AppInfo>> {
     list_all_connectors_with_options(config, /*force_refetch*/ false).await
 }
 
-pub async fn list_cached_all_connectors(config: &Config) -> Option<Vec<AppInfo>> {
+pub async fn list_cached_all_connectors(config: &ChatGptConfig) -> Option<Vec<AppInfo>> {
     if !apps_enabled(config).await {
         return Some(Vec::new());
     }
@@ -92,7 +67,7 @@ pub async fn list_cached_all_connectors(config: &Config) -> Option<Vec<AppInfo>>
 }
 
 pub async fn list_all_connectors_with_options(
-    config: &Config,
+    config: &ChatGptConfig,
     force_refetch: bool,
 ) -> anyhow::Result<Vec<AppInfo>> {
     if !apps_enabled(config).await {
@@ -128,7 +103,7 @@ pub async fn list_all_connectors_with_options(
 }
 
 fn connector_directory_cache_context(
-    config: &Config,
+    config: &ChatGptConfig,
     auth: &CodexAuth,
 ) -> ConnectorDirectoryCacheContext {
     ConnectorDirectoryCacheContext::new(
@@ -142,8 +117,8 @@ fn connector_directory_cache_context(
     )
 }
 
-async fn plugin_apps_for_config(config: &Config) -> Vec<AppConnectorId> {
-    let plugins_input = config.plugins_config_input();
+async fn plugin_apps_for_config(config: &ChatGptConfig) -> Vec<AppConnectorId> {
+    let plugins_input = config.plugins_config_input.clone();
     PluginsManager::new(config.codex_home.to_path_buf())
         .plugins_for_config(&plugins_input)
         .await

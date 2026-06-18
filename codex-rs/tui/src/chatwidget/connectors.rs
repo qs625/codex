@@ -50,7 +50,7 @@ impl ChatWidget {
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
             let accessible_result =
-                match chatgpt_connectors::list_accessible_connectors_from_mcp_tools_with_environment_manager(
+                match crate::legacy_core::connectors::list_accessible_connectors_from_mcp_tools_with_environment_manager(
                     &config,
                     force_refetch,
                     &environment_manager,
@@ -78,9 +78,12 @@ impl ChatWidget {
             });
 
             let result: Result<ConnectorsSnapshot, String> = async {
-                let all_connectors =
-                    chatgpt_connectors::list_all_connectors_with_options(&config, force_refetch)
-                        .await?;
+                let chatgpt_config = chatgpt_config_from_core(&config);
+                let all_connectors = chatgpt_connectors::list_all_connectors_with_options(
+                    &chatgpt_config,
+                    force_refetch,
+                )
+                .await?;
                 let connectors = chatgpt_connectors::merge_connectors_with_accessible(
                     all_connectors,
                     accessible_connectors,
@@ -360,8 +363,10 @@ impl ChatWidget {
                         /*all_connectors_loaded*/ false,
                     );
                 }
-                snapshot.connectors =
-                    chatgpt_connectors::with_app_enabled_state(snapshot.connectors, &self.config);
+                snapshot.connectors = crate::legacy_core::connectors::with_app_enabled_state(
+                    snapshot.connectors,
+                    &self.config,
+                );
                 if let ConnectorsCacheState::Ready(existing_snapshot) = &self.connectors.cache {
                     let enabled_by_id: HashMap<&str, bool> = existing_snapshot
                         .connectors
@@ -429,5 +434,16 @@ impl ChatWidget {
         self.refresh_connectors_popup_if_open(&snapshot.connectors);
         self.connectors.cache = ConnectorsCacheState::Ready(snapshot.clone());
         self.bottom_pane.set_connectors_snapshot(Some(snapshot));
+    }
+}
+
+fn chatgpt_config_from_core(config: &Config) -> codex_chatgpt::ChatGptConfig {
+    codex_chatgpt::ChatGptConfig {
+        codex_home: config.codex_home.to_path_buf(),
+        cli_auth_credentials_store_mode: config.cli_auth_credentials_store_mode,
+        forced_chatgpt_workspace_id: config.forced_chatgpt_workspace_id.clone(),
+        chatgpt_base_url: config.chatgpt_base_url.clone(),
+        apps_feature_enabled: config.features.enabled(Feature::Apps),
+        plugins_config_input: config.plugins_config_input(),
     }
 }

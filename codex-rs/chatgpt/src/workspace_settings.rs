@@ -4,10 +4,10 @@ use std::time::Duration;
 use std::time::Instant;
 
 use anyhow::Context;
-use codex_core::config::Config;
 use codex_login::CodexAuth;
 use serde::Deserialize;
 
+use crate::ChatGptConfig;
 use crate::chatgpt_client::chatgpt_get_request_with_timeout;
 
 const WORKSPACE_SETTINGS_TIMEOUT: Duration = Duration::from_secs(10);
@@ -82,7 +82,7 @@ impl WorkspaceSettingsCache {
 }
 
 pub async fn codex_plugins_enabled_for_workspace(
-    config: &Config,
+    config: &ChatGptConfig,
     auth: Option<&CodexAuth>,
     cache: Option<&WorkspaceSettingsCache>,
 ) -> anyhow::Result<bool> {
