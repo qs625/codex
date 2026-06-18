@@ -11,13 +11,14 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - 创建任何 subagent 时使用 `fork_turns=none`，并在创建消息中显式写清目标、约束、证据和交付格式。
 - 开发目录只保留四份固定 checkout：`~/Projects/my-codex`、`~/Projects/my-codex-dev`、`~/Projects/my-codex-dev-2`、`~/Projects/my-codex-dev-3`。PM 不再为每个任务创建临时开发目录；新任务只能从这四个目录中选择空闲目录，已有任务返工复用此前目录。
 - 如果需要准备开发目录，PM 将当前 `my-codex` checkout 复制或同步到对应固定目录，保持 `.git` 和工作区可用；四个 checkout 必须独立测试、独立编译，不共享 `codex-rs/target`、`node_modules` 或其他依赖/构建产物目录。
-- PM 同时最多协调四个 in-progress owner 任务，且每个 checkout 同一时间最多承载一个 owner 任务；超过四个或没有满足依赖条件的空闲 checkout 时必须排队，等待任务合并、阻塞暂停或明确关闭后再启动下一个 owner。
+- 每个固定 checkout 绑定一个长期 owner thread，PM 不为每个任务新建 owner。固定映射为：`~/Projects/my-codex` -> `/root/my_codex_pm/owner_main`，`~/Projects/my-codex-dev` -> `/root/my_codex_pm/owner_dev`，`~/Projects/my-codex-dev-2` -> `/root/my_codex_pm/owner_dev_2`，`~/Projects/my-codex-dev-3` -> `/root/my_codex_pm/owner_dev_3`。如果固定 owner thread 不存在或已不可用，PM 只按该固定 task_name 重新创建一次，`fork_turns=none`，`cwd` 设为对应 checkout。
+- PM 同时最多协调四个 in-progress owner 任务，且每个 checkout 的固定 owner 同一时间最多处理一个任务；超过四个或没有满足依赖条件的空闲 checkout 时必须排队，等待任务合并、阻塞暂停或明确关闭后再向空闲固定 owner 派发下一个任务。
 - PM 派发新任务前必须检查四个 checkout 的 active work、未合并 diff、目标文件范围和依赖关系。只有任务彼此没有未合并代码依赖、不会同时改同一高冲突文件/共享 contract，且目标 checkout 已同步到所需基线时，才能并行派发。
 - 如果新任务依赖另一个 checkout 中尚未完成或尚未合并的代码，不能派发到缺少依赖代码的空闲 checkout；必须先合并依赖改动并同步目标 checkout，或把新任务排队到依赖所在 checkout 在前序任务完成后继续。任何 checkout 中尚未完成的改动都不能被其他 checkout 中的新任务隐式依赖。
 - PM 必须在 progress file 里为每个 active work 记录 `checkout`、`branch`、`depends_on`、主要文件范围、当前基线 commit 和 next action。派发前如果依赖关系不清楚，先要求 owner 或 explorer 澄清依赖，不要用并行度换取不确定的返工风险。
 - PM 必须及时同步四个 checkout：任务合并后尽快把目标分支、schema/generated 文件和 AGENTS/agent/workflow 文档同步到所有空闲 checkout；同步前不要基于过期 checkout 派发依赖该改动的新任务。同步动作必须先确认目标 checkout 没有未归档的本地改动，不能覆盖 owner 正在开发的代码。
 - 同步策略：合并点以 `~/Projects/my-codex` 当前集成分支为准；任务在其他 checkout 完成并通过验收后，先提交在任务 checkout，再从集成 checkout 合并该任务分支。合并成功后，空闲 checkout 使用 fast-forward 同步到集成分支；非空闲 checkout 只记录需要同步的 commit，等 owner 当前任务完成、阻塞暂停或明确同意后再同步。不得用 destructive reset 覆盖未合并工作。
-- 一个独立任务默认只交给一个 owner。owner 在自己的任务树内负责设计、实现、组织独立 `@code-review` 执行代码评审、在 review 通过后自行运行必要测试和构建、更新 `AGENTS.md` 维护当前仓库状态，并汇总交付。
+- 一个独立任务默认只交给其 checkout 绑定的固定 owner。owner 在自己的长期任务树内串行负责设计、实现、组织独立 `@code-review` 执行代码评审、在 review 通过后自行运行必要测试和构建、更新 `AGENTS.md` 维护当前仓库状态，并汇总交付。
 - 仅修改 agent 指令、协作规则、spec 或 README 等文档时，如果用户明确允许简化流程，PM 可以直接在当前 checkout 修改、做文本级验证并提交；不强制创建 owner/reviewer/tester 流程。该例外不适用于产品代码、测试代码、构建配置、schema 或会影响运行时行为的改动。
 - 不再使用项目唯一固定 tester，也不要创建共享 Rust/Cargo tester 队列。每个 owner 在自己的 checkout/开发目录内完成验证；reviewer 只做 code review，不执行测试、构建、格式化、lint 或 benchmark。
 - owner 必须先用同一个 reviewer 线程多轮 review 到无阻塞问题，再自行在所属目录串行运行测试和构建命令。默认 Rust/Cargo 验证只包含修改模块的单元测试/最小 crate 测试，以及在 `codex-rs` 下验证与入口匹配的 binary：只涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时使用 `cargo build -p codex-app-server --bin codex-app-server`；只有确实改到 CLI/TUI 或 CLI app-server 子命令包装时才使用 `cargo build -p codex-cli`。不要默认跑全量 `cargo test`、`just test`、广域 `just fix`、snapshot、schema 或 lockfile workflow；只有变更明确需要或用户要求时才让 owner 加入。
@@ -32,14 +33,11 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 
 1. 澄清目标、范围、验收标准和非目标；缺少关键范围信息时最多问三个阻塞问题。
 2. 可以阅读一些代码来明确需求或约束, 但是不要面向实现做大量代码细节探查。
-3. 如果任务会跨 turn、跨 owner 或需要持续推进，创建或更新 `.codex/pm-progress.md`：记录 PM goal、active work、checkout/branch、owner、状态、下一步、阻塞、验证和已合并结果；短小单次任务可跳过，但交付时说明原因。修改 progress file 后，如果 Active Work 仍有未完成项，立即确保当前 thread goal 是完成 `.codex/pm-progress.md` 中的 Active Work。
-4. 根据需求和约束，选择 owner agent：
-   - 新功能、错误修复、现有功能修改：`@feature-owner`
-   - 性能优化：`@performance-owner`
-   - 重构或代码健康：`@refactor-owner`
-5. 从四个固定 checkout 中选择满足依赖条件的空闲目录；必要时准备或同步固定开发目录；把 checkout、branch、owner、依赖关系、主要文件范围、基线 commit 和 next action 写入 progress file，同时确保 in-progress owner 不超过四个且每个 checkout 只有一个 owner。
+3. 如果任务会跨 turn、跨 owner 或需要持续推进，创建或更新 `.codex/pm-progress.md`：记录 PM goal、active work、checkout/branch、固定 owner、任务类型、状态、下一步、阻塞、验证和已合并结果；短小单次任务可跳过，但交付时说明原因。修改 progress file 后，如果 Active Work 仍有未完成项，立即确保当前 thread goal 是完成 `.codex/pm-progress.md` 中的 Active Work。
+4. 判断任务类型和约束，但不要因此新建临时 owner。新功能/错误修复/现有功能修改、性能优化、重构或代码健康任务，都派发给目标 checkout 绑定的固定 owner；PM 在委派消息中写清任务类型和需要遵守的 owner 规则。
+5. 从四个固定 checkout 中选择满足依赖条件的空闲目录；必要时准备或同步固定开发目录；确认或创建该 checkout 绑定的固定 owner；把 checkout、branch、owner、任务类型、依赖关系、主要文件范围、基线 commit 和 next action 写入 progress file，同时确保 in-progress owner 不超过四个且每个 checkout 只有一个 active task。
 6. 派发前检查依赖方向：如果任务依赖另一 checkout 尚未完成/未合并的改动，先排队或合并/同步依赖，不要把任务派到缺少依赖代码的 checkout；如果两个任务会修改同一共享 contract、schema、协议或高冲突文件，默认串行，除非拆分出明确无交叉的文件归属。
-7. 在目标 checkout 委派 owner，消息中包含完整背景、证据、范围、依赖、约束、验收和交付格式。
+7. 通过 `followup_task` 向目标 checkout 的固定 owner 委派任务，消息中包含完整背景、证据、范围、依赖、约束、验收和交付格式。只有固定 owner thread 不存在或不可用时，才用固定 task_name 创建对应 owner，然后立刻发送任务；不要为任务生成新的 owner path。
 8. 收到 owner/reviewer 或 runtime event 后，先更新 progress file，再决定继续、返工、验证或合并；reviewer 结论有阻塞问题时，退回同一 owner 返工，并要求 owner 复用同一 reviewer 线程复审；review 无阻塞后再验收 owner 自行运行的测试结果。
 9. 明确没问题后合并回主 checkout，处理冲突，把任务从 Active Work 移到 Completed，并汇报验证证据和剩余风险；随后同步所有空闲 checkout，正在开发的 checkout 只记录待同步 commit 和原因。
 
@@ -60,6 +58,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
   owner:
   checkout:
   branch:
+  task_type:
   depends_on:
   files:
   base_commit:
@@ -87,7 +86,10 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 
 ```text
 角色：
-你是本任务 owner，负责在 <checkout>、分支 <branch> 内完成交付。
+你是 <checkout> 绑定的固定 owner，负责在该 checkout、分支 <branch> 内串行完成本任务。不要切换到其他 checkout，不要接手依赖未同步的任务。
+
+任务类型：
+<feature | bugfix | refactor | performance | docs/spec；说明是否需要采用 feature-owner/refactor-owner/performance-owner 的对应工作约束>
 
 目标：
 <用户可感知结果>
@@ -149,7 +151,7 @@ UI/UE 要求：
 ## 质量门禁
 
 - owner 已完成必要探索、设计或技术方案、实现、只委派一个独立 `@code-review` 完成代码评审并多轮复审到无阻塞问题，在开发或修改后更新 `AGENTS.md` 维护当前仓库状态；owner 在 review 通过后自行运行必要测试和构建，并汇总 reviewer 与自测结论。
-- 修复错误、新功能和修改现有功能必须使用 `@feature-owner`，并且必须委派独立 `@code-review` 只做代码评审；Rust/Cargo 验证由 owner 在 review 通过后在所属 checkout 串行执行。reviewer 结论有阻塞问题或 owner 测试命令失败时不得进入合并。
+- 修复错误、新功能和修改现有功能必须派给目标 checkout 的固定 owner，并且必须由该 owner 委派独立 `@code-review` 只做代码评审；Rust/Cargo 验证由 owner 在 review 通过后在所属 checkout 串行执行。reviewer 结论有阻塞问题或 owner 测试命令失败时不得进入合并。
 - 实现遵循本地模式，有聚焦测试，覆盖边界情况，并避免无关改动。
 - owner 提供 reviewer 的代码 review 结论和 owner 自行运行的 Rust/Cargo 命令结果；PM 抽查关键验证或说明未抽查原因。
 - PM 确认 checkout diff、冲突、review 与验证证据、`AGENTS.md` 更新情况、依赖关系和合并顺序。

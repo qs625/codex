@@ -18,6 +18,10 @@ None
   summary: 将 PM 协作规则扩展为四个固定 checkout：`~/Projects/my-codex`、`~/Projects/my-codex-dev`、`~/Projects/my-codex-dev-2`、`~/Projects/my-codex-dev-3`，并明确任务依赖判断、合并顺序和空闲 checkout 同步策略。
   validation: `rtk node --check .codex/workflows/feature-dev/workflow.ts` 通过；`rtk git worktree list` 确认四个 checkout 已同步到同一基线；原生 `find -type l` 确认没有 target/node_modules 共享链接。
   residual_risk: 新增 checkout 尚未安装 JS 依赖或生成 Rust target；首次验证会各自独立构建。
+- commit: current
+  summary: 将 PM 派发规则改为四个 checkout 各绑定一个长期 owner thread，PM 复用固定 owner 串行处理该 checkout 的任务，不再为每个任务新建 owner；同时标明 dynamic workflow 的 owner 绑定范围是单个 run，不作为 PM 固定 owner 池入口。
+  validation: `rtk node --check .codex/workflows/feature-dev/workflow.ts` 通过；文档搜索确认固定 owner 映射已写入 PM 规则，workflow 文档已标明 run-scoped owner 绑定限制。
+  residual_risk: 当前 workflow SDK 仍按 workflow run 绑定 `Agent(id)`；PM 常规派发应直接复用固定 owner thread，不通过 `feature-dev` workflow 入口。
 
 ## Known Issues
 
