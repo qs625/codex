@@ -65,6 +65,9 @@
     - `codex-memories-write` 调用面已初步盘点：`start.rs` 负责入口 eligibility 和创建 `MemoryStartupContext`；`runtime.rs` 负责 telemetry、model info、stage-one model streaming、内部 consolidation agent spawn/submit/shutdown；`phase1.rs` 负责 rollout 读取、prompt 构造和 state-db job 结果写入；`phase2.rs` 负责 memory workspace sync、内部 agent loop/heartbeat/token usage；`guard.rs` 只需要 rate-limit 配置字段和 auth manager。
     - `memories-write` 拆 core 的关键不是单个 util，而是需要 host-provided facade：一层负责 thread/runtime 操作（state_db、config snapshot、model info、spawn internal thread、submit prompt、agent status/token usage/shutdown），另一层负责 stage-one model sampling（或把 `ModelClient`/`Prompt` 迁到更小 crate）。直接在小 crate 里复刻 `ThreadManager`/`CodexThread` 会扩大耦合，不应这样做。
     - `memories-write` 已先清理明显 core re-export：`RolloutRecorder` 改为直接使用 `codex-rollout`，`ResponseEvent` 改为直接使用 `codex-api`，简单的 `content_items_to_text` 本地化；剩余 core 引用集中在 `Config`、`Prompt`、`ModelClient`、`ThreadManager`/`CodexThread`、`resolve_installation_id` 和 `build_turn_metadata_header`。
+    - 下一步 facade 形状应让 `memories-write` 暴露 `MemoryStartupRuntime` / `MemoryConsolidationAgent` 这类 host runtime trait，而不是继续接受 `ThreadManager`、`CodexThread`、`Config`。app-server/core adapter 捕获现有 `ThreadManager`、foreground `CodexThread` 和 `Config`，实现 state-db 访问、stage-one request context、stage-one prompt streaming、consolidation agent spawn/submit、status/token usage/shutdown。
+    - `memories-write` 自身应只保留业务配置子集，例如 `codex_home`、`MemoriesConfig`、telemetry 所需的 model/provider/log_user_prompt 字段和 feature eligibility 的布尔结果；`phase1`/`phase2` 不应直接 clone 或 mutate core `Config`。phase2 的 consolidation locked-down config 构造可以下沉到 app-server/core adapter，`memories-write` 只传 root、prompt 和期望 model/reasoning effort。
+    - stage-one prompt 应在 `memories-write` 内表示为轻量 `StageOnePromptRequest`（base instructions、user text、output schema、strict flag），由 adapter 转成 core `Prompt` 并调用 `ModelClient`；这样 `Prompt`、`ModelClient`、`resolve_installation_id`、`build_turn_metadata_header` 都留在 core adapter 侧。
   validation:
     - `rtk cargo check -p codex-utils-backoff -p codex-cloud-requirements -p codex-app-server-transport` 通过。
     - `rtk cargo test -p codex-utils-backoff` 通过，2 个测试通过。
@@ -80,7 +83,7 @@
     - `memories-write` re-export 清理后执行 `rtk cargo check -p codex-memories-write` 通过，退出码 0。
     - `memories-write` re-export 清理后对触碰文件执行 `rtk rustfmt --check memories/write/src/runtime.rs memories/write/src/phase1.rs` 通过；命令仍打印 workspace rustfmt 配置中 nightly-only `imports_granularity = Item` warning。
     - `rtk rustfmt --check ...` 对本次触碰的 Rust 文件通过；全 workspace `cargo fmt --check` 仍被既有未格式化文件阻断。
-  next_action: 进入 `memories-write` 阶段，先盘点 `CodexThread`、`ThreadManager`、`ModelClient`、`Prompt`、`ResponseEvent`、`RolloutRecorder` 等调用面，再设计 thread/model/runtime facade；不要把该较大拆分和已完成的 `file-subscription` patch 混合。
+  next_action: 实施 `memories-write` runtime facade：先新增 trait/settings/request 类型并把 phase1/phase2 改成不接收 core `Config`；再在 app-server 侧实现 core adapter；最后移除 `codex-memories-write` 的 normal `codex-core` 依赖并验证 app-server 反向依赖树。
 
 ## Completed
 
