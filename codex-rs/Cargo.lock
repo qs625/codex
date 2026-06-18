@@ -2094,6 +2094,8 @@ dependencies = [
  "codex-state",
  "codex-uds",
  "codex-utils-absolute-path",
+ "codex-utils-backoff",
+ "codex-utils-home-dir",
  "codex-utils-rustls-provider",
  "constant_time_eq 0.3.1",
  "futures",
@@ -2339,10 +2341,10 @@ dependencies = [
  "chrono",
  "codex-backend-client",
  "codex-config",
- "codex-core",
  "codex-login",
  "codex-otel",
  "codex-protocol",
+ "codex-utils-backoff",
  "hmac",
  "pretty_assertions",
  "serde",
@@ -2561,6 +2563,7 @@ dependencies = [
  "codex-thread-store",
  "codex-tools",
  "codex-utils-absolute-path",
+ "codex-utils-backoff",
  "codex-utils-cache",
  "codex-utils-cargo-bin",
  "codex-utils-home-dir",
@@ -3949,6 +3952,13 @@ name = "codex-utils-approval-presets"
 version = "0.0.0"
 dependencies = [
  "codex-protocol",
+]
+
+[[package]]
+name = "codex-utils-backoff"
+version = "0.0.0"
+dependencies = [
+ "rand 0.9.3",
 ]
 
 [[package]]

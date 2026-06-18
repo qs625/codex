@@ -82,6 +82,7 @@ members = [
     "tools",
     "v8-poc",
     "utils/absolute-path",
+    "utils/backoff",
     "utils/cargo-bin",
     "git-utils",
     "utils/cache",
@@ -220,6 +221,7 @@ codex-tui = { path = "tui" }
 codex-uds = { path = "uds" }
 codex-utils-absolute-path = { path = "utils/absolute-path" }
 codex-utils-approval-presets = { path = "utils/approval-presets" }
+codex-utils-backoff = { path = "utils/backoff" }
 codex-utils-cache = { path = "utils/cache" }
 codex-utils-cargo-bin = { path = "utils/cargo-bin" }
 codex-utils-cli = { path = "utils/cli" }

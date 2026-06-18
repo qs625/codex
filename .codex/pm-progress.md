@@ -2,11 +2,46 @@
 
 ## Current Goal
 
-None
+优化 `codex-app-server` 编译时间：基于主 checkout 的 Cargo timing 和依赖拓扑，逐步拆除 app-server 路径上不必要的 `codex-core` 依赖，并完成验证与交付。
 
 ## Active Work
 
-None
+- id: app-server-compile-time-topology
+  execution_mode: performance_refactor_exclusive
+  workdir: /Users/bytedance/Projects/my-codex
+  owner: root PM direct implementation
+  status: active
+  started_at: 2026-06-18 14:14:52 CST
+  context:
+    - 测量命令：`rtk cargo build --timings -p codex-app-server --bin codex-app-server`，在主 checkout `codex-rs` 执行。
+    - 本次使用主 checkout 独立 `codex-rs/target`，不使用共享 target。
+    - wall time 约 106.67s；Cargo timing 中 `codex-core` 单 unit 202.58s，是最大瓶颈。
+    - app-server 路径上依赖 `codex-core` 的本地 crate 包括 `codex-app-server`、`codex-app-server-transport`、`codex-chatgpt`、`codex-cloud-requirements`、`codex-file-subscription`、`codex-guardian`、`codex-memories-write`。
+  plan:
+    - step: 1
+      status: completed
+      description: 拆出低风险 `backoff` helper 到轻量 util crate，让 `codex-cloud-requirements` 和 `codex-app-server-transport` 不再为了 `codex_core::util::backoff` 依赖 `codex-core`。
+    - step: 2
+      status: completed
+      description: 运行最小验证，确认相关 crate 编译通过，并检查 `cargo tree -p codex-app-server --invert codex-core --edges normal` 中 `codex-cloud-requirements` 是否脱离 core；`app-server-transport` 若仍因测试或其他 API 依赖 core，则记录剩余原因。
+    - step: 3
+      status: completed
+      description: 评估下一层拆分：`Config` 边界、connector helper、unified exec/command runtime handle、thread runtime facade，按收益和风险排序。
+    - step: 4
+      status: completed
+      description: 若第 1 阶段收益明确且验证通过，提交本阶段改动；更大拆分另开后续步骤，避免一次改动过大。
+  findings:
+    - 已新增 `codex-utils-backoff`，`codex-core::util::backoff` 保留为 re-export。
+    - `codex-cloud-requirements` 已移除 `codex-core` 依赖；`cargo tree -p codex-app-server --invert codex-core --edges normal` 中该 crate 已消失。
+    - `codex-app-server-transport` 的 backoff 调用已迁移，并把生产代码的 `find_codex_home` 改为 `codex-utils-home-dir`；`codex-core` 仅保留为 dev-dependency 供测试支持 API 使用。
+    - 当前 `cargo tree -p codex-app-server --invert codex-core --edges normal` 剩余路径为 `codex-app-server`、`codex-chatgpt`、`codex-file-subscription`、`codex-guardian`、`codex-memories-write`。其中 `chatgpt`/`guardian` 主要卡 `Config` 仍在 core，`file-subscription`/`memories-write` 牵涉 thread/runtime handle，应作为后续较大拆分处理。
+  validation:
+    - `rtk cargo check -p codex-utils-backoff -p codex-cloud-requirements -p codex-app-server-transport` 通过。
+    - `rtk cargo test -p codex-utils-backoff` 通过，2 个测试通过。
+    - `rtk cargo check -p codex-app-server --bin codex-app-server` 通过。
+    - `rtk cargo build --timings -p codex-app-server --bin codex-app-server` 通过，warm-target wall time 约 100s；最新 timing 为 `target/cargo-timings/cargo-timing-20260618T062735.642709Z.html`。
+    - `rtk rustfmt --check ...` 对本次触碰的 Rust 文件通过；全 workspace `cargo fmt --check` 仍被既有未格式化文件阻断。
+  next_action: 更大收益的下一阶段应优先设计 `Config` 从 core 拆出的边界，再处理 runtime handle；本阶段改动可先独立提交。
 
 ## Completed
 
