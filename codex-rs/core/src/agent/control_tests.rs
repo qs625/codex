@@ -1286,7 +1286,7 @@ async fn spawn_child_completion_notifies_parent_history() {
 #[tokio::test]
 async fn multi_agent_v2_completion_ignores_dead_direct_parent() {
     let harness = AgentControlHarness::new().await;
-    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let (root_thread_id, root_thread) = harness.start_thread().await;
     let mut config = harness.config.clone();
     let _ = config.features.enable(Feature::MultiAgentV2);
     let worker_path = AgentPath::root().join("worker_a").expect("worker path");
@@ -1737,9 +1737,7 @@ async fn goal_post_turn_state_continues_despite_live_direct_child() {
         .await;
     assert_eq!(
         parent_thread.codex.session.thread_post_turn_state().await,
-        ThreadPostTurnState::GoContextContinuation {
-            goal_id,
-        }
+        ThreadPostTurnState::GoContextContinuation { goal_id }
     );
 }
 

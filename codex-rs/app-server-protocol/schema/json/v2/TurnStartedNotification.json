@@ -208,12 +208,12 @@
     },
     "CollabAgentTool": {
       "enum": [
-        "closeAgent",
-        "listAgents",
-        "resumeAgent",
-        "sendInput",
         "spawnAgent",
-        "wait"
+        "sendInput",
+        "resumeAgent",
+        "wait",
+        "listAgents",
+        "closeAgent"
       ],
       "type": "string"
     },

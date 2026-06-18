@@ -23,6 +23,8 @@ use crate::tools::events::ToolEventStage;
 use crate::turn_timing::now_unix_timestamp_ms;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::exec_output::StreamOutput;
+use codex_protocol::models::CommandExecutionNotificationKind;
+use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandNotifyOn;
 use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
@@ -204,19 +206,33 @@ async fn process_chunk(
 
         let generates_notification = matches!(notify_on, CommandNotificationFilter::Output)
             && notification_state.is_background_session_active();
+        let sequence = *emitted_deltas as u64 + 1;
         let event = ExecCommandOutputDeltaEvent {
             call_id: call_id.to_string(),
-            sequence: Some(*emitted_deltas as u64 + 1),
+            sequence: Some(sequence),
             generates_notification,
             created_at_ms: now_unix_timestamp_ms(),
             stream: ExecOutputStream::Stdout,
-            chunk: prefix,
+            chunk: prefix.clone(),
         };
         session_ref
             .send_event(turn_ref.as_ref(), EventMsg::ExecCommandOutputDelta(event))
             .await;
         *emitted_deltas += 1;
         if generates_notification {
+            let output = String::from_utf8_lossy(&prefix).to_string();
+            let item = ResponseItem::CommandExecutionNotification {
+                id: Some(format!("{call_id}:notification:output:{sequence}")),
+                command_item_id: call_id.to_string(),
+                kind: CommandExecutionNotificationKind::Output,
+                message: "Command output notification received.".to_string(),
+                output: Some(output),
+                exit_code: None,
+                created_at_ms: now_unix_timestamp_ms(),
+            };
+            session_ref
+                .record_model_items_and_emit_display_events(turn_ref.as_ref(), &[item])
+                .await;
             notification_state
                 .notify(CommandNotificationKind::Output)
                 .await;

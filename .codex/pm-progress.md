@@ -2,13 +2,73 @@
 
 ## Current Goal
 
-None
+Complete all Active Work recorded in this progress file.
+
+## Coordination Lock
+
+- Rust/Cargo validation is globally serialized. The fixed tester `/root/my_codex_pm/rust_cargo_tester` was closed once to clear queued validation work.
+- PM must not create the fixed tester with `agent_mode = management`; otherwise tester completion is not delivered to the PM parent. Use a normal tester so completion is automatically delivered, or explicitly require a PM followup if management mode is ever unavoidable.
+- Active validation slot: `init-context-client-display-20260617-014-quiet-app-server-check`.
+- PM must keep exactly one validation request active, record the result here, close or reuse the tester only after completion, and only then allow the next task's validation.
+- Owners must not send new fixed tester requests until PM explicitly grants the validation slot.
 
 ## Active Work
 
-- None. Verified on 2026-06-17 after merging command-wait-timeout-display that no
-  planned, in-progress, review, testing, blocked, or ready-to-merge work remains in this
-  PM tracker.
+- id: thread-status-active-idle-complete
+  owner: /root/my_codex_pm/thread_status_active_idle_complete_owner
+  worktree: /Users/bytedance/Projects/my-codex/.worktrees/thread-status-active-idle-complete
+  branch: agent/thread-status-active-idle-complete
+  status: in_progress
+  objective: Redesign thread status around Active, Idle(WaitCommand | WaitChild), and Complete. Active means a turn is running or starting to consume pending input. Goal continuation now triggers at turn end whenever there is no pending input, even if direct children or commands are still incomplete; explicit `wait_agent` / `command_wait` remain the model-controlled blocking waits. Ordinary non-management direct child completion must reliably deliver typed child completion pending input to the parent and wake the parent turn; parent-visible child completion must only be set when the parent starts a turn and consumes that typed pending input, while direct child incompleteness is checked only at the direct-child boundary and recursion is handled by the protocol.
+  last_update: 2026-06-17
+  next_action: Owner must cover both latest requirements: post-turn active goal continuation runs whenever there is no pending input, and ordinary direct child completion reliably wakes the parent with typed pending input; then reuse the same reviewer and wait for PM validation slot.
+  blockers: None.
+  validation: pending
+  commit: pending
+- id: init-context-client-display
+  owner: /root/my_codex_pm/init_context_client_display_owner
+  worktree: /Users/bytedance/Projects/my-codex/.worktrees/init-context-client-display
+  branch: agent/init-context-client-display
+  status: validating
+  objective: Fix client Conversation still not showing Init Context items by tracing whether display-capable EventMsg is emitted, projected to ThreadItem, persisted/replayed through app-server v2, and consumed by root-worker; restore typed Init Context display without raw marker or ResponseItem display fallback.
+  last_update: 2026-06-17
+  next_action: Wait for fixed tester request `init-context-client-display-20260617-014-quiet-app-server-check`; use the diagnostics to fix this same worktree before validating any later task.
+  blockers: None.
+  validation: fixed tester request `init-context-client-display-20260617-010-serial-validation` passed `rtk cargo test -p codex-rollout limited_mode_persists_injected_context_item_completed`; the app-server test command used the wrong target name (`--test suite` instead of `--test all`). Request `init-context-client-display-20260617-011-correct-app-server-target` exposed that this worktree needed the already-merged workflow binding change from main; PM fast-forwarded the worktree to `feat/tool-callback`. Requests `init-context-client-display-20260617-012-after-main-merge` and `init-context-client-display-20260617-013-app-server-check-diagnostics` still had app-server check/build exit 101 with output truncated before the actual error. Active request runs `rtk env RUSTFLAGS=-Awarnings cargo check -q -p codex-app-server` to suppress warnings and expose the error.
+  commit: pending
+- id: workflow-slash-commands-client-display
+  owner: /root/my_codex_pm/workflow_slash_commands_client_display_owner
+  worktree: /Users/bytedance/Projects/my-codex/.worktrees/workflow-slash-commands-client-display
+  branch: agent/workflow-slash-commands-client-display
+  status: blocked
+  objective: Restore workflow-related client UX in root-worker: workflow slash commands should appear in the slash menu and workflow runs should show the corresponding workflow graph/progress in the client. Workflow-created threads should be visibly associated with their workflow/run in the client. Trace workflow discovery/init context/app-server v2 data flow, client command registry/rendering, and workflow progress display without hardcoding non-runtime commands as builtins when they should come from discovery.
+  last_update: 2026-06-17
+  next_action: Resolve or diagnose fixed tester `codex-app-server` Rust validation exit 101 with empty stdout/stderr before merge.
+  blockers: Fixed tester reported `codex-app-server workflow` tests and `cargo build -p codex-app-server --bin codex-app-server` exit 101 with empty stdout/stderr; cause unknown.
+  validation: owner reported frontend build and focused slash/conversation tests passed; reviewer passed; fixed tester app-server-protocol workflow filter passed; full root-worker test still has known unrelated contextUsage failure.
+  commit: 8845cf1
+- id: gpt-auth-settings-workflow-test
+  owner: workflow:feature-dev
+  worktree: /Users/bytedance/Projects/my-codex/.worktrees/gpt-auth-settings-workflow
+  branch: agent/gpt-auth-settings-workflow
+  status: blocked
+  objective: Use the current feature-dev workflow to implement a small feature in the root-worker client settings: surface GPT/ChatGPT authentication status and let users start browser-based GPT login verification through the backend/app-server/CLI auth flow, without exposing tokens in the client.
+  last_update: 2026-06-17
+  next_action: Do not merge current branch. Rework this after workflow behavior is adjusted; current branch only contains design/spec artifacts and no completed product implementation.
+  blockers: feature is not implemented. A merge attempt was aborted because GPT auth settings work is incomplete.
+  validation: not run; not ready.
+  commit: 921aa8a design-only branch commit, intentionally not merged
+- id: feature-dev-workflow-orchestration-fix
+  owner: /root/my_codex_pm/feature_dev_workflow_orchestration_fix_owner
+  worktree: /Users/bytedance/Projects/my-codex/.worktrees/feature-dev-workflow-orchestration-fix
+  branch: agent/feature-dev-workflow-orchestration-fix
+  status: completed
+  objective: Fix feature-dev workflow orchestration so Research/Implement/Review/Fix/Verify waits for real agent completion results instead of passing `undefined`, verification follows the project fixed tester protocol instead of spawning `/root/my_codex_pm/tester` with a free-form message, and workflow SDK usage does not require callers to pass agent names/canonical paths when runtime can create canonical paths from stage ids.
+  last_update: 2026-06-17
+  next_action: None.
+  blockers: None.
+  validation: fixed tester request `feature-dev-workflow-orchestration-fix-20260617-001` passed `rtk cargo test -p codex-workflow` and `rtk cargo build -p codex-app-server --bin codex-app-server`; diagnostic request `feature-dev-workflow-orchestration-fix-20260617-002-core-workflow-stack-diagnostic` exposed a failing unit test, which owner fixed and reviewer approved. Request `feature-dev-workflow-orchestration-fix-20260617-003-after-root-slug-fix` passed workflow crate tests and app-server build but still returned exit 101 for the broad core workflow filter without the failure detail. Request `feature-dev-workflow-orchestration-fix-20260617-004-quiet-core-workflow-diagnostic` passed `rtk env RUST_MIN_STACK=16777216 cargo test -q -p codex-core workflow -- --test-threads=1`.
+  commit: d0b085192b840ec203b3d6ef1844d3f1abaec4a9
 
 ## Design Direction
 
@@ -16,9 +76,11 @@ None
 - `Active` means a turn is currently running, or a pending-input turn is being started immediately.
 - `Idle` means no turn is running, but direct children or wait_command state still prevent completion; schedule/event-tool recurring waits are out of scope for this lifecycle decision for now.
 - `Complete` means no active turn, no pending input, no incomplete direct child, no wait_command, and no active goal continuation to run.
-- Lifecycle evaluation order is fixed: pending input -> incomplete direct child -> wait_command -> active goal continuation -> complete.
+- Lifecycle evaluation order is fixed: pending input -> active goal continuation -> incomplete direct child -> wait_command -> complete.
+- Active goal continuation triggers when a turn ends and there is no pending input. Incomplete direct children and running commands keep the thread from becoming complete, but they do not suppress goal continuation.
 - The evaluator only needs direct-child status; recursive behavior is produced naturally because a child cannot notify its parent until its own direct children are complete.
 - Non-management subagents do not become parent-visible complete at their own turn finish. They first send a child completion message carrying their agent path; the parent marks that direct child complete when it starts a turn that consumes the completion message.
+- It is a bug if `list_agents` can see a non-management direct child as completed but the parent never receives a typed child completion pending input / wakeup. The status update and parent delivery must be coordinated by the lifecycle protocol, not inferred later from `list_agents`.
 - `agent_mode = management` is exempt from parent completion delivery and may transition directly to `Complete` when its own local lifecycle permits it.
 - The fixed Rust/Cargo tester path `/root/my_codex_pm/rust_cargo_tester` is created by PM as a management task. Owner and reviewer must not create tester threads; owner sends concrete validation JSON with `followup_task` to this fixed tester path. Tester returns raw command outputs directly to the requesting owner and does not need to notify PM when it completes.
 - `command_wait` display lifecycle should show a started ThreadItem at model tool-call start and a completed ThreadItem at return using the same item id; `CommandWait.wait_timeout_ms` must be the current window for that call, with the initial window derived from the originating `exec_command` effective `initial_wait_ms`.
@@ -63,6 +125,10 @@ None
 
 ## Completed
 
+- commit: `2aadc8ced`
+  summary: Fixed project `feature-dev` workflow startup by creating typed explorer/owner/reviewer/tester agents with `fork_turns: "none"` instead of full-history fork, and updated workflow/spec/AGENTS guidance.
+  validation: Owner reported reviewer passed with no blockers; `rtk node --check .codex/workflows/feature-dev/workflow.ts` passed; `rtk rg` confirmed four `wf.Agent` calls include `fork_turns: "none"`.
+  residual_risk: PM still needs to restart the GPT auth settings workflow from the updated main checkout to verify the workflow reaches agent stages.
 - commit: `5090f7476`
   summary: Merged command wait and client display fixes: stable command_wait duration formatting, typed Init Context display/replay with Agent file instructions, backend ThreadStatus-driven root-worker thinking state, obsolete SendMessage display normalization, and typed list_agents display through live/read paths.
   validation: Owner reported same reviewer passed all rounds with no blockers; frontend checks passed (`rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts`, `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts`, `rtk pnpm --dir apps/root-worker-prototype build`); fixed tester passed Init Context tests, list_agents protocol tests, failed list_agents trace test, affected crate checks, and after stale metadata cleanup `rtk proxy cargo build -p codex-app-server --bin codex-app-server`.

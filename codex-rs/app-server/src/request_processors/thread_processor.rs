@@ -3900,7 +3900,7 @@ async fn load_initial_injected_context_turns(
 
 fn initial_injected_context_turns_from_items(items: &[RolloutItem]) -> Vec<Turn> {
     let mut turns =
-        reconstruct_thread_turns_for_turns_list(items, ThreadStatus::Idle, false, None);
+        reconstruct_thread_turns_for_turns_list(items, ThreadStatus::Complete, false, None);
     for turn in &mut turns {
         turn.items
             .retain(|item| matches!(item, ThreadItem::InjectedContext { .. }));
@@ -3923,9 +3923,11 @@ async fn read_thread_history_items(
             include_history: true,
         })
         .await?;
-    let history = stored_thread.history.ok_or_else(|| ThreadStoreError::Internal {
-        message: format!("thread store did not return history for thread {thread_id}"),
-    })?;
+    let history = stored_thread
+        .history
+        .ok_or_else(|| ThreadStoreError::Internal {
+            message: format!("thread store did not return history for thread {thread_id}"),
+        })?;
     Ok(history.items)
 }
 

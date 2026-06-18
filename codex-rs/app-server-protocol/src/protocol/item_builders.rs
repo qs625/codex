@@ -12,7 +12,6 @@
 use crate::protocol::common::ServerNotification;
 use crate::protocol::v2::AutoReviewDecisionSource;
 use crate::protocol::v2::CommandAction;
-use crate::protocol::v2::CommandExecutionNotificationKind;
 use crate::protocol::v2::CommandExecutionNotifyOn;
 use crate::protocol::v2::CommandExecutionSource;
 use crate::protocol::v2::CommandExecutionStatus;
@@ -30,7 +29,6 @@ use codex_protocol::protocol::ExecApprovalRequestEvent;
 use codex_protocol::protocol::ExecCommandBeginEvent;
 use codex_protocol::protocol::ExecCommandEndEvent;
 use codex_protocol::protocol::ExecCommandNotifyOn as CoreExecCommandNotifyOn;
-use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::GuardianAssessmentAction;
 use codex_protocol::protocol::GuardianAssessmentEvent;
@@ -153,46 +151,6 @@ pub fn build_command_execution_end_item(payload: &ExecCommandEndEvent) -> Thread
         exit_code: Some(payload.exit_code),
         duration_ms: Some(duration_ms),
     }
-}
-
-pub fn build_command_execution_output_notification_item(
-    payload: &ExecCommandOutputDeltaEvent,
-) -> Option<ThreadItem> {
-    if !payload.generates_notification {
-        return None;
-    }
-
-    let sequence = payload.sequence?;
-    let output = String::from_utf8_lossy(&payload.chunk).to_string();
-    Some(ThreadItem::CommandExecutionNotification {
-        id: format!("{}:notification:output:{sequence}", payload.call_id),
-        command_item_id: payload.call_id.clone(),
-        kind: CommandExecutionNotificationKind::Output,
-        message: "Command output notification received.".to_string(),
-        output: Some(output),
-        exit_code: None,
-        created_at_ms: payload.created_at_ms,
-    })
-}
-
-pub fn build_command_execution_exit_notification_item(
-    payload: &ExecCommandEndEvent,
-) -> Option<ThreadItem> {
-    if CommandExecutionSource::from(payload.source) == CommandExecutionSource::UnifiedExecStartup
-        && payload.process_id.is_none()
-    {
-        return None;
-    }
-
-    Some(ThreadItem::CommandExecutionNotification {
-        id: format!("{}:notification:exit", payload.call_id),
-        command_item_id: payload.call_id.clone(),
-        kind: CommandExecutionNotificationKind::Exit,
-        message: "Command exit notification received.".to_string(),
-        output: None,
-        exit_code: Some(payload.exit_code),
-        created_at_ms: payload.completed_at_ms,
-    })
 }
 
 /// Build a guardian-derived [`ThreadItem`].

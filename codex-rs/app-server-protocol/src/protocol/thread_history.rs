@@ -2,8 +2,6 @@ use crate::protocol::event_item_projection::ProjectedEventItem;
 use crate::protocol::event_item_projection::project_event_msg_item;
 use crate::protocol::item_builders::build_command_execution_begin_item;
 use crate::protocol::item_builders::build_command_execution_end_item;
-use crate::protocol::item_builders::build_command_execution_exit_notification_item;
-use crate::protocol::item_builders::build_command_execution_output_notification_item;
 use crate::protocol::item_builders::build_file_change_approval_request_item;
 use crate::protocol::item_builders::build_file_change_begin_item;
 use crate::protocol::item_builders::build_file_change_end_item;
@@ -504,12 +502,7 @@ impl ThreadHistoryBuilder {
         self.upsert_item_in_turn_id(&payload.turn_id, item);
     }
 
-    fn handle_exec_command_output_delta(&mut self, payload: &ExecCommandOutputDeltaEvent) {
-        let Some(item) = build_command_execution_output_notification_item(payload) else {
-            return;
-        };
-        self.upsert_item_in_current_turn(item);
-    }
+    fn handle_exec_command_output_delta(&mut self, _payload: &ExecCommandOutputDeltaEvent) {}
 
     fn handle_exec_command_end(&mut self, payload: &ExecCommandEndEvent) {
         let item = build_command_execution_end_item(payload);
@@ -519,9 +512,6 @@ impl ThreadHistoryBuilder {
         // newer user turn may already have started. Route by event turn_id so
         // replay preserves the original turn association.
         self.upsert_item_in_turn_id(&payload.turn_id, item);
-        if let Some(item) = build_command_execution_exit_notification_item(payload) {
-            self.upsert_item_in_turn_id(&payload.turn_id, item);
-        }
     }
 
     fn handle_guardian_assessment(&mut self, payload: &GuardianAssessmentEvent) {
@@ -1577,6 +1567,7 @@ mod tests {
     use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
     use codex_protocol::protocol::AskForApproval;
     use codex_protocol::protocol::CodexErrorInfo;
+    use codex_protocol::protocol::CommandExecutionNotificationDisplayEvent;
     use codex_protocol::protocol::CompactedItem;
     use codex_protocol::protocol::DynamicToolCallResponseEvent;
     use codex_protocol::protocol::ExecCommandEndEvent;
@@ -3007,7 +2998,7 @@ mod tests {
             .collect::<Vec<_>>();
         let turns = build_turns_from_rollout_items(&items);
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items.len(), 5);
+        assert_eq!(turns[0].items.len(), 4);
         assert_eq!(
             turns[0].items[1],
             ThreadItem::WebSearch {
@@ -3040,18 +3031,6 @@ mod tests {
         );
         assert_eq!(
             turns[0].items[3],
-            ThreadItem::CommandExecutionNotification {
-                id: "exec-1:notification:exit".into(),
-                command_item_id: "exec-1".into(),
-                kind: CommandExecutionNotificationKind::Exit,
-                message: "Command exit notification received.".into(),
-                output: None,
-                exit_code: Some(0),
-                created_at_ms: 0,
-            }
-        );
-        assert_eq!(
-            turns[0].items[4],
             ThreadItem::McpToolCall {
                 id: "mcp-1".into(),
                 server: "docs".into(),
@@ -3105,7 +3084,7 @@ mod tests {
     }
 
     #[test]
-    fn background_exec_replay_creates_exit_notification_item() {
+    fn replays_command_execution_notification_completed_item() {
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".into(),
@@ -3113,24 +3092,34 @@ mod tests {
                 model_context_window: None,
                 collaboration_mode_kind: Default::default(),
             })),
-            RolloutItem::EventMsg(completed_exec_event(
-                "exec-background",
-                Some("pid-42".into()),
+            RolloutItem::EventMsg(EventMsg::CommandExecutionNotificationCompleted(
+                CommandExecutionNotificationDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "exec-background:notification:exit".into(),
+                    command_item_id: "exec-background".into(),
+                    kind: codex_protocol::models::CommandExecutionNotificationKind::Exit,
+                    message: "Command exit notification received.".into(),
+                    output: Some("done".into()),
+                    exit_code: Some(0),
+                    created_at_ms: 123,
+                    completed_at_ms: 124,
+                },
             )),
         ];
 
         let turns = build_turns_from_rollout_items(&items);
 
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items.len(), 2);
+        assert_eq!(turns[0].items.len(), 1);
         assert_eq!(
-            turns[0].items[1],
+            turns[0].items[0],
             ThreadItem::CommandExecutionNotification {
                 id: "exec-background:notification:exit".into(),
                 command_item_id: "exec-background".into(),
                 kind: CommandExecutionNotificationKind::Exit,
                 message: "Command exit notification received.".into(),
-                output: None,
+                output: Some("done".into()),
                 exit_code: Some(0),
                 created_at_ms: 123,
             }
@@ -4068,7 +4057,7 @@ mod tests {
             .collect::<Vec<_>>();
         let turns = build_turns_from_rollout_items(&items);
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items.len(), 4);
+        assert_eq!(turns[0].items.len(), 3);
         assert_eq!(
             turns[0].items[1],
             ThreadItem::CommandExecution {
@@ -4090,18 +4079,6 @@ mod tests {
         );
         assert_eq!(
             turns[0].items[2],
-            ThreadItem::CommandExecutionNotification {
-                id: "exec-declined:notification:exit".into(),
-                command_item_id: "exec-declined".into(),
-                kind: CommandExecutionNotificationKind::Exit,
-                message: "Command exit notification received.".into(),
-                output: None,
-                exit_code: Some(-1),
-                created_at_ms: 0,
-            }
-        );
-        assert_eq!(
-            turns[0].items[3],
             ThreadItem::FileChange {
                 id: "patch-declined".into(),
                 changes: vec![FileUpdateChange {
@@ -4341,20 +4318,8 @@ mod tests {
         assert_eq!(turns.len(), 2);
         assert_eq!(turns[0].id, "turn-a");
         assert_eq!(turns[1].id, "turn-b");
-        assert_eq!(turns[0].items.len(), 3);
+        assert_eq!(turns[0].items.len(), 2);
         assert_eq!(turns[1].items.len(), 1);
-        assert_eq!(
-            turns[0].items[2],
-            ThreadItem::CommandExecutionNotification {
-                id: "exec-late:notification:exit".into(),
-                command_item_id: "exec-late".into(),
-                kind: CommandExecutionNotificationKind::Exit,
-                message: "Command exit notification received.".into(),
-                output: None,
-                exit_code: Some(0),
-                created_at_ms: 0,
-            }
-        );
         assert_eq!(
             turns[0].items[1],
             ThreadItem::CommandExecution {

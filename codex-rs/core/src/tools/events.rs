@@ -10,6 +10,8 @@ use codex_protocol::error::SandboxErr;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::items::FileChangeItem;
 use codex_protocol::items::TurnItem;
+use codex_protocol::models::CommandExecutionNotificationKind;
+use codex_protocol::models::ResponseItem;
 use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandBeginEvent;
@@ -549,14 +551,18 @@ async fn emit_exec_end(
     exec_input: ExecCommandInput<'_>,
     exec_result: ExecCommandResult,
 ) {
+    let process_id = exec_input.process_id.map(str::to_owned);
+    let completed_at_ms = now_unix_timestamp_ms();
+    let exit_code = exec_result.exit_code;
+    let notification_output = exec_result.aggregated_output.clone();
     ctx.session
         .send_event(
             ctx.turn,
             EventMsg::ExecCommandEnd(ExecCommandEndEvent {
                 call_id: ctx.call_id.to_string(),
-                process_id: exec_input.process_id.map(str::to_owned),
+                process_id: process_id.clone(),
                 turn_id: ctx.turn.sub_id.clone(),
-                completed_at_ms: now_unix_timestamp_ms(),
+                completed_at_ms,
                 command: exec_input.command.to_vec(),
                 cwd: exec_input.cwd.clone(),
                 parsed_cmd: exec_input.parsed_cmd.to_vec(),
@@ -574,6 +580,20 @@ async fn emit_exec_end(
             }),
         )
         .await;
+    if process_id.is_some() {
+        let item = ResponseItem::CommandExecutionNotification {
+            id: Some(format!("{}:notification:exit", ctx.call_id)),
+            command_item_id: ctx.call_id.to_string(),
+            kind: CommandExecutionNotificationKind::Exit,
+            message: "Command exit notification received.".to_string(),
+            output: (!notification_output.is_empty()).then_some(notification_output),
+            exit_code: Some(exit_code),
+            created_at_ms: completed_at_ms,
+        };
+        ctx.session
+            .record_model_items_and_emit_display_events(ctx.turn, &[item])
+            .await;
+    }
 }
 
 async fn emit_patch_end(

@@ -6807,14 +6807,14 @@
         "type": "string"
       },
       "CollabAgentTool": {
-      "enum": [
-        "closeAgent",
-        "listAgents",
-        "resumeAgent",
-        "sendInput",
-        "spawnAgent",
-        "wait"
-      ],
+        "enum": [
+          "spawnAgent",
+          "sendInput",
+          "resumeAgent",
+          "wait",
+          "listAgents",
+          "closeAgent"
+        ],
         "type": "string"
       },
       "CollabAgentToolCallStatus": {
@@ -16120,7 +16120,7 @@
             "description": "Restored aggregate thread token usage, when available."
           },
           "turns": {
-            "description": "Only populated on `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read` (when `includeTurns` is true) responses. For all other responses and notifications returning a Thread, the turns field will be an empty list.",
+            "description": "Only populated on `thread/start`, `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read` (when `includeTurns` is true) responses. `thread/start` only includes initial injected context display items. For all other responses and notifications returning a Thread, the turns field will be an empty list.",
             "items": {
               "$ref": "#/definitions/v2/Turn"
             },

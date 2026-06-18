@@ -93,8 +93,9 @@ tokenUsage: ThreadTokenUsage | null,
  */
 contextUsage: ThreadContextUsage | null,
 /**
- * Only populated on `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read`
- * (when `includeTurns` is true) responses.
+ * Only populated on `thread/start`, `thread/resume`, `thread/rollback`, `thread/fork`, and
+ * `thread/read` (when `includeTurns` is true) responses.
+ * `thread/start` only includes initial injected context display items.
  * For all other responses and notifications returning a Thread,
  * the turns field will be an empty list.
  */
