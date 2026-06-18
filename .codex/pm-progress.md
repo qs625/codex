@@ -30,6 +30,10 @@ None
   summary: 补充 PM 调度规则：refactor、代码健康和 performance 任务为全局独占，只有没有 active 开发任务且 dev checkout 同步完成后才能启动；独占任务运行时不得并行启动开发任务或第二个独占任务。
   validation: `rtk node --check .codex/workflows/feature-dev/workflow.ts` 通过；文档搜索确认 PM 工作规则、标准流程和 progress 模板都包含 execution_mode 与独占约束。
   residual_risk: 独占规则依赖 PM 按 progress file 判断 active work；后续派发前必须先更新 progress。
+- commit: current
+  summary: 允许 refactor/performance 全局独占任务直接在主 checkout 工作，由固定 `owner_main` 承接；普通开发仍只派发到三个 dev checkout，PM 负责最终验收和同步空闲 dev。
+  validation: `rtk node --check .codex/workflows/feature-dev/workflow.ts` 通过；文档搜索确认 `owner_main` 只承接 refactor/performance 独占任务，普通开发仍只派发到 dev checkout。
+  residual_risk: refactor/performance 在主 checkout 工作时会占用集成分支；PM 必须确保 Active Work 为空且 dev 已同步后再启动。
 
 ## Known Issues
 

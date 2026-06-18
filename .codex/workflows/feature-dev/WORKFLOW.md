@@ -51,7 +51,7 @@ workflow 会在当前 workflow run 内创建并复用 agent session：
 `Agent(id)` 应在同一 workflow run 的 resume 时绑定回已有 agent session，不重复 spawn。
 这里的 `id` 是 workflow logical stage/binding id，不是 agent canonical path 或 name。runner 会把 `workflowRunId + stageId` 映射到实际 spawned agent path 并持久化 binding；workflow 脚本只引用 `explorer`、`owner`、`reviewer` 这类稳定 stage id，不手写或推导 canonical path。
 
-注意：PM 的常规开发调度使用三个固定开发 checkout owner：`owner_dev`、`owner_dev_2`、`owner_dev_3`；主 checkout 只用于 PM 集成合并。当前 workflow SDK 的 `Agent(id)` 绑定范围是单个 workflow run，因此 `feature-dev` 不适合作为 PM 固定 owner 池的派发入口；PM 不应为了普通开发任务启动 workflow 来绕过固定 owner 复用规则。只有用户明确要求测试或执行 dynamic workflow 时，才使用本 workflow。
+注意：PM 的常规开发调度使用三个固定开发 checkout owner：`owner_dev`、`owner_dev_2`、`owner_dev_3`；主 checkout 的 `owner_main` 只承接 refactor/performance 全局独占任务。当前 workflow SDK 的 `Agent(id)` 绑定范围是单个 workflow run，因此 `feature-dev` 不适合作为 PM 固定 owner 池的派发入口；PM 不应为了普通开发任务启动 workflow 来绕过固定 owner 复用规则。只有用户明确要求测试或执行 dynamic workflow 时，才使用本 workflow。
 
 当前 Rust runner 已能执行该 TypeScript entry，并在通过 `workflow_start` / `workflow_resume` model tool 启动时把 `Agent`、`followup`、`wait` 请求桥接到真实 MultiAgent V2 runtime。`Agent(id)` 的 binding 会持久化到 workflow run snapshot，resume 后同 id 返回已有 session，不重复 spawn。`wf.shell` 尚未安全接入 unified exec，调用时会返回明确 unsupported error。
 
