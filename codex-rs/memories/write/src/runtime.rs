@@ -1,12 +1,11 @@
+use codex_api::ResponseEvent;
 use codex_core::CodexThread;
 use codex_core::ModelClient;
 use codex_core::NewThread;
 use codex_core::Prompt;
-use codex_core::ResponseEvent;
 use codex_core::StartThreadOptions;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
-use codex_core::content_items_to_text;
 use codex_core::resolve_installation_id;
 use codex_features::Feature;
 use codex_login::AuthManager;
@@ -18,6 +17,7 @@ use codex_otel::TelemetryAuthMode;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::models::ContentItem;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::InitialHistory;
@@ -218,7 +218,7 @@ impl MemoryStartupContext {
                 ResponseEvent::OutputItemDone(item) => {
                     if result.is_empty()
                         && let codex_protocol::models::ResponseItem::Message { content, .. } = item
-                        && let Some(text) = content_items_to_text(&content)
+                        && let Some(text) = content_items_to_text(content.as_slice())
                     {
                         result.push_str(&text);
                     }
@@ -304,4 +304,17 @@ impl MemoryStartupContext {
 
         Ok(())
     }
+}
+
+fn content_items_to_text(content: &[ContentItem]) -> Option<String> {
+    let pieces = content
+        .iter()
+        .filter_map(|item| match item {
+            ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+                (!text.is_empty()).then_some(text.as_str())
+            }
+            ContentItem::InputImage { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    (!pieces.is_empty()).then(|| pieces.join("\n"))
 }

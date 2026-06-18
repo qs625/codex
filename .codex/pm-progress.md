@@ -43,7 +43,7 @@
       status: completed
       description: 对 `file-subscription` 阶段做最小验证：`rtk cargo check -p codex-file-subscription -p codex-app-server --bin codex-app-server`，并用 `rtk cargo tree -p codex-app-server --invert codex-core --edges normal` 确认该路径已脱离 core；通过后提交小阶段。
     - step: 9
-      status: pending
+      status: in_progress
       description: 单独盘点 `codex-memories-write` 对 core runtime 的依赖，设计 thread/model/runtime facade；该阶段涉及 `CodexThread`、`ModelClient`、`Prompt`、`ResponseEvent`、`RolloutRecorder` 等较大边界，不能和 `file-subscription` patch 混合。
     - step: 10
       status: pending
@@ -62,6 +62,9 @@
     - `codex-file-subscription` 已新增 `FileSubscriptionThreadRuntime` 边界，订阅 active count、event-driven trigger、event-command event、订阅 metadata 持久化和历史恢复都通过 host adapter 执行；app-server 侧用 `CoreFileSubscriptionThreadRuntime` 适配 `ThreadManager`。原先透传但未使用的 unified exec manager 参数已从该扩展路径移除。
     - `codex-file-subscription` 已移除 normal `codex-core` 依赖；当前 `cargo tree -p codex-app-server --invert codex-core --edges normal` 剩余路径为 `codex-app-server` 自身和 `codex-memories-write`。
     - `codex-memories-write` 同样直接使用 `CodexThread`、`ThreadManager`、`ModelClient`、`Prompt`、`ResponseEvent`、`RolloutRecorder` 等 core runtime 类型；这应作为 thread runtime facade 的较大拆分，不能和低风险 util/config 拆分混在一个小 patch。
+    - `codex-memories-write` 调用面已初步盘点：`start.rs` 负责入口 eligibility 和创建 `MemoryStartupContext`；`runtime.rs` 负责 telemetry、model info、stage-one model streaming、内部 consolidation agent spawn/submit/shutdown；`phase1.rs` 负责 rollout 读取、prompt 构造和 state-db job 结果写入；`phase2.rs` 负责 memory workspace sync、内部 agent loop/heartbeat/token usage；`guard.rs` 只需要 rate-limit 配置字段和 auth manager。
+    - `memories-write` 拆 core 的关键不是单个 util，而是需要 host-provided facade：一层负责 thread/runtime 操作（state_db、config snapshot、model info、spawn internal thread、submit prompt、agent status/token usage/shutdown），另一层负责 stage-one model sampling（或把 `ModelClient`/`Prompt` 迁到更小 crate）。直接在小 crate 里复刻 `ThreadManager`/`CodexThread` 会扩大耦合，不应这样做。
+    - `memories-write` 已先清理明显 core re-export：`RolloutRecorder` 改为直接使用 `codex-rollout`，`ResponseEvent` 改为直接使用 `codex-api`，简单的 `content_items_to_text` 本地化；剩余 core 引用集中在 `Config`、`Prompt`、`ModelClient`、`ThreadManager`/`CodexThread`、`resolve_installation_id` 和 `build_turn_metadata_header`。
   validation:
     - `rtk cargo check -p codex-utils-backoff -p codex-cloud-requirements -p codex-app-server-transport` 通过。
     - `rtk cargo test -p codex-utils-backoff` 通过，2 个测试通过。
@@ -74,6 +77,8 @@
     - `file-subscription` 拆分后执行 `rtk cargo check -p codex-file-subscription -p codex-app-server --bin codex-app-server` 通过，0 errors，42 warnings（均为既有 unused/dead_code 风格警告）。
     - `file-subscription` 拆分后执行 `rtk cargo tree -p codex-app-server --invert codex-core --edges normal`，确认 `codex-file-subscription` 已不在 `codex-core` normal 反向路径中。
     - 对本阶段触碰的 Rust 文件执行 `rtk rustfmt --check ...` 通过；命令仍打印 workspace rustfmt 配置中 nightly-only `imports_granularity = Item` warning。
+    - `memories-write` re-export 清理后执行 `rtk cargo check -p codex-memories-write` 通过，退出码 0。
+    - `memories-write` re-export 清理后对触碰文件执行 `rtk rustfmt --check memories/write/src/runtime.rs memories/write/src/phase1.rs` 通过；命令仍打印 workspace rustfmt 配置中 nightly-only `imports_granularity = Item` warning。
     - `rtk rustfmt --check ...` 对本次触碰的 Rust 文件通过；全 workspace `cargo fmt --check` 仍被既有未格式化文件阻断。
   next_action: 进入 `memories-write` 阶段，先盘点 `CodexThread`、`ThreadManager`、`ModelClient`、`Prompt`、`ResponseEvent`、`RolloutRecorder` 等调用面，再设计 thread/model/runtime facade；不要把该较大拆分和已完成的 `file-subscription` patch 混合。
 
