@@ -1,8 +1,8 @@
 use super::*;
 use crate::agent::control::ListedAgent;
 use crate::turn_timing::now_unix_timestamp_ms;
-use codex_tools::create_list_agents_tool;
 use codex_tools::ToolSpec;
+use codex_tools::create_list_agents_tool;
 
 pub(crate) struct Handler;
 

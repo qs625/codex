@@ -1,4 +1,5 @@
 mod accepted_lines;
+mod api_sink;
 mod client;
 mod events;
 mod facts;

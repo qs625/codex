@@ -1,8 +1,8 @@
 use super::*;
-use codex_feedback::FeedbackRequestTags;
-use codex_feedback::emit_feedback_request_tags;
-use codex_feedback::emit_feedback_request_tags_with_auth_env;
-use codex_login::AuthEnvTelemetry;
+use codex_auth_types::AuthEnvTelemetryMetadata;
+use codex_feedback_api::FeedbackRequestTags;
+use codex_feedback_api::emit_feedback_request_tags;
+use codex_feedback_api::emit_feedback_request_tags_with_auth_env;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -77,7 +77,7 @@ fn emit_feedback_request_tags_records_sentry_feedback_fields() {
         })
         .set_default();
 
-    let auth_env = AuthEnvTelemetry {
+    let auth_env = AuthEnvTelemetryMetadata {
         openai_api_key_env_present: true,
         codex_api_key_env_present: false,
         codex_api_key_env_enabled: true,
@@ -321,7 +321,7 @@ fn emit_feedback_request_tags_preserves_auth_env_fields_for_legacy_emitters() {
         })
         .set_default();
 
-    let auth_env = AuthEnvTelemetry {
+    let auth_env = AuthEnvTelemetryMetadata {
         openai_api_key_env_present: true,
         codex_api_key_env_present: true,
         codex_api_key_env_enabled: true,

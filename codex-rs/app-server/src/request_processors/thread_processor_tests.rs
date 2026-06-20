@@ -56,11 +56,11 @@ mod thread_processor_behavior_tests {
     use codex_app_server_protocol::ThreadIdleReason;
     use codex_app_server_protocol::ThreadItem;
     use codex_app_server_protocol::ToolRequestUserInputParams;
-    use codex_config::CloudRequirementsLoader;
-    use codex_config::LoaderOverrides;
-    use codex_config::SessionThreadConfig;
-    use codex_config::StaticThreadConfigLoader;
-    use codex_config::ThreadConfigSource;
+    use codex_config_loader::LoaderOverrides;
+    use codex_config_loader::SessionThreadConfig;
+    use codex_config_loader::StaticThreadConfigLoader;
+    use codex_config_loader::ThreadConfigSource;
+    use codex_config_requirements::CloudRequirementsLoader;
     use codex_model_provider_info::ModelProviderInfo;
     use codex_model_provider_info::WireApi;
     use codex_protocol::ThreadId;

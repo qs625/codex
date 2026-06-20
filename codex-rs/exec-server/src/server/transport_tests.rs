@@ -1,11 +1,11 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use codex_app_server_protocol::JSONRPCMessage;
-use codex_app_server_protocol::JSONRPCNotification;
-use codex_app_server_protocol::JSONRPCRequest;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::RequestId;
+use codex_jsonrpc_types::JSONRPCMessage;
+use codex_jsonrpc_types::JSONRPCNotification;
+use codex_jsonrpc_types::JSONRPCRequest;
+use codex_jsonrpc_types::JSONRPCResponse;
+use codex_jsonrpc_types::RequestId;
 use pretty_assertions::assert_eq;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;

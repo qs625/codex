@@ -6,6 +6,9 @@ use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
+use codex_code_mode_api::RuntimeResponse;
+use codex_code_mode_api::WaitOutcome;
+use codex_code_mode_api::WaitRequest;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 
@@ -73,23 +76,23 @@ impl ToolExecutor<ToolInvocation> for CodeModeWaitHandler {
                     .session
                     .services
                     .code_mode_service
-                    .wait(codex_code_mode::WaitRequest {
+                    .wait(WaitRequest {
                         cell_id: args.cell_id,
                         yield_time_ms: args.yield_time_ms,
                         terminate: args.terminate,
                     })
                     .await
                     .map_err(FunctionCallError::RespondToModel)?;
-                if let codex_code_mode::WaitOutcome::LiveCell(response) = &wait_response
-                    && !matches!(response, codex_code_mode::RuntimeResponse::Yielded { .. })
+                if let WaitOutcome::LiveCell(response) = &wait_response
+                    && !matches!(response, RuntimeResponse::Yielded { .. })
                 {
                     // Only a live-cell wait can close a CodeCell. A missing
                     // cell is still an ordinary `wait` tool result, but there
                     // is no runtime object for the reducer to complete.
                     let runtime_cell_id = match response {
-                        codex_code_mode::RuntimeResponse::Yielded { cell_id, .. }
-                        | codex_code_mode::RuntimeResponse::Terminated { cell_id, .. }
-                        | codex_code_mode::RuntimeResponse::Result { cell_id, .. } => cell_id,
+                        RuntimeResponse::Yielded { cell_id, .. }
+                        | RuntimeResponse::Terminated { cell_id, .. }
+                        | RuntimeResponse::Result { cell_id, .. } => cell_id,
                     };
                     exec.session
                         .services

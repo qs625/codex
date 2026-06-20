@@ -5,11 +5,11 @@ use std::path::Path;
 
 use crate::model::SkillLoadOutcome;
 use crate::model::SkillMetadata;
-use codex_otel::SessionTelemetry;
-use codex_otel::THREAD_SKILLS_DESCRIPTION_TRUNCATED_CHARS_METRIC;
-use codex_otel::THREAD_SKILLS_ENABLED_TOTAL_METRIC;
-use codex_otel::THREAD_SKILLS_KEPT_TOTAL_METRIC;
-use codex_otel::THREAD_SKILLS_TRUNCATED_METRIC;
+use codex_metrics_api::MetricsSink;
+use codex_metrics_api::THREAD_SKILLS_DESCRIPTION_TRUNCATED_CHARS_METRIC;
+use codex_metrics_api::THREAD_SKILLS_ENABLED_TOTAL_METRIC;
+use codex_metrics_api::THREAD_SKILLS_KEPT_TOTAL_METRIC;
+use codex_metrics_api::THREAD_SKILLS_TRUNCATED_METRIC;
 use codex_protocol::protocol::SkillScope;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::approx_token_count;
@@ -128,7 +128,7 @@ pub struct SkillRenderReport {
 pub enum SkillRenderSideEffects<'a> {
     None,
     ThreadStart {
-        session_telemetry: &'a SessionTelemetry,
+        session_telemetry: &'a dyn MetricsSink,
     },
 }
 

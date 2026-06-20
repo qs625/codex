@@ -1,6 +1,6 @@
 //! Resolve plugin namespace from skill file paths by walking ancestors for `plugin.json`.
 
-use codex_exec_server::ExecutorFileSystem;
+use codex_file_system::ExecutorFileSystem;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::path::Path;
 use std::path::PathBuf;
@@ -71,7 +71,7 @@ pub async fn plugin_namespace_for_skill_path(
 mod tests {
     use super::find_plugin_manifest_path;
     use super::plugin_namespace_for_skill_path;
-    use codex_exec_server::LOCAL_FS;
+    use codex_file_system::LOCAL_FS;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use std::fs;
     use tempfile::tempdir;

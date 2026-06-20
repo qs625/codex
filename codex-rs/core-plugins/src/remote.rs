@@ -1,14 +1,13 @@
 use crate::store::PLUGINS_CACHE_DIR;
 use crate::store::PluginStore;
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::PluginAuthPolicy;
-use codex_app_server_protocol::PluginAvailability;
-use codex_app_server_protocol::PluginInstallPolicy;
-use codex_app_server_protocol::PluginInterface;
-use codex_app_server_protocol::SkillInterface;
 use codex_login::CodexAuth;
 use codex_login::default_client::build_reqwest_client;
 use codex_plugin::PluginId;
+use codex_plugin_types::PluginAuthPolicy;
+use codex_plugin_types::PluginAvailability;
+use codex_plugin_types::PluginInstallPolicy;
+use codex_plugin_types::PluginInterface;
+use codex_plugin_types::SkillInterface;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use reqwest::RequestBuilder;
 use serde::Deserialize;
@@ -62,7 +61,8 @@ pub const REMOTE_WORKSPACE_SHARED_WITH_ME_UNLISTED_MARKETPLACE_DISPLAY_NAME: &st
 const REMOTE_PLUGIN_CATALOG_TIMEOUT: Duration = Duration::from_secs(30);
 const REMOTE_PLUGIN_LIST_PAGE_LIMIT: u32 = 200;
 const MAX_REMOTE_DEFAULT_PROMPT_LEN: usize = 128;
-const INVALID_REQUEST_ERROR_CODE: i64 = -32600;
+const INVALID_REMOTE_PLUGIN_ID_MESSAGE: &str =
+    "invalid remote plugin id: only ASCII letters, digits, `_`, `-`, and `~` are allowed";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemotePluginServiceConfig {
@@ -156,15 +156,13 @@ pub fn is_valid_remote_plugin_id(plugin_id: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '~')
 }
 
-pub fn validate_remote_plugin_id(plugin_id: &str) -> Result<(), JSONRPCErrorError> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("{INVALID_REMOTE_PLUGIN_ID_MESSAGE}")]
+pub struct RemotePluginIdError;
+
+pub fn validate_remote_plugin_id(plugin_id: &str) -> Result<(), RemotePluginIdError> {
     if !is_valid_remote_plugin_id(plugin_id) {
-        return Err(JSONRPCErrorError {
-            code: INVALID_REQUEST_ERROR_CODE,
-            message:
-                "invalid remote plugin id: only ASCII letters, digits, `_`, `-`, and `~` are allowed"
-                    .to_string(),
-            data: None,
-        });
+        return Err(RemotePluginIdError);
     }
 
     Ok(())
@@ -1265,7 +1263,7 @@ fn authenticated_request(
 ) -> Result<RequestBuilder, RemotePluginCatalogError> {
     Ok(request
         .timeout(REMOTE_PLUGIN_CATALOG_TIMEOUT)
-        .headers(codex_model_provider::auth_provider_from_auth(auth).to_auth_headers()))
+        .headers(codex_model_provider_api::auth_provider_from_auth(auth).to_auth_headers()))
 }
 
 async fn send_and_decode<T: for<'de> Deserialize<'de>>(

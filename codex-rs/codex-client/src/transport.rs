@@ -1,11 +1,11 @@
 use crate::default_client::CodexHttpClient;
 use crate::default_client::CodexRequestBuilder;
-use crate::error::TransportError;
-use crate::request::Request;
-use crate::request::RequestBody;
-use crate::request::Response;
 use async_trait::async_trait;
 use bytes::Bytes;
+use codex_client_types::Request;
+use codex_client_types::RequestBody;
+use codex_client_types::Response;
+use codex_client_types::TransportError;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use http::HeaderMap;

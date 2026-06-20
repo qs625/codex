@@ -8,7 +8,7 @@
 //! internal virtual transcript. Replaying more rows than the terminal retains wastes work and can
 //! make interactive resize feel worse without giving the user more usable history.
 
-use codex_config::types::DEFAULT_TERMINAL_RESIZE_REFLOW_FALLBACK_MAX_ROWS;
+use codex_config_types::DEFAULT_TERMINAL_RESIZE_REFLOW_FALLBACK_MAX_ROWS;
 use codex_terminal_detection::TerminalInfo;
 use codex_terminal_detection::TerminalName;
 use codex_terminal_detection::terminal_info;

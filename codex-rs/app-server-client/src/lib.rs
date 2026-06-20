@@ -43,11 +43,12 @@ use codex_app_server_protocol::Result as JsonRpcResult;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
 use codex_arg0::Arg0DispatchPaths;
-use codex_config::CloudRequirementsLoader;
-use codex_config::LoaderOverrides;
-use codex_config::NoopThreadConfigLoader;
-use codex_config::RemoteThreadConfigLoader;
-use codex_config::ThreadConfigLoader;
+use codex_config_loader::LoaderOverrides;
+use codex_config_loader::NoopThreadConfigLoader;
+use codex_config_loader::ThreadConfigLoadErrorCode;
+use codex_config_loader::ThreadConfigLoader;
+use codex_config_loader_remote::RemoteThreadConfigLoader;
+use codex_config_requirements::CloudRequirementsLoader;
 use codex_core::config::Config;
 pub use codex_exec_server::EnvironmentManager;
 pub use codex_exec_server::ExecServerRuntimePaths;
@@ -91,7 +92,7 @@ pub mod legacy_core {
     }
 
     pub mod otel_init {
-        pub use codex_core::otel_init::*;
+        pub use codex_otel_init::*;
     }
 
     pub mod personality_migration {
@@ -106,6 +107,7 @@ pub mod legacy_core {
         pub use codex_core::review_prompts::*;
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub mod test_support {
         pub use codex_core::test_support::*;
     }
@@ -2255,10 +2257,7 @@ mod tests {
             .load(Default::default())
             .await
             .expect_err("configured remote loader should try to connect");
-        assert_eq!(
-            err.code(),
-            codex_config::ThreadConfigLoadErrorCode::RequestFailed
-        );
+        assert_eq!(err.code(), ThreadConfigLoadErrorCode::RequestFailed);
     }
 
     #[tokio::test]

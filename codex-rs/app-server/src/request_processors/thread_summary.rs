@@ -92,7 +92,9 @@ fn extract_conversation_summary(
 ) -> Option<ConversationSummary> {
     let preview = head
         .iter()
-        .filter_map(|value| serde_json::from_value::<codex_protocol::protocol::EventMsg>(value.clone()).ok())
+        .filter_map(|value| {
+            serde_json::from_value::<codex_protocol::protocol::EventMsg>(value.clone()).ok()
+        })
         .find_map(|event| match event {
             codex_protocol::protocol::EventMsg::UserMessage(user) => Some(user.message),
             _ => None,

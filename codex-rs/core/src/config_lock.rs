@@ -1,9 +1,9 @@
 use std::io;
 
-use codex_config::ConfigLayerEntry;
-use codex_config::ConfigLayerSource;
-use codex_config::config_toml::ConfigLockfileToml;
-use codex_config::config_toml::ConfigToml;
+use codex_config_state::ConfigLayerEntry;
+use codex_config_toml::config_toml::ConfigToml;
+use codex_config_types::ConfigLayerSource;
+use codex_config_types::ConfigLockfileToml;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -18,14 +18,14 @@ pub(crate) struct ConfigLockReplayOptions {
 
 pub(crate) async fn read_config_lock_from_path(
     path: &AbsolutePathBuf,
-) -> io::Result<ConfigLockfileToml> {
+) -> io::Result<ConfigLockfileToml<ConfigToml>> {
     let contents = tokio::fs::read_to_string(path).await.map_err(|err| {
         config_lock_error(format!(
             "failed to read config lock file {}: {err}",
             path.display()
         ))
     })?;
-    let lockfile: ConfigLockfileToml = toml::from_str(&contents).map_err(|err| {
+    let lockfile: ConfigLockfileToml<ConfigToml> = toml::from_str(&contents).map_err(|err| {
         config_lock_error(format!(
             "failed to parse config lock file {}: {err}",
             path.display()
@@ -35,7 +35,7 @@ pub(crate) async fn read_config_lock_from_path(
     Ok(lockfile)
 }
 
-pub(crate) fn config_lockfile(config: ConfigToml) -> ConfigLockfileToml {
+pub(crate) fn config_lockfile(config: ConfigToml) -> ConfigLockfileToml<ConfigToml> {
     ConfigLockfileToml {
         version: CONFIG_LOCK_VERSION,
         codex_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -44,8 +44,8 @@ pub(crate) fn config_lockfile(config: ConfigToml) -> ConfigLockfileToml {
 }
 
 pub(crate) fn validate_config_lock_replay(
-    expected_lock: &ConfigLockfileToml,
-    actual_lock: &ConfigLockfileToml,
+    expected_lock: &ConfigLockfileToml<ConfigToml>,
+    actual_lock: &ConfigLockfileToml<ConfigToml>,
     options: ConfigLockReplayOptions,
 ) -> io::Result<()> {
     validate_config_lock_metadata_shape(expected_lock)?;
@@ -75,7 +75,7 @@ pub(crate) fn validate_config_lock_replay(
 
 pub(crate) fn lock_layer_from_config(
     lock_path: &AbsolutePathBuf,
-    lockfile: &ConfigLockfileToml,
+    lockfile: &ConfigLockfileToml<ConfigToml>,
 ) -> io::Result<ConfigLayerEntry> {
     let value = toml_value(
         &config_without_lock_controls(&lockfile.config),
@@ -109,7 +109,7 @@ pub(crate) fn clear_config_lock_debug_controls(config: &mut ConfigToml) {
     }
 }
 
-fn validate_config_lock_metadata_shape(lock: &ConfigLockfileToml) -> io::Result<()> {
+fn validate_config_lock_metadata_shape(lock: &ConfigLockfileToml<ConfigToml>) -> io::Result<()> {
     if lock.version != CONFIG_LOCK_VERSION {
         return Err(config_lock_error(format!(
             "unsupported config lock version {}; expected {CONFIG_LOCK_VERSION}",
@@ -120,9 +120,9 @@ fn validate_config_lock_metadata_shape(lock: &ConfigLockfileToml) -> io::Result<
 }
 
 fn config_lock_for_comparison(
-    lockfile: &ConfigLockfileToml,
+    lockfile: &ConfigLockfileToml<ConfigToml>,
     options: ConfigLockReplayOptions,
-) -> ConfigLockfileToml {
+) -> ConfigLockfileToml<ConfigToml> {
     let mut lockfile = lockfile.clone();
     clear_config_lock_debug_controls(&mut lockfile.config);
     if options.allow_codex_version_mismatch {

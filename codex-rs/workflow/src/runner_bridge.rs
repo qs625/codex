@@ -1,78 +1,16 @@
+use codex_workflow_api::WorkflowAgentBinding;
+use codex_workflow_api::WorkflowRuntimeBridge;
+use codex_workflow_api::WorkflowRuntimeError;
+use codex_workflow_api::WorkflowRuntimeRequest;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 use tokio::sync::Mutex;
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowAgentBinding {
-    pub agent_id: String,
-    pub agent_path: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workflow_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stage_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thread_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<Value>,
-    #[serde(default)]
-    pub options: Value,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowRuntimeRequest {
-    pub run_id: String,
-    pub workflow_id: String,
-    pub rpc_id: u64,
-    pub method: String,
-    #[serde(default)]
-    pub params: Value,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowRuntimeError {
-    pub code: String,
-    pub message: String,
-}
-
-impl WorkflowRuntimeError {
-    pub fn unsupported(message: impl Into<String>) -> Self {
-        Self {
-            code: "unsupported".to_string(),
-            message: message.into(),
-        }
-    }
-
-    pub fn invalid_request(message: impl Into<String>) -> Self {
-        Self {
-            code: "invalid_request".to_string(),
-            message: message.into(),
-        }
-    }
-}
-
-/// Host implementation for workflow runtime requests.
-///
-/// Implementations must route requests through Codex runtime primitives so workflow scripts keep
-/// the same permission, lifecycle, and typed event semantics as normal tool calls.
-pub trait WorkflowRuntimeBridge: Send + Sync {
-    fn call(
-        &self,
-        request: WorkflowRuntimeRequest,
-    ) -> Pin<Box<dyn Future<Output = Result<Value, WorkflowRuntimeError>> + Send + '_>>;
-}
 
 #[derive(Debug)]
 pub(crate) struct RunnerProcessState {
@@ -141,8 +79,14 @@ enum RunnerStdoutFrame {
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum RunnerStdinFrame<'a> {
-    RpcResult { id: u64, result: &'a Value },
-    RpcError { id: u64, error: &'a WorkflowRuntimeError },
+    RpcResult {
+        id: u64,
+        result: &'a Value,
+    },
+    RpcError {
+        id: u64,
+        error: &'a WorkflowRuntimeError,
+    },
 }
 
 pub(crate) async fn read_runner_stdout(

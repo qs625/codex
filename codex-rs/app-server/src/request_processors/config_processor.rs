@@ -31,15 +31,21 @@ use codex_app_server_protocol::NetworkUnixSocketPermission;
 use codex_app_server_protocol::SandboxMode;
 use codex_app_server_protocol::ServerNotification;
 use codex_chatgpt::connectors as chatgpt_connectors;
-use codex_config::ConfigRequirementsToml;
-use codex_config::HookEventsToml;
-use codex_config::HookHandlerConfig as CoreHookHandlerConfig;
-use codex_config::ManagedHooksRequirementsToml;
-use codex_config::MatcherGroup as CoreMatcherGroup;
-use codex_config::ResidencyRequirement as CoreResidencyRequirement;
-use codex_config::SandboxModeRequirement as CoreSandboxModeRequirement;
+use codex_config_requirements::ConfigRequirementsToml;
+use codex_config_requirements::NetworkDomainPermissionToml;
+use codex_config_requirements::NetworkDomainPermissionsToml;
+use codex_config_requirements::NetworkRequirementsToml;
+use codex_config_requirements::NetworkUnixSocketPermissionToml;
+use codex_config_requirements::NetworkUnixSocketPermissionsToml;
+use codex_config_requirements::SandboxModeRequirement as CoreSandboxModeRequirement;
+use codex_config_types::HookEventsToml;
+use codex_config_types::HookHandlerConfig as CoreHookHandlerConfig;
+use codex_config_types::ManagedHooksRequirementsToml;
+use codex_config_types::MatcherGroup as CoreMatcherGroup;
+use codex_config_types::ResidencyRequirement as CoreResidencyRequirement;
 use codex_core::ThreadManager;
 use codex_core::connectors as core_connectors;
+use codex_exec_server::EnvironmentManager;
 use codex_features::canonical_feature_for_key;
 use codex_features::feature_for_key;
 use codex_login::AuthManager;
@@ -66,6 +72,7 @@ pub(crate) struct ConfigRequestProcessor {
     config_manager: ConfigManager,
     auth_manager: Arc<AuthManager>,
     thread_manager: Arc<ThreadManager>,
+    environment_manager: Arc<EnvironmentManager>,
     analytics_events_client: AnalyticsEventsClient,
 }
 
@@ -75,6 +82,7 @@ impl ConfigRequestProcessor {
         config_manager: ConfigManager,
         auth_manager: Arc<AuthManager>,
         thread_manager: Arc<ThreadManager>,
+        environment_manager: Arc<EnvironmentManager>,
         analytics_events_client: AnalyticsEventsClient,
     ) -> Self {
         Self {
@@ -82,6 +90,7 @@ impl ConfigRequestProcessor {
             config_manager,
             auth_manager,
             thread_manager,
+            environment_manager,
             analytics_events_client,
         }
     }
@@ -215,7 +224,7 @@ impl ConfigRequestProcessor {
         }
 
         let outgoing = Arc::clone(&self.outgoing);
-        let environment_manager = self.thread_manager.environment_manager();
+        let environment_manager = Arc::clone(&self.environment_manager);
         tokio::spawn(async move {
             let chatgpt_config = chatgpt_config_from_core(&config);
             let (all_connectors_result, accessible_connectors_result) = tokio::join!(
@@ -223,7 +232,7 @@ impl ConfigRequestProcessor {
                     &chatgpt_config,
                     /*force_refetch*/ true,
                 ),
-                core_connectors::list_accessible_connectors_from_mcp_tools_with_environment_manager(
+                core_connectors::list_accessible_connectors_from_mcp_tools_with_environment_provider(
                     &config,
                     /*force_refetch*/ true,
                     &environment_manager,
@@ -535,21 +544,19 @@ fn map_residency_requirement_to_api(
     }
 }
 
-fn map_network_requirements_to_api(
-    network: codex_config::NetworkRequirementsToml,
-) -> NetworkRequirements {
+fn map_network_requirements_to_api(network: NetworkRequirementsToml) -> NetworkRequirements {
     let allowed_domains = network
         .domains
         .as_ref()
-        .and_then(codex_config::NetworkDomainPermissionsToml::allowed_domains);
+        .and_then(NetworkDomainPermissionsToml::allowed_domains);
     let denied_domains = network
         .domains
         .as_ref()
-        .and_then(codex_config::NetworkDomainPermissionsToml::denied_domains);
+        .and_then(NetworkDomainPermissionsToml::denied_domains);
     let allow_unix_sockets = network
         .unix_sockets
         .as_ref()
-        .map(codex_config::NetworkUnixSocketPermissionsToml::allow_unix_sockets)
+        .map(NetworkUnixSocketPermissionsToml::allow_unix_sockets)
         .filter(|entries| !entries.is_empty());
 
     NetworkRequirements {
@@ -586,20 +593,20 @@ fn map_network_requirements_to_api(
 }
 
 fn map_network_domain_permission_to_api(
-    permission: codex_config::NetworkDomainPermissionToml,
+    permission: NetworkDomainPermissionToml,
 ) -> NetworkDomainPermission {
     match permission {
-        codex_config::NetworkDomainPermissionToml::Allow => NetworkDomainPermission::Allow,
-        codex_config::NetworkDomainPermissionToml::Deny => NetworkDomainPermission::Deny,
+        NetworkDomainPermissionToml::Allow => NetworkDomainPermission::Allow,
+        NetworkDomainPermissionToml::Deny => NetworkDomainPermission::Deny,
     }
 }
 
 fn map_network_unix_socket_permission_to_api(
-    permission: codex_config::NetworkUnixSocketPermissionToml,
+    permission: NetworkUnixSocketPermissionToml,
 ) -> NetworkUnixSocketPermission {
     match permission {
-        codex_config::NetworkUnixSocketPermissionToml::Allow => NetworkUnixSocketPermission::Allow,
-        codex_config::NetworkUnixSocketPermissionToml::None => NetworkUnixSocketPermission::None,
+        NetworkUnixSocketPermissionToml::Allow => NetworkUnixSocketPermission::Allow,
+        NetworkUnixSocketPermissionToml::None => NetworkUnixSocketPermission::None,
     }
 }
 
@@ -622,7 +629,7 @@ fn config_write_error(code: ConfigWriteErrorCode, message: impl Into<String>) ->
 #[cfg(test)]
 mod tests {
     use super::map_requirements_toml_to_api;
-    use codex_config::ConfigRequirementsToml;
+    use codex_config_requirements::ConfigRequirementsToml;
     use pretty_assertions::assert_eq;
 
     #[test]

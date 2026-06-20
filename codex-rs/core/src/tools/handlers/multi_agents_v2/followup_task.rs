@@ -2,8 +2,8 @@ use super::message_tool::FollowupTaskArgs;
 use super::message_tool::handle_message_string_tool;
 use super::*;
 use crate::tools::context::FunctionToolOutput;
-use codex_tools::create_followup_task_tool;
 use codex_tools::ToolSpec;
+use codex_tools::create_followup_task_tool;
 
 pub(crate) struct Handler;
 

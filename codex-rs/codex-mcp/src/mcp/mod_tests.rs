@@ -1,10 +1,10 @@
 use super::*;
-use codex_config::Constrained;
-use codex_config::types::AppToolApproval;
-use codex_config::types::ApprovalsReviewer;
+use codex_config_types::AppToolApproval;
+use codex_config_types::Constrained;
 use codex_login::CodexAuth;
-use codex_plugin::AppConnectorId;
-use codex_plugin::PluginCapabilitySummary;
+use codex_plugin_types::AppConnectorId;
+use codex_plugin_types::PluginCapabilitySummary;
+use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::models::ManagedFileSystemPermissions;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::NetworkSandboxPolicy;

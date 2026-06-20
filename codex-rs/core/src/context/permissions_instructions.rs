@@ -1,5 +1,5 @@
 use super::ContextualUserFragment;
-use codex_execpolicy::Policy;
+use codex_execpolicy_api::Policy;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::models::PermissionProfile;

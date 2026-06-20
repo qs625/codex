@@ -1,13 +1,6 @@
-use std::collections::BTreeMap;
-
-use codex_app_server_protocol::AppInfo;
-use codex_app_server_protocol::McpElicitationObjectType;
-use codex_app_server_protocol::McpElicitationSchema;
-use codex_app_server_protocol::McpServerElicitationRequest;
-use codex_app_server_protocol::McpServerElicitationRequestParams;
+use codex_connectors_types::AppInfo;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::json;
 
 use crate::DiscoverableTool;
 use crate::DiscoverableToolAction;
@@ -36,17 +29,37 @@ pub struct RequestPluginInstallResult {
     pub suggest_reason: String,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
-pub struct RequestPluginInstallMeta<'a> {
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RequestPluginInstallMeta {
     pub codex_approval_kind: &'static str,
     pub persist: &'static str,
     pub tool_type: DiscoverableToolType,
     pub suggest_type: DiscoverableToolAction,
-    pub suggest_reason: &'a str,
-    pub tool_id: &'a str,
-    pub tool_name: &'a str,
+    pub suggest_reason: String,
+    pub tool_id: String,
+    pub tool_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub install_url: Option<&'a str>,
+    pub install_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestPluginInstallElicitationRequest {
+    pub thread_id: String,
+    pub turn_id: Option<String>,
+    pub server_name: String,
+    pub form: RequestPluginInstallElicitationForm,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestPluginInstallElicitationForm {
+    pub meta: RequestPluginInstallMeta,
+    pub message: String,
+    pub requested_schema: RequestPluginInstallElicitationSchema,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestPluginInstallElicitationSchema {
+    EmptyObject,
 }
 
 pub fn build_request_plugin_install_elicitation_request(
@@ -56,31 +69,25 @@ pub fn build_request_plugin_install_elicitation_request(
     args: &RequestPluginInstallArgs,
     suggest_reason: &str,
     tool: &DiscoverableTool,
-) -> McpServerElicitationRequestParams {
+) -> RequestPluginInstallElicitationRequest {
     let tool_name = tool.name().to_string();
     let install_url = tool.install_url().map(ToString::to_string);
-    let message = suggest_reason.to_string();
 
-    McpServerElicitationRequestParams {
+    RequestPluginInstallElicitationRequest {
         thread_id,
         turn_id: Some(turn_id),
         server_name: server_name.to_string(),
-        request: McpServerElicitationRequest::Form {
-            meta: Some(json!(build_request_plugin_install_meta(
+        form: RequestPluginInstallElicitationForm {
+            meta: build_request_plugin_install_meta(
                 args.tool_type,
                 args.action_type,
                 suggest_reason,
                 tool.id(),
-                tool_name.as_str(),
-                install_url.as_deref(),
-            ))),
-            message,
-            requested_schema: McpElicitationSchema {
-                schema_uri: None,
-                type_: McpElicitationObjectType::Object,
-                properties: BTreeMap::new(),
-                required: None,
-            },
+                tool_name,
+                install_url,
+            ),
+            message: suggest_reason.to_string(),
+            requested_schema: RequestPluginInstallElicitationSchema::EmptyObject,
         },
     }
 }
@@ -104,21 +111,21 @@ pub fn verified_connector_install_completed(
         .is_some_and(|connector| connector.is_accessible)
 }
 
-fn build_request_plugin_install_meta<'a>(
+fn build_request_plugin_install_meta(
     tool_type: DiscoverableToolType,
     action_type: DiscoverableToolAction,
-    suggest_reason: &'a str,
-    tool_id: &'a str,
-    tool_name: &'a str,
-    install_url: Option<&'a str>,
-) -> RequestPluginInstallMeta<'a> {
+    suggest_reason: &str,
+    tool_id: &str,
+    tool_name: String,
+    install_url: Option<String>,
+) -> RequestPluginInstallMeta {
     RequestPluginInstallMeta {
         codex_approval_kind: REQUEST_PLUGIN_INSTALL_APPROVAL_KIND_VALUE,
         persist: REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE,
         tool_type,
         suggest_type: action_type,
-        suggest_reason,
-        tool_id,
+        suggest_reason: suggest_reason.to_string(),
+        tool_id: tool_id.to_string(),
         tool_name,
         install_url,
     }

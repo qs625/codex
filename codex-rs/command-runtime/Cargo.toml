@@ -8,6 +8,8 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+chardetng = { workspace = true }
+encoding_rs = { workspace = true }
 rand = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 

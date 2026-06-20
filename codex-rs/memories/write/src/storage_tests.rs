@@ -6,7 +6,7 @@ use crate::rollout_summaries_dir;
 use crate::sync_rollout_summaries_from_memories;
 use chrono::TimeZone;
 use chrono::Utc;
-use codex_config::types::DEFAULT_MEMORIES_MAX_RAW_MEMORIES_FOR_CONSOLIDATION;
+use codex_config_types::DEFAULT_MEMORIES_MAX_RAW_MEMORIES_FOR_CONSOLIDATION;
 use codex_protocol::ThreadId;
 use codex_state::Stage1Output;
 use pretty_assertions::assert_eq;

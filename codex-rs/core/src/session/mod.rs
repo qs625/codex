@@ -22,6 +22,7 @@ use crate::attestation::AttestationProvider;
 use crate::build_available_skills;
 use crate::compact;
 use crate::config::ManagedFeatures;
+use crate::config::hook_config_layer_stack_from_config_layer_stack;
 use crate::config::resolve_tool_suggest_config_from_layer_stack;
 use crate::connectors;
 use crate::context::ApprovedCommandPrefixSaved;
@@ -55,37 +56,38 @@ use async_channel::Receiver;
 use async_channel::Sender;
 use chrono::Local;
 use chrono::Utc;
-use codex_analytics::AnalyticsEventsClient;
-use codex_analytics::SubAgentThreadStartedInput;
-use codex_app_server_protocol::McpServerElicitationRequest;
-use codex_app_server_protocol::McpServerElicitationRequestParams;
-use codex_config::types::OAuthCredentialsStoreMode;
-use codex_exec_server::Environment;
-use codex_exec_server::EnvironmentManager;
-use codex_exec_server::FileSystemSandboxContext;
-use codex_exec_server::LOCAL_FS;
+use codex_analytics_api::AnalyticsEventsClient;
+use codex_analytics_api::SubAgentThreadStartedInput;
+use codex_code_mode_api::CodeModeRuntimeFactory;
+use codex_code_mode_api::CodeModeRuntimeService;
+use codex_config_types::OAuthCredentialsStoreMode;
+use codex_default_client::originator;
+use codex_exec_server_api::ExecEnvironmentProvider;
 use codex_extension_api::PromptSlot;
 use codex_features::FEATURES;
 use codex_features::Feature;
 use codex_features::unstable_features_warning_event;
+use codex_file_system::FileSystemSandboxContext;
+use codex_file_system::LOCAL_FS;
 use codex_hooks::Hooks;
 use codex_hooks::HooksConfig;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::auth_env_telemetry::collect_auth_env_telemetry;
-use codex_login::default_client::originator;
 use codex_mcp::McpConnectionManager;
-use codex_mcp::McpRuntimeEnvironment;
 use codex_mcp::codex_apps_tools_cache_key;
-use codex_models_manager::manager::RefreshStrategy;
-use codex_models_manager::manager::SharedModelsManager;
+use codex_mcp_types::ElicitationResponse;
+use codex_mcp_types::McpServerElicitationRequest;
+use codex_mcp_types::McpServerElicitationRequestParams;
+use codex_model_provider_api::SharedModelProviderFactory;
+use codex_models_manager_api::RefreshStrategy;
+use codex_models_manager_api::SharedModelsManager;
 use codex_network_proxy::NetworkProxy;
-use codex_network_proxy::NetworkProxyAuditMetadata;
-use codex_network_proxy::normalize_host;
-use codex_otel::current_span_trace_id;
-use codex_otel::current_span_w3c_trace_context;
-use codex_otel::set_parent_from_w3c_trace_context;
-use codex_plugin::PluginLoadOutcome;
+use codex_network_proxy_api::BlockedRequestObserver;
+use codex_network_proxy_api::NetworkPolicyDecider;
+use codex_network_proxy_api::NetworkProxyAuditMetadata;
+use codex_network_proxy_api::normalize_host;
+use codex_openai_files_api::SharedOpenAiFileUploader;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType as AccountPlanType;
 use codex_protocol::approvals::ElicitationRequestEvent;
@@ -112,34 +114,34 @@ use codex_protocol::models::format_allow_prefixes;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_protocol::protocol::FileChange;
-use codex_protocol::protocol::HasLegacyEvent;
-use codex_protocol::protocol::InterAgentCommunication;
-use codex_protocol::protocol::InterAgentOperation;
-use codex_protocol::protocol::ItemCompletedEvent;
-use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::CommandExecutionNotificationDisplayEvent;
 use codex_protocol::protocol::CommandWaitDisplayEvent;
 use codex_protocol::protocol::CommandWriteStdinDisplayEvent;
 use codex_protocol::protocol::EventCommandDisplayEvent;
 use codex_protocol::protocol::EventDrivenToolDisplayEvent;
+use codex_protocol::protocol::FileChange;
+use codex_protocol::protocol::HasLegacyEvent;
+use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::InterAgentCommunicationDisplayEvent;
+use codex_protocol::protocol::InterAgentOperation;
+use codex_protocol::protocol::ItemCompletedEvent;
+use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::ResponseItemCompletedEvent;
 use codex_protocol::protocol::ResponseItemStartedEvent;
 use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
-use codex_protocol::protocol::ThreadGoalUpdateDisplayEvent;
-use codex_protocol::protocol::WorkflowRunProgressDisplayEvent;
 use codex_protocol::protocol::ThreadContextUsage;
 use codex_protocol::protocol::ThreadContextUsageUpdatedEvent;
+use codex_protocol::protocol::ThreadGoalUpdateDisplayEvent;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnContextItem;
 use codex_protocol::protocol::TurnContextNetworkItem;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::protocol::W3cTraceContext;
+use codex_protocol::protocol::WorkflowRunProgressDisplayEvent;
 use codex_protocol::request_permissions::PermissionGrantScope;
 use codex_protocol::request_permissions::RequestPermissionProfile;
 use codex_protocol::request_permissions::RequestPermissionsArgs;
@@ -147,7 +149,6 @@ use codex_protocol::request_permissions::RequestPermissionsEvent;
 use codex_protocol::request_permissions::RequestPermissionsResponse;
 use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_protocol::request_user_input::RequestUserInputResponse;
-use codex_rmcp_client::ElicitationResponse;
 use codex_rollout::state_db;
 use codex_rollout_trace::AgentResultTracePayload;
 use codex_rollout_trace::ThreadStartedTraceMetadata;
@@ -206,10 +207,10 @@ use crate::config::resolve_web_search_mode_for_turn;
 use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
 use crate::thread_rollout_truncation::initial_history_has_prior_user_turns;
-use codex_config::CONFIG_TOML_FILE;
-use codex_config::ConfigLayerSource;
-use codex_config::ConfigLayerStackOrdering;
-use codex_config::types::McpServerConfig;
+use codex_config_edit::CONFIG_TOML_FILE;
+use codex_config_state::ConfigLayerStackOrdering;
+use codex_config_types::ConfigLayerSource;
+use codex_config_types::McpServerConfig;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::error::CodexErr;
@@ -335,14 +336,15 @@ use crate::turn_timing::TurnTimingState;
 use crate::turn_timing::record_turn_ttfm_metric;
 use crate::unified_exec::UnifiedExecProcessManager;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
+use codex_auth_types::TelemetryAuthMode;
+use codex_core_plugins::PluginLoadOutcome;
 use codex_core_plugins::PluginsManager;
 use codex_git_utils::get_git_repo_root;
 use codex_mcp::compute_auth_statuses;
 use codex_mcp::effective_mcp_servers_from_configured;
 use codex_mcp::host_owned_codex_apps_enabled;
+use codex_metrics_api::THREAD_STARTED_METRIC;
 use codex_otel::SessionTelemetry;
-use codex_otel::THREAD_STARTED_METRIC;
-use codex_otel::TelemetryAuthMode;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
@@ -387,6 +389,10 @@ use codex_protocol::user_input::UserInput;
 use codex_tools::ToolEnvironmentMode;
 use codex_tools::ToolsConfig;
 use codex_tools::ToolsConfigParams;
+use codex_trace_context::context_from_w3c_trace_context;
+use codex_trace_context::current_span_trace_id;
+use codex_trace_context::current_span_w3c_trace_context;
+use codex_trace_context::set_parent_from_w3c_trace_context;
 use codex_utils_absolute_path::AbsolutePathBuf;
 #[cfg(test)]
 use codex_utils_stream_parser::ProposedPlanSegment;
@@ -417,8 +423,9 @@ pub(crate) struct CodexSpawnArgs {
     pub(crate) config: Config,
     pub(crate) installation_id: String,
     pub(crate) auth_manager: Arc<AuthManager>,
+    pub(crate) model_provider_factory: SharedModelProviderFactory,
     pub(crate) models_manager: SharedModelsManager,
-    pub(crate) environment_manager: Arc<EnvironmentManager>,
+    pub(crate) environment_manager: Arc<dyn ExecEnvironmentProvider>,
     pub(crate) skills_manager: Arc<SkillsManager>,
     pub(crate) plugins_manager: Arc<PluginsManager>,
     pub(crate) mcp_manager: Arc<McpManager>,
@@ -444,6 +451,10 @@ pub(crate) struct CodexSpawnArgs {
     pub(crate) thread_store: Arc<dyn ThreadStore>,
     pub(crate) attestation_provider: Option<Arc<dyn AttestationProvider>>,
     pub(crate) active_event_subscriptions: Arc<crate::ActiveEventSubscriptionTracker>,
+    pub(crate) openai_file_uploader: SharedOpenAiFileUploader,
+    pub(crate) code_mode_service: Arc<dyn CodeModeRuntimeService>,
+    pub(crate) code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+    pub(crate) workflow_runs: Arc<dyn crate::workflow_runs::WorkflowRunController>,
 }
 
 pub(crate) const INITIAL_SUBMIT_ID: &str = "";
@@ -460,7 +471,7 @@ impl Codex {
     pub(crate) async fn spawn(args: CodexSpawnArgs) -> CodexResult<CodexSpawnOk> {
         let parent_trace = match args.parent_trace {
             Some(trace) => {
-                if codex_otel::context_from_w3c_trace_context(&trace).is_some() {
+                if context_from_w3c_trace_context(&trace).is_some() {
                     Some(trace)
                 } else {
                     warn!("ignoring invalid thread spawn trace carrier");
@@ -486,6 +497,7 @@ impl Codex {
             mut config,
             installation_id,
             auth_manager,
+            model_provider_factory,
             models_manager,
             environment_manager,
             skills_manager,
@@ -509,6 +521,10 @@ impl Codex {
             thread_store,
             attestation_provider,
             active_event_subscriptions,
+            openai_file_uploader,
+            code_mode_service,
+            code_mode_runtime_factory,
+            workflow_runs,
         } = args;
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
         let (tx_event, rx_event) = async_channel::unbounded();
@@ -550,16 +566,11 @@ impl Codex {
 
         let config = Arc::new(config);
         let refresh_strategy = if session_source.is_non_root_agent() {
-            codex_models_manager::manager::RefreshStrategy::Offline
+            RefreshStrategy::Offline
         } else {
-            codex_models_manager::manager::RefreshStrategy::OnlineIfUncached
+            RefreshStrategy::OnlineIfUncached
         };
-        if config.model.is_none()
-            || !matches!(
-                refresh_strategy,
-                codex_models_manager::manager::RefreshStrategy::Offline
-            )
-        {
+        if config.model.is_none() || !matches!(refresh_strategy, RefreshStrategy::Offline) {
             let _ = models_manager.list_models(refresh_strategy).await;
         }
         let model = models_manager
@@ -672,6 +683,7 @@ impl Codex {
             config.clone(),
             installation_id,
             auth_manager.clone(),
+            model_provider_factory,
             models_manager.clone(),
             exec_policy,
             tx_event.clone(),
@@ -689,6 +701,10 @@ impl Codex {
             parent_rollout_thread_trace,
             attestation_provider,
             active_event_subscriptions,
+            openai_file_uploader,
+            code_mode_service,
+            code_mode_runtime_factory,
+            workflow_runs,
         )
         .await
         .map_err(|e| {
@@ -831,10 +847,7 @@ impl Codex {
     }
 }
 
-async fn merge_plugin_agent_roles<M: Clone>(
-    config: &mut Config,
-    plugin_outcome: &PluginLoadOutcome<M>,
-) {
+async fn merge_plugin_agent_roles(config: &mut Config, plugin_outcome: &PluginLoadOutcome) {
     let plugin_agent_dirs = plugin_outcome
         .effective_plugin_agent_dirs()
         .into_iter()
@@ -988,10 +1001,10 @@ impl Session {
 
     async fn start_managed_network_proxy(
         spec: &crate::config::NetworkProxySpec,
-        exec_policy: &codex_execpolicy::Policy,
+        exec_policy: &codex_execpolicy_api::Policy,
         permission_profile: &PermissionProfile,
-        network_policy_decider: Option<Arc<dyn codex_network_proxy::NetworkPolicyDecider>>,
-        blocked_request_observer: Option<Arc<dyn codex_network_proxy::BlockedRequestObserver>>,
+        network_policy_decider: Option<Arc<dyn NetworkPolicyDecider>>,
+        blocked_request_observer: Option<Arc<dyn BlockedRequestObserver>>,
         managed_network_requirements_enabled: bool,
         audit_metadata: NetworkProxyAuditMetadata,
     ) -> anyhow::Result<(StartedNetworkProxy, SessionNetworkProxyRuntime)> {
@@ -1831,7 +1844,8 @@ impl Session {
     }
 
     pub(crate) async fn has_pending_turn_input(&self) -> bool {
-        self.has_queued_response_items_for_next_turn().await || self.has_pending_mailbox_items().await
+        self.has_queued_response_items_for_next_turn().await
+            || self.has_pending_mailbox_items().await
     }
 
     pub(crate) async fn has_incomplete_direct_child(&self) -> bool {
@@ -2413,7 +2427,7 @@ impl Session {
                 review_id,
                 request,
                 /*retry_reason*/ None,
-                codex_analytics::GuardianApprovalRequestSource::MainTurn,
+                codex_analytics_api::GuardianApprovalRequestSource::MainTurn,
                 cancellation_token.clone(),
             );
             let decision = tokio::select! {
@@ -3531,7 +3545,9 @@ impl Session {
         }
 
         let mut turn_state = active_turn.turn_state.lock().await;
-        turn_state.push_pending_input(PendingInputItem::from(ResponseInputItem::from(input)));
+        turn_state.push_pending_input(PendingInputItem::from(
+            codex_model_input::response_input_item_from_user_input(input),
+        ));
         turn_state.accept_mailbox_delivery_for_current_turn();
         Ok(active_turn_id.clone())
     }
@@ -4155,7 +4171,9 @@ async fn build_hooks_for_config(
         legacy_notify_argv: config.notify.clone(),
         feature_enabled: config.features.enabled(Feature::CodexHooks),
         bypass_hook_trust: config.bypass_hook_trust,
-        config_layer_stack: Some(config.config_layer_stack.clone()),
+        config_layer_stack: Some(hook_config_layer_stack_from_config_layer_stack(
+            &config.config_layer_stack,
+        )),
         plugin_hook_sources,
         plugin_hook_load_warnings,
         shell_program: Some(hook_shell_program),

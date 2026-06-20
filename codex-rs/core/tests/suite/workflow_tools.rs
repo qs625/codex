@@ -364,7 +364,10 @@ async fn wait_for_persisted_workflow_status(
     run_id: &str,
     expected_status: &str,
 ) -> Result<()> {
-    let run_path = codex_home.join("workflow-runs").join(run_id).join("run.json");
+    let run_path = codex_home
+        .join("workflow-runs")
+        .join(run_id)
+        .join("run.json");
     let mut last_status = None;
     let mut last_error = None;
     for _ in 0..50 {

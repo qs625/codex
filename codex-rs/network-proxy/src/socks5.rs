@@ -506,9 +506,9 @@ mod tests {
     use crate::network_policy::test_support::find_event_by_name;
     use crate::runtime::ConfigReloader;
     use crate::runtime::ConfigState;
-    use crate::state::NetworkProxyConstraints;
     use crate::state::build_config_state;
     use async_trait::async_trait;
+    use codex_network_proxy_api::NetworkProxyConstraints;
     use pretty_assertions::assert_eq;
     use rama_core::extensions::Extensions;
     use rama_core::extensions::ExtensionsMut;

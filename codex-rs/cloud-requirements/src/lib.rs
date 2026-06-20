@@ -15,11 +15,11 @@ use chrono::DateTime;
 use chrono::Duration as ChronoDuration;
 use chrono::Utc;
 use codex_backend_client::Client as BackendClient;
-use codex_config::CloudRequirementsLoadError;
-use codex_config::CloudRequirementsLoadErrorCode;
-use codex_config::CloudRequirementsLoader;
-use codex_config::ConfigRequirementsToml;
-use codex_config::types::AuthCredentialsStoreMode;
+use codex_config_requirements::CloudRequirementsLoadError;
+use codex_config_requirements::CloudRequirementsLoadErrorCode;
+use codex_config_requirements::CloudRequirementsLoader;
+use codex_config_requirements::ConfigRequirementsToml;
+use codex_config_types::AuthCredentialsStoreMode;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::RefreshTokenError;
@@ -829,8 +829,8 @@ mod tests {
     use super::*;
     use base64::Engine;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    use codex_config::AppToolApproval;
-    use codex_config::types::AuthCredentialsStoreMode;
+    use codex_config_types::AppToolApproval;
+    use codex_config_types::AuthCredentialsStoreMode;
     use codex_login::auth::AgentIdentityAuth;
     use codex_login::auth::AgentIdentityAuthRecord;
     use codex_protocol::protocol::AskForApproval;
@@ -1399,10 +1399,10 @@ enabled = false
         assert_eq!(
             result,
             Some(ConfigRequirementsToml {
-                apps: Some(codex_config::AppsRequirementsToml {
+                apps: Some(codex_config_requirements::AppsRequirementsToml {
                     apps: BTreeMap::from([(
                         "connector_5f3c8c41a1e54ad7a76272c89e2554fa".to_string(),
-                        codex_config::AppRequirementToml {
+                        codex_config_requirements::AppRequirementToml {
                             enabled: Some(false),
                             tools: None,
                         },
@@ -1425,15 +1425,15 @@ approval_mode = "approve"
         assert_eq!(
             result,
             Some(ConfigRequirementsToml {
-                apps: Some(codex_config::AppsRequirementsToml {
+                apps: Some(codex_config_requirements::AppsRequirementsToml {
                     apps: BTreeMap::from([(
                         "connector_5f3c8c41a1e54ad7a76272c89e2554fa".to_string(),
-                        codex_config::AppRequirementToml {
+                        codex_config_requirements::AppRequirementToml {
                             enabled: None,
-                            tools: Some(codex_config::AppToolsRequirementsToml {
+                            tools: Some(codex_config_requirements::AppToolsRequirementsToml {
                                 tools: BTreeMap::from([(
                                     "calendar/list_events".to_string(),
-                                    codex_config::AppToolRequirementToml {
+                                    codex_config_requirements::AppToolRequirementToml {
                                         approval_mode: Some(AppToolApproval::Approve),
                                     },
                                 )]),
@@ -1460,11 +1460,11 @@ command = "sample-mcp"
             Some(ConfigRequirementsToml {
                 plugins: Some(BTreeMap::from([(
                     "sample@test".to_string(),
-                    codex_config::PluginRequirementsToml {
+                    codex_config_requirements::PluginRequirementsToml {
                         mcp_servers: Some(BTreeMap::from([(
                             "sample".to_string(),
-                            codex_config::McpServerRequirement {
-                                identity: codex_config::McpServerIdentity::Command {
+                            codex_config_requirements::McpServerRequirement {
+                                identity: codex_config_requirements::McpServerIdentity::Command {
                                     command: "sample-mcp".to_string(),
                                 },
                             },

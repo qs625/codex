@@ -1,0 +1,21 @@
+[package]
+name = "codex-api-provider"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Lightweight Codex API provider and auth primitives."
+
+[lib]
+name = "codex_api_provider"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-client-types = { workspace = true }
+codex-protocol = { workspace = true }
+http = { workspace = true }
+thiserror = { workspace = true }
+url = { workspace = true }

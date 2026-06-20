@@ -1,0 +1,27 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-model-provider-api"
+version.workspace = true
+description = "Lightweight model-provider request adapters shared across Codex crates."
+
+[lib]
+doctest = false
+name = "codex_model_provider_api"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-agent-identity = { workspace = true }
+codex-api-provider = { workspace = true }
+codex-auth-types = { workspace = true }
+codex-login = { workspace = true }
+codex-model-provider-info = { workspace = true }
+codex-models-manager-api = { workspace = true }
+codex-protocol = { workspace = true }
+http = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

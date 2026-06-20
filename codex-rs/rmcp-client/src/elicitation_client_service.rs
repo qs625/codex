@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
+use codex_mcp_types::ElicitationAction;
+use codex_mcp_types::ElicitationResponse;
 use rmcp::RoleClient;
 use rmcp::model::ClientInfo;
 use rmcp::model::ClientResult;
 use rmcp::model::CustomResult;
-use rmcp::model::ElicitationAction;
 use rmcp::model::Meta;
 use rmcp::model::RequestParamsMeta;
 use rmcp::model::ServerNotification;
@@ -18,7 +19,6 @@ use serde_json::Value;
 use crate::logging_client_handler::LoggingClientHandler;
 use crate::rmcp_client::Elicitation;
 use crate::rmcp_client::ElicitationPauseState;
-use crate::rmcp_client::ElicitationResponse;
 use crate::rmcp_client::SendElicitation;
 
 const MCP_PROGRESS_TOKEN_META_KEY: &str = "progressToken";

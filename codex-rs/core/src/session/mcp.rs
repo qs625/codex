@@ -2,6 +2,7 @@ use super::*;
 use codex_mcp::ElicitationReviewRequest;
 use codex_mcp::ElicitationReviewer;
 use codex_mcp::ElicitationReviewerHandle;
+use codex_mcp_types::ElicitationAction;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::mcp_approval_meta::APPROVAL_KIND_KEY as MCP_ELICITATION_APPROVAL_KIND_KEY;
 use codex_protocol::mcp_approval_meta::APPROVAL_KIND_MCP_TOOL_CALL as MCP_ELICITATION_APPROVAL_KIND_MCP_TOOL_CALL;
@@ -16,7 +17,6 @@ use codex_protocol::mcp_approval_meta::TOOL_NAME_KEY as MCP_ELICITATION_TOOL_NAM
 use codex_protocol::mcp_approval_meta::TOOL_PARAMS_KEY as MCP_ELICITATION_TOOL_PARAMS_KEY;
 use codex_protocol::mcp_approval_meta::TOOL_TITLE_KEY as MCP_ELICITATION_TOOL_TITLE_KEY;
 use rmcp::model::CreateElicitationRequestParams;
-use rmcp::model::ElicitationAction;
 use rmcp::model::Meta;
 use serde_json::Map;
 
@@ -79,7 +79,7 @@ impl Session {
             .elicitations_auto_deny()
         {
             return Some(ElicitationResponse {
-                action: codex_rmcp_client::ElicitationAction::Accept,
+                action: ElicitationAction::Accept,
                 content: Some(serde_json::json!({})),
                 meta: None,
             });
@@ -289,19 +289,26 @@ impl Session {
             host_owned_codex_apps_enabled(&mcp_config, auth.as_ref());
         let auth_statuses =
             compute_auth_statuses(mcp_servers.iter(), store_mode, auth.as_ref()).await;
+        let local_environment = self.services.environment_manager.local_environment();
         let mcp_runtime_environment = match turn_context.environments.primary() {
-            Some(turn_environment) => McpRuntimeEnvironment::new(
+            Some(turn_environment) => crate::mcp::mcp_runtime_environment(
                 Arc::clone(&turn_environment.environment),
+                Arc::clone(&local_environment),
                 turn_environment.cwd.to_path_buf(),
             ),
-            None => McpRuntimeEnvironment::new(
-                self.services
+            None => {
+                let environment = self
+                    .services
                     .environment_manager
                     .default_environment()
-                    .unwrap_or_else(|| self.services.environment_manager.local_environment()),
-                #[allow(deprecated)]
-                turn_context.cwd.to_path_buf(),
-            ),
+                    .unwrap_or_else(|| Arc::clone(&local_environment));
+                crate::mcp::mcp_runtime_environment(
+                    environment,
+                    local_environment,
+                    #[allow(deprecated)]
+                    turn_context.cwd.to_path_buf(),
+                )
+            }
         };
         {
             let mut guard = self.services.mcp_startup_cancellation_token.lock().await;

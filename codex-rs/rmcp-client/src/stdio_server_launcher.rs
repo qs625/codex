@@ -29,11 +29,11 @@ use std::time::Duration;
 
 use anyhow::Result;
 use anyhow::anyhow;
-use codex_config::types::McpServerEnvVar;
-use codex_exec_server::ExecBackend;
-use codex_exec_server::ExecEnvPolicy;
-use codex_exec_server::ExecParams;
-use codex_exec_server::ExecProcess;
+use codex_config_types::McpServerEnvVar;
+use codex_exec_server_api::ExecBackend;
+use codex_exec_server_api::ExecProcess;
+use codex_exec_server_protocol::ExecEnvPolicy;
+use codex_exec_server_protocol::ExecParams;
 use codex_protocol::config_types::ShellEnvironmentPolicyInherit;
 #[cfg(unix)]
 use codex_utils_pty::process_group::kill_process_group;

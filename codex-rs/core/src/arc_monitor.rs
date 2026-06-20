@@ -9,7 +9,7 @@ use crate::compact::content_items_to_text;
 use crate::event_mapping::is_contextual_user_message_content;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use codex_login::default_client::build_reqwest_client;
+use codex_default_client::build_reqwest_client;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::ResponseItem;
 
@@ -133,8 +133,8 @@ pub(crate) async fn monitor_action(
     if let Some(token) = env_token {
         request = request.bearer_auth(token);
     } else if let Some(auth) = auth.as_ref() {
-        request =
-            request.headers(codex_model_provider::auth_provider_from_auth(auth).to_auth_headers());
+        request = request
+            .headers(codex_model_provider_api::auth_provider_from_auth(auth).to_auth_headers());
     }
 
     let response = match request.send().await {

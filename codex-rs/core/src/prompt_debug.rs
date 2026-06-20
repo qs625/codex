@@ -1,12 +1,10 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use codex_exec_server::EnvironmentManager;
-use codex_exec_server::ExecServerRuntimePaths;
+use codex_exec_server_api::ExecEnvironmentProvider;
 use codex_login::AuthManager;
-use codex_protocol::error::CodexErr;
+use codex_model_provider_api::SharedModelProviderFactory;
 use codex_protocol::error::Result as CodexResult;
-use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::user_input::UserInput;
@@ -28,16 +26,13 @@ pub async fn build_prompt_input(
     mut config: Config,
     input: Vec<UserInput>,
     state_db: Option<StateDbHandle>,
+    environment_provider: Arc<dyn ExecEnvironmentProvider>,
+    model_provider_factory: SharedModelProviderFactory,
 ) -> CodexResult<Vec<ResponseItem>> {
     config.ephemeral = true;
 
     let auth_manager =
         AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false).await;
-
-    let local_runtime_paths = ExecServerRuntimePaths::from_optional_paths(
-        config.codex_self_exe.clone(),
-        config.codex_linux_sandbox_exe.clone(),
-    )?;
 
     let thread_store = thread_store_from_config(&config, state_db.clone());
     let installation_id = resolve_installation_id(&config.codex_home).await?;
@@ -45,17 +40,15 @@ pub async fn build_prompt_input(
         &config,
         Arc::clone(&auth_manager),
         SessionSource::Exec,
-        Arc::new(
-            EnvironmentManager::from_codex_home(config.codex_home.clone(), local_runtime_paths)
-                .await
-                .map_err(|err| CodexErr::Fatal(err.to_string()))?,
-        ),
+        environment_provider,
         empty_extension_registry(),
         /*analytics_events_client*/ None,
         thread_store,
         state_db.clone(),
         installation_id,
         /*attestation_provider*/ None,
+        model_provider_factory,
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
     );
     let thread = thread_manager.start_thread(config).await?;
 
@@ -76,7 +69,7 @@ pub(crate) async fn build_prompt_input_from_session(
         .await;
 
     if !input.is_empty() {
-        let input_item = ResponseInputItem::from(input);
+        let input_item = codex_model_input::response_input_item_from_user_input(input);
         let response_item = ResponseItem::from(input_item);
         sess.record_conversation_items(turn_context.as_ref(), std::slice::from_ref(&response_item))
             .await;

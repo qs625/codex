@@ -3,6 +3,7 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 use semver::Version;
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::io;
 
@@ -11,7 +12,6 @@ use crate::pull::PullEvent;
 use crate::pull::PullProgressReporter;
 use crate::url::base_url_to_host_root;
 use crate::url::is_openai_compatible_base_url;
-use codex_core::config::Config;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 #[cfg(test)]
@@ -32,19 +32,18 @@ impl OllamaClient {
     /// Construct a client for the built‑in open‑source ("oss") model provider
     /// and verify that a local Ollama server is reachable. If no server is
     /// detected, returns an error with helpful installation/run instructions.
-    pub async fn try_from_oss_provider(config: &Config) -> io::Result<Self> {
+    pub async fn try_from_oss_provider(
+        model_providers: &HashMap<String, ModelProviderInfo>,
+    ) -> io::Result<Self> {
         // Note that we must look up the provider from the Config to ensure that
         // any overrides the user has in their config.toml are taken into
         // account.
-        let provider = config
-            .model_providers
-            .get(OLLAMA_OSS_PROVIDER_ID)
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("Built-in provider {OLLAMA_OSS_PROVIDER_ID} not found",),
-                )
-            })?;
+        let provider = model_providers.get(OLLAMA_OSS_PROVIDER_ID).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Built-in provider {OLLAMA_OSS_PROVIDER_ID} not found",),
+            )
+        })?;
 
         Self::try_from_provider(provider).await
     }

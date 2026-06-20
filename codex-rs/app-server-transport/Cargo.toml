@@ -22,10 +22,11 @@ axum = { workspace = true, default-features = false, features = [
 ] }
 base64 = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
-codex-api = { workspace = true }
+codex-api-provider = { workspace = true }
 codex-app-server-protocol = { workspace = true }
+codex-auth-types = { workspace = true }
 codex-login = { workspace = true }
-codex-model-provider = { workspace = true }
+codex-model-provider-api = { workspace = true }
 codex-state = { workspace = true }
 codex-uds = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
@@ -55,7 +56,7 @@ uuid = { workspace = true, features = ["serde", "v7"] }
 
 [dev-dependencies]
 chrono = { workspace = true }
-codex-config = { workspace = true }
-codex-core = { workspace = true }
+codex-config-types = { workspace = true }
+codex-core = { workspace = true, features = ["test-support"] }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }

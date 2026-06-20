@@ -133,7 +133,7 @@ pub async fn fetch_remote_plugin_status(
     let request = client
         .get(&url)
         .timeout(REMOTE_PLUGIN_FETCH_TIMEOUT)
-        .headers(codex_model_provider::auth_provider_from_auth(auth).to_auth_headers());
+        .headers(codex_model_provider_api::auth_provider_from_auth(auth).to_auth_headers());
 
     let response = request
         .send()
@@ -171,8 +171,8 @@ pub async fn fetch_remote_featured_plugin_ids(
         .timeout(REMOTE_FEATURED_PLUGIN_FETCH_TIMEOUT);
 
     if let Some(auth) = auth.filter(|auth| auth.uses_codex_backend()) {
-        request =
-            request.headers(codex_model_provider::auth_provider_from_auth(auth).to_auth_headers());
+        request = request
+            .headers(codex_model_provider_api::auth_provider_from_auth(auth).to_auth_headers());
     }
 
     let response = request
@@ -240,7 +240,7 @@ async fn post_remote_plugin_mutation(
     let request = client
         .post(url.clone())
         .timeout(REMOTE_PLUGIN_MUTATION_TIMEOUT)
-        .headers(codex_model_provider::auth_provider_from_auth(auth).to_auth_headers());
+        .headers(codex_model_provider_api::auth_provider_from_auth(auth).to_auth_headers());
 
     let response = request
         .send()

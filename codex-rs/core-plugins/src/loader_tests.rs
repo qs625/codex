@@ -2,6 +2,7 @@ use super::*;
 use crate::manifest::load_plugin_manifest;
 use codex_config::ConfigLayerEntry;
 use codex_config::ConfigLayerSource;
+use codex_config::ConfigLayerStack;
 use codex_config::ConfigRequirements;
 use codex_config::ConfigRequirementsToml;
 use codex_plugin::PluginId;
@@ -41,6 +42,7 @@ fn configured_plugins_from_stack_merges_user_layers() {
         ConfigRequirementsToml::default(),
     )
     .expect("valid config layer stack");
+    let stack = stack.into();
 
     let plugins = configured_plugins_from_stack(&stack);
 

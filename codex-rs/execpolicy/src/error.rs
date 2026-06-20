@@ -1,6 +1,8 @@
 use starlark::Error as StarlarkError;
 use thiserror::Error;
 
+use codex_execpolicy_api::Error as ApiError;
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +50,27 @@ pub enum Error {
     },
     #[error("starlark error: {0}")]
     Starlark(StarlarkError),
+}
+
+impl From<ApiError> for Error {
+    fn from(value: ApiError) -> Self {
+        match value {
+            ApiError::InvalidDecision(message) => Self::InvalidDecision(message),
+            ApiError::InvalidPattern(message) => Self::InvalidPattern(message),
+            ApiError::InvalidExample(message) => Self::InvalidExample(message),
+            ApiError::InvalidRule(message) => Self::InvalidRule(message),
+            ApiError::ExampleDidNotMatch { rules, examples } => Self::ExampleDidNotMatch {
+                rules,
+                examples,
+                location: None,
+            },
+            ApiError::ExampleDidMatch { rule, example } => Self::ExampleDidMatch {
+                rule,
+                example,
+                location: None,
+            },
+        }
+    }
 }
 
 impl Error {

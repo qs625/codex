@@ -1,0 +1,17 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-metrics-api"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "codex_metrics_api"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-utils-string = { workspace = true }
+serde = { workspace = true, features = ["derive"] }

@@ -10,20 +10,14 @@ name = "codex_execpolicy"
 path = "src/lib.rs"
 doctest = false
 
-[[bin]]
-name = "codex-execpolicy"
-path = "src/main.rs"
-
 [lints]
 workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
+codex-execpolicy-api = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 multimap = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
 shlex = { workspace = true }
 starlark = { workspace = true }
 thiserror = { workspace = true }

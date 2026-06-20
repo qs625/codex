@@ -1,10 +1,10 @@
-use codex_config::CONFIG_TOML_FILE;
-use codex_config::ConfigLayerStack;
-use codex_config::TomlValue;
+use codex_config_edit::CONFIG_TOML_FILE;
+use codex_config_state::ConfigLayerStack;
 use codex_core::config::Config;
 use codex_features::Feature;
 use codex_hooks::HookListEntry;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use toml::Value as TomlValue;
 
 pub fn trust_discovered_hooks(config: &mut Config) {
     if let Err(err) = config.features.enable(Feature::CodexHooks) {
@@ -13,7 +13,11 @@ pub fn trust_discovered_hooks(config: &mut Config) {
 
     let listed = codex_hooks::list_hooks(codex_hooks::HooksConfig {
         feature_enabled: true,
-        config_layer_stack: Some(config.config_layer_stack.clone()),
+        config_layer_stack: Some(
+            codex_core::config::hook_config_layer_stack_from_config_layer_stack(
+                &config.config_layer_stack,
+            ),
+        ),
         ..codex_hooks::HooksConfig::default()
     });
     assert!(

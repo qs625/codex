@@ -11,8 +11,9 @@ use crate::tools::registry::ToolExposure;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::spec::collect_tool_router_parts;
 use crate::tools::spec_plan::build_tool_registry_builder_from_executors;
+use codex_code_mode_api::is_code_mode_nested_tool;
 use codex_extension_api::ExtensionToolExecutor;
-use codex_mcp::ToolInfo;
+use codex_mcp_tool_types::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::models::SearchToolCallParams;
@@ -187,7 +188,7 @@ fn is_hidden_by_code_mode_only(
     registry: &ToolRegistry,
     spec: &ToolSpec,
 ) -> bool {
-    if !config.code_mode_only_enabled || !codex_code_mode::is_code_mode_nested_tool(spec.name()) {
+    if !config.code_mode_only_enabled || !is_code_mode_nested_tool(spec.name()) {
         return false;
     }
 

@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
 
-use codex_exec_server::ExecutorFileSystem;
+use codex_file_system::ExecutorFileSystem;
 use codex_protocol::protocol::Product;
 use codex_protocol::protocol::SkillScope;
 use codex_utils_absolute_path::AbsolutePathBuf;

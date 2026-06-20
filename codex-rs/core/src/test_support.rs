@@ -6,21 +6,45 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
-use codex_exec_server::EnvironmentManager;
+use async_trait::async_trait;
+use codex_api::ModelsClient;
+use codex_api::ReqwestTransport;
+use codex_default_client::build_reqwest_client;
+use codex_exec_server_api::ExecEnvironmentProvider;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
-use codex_model_provider::create_model_provider;
+use codex_model_provider_api::ModelProvider;
+use codex_model_provider_api::ModelProviderFactory;
+use codex_model_provider_api::ModelProviderFuture;
+use codex_model_provider_api::ProviderAccountError;
+use codex_model_provider_api::ProviderAccountResult;
+use codex_model_provider_api::ProviderAccountState;
+use codex_model_provider_api::SharedModelProvider;
+use codex_model_provider_api::SharedModelProviderFactory;
+use codex_model_provider_api::model_provider_info_to_api_provider;
+use codex_model_provider_api::resolve_provider_auth;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_models_manager::bundled_models_response;
 use codex_models_manager::collaboration_mode_presets;
-use codex_models_manager::manager::SharedModelsManager;
+use codex_models_manager::manager::ModelCachePolicy;
+use codex_models_manager::manager::ModelsEndpointClient;
+use codex_models_manager::manager::OpenAiModelsManager;
+use codex_models_manager::manager::StaticModelsManager;
 use codex_models_manager::test_support::construct_model_info_offline_for_tests;
 use codex_models_manager::test_support::get_model_offline_for_tests;
+use codex_models_manager_api::SharedModelsManager;
+use codex_protocol::account::ProviderAccount;
 use codex_protocol::config_types::CollaborationModeMask;
+use codex_protocol::error::CodexErr;
+use codex_protocol::error::Result as CodexResult;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelPreset;
+use codex_protocol::openai_models::ModelsResponse;
+use http::HeaderMap;
 use once_cell::sync::Lazy;
+use tokio::time::timeout;
 
 use crate::ThreadManager;
 use crate::config::Config;
@@ -35,6 +59,188 @@ static TEST_MODEL_PRESETS: Lazy<Vec<ModelPreset>> = Lazy::new(|| {
     ModelPreset::mark_default_by_picker_visibility(&mut presets);
     presets
 });
+
+const TEST_MODELS_REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Debug, Default)]
+struct TestModelProviderFactory;
+
+impl ModelProviderFactory for TestModelProviderFactory {
+    fn create_model_provider(
+        &self,
+        provider_info: ModelProviderInfo,
+        auth_manager: Option<Arc<AuthManager>>,
+    ) -> SharedModelProvider {
+        Arc::new(TestModelProvider {
+            info: provider_info,
+            auth_manager,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct TestModelProvider {
+    info: ModelProviderInfo,
+    auth_manager: Option<Arc<AuthManager>>,
+}
+
+impl ModelProvider for TestModelProvider {
+    fn info(&self) -> &ModelProviderInfo {
+        &self.info
+    }
+
+    fn auth_manager(&self) -> Option<Arc<AuthManager>> {
+        self.auth_manager.clone()
+    }
+
+    fn supports_attestation(&self) -> bool {
+        self.auth_manager
+            .as_ref()
+            .and_then(|auth_manager| auth_manager.auth_cached())
+            .is_some_and(|auth| auth.is_chatgpt_auth())
+    }
+
+    fn auth(&self) -> ModelProviderFuture<'_, Option<CodexAuth>> {
+        Box::pin(async move {
+            match self.auth_manager.as_ref() {
+                Some(auth_manager) => auth_manager.auth().await,
+                None => None,
+            }
+        })
+    }
+
+    fn account_state(&self) -> ProviderAccountResult {
+        let account = if self.info.requires_openai_auth {
+            self.auth_manager
+                .as_ref()
+                .and_then(|auth_manager| {
+                    let auth = auth_manager.auth_cached()?;
+                    if auth_manager.refresh_failure_for_auth(&auth).is_some() {
+                        return None;
+                    }
+                    Some(auth)
+                })
+                .map(|auth| match &auth {
+                    CodexAuth::ApiKey(_) => Ok(ProviderAccount::ApiKey),
+                    CodexAuth::Chatgpt(_)
+                    | CodexAuth::ChatgptAuthTokens(_)
+                    | CodexAuth::AgentIdentity(_) => {
+                        let email = auth.get_account_email();
+                        let plan_type = auth.account_plan_type();
+
+                        match (email, plan_type) {
+                            (Some(email), Some(plan_type)) => {
+                                Ok(ProviderAccount::Chatgpt { email, plan_type })
+                            }
+                            _ => Err(ProviderAccountError::MissingChatgptAccountDetails),
+                        }
+                    }
+                })
+                .transpose()?
+        } else {
+            None
+        };
+
+        Ok(ProviderAccountState {
+            account,
+            requires_openai_auth: self.info.requires_openai_auth,
+        })
+    }
+
+    fn models_manager(
+        &self,
+        codex_home: PathBuf,
+        config_model_catalog: Option<ModelsResponse>,
+    ) -> SharedModelsManager {
+        match config_model_catalog {
+            Some(model_catalog) => Arc::new(StaticModelsManager::new(
+                self.auth_manager.clone(),
+                model_catalog,
+            )),
+            None => {
+                let endpoint = Arc::new(TestModelsEndpoint {
+                    provider_info: self.info.clone(),
+                    auth_manager: self.auth_manager.clone(),
+                });
+                if self.info.is_openai() {
+                    Arc::new(OpenAiModelsManager::new(
+                        codex_home,
+                        endpoint,
+                        self.auth_manager.clone(),
+                    ))
+                } else {
+                    Arc::new(OpenAiModelsManager::new_with_fallback_models(
+                        codex_home,
+                        endpoint,
+                        self.auth_manager.clone(),
+                        Vec::new(),
+                        ModelCachePolicy::Disabled,
+                    ))
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct TestModelsEndpoint {
+    provider_info: ModelProviderInfo,
+    auth_manager: Option<Arc<AuthManager>>,
+}
+
+impl TestModelsEndpoint {
+    async fn auth(&self) -> Option<CodexAuth> {
+        match self.auth_manager.as_ref() {
+            Some(auth_manager) => auth_manager.auth().await,
+            None => None,
+        }
+    }
+}
+
+#[async_trait]
+impl ModelsEndpointClient for TestModelsEndpoint {
+    fn has_command_auth(&self) -> bool {
+        self.provider_info.has_command_auth()
+    }
+
+    async fn uses_codex_backend(&self) -> bool {
+        self.auth()
+            .await
+            .as_ref()
+            .is_some_and(CodexAuth::uses_codex_backend)
+    }
+
+    async fn list_models(
+        &self,
+        client_version: &str,
+    ) -> CodexResult<(Vec<ModelInfo>, Option<String>)> {
+        let auth = self.auth().await;
+        let auth_mode = auth.as_ref().map(CodexAuth::auth_mode);
+        let api_provider = model_provider_info_to_api_provider(&self.provider_info, auth_mode);
+        let api_auth = resolve_provider_auth(auth.as_ref(), &self.provider_info)?;
+        let transport = ReqwestTransport::new(build_reqwest_client());
+        let client = ModelsClient::new(transport, api_provider, api_auth);
+
+        timeout(
+            TEST_MODELS_REFRESH_TIMEOUT,
+            client.list_models(client_version, HeaderMap::new()),
+        )
+        .await
+        .map_err(|_| CodexErr::Timeout)?
+        .map_err(codex_api::map_api_error)
+    }
+}
+
+pub fn model_provider_factory_for_tests() -> SharedModelProviderFactory {
+    Arc::new(TestModelProviderFactory)
+}
+
+pub fn create_model_provider_for_tests(
+    provider: ModelProviderInfo,
+    auth_manager: Option<Arc<AuthManager>>,
+) -> SharedModelProvider {
+    TestModelProviderFactory.create_model_provider(provider, auth_manager)
+}
 
 pub fn set_thread_manager_test_mode(enabled: bool) {
     thread_manager::set_thread_manager_test_mode_for_tests(enabled);
@@ -56,18 +262,23 @@ pub fn thread_manager_with_models_provider(
     auth: CodexAuth,
     provider: ModelProviderInfo,
 ) -> ThreadManager {
-    ThreadManager::with_models_provider_for_tests(auth, provider)
+    ThreadManager::with_models_provider_for_tests(
+        auth,
+        provider,
+        model_provider_factory_for_tests(),
+    )
 }
 
 pub fn thread_manager_with_models_provider_and_home(
     auth: CodexAuth,
     provider: ModelProviderInfo,
     codex_home: PathBuf,
-    environment_manager: Arc<EnvironmentManager>,
+    environment_manager: Arc<dyn ExecEnvironmentProvider>,
 ) -> ThreadManager {
     ThreadManager::with_models_provider_and_home_for_tests(
         auth,
         provider,
+        model_provider_factory_for_tests(),
         codex_home,
         environment_manager,
     )
@@ -77,12 +288,13 @@ pub fn thread_manager_with_models_provider_home_and_state(
     auth: CodexAuth,
     provider: ModelProviderInfo,
     codex_home: PathBuf,
-    environment_manager: Arc<EnvironmentManager>,
+    environment_manager: Arc<dyn ExecEnvironmentProvider>,
     state_db: Option<crate::StateDbHandle>,
 ) -> ThreadManager {
     ThreadManager::with_models_provider_home_and_state_for_tests(
         auth,
         provider,
+        model_provider_factory_for_tests(),
         codex_home,
         environment_manager,
         state_db,
@@ -121,7 +333,7 @@ pub fn models_manager_with_provider(
     auth_manager: Arc<AuthManager>,
     provider: ModelProviderInfo,
 ) -> SharedModelsManager {
-    let provider = create_model_provider(provider, Some(auth_manager));
+    let provider = create_model_provider_for_tests(provider, Some(auth_manager));
     provider.models_manager(codex_home, /*config_model_catalog*/ None)
 }
 

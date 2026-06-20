@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use codex_app_server_protocol::AuthMode;
-use codex_config::types::AuthCredentialsStoreMode;
+use codex_auth_types::AuthMode;
+use codex_config_types::AuthCredentialsStoreMode;
 use codex_login::load_auth_dot_json;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,7 +59,7 @@ mod tests {
 
     use base64::Engine;
     use chrono::Utc;
-    use codex_app_server_protocol::AuthMode;
+    use codex_auth_types::AuthMode;
     use codex_login::AuthDotJson;
     use codex_login::auth::login_with_chatgpt_auth_tokens;
     use codex_login::save_auth;

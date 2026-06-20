@@ -2,9 +2,9 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use codex_analytics::CompactionTrigger;
-use codex_analytics::HookRunFact;
-use codex_analytics::build_track_events_context;
+use codex_analytics_api::CompactionTrigger;
+use codex_analytics_api::HookRunFact;
+use codex_analytics_api::build_track_events_context;
 use codex_hooks::PermissionRequestDecision;
 use codex_hooks::PermissionRequestOutcome;
 use codex_hooks::PermissionRequestRequest;
@@ -15,8 +15,8 @@ use codex_hooks::PreToolUseRequest;
 use codex_hooks::SessionStartOutcome;
 use codex_hooks::UserPromptSubmitOutcome;
 use codex_hooks::UserPromptSubmitRequest;
-use codex_otel::HOOK_RUN_DURATION_METRIC;
-use codex_otel::HOOK_RUN_METRIC;
+use codex_metrics_api::HOOK_RUN_DURATION_METRIC;
+use codex_metrics_api::HOOK_RUN_METRIC;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AskForApproval;
@@ -558,7 +558,7 @@ fn hook_run_analytics_payload(
     thread_id: String,
     turn_context: &TurnContext,
     completed: &HookCompletedEvent,
-) -> (codex_analytics::TrackEventsContext, HookRunFact) {
+) -> (codex_analytics_api::TrackEventsContext, HookRunFact) {
     (
         build_track_events_context(
             turn_context.model_info.slug.clone(),

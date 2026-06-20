@@ -31,8 +31,10 @@ use crate::metrics::runtime_metrics::RuntimeMetricsSummary;
 use crate::metrics::timer::Timer;
 use crate::provider::OtelProvider;
 use crate::sanitize_metric_tag_value;
-use codex_api::ApiError;
-use codex_api::ResponseEvent;
+use codex_api_types::ResponseEvent;
+use codex_api_types::SseEventTelemetry;
+use codex_api_types::WebsocketEventTelemetry;
+use codex_auth_types::AuthEnvTelemetryMetadata;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::models::ResponseItem;
@@ -42,16 +44,10 @@ use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::user_input::UserInput;
-use eventsource_stream::Event as StreamEvent;
-use eventsource_stream::EventStreamError as StreamError;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
-use reqwest::Error;
-use reqwest::Response;
 use std::borrow::Cow;
-use std::future::Future;
 use std::time::Duration;
 use std::time::Instant;
-use tokio::time::error::Elapsed;
 use tracing::Span;
 
 const SSE_UNKNOWN_KIND: &str = "unknown";
@@ -69,16 +65,6 @@ fn trace_field_value<'a>(fields: &'a [(&str, &str)], key: &str) -> Option<&'a st
     fields
         .iter()
         .find_map(|(field_key, value)| (*field_key == key).then_some(*value))
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AuthEnvTelemetryMetadata {
-    pub openai_api_key_env_present: bool,
-    pub codex_api_key_env_present: bool,
-    pub codex_api_key_env_enabled: bool,
-    pub provider_env_key_name: Option<String>,
-    pub provider_env_key_present: Option<bool>,
-    pub refresh_token_url_override_present: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -418,39 +404,6 @@ impl SessionTelemetry {
         );
     }
 
-    pub async fn log_request<F, Fut>(&self, attempt: u64, f: F) -> Result<Response, Error>
-    where
-        F: FnOnce() -> Fut,
-        Fut: Future<Output = Result<Response, Error>>,
-    {
-        let start = Instant::now();
-        let response = f().await;
-        let duration = start.elapsed();
-
-        let (status, error) = match &response {
-            Ok(response) => (Some(response.status().as_u16()), None),
-            Err(error) => (error.status().map(|s| s.as_u16()), Some(error.to_string())),
-        };
-        self.record_api_request(
-            attempt,
-            status,
-            error.as_deref(),
-            duration,
-            /*auth_header_attached*/ false,
-            /*auth_header_name*/ None,
-            /*retry_after_unauthorized*/ false,
-            /*recovery_mode*/ None,
-            /*recovery_phase*/ None,
-            "unknown",
-            /*request_id*/ None,
-            /*cf_ray*/ None,
-            /*auth_error*/ None,
-            /*auth_error_code*/ None,
-        );
-
-        response
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn record_api_request(
         &self,
@@ -639,83 +592,20 @@ impl SessionTelemetry {
 
     pub fn record_websocket_event(
         &self,
-        result: &Result<
-            Option<
-                Result<
-                    tokio_tungstenite::tungstenite::Message,
-                    tokio_tungstenite::tungstenite::Error,
-                >,
-            >,
-            ApiError,
-        >,
+        event: Option<&WebsocketEventTelemetry>,
         duration: Duration,
     ) {
-        let mut kind = None;
-        let mut error_message = None;
-        let mut success = true;
-
-        match result {
-            Ok(Some(Ok(message))) => match message {
-                tokio_tungstenite::tungstenite::Message::Text(text) => {
-                    match serde_json::from_str::<serde_json::Value>(text) {
-                        Ok(value) => {
-                            kind = value
-                                .get("type")
-                                .and_then(|value| value.as_str())
-                                .map(std::string::ToString::to_string);
-                            if kind.as_deref() == Some(RESPONSES_WEBSOCKET_TIMING_KIND) {
-                                self.record_responses_websocket_timing_metrics(&value);
-                            }
-                            if kind.as_deref() == Some("response.failed") {
-                                success = false;
-                                error_message = value
-                                    .get("response")
-                                    .and_then(|value| value.get("error"))
-                                    .map(serde_json::Value::to_string)
-                                    .or_else(|| Some("response.failed event received".to_string()));
-                            }
-                        }
-                        Err(err) => {
-                            kind = Some("parse_error".to_string());
-                            error_message = Some(err.to_string());
-                            success = false;
-                        }
-                    }
-                }
-                tokio_tungstenite::tungstenite::Message::Binary(_) => {
-                    success = false;
-                    error_message = Some("unexpected binary websocket event".to_string());
-                }
-                tokio_tungstenite::tungstenite::Message::Ping(_)
-                | tokio_tungstenite::tungstenite::Message::Pong(_) => {
-                    return;
-                }
-                tokio_tungstenite::tungstenite::Message::Close(_) => {
-                    success = false;
-                    error_message =
-                        Some("websocket closed by server before response.completed".to_string());
-                }
-                tokio_tungstenite::tungstenite::Message::Frame(_) => {
-                    success = false;
-                    error_message = Some("unexpected websocket frame".to_string());
-                }
-            },
-            Ok(Some(Err(err))) => {
-                success = false;
-                error_message = Some(err.to_string());
-            }
-            Ok(None) => {
-                success = false;
-                error_message = Some("stream closed before response.completed".to_string());
-            }
-            Err(err) => {
-                success = false;
-                error_message = Some(err.to_string());
-            }
+        let Some(event) = event else {
+            return;
+        };
+        if event.kind.as_deref() == Some(RESPONSES_WEBSOCKET_TIMING_KIND)
+            && let Some(value) = event.payload.as_ref()
+        {
+            self.record_responses_websocket_timing_metrics(value);
         }
 
-        let kind_str = kind.as_deref().unwrap_or(WEBSOCKET_UNKNOWN_KIND);
-        let success_str = if success { "true" } else { "false" };
+        let kind_str = event.kind.as_deref().unwrap_or(WEBSOCKET_UNKNOWN_KIND);
+        let success_str = if event.success { "true" } else { "false" };
         let tags = [("kind", kind_str), ("success", success_str)];
         self.counter(WEBSOCKET_EVENT_COUNT_METRIC, /*inc*/ 1, &tags);
         self.record_duration(WEBSOCKET_EVENT_DURATION_METRIC, duration, &tags);
@@ -726,61 +616,26 @@ impl SessionTelemetry {
                 event.kind = %kind_str,
                 duration_ms = %duration.as_millis(),
                 success = success_str,
-                error.message = error_message.as_deref(),
+                error.message = event.error_message.as_deref(),
             },
             log: {},
             trace: {},
         );
     }
 
-    pub fn log_sse_event<E>(
-        &self,
-        response: &Result<Option<Result<StreamEvent, StreamError<E>>>, Elapsed>,
-        duration: Duration,
-    ) where
-        E: std::fmt::Display,
-    {
-        match response {
-            Ok(Some(Ok(sse))) => {
-                if sse.data.trim() == "[DONE]" {
-                    self.sse_event(&sse.event, duration);
-                } else {
-                    match serde_json::from_str::<serde_json::Value>(&sse.data) {
-                        Ok(error) if sse.event == "response.failed" => {
-                            self.sse_event_failed(Some(&sse.event), duration, &error);
-                        }
-                        Ok(content) if sse.event == "response.output_item.done" => {
-                            match serde_json::from_value::<ResponseItem>(content) {
-                                Ok(_) => self.sse_event(&sse.event, duration),
-                                Err(_) => {
-                                    self.sse_event_failed(
-                                        Some(&sse.event),
-                                        duration,
-                                        &"failed to parse response.output_item.done",
-                                    );
-                                }
-                            };
-                        }
-                        Ok(_) => {
-                            self.sse_event(&sse.event, duration);
-                        }
-                        Err(error) => {
-                            self.sse_event_failed(Some(&sse.event), duration, &error);
-                        }
-                    }
-                }
-            }
-            Ok(Some(Err(error))) => {
-                self.sse_event_failed(/*kind*/ None, duration, error);
-            }
-            Ok(None) => {}
-            Err(_) => {
-                self.sse_event_failed(
-                    /*kind*/ None,
-                    duration,
-                    &"idle timeout waiting for SSE",
-                );
-            }
+    pub fn log_sse_event(&self, event: Option<&SseEventTelemetry>, duration: Duration) {
+        let Some(event) = event else {
+            return;
+        };
+        if event.success {
+            let kind = event.kind.as_deref().unwrap_or(SSE_UNKNOWN_KIND);
+            self.sse_event(kind, duration);
+        } else {
+            let error = event
+                .error_message
+                .as_deref()
+                .unwrap_or("unknown SSE error");
+            self.sse_event_failed(event.kind.as_ref(), duration, &error);
         }
     }
 

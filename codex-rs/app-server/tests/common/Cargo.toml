@@ -17,8 +17,9 @@ anyhow = { workspace = true }
 base64 = { workspace = true }
 chrono = { workspace = true }
 codex-app-server-protocol = { workspace = true }
-codex-config = { workspace = true }
-codex-core = { workspace = true }
+codex-auth-types = { workspace = true }
+codex-config-types = { workspace = true }
+codex-core = { workspace = true, features = ["test-support"] }
 codex-features = { workspace = true }
 codex-login = { workspace = true }
 codex-models-manager = { workspace = true }

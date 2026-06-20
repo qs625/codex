@@ -50,7 +50,7 @@ impl ChatWidget {
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
             let accessible_result =
-                match crate::legacy_core::connectors::list_accessible_connectors_from_mcp_tools_with_environment_manager(
+                match crate::legacy_core::connectors::list_accessible_connectors_from_mcp_tools_with_environment_provider(
                     &config,
                     force_refetch,
                     &environment_manager,

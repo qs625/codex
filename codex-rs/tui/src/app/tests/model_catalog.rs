@@ -1,6 +1,6 @@
 use super::*;
 use assert_matches::assert_matches;
-use codex_config::types::ModelAvailabilityNuxConfig;
+use codex_config_types::ModelAvailabilityNuxConfig;
 use codex_protocol::openai_models::ModelAvailabilityNux;
 use pretty_assertions::assert_eq;
 use tokio::sync::mpsc::unbounded_channel;

@@ -9,6 +9,7 @@ use crate::rate_limits::parse_rate_limit_event;
 use crate::sse::ResponsesStreamEvent;
 use crate::sse::process_responses_event;
 use crate::telemetry::WebsocketTelemetry;
+use crate::telemetry::summarize_websocket_poll;
 use codex_client::TransportError;
 use codex_client::maybe_build_rustls_client_config_with_custom_ca;
 use codex_utils_rustls_provider::ensure_rustls_crypto_provider;
@@ -683,7 +684,8 @@ async fn run_websocket_response_stream(
             .await
             .map_err(|_| ApiError::Stream("idle timeout waiting for websocket".into()));
         if let Some(t) = telemetry.as_ref() {
-            t.on_ws_event(&response, poll_start.elapsed());
+            let event = summarize_websocket_poll(&response);
+            t.on_ws_event(event.as_ref(), poll_start.elapsed());
         }
         let message = match response {
             Ok(Some(Ok(msg))) => msg,

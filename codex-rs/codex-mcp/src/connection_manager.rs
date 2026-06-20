@@ -31,18 +31,19 @@ use crate::runtime::McpRuntimeEnvironment;
 use crate::runtime::emit_duration;
 use crate::server::EffectiveMcpServer;
 use crate::server::McpServerMetadata;
-use crate::tools::ToolInfo;
 use crate::tools::filter_tools;
 use crate::tools::normalize_tools_for_model;
-use crate::tools::tool_with_model_visible_input_schema;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
 use async_channel::Sender;
-use codex_config::Constrained;
-use codex_config::McpServerTransportConfig;
-use codex_config::types::OAuthCredentialsStoreMode;
+use codex_config_types::Constrained;
+use codex_config_types::McpServerTransportConfig;
+use codex_config_types::OAuthCredentialsStoreMode;
 use codex_login::CodexAuth;
+use codex_mcp_tool_types::ToolInfo;
+use codex_mcp_tool_types::tool_with_model_visible_input_schema;
+use codex_mcp_types::ElicitationResponse;
 use codex_protocol::mcp::CallToolResult;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
@@ -52,7 +53,6 @@ use codex_protocol::protocol::McpStartupCompleteEvent;
 use codex_protocol::protocol::McpStartupFailure;
 use codex_protocol::protocol::McpStartupStatus;
 use codex_protocol::protocol::McpStartupUpdateEvent;
-use codex_rmcp_client::ElicitationResponse;
 use rmcp::model::ElicitationCapability;
 use rmcp::model::ListResourceTemplatesResult;
 use rmcp::model::ListResourcesResult;
@@ -191,7 +191,7 @@ impl McpConnectionManager {
         let startup_submit_id = submit_id.clone();
         let codex_apps_auth_provider = auth
             .filter(|auth| auth.uses_codex_backend())
-            .map(codex_model_provider::auth_provider_from_auth);
+            .map(codex_model_provider_api::auth_provider_from_auth);
         let mcp_servers = mcp_servers.clone();
         for (server_name, server) in mcp_servers
             .into_iter()

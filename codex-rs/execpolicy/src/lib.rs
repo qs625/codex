@@ -1,26 +1,29 @@
-pub(crate) mod amend;
-pub(crate) mod decision;
 pub(crate) mod error;
-pub(crate) mod execpolicycheck;
-mod executable_name;
 pub(crate) mod parser;
-pub(crate) mod policy;
-pub mod rule;
+pub mod rule {
+    pub use codex_execpolicy_api::rule::NetworkRule;
+    pub use codex_execpolicy_api::rule::NetworkRuleProtocol;
+    pub use codex_execpolicy_api::rule::PatternToken;
+    pub use codex_execpolicy_api::rule::PrefixPattern;
+    pub use codex_execpolicy_api::rule::PrefixRule;
+    pub use codex_execpolicy_api::rule::Rule;
+    pub use codex_execpolicy_api::rule::RuleMatch;
+    pub use codex_execpolicy_api::rule::RuleRef;
+}
 
-pub use amend::AmendError;
-pub use amend::blocking_append_allow_prefix_rule;
-pub use amend::blocking_append_network_rule;
-pub use decision::Decision;
+pub use codex_execpolicy_api::AmendError;
+pub use codex_execpolicy_api::Decision;
+pub use codex_execpolicy_api::Evaluation;
+pub use codex_execpolicy_api::MatchOptions;
+pub use codex_execpolicy_api::Policy;
+pub use codex_execpolicy_api::blocking_append_allow_prefix_rule;
+pub use codex_execpolicy_api::blocking_append_network_rule;
 pub use error::Error;
 pub use error::ErrorLocation;
 pub use error::Result;
 pub use error::TextPosition;
 pub use error::TextRange;
-pub use execpolicycheck::ExecPolicyCheckCommand;
 pub use parser::PolicyParser;
-pub use policy::Evaluation;
-pub use policy::MatchOptions;
-pub use policy::Policy;
 pub use rule::NetworkRuleProtocol;
 pub use rule::PatternToken;
 pub use rule::PrefixPattern;

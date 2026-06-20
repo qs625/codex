@@ -1,9 +1,12 @@
 use super::*;
 use crate::config::ConstraintError;
 use crate::goals::GoalRuntimeState;
-use crate::workflow_runs::WorkflowRunManager;
+use crate::workflow_runs::WorkflowRunController;
+use codex_code_mode_api::CodeModeRuntimeFactory;
+use codex_code_mode_api::CodeModeRuntimeService;
 use codex_command_runtime::WaitBackoffState;
-use codex_config::RequirementSource;
+use codex_config_types::RequirementSource;
+use codex_metrics_api::MetricsSink;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ServiceTier;
@@ -39,7 +42,7 @@ pub(crate) struct Session {
     pub(super) idle_pending_input: Mutex<Vec<crate::pending_input::PendingInputItem>>,
     pub(crate) goal_runtime: GoalRuntimeState,
     pub(crate) guardian_review_session: GuardianReviewSessionManager,
-    pub(crate) workflow_runs: WorkflowRunManager,
+    pub(crate) workflow_runs: Arc<dyn WorkflowRunController>,
     pub(crate) services: SessionServices,
     pub(super) next_internal_sub_id: AtomicU64,
     pub(super) parent_child_completion_active: AtomicBool,
@@ -503,6 +506,7 @@ impl Session {
         config: Arc<Config>,
         installation_id: String,
         auth_manager: Arc<AuthManager>,
+        model_provider_factory: SharedModelProviderFactory,
         models_manager: SharedModelsManager,
         exec_policy: Arc<ExecPolicyManager>,
         tx_event: Sender<Event>,
@@ -514,12 +518,16 @@ impl Session {
         mcp_manager: Arc<McpManager>,
         extensions: Arc<codex_extension_api::ExtensionRegistry<crate::config::Config>>,
         agent_control: AgentControl,
-        environment_manager: Arc<EnvironmentManager>,
+        environment_manager: Arc<dyn ExecEnvironmentProvider>,
         analytics_events_client: Option<AnalyticsEventsClient>,
         thread_store: Arc<dyn ThreadStore>,
         parent_rollout_thread_trace: ThreadTraceContext,
         attestation_provider: Option<Arc<dyn AttestationProvider>>,
         active_event_subscriptions: Arc<crate::ActiveEventSubscriptionTracker>,
+        openai_file_uploader: SharedOpenAiFileUploader,
+        code_mode_service: Arc<dyn CodeModeRuntimeService>,
+        code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+        workflow_runs: Arc<dyn WorkflowRunController>,
     ) -> anyhow::Result<Arc<Self>> {
         debug!(
             "Configuring session: model={}; provider={:?}",
@@ -781,7 +789,7 @@ impl Session {
                 model: Some(session_model.clone()),
                 slug: Some(session_model),
             };
-            config.features.emit_metrics(&session_telemetry);
+            emit_feature_metrics(&config.features, &session_telemetry);
             session_telemetry.counter(
                 THREAD_STARTED_METRIC,
                 /*inc*/ 1,
@@ -935,13 +943,8 @@ impl Session {
                 });
             }
 
-            let analytics_events_client = analytics_events_client.unwrap_or_else(|| {
-                AnalyticsEventsClient::new(
-                    Arc::clone(&auth_manager),
-                    config.chatgpt_base_url.trim_end_matches('/').to_string(),
-                    config.analytics_enabled,
-                )
-            });
+            let analytics_events_client =
+                analytics_events_client.unwrap_or_else(AnalyticsEventsClient::disabled);
             let session_id = if session_configuration.session_source.is_non_root_agent() {
                 agent_control.session_id()
             } else {
@@ -992,6 +995,7 @@ impl Session {
                 show_raw_agent_reasoning: config.show_raw_agent_reasoning,
                 exec_policy,
                 auth_manager: Arc::clone(&auth_manager),
+                model_provider_factory: Arc::clone(&model_provider_factory),
                 session_telemetry,
                 models_manager: Arc::clone(&models_manager),
                 tool_approvals: Mutex::new(ApprovalStore::default()),
@@ -1018,6 +1022,7 @@ impl Session {
                     session_id,
                     thread_id,
                     installation_id.clone(),
+                    Arc::clone(&model_provider_factory),
                     session_configuration.provider.clone(),
                     session_configuration.session_source.clone(),
                     config.model_verbosity,
@@ -1035,7 +1040,9 @@ impl Session {
                     Self::build_model_client_beta_features_header(config.as_ref()),
                     attestation_provider,
                 ),
-                code_mode_service: crate::tools::code_mode::CodeModeService::new(),
+                openai_file_uploader,
+                code_mode_service,
+                code_mode_runtime_factory,
                 environment_manager,
             };
             services
@@ -1062,7 +1069,7 @@ impl Session {
                 idle_pending_input: Mutex::new(Vec::new()),
                 goal_runtime: GoalRuntimeState::new(),
                 guardian_review_session: GuardianReviewSessionManager::default(),
-                workflow_runs: WorkflowRunManager::new(config.codex_home.clone()),
+                workflow_runs,
                 services,
                 next_internal_sub_id: AtomicU64::new(0),
                 parent_child_completion_active: AtomicBool::new(true),
@@ -1147,18 +1154,25 @@ impl Session {
             })?
             .primary()
             .cloned();
+            let local_environment = sess.services.environment_manager.local_environment();
             let mcp_runtime_environment = match turn_environment {
-                Some(turn_environment) => McpRuntimeEnvironment::new(
+                Some(turn_environment) => crate::mcp::mcp_runtime_environment(
                     Arc::clone(&turn_environment.environment),
+                    Arc::clone(&local_environment),
                     turn_environment.cwd.to_path_buf(),
                 ),
-                None => McpRuntimeEnvironment::new(
-                    sess.services
+                None => {
+                    let environment = sess
+                        .services
                         .environment_manager
                         .default_environment()
-                        .unwrap_or_else(|| sess.services.environment_manager.local_environment()),
-                    session_configuration.cwd.to_path_buf(),
-                ),
+                        .unwrap_or_else(|| Arc::clone(&local_environment));
+                    crate::mcp::mcp_runtime_environment(
+                        environment,
+                        local_environment,
+                        session_configuration.cwd.to_path_buf(),
+                    )
+                }
             };
             let (mcp_connection_manager, cancel_token) = McpConnectionManager::new(
                 &mcp_servers,
@@ -1246,6 +1260,24 @@ impl Session {
                 live_thread_init.discard().await;
                 Err(err)
             }
+        }
+    }
+}
+
+fn emit_feature_metrics(features: &codex_features::Features, metrics: &dyn MetricsSink) {
+    for feature in FEATURES {
+        if matches!(feature.stage, codex_features::Stage::Removed) {
+            continue;
+        }
+        if features.enabled(feature.id) != feature.default_enabled {
+            metrics.counter(
+                "codex.feature.state",
+                /*inc*/ 1,
+                &[
+                    ("feature", feature.key),
+                    ("value", &features.enabled(feature.id).to_string()),
+                ],
+            );
         }
     }
 }

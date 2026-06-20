@@ -1,15 +1,16 @@
 use super::process::UnifiedExecProcess;
 use crate::unified_exec::UnifiedExecError;
-use async_trait::async_trait;
-use codex_exec_server::ExecProcess;
-use codex_exec_server::ExecProcessEventReceiver;
-use codex_exec_server::ExecServerError;
-use codex_exec_server::ProcessId;
-use codex_exec_server::ReadResponse;
-use codex_exec_server::StartedExecProcess;
-use codex_exec_server::WriteResponse;
-use codex_exec_server::WriteStatus;
+use codex_exec_server_api::ExecProcess;
+use codex_exec_server_api::ExecProcessEventReceiver;
+use codex_exec_server_api::ExecRuntimeError;
+use codex_exec_server_api::StartedExecProcess;
+use codex_exec_server_protocol::ProcessId;
+use codex_exec_server_protocol::ReadResponse;
+use codex_exec_server_protocol::WriteResponse;
+use codex_exec_server_protocol::WriteStatus;
 use codex_sandboxing::SandboxType;
+use futures::FutureExt;
+use futures::future::BoxFuture;
 use pretty_assertions::assert_eq;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -24,7 +25,6 @@ struct MockExecProcess {
     wake_tx: watch::Sender<u64>,
 }
 
-#[async_trait]
 impl ExecProcess for MockExecProcess {
     fn process_id(&self) -> &ProcessId {
         &self.process_id
@@ -38,33 +38,36 @@ impl ExecProcess for MockExecProcess {
         ExecProcessEventReceiver::empty()
     }
 
-    async fn read(
+    fn read(
         &self,
         _after_seq: Option<u64>,
         _max_bytes: Option<usize>,
         _wait_ms: Option<u64>,
-    ) -> Result<ReadResponse, ExecServerError> {
-        Ok(self
-            .read_responses
-            .lock()
-            .await
-            .pop_front()
-            .unwrap_or(ReadResponse {
-                chunks: Vec::new(),
-                next_seq: 1,
-                exited: false,
-                exit_code: None,
-                closed: false,
-                failure: None,
-            }))
+    ) -> BoxFuture<'_, Result<ReadResponse, ExecRuntimeError>> {
+        async move {
+            Ok(self
+                .read_responses
+                .lock()
+                .await
+                .pop_front()
+                .unwrap_or(ReadResponse {
+                    chunks: Vec::new(),
+                    next_seq: 1,
+                    exited: false,
+                    exit_code: None,
+                    closed: false,
+                    failure: None,
+                }))
+        }
+        .boxed()
     }
 
-    async fn write(&self, _chunk: Vec<u8>) -> Result<WriteResponse, ExecServerError> {
-        Ok(self.write_response.clone())
+    fn write(&self, _chunk: Vec<u8>) -> BoxFuture<'_, Result<WriteResponse, ExecRuntimeError>> {
+        async move { Ok(self.write_response.clone()) }.boxed()
     }
 
-    async fn terminate(&self) -> Result<(), ExecServerError> {
-        Ok(())
+    fn terminate(&self) -> BoxFuture<'_, Result<(), ExecRuntimeError>> {
+        async move { Ok(()) }.boxed()
     }
 }
 

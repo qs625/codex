@@ -1,7 +1,7 @@
 mod client;
 
 pub use client::LMStudioClient;
-use codex_core::config::Config;
+use codex_model_provider_info::ModelProviderInfo;
 
 /// Default OSS model to use when `--oss` is passed without an explicit `-m`.
 pub const DEFAULT_OSS_MODEL: &str = "openai/gpt-oss-20b";
@@ -10,14 +10,17 @@ pub const DEFAULT_OSS_MODEL: &str = "openai/gpt-oss-20b";
 ///
 /// - Ensures a local LM Studio server is reachable.
 /// - Checks if the model exists locally and downloads it if missing.
-pub async fn ensure_oss_ready(config: &Config) -> std::io::Result<()> {
-    let model = match config.model.as_ref() {
+pub async fn ensure_oss_ready(
+    model: Option<&str>,
+    provider: &ModelProviderInfo,
+) -> std::io::Result<()> {
+    let model = match model {
         Some(model) => model,
         None => DEFAULT_OSS_MODEL,
     };
 
     // Verify local LM Studio is reachable.
-    let lmstudio_client = LMStudioClient::try_from_provider(config).await?;
+    let lmstudio_client = LMStudioClient::try_from_provider(provider).await?;
 
     match lmstudio_client.fetch_models().await {
         Ok(models) => {

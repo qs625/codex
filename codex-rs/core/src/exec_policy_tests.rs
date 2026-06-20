@@ -1,8 +1,6 @@
 use super::*;
 use crate::config::Config;
 use crate::config::ConfigBuilder;
-use codex_app_server_protocol::ConfigLayerSource;
-use codex_config::CONFIG_TOML_FILE;
 use codex_config::ConfigLayerEntry;
 use codex_config::ConfigLayerStack;
 use codex_config::ConfigLayerStackOrdering;
@@ -13,7 +11,9 @@ use codex_config::RequirementSource;
 use codex_config::RequirementsExecPolicy;
 use codex_config::Sourced;
 use codex_config::config_toml::ConfigToml;
-use codex_config::config_toml::ProjectConfig;
+use codex_config_edit::CONFIG_TOML_FILE;
+use codex_config_loader::ProjectConfig;
+use codex_config_types::ConfigLayerSource;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::FileSystemAccessMode;
@@ -83,7 +83,7 @@ async fn write_project_trust_config(
     trusted_projects: &[(&Path, TrustLevel)],
 ) -> std::io::Result<()> {
     tokio::fs::write(
-        codex_home.join(codex_config::CONFIG_TOML_FILE),
+        codex_home.join(CONFIG_TOML_FILE),
         toml::to_string(&ConfigToml {
             projects: Some(
                 trusted_projects
@@ -374,7 +374,7 @@ async fn merges_requirements_exec_policy_network_rules() -> anyhow::Result<()> {
     let mut requirements_exec_policy = Policy::empty();
     requirements_exec_policy.add_network_rule(
         "blocked.example.com",
-        codex_execpolicy::NetworkRuleProtocol::Https,
+        codex_execpolicy_api::NetworkRuleProtocol::Https,
         Decision::Forbidden,
         /*justification*/ None,
     )?;
@@ -421,7 +421,7 @@ host_executable(name = "git", paths = ["{git_path_literal}"])
     let mut requirements_exec_policy = Policy::empty();
     requirements_exec_policy.add_network_rule(
         "blocked.example.com",
-        codex_execpolicy::NetworkRuleProtocol::Https,
+        codex_execpolicy_api::NetworkRuleProtocol::Https,
         Decision::Forbidden,
         /*justification*/ None,
     )?;
@@ -518,9 +518,8 @@ async fn ignore_user_project_rules_keeps_system_policy_files() {
         r#"prefix_rule(pattern=["curl"], decision="allow")"#,
     )
     .expect("write policy file");
-    let config_file =
-        AbsolutePathBuf::from_absolute_path(config_dir.join(codex_config::CONFIG_TOML_FILE))
-            .expect("absolute config file");
+    let config_file = AbsolutePathBuf::from_absolute_path(config_dir.join(CONFIG_TOML_FILE))
+        .expect("absolute config file");
     let layer = ConfigLayerEntry::new(
         ConfigLayerSource::System { file: config_file },
         TomlValue::Table(Default::default()),

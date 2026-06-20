@@ -1,149 +1,37 @@
-use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use codex_api::Provider;
-use codex_api::SharedAuthProvider;
+use codex_api_provider::Provider;
+use codex_auth_types::AuthMode;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
+use codex_model_provider_api::ModelProvider;
+use codex_model_provider_api::ModelProviderFactory;
+use codex_model_provider_api::ModelProviderFuture;
+use codex_model_provider_api::ProviderAccountError;
+use codex_model_provider_api::ProviderAccountResult;
+use codex_model_provider_api::ProviderAccountState;
+use codex_model_provider_api::SharedModelProvider;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_models_manager::manager::ModelCachePolicy;
 use codex_models_manager::manager::OpenAiModelsManager;
-use codex_models_manager::manager::SharedModelsManager;
 use codex_models_manager::manager::StaticModelsManager;
+use codex_models_manager_api::SharedModelsManager;
 use codex_protocol::account::ProviderAccount;
+use codex_protocol::error::Result as CodexResult;
 use codex_protocol::openai_models::ModelsResponse;
 
 use crate::amazon_bedrock::AmazonBedrockModelProvider;
 use crate::auth::auth_manager_for_provider;
-use crate::auth::resolve_provider_auth;
 use crate::models_endpoint::OpenAiModelsEndpoint;
 
-/// Optional provider-backed features that Codex may expose at runtime.
-///
-/// These capabilities are a provider-owned upper bound. Callers can disable
-/// more functionality through normal config, but should not expose a feature
-/// that the active provider marks unsupported here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProviderCapabilities {
-    pub namespace_tools: bool,
-    pub image_generation: bool,
-    pub web_search: bool,
+/// Adapts serializable provider metadata into API-client provider configuration.
+pub fn model_provider_info_to_api_provider(
+    provider: &ModelProviderInfo,
+    auth_mode: Option<AuthMode>,
+) -> CodexResult<Provider> {
+    Ok(codex_model_provider_api::model_provider_info_to_api_provider(provider, auth_mode))
 }
-
-impl Default for ProviderCapabilities {
-    fn default() -> Self {
-        Self {
-            namespace_tools: true,
-            image_generation: true,
-            web_search: true,
-        }
-    }
-}
-
-/// Current app-visible account state for a model provider.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProviderAccountState {
-    pub account: Option<ProviderAccount>,
-    pub requires_openai_auth: bool,
-}
-
-/// Error returned when a provider cannot construct its app-visible account state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProviderAccountError {
-    MissingChatgptAccountDetails,
-}
-
-impl fmt::Display for ProviderAccountError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingChatgptAccountDetails => {
-                write!(
-                    f,
-                    "email and plan type are required for chatgpt authentication"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for ProviderAccountError {}
-
-pub type ProviderAccountResult = std::result::Result<ProviderAccountState, ProviderAccountError>;
-
-/// Default model used for automatic approval review when a provider does not
-/// require a backend-specific model ID.
-pub const DEFAULT_APPROVAL_REVIEW_PREFERRED_MODEL: &str = "codex-auto-review";
-
-/// Runtime provider abstraction used by model execution.
-///
-/// Implementations own provider-specific behavior for a model backend. The
-/// `ModelProviderInfo` returned by `info` is the serialized/configured provider
-/// metadata used by the default OpenAI-compatible implementation.
-#[async_trait::async_trait]
-pub trait ModelProvider: fmt::Debug + Send + Sync {
-    /// Returns the configured provider metadata.
-    fn info(&self) -> &ModelProviderInfo;
-
-    /// Returns the provider-owned capability upper bounds.
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities::default()
-    }
-
-    /// Returns the preferred model used for automatic approval review.
-    ///
-    /// Providers that require backend-specific model IDs should override this.
-    fn approval_review_preferred_model(&self) -> &'static str {
-        DEFAULT_APPROVAL_REVIEW_PREFERRED_MODEL
-    }
-
-    /// Returns whether requests made through this provider should include attestation.
-    fn supports_attestation(&self) -> bool {
-        false
-    }
-
-    /// Returns the provider-scoped auth manager, when this provider uses one.
-    ///
-    /// TODO(celia-oai): Make auth manager access internal to this crate so callers
-    /// resolve provider-specific auth only through `ModelProvider`. We first need
-    /// to think through whether Codex should have a unified provider-specific auth
-    /// manager throughout the codebase; that is a larger refactor than this change.
-    fn auth_manager(&self) -> Option<Arc<AuthManager>>;
-
-    /// Returns the current provider-scoped auth value, if one is configured.
-    async fn auth(&self) -> Option<CodexAuth>;
-
-    /// Returns the current app-visible account state for this provider.
-    fn account_state(&self) -> ProviderAccountResult;
-
-    /// Returns provider configuration adapted for the API client.
-    async fn api_provider(&self) -> codex_protocol::error::Result<Provider> {
-        let auth = self.auth().await;
-        self.info()
-            .to_api_provider(auth.as_ref().map(CodexAuth::auth_mode))
-    }
-
-    /// Returns the provider base URL that will be used at request time.
-    async fn runtime_base_url(&self) -> codex_protocol::error::Result<Option<String>> {
-        Ok(self.info().base_url.clone())
-    }
-
-    /// Returns the auth provider used to attach request credentials.
-    async fn api_auth(&self) -> codex_protocol::error::Result<SharedAuthProvider> {
-        let auth = self.auth().await;
-        resolve_provider_auth(auth.as_ref(), self.info())
-    }
-
-    /// Creates the model manager implementation appropriate for this provider.
-    fn models_manager(
-        &self,
-        codex_home: PathBuf,
-        config_model_catalog: Option<ModelsResponse>,
-    ) -> SharedModelsManager;
-}
-
-/// Shared runtime model provider handle.
-pub type SharedModelProvider = Arc<dyn ModelProvider>;
 
 /// Creates the default runtime model provider for configured provider metadata.
 pub fn create_model_provider(
@@ -154,6 +42,20 @@ pub fn create_model_provider(
         Arc::new(AmazonBedrockModelProvider::new(provider_info))
     } else {
         Arc::new(ConfiguredModelProvider::new(provider_info, auth_manager))
+    }
+}
+
+/// Default runtime factory for configured model providers.
+#[derive(Debug, Default)]
+pub struct DefaultModelProviderFactory;
+
+impl ModelProviderFactory for DefaultModelProviderFactory {
+    fn create_model_provider(
+        &self,
+        provider_info: ModelProviderInfo,
+        auth_manager: Option<Arc<AuthManager>>,
+    ) -> SharedModelProvider {
+        create_model_provider(provider_info, auth_manager)
     }
 }
 
@@ -174,7 +76,6 @@ impl ConfiguredModelProvider {
     }
 }
 
-#[async_trait::async_trait]
 impl ModelProvider for ConfiguredModelProvider {
     fn info(&self) -> &ModelProviderInfo {
         &self.info
@@ -191,11 +92,13 @@ impl ModelProvider for ConfiguredModelProvider {
             .is_some_and(|auth| auth.is_chatgpt_auth())
     }
 
-    async fn auth(&self) -> Option<CodexAuth> {
-        match self.auth_manager.as_ref() {
-            Some(auth_manager) => auth_manager.auth().await,
-            None => None,
-        }
+    fn auth(&self) -> ModelProviderFuture<'_, Option<CodexAuth>> {
+        Box::pin(async move {
+            match self.auth_manager.as_ref() {
+                Some(auth_manager) => auth_manager.auth().await,
+                None => None,
+            }
+        })
     }
 
     fn account_state(&self) -> ProviderAccountResult {
@@ -275,9 +178,11 @@ impl ModelProvider for ConfiguredModelProvider {
 mod tests {
     use std::num::NonZeroU64;
 
+    use codex_model_provider_api::DEFAULT_APPROVAL_REVIEW_PREFERRED_MODEL;
+    use codex_model_provider_api::ProviderCapabilities;
     use codex_model_provider_info::ModelProviderAwsAuthInfo;
     use codex_model_provider_info::WireApi;
-    use codex_models_manager::manager::RefreshStrategy;
+    use codex_models_manager_api::RefreshStrategy;
     use codex_protocol::config_types::ModelProviderAuthInfo;
     use codex_protocol::openai_models::ModelInfo;
     use codex_protocol::openai_models::ModelsResponse;

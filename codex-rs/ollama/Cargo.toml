@@ -15,7 +15,6 @@ workspace = true
 [dependencies]
 async-stream = { workspace = true }
 bytes = { workspace = true }
-codex-core = { workspace = true }
 codex-model-provider-info = { workspace = true }
 futures = { workspace = true }
 reqwest = { workspace = true, features = ["json", "stream"] }
@@ -29,8 +28,9 @@ tokio = { workspace = true, features = [
     "signal",
 ] }
 tracing = { workspace = true, features = ["log"] }
-wiremock = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+codex-core = { workspace = true }
 pretty_assertions = { workspace = true }
+wiremock = { workspace = true }

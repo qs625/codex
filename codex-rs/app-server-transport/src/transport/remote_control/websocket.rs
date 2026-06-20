@@ -1005,7 +1005,7 @@ pub(crate) async fn load_remote_control_auth(
     }
 
     Ok(RemoteControlConnectionAuth {
-        auth_provider: codex_model_provider::auth_provider_from_auth(&auth),
+        auth_provider: codex_model_provider_api::auth_provider_from_auth(&auth),
         account_id: auth.get_account_id().ok_or_else(|| {
             io::Error::new(
                 ErrorKind::WouldBlock,
@@ -1238,12 +1238,12 @@ mod tests {
     use crate::transport::remote_control::protocol::StreamId;
     use crate::transport::remote_control::protocol::normalize_remote_control_url;
     use chrono::Utc;
-    use codex_app_server_protocol::AuthMode;
     use codex_app_server_protocol::ConfigWarningNotification;
     use codex_app_server_protocol::JSONRPCMessage;
     use codex_app_server_protocol::JSONRPCNotification;
     use codex_app_server_protocol::ServerNotification;
-    use codex_config::types::AuthCredentialsStoreMode;
+    use codex_auth_types::AuthMode;
+    use codex_config_types::AuthCredentialsStoreMode;
     use codex_core::test_support::auth_manager_from_auth;
     use codex_login::AuthDotJson;
     use codex_login::CodexAuth;

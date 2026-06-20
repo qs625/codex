@@ -1,15 +1,14 @@
 use std::collections::BTreeMap;
 
-use codex_config::Constrained;
-use codex_config::ConstrainedWithSource;
-use codex_config::ConstraintError;
-use codex_config::ConstraintResult;
-use codex_config::FeatureRequirementsToml;
-use codex_config::RequirementSource;
-use codex_config::Sourced;
-
-use codex_config::config_toml::ConfigToml;
-use codex_config::profile_toml::ConfigProfile;
+use codex_config_requirements::ConstrainedWithSource;
+use codex_config_requirements::FeatureRequirementsToml;
+use codex_config_requirements::Sourced;
+use codex_config_toml::config_toml::ConfigToml;
+use codex_config_toml::profile_toml::ConfigProfile;
+use codex_config_types::Constrained;
+use codex_config_types::ConstraintError;
+use codex_config_types::ConstraintResult;
+use codex_config_types::RequirementSource;
 use codex_features::Feature;
 use codex_features::FeatureConfigSource;
 use codex_features::FeatureOverrides;

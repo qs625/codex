@@ -1,3 +1,4 @@
+mod config_layers;
 pub mod config_rules;
 mod env_var_dependencies;
 pub mod injection;
@@ -10,6 +11,8 @@ pub mod remote;
 pub mod render;
 pub mod system;
 
+pub use config_layers::SkillConfigLayerEntry;
+pub use config_layers::SkillConfigLayerStack;
 pub use env_var_dependencies::SkillDependencyInfo;
 pub use env_var_dependencies::collect_env_var_dependencies;
 pub(crate) use invocation_utils::build_implicit_skill_path_indexes;

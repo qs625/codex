@@ -11,7 +11,7 @@
 //! and the bottom pane's runtime keymap bindings. Updating only one of those would make the UI
 //! appear to accept a remap while some handlers still respond to the old keys.
 
-use codex_config::types::TuiKeymap;
+use codex_config_types::TuiKeymap;
 use codex_terminal_detection::terminal_info;
 
 use super::ChatWidget;

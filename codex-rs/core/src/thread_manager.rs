@@ -16,20 +16,28 @@ use crate::session::INITIAL_SUBMIT_ID;
 use crate::shell_snapshot::ShellSnapshot;
 use crate::tasks::InterruptedTurnHistoryMarker;
 use crate::tasks::interrupted_turn_history_marker;
-use codex_analytics::AnalyticsEventsClient;
-use codex_app_server_protocol::ThreadHistoryBuilder;
-use codex_app_server_protocol::TurnStatus;
+use crate::workflow_runs::WorkflowRunController;
+use codex_analytics_api::AnalyticsEventsClient;
+use codex_code_mode_api::CodeModeRuntimeFactory;
 use codex_core_plugins::PluginsManager;
+#[cfg(any(test, feature = "test-support"))]
 use codex_exec_server::EnvironmentManager;
+use codex_exec_server_api::ExecEnvironmentProvider;
 use codex_extension_api::ExtensionRegistry;
+#[cfg(any(test, feature = "test-support"))]
 use codex_extension_api::empty_extension_registry;
 use codex_login::AuthManager;
+#[cfg(any(test, feature = "test-support"))]
 use codex_login::CodexAuth;
-use codex_model_provider::create_model_provider;
+use codex_model_provider_api::ModelProviderFactory;
+use codex_model_provider_api::SharedModelProviderFactory;
 use codex_model_provider_info::ModelProviderInfo;
+#[cfg(any(test, feature = "test-support"))]
 use codex_model_provider_info::OPENAI_PROVIDER_ID;
-use codex_models_manager::manager::RefreshStrategy;
-use codex_models_manager::manager::SharedModelsManager;
+use codex_models_manager_api::RefreshStrategy;
+use codex_models_manager_api::SharedModelsManager;
+use codex_openai_files_api::DisabledOpenAiFileUploader;
+use codex_openai_files_api::SharedOpenAiFileUploader;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::error::CodexErr;
@@ -217,7 +225,7 @@ pub(crate) struct ThreadManagerState {
     thread_created_tx: broadcast::Sender<ThreadCreatedEvent>,
     auth_manager: Arc<AuthManager>,
     models_manager: SharedModelsManager,
-    environment_manager: Arc<EnvironmentManager>,
+    environment_manager: Arc<dyn ExecEnvironmentProvider>,
     skills_manager: Arc<SkillsManager>,
     plugins_manager: Arc<PluginsManager>,
     mcp_manager: Arc<McpManager>,
@@ -229,6 +237,10 @@ pub(crate) struct ThreadManagerState {
     analytics_events_client: Option<AnalyticsEventsClient>,
     state_db: Option<StateDbHandle>,
     active_event_subscriptions: Arc<ActiveEventSubscriptionTracker>,
+    model_provider_factory: SharedModelProviderFactory,
+    code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+    openai_file_uploader: SharedOpenAiFileUploader,
+    workflow_runs: Arc<dyn WorkflowRunController>,
     // Captures submitted ops for testing purpose when test mode is enabled.
     ops_log: Option<SharedCapturedOps>,
 }
@@ -236,8 +248,10 @@ pub(crate) struct ThreadManagerState {
 pub fn build_models_manager(
     config: &Config,
     auth_manager: Arc<AuthManager>,
+    model_provider_factory: &dyn ModelProviderFactory,
 ) -> SharedModelsManager {
-    let provider = create_model_provider(config.model_provider.clone(), Some(auth_manager));
+    let provider = model_provider_factory
+        .create_model_provider(config.model_provider.clone(), Some(auth_manager));
     provider.models_manager(
         config.codex_home.to_path_buf(),
         config.model_catalog.clone(),
@@ -263,13 +277,83 @@ impl ThreadManager {
         config: &Config,
         auth_manager: Arc<AuthManager>,
         session_source: SessionSource,
-        environment_manager: Arc<EnvironmentManager>,
+        environment_manager: Arc<dyn ExecEnvironmentProvider>,
         extensions: Arc<ExtensionRegistry<Config>>,
         analytics_events_client: Option<AnalyticsEventsClient>,
         thread_store: Arc<dyn ThreadStore>,
         state_db: Option<StateDbHandle>,
         installation_id: String,
         attestation_provider: Option<Arc<dyn AttestationProvider>>,
+        model_provider_factory: SharedModelProviderFactory,
+        code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+    ) -> Self {
+        Self::new_with_workflow_runs(
+            config,
+            auth_manager,
+            session_source,
+            environment_manager,
+            extensions,
+            analytics_events_client,
+            thread_store,
+            state_db,
+            installation_id,
+            attestation_provider,
+            model_provider_factory,
+            code_mode_runtime_factory,
+            Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_workflow_runs(
+        config: &Config,
+        auth_manager: Arc<AuthManager>,
+        session_source: SessionSource,
+        environment_manager: Arc<dyn ExecEnvironmentProvider>,
+        extensions: Arc<ExtensionRegistry<Config>>,
+        analytics_events_client: Option<AnalyticsEventsClient>,
+        thread_store: Arc<dyn ThreadStore>,
+        state_db: Option<StateDbHandle>,
+        installation_id: String,
+        attestation_provider: Option<Arc<dyn AttestationProvider>>,
+        model_provider_factory: SharedModelProviderFactory,
+        code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+        workflow_runs: Arc<dyn WorkflowRunController>,
+    ) -> Self {
+        Self::new_with_workflow_runs_and_openai_file_uploader(
+            config,
+            auth_manager,
+            session_source,
+            environment_manager,
+            extensions,
+            analytics_events_client,
+            thread_store,
+            state_db,
+            installation_id,
+            attestation_provider,
+            model_provider_factory,
+            code_mode_runtime_factory,
+            workflow_runs,
+            Arc::new(DisabledOpenAiFileUploader),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_workflow_runs_and_openai_file_uploader(
+        config: &Config,
+        auth_manager: Arc<AuthManager>,
+        session_source: SessionSource,
+        environment_manager: Arc<dyn ExecEnvironmentProvider>,
+        extensions: Arc<ExtensionRegistry<Config>>,
+        analytics_events_client: Option<AnalyticsEventsClient>,
+        thread_store: Arc<dyn ThreadStore>,
+        state_db: Option<StateDbHandle>,
+        installation_id: String,
+        attestation_provider: Option<Arc<dyn AttestationProvider>>,
+        model_provider_factory: SharedModelProviderFactory,
+        code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+        workflow_runs: Arc<dyn WorkflowRunController>,
+        openai_file_uploader: SharedOpenAiFileUploader,
     ) -> Self {
         let codex_home = config.codex_home.clone();
         let restriction_product = session_source.restriction_product();
@@ -288,7 +372,11 @@ impl ThreadManager {
             state: Arc::new(ThreadManagerState {
                 threads: Arc::new(RwLock::new(HashMap::new())),
                 thread_created_tx,
-                models_manager: build_models_manager(config, auth_manager.clone()),
+                models_manager: build_models_manager(
+                    config,
+                    auth_manager.clone(),
+                    model_provider_factory.as_ref(),
+                ),
                 environment_manager,
                 skills_manager,
                 plugins_manager,
@@ -302,6 +390,10 @@ impl ThreadManager {
                 analytics_events_client,
                 state_db,
                 active_event_subscriptions: Arc::new(ActiveEventSubscriptionTracker::default()),
+                model_provider_factory,
+                code_mode_runtime_factory,
+                openai_file_uploader,
+                workflow_runs,
                 ops_log: should_use_test_thread_manager_behavior()
                     .then(|| Arc::new(std::sync::Mutex::new(Vec::new()))),
             }),
@@ -311,9 +403,11 @@ impl ThreadManager {
 
     /// Construct with a dummy AuthManager containing the provided CodexAuth.
     /// Used for integration tests: should not be used by ordinary business logic.
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn with_models_provider_for_tests(
         auth: CodexAuth,
         provider: ModelProviderInfo,
+        model_provider_factory: SharedModelProviderFactory,
     ) -> Self {
         set_thread_manager_test_mode_for_tests(/*enabled*/ true);
         let codex_home = std::env::temp_dir().join(format!(
@@ -325,6 +419,7 @@ impl ThreadManager {
         let mut manager = Self::with_models_provider_and_home_for_tests(
             auth,
             provider,
+            model_provider_factory,
             codex_home.clone(),
             Arc::new(EnvironmentManager::default_for_tests()),
         );
@@ -334,26 +429,31 @@ impl ThreadManager {
 
     /// Construct with a dummy AuthManager containing the provided CodexAuth and codex home.
     /// Used for integration tests: should not be used by ordinary business logic.
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn with_models_provider_and_home_for_tests(
         auth: CodexAuth,
         provider: ModelProviderInfo,
+        model_provider_factory: SharedModelProviderFactory,
         codex_home: PathBuf,
-        environment_manager: Arc<EnvironmentManager>,
+        environment_manager: Arc<dyn ExecEnvironmentProvider>,
     ) -> Self {
         Self::with_models_provider_home_and_state_for_tests(
             auth,
             provider,
+            model_provider_factory,
             codex_home,
             environment_manager,
             /*state_db*/ None,
         )
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn with_models_provider_home_and_state_for_tests(
         auth: CodexAuth,
         provider: ModelProviderInfo,
+        model_provider_factory: SharedModelProviderFactory,
         codex_home: PathBuf,
-        environment_manager: Arc<EnvironmentManager>,
+        environment_manager: Arc<dyn ExecEnvironmentProvider>,
         state_db: Option<StateDbHandle>,
     ) -> Self {
         set_thread_manager_test_mode_for_tests(/*enabled*/ true);
@@ -389,7 +489,8 @@ impl ThreadManager {
             state: Arc::new(ThreadManagerState {
                 threads: Arc::new(RwLock::new(HashMap::new())),
                 thread_created_tx,
-                models_manager: create_model_provider(provider, Some(auth_manager.clone()))
+                models_manager: model_provider_factory
+                    .create_model_provider(provider, Some(auth_manager.clone()))
                     .models_manager(codex_home, /*config_model_catalog*/ None),
                 environment_manager,
                 skills_manager,
@@ -404,6 +505,12 @@ impl ThreadManager {
                 analytics_events_client: None,
                 state_db,
                 active_event_subscriptions: Arc::new(ActiveEventSubscriptionTracker::default()),
+                model_provider_factory,
+                code_mode_runtime_factory: Arc::new(
+                    codex_code_mode_api::DisabledCodeModeRuntimeFactory,
+                ),
+                openai_file_uploader: Arc::new(DisabledOpenAiFileUploader),
+                workflow_runs: Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
                 ops_log: should_use_test_thread_manager_behavior()
                     .then(|| Arc::new(std::sync::Mutex::new(Vec::new()))),
             }),
@@ -448,7 +555,7 @@ impl ThreadManager {
         self.state.mcp_manager.clone()
     }
 
-    pub fn environment_manager(&self) -> Arc<EnvironmentManager> {
+    pub fn environment_provider(&self) -> Arc<dyn ExecEnvironmentProvider> {
         self.state.environment_manager.clone()
     }
 
@@ -488,9 +595,13 @@ impl ThreadManager {
         let mut config = config.clone();
         config.model_provider = provider_info;
         config.model_catalog = model_catalog;
-        build_models_manager(&config, self.state.auth_manager.clone())
-            .list_models(refresh_strategy)
-            .await
+        build_models_manager(
+            &config,
+            self.state.auth_manager.clone(),
+            self.state.model_provider_factory.as_ref(),
+        )
+        .list_models(refresh_strategy)
+        .await
     }
 
     pub fn list_collaboration_modes(&self) -> Vec<CollaborationModeMask> {
@@ -1281,14 +1392,17 @@ impl ThreadManagerState {
             .parent_rollout_thread_trace_for_source(&session_source, &initial_history)
             .await;
         let tracked_session_source = session_source.clone();
+        let environment_manager: Arc<dyn ExecEnvironmentProvider> =
+            self.environment_manager.clone();
         let CodexSpawnOk {
             codex, thread_id, ..
         } = Codex::spawn(CodexSpawnArgs {
             config,
             installation_id: self.installation_id.clone(),
             auth_manager,
+            model_provider_factory: Arc::clone(&self.model_provider_factory),
             models_manager: Arc::clone(&self.models_manager),
-            environment_manager: Arc::clone(&self.environment_manager),
+            environment_manager,
             skills_manager: Arc::clone(&self.skills_manager),
             plugins_manager: Arc::clone(&self.plugins_manager),
             mcp_manager: Arc::clone(&self.mcp_manager),
@@ -1310,6 +1424,10 @@ impl ThreadManagerState {
             thread_store: Arc::clone(&self.thread_store),
             attestation_provider: self.attestation_provider.clone(),
             active_event_subscriptions: Arc::clone(&self.active_event_subscriptions),
+            openai_file_uploader: Arc::clone(&self.openai_file_uploader),
+            code_mode_service: self.code_mode_runtime_factory.create_service(),
+            code_mode_runtime_factory: Arc::clone(&self.code_mode_runtime_factory),
+            workflow_runs: Arc::clone(&self.workflow_runs),
         })
         .await?;
         let new_thread = self
@@ -1490,28 +1608,61 @@ struct SnapshotTurnState {
 
 fn snapshot_turn_state(history: &InitialHistory) -> SnapshotTurnState {
     let rollout_items = history.get_rollout_items();
-    let mut builder = ThreadHistoryBuilder::new();
-    for item in &rollout_items {
-        builder.handle_rollout_item(item);
-    }
-    let active_turn_id = builder.active_turn_id_if_explicit();
-    if builder.has_active_turn() && active_turn_id.is_some() {
-        let active_turn_snapshot = builder.active_turn_snapshot();
-        if active_turn_snapshot
-            .as_ref()
-            .is_some_and(|turn| turn.status != TurnStatus::InProgress)
-        {
-            return SnapshotTurnState {
-                ends_mid_turn: false,
-                active_turn_id: None,
-                active_turn_start_index: None,
-            };
-        }
 
+    let mut finished_explicit_turn_ids = HashSet::new();
+    let mut active_explicit_turn: Option<(String, usize)> = None;
+    for (index, item) in rollout_items.iter().enumerate() {
+        match item {
+            RolloutItem::EventMsg(EventMsg::TurnStarted(event)) => {
+                if let Some((turn_id, _)) = active_explicit_turn.take() {
+                    finished_explicit_turn_ids.insert(turn_id);
+                }
+                active_explicit_turn = Some((event.turn_id.clone(), index));
+            }
+            RolloutItem::EventMsg(EventMsg::TurnComplete(event)) => {
+                if active_explicit_turn
+                    .as_ref()
+                    .is_some_and(|(turn_id, _)| turn_id == &event.turn_id)
+                {
+                    if let Some((turn_id, _)) = active_explicit_turn.take() {
+                        finished_explicit_turn_ids.insert(turn_id);
+                    }
+                } else if !finished_explicit_turn_ids.contains(&event.turn_id)
+                    && let Some((turn_id, _)) = active_explicit_turn.take()
+                {
+                    finished_explicit_turn_ids.insert(turn_id);
+                }
+            }
+            RolloutItem::EventMsg(EventMsg::TurnAborted(event)) => match event.turn_id.as_deref() {
+                Some(aborted_turn_id) => {
+                    if active_explicit_turn
+                        .as_ref()
+                        .is_some_and(|(turn_id, _)| turn_id == aborted_turn_id)
+                    {
+                        if let Some((turn_id, _)) = active_explicit_turn.take() {
+                            finished_explicit_turn_ids.insert(turn_id);
+                        }
+                    } else if !finished_explicit_turn_ids.contains(aborted_turn_id)
+                        && let Some((turn_id, _)) = active_explicit_turn.take()
+                    {
+                        finished_explicit_turn_ids.insert(turn_id);
+                    }
+                }
+                None => {
+                    if let Some((turn_id, _)) = active_explicit_turn.take() {
+                        finished_explicit_turn_ids.insert(turn_id);
+                    }
+                }
+            },
+            _ => {}
+        }
+    }
+
+    if let Some((turn_id, start_index)) = active_explicit_turn {
         return SnapshotTurnState {
             ends_mid_turn: true,
-            active_turn_id,
-            active_turn_start_index: builder.active_turn_start_index(),
+            active_turn_id: Some(turn_id),
+            active_turn_start_index: Some(start_index),
         };
     }
 

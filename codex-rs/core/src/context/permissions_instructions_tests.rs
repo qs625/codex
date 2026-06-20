@@ -1,5 +1,5 @@
 use super::*;
-use codex_execpolicy::Decision;
+use codex_execpolicy_api::Decision;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;

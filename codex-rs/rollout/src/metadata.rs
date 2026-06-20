@@ -152,10 +152,7 @@ pub(crate) async fn backfill_sessions_with_lease(
     default_provider: &str,
     backfill_lease_seconds: i64,
 ) {
-    let metric_client = codex_otel::global();
-    let timer = metric_client
-        .as_ref()
-        .and_then(|otel| otel.start_timer(DB_METRIC_BACKFILL_DURATION_MS, &[]).ok());
+    let timer = codex_metrics_api::start_global_timer(DB_METRIC_BACKFILL_DURATION_MS, &[]);
     let backfill_state = match runtime.get_backfill_state().await {
         Ok(state) => state,
         Err(err) => {
@@ -249,10 +246,8 @@ pub(crate) async fn backfill_sessions_with_lease(
             stats.scanned = stats.scanned.saturating_add(1);
             match extract_metadata_from_rollout(&rollout.path, default_provider).await {
                 Ok(outcome) => {
-                    if outcome.parse_errors > 0
-                        && let Some(ref metric_client) = metric_client
-                    {
-                        let _ = metric_client.counter(
+                    if outcome.parse_errors > 0 {
+                        codex_metrics_api::record_global_counter(
                             DB_ERROR_METRIC,
                             outcome.parse_errors as i64,
                             &[("stage", "backfill_sessions")],
@@ -345,13 +340,13 @@ pub(crate) async fn backfill_sessions_with_lease(
         "state db backfill scanned={}, upserted={}, failed={}",
         stats.scanned, stats.upserted, stats.failed
     );
-    if let Some(metric_client) = metric_client {
-        let _ = metric_client.counter(
+    {
+        codex_metrics_api::record_global_counter(
             DB_METRIC_BACKFILL,
             stats.upserted as i64,
             &[("status", "upserted")],
         );
-        let _ = metric_client.counter(
+        codex_metrics_api::record_global_counter(
             DB_METRIC_BACKFILL,
             stats.failed as i64,
             &[("status", "failed")],
@@ -365,7 +360,7 @@ pub(crate) async fn backfill_sessions_with_lease(
         } else {
             "partial_failure"
         };
-        let _ = timer.record(&[("status", status)]);
+        timer.record(&[("status", status)]);
     }
 }
 

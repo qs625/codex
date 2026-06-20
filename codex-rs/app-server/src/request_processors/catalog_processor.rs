@@ -7,6 +7,7 @@ pub(crate) struct CatalogRequestProcessor {
     pub(super) thread_manager: Arc<ThreadManager>,
     pub(super) config: Arc<Config>,
     pub(super) config_manager: ConfigManager,
+    pub(super) environment_manager: Arc<EnvironmentManager>,
     pub(super) workspace_settings_cache: Arc<workspace_settings::WorkspaceSettingsCache>,
 }
 
@@ -99,6 +100,7 @@ impl CatalogRequestProcessor {
         thread_manager: Arc<ThreadManager>,
         config: Arc<Config>,
         config_manager: ConfigManager,
+        environment_manager: Arc<EnvironmentManager>,
         workspace_settings_cache: Arc<workspace_settings::WorkspaceSettingsCache>,
     ) -> Self {
         Self {
@@ -106,6 +108,7 @@ impl CatalogRequestProcessor {
             thread_manager,
             config,
             config_manager,
+            environment_manager,
             workspace_settings_cache,
         }
     }
@@ -404,14 +407,9 @@ impl CatalogRequestProcessor {
         let skills_manager = self.thread_manager.skills_manager();
         let plugins_manager = self.thread_manager.plugins_manager();
         let fs = Some(
-            self.thread_manager
-                .environment_manager()
+            self.environment_manager
                 .default_environment()
-                .unwrap_or_else(|| {
-                    self.thread_manager
-                        .environment_manager()
-                        .local_environment()
-                })
+                .unwrap_or_else(|| self.environment_manager.local_environment())
                 .get_filesystem(),
         );
         let mut data = futures::stream::iter(cwds.into_iter().enumerate())
@@ -440,9 +438,13 @@ impl CatalogRequestProcessor {
                     };
                     let effective_skill_roots = if workspace_codex_plugins_enabled {
                         let plugins_input = config.plugins_config_input();
+                        let plugin_config_layer_stack =
+                            codex_core::config::plugin_config_layer_stack_from_config_layer_stack(
+                                &config_layer_stack,
+                            );
                         plugins_manager
                             .effective_skill_roots_for_layer_stack(
-                                &config_layer_stack,
+                                &plugin_config_layer_stack,
                                 &plugins_input,
                             )
                             .await
@@ -452,7 +454,9 @@ impl CatalogRequestProcessor {
                     let skills_input = codex_core::skills::SkillsLoadInput::new(
                         cwd_abs.clone(),
                         effective_skill_roots,
-                        config_layer_stack,
+                        codex_core::config::skill_config_layer_stack_from_config_layer_stack(
+                            &config_layer_stack,
+                        ),
                         config.bundled_skills_enabled(),
                     );
                     let outcome = skills_manager
@@ -526,9 +530,13 @@ impl CatalogRequestProcessor {
             let plugin_outcome = if plugins_enabled && config.features.enabled(Feature::PluginHooks)
             {
                 let plugins_input = config.plugins_config_input();
+                let plugin_config_layer_stack =
+                    codex_core::config::plugin_config_layer_stack_from_config_layer_stack(
+                        &config.config_layer_stack,
+                    );
                 plugins_manager
                     .plugins_for_layer_stack(
-                        &config.config_layer_stack,
+                        &plugin_config_layer_stack,
                         &plugins_input,
                         /*plugin_hooks_feature_enabled*/ true,
                     )
@@ -539,7 +547,11 @@ impl CatalogRequestProcessor {
             let hooks = codex_hooks::list_hooks(codex_hooks::HooksConfig {
                 feature_enabled: config.features.enabled(Feature::CodexHooks),
                 bypass_hook_trust: config.bypass_hook_trust,
-                config_layer_stack: Some(config.config_layer_stack),
+                config_layer_stack: Some(
+                    codex_core::config::hook_config_layer_stack_from_config_layer_stack(
+                        &config.config_layer_stack,
+                    ),
+                ),
                 plugin_hook_sources: plugin_outcome.effective_plugin_hook_sources(),
                 plugin_hook_load_warnings: plugin_outcome.effective_plugin_hook_warnings(),
                 ..Default::default()

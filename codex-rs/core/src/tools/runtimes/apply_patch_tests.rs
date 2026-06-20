@@ -57,7 +57,7 @@ async fn guardian_review_request_includes_patch_context() {
     let expected_cwd = action.cwd.clone();
     let expected_patch = action.patch.clone();
     let request = ApplyPatchRequest {
-        turn_environment: test_turn_environment(codex_exec_server::LOCAL_ENVIRONMENT_ID),
+        turn_environment: test_turn_environment(codex_exec_server_api::LOCAL_ENVIRONMENT_ID),
         action,
         file_paths: vec![path.clone()],
         changes: HashMap::from([(
@@ -96,7 +96,7 @@ async fn permission_request_payload_uses_apply_patch_hook_name_and_aliases() {
     let action = ApplyPatchAction::new_add_for_test(&path, "hello".to_string());
     let expected_patch = action.patch.clone();
     let req = ApplyPatchRequest {
-        turn_environment: test_turn_environment(codex_exec_server::LOCAL_ENVIRONMENT_ID),
+        turn_environment: test_turn_environment(codex_exec_server_api::LOCAL_ENVIRONMENT_ID),
         action,
         file_paths: vec![path],
         changes: HashMap::new(),
@@ -162,7 +162,7 @@ async fn sandbox_cwd_uses_patch_action_cwd() {
         .join("apply-patch-runtime-sandbox-cwd.txt")
         .abs();
     let req = ApplyPatchRequest {
-        turn_environment: test_turn_environment(codex_exec_server::LOCAL_ENVIRONMENT_ID),
+        turn_environment: test_turn_environment(codex_exec_server_api::LOCAL_ENVIRONMENT_ID),
         action: ApplyPatchAction::new_add_for_test(&path, "hello".to_string()),
         file_paths: vec![path.clone()],
         changes: HashMap::new(),
@@ -190,7 +190,7 @@ async fn file_system_sandbox_context_uses_active_attempt() {
         )),
     };
     let req = ApplyPatchRequest {
-        turn_environment: test_turn_environment(codex_exec_server::LOCAL_ENVIRONMENT_ID),
+        turn_environment: test_turn_environment(codex_exec_server_api::LOCAL_ENVIRONMENT_ID),
         action: ApplyPatchAction::new_add_for_test(&path, "hello".to_string()),
         file_paths: vec![path.clone()],
         changes: HashMap::new(),
@@ -248,7 +248,7 @@ async fn no_sandbox_attempt_has_no_file_system_context() {
         .join("apply-patch-runtime-none.txt")
         .abs();
     let req = ApplyPatchRequest {
-        turn_environment: test_turn_environment(codex_exec_server::LOCAL_ENVIRONMENT_ID),
+        turn_environment: test_turn_environment(codex_exec_server_api::LOCAL_ENVIRONMENT_ID),
         action: ApplyPatchAction::new_add_for_test(&path, "hello".to_string()),
         file_paths: vec![path.clone()],
         changes: HashMap::new(),

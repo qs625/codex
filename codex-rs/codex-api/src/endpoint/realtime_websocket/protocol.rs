@@ -1,5 +1,8 @@
 use crate::endpoint::realtime_websocket::protocol_v1::parse_realtime_event_v1;
 use crate::endpoint::realtime_websocket::protocol_v2::parse_realtime_event_v2;
+pub use codex_api_types::RealtimeEventParser;
+pub use codex_api_types::RealtimeSessionConfig;
+pub use codex_api_types::RealtimeSessionMode;
 pub use codex_protocol::protocol::RealtimeAudioFrame;
 pub use codex_protocol::protocol::RealtimeEvent;
 pub use codex_protocol::protocol::RealtimeOutputModality;
@@ -7,29 +10,6 @@ pub use codex_protocol::protocol::RealtimeTranscriptEntry;
 pub use codex_protocol::protocol::RealtimeVoice;
 use serde::Serialize;
 use serde_json::Value;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RealtimeEventParser {
-    V1,
-    RealtimeV2,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RealtimeSessionMode {
-    Conversational,
-    Transcription,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RealtimeSessionConfig {
-    pub instructions: String,
-    pub model: Option<String>,
-    pub session_id: Option<String>,
-    pub event_parser: RealtimeEventParser,
-    pub session_mode: RealtimeSessionMode,
-    pub output_modality: RealtimeOutputModality,
-    pub voice: RealtimeVoice,
-}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]

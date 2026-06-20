@@ -4,20 +4,20 @@ use crate::environment_selection::ResolvedTurnEnvironments;
 use crate::exec_policy::ExecPolicyManager;
 use crate::guardian::GUARDIAN_REVIEWER_NAME;
 use crate::sandboxing::SandboxPermissions;
+use crate::test_support::create_model_provider_for_tests;
 use crate::test_support::models_manager_with_provider;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolCallSource;
 use crate::turn_diff_tracker::TurnDiffTracker;
-use codex_app_server_protocol::ConfigLayerSource;
 use codex_config::ConfigLayerEntry;
 use codex_config::ConfigRequirements;
 use codex_config::ConfigRequirementsToml;
+use codex_config_types::ConfigLayerSource;
 use codex_exec_server::EnvironmentManager;
-use codex_execpolicy::Decision;
-use codex_execpolicy::Evaluation;
-use codex_execpolicy::RuleMatch;
+use codex_execpolicy_api::Decision;
+use codex_execpolicy_api::Evaluation;
+use codex_execpolicy_api::RuleMatch;
 use codex_features::Feature;
-use codex_model_provider::create_model_provider;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::models::AdditionalPermissionProfile as PermissionProfile;
 use codex_protocol::models::ContentItem;
@@ -95,7 +95,7 @@ async fn request_permissions_routes_to_guardian_when_reviewer_is_enabled() {
     );
     session.services.models_manager = models_manager;
     turn_context_raw.config = Arc::clone(&config);
-    turn_context_raw.provider = create_model_provider(
+    turn_context_raw.provider = create_model_provider_for_tests(
         config.model_provider.clone(),
         turn_context_raw.auth_manager.clone(),
     );
@@ -177,7 +177,7 @@ async fn request_permissions_guardian_review_stops_when_cancelled() {
         .services
         .models_manager = models_manager;
     turn_context_raw.config = Arc::clone(&config);
-    turn_context_raw.provider = create_model_provider(
+    turn_context_raw.provider = create_model_provider_for_tests(
         config.model_provider.clone(),
         turn_context_raw.auth_manager.clone(),
     );
@@ -280,7 +280,7 @@ async fn guardian_allows_shell_command_additional_permissions_requests_past_poli
     );
     session.services.models_manager = models_manager;
     turn_context_raw.config = Arc::clone(&config);
-    turn_context_raw.provider = create_model_provider(
+    turn_context_raw.provider = create_model_provider_for_tests(
         config.model_provider.clone(),
         turn_context_raw.auth_manager.clone(),
     );
@@ -384,7 +384,7 @@ async fn strict_auto_review_turn_grant_forces_guardian_for_shell_command_policy_
     );
     session.services.models_manager = models_manager;
     turn_context_raw.config = Arc::clone(&config);
-    turn_context_raw.provider = create_model_provider(
+    turn_context_raw.provider = create_model_provider_for_tests(
         config.model_provider.clone(),
         turn_context_raw.auth_manager.clone(),
     );
@@ -666,6 +666,7 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
         config,
         installation_id: "11111111-1111-4111-8111-111111111111".to_string(),
         auth_manager,
+        model_provider_factory: crate::test_support::model_provider_factory_for_tests(),
         models_manager,
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
         skills_manager,
@@ -693,6 +694,10 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
         thread_store,
         attestation_provider: None,
         active_event_subscriptions: Arc::new(crate::ActiveEventSubscriptionTracker::default()),
+        openai_file_uploader: Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
+        code_mode_service: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
+        code_mode_runtime_factory: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        workflow_runs: Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
     })
     .await
     .expect("spawn guardian subagent");

@@ -10,11 +10,11 @@
 use codex_app_server_client::AppServerRequestHandle;
 use codex_app_server_protocol::AccountLoginCompletedNotification;
 use codex_app_server_protocol::AccountUpdatedNotification;
-use codex_app_server_protocol::AuthMode as AppServerAuthMode;
 use codex_app_server_protocol::CancelLoginAccountParams;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::LoginAccountParams;
 use codex_app_server_protocol::LoginAccountResponse;
+use codex_auth_types::AuthMode as AppServerAuthMode;
 use codex_login::read_openai_api_key_from_env;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -1037,7 +1037,7 @@ mod tests {
     use codex_app_server_client::InProcessClientStartArgs;
     use codex_arg0::Arg0DispatchPaths;
     use codex_cloud_requirements::cloud_requirements_loader_for_storage;
-    use codex_config::types::AuthCredentialsStoreMode;
+    use codex_config_types::AuthCredentialsStoreMode;
 
     use pretty_assertions::assert_eq;
     use std::sync::Arc;

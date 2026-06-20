@@ -32,8 +32,9 @@ use codex_api::ApiError;
 use codex_api::ResponsesWebsocketClient;
 use codex_api::is_azure_responses_provider;
 use codex_arg0::Arg0DispatchPaths;
-use codex_config::types::McpServerConfig;
-use codex_config::types::McpServerTransportConfig;
+use codex_config_edit::CONFIG_TOML_FILE;
+use codex_config_types::McpServerConfig;
+use codex_config_types::McpServerTransportConfig;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
@@ -1028,7 +1029,7 @@ fn feature_flag_details(config: &Config, details: &mut Vec<String>) {
 }
 
 fn config_toml_details(config: &Config, details: &mut Vec<String>) {
-    let config_path = config.codex_home.join(codex_config::CONFIG_TOML_FILE);
+    let config_path = config.codex_home.join(CONFIG_TOML_FILE);
     details.push(format!("config.toml: {}", config_path.display()));
     match std::fs::read_to_string(&config_path) {
         Ok(contents) => match toml::from_str::<toml::Value>(&contents) {
@@ -1198,21 +1199,21 @@ fn provider_specific_auth_check(
 
 fn stored_auth_mode(auth: &codex_login::AuthDotJson) -> &'static str {
     match stored_auth_mode_value(auth) {
-        codex_app_server_protocol::AuthMode::ApiKey => "api_key",
-        codex_app_server_protocol::AuthMode::Chatgpt => "chatgpt",
-        codex_app_server_protocol::AuthMode::ChatgptAuthTokens => "chatgpt_auth_tokens",
-        codex_app_server_protocol::AuthMode::AgentIdentity => "agent_identity",
+        codex_auth_types::AuthMode::ApiKey => "api_key",
+        codex_auth_types::AuthMode::Chatgpt => "chatgpt",
+        codex_auth_types::AuthMode::ChatgptAuthTokens => "chatgpt_auth_tokens",
+        codex_auth_types::AuthMode::AgentIdentity => "agent_identity",
     }
 }
 
-fn stored_auth_mode_value(auth: &AuthDotJson) -> codex_app_server_protocol::AuthMode {
+fn stored_auth_mode_value(auth: &AuthDotJson) -> codex_auth_types::AuthMode {
     if let Some(mode) = auth.auth_mode {
         return mode;
     }
     if auth.openai_api_key.is_some() {
-        codex_app_server_protocol::AuthMode::ApiKey
+        codex_auth_types::AuthMode::ApiKey
     } else {
-        codex_app_server_protocol::AuthMode::Chatgpt
+        codex_auth_types::AuthMode::Chatgpt
     }
 }
 
@@ -1222,7 +1223,7 @@ fn stored_auth_issues(
 ) -> Vec<&'static str> {
     let mut issues = Vec::new();
     match stored_auth_mode_value(auth) {
-        codex_app_server_protocol::AuthMode::ApiKey => {
+        codex_auth_types::AuthMode::ApiKey => {
             let stored_key_present = auth
                 .openai_api_key
                 .as_deref()
@@ -1233,7 +1234,7 @@ fn stored_auth_issues(
                 issues.push("API key auth is missing an API key");
             }
         }
-        codex_app_server_protocol::AuthMode::Chatgpt => {
+        codex_auth_types::AuthMode::Chatgpt => {
             match auth.tokens.as_ref() {
                 Some(tokens) => {
                     if tokens.access_token.trim().is_empty() {
@@ -1249,7 +1250,7 @@ fn stored_auth_issues(
                 issues.push("ChatGPT auth is missing refresh metadata");
             }
         }
-        codex_app_server_protocol::AuthMode::ChatgptAuthTokens => {
+        codex_auth_types::AuthMode::ChatgptAuthTokens => {
             match auth.tokens.as_ref() {
                 Some(tokens) => {
                     if tokens.access_token.trim().is_empty() {
@@ -1265,7 +1266,7 @@ fn stored_auth_issues(
                 issues.push("external ChatGPT auth is missing refresh metadata");
             }
         }
-        codex_app_server_protocol::AuthMode::AgentIdentity => {
+        codex_auth_types::AuthMode::AgentIdentity => {
             if auth
                 .agent_identity
                 .as_deref()
@@ -2255,10 +2256,10 @@ fn websocket_error_detail(err: &ApiError) -> String {
 
 fn auth_mode_name(auth: &CodexAuth) -> &'static str {
     match auth.auth_mode() {
-        codex_app_server_protocol::AuthMode::ApiKey => "api_key",
-        codex_app_server_protocol::AuthMode::Chatgpt => "chatgpt",
-        codex_app_server_protocol::AuthMode::ChatgptAuthTokens => "chatgpt_auth_tokens",
-        codex_app_server_protocol::AuthMode::AgentIdentity => "agent_identity",
+        codex_auth_types::AuthMode::ApiKey => "api_key",
+        codex_auth_types::AuthMode::Chatgpt => "chatgpt",
+        codex_auth_types::AuthMode::ChatgptAuthTokens => "chatgpt_auth_tokens",
+        codex_auth_types::AuthMode::AgentIdentity => "agent_identity",
     }
 }
 
@@ -2388,11 +2389,11 @@ fn provider_auth_reachability_mode_from_auth(
         return ProviderAuthReachabilityMode::Chatgpt;
     }
     match stored_auth.map(stored_auth_mode_value) {
-        Some(codex_app_server_protocol::AuthMode::ApiKey) => ProviderAuthReachabilityMode::ApiKey,
+        Some(codex_auth_types::AuthMode::ApiKey) => ProviderAuthReachabilityMode::ApiKey,
         Some(
-            codex_app_server_protocol::AuthMode::Chatgpt
-            | codex_app_server_protocol::AuthMode::ChatgptAuthTokens
-            | codex_app_server_protocol::AuthMode::AgentIdentity,
+            codex_auth_types::AuthMode::Chatgpt
+            | codex_auth_types::AuthMode::ChatgptAuthTokens
+            | codex_auth_types::AuthMode::AgentIdentity,
         )
         | None => ProviderAuthReachabilityMode::Chatgpt,
     }
@@ -3221,7 +3222,7 @@ mod tests {
     #[test]
     fn stored_auth_validation_rejects_missing_api_key() {
         let auth = AuthDotJson {
-            auth_mode: Some(codex_app_server_protocol::AuthMode::ApiKey),
+            auth_mode: Some(codex_auth_types::AuthMode::ApiKey),
             openai_api_key: None,
             tokens: None,
             last_refresh: None,
@@ -3257,7 +3258,7 @@ mod tests {
     #[test]
     fn provider_reachability_mode_uses_api_key_auth() {
         let api_key_auth = AuthDotJson {
-            auth_mode: Some(codex_app_server_protocol::AuthMode::ApiKey),
+            auth_mode: Some(codex_auth_types::AuthMode::ApiKey),
             openai_api_key: Some("sk-test".to_string()),
             tokens: None,
             last_refresh: None,

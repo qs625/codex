@@ -3,10 +3,10 @@
 use anyhow::Context;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use codex_exec_server::CreateDirectoryOptions;
-use codex_exec_server::LOCAL_ENVIRONMENT_ID;
-use codex_exec_server::REMOTE_ENVIRONMENT_ID;
-use codex_exec_server::RemoveOptions;
+use codex_exec_server_api::LOCAL_ENVIRONMENT_ID;
+use codex_exec_server_api::REMOTE_ENVIRONMENT_ID;
+use codex_file_system::CreateDirectoryOptions;
+use codex_file_system::RemoveOptions;
 use codex_login::CodexAuth;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::models::PermissionProfile;

@@ -1,5 +1,5 @@
 use super::*;
-use codex_config::types::History;
+use codex_config_types::History;
 use pretty_assertions::assert_eq;
 use std::fs::File;
 use std::io::Write;

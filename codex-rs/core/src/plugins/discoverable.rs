@@ -4,7 +4,7 @@ use tracing::warn;
 
 use super::PluginCapabilitySummary;
 use crate::config::Config;
-use codex_config::types::ToolSuggestDiscoverableType;
+use codex_config_types::ToolSuggestDiscoverableType;
 use codex_core_plugins::OPENAI_BUNDLED_MARKETPLACE_NAME;
 use codex_core_plugins::OPENAI_CURATED_MARKETPLACE_NAME;
 use codex_core_plugins::PluginsManager;

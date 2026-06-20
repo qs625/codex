@@ -77,9 +77,9 @@ use codex_app_server_protocol::Result;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
 use codex_arg0::Arg0DispatchPaths;
-use codex_config::CloudRequirementsLoader;
-use codex_config::LoaderOverrides;
-use codex_config::ThreadConfigLoader;
+use codex_config_loader::LoaderOverrides;
+use codex_config_loader::ThreadConfigLoader;
+use codex_config_requirements::CloudRequirementsLoader;
 use codex_core::config::Config;
 use codex_core::resolve_installation_id;
 use codex_exec_server::EnvironmentManager;
@@ -813,7 +813,7 @@ mod tests {
             loader_overrides: LoaderOverrides::default(),
             strict_config: false,
             cloud_requirements: CloudRequirementsLoader::default(),
-            thread_config_loader: Arc::new(codex_config::NoopThreadConfigLoader),
+            thread_config_loader: Arc::new(codex_config_loader::NoopThreadConfigLoader),
             feedback: CodexFeedback::new(),
             log_db: None,
             state_db: Some(state_db),

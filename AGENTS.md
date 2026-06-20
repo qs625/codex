@@ -108,11 +108,550 @@ Particularly when introducing a new concept/feature/API, before adding to `codex
   plan，也属于 `codex-tools` 边界。`Session`、`TurnContext`、hooks、approval、
   telemetry、真实 tool handler 执行、`dispatch_any` 和 turn loop 编排继续留在 `codex-core`，
   除非先拆出稳定共享接口。
+- code-mode 的描述层、工具定义、tool namespace description、exec/wait public tool name、
+  exec prompt builder、pragma parser 和 JSON schema 到 TypeScript 的渲染属于轻量 API 边界，
+  owner crate 是 `codex-rs/code-mode-api`（`codex-code-mode-api`）。`codex-tools` 这类只做
+  tool spec/planning 的 crate 应依赖 `codex-code-mode-api`，不得为了生成 code-mode tool
+  description 或 nested tool definition 直接依赖带 V8 runtime 的 `codex-code-mode`。
+  `codex-rollout-trace` 这类只需要 code-mode public tool name、runtime response DTO 或 trace
+  serialization 的 crate 也应依赖 `codex-code-mode-api`，不应直接依赖 runtime implementation。
+  `codex-code-mode-api` 还承载 `CodeModeRuntimeService`、`CodeModeRuntimeFactory`、
+  `CodeModeTurnHost` 和 execute/wait request/outcome 这些 runtime trait/DTO；`codex-core`
+  和后续 session runtime 只能依赖这些 trait/DTO。V8-backed `codex-code-mode` 是 runtime
+  implementation crate，由 app-server/CLI/TUI 这类组合根通过 constructor injection 注入，
+  不要在 core/session/工具规划 crate 中直接创建或依赖 V8 implementation。`codex-code-mode`
+  可以继续 re-export API 类型以保持兼容。
 - 不依赖 `codex-core` 的 command runtime primitive，例如 command output buffer、process
   state、wait/write-stdin DTO、notification filter/state 和 yield/token/chunk id helper，应放在
   `codex-rs/command-runtime`（`codex-command-runtime`）。`ExecCommandHandler`、
   `CommandWaitHandler`、`WriteStdinHandler`、approval/sandbox/spawn、async watcher event
-  emission、`Session`/`TurnContext` 编排继续留在 `codex-core`。
+  emission、`Session`/`TurnContext` 编排继续留在 `codex-core`。命令输出的 legacy encoding 智能解码
+  （`bytes_to_string_smart`、`chardetng`/`encoding_rs` 依赖和相关 CP1251/CP866/Windows-1252 回归测试）
+  属于 command runtime 边界；`codex-protocol::exec_output` 只保留轻量 DTO，不要为了 DTO 或
+  `StreamOutput` 把编码检测依赖重新拉回 shared protocol。
+- shell command parsing/safety 和 shell executable PATH lookup 属于 `codex-rs/shell-command`
+  （`codex-shell-command`）。`codex-core` 可以使用 `codex_shell_command::resolve_executable_in_path`
+  这类 shell utility，但不要为了 shell discovery 直接依赖 `which`；测试需要探测本机可执行文件时可以
+  把 `which` 作为 dev-dependency。
+- OS/user display-name lookup 属于 `codex-rs/user-info`（`codex-user-info`）。`codex-core`
+  需要当前用户名字、first name 或 greeting fallback 时应调用 `codex_user_info` helper，不要为了
+  prompt/realtime 文案直接依赖 `whoami`；需要覆盖本机用户名行为的测试应通过该 crate helper 或 dev-dependency
+  边界处理。
+- model input adapter 属于 `codex-rs/model-input`（`codex-model-input`）：把 `UserInput`
+  转成 model-visible `ResponseInputItem`、读取本地图片、resize/encode、生成 LocalImage
+  placeholder 和图片 label 序列都在该 crate。`codex-protocol` 只保留 `UserInput`、Responses API
+  DTO、pre-encoded image wrapping 和 image tag helper，不要为了 `LocalImage` 文件 IO 或
+  `codex-utils-image` 把图片处理栈重新拉回 protocol。core/session/compact/prompt debug 等进入模型
+  上下文的路径必须显式调用 `codex_model_input::response_input_item_from_user_input`。图片解码、
+  resize/encode、内存图片尺寸读取和 `image` crate 依赖属于 `codex-utils-image`，`codex-core`
+  不要直接依赖 `image` 来实现 token estimate、view-image 或 model input helper。
+- `codex-protocol` 是 shared DTO/wire/error 语义层，不应为了 runtime helper 自动转换依赖
+  `tokio`、`tokio-util`、`codex-async-utils` 或 `async-trait`。需要把
+  `codex_async_utils::CancelErr`、`tokio::task::JoinError` 等 runtime error 转成 `CodexErr` 时，应在
+  core/app-server 等调用方显式 `map_err` 到 `CodexErr::TurnAborted`、`CodexErr::TaskJoin` 或更具体的
+  domain error，避免所有 protocol consumers 间接拉入 async runtime crates。
+- 不依赖 `codex-core` 的通用 filesystem trait 和 unsandboxed 本地文件系统实现属于
+  `codex-rs/file-system`（`codex-file-system`）。插件、技能、配置、AGENTS.md 加载等只需要本地文件
+  读取/metadata 的路径应依赖 `codex_file_system::ExecutorFileSystem` 和
+  `codex_file_system::LOCAL_FS`，不要为了 `LOCAL_FS` 或 trait 把 `codex-exec-server` 拉入轻量 crate。
+  `codex-apply-patch` 也只应依赖 `codex-file-system` 这一层；它不应为了 standalone executable 或
+  sandbox context 走 `codex-exec-server` re-export。
+  `codex-exec-server` 继续拥有 sandbox-aware process/filesystem implementation、environment manager、
+  JSON-RPC transport 和 remote executor runtime。
+- SQLite state runtime、thread metadata、goal/agent-job/log DB model、migrations、telemetry layer 和
+  `StateRuntime` 属于 `codex-rs/state`（`codex-state`）。CLI-only utilities 例如
+  `codex-state-logs`、`clap` parser、`dirs` home lookup 和 colored terminal formatting 属于
+  `codex-rs/state-cli`（`codex-state-cli`）；core、rollout、thread-store 或其他 runtime
+  consumer 不应为了日志查看 CLI 让 `codex-state` 携带 `clap`、`dirs` 或 `owo-colors`。
+- Fuzzy file search library、session runtime、search options、match DTO 和 nucleo/ignore walker 属于
+  `codex-rs/file-search`（`codex-file-search`）。`codex-file-search` CLI parser、stdout reporter、
+  JSON output formatting 和 no-pattern directory listing fallback 属于 `codex-rs/file-search-cli`
+  （`codex-file-search-cli`）；rollout/thread-store/core 这类只需要搜索 library 的路径不应为了
+  `codex-file-search` 二进制入口携带 `clap`、`serde_json` 或 `tokio::process`。
+- Shell escalation runtime、escalation protocol/server/client、policy evaluation adapter 和
+  `run_shell_escalation_execve_wrapper` 属于 `codex-rs/shell-escalation`
+  （`codex-shell-escalation`）。`codex-execve-wrapper` binary、`clap` argument parser 和
+  stderr tracing subscriber setup 属于 `codex-rs/shell-escalation-cli`
+  （`codex-shell-escalation-cli`）；core shell runtime 不应为了 wrapper binary 让
+  `codex-shell-escalation` 携带 `clap` 或 `tracing-subscriber`。
+- exec-server JSON-RPC wire DTO 和 method 常量属于 `codex-rs/exec-server-protocol`
+  （`codex-exec-server-protocol`），包括 `ProcessId`、exec/read/write/terminate request-response、
+  output notifications、filesystem protocol payload、executor-side HTTP request payload 和 base64
+  byte chunks。`codex-exec-server` 可以 re-export 这些类型以兼容旧路径，但 `codex-core`、
+  `codex-rmcp-client` 或其他只需要 protocol DTO 的消费者应直接依赖 `codex-exec-server-protocol`。
+  exec-server runtime capability traits 属于 `codex-rs/exec-server-api`
+  （`codex-exec-server-api`），包括 `ExecBackend`、`ExecProcess`、`StartedExecProcess`、
+  `ExecProcessEvent`/event log/receiver、`HttpClient`、`HttpResponseBody`、`ExecEnvironment`、
+  `ExecEnvironmentProvider` 和低依赖
+  `ExecRuntimeError`。`ExecServerRuntimePaths`、`LOCAL_ENVIRONMENT_ID` 和
+  `REMOTE_ENVIRONMENT_ID` 也属于 `codex-exec-server-api`，因为它们是 host/runtime selection 的轻量
+  API，而不是 concrete transport implementation。`codex-mcp`、`codex-rmcp-client` 或其他只需要
+  host-provided process/HTTP capability 的 crate 应依赖 `codex-exec-server-api` +
+  `codex-exec-server-protocol`，不要直接依赖 concrete `codex-exec-server`。`codex-core` unified
+  exec 只需要 `ExecProcess`、`StartedExecProcess`、process event receiver、runtime paths 或标准
+  environment id 时，也应直接依赖 `codex-exec-server-api`，不要经 `codex-exec-server`
+  re-export；core 只需要对已选 environment 执行 process/HTTP/filesystem capability 时，应接收
+  `Arc<dyn ExecEnvironment>` / `&dyn ExecEnvironment`，不要把 concrete `Environment` 继续穿透到
+  session、MCP helper、AGENTS.md loader 或 unified exec request。
+  core 只需要解析已配置 environment、默认 environment 列表或 local fallback 时，应接收
+  `Arc<dyn ExecEnvironmentProvider>` / `&dyn ExecEnvironmentProvider`，不要把 concrete
+  `EnvironmentManager` 继续穿透到 session services、thread manager runtime state、environment
+  selection 或 connectors helper。app-server 这类组合根可以继续持有 concrete `EnvironmentManager`
+  处理 environment add/upsert、local FS processor 和配置文件 discovery，但应把 runtime session
+  路径投影成 `ExecEnvironmentProvider` 注入 core。
+  core connector accessible 查询和 prompt debug 构造必须显式接收 `&dyn ExecEnvironmentProvider`
+  或 `Arc<dyn ExecEnvironmentProvider>`；不要在 `core/src/connectors.rs`、`core/src/prompt_debug.rs`
+  或 MCP tool fallback 中通过 `codex_home` 临时构造 `EnvironmentManager`。
+  `codex-exec-server` 负责实现并 re-export 这些 API traits；本地/远程
+  process implementation、`Environment`/`EnvironmentManager`、rich `ExecServerError`、transport
+  clients、sandbox-aware FS/process implementation 和 remote executor runtime 继续留在
+  `codex-exec-server`，由 core/app-server 等组合根投影成 MCP runtime environment 或后续
+  `RuntimeServices`。不要把 `reqwest`、`tokio-tungstenite` 等 transport-specific error 类型放进
+  `codex-exec-server-api`。
+  `codex-core` normal dependency graph 不应包含 concrete `codex-exec-server`；需要测试 fixture
+  或 legacy `EnvironmentManager::default_for_tests()` 时，把 `codex-exec-server` 保持在 optional
+  `test-support` feature 或 dev-dependency 边界。MCP runtime environment 构造需要同时传入 selected
+  environment 和 local environment：远端环境用于 remote stdio/HTTP，local environment 用于 local
+  streamable HTTP，不要在 core 里直接构造 `ReqwestHttpClient`。
+- 不依赖 `codex-core` 的 filesystem permissions runtime matcher，例如 read-deny glob matcher、
+  normalized/canonical path candidates 和 `globset` 相关测试，应放在
+  `codex-rs/permissions-runtime`（`codex-permissions-runtime`）。`codex-protocol::permissions`
+  只保留 permissions DTO、read-only reason helper 和 wire/context 可见类型，不要为了
+  `ReadDenyMatcher` 或 sandbox implementation 把 `globset` 重新拉回 shared protocol。
+- 不依赖 `codex-core` 的 network proxy 纯 API/DTO，例如 network policy decision/source 等
+  protocol/config/display 共享类型，应放在 `codex-rs/network-proxy-api`
+  （`codex-network-proxy-api`）。`codex-protocol` 这类基础类型层不要为了共享 DTO 直接依赖
+  Rama-backed `codex-network-proxy`。`NetworkProxyConfig`、`NetworkProxySettings`、
+  `NetworkMode`、domain/unix socket permission DTO、`normalize_host`、`NetworkPolicyRequest`、
+  `NetworkProtocol`、`NetworkDecision`、`NetworkPolicyDecider`、`NetworkProxyAuditMetadata`、
+  `BlockedRequest`、`BlockedRequestObserver`、`NetworkHostPort`、`parse_network_host_port`、
+  `host_and_port_from_network_addr`、`NetworkProxyConstraints`、`PartialNetworkConfig`、
+  `PartialNetworkProxyConfig`、`NetworkProxyConstraintError`、`NetworkProxyRuntimeSnapshot`、
+  proxy env key 常量和 proxy env apply helper 属于
+  `codex-network-proxy-api`；
+  `codex-network-proxy` 只可 re-export 这些类型以兼容旧 callsite。proxy backend、Rama runtime、
+  state builder、config reloader、proxy handle、host policy evaluation、读取/写入环境变量的
+  process wiring 和 runtime state 继续留在 `codex-network-proxy` 或后续明确的实现 crate。
+  `codex-sandboxing` 这类只需要 sandbox policy 生成输入的 crate 应消费
+  `NetworkProxyRuntimeSnapshot`，不要直接依赖 Rama-backed `codex-network-proxy`；真实
+  `NetworkProxy` 到 snapshot 的转换由 core/app-server 等持有 runtime handle 的边界完成。
+  `codex-network-proxy` 不应为了历史空 `Args` 兼容类型或未来二进制入口携带 `clap`；若需要
+  network proxy CLI parser，应新建明确的 CLI crate，而不是把 CLI derive 放回 Rama runtime crate。
+- 不依赖 `codex-core` 的 exec policy 纯策略模型，例如 `Decision`、`Evaluation`、
+  `RuleMatch`、`Policy`、`PrefixRule`、network rule DTO 和 host executable lookup helper，应放在
+  no-Starlark 的 `codex-rs/execpolicy-api`（`codex-execpolicy-api`）。append/amend 文件写入
+  不依赖 Starlark，也属于 `codex-execpolicy-api`；Starlark parser 和 parser error display
+  继续留在 `codex-execpolicy`。`ExecPolicyCheckCommand`、`codex-execpolicy` bin 入口和
+  `clap`/JSON formatting 这类命令行解析/展示逻辑属于 `codex-rs/execpolicy-cli`
+  （`codex-execpolicy-cli`）；`codex-cli` 的 `execpolicy check` 子命令应依赖
+  `codex-execpolicy-cli`，不要从 parser crate 重新导出 CLI command。
+  `codex-config`、`codex-protocol` 等基础类型层不得为了构造或持有 policy DTO 拉入 `starlark`。
+  `codex-execpolicy` 会 re-export API policy types 和 append/amend writer 以保持 callsite
+  简洁；纯 `Policy` mutation/validation 返回 `codex_execpolicy_api::Error`，append/amend
+  返回 `codex_execpolicy_api::AmendError`，Starlark parser/location/display 错误才使用
+  `codex_execpolicy::Error`。`codex-core` 的
+  session、network proxy loader、shell runtime 和 tests 中只需要 `Policy`/`Decision`/`Evaluation`
+  这类策略模型或 append/amend writer 时，也应直接依赖 `codex-execpolicy-api`；只有 parser 和
+  parser error display 边界继续依赖 `codex-execpolicy`。
+- 不要把 `codex-app-server-protocol` 当作全仓混合共享 DTO 层。app-server v2
+  JSON-RPC/control/event envelope、`ThreadItem` display payload、thread/turn 请求响应和 schema export
+  可以继续归 app-server protocol；但被 config/tools/connectors/login/model-provider-info/otel 等非
+  app-server transport crate 共同使用的 auth/app/config/MCP elicitation 等 DTO，应迁移到更窄的 owner
+  crate 或清理后的轻量 API crate。迁移前后必须用 `cargo tree --depth 1` 和
+  `cargo tree --invert <heavy-crate> --edges normal` 证明没有通过 `codex-protocol`、`config`、
+  `tools` 或新的 shared crate 间接拉回 reqwest/ICU/V8/Starlark/Rama/app-server v2 envelope。
+- JSON-RPC 基础 wire 类型属于 `codex-rs/jsonrpc-types`（`codex-jsonrpc-types`），包括
+  `RequestId`、request/notification/response/error message envelope 和 `JSONRPCErrorError`。
+  `codex-app-server-protocol::jsonrpc_lite` 只做兼容 re-export；`codex-exec-server`、remote executor
+  或其他只需要 JSON-RPC message/error 的消费者应直接依赖 `codex-jsonrpc-types`，不要为了基础
+  JSON-RPC envelope 拉入 app-server v2 thread/event/display protocol。
+- MCP elicitation request/schema 这类 core/app-server 共同使用、但不需要 app-server v2 envelope 或
+  `rmcp` conversion 的 DTO 属于 `codex-rs/mcp-types`（`codex-mcp-types`）。`codex-app-server-protocol`
+  可以 re-export 这些类型并继续拥有 server request/response wrapper 与 `rmcp` adapter；`codex-core`
+  和 tool handlers 不应直接依赖 app-server-protocol 来构造 elicitation request/schema。MCP 相关的
+  纯常量和 sandbox payload，例如 `CODEX_APPS_MCP_SERVER_NAME`、`MCP_TOOL_CODEX_APPS_META_KEY`、
+  `MCP_SANDBOX_STATE_META_CAPABILITY` 和 `SandboxState`，也属于 `codex-mcp-types`。MCP elicitation
+  response DTO 也属于 `codex-mcp-types`：`ElicitationAction` 复用 `codex-protocol` 的 approvals
+  enum，`ElicitationResponse` 保持为不依赖 `rmcp` 的 typed DTO；`codex-rmcp-client` 只在 rmcp
+  protocol 边界 re-export/转换这些类型，`codex-core` 和 `codex-mcp` 不应为了构造 response DTO
+  依赖 rmcp-client 的兼容 re-export。MCP `ToolInfo`、raw `rmcp::model::Tool` metadata、
+  OpenAI file-param meta 解析和 model-visible input schema masking 属于 `codex-rs/mcp-tool-types`
+  （`codex-mcp-tool-types`），因为它们需要承载 `rmcp::model::Tool`，不应放入纯 `codex-mcp-types`。
+  `codex-core` 只需要 MCP tool metadata 时应直接依赖 `codex-mcp-tool-types`，不要经
+  `codex-mcp` re-export；`codex-mcp-tool-types` 可以依赖 `rmcp`，但不得间接拉回 full
+  `codex-mcp` runtime、`codex-rmcp-client`、login、model-provider 或 exec-server。MCP OAuth
+  login/browser callback flow 属于 MCP runtime boundary；core 中安装 skill MCP dependencies 等路径
+  应通过 `codex-mcp` 暴露的 runtime entry 调用，不要直接依赖 `codex-rmcp-client`。
+- Plugin policy/interface/display metadata 这类插件领域 DTO 属于 `codex-rs/plugin-types`
+  （`codex-plugin-types`）。`codex-app-server-protocol` 可以 re-export 用于 wire/schema 兼容；
+  `codex-core-plugins`、TUI 或其他插件领域消费者应直接依赖 plugin types，不要为了
+  `PluginInstallPolicy`、`PluginAuthPolicy`、`PluginAvailability`、`PluginInterface` 或
+  `SkillInterface` 依赖 app-server-protocol。`PluginId`、`AppConnectorId`、
+  `PluginCapabilitySummary`、`PluginTelemetryMetadata` 和 `PluginHookSource` 也属于 `codex-plugin-types`；
+  `codex-plugin` 只 re-export 这些类型并承载 loader/runtime outcome，轻量 API crate 不要为了插件
+  id、telemetry metadata、capability summary 或 hook source 依赖 `codex-plugin`。`codex-hooks` 和
+  `codex-mcp` 这类只消费 hook/capability/provenance DTO 的 crate 应直接依赖 `codex-plugin-types`；
+  只有真实 plugin loader/manager/outcome owner 才依赖 `codex-plugin`。
+- `codex-core-plugins` 和 `codex-core-skills` 不应直接依赖 `codex-analytics`。插件生命周期 analytics
+  通过 `PluginAnalyticsEventSink` 这类窄 trait 从组合根注入；skill injection 应返回领域 invocation
+  数据，由 core/app-server 这类已经拥有 analytics client 的边界转换并上报。不要为了打点把
+  app-server protocol 事件 reducer 或 analytics client queue 拉回 plugin/skill core crate。
+- `codex-core`、runtime/session 编排和其他不需要真实 analytics 队列的 crate 只能依赖
+  `codex-rs/analytics-api`（`codex-analytics-api`）中的 analytics DTO 与 `AnalyticsEventsClient`
+  facade。真实 `codex-analytics` 继续拥有事件队列、reducer、HTTP 发送、app-server protocol adapter
+  和 `codex-app-server-protocol` 依赖，由 app-server 组合根创建后通过 `api_client()` 注入 core。
+  core 内部缺省 analytics client 应使用 disabled facade，不要直接构造真实 analytics client，也不要为了
+  `track_*` 调用把 app-server protocol 或 analytics reducer 拉回 runtime crate。`codex-analytics-api`
+  只能依赖 `codex-plugin-types` 等轻量类型；不得依赖 `codex-plugin`，否则会经 plugin loader/runtime
+  依赖链把 `codex-login` 等实现 crate 间接拉回 core。
+- 不需要真实 OTEL runtime 的 crate 只能通过 `codex-rs/metrics-api`（`codex-metrics-api`）记录
+  best-effort metrics。该 crate 承载 `MetricsSink`、低基数 originator tag helper、纯 metric
+  name 常量、纯 telemetry tag/source enum（例如 `ToolDecisionSource`）、
+  `StatsigMetricsSettings` 跨进程 DTO、全局 counter/histogram/duration helper 和
+  lightweight duration timer，不得依赖
+  `codex-otel`、`codex-api`、HTTP/SSE/WebSocket runtime、tokio runtime 或 app-server protocol。真实
+  `codex-otel` 可以 re-export metrics API 的纯类型，在初始化时把 concrete `MetricsClient` 安装到
+  metrics API facade，且 `SessionTelemetry` 实现 `MetricsSink` 以保留 per-session metadata tags；
+  `codex-mcp`、agent runtime、
+  core-plugins/core-skills、rollout 或其他 runtime-adjacent crate 不应为了 global counter/duration、
+  skill metrics、DB telemetry、metric name 常量或纯 tag/source enum 直接依赖 `codex-otel`。
+  `codex-core` 需要记录 best-effort 全局 counter、histogram 或 duration 时，应使用
+  `codex_metrics_api::record_global_*` / `start_global_timer`；不要调用 `codex_otel::global()`
+  获取 concrete metrics client。只有 `SessionTelemetry` 和 OTEL provider implementation 这类
+  concrete telemetry runtime 边界才继续依赖 `codex-otel`，直到对应 facade 拆出。
+  metrics-only helper 的函数签名应接收 `&dyn codex_metrics_api::MetricsSink` 或对应 facade 类型，
+  不要把 helper 绑定到 `codex_otel::SessionTelemetry`；调用方可以继续传入 session telemetry 以保留
+  per-session metadata tags，但 helper 本身必须停留在 metrics API 边界。
+  如果 core 只需要持有一个 duration timer 直到 drop 记录指标，应隐藏为 boxed drop guard，避免在
+  session/turn state 类型中公开 `codex_otel::Timer` 这类 concrete OTEL runtime 类型。
+  只需要 metric tag sanitization 时，直接使用 `codex-utils-string::sanitize_metric_tag_value`，
+  不要通过 `codex_otel::sanitize_metric_tag_value` re-export 形成语义上的 runtime dependency。
+- W3C trace propagation helper 属于 `codex-rs/trace-context`（`codex-trace-context`）：
+  current span trace id、W3C trace carrier、traceparent/tracestate validation、从环境变量恢复
+  trace context、给 span 设置 parent context 这类 helper 应直接从该轻量 crate 引用。`codex-otel`
+  可以 re-export 这些 helper 兼容旧路径，并在 provider init 中设置 tracestate；但 core/session/runtime、
+  API client、测试或其他非 OTEL runtime crate 不应为了 trace helper 依赖 full `codex-otel`。
+  `SessionTelemetry` 和 OTEL provider implementation 仍属于 `codex-otel`，后续需要单独设计
+  session telemetry facade，不能把 W3C trace helper 拆出误写成 full OTEL direct edge 已消除。
+- OTEL provider 初始化、process-start metrics 和 SQLite telemetry recorder 安装属于
+  `codex-rs/otel-init`（`codex-otel-init`）。该 crate 是 app-server、TUI、exec、mcp-server
+  这类组合根的 startup helper，可以依赖 `codex-otel`、`codex-rollout` 和 `codex-state`，但不得依赖
+  `codex-core` 或 `codex-core::Config`。调用方应把完整 runtime config 投影成
+  `codex_otel_init::OtelProviderConfig`（`codex_home`、`OtelConfig`、analytics flag、runtime metrics flag）
+  后调用 `build_provider`；不要从 core re-export 或恢复 `codex_core::otel_init`。
+- `codex-windows-sandbox` 默认 feature 可以为 standalone setup helper 保留 WFP Statsig metrics
+  emission，但 `codex-core` 依赖它时必须关闭默认 feature，避免 core 通过 Windows sandbox helper
+  间接拉入 full `codex-otel`。需要传递 setup metrics 配置时使用
+  `codex_metrics_api::StatsigMetricsSettings` DTO；只有真正构造 OTEL provider 的 setup helper
+  implementation 才能依赖 `codex-otel`。
+- `codex-core` 的 fork/resume snapshot turn-state 判断不得依赖 app-server display history builder
+  （例如 `ThreadHistoryBuilder` / `TurnStatus`）。core 只需要知道 rollout 是否截在显式 turn 中间时，
+  应直接扫描 typed `RolloutItem::EventMsg(EventMsg::TurnStarted | TurnComplete | TurnAborted)`；
+  完整 `ThreadHistoryBuilder` 继续属于 app-server-protocol display/history projection 边界。
+- `codex-protocol` 的基础展示/计数格式化 helper 不应为了 locale-aware 展示拉入 ICU 或
+  `sys-locale`。token 数、字符数这类跨 TUI/exec/protocol 复用的轻量格式化保持固定逗号分隔；如果未来
+  需要真正 locale-aware 的 UI 展示，应放到 TUI/app-server UI 边界或新的窄 UI formatting crate，不要让
+  config/protocol 消费者通过 `codex-protocol` 间接编译 ICU 数据栈。
+- `codex-protocol::error` 是跨 runtime/UI 的错误语义层，不应保存 `reqwest::Error` 这类具体 transport
+  implementation error。需要传递 HTTP 语义时保留 `http::StatusCode` 和用户可见 message/request id；
+  reqwest/codex-client/codex-api 的具体错误应在 API/runtime adapter 边界映射成 protocol error DTO，避免
+  config、protocol、TUI 和其他轻量消费者为了错误枚举编译 reqwest client stack。
+- Responses API 请求 shape、stream event DTO 和 websocket 请求 metadata helper 属于 `codex-rs/api-types`
+  （`codex-api-types`）：`Reasoning`、`TextControls`、`OpenAiVerbosity`、`ResponsesApiRequest`、
+  `ResponseCreateWsRequest`、`ResponsesWsRequest`、`ResponseEvent`、websocket request metadata key 和
+  `create_text_param_for_request` / `response_create_client_metadata` 这类纯 DTO/helper 应从该 crate 引用。
+  Realtime session selection DTO（`RealtimeEventParser`、`RealtimeSessionMode`、
+  `RealtimeSessionConfig`）也属于 `codex-api-types`；Realtime audio/event payload
+  （`RealtimeAudioFrame`、`RealtimeEvent`）属于 `codex-protocol`，不要通过 full `codex-api`
+  re-export 在 core/session runtime 中使用这些纯类型。
+  SSE/WebSocket telemetry 对外也只能暴露 `SseEventTelemetry` / `WebsocketEventTelemetry` 这类
+  transport-neutral summary DTO；`eventsource_stream::Event`、`EventStreamError` 和
+  `tokio_tungstenite::tungstenite::Message/Error` 的分类归纳属于 `codex-api` runtime 边界，不要让
+  `codex-core` 或 `codex-otel` 为 telemetry 实现直接依赖这些 transport parser/runtime 类型。
+  `codex-api` 只 re-export 这些类型用于旧路径兼容，并继续拥有 API client、auth header adapter、
+  HTTP transport、SSE/WebSocket parser、`ResponseStream` 和 endpoint runtime；
+  core/session runtime 不应为了构造 request body、text controls 或匹配 response stream event 依赖完整
+  `codex-api`。
+- OpenAI file upload API 边界属于 `codex-rs/openai-files-api`（`codex-openai-files-api`）：
+  `UploadedOpenAiFile`、`OpenAiFileUploader`、`SharedOpenAiFileUploader` 和 disabled uploader 从该轻量
+  crate 引用；它只能依赖 auth provider/serde 等低层类型，不得拉 `reqwest`、`codex-client`、
+  `codex-api`、`codex-core`、MCP runtime 或 app-server protocol。真实上传 runtime 属于
+  `codex-rs/openai-files`（`codex-openai-files`）：`upload_local_file`、`OpenAiFileError`、
+  `openai_file_uri`、文件上传限制常量和 `ReqwestOpenAiFileUploader` 实现从该 crate 引用，该 crate 可以拥有
+  上传所需的 `reqwest` / `codex-client` custom CA runtime，但不得依赖 full `codex-api`、`codex-core`、
+  `codex-otel`、MCP runtime 或 app-server protocol。`codex-core` 只应持有
+  `Arc<dyn OpenAiFileUploader>`，由 app-server/mcp-server/test-support 组合根通过 constructor injection
+  注入真实实现；不要让 core production manifest 直接依赖 `codex-openai-files`，也不要让 `codex-api` 为旧路径
+  兼容 re-export 文件上传 helper，否则 core 只要依赖 API client 就会间接拉回文件上传 runtime。
+- Feedback request tag API 边界属于 `codex-rs/feedback-api`（`codex-feedback-api`）：
+  `FeedbackRequestTags`、`emit_feedback_request_tags` 和
+  `emit_feedback_request_tags_with_auth_env` 应从该轻量 crate 引用；它只允许依赖
+  `codex-auth-types` 和 `tracing` 这类低层 telemetry type/emission 依赖。带 auth env 的 helper 接收
+  `AuthEnvTelemetryMetadata`，不要让 API crate 依赖 `codex-login::AuthEnvTelemetry`。`codex-feedback`
+  继续拥有 feedback ring buffer、metadata layer、Sentry upload、diagnostics attachment 和
+  `tracing-subscriber` runtime，并可 re-export 这些 API 以兼容旧路径；`codex-core`、`codex-model-provider`
+  或其他只需要打 request tag 的 crate 不应 normal 依赖 heavy `codex-feedback`。
+- `codex-otel` 不应为了 telemetry event classification 依赖完整 `codex-api`。记录 Responses stream event
+  时直接依赖 `codex-api-types::ResponseEvent`；SSE/WebSocket poll 指标只能消费
+  `codex-api-types` 的 telemetry summary DTO，不要重新匹配 raw transport event/message 类型。websocket
+  telemetry 的外层错误参数应保持为 `Display`/轻量错误语义，不要绑定 `codex_api::ApiError`，否则
+  `codex-otel -> codex-api` 会把 full API runtime 间接拉回 core 和 windows sandbox。`ApiError` 仍属于
+  `codex-api` runtime boundary，只有 API client/adapter 层应直接匹配它。`SessionTelemetry` 不应暴露
+  `reqwest::Response/Error` 绑定的 helper；API request telemetry 应由 API/client adapter 归纳成
+  transport-neutral fields 后调用 `record_api_request`。
+- HTTP client request/error/retry 基础类型属于 `codex-rs/client-types`（`codex-client-types`）：
+  `Request`、`RequestBody`、`RequestCompression`、`PreparedRequestBody`、`Response`、`TransportError`、
+  `StreamError`、`RetryPolicy` 和 `RetryOn` 应从该 crate 作为轻量类型层复用；`codex-client` 只 re-export
+  这些类型并继续拥有 reqwest transport、SSE stream、custom CA、retry executor、request telemetry 和
+  default client runtime。新 crate 不应为了构造或签名 request body 依赖完整 `codex-client`。
+- Response debug context helper 属于 `codex-rs/response-debug-context`（`codex-response-debug-context`），
+  只处理 `codex-client-types::TransportError` 中的 HTTP debug headers 和 transport error telemetry
+  message。该 crate 不得依赖 `codex-api`、`codex-client`、reqwest、tokio、SSE/WebSocket runtime 或
+  app-server protocol。`ApiError` 到 response debug context / telemetry message 的 adapter 属于
+  `codex-api`，因为 `ApiError` 是 API runtime error；core 可以从 `codex-api` 引用该 adapter，但不要把
+  `ApiError` helper 放回 response-debug-context 形成 `response-debug-context -> codex-api` 回流。
+- API provider/auth 基础边界属于 `codex-rs/api-provider`（`codex-api-provider`）：`Provider`、
+  `RetryConfig`、`AuthProvider`、`SharedAuthProvider`、`AuthProviderFuture`、`AuthError`、
+  `AuthHeaderTelemetry`、`auth_header_telemetry`、session header helper 和 Azure endpoint detection 应从该
+  crate 引用。`codex-api` 只 re-export 这些类型用于旧路径兼容，并继续拥有具体 endpoint client、
+  `ApiError`、`ResponseStream`、HTTP/SSE/WebSocket runtime 和 file upload；`model-provider-api`、core 和
+  model-provider implementation 不应为了 provider config 或 auth-header adapter 依赖完整 `codex-api`。
+- `codex-protocol::items` 中 hook prompt 使用的 `<hook_prompt hook_run_id="...">...</hook_prompt>` 是受控
+  internal marker，不应为了这一处 marker 重新引入通用 XML serde/parser 依赖。修改该 marker 时保持手写
+  XML entity escape/unescape 的受控实现，并用 hook prompt roundtrip/legacy parse 测试覆盖；需要通用 XML
+  解析时应先证明这是新的协议边界，而不是把 quick-xml 拉回 shared protocol。
+- `codex-protocol::config_types::EnvironmentVariablePattern` 是 shell env policy 的轻量 wildcard 类型，仅支持
+  `*` 和 `?` 的整串匹配以及显式大小写无关构造；不要为了环境变量 include/exclude pattern 重新把
+  `wildmatch`、`regex` 或 glob 运行时拉入 shared protocol。修改该类型时用 env pattern、shell_environment
+  和 exec_env 覆盖保证 include/exclude/default sensitive filtering 行为不变。
+- `AuthMode` 和 ChatGPT workspace 登录限制 config 形状 `ForcedChatgptWorkspaceIds` 属于认证域共享类型，
+  owner crate 是 `codex-rs/auth-types`
+  （`codex-auth-types`）。login、model-provider-info、otel、models-manager、core、CLI/TUI 和
+  app-server 需要认证模式或登录限制 DTO 时应直接依赖 `codex-auth-types`；`codex-app-server-protocol`
+  或 `codex_config::config_toml` 只 re-export 这些类型用于 wire/旧路径兼容，不要把新的 auth domain type
+  放回 app-server-protocol 或 full `codex-config`。`AuthEnvTelemetryMetadata` 和 `TelemetryAuthMode`
+  这类认证环境 telemetry DTO / tag enum 也属于 `codex-auth-types`；`codex-login` 可以收集 auth env state
+  并转换成该 DTO，但不要为了 DTO 或 tag enum 依赖 `codex-otel`，否则会把 `codex-api`/HTTP runtime
+  经 telemetry 栈间接拉回 login/model-provider-api。
+- 默认 Codex HTTP client metadata/helper 属于 `codex-rs/default-client`（`codex-default-client`）：
+  `originator`、first-party originator 判断、User-Agent、default headers、residency header state、
+  default `reqwest` client builder 和 `CodexHttpClient` constructor 应从该 crate 引用。`codex-login`
+  只为旧路径兼容 re-export 这些 helper；不需要 token refresh、auth storage、login server 或 revoke
+  runtime 的 crate 不应为了 default client helper 依赖 `codex-login`。`codex-default-client` 可以依赖
+  `codex-client`、`codex-config-types` 和 terminal detection，但不得依赖 `codex-login`、
+  keyring/agent-identity/login-server runtime、`codex-api` 或 model-provider implementation。
+- config layer source/metadata/layer 属于配置域共享类型，owner crate 是
+  `codex-rs/config-types`（`codex-config-types`）；`codex-config` 负责 layer stack、loader、
+  diagnostics 和本地 loader/validation 集成，`codex-app-server-protocol` 只能 re-export 或包装这些 layer DTO 以保持 wire 兼容。
+  `codex-config` 不得直接依赖 `codex-app-server-protocol` 来返回 `ConfigLayerSource`、
+  `ConfigLayerMetadata`、`ConfigLayer` 或其他 v1/v2 transport payload。
+- `config.toml` 的 schema-heavy 外层 shape 属于 `codex-rs/config-toml`
+  （`codex-config-toml`）：`ConfigToml`、`ConfigProfile`、`ProfileTui`、`ToolsToml`、
+  `RealtimeConfig`/`RealtimeToml`/`RealtimeAudioToml`、`DebugToml`、`AutoReviewToml`、
+  `GhostSnapshotToml`、config schema helper，以及只服务这些外层 shape 的
+  `AnalyticsConfigToml`、`FeedbackConfigToml`、`Tui`、`ShellEnvironmentPolicyToml` 都归这个 crate。
+  它可以依赖 `codex-config-types`、`codex-config-loader`、`codex-config-permissions`、
+  `codex-features`、`codex-model-provider-info` 和 `codex-protocol` 来描述现有 TOML schema，
+  但不得依赖 full `codex-config`、`codex-app-server-protocol`、`codex-code-mode`、Starlark-backed
+  `codex-execpolicy` 或 Rama-backed `codex-network-proxy`。`codex_config::config_toml`、
+  `codex_config::profile_toml`、`codex_config::schema` 和相关 `codex_config::types`
+  只作为旧路径兼容 re-export；core、app-server 或其他只需要 TOML shape/schema 的消费者应直接依赖
+  `codex-config-toml`，不要为了 `ConfigToml`/schema helper 拉入 full `codex-config`。
+- config schema 生成 CLI 属于 `codex-rs/config-schema`（`codex-config-schema`），bin 名称仍为
+  `codex-write-config-schema`。它只应依赖 `codex-config-toml` 的 schema API、`clap` 和基础错误处理；
+  不要把 schema 写入命令放回 `codex-core`，也不要让 `codex-core` 为这个维护工具携带 `clap`。
+- local filesystem config layer loader 属于 `codex-rs/config-local-loader`
+  （`codex-config-local-loader`）：system/user/profile/project/repo/runtime layer IO、strict TOML
+  validation、legacy managed config 到 requirements 的映射、thread config source 到 layer stack 的投影、
+  project-local trust/root/git checkout 处理、relative path resolution 和 system config/requirements path
+  helper 都归这个 crate。`codex_config::loader::*` 只保留兼容 re-export；core、app-server 或测试 helper
+  需要 `load_config_layers_state`、`load_requirements_toml`、`project_trust_key` 或
+  `resolve_relative_paths_in_config_toml` 时应直接依赖 `codex-config-local-loader`。该 crate 可以依赖
+  `codex-config-diagnostics`、`codex-config-loader`、`codex-config-requirements`、`codex-config-state`、
+  `codex-config-toml`、`codex-config-types`、`codex-file-system`、`codex-git-utils`、
+  `codex-model-provider-info` 和 `codex-protocol` 来完成现有 local layer 语义，但不得依赖 full
+  `codex-config`、`codex-app-server-protocol`、`codex-code-mode`、Starlark-backed `codex-execpolicy` 或
+  Rama-backed `codex-network-proxy`。不要把 effective runtime `Config` 构造、session defaults、network
+  proxy backend/evaluator 或 app-server transport adapter 移入 local-loader；这些属于 core/runtime 或
+  app-server 组合根边界。
+- 不依赖 loader、diagnostics、filesystem/git/MDM/remote-thread-config 或 model-provider validation 的纯
+  config DTO，例如 history settings、credential store mode、residency enum、TOML schema 子类型和
+  memory settings、otel settings、UI/settings 枚举、Realtime transport/mode/resolved audio config
+  （`RealtimeAudioConfig`）、Windows sandbox TOML DTO 和 workspace-write sandbox DTO
+  （`SandboxWorkspaceWrite`），
+  应优先放在 `codex-config-types`。TUI keymap schema
+  （`TuiKeymap`、`KeybindingSpec` 等）、notification/session picker/tool-suggest/notices 这类纯 UI/config
+  persistence DTO，以及 app connector 配置 DTO（`AppsConfigToml`、`AppsDefaultConfig`、`AppConfig`、
+  `AppToolsConfig`、`AppToolConfig`）也属于 `codex-config-types`；OTEL config 的无 runtime 校验 helper
+  （例如 span attribute key 和 W3C tracestate config grammar validator）也属于 `codex-config-types`，
+  core/config loader 不要为了清洗 config metadata 依赖 `codex-otel` 或 OpenTelemetry SDK；
+  `codex-otel` 可以 re-export 旧 validator 路径并在 provider/init 边界复用同一套 helper。
+  `codex_config::types` 只做兼容 re-export。MCP server config/tool
+  approval/env var/OAuth DTO 和 hook TOML/JSON DTO（`HooksFile`、`HooksToml`、`HookEventsToml`、`MatcherGroup`、
+  `HookHandlerConfig`、managed hook requirements）也属于这个轻量类型边界；依赖
+  `codex_protocol::HookEventName` 的 hook 事件投影留在 `codex-config`/`codex-hooks` 边界，不要让
+  `codex-config-types` 反向依赖 protocol。`codex-config` 可以 re-export 这些类型保持
+  兼容，但 message-history、login、rmcp-client、TUI helper 等轻量消费者应直接依赖
+  `codex-config-types`，不要为了一个纯 DTO 拉入完整 `codex-config`。
+- Agent role declaration DTO（`AgentsToml`、`AgentRoleToml`）、`ThreadStoreToml` 和外层
+  config lockfile DTO（`ConfigLockfileToml<TConfig>`）属于
+  `codex-config-types`，`codex_config::config_toml` 只做兼容 re-export。Agent role discovery
+  的 required-description 校验不能放在通用目录 discovery 阶段，因为高优先级 role 可以先缺
+  description 再从低优先级 layer 继承；只在最终插入或 plugin merge 等不会再发生继承的边界过滤。
+- model provider domain TOML/helper 属于 `codex-model-provider-info`：`ModelOptionToml`、
+  `validate_model_providers`、`validate_reserved_model_provider_ids`、`deserialize_model_providers`
+  和 `validate_oss_provider` 应与 `ModelProviderInfo`/provider 常量同 owner。`codex_config::config_toml`
+  只做旧路径兼容 re-export；core effective config、app-server model 展示或其他消费者需要 model option
+  / provider validation 时应直接依赖 `codex-model-provider-info`，不要为了这类 model-provider domain
+  helper 拉入完整 `codex-config`，也不要把它们塞入无 protocol 依赖的 `codex-config-types`。该 crate
+  只能承载 provider DTO/catalog/validation 和不依赖 API client 的轻量 helper。把
+  `ModelProviderInfo` 转换成 `codex_api_provider::Provider`、解析 HTTP header map、按 auth mode 选择 API
+  base URL，以及把 `CodexAuth` 映射成 `codex_api_provider::AuthProvider` 的 request-header adapter 属于
+  `codex-model-provider-api`；需要这些 request adapter 的 core/core-plugins/core-skills/codex-mcp
+  消费者应直接依赖该 crate，不要为了 headers 或 provider config adapter 拉入完整
+  `codex-model-provider`。只需要 `auth_provider_from_auth` 或 `unauthenticated_auth_provider` 的
+  backend/app-server transport helper 也应直接依赖 `codex-model-provider-api`，不要经
+  `codex-model-provider` 兼容 re-export 间接拉回 API/model runtime。`codex-model-provider-api` 不是纯基础类型层，它可以依赖 `codex-login`
+  来理解 `CodexAuth`。runtime provider trait/types 也属于 `codex-model-provider-api`：
+  `ModelProvider`、`SharedModelProvider`、`ModelProviderFuture`、`ProviderCapabilities`、
+  `ProviderAccountState`、`ProviderAccountError` 和 `ProviderAccountResult` 应从 API crate 引用；不要为了
+  trait object、provider capability 或 account state 类型拉入完整 `codex-model-provider`。
+  `ModelProviderFactory` / `SharedModelProviderFactory` 也属于 `codex-model-provider-api`；core/session
+  runtime 只能通过 constructor injection 持有该 factory trait，不要直接调用完整
+  `codex-model-provider` 的 concrete constructor。`DefaultModelProviderFactory`、`create_model_provider`、
+  configured provider、Bedrock provider、provider-scoped auth manager construction、model manager
+  implementation selection 和 request execution 边界继续属于完整 `codex-model-provider`，只应由
+  app-server/CLI/MCP server 等组合根或 core test support 构造并注入。core 单测需要 provider factory 时
+  使用 `codex_core::test_support::model_provider_factory_for_tests()`，不要把 `codex-model-provider`
+  加回 core normal dependency。
+  不要让 config-facing info crate 依赖 `codex-api`、`http` 或 client stack。
+- model catalog API 属于 `codex-rs/models-manager-api`（`codex-models-manager-api`）：
+  `ModelsManager`、`SharedModelsManager`、`RefreshStrategy`、`TryListModelsError`、
+  `ModelsManagerConfig` 和 `ModelMetadataOverride` 应由这个 API crate 承载。core、core-api、
+  app-server、CLI、model-provider 或其他只需要模型目录 trait/config 的消费者应直接依赖
+  `codex-models-manager-api`，不要为了 trait、refresh strategy 或 config override 拉入完整
+  `codex-models-manager`。完整 `codex-models-manager` 继续拥有 bundled model catalog、cache、
+  remote refresh、concrete manager、collaboration presets、model_info fallback/override 逻辑和测试。
+  `codex-models-manager-api` 当前仍依赖 `codex-protocol::openai_models` 的模型 DTO；不要把它当作完全
+  无 protocol 依赖的基础类型层。若后续要继续降低这条边，应先拆 model catalog DTO/config types，而不是
+  通过 full manager re-export 绕回 implementation。`codex_core::test_support` 是非生产测试支撑边界，
+  只能在 `codex-core/test-support` feature 或本 crate unit tests 中编译；该 feature 才允许 core
+  拉入 full `codex-models-manager` 的 bundled catalog/offline helper/concrete manager。不要把
+  `codex-models-manager` 加回 `codex-core` 默认 normal graph。需要 legacy re-export 的客户端测试应启用
+  对应 crate 的 test-support feature，例如 `codex-app-server-client/test-support`，生产 dependency 不要默认
+  re-export core test support。
+- project trust config shape（`ProjectConfig`）、project trust key/lookup、project root marker 解析和 CLI override dotted TOML layer builder
+  这类 loader 层路径/根检测/运行时 layer 构造 helper 属于
+  `codex-config-loader`；需要读取项目 trust config、生成 `project_trust_key`、做 trust lookup，或从 merged TOML 解析
+  `project_root_markers`、构造 `build_cli_overrides_layer` 的消费者应直接依赖
+  `codex-config-loader`。`codex_config::loader` 和 `codex_config::*` 只作为旧路径兼容
+  re-export，不要为了这些 helper 拉入完整 `codex-config`。
+- permissions profile TOML、filesystem permission TOML、network profile TOML 和 profile 到
+  `NetworkProxyConfig` 的 overlay helper 属于 `codex-rs/config-permissions`
+  （`codex-config-permissions`）。这个 crate 可以依赖 `codex-protocol` 的 filesystem permission
+  基础类型和 `codex-network-proxy-api` 的 proxy DTO，但不得依赖完整 `codex-config`、
+  app-server protocol、Starlark、Rama 或 code-mode runtime。`codex_config::permissions_toml`
+  只作为旧路径兼容 re-export；core runtime、network proxy loader 或其他只需要 permissions
+  TOML/profile 的消费者应直接依赖 `codex-config-permissions`，不要为了 permissions profile
+  拉入完整 `codex-config`。
+- `codex-core-api` 这类 facade crate 为了导出纯 config DTO 时应直接依赖 `codex-config-types`，
+  不要为了 `History`、credential store mode、TUI/settings、memories、otel 等纯类型 re-export
+  重新 normal 依赖完整 `codex-config`。仍必须兼容导出的 full config loader/state 类型（例如
+  `ConfigLayerStack`、Realtime config）可以暂时经 `codex_core::config` 旧 facade
+  暴露；要消除这条间接路径时，应先拆出明确的 `codex-config-loader`/state 边界，而不是把 full
+  config 直接加回 facade。
+- `codex-rs/config-loader`（`codex-config-loader`）只承载 loader API：`LoaderOverrides`、
+  `ConfigLoadOptions`、thread config source/loader trait、Noop/Static loader、`ProjectConfig`、project trust/root marker
+  helper 和 CLI override TOML layer builder 等轻量边界。它不得依赖
+  full `codex-config`，也不得包含 tonic/prost remote implementation。remote thread config loader 属于
+  `codex-rs/config-loader-remote`（`codex-config-loader-remote`），由 app-server、app-server-client
+  等组合根显式依赖；不要通过 `codex-config` re-export remote implementation，也不要让
+  `codex-config -> codex-config-loader -> codex-config-loader-remote` 把 remote/gRPC 依赖间接拉回 full
+  config。`codex-config` 负责把 thread config sources 投影成 `ConfigLayerEntry`，loader API crate 不拥有
+  full config layer stack 或 local loader IO。
+- `codex-rs/features`（`codex-features`）负责 feature registry、feature TOML DTO、legacy key
+  handling 和 warning event construction，不得依赖 `codex-otel` 或其他 telemetry/runtime
+  implementation。需要按 enabled feature 发 metrics 时，应在持有 `SessionTelemetry` 的 runtime/组合根
+  边界实现 helper，避免 `codex-config -> codex-features -> codex-otel` 把 OTEL、tonic 或 prost
+  间接拉入 config graph。
+- `codex-rs/config-diagnostics`（`codex-config-diagnostics`）负责轻量 config 诊断类型和
+  TOML span/formatting helper：`ConfigError`、`ConfigLoadError`、`TextRange`、
+  `config_error_from_toml*`、`format_config_error*` 和 `io_error_from_config_error`。
+  `codex-config` 只 re-export 旧路径；CLI/TUI/exec/app-server 这类只需要
+  downcast/展示 config load error 的入口，应直接依赖 diagnostics crate 和 `codex-config-loader`，
+  不要为了错误展示或 loader options 重新 normal 依赖 full `codex-config`。
+- `codex-rs/config-state`（`codex-config-state`）负责轻量 config layer state：`ConfigLayerEntry`、
+  `ConfigLayerStack`、`ConfigLayerStackOrdering`、`merge_toml_values`、key alias、origin helper
+  和需要 `ConfigLayerStack`/filesystem 的 first-layer diagnostic 定位 helper。
+  `codex-config` 只 re-export 旧路径并保留完整 loader/validation 集成；TUI debug display、
+  app-server config manager 或其他只需要展示/排序/合并已加载 layer 的调用方，应直接依赖
+  `codex-config-state`、`codex-config-requirements` 和 `codex-config-types`，不要为了 layer stack
+  display/mutation 重新 normal 依赖 full `codex-config`。`codex-config-state` 不得依赖 full
+  `codex-config`、app-server protocol、Starlark、Rama 或 code-mode runtime。
+- Plugin 和 marketplace 的纯 TOML DTO（`PluginConfig`、`PluginMcpServerConfig`、
+  `MarketplaceConfig`、`MarketplaceSourceType`）属于 `codex-config-types`；`codex-config`
+  只做旧路径 re-export。`codex-core-plugins` 的读取侧应使用
+  `PluginConfigLayerStack` / `PluginConfigLayerEntry` 这类 plugin 专用只读 view；core/app-server
+  等组合根负责从完整 `codex_config::ConfigLayerStack` 投影过去。写用户 `config.toml` 的 plugin
+  enable/clear、marketplace add/remove/upgrade、MCP server edit/load helper
+  （`ConfigEditsBuilder`、`load_global_mcp_servers`）、`CONFIG_TOML_FILE` 和 `version_for_toml`
+  属于 `codex-rs/config-edit`（`codex-config-edit`）；`codex-config` 只 re-export 以保持旧路径兼容。
+  `codex-core-plugins` production path 不得 normal 依赖 full `codex-config`，测试 fixture 需要完整
+  loader 时才允许 dev-depend `codex-config`。
+- requirements TOML、normalized requirements、requirements exec policy TOML/evaluator 和 cloud requirements
+  loader 属于 `codex-rs/config-requirements`（`codex-config-requirements`）。`codex-config`
+  只作为旧路径兼容 re-export；loader、MDM、diagnostics、filesystem/git、profile/thread config
+  stack 和 model-provider validation 继续留在 `codex-config` 或后续明确的 loader crate。`codex-cloud-requirements`
+  这类只需要 requirements 解析/加载的小 crate 不得 normal 依赖完整 `codex-config`；需要 policy DTO 时依赖
+  `codex-execpolicy-api`，需要 config DTO 时依赖 `codex-config-types`。
+- `codex-hooks` 不得为了 hook discovery 直接 normal 依赖完整 `codex-config`。Hook runtime 需要已加载
+  config stack 时，应使用 `codex_hooks::HookConfigLayerStack` / `HookConfigLayerEntry` 这类 hook
+  专用只读 view；core/app-server 等组合根负责从 `codex_config::ConfigLayerStack` 投影过去。Hook
+  event name 投影和 hook trust hash 可以留在 `codex-hooks` 或 `codex-config` 边界，但不要放入
+  `codex-config-types` 反向依赖 protocol，也不要把 full loader/requirements evaluator 混进 hooks crate。
+- `codex-core-skills` 不得为了读取 `[skills]`、技能开关或 project root marker 直接 normal 依赖完整
+  `codex-config`。Skill runtime 需要已加载 config stack 时，应使用
+  `codex_core_skills::SkillConfigLayerStack` / `SkillConfigLayerEntry` 只读 view；core、core-plugins 或
+  app-server 等组合根负责从 `codex_config::ConfigLayerStack` 投影过去。`SkillsConfig` /
+  `SkillConfig` / `BundledSkillsConfig` 属于 `codex-config-types`，允许 `codex-config-types` normal 依赖
+  `toml` 来支持从 `toml::Value` 反序列化这些纯 DTO，但不得因此引入 full config loader、
+  app-server protocol、Starlark、Rama 或 V8。
+- Dynamic Workflow 的 manifest、registry、summary/details、discovery diagnostics 和 init-context
+  renderer，以及 `WorkflowRun` / `WorkflowRunStatus` / `WorkflowAgentBinding` /
+  `WorkflowRuntimeBridge` / `WorkflowRuntimeRequest` / `WorkflowRuntimeError`、
+  `WorkflowRunController` 和 `WorkflowRunUpdateReceiver` 这类 run-control DTO/trait 属于
+  `codex-rs/workflow-api`（`codex-workflow-api`）。core/app-server 等只需要列出、描述、展示 workflow
+  run、实现 runtime bridge 或启动 workflow tool 时应直接依赖该 API crate；`codex-core` 不应 normal
+  依赖 concrete `codex-workflow`。`WorkflowRunManager`、runner bridge implementation、
+  Node/TypeScript runner process、snapshot persistence 和 abort/resume/status 运行时控制继续属于
+  `codex-rs/workflow`（`codex-workflow`），由 app-server、MCP server 或 test support 这类组合根通过
+  `ThreadManager::new_with_workflow_runs` 注入。
+- 小型 UI/CLI helper crate 不得为了读取 `codex_core::config::Config` 的少数字段 normal 依赖
+  `codex-core`。调用方已经持有 effective `Config` 时，应在组合根/调用方边界提取轻量输入传入
+  helper，例如 `model: Option<&str>`、`ModelProviderInfo`、provider map、`PermissionProfile`、
+  `SandboxPolicy` 或 `AbsolutePathBuf`。`codex-utils-sandbox-summary` 只负责 protocol sandbox/permission
+  summary；`codex-utils-oss`、`codex-lmstudio`、`codex-ollama` 的 normal graph 不应依赖
+  `codex-core`，测试需要 sandbox env 常量时只能作为 dev-dependency。
+- code-mode runtime implementation 只能由产品入口/组合根显式注入，例如 app-server 或 mcp-server 使用
+  `codex_code_mode::V8CodeModeRuntimeFactory` 创建 `ThreadManager`；`codex-core` 和 core tests 使用
+  `codex-code-mode-api` trait/disabled factory，不要为了补调用点把 `codex-code-mode` 重新加回 core。
+- connector app metadata 属于 connector domain 共享类型，owner crate 是
+  `codex-rs/connectors-types`（`codex-connectors-types`）。`AppBranding`、`AppReview`、
+  `AppScreenshot`、`AppMetadata`、`AppInfo`、`AppSummary` 这类生产路径类型应由
+  connectors、chatgpt、tools、core connector/render 代码直接依赖 `codex-connectors-types`；
+  `codex-app-server-protocol` 只 re-export 或包装 app list request/response/notification 的 wire
+  payload，不作为 connector metadata 的 owner。
+- request-plugin-install 的 tool discovery、安装建议参数、结果和 elicitation plan 属于
+  `codex-rs/tools` 的 domain/tool planning 边界；`codex-tools` 不得直接依赖
+  `codex-app-server-protocol` 来构造 `McpServerElicitationRequestParams`。需要发给客户端的 MCP
+  elicitation request 应由 core/app-server runtime 边界把 tools 返回的 plan 投影成
+  app-server protocol payload。
+- domain crate 不要为了“方便转换”实现到 app-server protocol payload 的 `From`/`Into` 或直接返回
+  app-server request/response DTO。例如 config crate 不应生成 v1/v2 `UserSavedConfig`、`Profile`、
+  `SandboxSettings`、`ConfigLayer` 这类 transport payload；应由 app-server/protocol 边界把 domain type
+  映射成 wire type。只有真正被多个非 transport crate 共享、且 owner 明确的小类型（例如 auth mode、
+  connector app metadata、config layer source/metadata）才拆到 owner API/types crate，并由
+  app-server-protocol re-export 或包装。
 - 当小 crate 只需要 core/app-server 的少量运行时能力时，优先定义轻量 service facade/trait crate-local 边界，再由 app-server 或 core-adapter 侧通过 constructor injection 显式注入实现。小 crate 暴露业务请求/配置子集和 trait（例如 runtime、agent handle、prompt request），不要直接依赖 `ThreadManager`、`CodexThread`、`Config`、`ModelClient`、`Prompt` 或整套 session/turn loop。需要多个服务时可以在 host 侧组合成 `RuntimeServices` / service registry，但注册表应只是显式持有和传递 typed services，不要引入宏驱动或反射式 IoC 框架，除非有清晰的维护和编译收益。
 - service facade 的实现方应放在拥有重依赖的 host crate，例如 app-server adapter 负责把轻量 request 转成 core `Prompt`、创建 `ModelClient`、构造 locked-down `Config`、spawn/shutdown internal thread；业务 crate 只表达“要做什么”。测试需要 core-backed 行为时，把 core adapter 放在 `#[cfg(test)]` 或 dev-dependency 路径，不能为了测试便利把 `codex-core` 拉回 normal dependencies。
 

@@ -1,11 +1,14 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 use codex_arg0::Arg0DispatchPaths;
-use codex_config::ConfigLayerStackOrdering;
-use codex_config::LoaderOverrides;
-use codex_config::NoopThreadConfigLoader;
-use codex_config::RemoteThreadConfigLoader;
-use codex_config::ThreadConfigLoader;
+use codex_config_diagnostics::ConfigLoadError;
+use codex_config_diagnostics::TextRange as CoreTextRange;
+use codex_config_loader::LoaderOverrides;
+use codex_config_loader::NoopThreadConfigLoader;
+use codex_config_loader::ThreadConfigLoader;
+use codex_config_loader_remote::RemoteThreadConfigLoader;
+use codex_config_state::ConfigLayerStackOrdering;
+use codex_config_types::ConfigLayerSource;
 use codex_core::config::Config;
 use codex_core::resolve_installation_id;
 use codex_login::AuthManager;
@@ -38,20 +41,17 @@ use crate::transport::start_remote_control;
 use crate::transport::start_stdio_connection;
 use crate::transport::start_websocket_acceptor;
 use codex_analytics::AppServerRpcTransport;
-use codex_app_server_protocol::ConfigLayerSource;
 use codex_app_server_protocol::ConfigWarningNotification;
 use codex_app_server_protocol::JSONRPCMessage;
 use codex_app_server_protocol::RemoteControlStatusChangedNotification;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::TextPosition as AppTextPosition;
 use codex_app_server_protocol::TextRange as AppTextRange;
-use codex_config::ConfigLoadError;
-use codex_config::TextRange as CoreTextRange;
 use codex_core::ExecPolicyError;
 use codex_core::check_execpolicy_for_warnings;
 use codex_core::config::find_codex_home;
 use codex_exec_server::EnvironmentManager;
-use codex_exec_server::ExecServerRuntimePaths;
+use codex_exec_server_api::ExecServerRuntimePaths;
 use codex_feedback::CodexFeedback;
 use codex_protocol::protocol::SessionSource;
 use codex_rollout::state_db as rollout_state_db;
@@ -503,8 +503,15 @@ pub async fn run_main_with_transport_options(
         }
     };
 
-    let otel = codex_core::otel_init::build_provider(
-        &config,
+    let otel = codex_otel_init::build_provider(
+        codex_otel_init::OtelProviderConfig {
+            codex_home: config.codex_home.as_path(),
+            otel: &config.otel,
+            analytics_enabled: config.analytics_enabled,
+            runtime_metrics_enabled: config
+                .features
+                .enabled(codex_features::Feature::RuntimeMetrics),
+        },
         env!("CARGO_PKG_VERSION"),
         Some(OTEL_SERVICE_NAME),
         default_analytics_enabled,
@@ -515,8 +522,8 @@ pub async fn run_main_with_transport_options(
             format!("error loading otel config: {e}"),
         )
     })?;
-    codex_core::otel_init::record_process_start(otel.as_ref(), OTEL_SERVICE_NAME);
-    codex_core::otel_init::install_sqlite_telemetry(otel.as_ref(), OTEL_SERVICE_NAME);
+    codex_otel_init::record_process_start(otel.as_ref(), OTEL_SERVICE_NAME);
+    codex_otel_init::install_sqlite_telemetry(otel.as_ref(), OTEL_SERVICE_NAME);
     let state_db = match rollout_state_db::try_init(&config).await {
         Ok(state_db) => Some(state_db),
         Err(err) => {

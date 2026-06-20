@@ -242,9 +242,9 @@ pub async fn get_state_db(config: &impl RolloutConfigView) -> Option<StateDbHand
     require_backfill_complete(runtime, config.sqlite_home()).await
 }
 
-/// Build a SQLite telemetry recorder backed by an OTEL metrics client.
+/// Build a SQLite telemetry recorder backed by a metrics sink.
 pub fn sqlite_telemetry_recorder(
-    metrics: codex_otel::MetricsClient,
+    metrics: std::sync::Arc<dyn codex_metrics_api::MetricsSink>,
     originator: &str,
 ) -> codex_state::DbTelemetryHandle {
     sqlite_metrics::recorder(metrics, originator)

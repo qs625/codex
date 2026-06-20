@@ -6,7 +6,7 @@ mod seatbelt;
 use std::path::PathBuf;
 use std::process::Stdio;
 
-use codex_config::LoaderOverrides;
+use codex_config_loader::LoaderOverrides;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
@@ -244,6 +244,7 @@ async fn run_command_under_sandbox(
     let network = network_proxy
         .as_ref()
         .map(codex_core::config::StartedNetworkProxy::proxy);
+    let network_snapshot = network.as_ref().map(|network| network.runtime_snapshot());
 
     let mut child = match sandbox_type {
         #[cfg(target_os = "macos")]
@@ -256,7 +257,7 @@ async fn run_command_under_sandbox(
                 network_sandbox_policy,
                 sandbox_policy_cwd: sandbox_policy_cwd.as_path(),
                 enforce_managed_network: false,
-                network: network.as_ref(),
+                network: network_snapshot.as_ref(),
                 extra_allow_unix_sockets: allow_unix_sockets,
             });
             spawn_debug_sandbox_child(

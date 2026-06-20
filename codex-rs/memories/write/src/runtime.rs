@@ -1,4 +1,4 @@
-use codex_config::types::MemoriesConfig;
+use codex_config_types::MemoriesConfig;
 use codex_otel::Timer;
 use codex_protocol::ThreadId;
 use codex_protocol::models::BaseInstructions;

@@ -6,13 +6,13 @@ use self::activation::installed_marketplace_metadata_matches;
 use self::activation::write_installed_marketplace_metadata;
 use self::git::clone_git_source;
 use self::git::git_remote_revision;
+use crate::config_layers::PluginConfigLayerStack;
 use crate::marketplace::validate_marketplace_root;
-use codex_config::CONFIG_TOML_FILE;
-use codex_config::ConfigLayerStack;
-use codex_config::MarketplaceConfigUpdate;
-use codex_config::record_user_marketplace;
-use codex_config::types::MarketplaceConfig;
-use codex_config::types::MarketplaceSourceType;
+use codex_config_edit::CONFIG_TOML_FILE;
+use codex_config_edit::MarketplaceConfigUpdate;
+use codex_config_edit::record_user_marketplace;
+use codex_config_types::MarketplaceConfig;
+use codex_config_types::MarketplaceSourceType;
 use codex_plugin::validate_plugin_segment;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
@@ -52,7 +52,9 @@ impl ConfiguredMarketplaceUpgradeOutcome {
     }
 }
 
-pub fn configured_git_marketplace_names(config_layer_stack: &ConfigLayerStack) -> Vec<String> {
+pub fn configured_git_marketplace_names(
+    config_layer_stack: &PluginConfigLayerStack,
+) -> Vec<String> {
     let mut names = configured_git_marketplaces(config_layer_stack)
         .into_iter()
         .map(|marketplace| marketplace.name)
@@ -63,7 +65,7 @@ pub fn configured_git_marketplace_names(config_layer_stack: &ConfigLayerStack) -
 
 pub fn upgrade_configured_git_marketplaces(
     codex_home: &Path,
-    config_layer_stack: &ConfigLayerStack,
+    config_layer_stack: &PluginConfigLayerStack,
     marketplace_name: Option<&str>,
 ) -> ConfiguredMarketplaceUpgradeOutcome {
     let marketplaces = configured_git_marketplaces(config_layer_stack)
@@ -106,7 +108,7 @@ fn marketplace_install_root(codex_home: &Path) -> PathBuf {
 }
 
 fn configured_git_marketplaces(
-    config_layer_stack: &ConfigLayerStack,
+    config_layer_stack: &PluginConfigLayerStack,
 ) -> Vec<ConfiguredGitMarketplace> {
     let Some(user_config) = config_layer_stack.effective_user_config() else {
         return Vec::new();

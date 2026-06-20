@@ -10,7 +10,7 @@ use crate::context::RealtimeStartWithInstructions;
 use crate::session::PreviousTurnSettings;
 use crate::session::turn_context::TurnContext;
 use crate::shell::Shell;
-use codex_execpolicy::Policy;
+use codex_execpolicy_api::Policy;
 use codex_features::Feature;
 use codex_protocol::config_types::Personality;
 use codex_protocol::models::ContentItem;

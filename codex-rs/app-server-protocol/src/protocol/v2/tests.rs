@@ -2366,7 +2366,6 @@ fn network_requirements_serializes_canonical_and_legacy_fields() {
     );
 }
 
-
 #[test]
 fn skills_list_params_serialization_uses_force_reload() {
     assert_eq!(

@@ -229,13 +229,11 @@ impl AgentRegistry {
             } else {
                 active_agents.used_agent_nicknames.clear();
                 active_agents.nickname_reset_count += 1;
-                if let Some(metrics) = codex_otel::global() {
-                    let _ = metrics.counter(
-                        "codex.multi_agent.nickname_pool_reset",
-                        /*inc*/ 1,
-                        &[],
-                    );
-                }
+                codex_metrics_api::record_global_counter(
+                    codex_metrics_api::MULTI_AGENT_NICKNAME_POOL_RESET_METRIC,
+                    /*inc*/ 1,
+                    &[],
+                );
                 format_agent_nickname(
                     names.choose(&mut rand::rng())?,
                     active_agents.nickname_reset_count,

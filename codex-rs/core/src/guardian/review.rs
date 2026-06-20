@@ -1,9 +1,9 @@
-use codex_analytics::GuardianApprovalRequestSource;
-use codex_analytics::GuardianReviewAnalyticsResult;
-use codex_analytics::GuardianReviewDecision;
-use codex_analytics::GuardianReviewFailureReason;
-use codex_analytics::GuardianReviewTerminalStatus;
-use codex_analytics::GuardianReviewTrackContext;
+use codex_analytics_api::GuardianApprovalRequestSource;
+use codex_analytics_api::GuardianReviewAnalyticsResult;
+use codex_analytics_api::GuardianReviewDecision;
+use codex_analytics_api::GuardianReviewFailureReason;
+use codex_analytics_api::GuardianReviewTerminalStatus;
+use codex_analytics_api::GuardianReviewTrackContext;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
@@ -650,7 +650,7 @@ pub(super) async fn run_guardian_review_session(
     let available_models = session
         .services
         .models_manager
-        .list_models(codex_models_manager::manager::RefreshStrategy::Offline)
+        .list_models(codex_models_manager_api::RefreshStrategy::Offline)
         .await;
     let preferred_reasoning_effort = |supports_low: bool, fallback| {
         if supports_low {

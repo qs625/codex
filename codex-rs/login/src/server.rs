@@ -36,9 +36,9 @@ use crate::token_data::TokenData;
 use crate::token_data::parse_chatgpt_jwt_claims;
 use base64::Engine;
 use chrono::Utc;
-use codex_app_server_protocol::AuthMode;
+use codex_auth_types::AuthMode;
 use codex_client::build_reqwest_client_with_custom_ca;
-use codex_config::types::AuthCredentialsStoreMode;
+use codex_config_types::AuthCredentialsStoreMode;
 use codex_utils_template::Template;
 use rand::RngCore;
 use serde_json::Value as JsonValue;
@@ -1159,8 +1159,8 @@ mod tests {
 
     use anyhow::Context;
     use base64::Engine;
-    use codex_app_server_protocol::AuthMode;
-    use codex_config::types::AuthCredentialsStoreMode;
+    use codex_auth_types::AuthMode;
+    use codex_config_types::AuthCredentialsStoreMode;
     use serde_json::Value;
     use serde_json::json;
     use tempfile::tempdir;

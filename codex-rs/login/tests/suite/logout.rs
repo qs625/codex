@@ -1,8 +1,8 @@
 use anyhow::Context;
 use anyhow::Result;
 use base64::Engine;
-use codex_app_server_protocol::AuthMode;
-use codex_config::types::AuthCredentialsStoreMode;
+use codex_auth_types::AuthMode;
+use codex_config_types::AuthCredentialsStoreMode;
 use codex_login::AuthDotJson;
 use codex_login::AuthManager;
 use codex_login::CLIENT_ID;

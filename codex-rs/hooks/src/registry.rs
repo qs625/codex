@@ -1,7 +1,7 @@
-use codex_config::ConfigLayerStack;
-use codex_plugin::PluginHookSource;
+use codex_plugin_types::PluginHookSource;
 use tokio::process::Command;
 
+use crate::config_layers::HookConfigLayerStack;
 use crate::engine::ClaudeHooksEngine;
 use crate::engine::CommandShell;
 use crate::engine::HookListEntry;
@@ -31,7 +31,7 @@ pub struct HooksConfig {
     pub legacy_notify_argv: Option<Vec<String>>,
     pub feature_enabled: bool,
     pub bypass_hook_trust: bool,
-    pub config_layer_stack: Option<ConfigLayerStack>,
+    pub config_layer_stack: Option<HookConfigLayerStack>,
     pub plugin_hook_sources: Vec<PluginHookSource>,
     pub plugin_hook_load_warnings: Vec<String>,
     pub shell_program: Option<String>,

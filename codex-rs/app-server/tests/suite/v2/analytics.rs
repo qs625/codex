@@ -40,8 +40,15 @@ async fn app_server_default_analytics_disabled_without_flag() -> Result<()> {
     set_metrics_exporter(&mut config);
     config.analytics_enabled = None;
 
-    let provider = codex_core::otel_init::build_provider(
-        &config,
+    let provider = codex_otel_init::build_provider(
+        codex_otel_init::OtelProviderConfig {
+            codex_home: config.codex_home.as_path(),
+            otel: &config.otel,
+            analytics_enabled: config.analytics_enabled,
+            runtime_metrics_enabled: config
+                .features
+                .enabled(codex_features::Feature::RuntimeMetrics),
+        },
         SERVICE_VERSION,
         Some("codex-app-server"),
         /*default_analytics_enabled*/ false,
@@ -65,8 +72,15 @@ async fn app_server_default_analytics_enabled_with_flag() -> Result<()> {
     set_metrics_exporter(&mut config);
     config.analytics_enabled = None;
 
-    let provider = codex_core::otel_init::build_provider(
-        &config,
+    let provider = codex_otel_init::build_provider(
+        codex_otel_init::OtelProviderConfig {
+            codex_home: config.codex_home.as_path(),
+            otel: &config.otel,
+            analytics_enabled: config.analytics_enabled,
+            runtime_metrics_enabled: config
+                .features
+                .enabled(codex_features::Feature::RuntimeMetrics),
+        },
         SERVICE_VERSION,
         Some("codex-app-server"),
         /*default_analytics_enabled*/ true,

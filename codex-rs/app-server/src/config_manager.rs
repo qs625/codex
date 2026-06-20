@@ -1,10 +1,12 @@
 use codex_arg0::Arg0DispatchPaths;
 use codex_cloud_requirements::cloud_requirements_loader;
-use codex_config::CloudRequirementsLoader;
-use codex_config::ConfigLayerStack;
-use codex_config::LoaderOverrides;
-use codex_config::ThreadConfigLoader;
-use codex_config::loader::load_config_layers_state;
+use codex_config_loader::ConfigLoadOptions;
+use codex_config_loader::LoaderOverrides;
+use codex_config_loader::NoopThreadConfigLoader;
+use codex_config_loader::ThreadConfigLoader;
+use codex_config_local_loader::load_config_layers_state;
+use codex_config_requirements::CloudRequirementsLoader;
+use codex_config_state::ConfigLayerStack;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_exec_server::LOCAL_FS;
@@ -119,7 +121,7 @@ impl ConfigManager {
         self.thread_config_loader
             .read()
             .map(|guard| Arc::clone(&*guard))
-            .unwrap_or_else(|_| Arc::new(codex_config::NoopThreadConfigLoader))
+            .unwrap_or_else(|_| Arc::new(NoopThreadConfigLoader))
     }
 
     pub(crate) async fn sync_default_client_residency_requirement(&self) {
@@ -174,7 +176,7 @@ impl ConfigManager {
             let user_config_path = self.loader_overrides.user_config_path(self.codex_home())?;
             config.config_layer_stack = config.config_layer_stack.with_user_config_profile(
                 &user_config_path,
-                self.loader_overrides.user_config_profile.as_ref(),
+                self.loader_overrides.user_config_profile.as_deref(),
                 TomlValue::Table(toml::map::Map::new()),
             );
         }
@@ -263,7 +265,7 @@ impl ConfigManager {
             &self.codex_home,
             cwd,
             &self.current_cli_overrides(),
-            codex_config::ConfigLoadOptions {
+            ConfigLoadOptions {
                 loader_overrides: self.loader_overrides.clone(),
                 strict_config: self.strict_config,
             },
@@ -304,7 +306,7 @@ impl ConfigManager {
             /*strict_config*/ false,
             cloud_requirements,
             Arg0DispatchPaths::default(),
-            Arc::new(codex_config::NoopThreadConfigLoader),
+            Arc::new(NoopThreadConfigLoader),
         )
     }
 

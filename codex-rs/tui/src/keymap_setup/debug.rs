@@ -1,4 +1,4 @@
-use codex_config::types::TuiKeymap;
+use codex_config_types::TuiKeymap;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;

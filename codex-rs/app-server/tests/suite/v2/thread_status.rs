@@ -302,8 +302,8 @@ async fn thread_read_stays_active_while_event_subscription_is_pending() -> Resul
     assert_eq!(
         thread.status,
         ThreadStatus::Idle {
-                reason: ThreadIdleReason::WaitCommand,
-            },
+            reason: ThreadIdleReason::WaitCommand,
+        },
     );
 
     Ok(())
@@ -419,8 +419,8 @@ async fn startup_restores_threads_with_persisted_event_subscriptions() -> Result
     assert_eq!(
         restored_thread.status,
         ThreadStatus::Idle {
-                reason: ThreadIdleReason::WaitCommand,
-            },
+            reason: ThreadIdleReason::WaitCommand,
+        },
     );
 
     Ok(())

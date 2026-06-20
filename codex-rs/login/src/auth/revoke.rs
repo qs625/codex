@@ -8,7 +8,7 @@
 use serde::Serialize;
 use std::time::Duration;
 
-use codex_app_server_protocol::AuthMode as ApiAuthMode;
+use codex_auth_types::AuthMode as ApiAuthMode;
 use codex_client::CodexHttpClient;
 
 use super::manager::CLIENT_ID;

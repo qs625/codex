@@ -9,6 +9,7 @@ use crate::metrics::validation::validate_metric_name;
 use crate::metrics::validation::validate_tag_key;
 use crate::metrics::validation::validate_tag_value;
 use crate::metrics::validation::validate_tags;
+use codex_metrics_api::MetricsSink;
 use codex_utils_string::sanitize_metric_tag_value;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::Counter;
@@ -287,6 +288,20 @@ impl MetricsClient {
     /// Flush metrics and stop the underlying OTEL meter provider.
     pub fn shutdown(&self) -> Result<()> {
         self.0.shutdown()
+    }
+}
+
+impl MetricsSink for MetricsClient {
+    fn counter(&self, name: &str, inc: i64, tags: &[(&str, &str)]) {
+        let _ = MetricsClient::counter(self, name, inc, tags);
+    }
+
+    fn histogram(&self, name: &str, value: i64, tags: &[(&str, &str)]) {
+        let _ = MetricsClient::histogram(self, name, value, tags);
+    }
+
+    fn record_duration(&self, name: &str, duration: Duration, tags: &[(&str, &str)]) {
+        let _ = MetricsClient::record_duration(self, name, duration, tags);
     }
 }
 

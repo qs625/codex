@@ -3,6 +3,7 @@ use crate::common::ResponseStream;
 use crate::error::ApiError;
 use crate::rate_limits::parse_all_rate_limits;
 use crate::telemetry::SseTelemetry;
+use crate::telemetry::summarize_sse_poll;
 use codex_client::ByteStream;
 use codex_client::StreamResponse;
 use codex_protocol::models::ResponseItem;
@@ -410,7 +411,8 @@ pub async fn process_sse(
         let start = Instant::now();
         let response = timeout(idle_timeout, stream.next()).await;
         if let Some(t) = telemetry.as_ref() {
-            t.on_sse_poll(&response, start.elapsed());
+            let event = summarize_sse_poll(&response);
+            t.on_sse_poll(event.as_ref(), start.elapsed());
         }
         let sse = match response {
             Ok(Some(Ok(sse))) => sse,

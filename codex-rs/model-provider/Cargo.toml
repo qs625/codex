@@ -15,12 +15,15 @@ workspace = true
 [dependencies]
 async-trait = { workspace = true }
 codex-api = { workspace = true }
-codex-agent-identity = { workspace = true }
+codex-api-provider = { workspace = true }
 codex-aws-auth = { workspace = true }
+codex-auth-types = { workspace = true }
 codex-client = { workspace = true }
-codex-feedback = { workspace = true }
+codex-feedback-api = { workspace = true }
 codex-login = { workspace = true }
+codex-model-provider-api = { workspace = true }
 codex-model-provider-info = { workspace = true }
+codex-models-manager-api = { workspace = true }
 codex-models-manager = { workspace = true }
 codex-otel = { workspace = true }
 codex-protocol = { workspace = true }

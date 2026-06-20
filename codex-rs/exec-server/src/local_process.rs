@@ -4,13 +4,15 @@ use std::collections::hash_map::Entry;
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
-use codex_app_server_protocol::JSONRPCErrorError;
+use codex_exec_server_api::ExecRuntimeError;
+use codex_jsonrpc_types::JSONRPCErrorError;
 use codex_protocol::config_types::EnvironmentVariablePattern;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::shell_environment;
 use codex_utils_pty::ExecCommandSession;
 use codex_utils_pty::TerminalSize;
+use futures::FutureExt;
+use futures::future::BoxFuture;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 use tokio::sync::mpsc;
@@ -436,25 +438,30 @@ fn shell_environment_policy(env_policy: &ExecEnvPolicy) -> ShellEnvironmentPolic
     }
 }
 
-#[async_trait]
 impl ExecBackend for LocalProcess {
-    async fn start(&self, params: ExecParams) -> Result<StartedExecProcess, ExecServerError> {
-        let (response, wake_tx, events) = self
-            .start_process(params)
-            .await
-            .map_err(map_handler_error)?;
-        Ok(StartedExecProcess {
-            process: Arc::new(LocalExecProcess {
-                process_id: response.process_id,
-                backend: self.clone(),
-                wake_tx,
-                events,
-            }),
-        })
+    fn start(
+        &self,
+        params: ExecParams,
+    ) -> BoxFuture<'_, Result<StartedExecProcess, ExecRuntimeError>> {
+        async move {
+            let (response, wake_tx, events) = self
+                .start_process(params)
+                .await
+                .map_err(map_handler_error)
+                .map_err(ExecRuntimeError::from)?;
+            Ok(StartedExecProcess {
+                process: Arc::new(LocalExecProcess {
+                    process_id: response.process_id,
+                    backend: self.clone(),
+                    wake_tx,
+                    events,
+                }),
+            })
+        }
+        .boxed()
     }
 }
 
-#[async_trait]
 impl ExecProcess for LocalExecProcess {
     fn process_id(&self) -> &ProcessId {
         &self.process_id
@@ -468,23 +475,39 @@ impl ExecProcess for LocalExecProcess {
         self.events.subscribe()
     }
 
-    async fn read(
+    fn read(
         &self,
         after_seq: Option<u64>,
         max_bytes: Option<usize>,
         wait_ms: Option<u64>,
-    ) -> Result<ReadResponse, ExecServerError> {
-        self.backend
-            .read(&self.process_id, after_seq, max_bytes, wait_ms)
-            .await
+    ) -> BoxFuture<'_, Result<ReadResponse, ExecRuntimeError>> {
+        async move {
+            self.backend
+                .read(&self.process_id, after_seq, max_bytes, wait_ms)
+                .await
+                .map_err(ExecRuntimeError::from)
+        }
+        .boxed()
     }
 
-    async fn write(&self, chunk: Vec<u8>) -> Result<WriteResponse, ExecServerError> {
-        self.backend.write(&self.process_id, chunk).await
+    fn write(&self, chunk: Vec<u8>) -> BoxFuture<'_, Result<WriteResponse, ExecRuntimeError>> {
+        async move {
+            self.backend
+                .write(&self.process_id, chunk)
+                .await
+                .map_err(ExecRuntimeError::from)
+        }
+        .boxed()
     }
 
-    async fn terminate(&self) -> Result<(), ExecServerError> {
-        self.backend.terminate(&self.process_id).await
+    fn terminate(&self) -> BoxFuture<'_, Result<(), ExecRuntimeError>> {
+        async move {
+            self.backend
+                .terminate(&self.process_id)
+                .await
+                .map_err(ExecRuntimeError::from)
+        }
+        .boxed()
     }
 }
 

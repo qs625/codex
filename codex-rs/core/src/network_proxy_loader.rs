@@ -6,26 +6,28 @@ use crate::exec_policy::load_exec_policy;
 use anyhow::Context;
 use anyhow::Result;
 use async_trait::async_trait;
-use codex_app_server_protocol::ConfigLayerSource;
-use codex_config::CONFIG_TOML_FILE;
-use codex_config::CloudRequirementsLoader;
-use codex_config::ConfigLayerStack;
-use codex_config::ConfigLayerStackOrdering;
-use codex_config::LoaderOverrides;
-use codex_config::loader::load_config_layers_state;
-use codex_config::permissions_toml::NetworkToml;
-use codex_config::permissions_toml::PermissionsToml;
-use codex_config::permissions_toml::overlay_network_domain_permissions;
-use codex_exec_server::LOCAL_FS;
+use codex_config_edit::CONFIG_TOML_FILE;
+use codex_config_loader::LoaderOverrides;
+use codex_config_loader::NoopThreadConfigLoader;
+use codex_config_local_loader::load_config_layers_state;
+use codex_config_permissions::NetworkToml;
+use codex_config_permissions::PermissionsToml;
+use codex_config_permissions::overlay_network_domain_permissions;
+use codex_config_requirements::CloudRequirementsLoader;
+use codex_config_state::ConfigLayerStack;
+use codex_config_state::ConfigLayerStackOrdering;
+use codex_config_types::ConfigLayerSource;
+use codex_execpolicy_api::Policy;
+use codex_file_system::LOCAL_FS;
 use codex_network_proxy::ConfigReloader;
 use codex_network_proxy::ConfigState;
-use codex_network_proxy::NetworkProxyConfig;
-use codex_network_proxy::NetworkProxyConstraintError;
-use codex_network_proxy::NetworkProxyConstraints;
 use codex_network_proxy::NetworkProxyState;
 use codex_network_proxy::build_config_state;
-use codex_network_proxy::normalize_host;
 use codex_network_proxy::validate_policy_against_constraints;
+use codex_network_proxy_api::NetworkDomainPermission;
+use codex_network_proxy_api::NetworkProxyConfig;
+use codex_network_proxy_api::NetworkProxyConstraints;
+use codex_network_proxy_api::normalize_host;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -53,16 +55,14 @@ async fn build_config_state_with_mtimes() -> Result<(ConfigState, Vec<LayerMtime
         &cli_overrides,
         overrides,
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &NoopThreadConfigLoader,
     )
     .await
     .context("failed to load Codex config")?;
 
     let (exec_policy, warning) = match load_exec_policy(&config_layer_stack).await {
         Ok(policy) => (policy, None),
-        Err(err @ ExecPolicyError::ParsePolicy { .. }) => {
-            (codex_execpolicy::Policy::empty(), Some(err))
-        }
+        Err(err @ ExecPolicyError::ParsePolicy { .. }) => (Policy::empty(), Some(err)),
         Err(err) => return Err(err.into()),
     };
     if let Some(err) = warning.as_ref() {
@@ -108,7 +108,7 @@ fn enforce_trusted_constraints(
 ) -> Result<NetworkProxyConstraints> {
     let constraints = network_constraints_from_trusted_layers(layers)?;
     validate_policy_against_constraints(config, &constraints)
-        .map_err(NetworkProxyConstraintError::into_anyhow)
+        .map_err(anyhow::Error::from)
         .context("network proxy constraints")?;
     Ok(constraints)
 }
@@ -207,7 +207,7 @@ fn apply_network_tables(config: &mut NetworkProxyConfig, parsed: NetworkTablesTo
 
 fn config_from_layers(
     layers: &ConfigLayerStack,
-    exec_policy: &codex_execpolicy::Policy,
+    exec_policy: &Policy,
 ) -> Result<NetworkProxyConfig> {
     let mut config = NetworkProxyConfig::default();
     for layer in layers.get_layers(
@@ -221,31 +221,20 @@ fn config_from_layers(
     Ok(config)
 }
 
-fn apply_exec_policy_network_rules(
-    config: &mut NetworkProxyConfig,
-    exec_policy: &codex_execpolicy::Policy,
-) {
+fn apply_exec_policy_network_rules(config: &mut NetworkProxyConfig, exec_policy: &Policy) {
     let (allowed_domains, denied_domains) = exec_policy.compiled_network_domains();
     for host in allowed_domains {
-        upsert_network_domain(
-            config,
-            host,
-            codex_network_proxy::NetworkDomainPermission::Allow,
-        );
+        upsert_network_domain(config, host, NetworkDomainPermission::Allow);
     }
     for host in denied_domains {
-        upsert_network_domain(
-            config,
-            host,
-            codex_network_proxy::NetworkDomainPermission::Deny,
-        );
+        upsert_network_domain(config, host, NetworkDomainPermission::Deny);
     }
 }
 
 fn upsert_network_domain(
     config: &mut NetworkProxyConfig,
     host: String,
-    permission: codex_network_proxy::NetworkDomainPermission,
+    permission: NetworkDomainPermission,
 ) {
     config
         .network

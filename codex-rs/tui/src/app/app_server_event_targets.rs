@@ -182,11 +182,11 @@ mod tests {
     use codex_app_server_protocol::GuardianWarningNotification;
     use codex_app_server_protocol::ServerNotification;
     use codex_app_server_protocol::WarningNotification;
-    use codex_app_server_protocol::v2::WorkflowRun;
-    use codex_app_server_protocol::v2::WorkflowRunStatus;
-    use codex_app_server_protocol::v2::WorkflowRunUpdatedNotification;
-    use codex_app_server_protocol::v2::WorkflowSource;
-    use codex_app_server_protocol::v2::WorkflowSummary;
+    use codex_app_server_protocol::WorkflowRun;
+    use codex_app_server_protocol::WorkflowRunStatus;
+    use codex_app_server_protocol::WorkflowRunUpdatedNotification;
+    use codex_app_server_protocol::WorkflowSource;
+    use codex_app_server_protocol::WorkflowSummary;
     use codex_protocol::ThreadId;
     use pretty_assertions::assert_eq;
     use serde_json::json;

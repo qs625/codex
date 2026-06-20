@@ -12,6 +12,10 @@ use codex_config::permissions_toml::NetworkUnixSocketPermissionsToml;
 use codex_config::permissions_toml::PermissionProfileToml;
 use codex_config::permissions_toml::PermissionsToml;
 use codex_config::permissions_toml::WorkspaceRootsToml;
+use codex_network_proxy_api::NetworkDomainPermission;
+use codex_network_proxy_api::NetworkDomainPermissionEntry;
+use codex_network_proxy_api::NetworkDomainPermissions;
+use codex_network_proxy_api::NetworkUnixSocketPermissions;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
@@ -219,7 +223,7 @@ fn network_toml_overlays_unix_socket_permissions_by_path() {
 
     assert_eq!(
         config.network.unix_sockets,
-        Some(codex_network_proxy::NetworkUnixSocketPermissions {
+        Some(NetworkUnixSocketPermissions {
             entries: BTreeMap::from([
                 (
                     "/tmp/base.sock".to_string(),
@@ -268,10 +272,10 @@ fn profile_network_proxy_config_keeps_proxy_disabled_for_proxy_policy() {
     assert!(!config.network.enable_socks5);
     assert_eq!(
         config.network.domains,
-        Some(codex_network_proxy::NetworkDomainPermissions {
-            entries: vec![codex_network_proxy::NetworkDomainPermissionEntry {
+        Some(NetworkDomainPermissions {
+            entries: vec![NetworkDomainPermissionEntry {
                 pattern: "openai.com".to_string(),
-                permission: codex_network_proxy::NetworkDomainPermission::Allow,
+                permission: NetworkDomainPermission::Allow,
             }],
         })
     );

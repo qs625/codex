@@ -11,12 +11,12 @@ use std::io;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use codex_api::SharedAuthProvider;
-use codex_exec_server::ExecServerError;
-use codex_exec_server::HttpClient;
-use codex_exec_server::HttpHeader;
-use codex_exec_server::HttpRequestParams;
-use codex_exec_server::HttpResponseBodyStream;
+use codex_api_provider::SharedAuthProvider;
+use codex_exec_server_api::ExecRuntimeError;
+use codex_exec_server_api::HttpClient;
+use codex_exec_server_api::HttpResponseBodyStream;
+use codex_exec_server_protocol::HttpHeader;
+use codex_exec_server_protocol::HttpRequestParams;
 use futures::StreamExt;
 use futures::stream;
 use futures::stream::BoxStream;
@@ -52,7 +52,7 @@ pub(crate) enum StreamableHttpClientAdapterError {
     #[error("streamable HTTP session expired with 404 Not Found")]
     SessionExpired404,
     #[error(transparent)]
-    HttpRequest(#[from] ExecServerError),
+    HttpRequest(#[from] ExecRuntimeError),
     #[error("invalid HTTP header: {0}")]
     Header(String),
 }

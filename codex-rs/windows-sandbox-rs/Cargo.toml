@@ -21,6 +21,10 @@ path = "src/bin/command_runner/main.rs"
 [lints]
 workspace = true
 
+[features]
+default = ["wfp-otel"]
+wfp-otel = ["dep:codex-otel"]
+
 [dependencies]
 anyhow = "1.0"
 base64 = { workspace = true }
@@ -28,10 +32,12 @@ chrono = { version = "0.4.42", default-features = false, features = [
     "clock",
     "std",
 ] }
+codex-metrics-api = { workspace = true }
 codex-utils-pty = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-string = { workspace = true }
-codex-otel = { workspace = true }
+codex-otel = { workspace = true, optional = true }
+codex-permissions-runtime = { workspace = true }
 dunce = "1.0"
 glob = { workspace = true }
 serde = { version = "1.0", features = ["derive"] }

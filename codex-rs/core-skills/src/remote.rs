@@ -112,7 +112,7 @@ pub async fn list_remote_skills(
         .get(&url)
         .timeout(REMOTE_SKILLS_API_TIMEOUT)
         .query(&query_params)
-        .headers(codex_model_provider::auth_provider_from_auth(auth).to_auth_headers());
+        .headers(codex_model_provider_api::auth_provider_from_auth(auth).to_auth_headers());
     let response = request
         .send()
         .await
@@ -152,7 +152,7 @@ pub async fn export_remote_skill(
     let request = client
         .get(&url)
         .timeout(REMOTE_SKILLS_API_TIMEOUT)
-        .headers(codex_model_provider::auth_provider_from_auth(auth).to_auth_headers());
+        .headers(codex_model_provider_api::auth_provider_from_auth(auth).to_auth_headers());
 
     let response = request
         .send()

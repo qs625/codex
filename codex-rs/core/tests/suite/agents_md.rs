@@ -1,5 +1,5 @@
 use anyhow::Result;
-use codex_exec_server::CreateDirectoryOptions;
+use codex_file_system::CreateDirectoryOptions;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_response_created;
 use core_test_support::responses::mount_sse_once;

@@ -24,6 +24,10 @@ use crate::client::Inner;
 use crate::protocol::HTTP_REQUEST_BODY_DELTA_METHOD;
 use crate::protocol::HttpRequestBodyDeltaNotification;
 use crate::rpc::RpcNotificationSender;
+use codex_exec_server_api::ExecRuntimeError;
+use codex_exec_server_api::HttpResponseBody;
+use futures::FutureExt;
+use futures::future::BoxFuture;
 
 pub(super) struct HttpBodyStreamRegistration {
     inner: Arc<Inner>,
@@ -142,6 +146,12 @@ impl HttpResponseBodyStream {
                 Ok(Some(chunk))
             }
         }
+    }
+}
+
+impl HttpResponseBody for HttpResponseBodyStream {
+    fn recv(&mut self) -> BoxFuture<'_, Result<Option<Vec<u8>>, ExecRuntimeError>> {
+        async move { self.recv().await.map_err(ExecRuntimeError::from) }.boxed()
     }
 }
 

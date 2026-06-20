@@ -11,20 +11,23 @@ use crate::exec_policy::ExecPolicyManager;
 use crate::guardian::GuardianRejection;
 use crate::guardian::GuardianRejectionCircuitBreaker;
 use crate::mcp::McpManager;
-use crate::tools::code_mode::CodeModeService;
 use crate::tools::network_approval::NetworkApprovalService;
 use crate::tools::sandboxing::ApprovalStore;
 use crate::unified_exec::UnifiedExecProcessManager;
 use arc_swap::ArcSwap;
-use codex_analytics::AnalyticsEventsClient;
+use codex_analytics_api::AnalyticsEventsClient;
+use codex_code_mode_api::CodeModeRuntimeFactory;
+use codex_code_mode_api::CodeModeRuntimeService;
 use codex_core_plugins::PluginsManager;
-use codex_exec_server::EnvironmentManager;
+use codex_exec_server_api::ExecEnvironmentProvider;
 use codex_extension_api::ExtensionData;
 use codex_extension_api::ExtensionRegistry;
 use codex_hooks::Hooks;
 use codex_login::AuthManager;
 use codex_mcp::McpConnectionManager;
-use codex_models_manager::manager::SharedModelsManager;
+use codex_model_provider_api::SharedModelProviderFactory;
+use codex_models_manager_api::SharedModelsManager;
+use codex_openai_files_api::SharedOpenAiFileUploader;
 use codex_otel::SessionTelemetry;
 use codex_rollout::state_db::StateDbHandle;
 use codex_rollout_trace::ThreadTraceContext;
@@ -53,6 +56,7 @@ pub(crate) struct SessionServices {
     pub(crate) show_raw_agent_reasoning: bool,
     pub(crate) exec_policy: Arc<ExecPolicyManager>,
     pub(crate) auth_manager: Arc<AuthManager>,
+    pub(crate) model_provider_factory: SharedModelProviderFactory,
     pub(crate) models_manager: SharedModelsManager,
     pub(crate) session_telemetry: SessionTelemetry,
     pub(crate) tool_approvals: Mutex<ApprovalStore>,
@@ -75,8 +79,10 @@ pub(crate) struct SessionServices {
     pub(crate) active_event_subscriptions: Arc<ActiveEventSubscriptionTracker>,
     /// Session-scoped model client shared across turns.
     pub(crate) model_client: ModelClient,
-    pub(crate) code_mode_service: CodeModeService,
+    pub(crate) openai_file_uploader: SharedOpenAiFileUploader,
+    pub(crate) code_mode_service: Arc<dyn CodeModeRuntimeService>,
+    pub(crate) code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
     /// Shared process-level environment registry. Sessions carry an `Arc` handle so they can pass
     /// the same manager through child-thread spawn paths without reconstructing it.
-    pub(crate) environment_manager: Arc<EnvironmentManager>,
+    pub(crate) environment_manager: Arc<dyn ExecEnvironmentProvider>,
 }

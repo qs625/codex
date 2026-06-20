@@ -2,8 +2,9 @@ use super::*;
 use crate::SkillLoadOutcome;
 use crate::config::GhostSnapshotConfig;
 use crate::environment_selection::ResolvedTurnEnvironments;
-use codex_model_provider::SharedModelProvider;
-use codex_model_provider::create_model_provider;
+use codex_exec_server_api::ExecEnvironment;
+use codex_model_provider_api::ModelProviderFactory;
+use codex_model_provider_api::SharedModelProvider;
 use codex_protocol::SessionId;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::ThreadSource;
@@ -36,7 +37,7 @@ impl TurnSkillsContext {
 #[derive(Clone, Debug)]
 pub(crate) struct TurnEnvironment {
     pub(crate) environment_id: String,
-    pub(crate) environment: Arc<Environment>,
+    pub(crate) environment: Arc<dyn ExecEnvironment>,
     pub(crate) cwd: AbsolutePathBuf,
     pub(crate) shell: Option<String>,
 }
@@ -381,12 +382,12 @@ impl TurnContext {
             allowed_domains: network
                 .domains
                 .as_ref()
-                .and_then(codex_config::NetworkDomainPermissionsToml::allowed_domains)
+                .and_then(codex_config_requirements::NetworkDomainPermissionsToml::allowed_domains)
                 .unwrap_or_default(),
             denied_domains: network
                 .domains
                 .as_ref()
-                .and_then(codex_config::NetworkDomainPermissionsToml::denied_domains)
+                .and_then(codex_config_requirements::NetworkDomainPermissionsToml::denied_domains)
                 .unwrap_or_default(),
         })
     }
@@ -462,6 +463,7 @@ impl Session {
         thread_id: ThreadId,
         session_id: SessionId,
         auth_manager: Option<Arc<AuthManager>>,
+        model_provider_factory: &dyn ModelProviderFactory,
         session_telemetry: &SessionTelemetry,
         provider: ModelProviderInfo,
         session_configuration: &SessionConfiguration,
@@ -490,7 +492,8 @@ impl Session {
         let image_generation_tool_auth_allowed =
             image_generation_tool_auth_allowed(auth_manager.as_deref());
         let auth_manager_for_context = auth_manager.clone();
-        let provider_for_context = create_model_provider(provider, auth_manager);
+        let provider_for_context =
+            model_provider_factory.create_model_provider(provider, auth_manager);
         let provider_capabilities = provider_for_context.capabilities();
         let session_telemetry_for_context = session_telemetry;
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
@@ -752,6 +755,7 @@ impl Session {
             self.thread_id(),
             self.session_id(),
             Some(Arc::clone(&self.services.auth_manager)),
+            self.services.model_provider_factory.as_ref(),
             &self.services.session_telemetry,
             session_configuration.provider.clone(),
             &session_configuration,

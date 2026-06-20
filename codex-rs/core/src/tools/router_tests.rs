@@ -299,8 +299,8 @@ fn mcp_tool_info(
     supports_parallel_tool_calls: bool,
     callable_namespace: &str,
     tool_name: &str,
-) -> codex_mcp::ToolInfo {
-    codex_mcp::ToolInfo {
+) -> codex_mcp_tool_types::ToolInfo {
+    codex_mcp_tool_types::ToolInfo {
         server_name: server_name.to_string(),
         supports_parallel_tool_calls,
         server_origin: None,

@@ -12,8 +12,8 @@
 
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use codex_api::upload_local_file;
 use codex_login::CodexAuth;
+use codex_openai_files_api::OpenAiFileUploader;
 use serde_json::Value as JsonValue;
 
 pub(crate) async fn rewrite_mcp_tool_arguments_for_openai_files(
@@ -39,9 +39,14 @@ pub(crate) async fn rewrite_mcp_tool_arguments_for_openai_files(
         let Some(value) = arguments.get(field_name) else {
             continue;
         };
-        let Some(uploaded_value) =
-            rewrite_argument_value_for_openai_files(turn_context, auth.as_ref(), field_name, value)
-                .await?
+        let Some(uploaded_value) = rewrite_argument_value_for_openai_files(
+            turn_context,
+            sess.services.openai_file_uploader.as_ref(),
+            auth.as_ref(),
+            field_name,
+            value,
+        )
+        .await?
         else {
             continue;
         };
@@ -57,6 +62,7 @@ pub(crate) async fn rewrite_mcp_tool_arguments_for_openai_files(
 
 async fn rewrite_argument_value_for_openai_files(
     turn_context: &TurnContext,
+    uploader: &dyn OpenAiFileUploader,
     auth: Option<&CodexAuth>,
     field_name: &str,
     value: &JsonValue,
@@ -65,6 +71,7 @@ async fn rewrite_argument_value_for_openai_files(
         JsonValue::String(path_or_file_ref) => {
             let rewritten = build_uploaded_local_argument_value(
                 turn_context,
+                uploader,
                 auth,
                 field_name,
                 /*index*/ None,
@@ -81,6 +88,7 @@ async fn rewrite_argument_value_for_openai_files(
                 };
                 let rewritten = build_uploaded_local_argument_value(
                     turn_context,
+                    uploader,
                     auth,
                     field_name,
                     Some(index),
@@ -97,6 +105,7 @@ async fn rewrite_argument_value_for_openai_files(
 
 async fn build_uploaded_local_argument_value(
     turn_context: &TurnContext,
+    uploader: &dyn OpenAiFileUploader,
     auth: Option<&CodexAuth>,
     field_name: &str,
     index: Option<usize>,
@@ -114,19 +123,20 @@ async fn build_uploaded_local_argument_value(
             "ChatGPT auth is required to upload local files for Codex Apps tools".to_string(),
         );
     }
-    let upload_auth = codex_model_provider::auth_provider_from_auth(auth);
-    let uploaded = upload_local_file(
-        turn_context.config.chatgpt_base_url.trim_end_matches('/'),
-        upload_auth.as_ref(),
-        &resolved_path,
-    )
-    .await
-    .map_err(|error| match index {
-        Some(index) => {
-            format!("failed to upload `{file_path}` for `{field_name}[{index}]`: {error}")
-        }
-        None => format!("failed to upload `{file_path}` for `{field_name}`: {error}"),
-    })?;
+    let upload_auth = codex_model_provider_api::auth_provider_from_auth(auth);
+    let uploaded = uploader
+        .upload_local_file(
+            turn_context.config.chatgpt_base_url.trim_end_matches('/'),
+            upload_auth.as_ref(),
+            &resolved_path,
+        )
+        .await
+        .map_err(|error| match index {
+            Some(index) => {
+                format!("failed to upload `{file_path}` for `{field_name}[{index}]`: {error}")
+            }
+            None => format!("failed to upload `{file_path}` for `{field_name}`: {error}"),
+        })?;
     Ok(serde_json::json!({
         "download_url": uploaded.download_url,
         "file_id": uploaded.file_id,
@@ -226,8 +236,10 @@ mod tests {
         config.chatgpt_base_url = format!("{}/backend-api", server.uri());
         turn_context.config = Arc::new(config);
 
+        let uploader = codex_openai_files::ReqwestOpenAiFileUploader;
         let rewritten = build_uploaded_local_argument_value(
             &turn_context,
+            &uploader,
             Some(&auth),
             "file",
             /*index*/ None,
@@ -309,8 +321,10 @@ mod tests {
         let mut config = (*turn_context.config).clone();
         config.chatgpt_base_url = format!("{}/backend-api", server.uri());
         turn_context.config = Arc::new(config);
+        let uploader = codex_openai_files::ReqwestOpenAiFileUploader;
         let rewritten = rewrite_argument_value_for_openai_files(
             &turn_context,
+            &uploader,
             Some(&auth),
             "file",
             &serde_json::json!("file_report.csv"),
@@ -426,8 +440,10 @@ mod tests {
         let mut config = (*turn_context.config).clone();
         config.chatgpt_base_url = format!("{}/backend-api", server.uri());
         turn_context.config = Arc::new(config);
+        let uploader = codex_openai_files::ReqwestOpenAiFileUploader;
         let rewritten = rewrite_argument_value_for_openai_files(
             &turn_context,
+            &uploader,
             Some(&auth),
             "files",
             &serde_json::json!(["one.csv", "two.csv"]),
@@ -464,6 +480,8 @@ mod tests {
         session.services.auth_manager = crate::test_support::auth_manager_from_auth(
             CodexAuth::create_dummy_chatgpt_auth_for_testing(),
         );
+        session.services.openai_file_uploader =
+            Arc::new(codex_openai_files::ReqwestOpenAiFileUploader);
         let error = rewrite_mcp_tool_arguments_for_openai_files(
             &session,
             &turn_context,

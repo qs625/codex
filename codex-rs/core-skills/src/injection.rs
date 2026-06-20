@@ -5,12 +5,9 @@ use std::sync::Arc;
 use crate::SkillLoadOutcome;
 use crate::SkillMetadata;
 use crate::build_skill_name_counts;
-use codex_analytics::AnalyticsEventsClient;
-use codex_analytics::InvocationType;
-use codex_analytics::SkillInvocation;
-use codex_analytics::TrackEventsContext;
-use codex_exec_server::LOCAL_FS;
-use codex_otel::SessionTelemetry;
+use codex_file_system::LOCAL_FS;
+use codex_metrics_api::MetricsSink;
+use codex_protocol::protocol::SkillScope;
 use codex_protocol::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_plugins::mention_syntax::TOOL_MENTION_SIGIL;
@@ -19,6 +16,7 @@ use codex_utils_plugins::mention_syntax::TOOL_MENTION_SIGIL;
 pub struct SkillInjections {
     pub items: Vec<SkillInjection>,
     pub warnings: Vec<String>,
+    pub invocations: Vec<SkillInvocation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,12 +26,25 @@ pub struct SkillInjection {
     pub contents: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillInvocation {
+    pub skill_name: String,
+    pub skill_scope: SkillScope,
+    pub skill_path: std::path::PathBuf,
+    pub plugin_id: Option<String>,
+    pub invocation_type: SkillInvocationType,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillInvocationType {
+    Explicit,
+    Implicit,
+}
+
 pub async fn build_skill_injections(
     mentioned_skills: &[SkillMetadata],
     loaded_skills: Option<&SkillLoadOutcome>,
-    otel: Option<&SessionTelemetry>,
-    analytics_client: &AnalyticsEventsClient,
-    tracking: TrackEventsContext,
+    otel: Option<&dyn MetricsSink>,
 ) -> SkillInjections {
     if mentioned_skills.is_empty() {
         return SkillInjections::default();
@@ -42,9 +53,8 @@ pub async fn build_skill_injections(
     let mut result = SkillInjections {
         items: Vec::with_capacity(mentioned_skills.len()),
         warnings: Vec::new(),
+        invocations: Vec::new(),
     };
-    let mut invocations = Vec::new();
-
     for skill in mentioned_skills {
         let fs = loaded_skills
             .and_then(|outcome| outcome.file_system_for_skill(skill))
@@ -55,12 +65,12 @@ pub async fn build_skill_injections(
         {
             Ok(contents) => {
                 emit_skill_injected_metric(otel, skill, "ok");
-                invocations.push(SkillInvocation {
+                result.invocations.push(SkillInvocation {
                     skill_name: skill.name.clone(),
                     skill_scope: skill.scope,
                     skill_path: skill.path_to_skills_md.to_path_buf(),
                     plugin_id: skill.plugin_id.clone(),
-                    invocation_type: InvocationType::Explicit,
+                    invocation_type: SkillInvocationType::Explicit,
                 });
                 result.items.push(SkillInjection {
                     name: skill.name.clone(),
@@ -80,16 +90,10 @@ pub async fn build_skill_injections(
         }
     }
 
-    analytics_client.track_skill_invocations(tracking, invocations);
-
     result
 }
 
-fn emit_skill_injected_metric(
-    otel: Option<&SessionTelemetry>,
-    skill: &SkillMetadata,
-    status: &str,
-) {
+fn emit_skill_injected_metric(otel: Option<&dyn MetricsSink>, skill: &SkillMetadata, status: &str) {
     let Some(otel) = otel else {
         return;
     };

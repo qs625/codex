@@ -32,7 +32,7 @@ use codex_app_server_protocol::ServerResponse;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::default_client::create_client;
-use codex_plugin::PluginTelemetryMetadata;
+use codex_plugin_types::PluginTelemetryMetadata;
 use codex_protocol::request_permissions::RequestPermissionsResponse;
 use std::collections::HashSet;
 use std::sync::Arc;

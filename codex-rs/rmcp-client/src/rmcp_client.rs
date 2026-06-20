@@ -11,10 +11,12 @@ use std::time::Instant;
 
 use anyhow::Result;
 use anyhow::anyhow;
-use codex_api::SharedAuthProvider;
+use codex_api_provider::SharedAuthProvider;
 use codex_client::build_reqwest_client_with_custom_ca;
-use codex_config::types::McpServerEnvVar;
-use codex_exec_server::HttpClient;
+use codex_config_types::McpServerEnvVar;
+use codex_exec_server_api::HttpClient;
+use codex_mcp_types::ElicitationAction;
+use codex_mcp_types::ElicitationResponse;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use oauth2::TokenResponse;
@@ -28,7 +30,6 @@ use rmcp::model::CreateElicitationRequestParams;
 use rmcp::model::CreateElicitationResult;
 use rmcp::model::CustomNotification;
 use rmcp::model::CustomRequest;
-use rmcp::model::ElicitationAction;
 use rmcp::model::Extensions;
 use rmcp::model::InitializeRequestParams;
 use rmcp::model::InitializeResult;
@@ -50,8 +51,6 @@ use rmcp::transport::auth::AuthError;
 use rmcp::transport::auth::OAuthState;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::streamable_http_client::StreamableHttpError;
-use serde::Deserialize;
-use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::Mutex;
 use tokio::sync::Semaphore;
@@ -72,7 +71,7 @@ use crate::stdio_server_launcher::StdioServerProcessHandle;
 use crate::stdio_server_launcher::StdioServerTransport;
 use crate::utils::apply_default_headers;
 use crate::utils::build_default_headers;
-use codex_config::types::OAuthCredentialsStoreMode;
+use codex_config_types::OAuthCredentialsStoreMode;
 
 enum PendingTransport {
     InProcess {
@@ -225,31 +224,20 @@ enum ClientOperationError {
 
 pub type Elicitation = CreateElicitationRequestParams;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ElicitationResponse {
-    pub action: ElicitationAction,
-    pub content: Option<serde_json::Value>,
-    #[serde(rename = "_meta")]
-    pub meta: Option<serde_json::Value>,
-}
-
-impl From<CreateElicitationResult> for ElicitationResponse {
-    fn from(value: CreateElicitationResult) -> Self {
-        Self {
-            action: value.action,
-            content: value.content,
-            meta: None,
-        }
+pub(crate) fn create_elicitation_result_from_response(
+    value: ElicitationResponse,
+) -> CreateElicitationResult {
+    CreateElicitationResult {
+        action: rmcp_elicitation_action(value.action),
+        content: value.content,
     }
 }
 
-impl From<ElicitationResponse> for CreateElicitationResult {
-    fn from(value: ElicitationResponse) -> Self {
-        Self {
-            action: value.action,
-            content: value.content,
-        }
+pub(crate) fn rmcp_elicitation_action(action: ElicitationAction) -> rmcp::model::ElicitationAction {
+    match action {
+        ElicitationAction::Accept => rmcp::model::ElicitationAction::Accept,
+        ElicitationAction::Decline => rmcp::model::ElicitationAction::Decline,
+        ElicitationAction::Cancel => rmcp::model::ElicitationAction::Cancel,
     }
 }
 

@@ -1,3 +1,5 @@
+use crate::config_layers::SkillConfigLayerStack;
+use crate::config_layers::SkillConfigLayerStackOrdering;
 use crate::model::SkillDependencies;
 use crate::model::SkillError;
 use crate::model::SkillFileSystemsByPath;
@@ -7,14 +9,9 @@ use crate::model::SkillMetadata;
 use crate::model::SkillPolicy;
 use crate::model::SkillToolDependency;
 use crate::system::system_cache_root_dir;
-use codex_app_server_protocol::ConfigLayerSource;
-use codex_config::ConfigLayerStack;
-use codex_config::ConfigLayerStackOrdering;
-use codex_config::default_project_root_markers;
-use codex_config::merge_toml_values;
-use codex_config::project_root_markers_from_config;
-use codex_exec_server::ExecutorFileSystem;
-use codex_exec_server::LOCAL_FS;
+use codex_config_types::ConfigLayerSource;
+use codex_file_system::ExecutorFileSystem;
+use codex_file_system::LOCAL_FS;
 use codex_protocol::protocol::Product;
 use codex_protocol::protocol::SkillScope;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -229,7 +226,7 @@ where
 
 pub(crate) async fn skill_roots(
     fs: Option<Arc<dyn ExecutorFileSystem>>,
-    config_layer_stack: &ConfigLayerStack,
+    config_layer_stack: &SkillConfigLayerStack,
     cwd: &AbsolutePathBuf,
     plugin_skill_roots: Vec<PluginSkillRoot>,
 ) -> Vec<SkillRoot> {
@@ -247,7 +244,7 @@ pub(crate) async fn skill_roots(
 
 async fn skill_roots_with_home_dir(
     fs: Option<Arc<dyn ExecutorFileSystem>>,
-    config_layer_stack: &ConfigLayerStack,
+    config_layer_stack: &SkillConfigLayerStack,
     cwd: &AbsolutePathBuf,
     home_dir: Option<&AbsolutePathBuf>,
     plugin_skill_roots: Vec<PluginSkillRoot>,
@@ -268,14 +265,14 @@ async fn skill_roots_with_home_dir(
 }
 
 fn skill_roots_from_layer_stack_inner(
-    config_layer_stack: &ConfigLayerStack,
+    config_layer_stack: &SkillConfigLayerStack,
     home_dir: Option<&AbsolutePathBuf>,
     repo_fs: Arc<dyn ExecutorFileSystem>,
 ) -> Vec<SkillRoot> {
     let mut roots = Vec::new();
 
     for layer in config_layer_stack.get_layers(
-        ConfigLayerStackOrdering::HighestPrecedenceFirst,
+        SkillConfigLayerStackOrdering::HighestPrecedenceFirst,
         /*include_disabled*/ true,
     ) {
         let Some(config_folder) = layer.config_folder() else {
@@ -342,7 +339,7 @@ fn skill_roots_from_layer_stack_inner(
 
 async fn repo_agents_skill_roots(
     fs: Arc<dyn ExecutorFileSystem>,
-    config_layer_stack: &ConfigLayerStack,
+    config_layer_stack: &SkillConfigLayerStack,
     cwd: &AbsolutePathBuf,
 ) -> Vec<SkillRoot> {
     repo_skills_roots_for_dirname(fs, config_layer_stack, cwd, AGENTS_DIR_NAME).await
@@ -350,7 +347,7 @@ async fn repo_agents_skill_roots(
 
 async fn repo_dot_codex_skill_roots(
     fs: Arc<dyn ExecutorFileSystem>,
-    config_layer_stack: &ConfigLayerStack,
+    config_layer_stack: &SkillConfigLayerStack,
     cwd: &AbsolutePathBuf,
 ) -> Vec<SkillRoot> {
     repo_skills_roots_for_dirname(fs, config_layer_stack, cwd, ".codex").await
@@ -358,7 +355,7 @@ async fn repo_dot_codex_skill_roots(
 
 async fn repo_skills_roots_for_dirname(
     fs: Arc<dyn ExecutorFileSystem>,
-    config_layer_stack: &ConfigLayerStack,
+    config_layer_stack: &SkillConfigLayerStack,
     cwd: &AbsolutePathBuf,
     dirname: &str,
 ) -> Vec<SkillRoot> {
@@ -388,18 +385,8 @@ async fn repo_skills_roots_for_dirname(
     roots
 }
 
-fn project_root_markers_from_stack(config_layer_stack: &ConfigLayerStack) -> Vec<String> {
-    let mut merged = TomlValue::Table(toml::map::Map::new());
-    for layer in config_layer_stack.get_layers(
-        ConfigLayerStackOrdering::LowestPrecedenceFirst,
-        /*include_disabled*/ false,
-    ) {
-        if matches!(layer.name, ConfigLayerSource::Project { .. }) {
-            continue;
-        }
-        merge_toml_values(&mut merged, &layer.config);
-    }
-
+fn project_root_markers_from_stack(config_layer_stack: &SkillConfigLayerStack) -> Vec<String> {
+    let merged = config_layer_stack.effective_config_without_project_layers();
     match project_root_markers_from_config(&merged) {
         Ok(Some(markers)) => markers,
         Ok(None) => default_project_root_markers(),
@@ -408,6 +395,36 @@ fn project_root_markers_from_stack(config_layer_stack: &ConfigLayerStack) -> Vec
             default_project_root_markers()
         }
     }
+}
+
+fn project_root_markers_from_config(config: &TomlValue) -> io::Result<Option<Vec<String>>> {
+    let Some(table) = config.as_table() else {
+        return Ok(None);
+    };
+    let Some(markers_value) = table.get("project_root_markers") else {
+        return Ok(None);
+    };
+    let TomlValue::Array(entries) = markers_value else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "project_root_markers must be an array of strings",
+        ));
+    };
+    let mut markers = Vec::new();
+    for entry in entries {
+        let Some(marker) = entry.as_str() else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "project_root_markers must be an array of strings",
+            ));
+        };
+        markers.push(marker.to_string());
+    }
+    Ok(Some(markers))
+}
+
+fn default_project_root_markers() -> Vec<String> {
+    vec![".git".to_string()]
 }
 
 async fn find_project_root(
@@ -994,11 +1011,12 @@ fn extract_frontmatter(contents: &str) -> Option<String> {
 #[cfg(test)]
 pub(crate) async fn skill_roots_from_layer_stack(
     fs: Arc<dyn ExecutorFileSystem>,
-    config_layer_stack: &ConfigLayerStack,
+    config_layer_stack: &codex_config::ConfigLayerStack,
     cwd: &AbsolutePathBuf,
     home_dir: Option<&AbsolutePathBuf>,
 ) -> Vec<SkillRoot> {
-    skill_roots_with_home_dir(Some(fs), config_layer_stack, cwd, home_dir, Vec::new()).await
+    let config_layer_stack = SkillConfigLayerStack::from(config_layer_stack.clone());
+    skill_roots_with_home_dir(Some(fs), &config_layer_stack, cwd, home_dir, Vec::new()).await
 }
 
 #[cfg(test)]

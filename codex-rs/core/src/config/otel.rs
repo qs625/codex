@@ -1,10 +1,13 @@
 use std::collections::BTreeMap;
 use std::fmt::Display;
 
-use codex_config::types::DEFAULT_OTEL_ENVIRONMENT;
-use codex_config::types::OtelConfig;
-use codex_config::types::OtelConfigToml;
-use codex_config::types::OtelExporterKind;
+use codex_config_types::DEFAULT_OTEL_ENVIRONMENT;
+use codex_config_types::OtelConfig;
+use codex_config_types::OtelConfigToml;
+use codex_config_types::OtelExporterKind;
+use codex_config_types::validate_otel_span_attributes;
+use codex_config_types::validate_otel_tracestate_entries;
+use codex_config_types::validate_otel_tracestate_member;
 
 pub(crate) fn resolve_config(
     config: OtelConfigToml,
@@ -47,7 +50,7 @@ fn resolve_span_attributes(
     let mut valid_attributes = BTreeMap::new();
     for (key, value) in span_attributes {
         let attribute = BTreeMap::from([(key.clone(), value.clone())]);
-        if let Err(err) = codex_otel::validate_span_attributes(&attribute) {
+        if let Err(err) = validate_otel_span_attributes(&attribute) {
             push_invalid_config_warning("otel.span_attributes", err, startup_warnings);
             continue;
         }
@@ -71,7 +74,7 @@ fn resolve_tracestate(
         if fields.is_empty() {
             continue;
         }
-        if let Err(err) = codex_otel::validate_tracestate_member(&member_key, &fields) {
+        if let Err(err) = validate_otel_tracestate_member(&member_key, &fields) {
             push_invalid_config_warning("otel.tracestate", err, startup_warnings);
             continue;
         }
@@ -81,7 +84,7 @@ fn resolve_tracestate(
     // Tracestate members can be valid individually while the combined W3C
     // tracestate header is not, so validate the filtered set before handing it
     // to provider initialization.
-    if let Err(err) = codex_otel::validate_tracestate_entries(&valid_entries) {
+    if let Err(err) = validate_otel_tracestate_entries(&valid_entries) {
         push_invalid_config_warning("otel.tracestate", err, startup_warnings);
         return BTreeMap::new();
     }
@@ -97,7 +100,7 @@ fn resolve_tracestate_member_fields(
     let mut valid_fields = BTreeMap::new();
     for (field_key, value) in fields {
         let field = BTreeMap::from([(field_key.clone(), value.clone())]);
-        if let Err(err) = codex_otel::validate_tracestate_member(member_key, &field) {
+        if let Err(err) = validate_otel_tracestate_member(member_key, &field) {
             push_invalid_config_warning("otel.tracestate", err, startup_warnings);
             continue;
         }

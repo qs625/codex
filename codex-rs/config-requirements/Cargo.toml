@@ -1,0 +1,31 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-config-requirements"
+version.workspace = true
+description = "Configuration requirements API types and loader helpers shared across Codex crates."
+
+[lib]
+doctest = false
+name = "codex_config_requirements"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-config-types = { workspace = true }
+codex-execpolicy-api = { workspace = true }
+codex-protocol = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+futures = { workspace = true, features = ["alloc", "std"] }
+multimap = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+wildmatch = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+pretty_assertions = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
+toml = { workspace = true }

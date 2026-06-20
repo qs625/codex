@@ -28,6 +28,7 @@ use anyhow::Result;
 use anyhow::anyhow;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use codex_metrics_api::StatsigMetricsSettings;
 
 use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::Foundation::GetLastError;
@@ -449,7 +450,7 @@ struct ElevationPayload {
     proxy_ports: Vec<u16>,
     #[serde(default)]
     allow_local_binding: bool,
-    otel: Option<codex_otel::StatsigMetricsSettings>,
+    otel: Option<StatsigMetricsSettings>,
     real_user: String,
     #[serde(default)]
     refresh_only: bool,
@@ -765,7 +766,7 @@ pub fn run_elevated_setup(
         proxy_ports: offline_proxy_settings.proxy_ports,
         allow_local_binding: offline_proxy_settings.allow_local_binding,
         real_user: std::env::var("USERNAME").unwrap_or_else(|_| "Administrators".to_string()),
-        otel: codex_otel::global_statsig_metrics_settings(),
+        otel: global_statsig_metrics_settings(),
         refresh_only: false,
     };
     let needs_elevation = !is_elevated().map_err(|err| {
@@ -775,6 +776,16 @@ pub fn run_elevated_setup(
         )
     })?;
     run_setup_exe(&payload, needs_elevation, request.codex_home)
+}
+
+#[cfg(feature = "wfp-otel")]
+fn global_statsig_metrics_settings() -> Option<StatsigMetricsSettings> {
+    codex_otel::global_statsig_metrics_settings()
+}
+
+#[cfg(not(feature = "wfp-otel"))]
+fn global_statsig_metrics_settings() -> Option<StatsigMetricsSettings> {
+    None
 }
 
 fn build_payload_roots(

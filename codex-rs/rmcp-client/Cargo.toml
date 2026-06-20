@@ -14,11 +14,13 @@ axum = { workspace = true, default-features = false, features = [
     "tokio",
 ] }
 base64 = { workspace = true }
-codex-api = { workspace = true }
+codex-api-provider = { workspace = true }
 codex-client = { workspace = true }
-codex-config = { workspace = true }
-codex-exec-server = { workspace = true }
+codex-config-types = { workspace = true }
+codex-exec-server-api = { workspace = true }
+codex-exec-server-protocol = { workspace = true }
 codex-keyring-store = { workspace = true }
+codex-mcp-types = { workspace = true }
 codex-protocol = { workspace = true }
 codex-utils-pty = { workspace = true }
 codex-utils-home-dir = { workspace = true }

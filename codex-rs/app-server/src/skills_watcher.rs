@@ -6,6 +6,7 @@ use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::SkillsChangedNotification;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
+use codex_core::config::skill_config_layer_stack_from_config_layer_stack;
 use codex_core::skills::SkillsLoadInput;
 use codex_core::skills::SkillsManager;
 use codex_file_watcher::FileWatcher;
@@ -53,7 +54,7 @@ impl SkillsWatcher {
             return WatchRegistration::default();
         };
         let Some(environment) = thread_manager
-            .environment_manager()
+            .environment_provider()
             .get_environment(&environment_selection.environment_id)
         else {
             warn!(
@@ -72,7 +73,7 @@ impl SkillsWatcher {
         let skills_input = SkillsLoadInput::new(
             config.cwd.clone(),
             plugin_outcome.effective_plugin_skill_roots(),
-            config.config_layer_stack.clone(),
+            skill_config_layer_stack_from_config_layer_stack(&config.config_layer_stack),
             config.bundled_skills_enabled(),
         );
         let roots = thread_manager

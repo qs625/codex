@@ -16,10 +16,12 @@ workspace = true
 chrono = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-string = { workspace = true }
-codex-api = { workspace = true }
-codex-app-server-protocol = { workspace = true }
+codex-api-types = { workspace = true }
+codex-auth-types = { workspace = true }
+codex-config-types = { workspace = true }
+codex-metrics-api = { workspace = true }
 codex-protocol = { workspace = true }
-eventsource-stream = { workspace = true }
+codex-trace-context = { workspace = true }
 gethostname = { workspace = true }
 opentelemetry = { workspace = true, features = ["logs", "metrics", "trace"] }
 opentelemetry-appender-tracing = { workspace = true }
@@ -50,10 +52,8 @@ os_info = { workspace = true }
 reqwest = { workspace = true, features = ["blocking", "rustls-tls"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-strum_macros = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-tokio-tungstenite = { workspace = true }
 tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 tracing-subscriber = { workspace = true }

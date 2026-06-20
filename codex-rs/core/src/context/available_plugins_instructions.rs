@@ -1,4 +1,4 @@
-use codex_plugin::PluginCapabilitySummary;
+use codex_plugin_types::PluginCapabilitySummary;
 use codex_protocol::protocol::PLUGINS_INSTRUCTIONS_CLOSE_TAG;
 use codex_protocol::protocol::PLUGINS_INSTRUCTIONS_OPEN_TAG;
 

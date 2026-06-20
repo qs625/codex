@@ -25,7 +25,6 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
-use tokio::process::Command;
 
 #[cfg(test)]
 use nucleo::Utf32Str;
@@ -33,10 +32,6 @@ use nucleo::Utf32Str;
 use nucleo::pattern::AtomKind;
 #[cfg(test)]
 use nucleo::pattern::Pattern;
-
-mod cli;
-
-pub use cli::Cli;
 
 /// A single match result returned from the search.
 ///
@@ -208,82 +203,6 @@ pub fn create_session(
     thread::spawn(move || walker_worker(walker_inner, override_matcher, injector));
 
     Ok(FileSearchSession { inner })
-}
-
-pub trait Reporter {
-    fn report_match(&self, file_match: &FileMatch);
-    fn warn_matches_truncated(&self, total_match_count: usize, shown_match_count: usize);
-    fn warn_no_search_pattern(&self, search_directory: &Path);
-}
-
-pub async fn run_main<T: Reporter>(
-    Cli {
-        pattern,
-        limit,
-        cwd,
-        compute_indices,
-        json: _,
-        exclude,
-        threads,
-    }: Cli,
-    reporter: T,
-) -> anyhow::Result<()> {
-    let search_directory = match cwd {
-        Some(dir) => dir,
-        None => std::env::current_dir()?,
-    };
-    let pattern_text = match pattern {
-        Some(pattern) => pattern,
-        None => {
-            reporter.warn_no_search_pattern(&search_directory);
-            #[cfg(unix)]
-            Command::new("ls")
-                .arg("-al")
-                .current_dir(search_directory)
-                .stdout(std::process::Stdio::inherit())
-                .stderr(std::process::Stdio::inherit())
-                .status()
-                .await?;
-            #[cfg(windows)]
-            {
-                Command::new("cmd")
-                    .arg("/c")
-                    .arg(search_directory)
-                    .stdout(std::process::Stdio::inherit())
-                    .stderr(std::process::Stdio::inherit())
-                    .status()
-                    .await?;
-            }
-            return Ok(());
-        }
-    };
-
-    let FileSearchResults {
-        total_match_count,
-        matches,
-    } = run(
-        &pattern_text,
-        vec![search_directory.to_path_buf()],
-        FileSearchOptions {
-            limit,
-            exclude,
-            threads,
-            compute_indices,
-            respect_gitignore: true,
-        },
-        /*cancel_flag*/ None,
-    )?;
-    let match_count = matches.len();
-    let matches_truncated = total_match_count > match_count;
-
-    for file_match in matches {
-        reporter.report_match(&file_match);
-    }
-    if matches_truncated {
-        reporter.warn_matches_truncated(total_match_count, match_count);
-    }
-
-    Ok(())
 }
 
 /// The worker threads will periodically check `cancel_flag` to see if they

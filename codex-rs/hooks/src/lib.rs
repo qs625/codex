@@ -1,6 +1,8 @@
+mod config_layers;
 mod config_rules;
 mod declarations;
 mod engine;
+mod event_projection;
 pub(crate) mod events;
 mod legacy_notify;
 mod output_spill;
@@ -10,6 +12,9 @@ mod types;
 
 use codex_protocol::protocol::HookEventName;
 
+pub use config_layers::HookConfigLayerEntry;
+pub use config_layers::HookConfigLayerStack;
+pub use config_layers::HookManagedHooksRequirement;
 pub use config_rules::hook_states_from_stack;
 pub use declarations::PluginHookDeclaration;
 pub use declarations::plugin_hook_declarations;

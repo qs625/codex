@@ -1,13 +1,17 @@
 use crate::runner_bridge::RunnerProcessState;
-use crate::runner_bridge::WorkflowAgentBinding;
-use crate::runner_bridge::WorkflowRuntimeBridge;
 use crate::runner_bridge::read_runner_stdout;
 use crate::runner_bridge::write_bootstrap;
 use crate::runner_bridge::write_workflow_shim;
-use crate::workflows::WorkflowRegistry;
-use crate::workflows::WorkflowSummary;
-use serde::Deserialize;
-use serde::Serialize;
+use codex_workflow_api::WorkflowRegistry;
+use codex_workflow_api::WorkflowRun;
+use codex_workflow_api::WorkflowRunController;
+use codex_workflow_api::WorkflowRunFuture;
+use codex_workflow_api::WorkflowRunStatus;
+use codex_workflow_api::WorkflowRunUpdateError;
+use codex_workflow_api::WorkflowRunUpdateFuture;
+use codex_workflow_api::WorkflowRunUpdateReceiver;
+use codex_workflow_api::WorkflowRuntimeBridge;
+use codex_workflow_api::WorkflowSummary;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -35,38 +39,6 @@ static WORKFLOW_RUN_STATES: once_cell::sync::Lazy<
     StdMutex<HashMap<PathBuf, Weak<WorkflowRunState>>>,
 > = once_cell::sync::Lazy::new(|| StdMutex::new(HashMap::new()));
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkflowRunStatus {
-    Running,
-    Completed,
-    Failed,
-    Aborted,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowRun {
-    pub run_id: String,
-    pub workflow: WorkflowSummary,
-    pub status: WorkflowRunStatus,
-    pub runner_status: String,
-    pub inputs: Value,
-    pub created_at: i64,
-    pub updated_at: i64,
-    pub revision: u64,
-    pub message: String,
-    pub abort_reason: Option<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub bindings: BTreeMap<String, WorkflowAgentBinding>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub snapshot_path: Option<String>,
-}
-
 #[derive(Debug)]
 struct LiveRunHandle {
     abort_tx: oneshot::Sender<Option<String>>,
@@ -87,6 +59,60 @@ pub struct WorkflowRunManager {
 impl Default for WorkflowRunManager {
     fn default() -> Self {
         Self::in_memory()
+    }
+}
+
+struct BroadcastWorkflowRunUpdateReceiver {
+    inner: broadcast::Receiver<WorkflowRun>,
+}
+
+impl WorkflowRunUpdateReceiver for BroadcastWorkflowRunUpdateReceiver {
+    fn recv(&mut self) -> WorkflowRunUpdateFuture<'_> {
+        Box::pin(async move {
+            self.inner.recv().await.map_err(|err| match err {
+                broadcast::error::RecvError::Lagged(count) => WorkflowRunUpdateError::Lagged(count),
+                broadcast::error::RecvError::Closed => WorkflowRunUpdateError::Closed,
+            })
+        })
+    }
+}
+
+impl WorkflowRunController for WorkflowRunManager {
+    fn subscribe(&self) -> Box<dyn WorkflowRunUpdateReceiver> {
+        Box::new(BroadcastWorkflowRunUpdateReceiver {
+            inner: WorkflowRunManager::subscribe(self),
+        })
+    }
+
+    fn start_with_bridge<'a>(
+        &'a self,
+        registry: &'a WorkflowRegistry,
+        workflow_id: &'a str,
+        inputs: Value,
+        bridge: Arc<dyn WorkflowRuntimeBridge>,
+    ) -> WorkflowRunFuture<'a> {
+        Box::pin(async move {
+            WorkflowRunManager::start_with_bridge(self, registry, workflow_id, inputs, bridge).await
+        })
+    }
+
+    fn status<'a>(&'a self, run_id: &'a str) -> WorkflowRunFuture<'a> {
+        Box::pin(async move { WorkflowRunManager::status(self, run_id).await })
+    }
+
+    fn resume_with_bridge<'a>(
+        &'a self,
+        run_id: &'a str,
+        inputs: Option<Value>,
+        bridge: Arc<dyn WorkflowRuntimeBridge>,
+    ) -> WorkflowRunFuture<'a> {
+        Box::pin(async move {
+            WorkflowRunManager::resume_with_bridge(self, run_id, inputs, bridge).await
+        })
+    }
+
+    fn abort<'a>(&'a self, run_id: &'a str, reason: Option<String>) -> WorkflowRunFuture<'a> {
+        Box::pin(async move { WorkflowRunManager::abort(self, run_id, reason).await })
     }
 }
 
@@ -132,7 +158,9 @@ impl WorkflowRunManager {
         workflow_id: &str,
         inputs: Value,
     ) -> Result<WorkflowRun, String> {
-        let run = self.start_without_runner(registry, workflow_id, inputs).await?;
+        let run = self
+            .start_without_runner(registry, workflow_id, inputs)
+            .await?;
         self.spawn_runner(run.clone(), WorkflowRunnerMode::Start, None)
             .await?;
         Ok(run)
@@ -145,7 +173,9 @@ impl WorkflowRunManager {
         inputs: Value,
         bridge: Arc<dyn WorkflowRuntimeBridge>,
     ) -> Result<WorkflowRun, String> {
-        let run = self.start_without_runner(registry, workflow_id, inputs).await?;
+        let run = self
+            .start_without_runner(registry, workflow_id, inputs)
+            .await?;
         self.spawn_runner(run.clone(), WorkflowRunnerMode::Start, Some(bridge))
             .await?;
         Ok(run)
@@ -446,11 +476,9 @@ async fn run_workflow_process(
             Err(err) => Err(format!("failed to join workflow runner stdout task: {err}")),
         }
     } else {
-        stdout_task.await.unwrap_or_else(|err| {
-            Err(format!(
-                "failed to join workflow runner stdout task: {err}"
-            ))
-        })
+        stdout_task
+            .await
+            .unwrap_or_else(|err| Err(format!("failed to join workflow runner stdout task: {err}")))
     };
     let stderr = stderr_task.await.unwrap_or_default();
     let state = runner_state.lock().await;
@@ -577,10 +605,7 @@ fn unix_timestamp_seconds() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runner_bridge::WorkflowAgentBinding;
-    use crate::runner_bridge::WorkflowRuntimeBridge;
-    use crate::runner_bridge::WorkflowRuntimeError;
-    use crate::runner_bridge::WorkflowRuntimeRequest;
+    use codex_workflow_api::WorkflowAgentBinding;
     use pretty_assertions::assert_eq;
     use std::fs;
     use std::future::Future;
@@ -589,8 +614,11 @@ mod tests {
     use std::sync::Mutex as TestMutex;
     use tokio::sync::Notify;
 
-    use crate::workflows::WorkflowInputSpec;
-    use crate::workflows::WorkflowSource;
+    use codex_workflow_api::WorkflowInputSpec;
+    use codex_workflow_api::WorkflowRuntimeBridge;
+    use codex_workflow_api::WorkflowRuntimeError;
+    use codex_workflow_api::WorkflowRuntimeRequest;
+    use codex_workflow_api::WorkflowSource;
 
     fn registry_for(path: &Path) -> WorkflowRegistry {
         WorkflowRegistry {
@@ -631,7 +659,8 @@ mod tests {
         fn call(
             &self,
             request: WorkflowRuntimeRequest,
-        ) -> Pin<Box<dyn Future<Output = Result<Value, WorkflowRuntimeError>> + Send + '_>> {
+        ) -> Pin<Box<dyn Future<Output = Result<Value, WorkflowRuntimeError>> + Send + '_>>
+        {
             Box::pin(async move {
                 self.methods
                     .lock()
@@ -686,7 +715,8 @@ mod tests {
         fn call(
             &self,
             request: WorkflowRuntimeRequest,
-        ) -> Pin<Box<dyn Future<Output = Result<Value, WorkflowRuntimeError>> + Send + '_>> {
+        ) -> Pin<Box<dyn Future<Output = Result<Value, WorkflowRuntimeError>> + Send + '_>>
+        {
             Box::pin(async move {
                 match request.method.as_str() {
                     "agent.spawn" => {
@@ -788,14 +818,22 @@ export default defineWorkflow({
         let bridge = Arc::new(FakeBridge::default());
 
         let started = manager
-            .start_with_bridge(&registry, "feature-dev", serde_json::json!({}), bridge.clone())
+            .start_with_bridge(
+                &registry,
+                "feature-dev",
+                serde_json::json!({}),
+                bridge.clone(),
+            )
             .await
             .expect("start workflow run");
         let completed = wait_for_terminal(&manager, &started.run_id).await;
 
         assert_eq!(completed.status, WorkflowRunStatus::Completed);
         assert_eq!(
-            completed.bindings.get("owner").map(|binding| binding.agent_path.as_str()),
+            completed
+                .bindings
+                .get("owner")
+                .map(|binding| binding.agent_path.as_str()),
             Some("/root/owner")
         );
         assert_eq!(
@@ -803,7 +841,9 @@ export default defineWorkflow({
                 .output
                 .as_ref()
                 .and_then(|output| output.pointer("/result/result/summary")),
-            Some(&Value::String("agent completed through fake bridge".to_string()))
+            Some(&Value::String(
+                "agent completed through fake bridge".to_string()
+            ))
         );
         assert_eq!(
             completed
@@ -829,8 +869,14 @@ export default defineWorkflow({
             .lock()
             .expect("fake bridge params lock")
             .clone();
-        assert_eq!(params[1].get("target").and_then(Value::as_str), Some("/root/owner"));
-        assert_eq!(params[2].get("target").and_then(Value::as_str), Some("/root/owner"));
+        assert_eq!(
+            params[1].get("target").and_then(Value::as_str),
+            Some("/root/owner")
+        );
+        assert_eq!(
+            params[2].get("target").and_then(Value::as_str),
+            Some("/root/owner")
+        );
     }
 
     #[tokio::test]

@@ -4,11 +4,12 @@ use std::env;
 use std::sync::Arc;
 
 use crate::config::Config;
+use crate::config::skill_config_layer_stack_from_config_layer_stack;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use codex_analytics::InvocationType;
-use codex_analytics::SkillInvocation;
-use codex_analytics::build_track_events_context;
+use codex_analytics_api::InvocationType;
+use codex_analytics_api::SkillInvocation;
+use codex_analytics_api::build_track_events_context;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::SkillScope;
 use codex_protocol::protocol::ThreadSkill;
@@ -55,7 +56,7 @@ pub(crate) fn skills_load_input_from_config(
     SkillsLoadInput::new(
         config.cwd.clone(),
         effective_skill_roots,
-        config.config_layer_stack.clone(),
+        skill_config_layer_stack_from_config_layer_stack(&config.config_layer_stack),
         config.bundled_skills_enabled(),
     )
     .with_allowlist_patterns(config.agent_skill_patterns.clone())

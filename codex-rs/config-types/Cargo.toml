@@ -1,0 +1,26 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-config-types"
+version.workspace = true
+description = "Lightweight configuration API types shared across Codex crates."
+
+[lib]
+doctest = false
+name = "codex_config_types"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-utils-absolute-path = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+ts-rs = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

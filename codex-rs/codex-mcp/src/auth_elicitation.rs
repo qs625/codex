@@ -6,7 +6,7 @@
 use codex_protocol::mcp::CallToolResult;
 use serde::Serialize;
 
-pub const MCP_TOOL_CODEX_APPS_META_KEY: &str = "_codex_apps";
+pub use codex_mcp_types::MCP_TOOL_CODEX_APPS_META_KEY;
 pub const CONNECTOR_AUTH_FAILURE_META_KEY: &str = "connector_auth_failure";
 pub const CONNECTOR_AUTH_FAILURE_IS_AUTH_FAILURE_KEY: &str = "is_auth_failure";
 pub const CONNECTOR_AUTH_FAILURE_AUTH_REASON_KEY: &str = "auth_reason";

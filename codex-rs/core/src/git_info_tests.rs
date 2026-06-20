@@ -1,4 +1,4 @@
-use codex_exec_server::LOCAL_FS;
+use codex_file_system::LOCAL_FS;
 use codex_git_utils::GitInfo;
 use codex_git_utils::GitSha;
 use codex_git_utils::collect_git_info;

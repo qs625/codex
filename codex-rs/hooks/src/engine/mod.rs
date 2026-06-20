@@ -4,6 +4,7 @@ pub(crate) mod dispatcher;
 pub(crate) mod output_parser;
 pub(crate) mod schema_loader;
 
+use crate::config_layers::HookConfigLayerStack;
 use crate::events::compact::PostCompactRequest;
 use crate::events::compact::PreCompactOutcome;
 use crate::events::compact::PreCompactRequest;
@@ -21,8 +22,7 @@ use crate::events::stop::StopRequest;
 use crate::events::user_prompt_submit::UserPromptSubmitOutcome;
 use crate::events::user_prompt_submit::UserPromptSubmitRequest;
 use crate::output_spill::HookOutputSpiller;
-use codex_config::ConfigLayerStack;
-use codex_plugin::PluginHookSource;
+use codex_plugin_types::PluginHookSource;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::HookEventName;
 use codex_protocol::protocol::HookHandlerType;
@@ -106,7 +106,7 @@ impl ClaudeHooksEngine {
     pub(crate) fn new(
         enabled: bool,
         bypass_hook_trust: bool,
-        config_layer_stack: Option<&ConfigLayerStack>,
+        config_layer_stack: Option<&HookConfigLayerStack>,
         plugin_hook_sources: Vec<PluginHookSource>,
         plugin_hook_load_warnings: Vec<String>,
         shell: CommandShell,

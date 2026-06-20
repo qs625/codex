@@ -9,8 +9,8 @@ workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
-codex-app-server-protocol = { workspace = true }
-codex-code-mode = { workspace = true }
+codex-code-mode-api = { workspace = true }
+codex-connectors-types = { workspace = true }
 codex-features = { workspace = true }
 codex-protocol = { workspace = true }
 codex-utils-absolute-path = { workspace = true }

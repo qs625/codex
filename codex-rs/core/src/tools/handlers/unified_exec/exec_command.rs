@@ -25,19 +25,19 @@ use crate::unified_exec::UnifiedExecError;
 use crate::unified_exec::UnifiedExecProcessManager;
 use crate::unified_exec::generate_chunk_id;
 use codex_features::Feature;
-use codex_otel::SessionTelemetry;
-use codex_otel::TOOL_CALL_UNIFIED_EXEC_METRIC;
+use codex_metrics_api::MetricsSink;
+use codex_metrics_api::TOOL_CALL_UNIFIED_EXEC_METRIC;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use codex_utils_output_truncation::approx_token_count;
 
-use codex_tools::CommandToolOptions;
-use codex_tools::create_exec_command_tool_with_environment_id;
 use super::ExecCommandArgs;
 use super::ExecCommandEnvironmentArgs;
 use super::effective_max_output_tokens;
 use super::get_command;
 use super::post_unified_exec_tool_use_payload;
+use codex_tools::CommandToolOptions;
+use codex_tools::create_exec_command_tool_with_environment_id;
 
 #[derive(Clone, Copy)]
 pub(crate) struct ExecCommandHandlerOptions {
@@ -349,8 +349,8 @@ impl ToolHandler for ExecCommandHandler {
     }
 }
 
-fn emit_unified_exec_tty_metric(session_telemetry: &SessionTelemetry, tty: bool) {
-    session_telemetry.counter(
+fn emit_unified_exec_tty_metric(metrics: &dyn MetricsSink, tty: bool) {
+    metrics.counter(
         TOOL_CALL_UNIFIED_EXEC_METRIC,
         /*inc*/ 1,
         &[("tty", if tty { "true" } else { "false" })],

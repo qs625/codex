@@ -1,15 +1,23 @@
 use crate::install_wfp_filters_for_account;
+#[cfg(feature = "wfp-otel")]
 use crate::setup_error::sanitize_setup_metric_tag_value;
 use anyhow::Result;
+use codex_metrics_api::StatsigMetricsSettings;
+#[cfg(feature = "wfp-otel")]
 use codex_otel::OtelExporter;
+#[cfg(feature = "wfp-otel")]
 use codex_otel::OtelProvider;
+#[cfg(feature = "wfp-otel")]
 use codex_otel::OtelSettings;
-use codex_otel::StatsigMetricsSettings;
+#[cfg(feature = "wfp-otel")]
 use std::collections::BTreeMap;
 use std::path::Path;
 
+#[cfg(feature = "wfp-otel")]
 const WFP_SETUP_SERVICE_NAME: &str = "codex-windows-sandbox-setup";
+#[cfg(feature = "wfp-otel")]
 const WFP_SETUP_SUCCESS_METRIC: &str = "codex.windows_sandbox.wfp_setup_success";
+#[cfg(feature = "wfp-otel")]
 const WFP_SETUP_FAILURE_METRIC: &str = "codex.windows_sandbox.wfp_setup_failure";
 
 #[derive(Debug, Clone, Copy)]
@@ -35,6 +43,7 @@ fn panic_payload_to_string(panic_payload: Box<dyn std::any::Any + Send>) -> Stri
     }
 }
 
+#[cfg(feature = "wfp-otel")]
 fn build_wfp_metrics_provider(
     codex_home: &Path,
     otel: Option<&StatsigMetricsSettings>,
@@ -61,6 +70,7 @@ fn build_wfp_metrics_provider(
     .map_err(|err| anyhow::anyhow!("failed to initialize WFP setup metrics provider: {err}"))
 }
 
+#[cfg(feature = "wfp-otel")]
 fn emit_wfp_setup_metric(
     codex_home: &Path,
     otel: Option<&StatsigMetricsSettings>,
@@ -94,6 +104,15 @@ fn emit_wfp_setup_metric(
         }
     }
     provider.shutdown();
+    Ok(())
+}
+
+#[cfg(not(feature = "wfp-otel"))]
+fn emit_wfp_setup_metric(
+    _codex_home: &Path,
+    _otel: Option<&StatsigMetricsSettings>,
+    _metric: &WfpSetupMetric,
+) -> Result<()> {
     Ok(())
 }
 

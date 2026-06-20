@@ -1,10 +1,15 @@
+use std::collections::BTreeMap;
 use std::collections::HashSet;
 
-use codex_app_server_protocol::AppInfo;
-use codex_config::types::ToolSuggestDisabledTool;
-use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
-use codex_rmcp_client::ElicitationAction;
-use codex_rmcp_client::ElicitationResponse;
+use codex_config_types::ToolSuggestDisabledTool;
+use codex_connectors_types::AppInfo;
+use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
+use codex_mcp_types::ElicitationAction;
+use codex_mcp_types::ElicitationResponse;
+use codex_mcp_types::McpElicitationObjectType;
+use codex_mcp_types::McpElicitationSchema;
+use codex_mcp_types::McpServerElicitationRequest;
+use codex_mcp_types::McpServerElicitationRequestParams;
 use codex_tools::DiscoverableTool;
 use codex_tools::DiscoverableToolAction;
 use codex_tools::DiscoverableToolType;
@@ -12,6 +17,8 @@ use codex_tools::REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE;
 use codex_tools::REQUEST_PLUGIN_INSTALL_PERSIST_KEY;
 use codex_tools::REQUEST_PLUGIN_INSTALL_TOOL_NAME;
 use codex_tools::RequestPluginInstallArgs;
+use codex_tools::RequestPluginInstallElicitationRequest;
+use codex_tools::RequestPluginInstallElicitationSchema;
 use codex_tools::RequestPluginInstallEntry;
 use codex_tools::RequestPluginInstallResult;
 use codex_tools::ToolName;
@@ -19,10 +26,12 @@ use codex_tools::ToolSpec;
 use codex_tools::all_requested_connectors_picked_up;
 use codex_tools::build_request_plugin_install_elicitation_request;
 use codex_tools::collect_request_plugin_install_entries;
+use codex_tools::create_request_plugin_install_tool;
 use codex_tools::filter_request_plugin_install_discoverable_tools_for_client;
 use codex_tools::verified_connector_install_completed;
 use rmcp::model::RequestId;
 use serde_json::Value;
+use serde_json::json;
 use tracing::warn;
 
 use crate::config::edit::ConfigEdit;
@@ -33,7 +42,6 @@ use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::handlers::parse_arguments;
-use codex_tools::create_request_plugin_install_tool;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
 
@@ -145,7 +153,7 @@ impl ToolExecutor<ToolInvocation> for RequestPluginInstallHandler {
             })?;
 
         let request_id = RequestId::String(format!("request_plugin_install_{call_id}").into());
-        let params = build_request_plugin_install_elicitation_request(
+        let request = build_request_plugin_install_elicitation_request(
             CODEX_APPS_MCP_SERVER_NAME,
             session.conversation_id.to_string(),
             turn.sub_id.clone(),
@@ -153,6 +161,7 @@ impl ToolExecutor<ToolInvocation> for RequestPluginInstallHandler {
             suggest_reason,
             &tool,
         );
+        let params = request_plugin_install_elicitation_request_to_mcp_params(request);
         let response = session
             .request_mcp_server_elicitation(turn.as_ref(), request_id, params)
             .await;
@@ -195,6 +204,30 @@ impl ToolExecutor<ToolInvocation> for RequestPluginInstallHandler {
 }
 
 impl ToolHandler for RequestPluginInstallHandler {}
+
+fn request_plugin_install_elicitation_request_to_mcp_params(
+    request: RequestPluginInstallElicitationRequest,
+) -> McpServerElicitationRequestParams {
+    let requested_schema = match request.form.requested_schema {
+        RequestPluginInstallElicitationSchema::EmptyObject => McpElicitationSchema {
+            schema_uri: None,
+            type_: McpElicitationObjectType::Object,
+            properties: BTreeMap::new(),
+            required: None,
+        },
+    };
+
+    McpServerElicitationRequestParams {
+        thread_id: request.thread_id,
+        turn_id: request.turn_id,
+        server_name: request.server_name,
+        request: McpServerElicitationRequest::Form {
+            meta: Some(json!(request.form.meta)),
+            message: request.form.message,
+            requested_schema,
+        },
+    }
+}
 
 async fn maybe_persist_disabled_install_request(
     session: &crate::session::session::Session,

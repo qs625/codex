@@ -13,8 +13,8 @@
 
 use std::collections::BTreeSet;
 
-use codex_config::types::KeybindingsSpec;
-use codex_config::types::TuiKeymap;
+use codex_config_types::KeybindingsSpec;
+use codex_config_types::TuiKeymap;
 use crossterm::event::KeyEvent;
 
 use crate::key_hint::KeyBinding;

@@ -4,8 +4,6 @@ use std::sync::RwLock;
 
 use crate::ExecServerError;
 use crate::ExecServerRuntimePaths;
-use crate::ExecutorFileSystem;
-use crate::HttpClient;
 use crate::client::LazyRemoteExecServerClient;
 use crate::client::http_client::ReqwestHttpClient;
 use crate::client_api::ExecServerTransportParams;
@@ -17,9 +15,15 @@ use crate::environment_provider::normalize_exec_server_url;
 use crate::environment_toml::environment_provider_from_codex_home;
 use crate::local_file_system::LocalFileSystem;
 use crate::local_process::LocalProcess;
-use crate::process::ExecBackend;
 use crate::remote_file_system::RemoteFileSystem;
 use crate::remote_process::RemoteProcess;
+use codex_exec_server_api::ExecBackend;
+use codex_exec_server_api::ExecEnvironment;
+use codex_exec_server_api::ExecEnvironmentProvider;
+use codex_exec_server_api::HttpClient;
+pub use codex_exec_server_api::LOCAL_ENVIRONMENT_ID;
+pub use codex_exec_server_api::REMOTE_ENVIRONMENT_ID;
+use codex_file_system::ExecutorFileSystem;
 
 pub const CODEX_EXEC_SERVER_URL_ENV_VAR: &str = "CODEX_EXEC_SERVER_URL";
 
@@ -44,9 +48,6 @@ pub struct EnvironmentManager {
     environments: RwLock<HashMap<String, Arc<Environment>>>,
     local_environment: Arc<Environment>,
 }
-
-pub const LOCAL_ENVIRONMENT_ID: &str = "local";
-pub const REMOTE_ENVIRONMENT_ID: &str = "remote";
 
 #[derive(Clone, Debug)]
 pub struct EnvironmentManagerArgs {
@@ -297,6 +298,31 @@ impl EnvironmentManager {
     }
 }
 
+impl ExecEnvironmentProvider for EnvironmentManager {
+    fn default_environment(&self) -> Option<Arc<dyn ExecEnvironment>> {
+        EnvironmentManager::default_environment(self).map(|environment| {
+            let environment: Arc<dyn ExecEnvironment> = environment;
+            environment
+        })
+    }
+
+    fn default_environment_ids(&self) -> Vec<String> {
+        EnvironmentManager::default_environment_ids(self)
+    }
+
+    fn local_environment(&self) -> Arc<dyn ExecEnvironment> {
+        let environment: Arc<dyn ExecEnvironment> = EnvironmentManager::local_environment(self);
+        environment
+    }
+
+    fn get_environment(&self, environment_id: &str) -> Option<Arc<dyn ExecEnvironment>> {
+        EnvironmentManager::get_environment(self, environment_id).map(|environment| {
+            let environment: Arc<dyn ExecEnvironment> = environment;
+            environment
+        })
+    }
+}
+
 /// Concrete execution/filesystem environment selected for a session.
 ///
 /// This bundles the selected backend metadata together with the local runtime
@@ -440,6 +466,32 @@ impl Environment {
     }
 
     pub fn get_filesystem(&self) -> Arc<dyn ExecutorFileSystem> {
+        Arc::clone(&self.filesystem)
+    }
+}
+
+impl ExecEnvironment for Environment {
+    fn is_remote(&self) -> bool {
+        self.remote_transport.is_some()
+    }
+
+    fn exec_server_url(&self) -> Option<&str> {
+        self.exec_server_url.as_deref()
+    }
+
+    fn local_runtime_paths(&self) -> Option<&ExecServerRuntimePaths> {
+        self.local_runtime_paths.as_ref()
+    }
+
+    fn get_exec_backend(&self) -> Arc<dyn ExecBackend> {
+        Arc::clone(&self.exec_backend)
+    }
+
+    fn get_http_client(&self) -> Arc<dyn HttpClient> {
+        Arc::clone(&self.http_client)
+    }
+
+    fn get_filesystem(&self) -> Arc<dyn ExecutorFileSystem> {
         Arc::clone(&self.filesystem)
     }
 }

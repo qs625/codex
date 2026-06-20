@@ -101,15 +101,14 @@ mod tests {
     use super::*;
     use crate::extensions::guardian_agent_spawner;
     use crate::extensions::thread_extensions;
-    use async_trait::async_trait;
     use codex_arg0::Arg0DispatchPaths;
-    use codex_config::CloudRequirementsLoader;
-    use codex_config::LoaderOverrides;
-    use codex_config::ThreadConfigContext;
-    use codex_config::ThreadConfigLoadError;
-    use codex_config::ThreadConfigLoadErrorCode;
-    use codex_config::ThreadConfigLoader;
-    use codex_config::ThreadConfigSource;
+    use codex_config_loader::LoaderOverrides;
+    use codex_config_loader::ThreadConfigContext;
+    use codex_config_loader::ThreadConfigLoadError;
+    use codex_config_loader::ThreadConfigLoadErrorCode;
+    use codex_config_loader::ThreadConfigLoader;
+    use codex_config_loader::ThreadConfigSource;
+    use codex_config_requirements::CloudRequirementsLoader;
     use codex_core::config::ConfigOverrides;
     use codex_core::init_state_db;
     use codex_core::thread_store_from_config;
@@ -120,6 +119,8 @@ mod tests {
     use codex_protocol::protocol::SessionSource;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
+    use std::future::Future;
+    use std::pin::Pin;
     use std::sync::Weak;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
@@ -184,7 +185,7 @@ mod tests {
         let thread_store = thread_store_from_config(&good_config, Some(state_db.clone()));
         let thread_watch_manager = crate::thread_status::ThreadWatchManager::new();
         let thread_manager = Arc::new_cyclic(|thread_manager| {
-            ThreadManager::new(
+            ThreadManager::new_with_workflow_runs_and_openai_file_uploader(
                 &good_config,
                 auth_manager,
                 SessionSource::Exec,
@@ -200,6 +201,12 @@ mod tests {
                 Some(state_db.clone()),
                 "11111111-1111-4111-8111-111111111111".to_string(),
                 /*attestation_provider*/ None,
+                Arc::new(codex_model_provider::DefaultModelProviderFactory),
+                Arc::new(codex_code_mode::V8CodeModeRuntimeFactory),
+                Arc::new(codex_workflow::WorkflowRunManager::new(
+                    good_config.codex_home.clone(),
+                )),
+                Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
             )
         });
         thread_manager.start_thread(good_config).await?;
@@ -231,24 +238,31 @@ mod tests {
         bad_loads: AtomicUsize,
     }
 
-    #[async_trait]
     impl ThreadConfigLoader for CountingThreadConfigLoader {
-        async fn load(
+        fn load(
             &self,
             context: ThreadConfigContext,
-        ) -> Result<Vec<ThreadConfigSource>, ThreadConfigLoadError> {
-            if context.cwd.as_ref() == Some(&self.good_cwd) {
-                self.good_loads.fetch_add(1, Ordering::Relaxed);
-            }
-            if context.cwd.as_ref() == Some(&self.bad_cwd) {
-                self.bad_loads.fetch_add(1, Ordering::Relaxed);
-                return Err(ThreadConfigLoadError::new(
-                    ThreadConfigLoadErrorCode::Internal,
-                    /*status_code*/ None,
-                    "failed to load refresh config",
-                ));
-            }
-            Ok(Vec::new())
+        ) -> Pin<
+            Box<
+                dyn Future<Output = Result<Vec<ThreadConfigSource>, ThreadConfigLoadError>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async move {
+                if context.cwd.as_ref() == Some(&self.good_cwd) {
+                    self.good_loads.fetch_add(1, Ordering::Relaxed);
+                }
+                if context.cwd.as_ref() == Some(&self.bad_cwd) {
+                    self.bad_loads.fetch_add(1, Ordering::Relaxed);
+                    return Err(ThreadConfigLoadError::new(
+                        ThreadConfigLoadErrorCode::Internal,
+                        /*status_code*/ None,
+                        "failed to load refresh config",
+                    ));
+                }
+                Ok(Vec::new())
+            })
         }
     }
 }

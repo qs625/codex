@@ -1,0 +1,20 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-config-permissions"
+version.workspace = true
+description = "Permission profile TOML types and network proxy projection helpers."
+
+[lib]
+doctest = false
+name = "codex_config_permissions"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-network-proxy-api = { workspace = true }
+codex-protocol = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }

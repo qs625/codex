@@ -27,8 +27,6 @@ use crate::user_input::ByteRange;
 use crate::user_input::TextElement;
 use crate::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use quick_xml::de::from_str as from_xml_str;
-use quick_xml::se::to_string as to_xml_string;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -95,15 +93,6 @@ pub struct InjectedContextItem {
 pub struct InjectedContextSection {
     pub label: String,
     pub text: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename = "hook_prompt")]
-struct HookPromptXml {
-    #[serde(rename = "@hook_run_id")]
-    hook_run_id: String,
-    #[serde(rename = "$text")]
-    text: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
@@ -442,7 +431,7 @@ pub fn parse_hook_prompt_message(
 
 pub fn parse_hook_prompt_fragment(text: &str) -> Option<HookPromptFragment> {
     let trimmed = text.trim();
-    let HookPromptXml { text, hook_run_id } = from_xml_str::<HookPromptXml>(trimmed).ok()?;
+    let (text, hook_run_id) = parse_hook_prompt_xml(trimmed)?;
     if hook_run_id.trim().is_empty() {
         return None;
     }
@@ -454,11 +443,100 @@ fn serialize_hook_prompt_fragment(text: &str, hook_run_id: &str) -> Option<Strin
     if hook_run_id.trim().is_empty() {
         return None;
     }
-    to_xml_string(&HookPromptXml {
-        text: text.to_string(),
-        hook_run_id: hook_run_id.to_string(),
-    })
-    .ok()
+    Some(format!(
+        "<hook_prompt hook_run_id=\"{}\">{}</hook_prompt>",
+        escape_xml_attr(hook_run_id),
+        escape_xml_text(text)
+    ))
+}
+
+fn parse_hook_prompt_xml(input: &str) -> Option<(String, String)> {
+    let without_open = input.strip_prefix("<hook_prompt")?;
+    let tag_end = without_open.find('>')?;
+    let start_tag = &without_open[..tag_end];
+    if !start_tag.is_empty() && !start_tag.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let content_and_close = &without_open[tag_end + 1..];
+    let content = content_and_close.strip_suffix("</hook_prompt>")?;
+    let hook_run_id = parse_xml_attr(start_tag, "hook_run_id")?;
+    Some((unescape_xml(content)?, hook_run_id))
+}
+
+fn parse_xml_attr(tag: &str, attr_name: &str) -> Option<String> {
+    let mut search_start = 0;
+    let attr_start = loop {
+        let relative_start = tag[search_start..].find(attr_name)?;
+        let attr_start = search_start + relative_start;
+        let before_ok = attr_start == 0
+            || tag[..attr_start]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_whitespace);
+        let after_start = attr_start + attr_name.len();
+        let after_ok = tag[after_start..]
+            .chars()
+            .next()
+            .is_some_and(|ch| ch == '=' || ch.is_whitespace());
+        if before_ok && after_ok {
+            break attr_start;
+        }
+        search_start = after_start;
+    };
+    let rest = &tag[attr_start + attr_name.len()..];
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix('=')?.trim_start();
+    let quote = rest.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let value_start = quote.len_utf8();
+    let value_end = rest[value_start..].find(quote)?;
+    unescape_xml(&rest[value_start..value_start + value_end])
+}
+
+fn escape_xml_text(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn escape_xml_attr(value: &str) -> String {
+    escape_xml_text(value)
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn unescape_xml(value: &str) -> Option<String> {
+    let mut output = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(entity_start) = rest.find('&') {
+        output.push_str(&rest[..entity_start]);
+        rest = &rest[entity_start + 1..];
+        let entity_end = rest.find(';')?;
+        let entity = &rest[..entity_end];
+        let decoded = match entity {
+            "amp" => '&',
+            "lt" => '<',
+            "gt" => '>',
+            "quot" => '"',
+            "apos" => '\'',
+            _ if entity.starts_with("#x") => {
+                let code = u32::from_str_radix(&entity[2..], 16).ok()?;
+                char::from_u32(code)?
+            }
+            _ if entity.starts_with('#') => {
+                let code = entity[1..].parse::<u32>().ok()?;
+                char::from_u32(code)?
+            }
+            _ => return None,
+        };
+        output.push(decoded);
+        rest = &rest[entity_end + 1..];
+    }
+    output.push_str(rest);
+    Some(output)
 }
 
 impl AgentMessageItem {

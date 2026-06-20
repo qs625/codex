@@ -20,8 +20,8 @@
 
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
-use codex_config::types::KeybindingsSpec;
-use codex_config::types::TuiKeymap;
+use codex_config_types::KeybindingsSpec;
+use codex_config_types::TuiKeymap;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyModifiers;
 use std::collections::HashMap;
@@ -1613,7 +1613,7 @@ fn parse_keybinding(spec: &str) -> Option<KeyBinding> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_config::types::KeybindingSpec;
+    use codex_config_types::KeybindingSpec;
 
     fn one(spec: &str) -> KeybindingsSpec {
         KeybindingsSpec::One(KeybindingSpec(spec.to_string()))

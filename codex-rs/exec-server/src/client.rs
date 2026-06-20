@@ -7,7 +7,7 @@ use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
-use codex_app_server_protocol::JSONRPCNotification;
+use codex_jsonrpc_types::JSONRPCNotification;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use serde_json::Value;
@@ -22,7 +22,6 @@ use tracing::debug;
 use crate::ProcessId;
 use crate::client_api::ExecServerClientConnectOptions;
 use crate::client_api::ExecServerTransportParams;
-use crate::client_api::HttpClient;
 use crate::client_api::RemoteExecServerConnectArgs;
 use crate::client_api::StdioExecServerConnectArgs;
 use crate::connection::JsonRpcConnection;
@@ -78,6 +77,9 @@ use crate::protocol::WriteResponse;
 use crate::rpc::RpcCallError;
 use crate::rpc::RpcClient;
 use crate::rpc::RpcClientEvent;
+use codex_exec_server_api::ExecRuntimeError;
+use codex_exec_server_api::HttpClient;
+use codex_exec_server_api::HttpResponseBodyStream as ApiHttpResponseBodyStream;
 
 pub(crate) mod http_client;
 
@@ -220,8 +222,16 @@ impl HttpClient for LazyRemoteExecServerClient {
     fn http_request(
         &self,
         params: crate::HttpRequestParams,
-    ) -> BoxFuture<'_, Result<crate::HttpRequestResponse, ExecServerError>> {
-        async move { self.get().await?.http_request(params).await }.boxed()
+    ) -> BoxFuture<'_, Result<crate::HttpRequestResponse, ExecRuntimeError>> {
+        async move {
+            self.get()
+                .await
+                .map_err(ExecRuntimeError::from)?
+                .http_request(params)
+                .await
+                .map_err(ExecRuntimeError::from)
+        }
+        .boxed()
     }
 
     fn http_request_stream(
@@ -229,9 +239,19 @@ impl HttpClient for LazyRemoteExecServerClient {
         params: crate::HttpRequestParams,
     ) -> BoxFuture<
         '_,
-        Result<(crate::HttpRequestResponse, crate::HttpResponseBodyStream), ExecServerError>,
+        Result<(crate::HttpRequestResponse, ApiHttpResponseBodyStream), ExecRuntimeError>,
     > {
-        async move { self.get().await?.http_request_stream(params).await }.boxed()
+        async move {
+            let (response, stream) = self
+                .get()
+                .await
+                .map_err(ExecRuntimeError::from)?
+                .http_request_stream(params)
+                .await
+                .map_err(ExecRuntimeError::from)?;
+            Ok((response, Box::new(stream) as ApiHttpResponseBodyStream))
+        }
+        .boxed()
     }
 }
 
@@ -273,6 +293,19 @@ pub enum ExecServerError {
     ExecutorRegistryAuth(String),
     #[error("executor registry request failed: {0}")]
     ExecutorRegistryRequest(#[from] reqwest::Error),
+}
+
+impl From<ExecServerError> for ExecRuntimeError {
+    fn from(error: ExecServerError) -> Self {
+        match error {
+            ExecServerError::Closed => ExecRuntimeError::Closed,
+            ExecServerError::Disconnected(message) => ExecRuntimeError::Disconnected(message),
+            ExecServerError::HttpRequest(message) => ExecRuntimeError::HttpRequest(message),
+            ExecServerError::Protocol(message) => ExecRuntimeError::Protocol(message),
+            ExecServerError::Server { code, message } => ExecRuntimeError::Server { code, message },
+            other => ExecRuntimeError::Other(other.to_string()),
+        }
+    }
 }
 
 impl ExecServerClient {
@@ -870,9 +903,9 @@ async fn handle_server_notification(
 
 #[cfg(test)]
 mod tests {
-    use codex_app_server_protocol::JSONRPCMessage;
-    use codex_app_server_protocol::JSONRPCNotification;
-    use codex_app_server_protocol::JSONRPCResponse;
+    use codex_jsonrpc_types::JSONRPCMessage;
+    use codex_jsonrpc_types::JSONRPCNotification;
+    use codex_jsonrpc_types::JSONRPCResponse;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
     #[cfg(unix)]

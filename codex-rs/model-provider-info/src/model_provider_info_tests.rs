@@ -300,15 +300,14 @@ fn test_create_amazon_bedrock_provider() {
 
 #[test]
 fn test_amazon_bedrock_provider_adds_mantle_client_agent_header() {
-    let api_provider = ModelProviderInfo::create_amazon_bedrock_provider(/*aws*/ None)
-        .to_api_provider(/*auth_mode*/ None)
-        .expect("Amazon Bedrock provider should build API provider");
+    let provider = ModelProviderInfo::create_amazon_bedrock_provider(/*aws*/ None);
 
     assert_eq!(
-        api_provider
-            .headers
-            .get(AMAZON_BEDROCK_MANTLE_CLIENT_AGENT_HEADER)
-            .and_then(|value| value.to_str().ok()),
+        provider
+            .http_headers
+            .as_ref()
+            .and_then(|headers| headers.get(AMAZON_BEDROCK_MANTLE_CLIENT_AGENT_HEADER))
+            .map(String::as_str),
         Some(AMAZON_BEDROCK_MANTLE_CLIENT_AGENT_VALUE)
     );
 }

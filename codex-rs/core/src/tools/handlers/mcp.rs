@@ -17,7 +17,7 @@ use crate::tools::registry::ToolExposure;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolTelemetryTags;
 use crate::tools::tool_search_entry::ToolSearchInfo;
-use codex_mcp::ToolInfo;
+use codex_mcp_tool_types::ToolInfo;
 use codex_tools::ResponsesApiNamespace;
 use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ToolName;

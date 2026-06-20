@@ -130,7 +130,7 @@ mod tests {
     use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
     use codex_app_server_protocol::PermissionProfileFileSystemPermissions;
     use codex_app_server_protocol::PermissionProfileNetworkPermissions;
-    use codex_config::types::ApprovalsReviewer;
+    use codex_protocol::config_types::ApprovalsReviewer;
     use codex_protocol::models::PermissionProfile;
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
@@ -194,7 +194,7 @@ mod tests {
         app.side_threads
             .insert(side_thread_id, SideThreadState::new(main_thread_id));
         app.config.permissions.approval_policy =
-            codex_config::Constrained::allow_any(AskForApproval::OnRequest.to_core());
+            codex_config_types::Constrained::allow_any(AskForApproval::OnRequest.to_core());
         app.config.approvals_reviewer = ApprovalsReviewer::AutoReview;
         let expected_permission_profile = PermissionProfile::workspace_write();
         app.chat_widget.handle_thread_session(main_session.clone());
@@ -283,7 +283,7 @@ mod tests {
         );
         app.chat_widget.handle_thread_session(session.clone());
         app.config.permissions.approval_policy =
-            codex_config::Constrained::allow_any(AskForApproval::OnRequest.to_core());
+            codex_config_types::Constrained::allow_any(AskForApproval::OnRequest.to_core());
 
         app.sync_active_thread_permission_settings_to_cached_session()
             .await;

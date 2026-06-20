@@ -1,6 +1,7 @@
 use std::process::Command;
 use std::sync::Arc;
 
+use codex_auth_types::TelemetryAuthMode;
 use codex_core::ModelClient;
 use codex_core::Prompt;
 use codex_core::ResponseEvent;
@@ -8,7 +9,6 @@ use codex_login::CodexAuth;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::WireApi;
 use codex_otel::SessionTelemetry;
-use codex_otel::TelemetryAuthMode;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::models::ContentItem;
@@ -103,6 +103,7 @@ async fn responses_stream_includes_subagent_header_on_review() {
         thread_id.into(),
         thread_id,
         /*installation_id*/ TEST_INSTALLATION_ID.to_string(),
+        codex_core::test_support::model_provider_factory_for_tests(),
         provider.clone(),
         session_source,
         config.model_verbosity,
@@ -241,6 +242,7 @@ async fn responses_stream_includes_subagent_header_on_other() {
         thread_id.into(),
         thread_id,
         /*installation_id*/ TEST_INSTALLATION_ID.to_string(),
+        codex_core::test_support::model_provider_factory_for_tests(),
         provider.clone(),
         session_source,
         config.model_verbosity,
@@ -368,6 +370,7 @@ async fn responses_respects_model_info_overrides_from_config() {
         thread_id.into(),
         thread_id,
         /*installation_id*/ TEST_INSTALLATION_ID.to_string(),
+        codex_core::test_support::model_provider_factory_for_tests(),
         provider.clone(),
         session_source,
         config.model_verbosity,

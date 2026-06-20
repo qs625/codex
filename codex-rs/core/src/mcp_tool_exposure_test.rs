@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use codex_features::Feature;
 use codex_features::Features;
-use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
-use codex_mcp::ToolInfo;
+use codex_mcp_tool_types::ToolInfo;
+use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
 use codex_models_manager::test_support::construct_model_info_offline_for_tests;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WindowsSandboxLevel;
@@ -90,7 +90,7 @@ fn numbered_mcp_tools(count: usize) -> Vec<ToolInfo> {
 fn tool_names(tools: &[ToolInfo]) -> HashSet<ToolName> {
     tools
         .iter()
-        .map(codex_mcp::ToolInfo::canonical_tool_name)
+        .map(codex_mcp_tool_types::ToolInfo::canonical_tool_name)
         .collect()
 }
 

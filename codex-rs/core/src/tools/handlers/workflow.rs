@@ -1,11 +1,27 @@
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
+use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::context::ToolCallSource;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
-use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::handlers::multi_agents_v2;
 use crate::tools::handlers::parse_arguments;
+use crate::tools::registry::ToolExecutor;
+use crate::tools::registry::ToolHandler;
+use crate::workflow_runs::WorkflowAgentBinding;
+use crate::workflow_runs::WorkflowRun;
+use crate::workflow_runs::WorkflowRunStatus;
+use crate::workflow_runs::WorkflowRunUpdateError;
+use crate::workflow_runs::WorkflowRunUpdateReceiver;
+use crate::workflow_runs::WorkflowRuntimeBridge;
+use crate::workflow_runs::WorkflowRuntimeError;
+use crate::workflow_runs::WorkflowRuntimeRequest;
+use crate::workflows::load_workflow_registry;
+use codex_protocol::models::ResponseItem;
+use codex_protocol::models::WorkflowRunProgressEvent;
+use codex_protocol::models::WorkflowRunProgressKind;
+use codex_tools::ToolName;
+use codex_tools::ToolSpec;
 use codex_tools::WORKFLOW_ABORT_TOOL_NAME;
 use codex_tools::WORKFLOW_DESCRIBE_TOOL_NAME;
 use codex_tools::WORKFLOW_LIST_TOOL_NAME;
@@ -18,20 +34,6 @@ use codex_tools::create_workflow_list_tool;
 use codex_tools::create_workflow_resume_tool;
 use codex_tools::create_workflow_start_tool;
 use codex_tools::create_workflow_status_tool;
-use crate::tools::registry::ToolExecutor;
-use crate::tools::registry::ToolHandler;
-use crate::workflow_runs::WorkflowAgentBinding;
-use crate::workflow_runs::WorkflowRun;
-use crate::workflow_runs::WorkflowRunStatus;
-use crate::workflow_runs::WorkflowRuntimeBridge;
-use crate::workflow_runs::WorkflowRuntimeError;
-use crate::workflow_runs::WorkflowRuntimeRequest;
-use crate::workflows::load_workflow_registry;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::models::WorkflowRunProgressEvent;
-use codex_protocol::models::WorkflowRunProgressKind;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
 use serde::Deserialize;
 use serde_json::Value;
 use std::future::Future;
@@ -116,7 +118,11 @@ impl CodexWorkflowRuntimeBridge {
         request: WorkflowRuntimeRequest,
     ) -> Result<Value, WorkflowRuntimeError> {
         let agent_id = required_string(&request.params, "id")?;
-        let options = request.params.get("options").cloned().unwrap_or(Value::Null);
+        let options = request
+            .params
+            .get("options")
+            .cloned()
+            .unwrap_or(Value::Null);
         let message = required_string(&options, "message")?;
         let mut args = serde_json::json!({
             "message": message,
@@ -137,8 +143,18 @@ impl CodexWorkflowRuntimeBridge {
             &options,
             &["serviceTier", "service_tier"],
         );
-        copy_option_string(&mut args, "agent_mode", &options, &["agentMode", "agent_mode"]);
-        copy_option_string(&mut args, "fork_turns", &options, &["forkTurns", "fork_turns"]);
+        copy_option_string(
+            &mut args,
+            "agent_mode",
+            &options,
+            &["agentMode", "agent_mode"],
+        );
+        copy_option_string(
+            &mut args,
+            "fork_turns",
+            &options,
+            &["forkTurns", "fork_turns"],
+        );
 
         let invocation = self.invocation("spawn_agent", &request, args)?;
         let result = multi_agents_v2::handle_workflow_spawn_agent(invocation)
@@ -183,9 +199,13 @@ impl CodexWorkflowRuntimeBridge {
     ) -> Result<Value, WorkflowRuntimeError> {
         let target = required_string(&request.params, "target")?;
         let args = serde_json::json!({ "target": target.clone() });
-        multi_agents_v2::handle_workflow_wait_agent(self.invocation("wait_agent", &request, args)?)
-            .await
-            .map_err(runtime_error_from_tool_error)
+        multi_agents_v2::handle_workflow_wait_agent(self.invocation(
+            "wait_agent",
+            &request,
+            args,
+        )?)
+        .await
+        .map_err(runtime_error_from_tool_error)
     }
 
     fn invocation(
@@ -404,7 +424,12 @@ impl ToolExecutor<ToolInvocation> for WorkflowStartHandler {
         });
         let run = session
             .workflow_runs
-            .start_with_bridge(&registry, workflow, args.inputs.unwrap_or(Value::Null), bridge)
+            .start_with_bridge(
+                &registry,
+                workflow,
+                args.inputs.unwrap_or(Value::Null),
+                bridge,
+            )
             .await
             .map_err(FunctionCallError::RespondToModel)?;
         record_workflow_progress(&session, &turn, &run, WorkflowRunProgressKind::Started).await;
@@ -588,15 +613,15 @@ async fn record_workflow_progress(
 fn record_terminal_workflow_progress(
     session: std::sync::Arc<crate::session::session::Session>,
     turn: std::sync::Arc<crate::session::turn_context::TurnContext>,
-    mut updates: tokio::sync::broadcast::Receiver<WorkflowRun>,
+    mut updates: Box<dyn WorkflowRunUpdateReceiver>,
     run_id: String,
 ) {
     tokio::spawn(async move {
         loop {
             let run = match updates.recv().await {
                 Ok(run) => run,
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                Err(WorkflowRunUpdateError::Lagged(_)) => continue,
+                Err(WorkflowRunUpdateError::Closed) => break,
             };
             if run.run_id == run_id
                 && let Some(kind) = workflow_progress_kind_for_terminal_status(run.status)

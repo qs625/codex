@@ -57,11 +57,11 @@ use crate::unified_exec::process::OutputHandles;
 use crate::unified_exec::process::SpawnLifecycleHandle;
 use crate::unified_exec::process::UnifiedExecProcess;
 use codex_command_runtime::CommandNotificationSnapshot;
+use codex_protocol::ThreadId;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
 use codex_protocol::protocol::ExecCommandSource;
-use codex_protocol::ThreadId;
 use codex_tools::ToolName;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::approx_token_count;
@@ -127,8 +127,8 @@ fn apply_unified_exec_env(mut env: HashMap<String, String>) -> HashMap<String, S
 
 fn exec_env_policy_from_shell_policy(
     policy: &ShellEnvironmentPolicy,
-) -> codex_exec_server::ExecEnvPolicy {
-    codex_exec_server::ExecEnvPolicy {
+) -> codex_exec_server_protocol::ExecEnvPolicy {
+    codex_exec_server_protocol::ExecEnvPolicy {
         inherit: policy.inherit.clone(),
         ignore_default_excludes: policy.ignore_default_excludes,
         exclude: policy
@@ -159,7 +159,7 @@ fn env_overlay_for_exec_server(
 fn exec_server_env_for_request(
     request: &ExecRequest,
 ) -> (
-    Option<codex_exec_server::ExecEnvPolicy>,
+    Option<codex_exec_server_protocol::ExecEnvPolicy>,
     HashMap<String, String>,
 ) {
     if let Some(exec_server_env_config) = &request.exec_server_env_config {
@@ -176,9 +176,9 @@ fn exec_server_params_for_request(
     process_id: i32,
     request: &ExecRequest,
     tty: bool,
-) -> codex_exec_server::ExecParams {
+) -> codex_exec_server_protocol::ExecParams {
     let (env_policy, env) = exec_server_env_for_request(request);
-    codex_exec_server::ExecParams {
+    codex_exec_server_protocol::ExecParams {
         process_id: exec_server_process_id(process_id).into(),
         argv: request.command.clone(),
         cwd: request.cwd.to_path_buf(),
@@ -946,7 +946,7 @@ impl UnifiedExecProcessManager {
         request: &ExecRequest,
         tty: bool,
         mut spawn_lifecycle: SpawnLifecycleHandle,
-        environment: &codex_exec_server::Environment,
+        environment: &dyn codex_exec_server_api::ExecEnvironment,
     ) -> Result<UnifiedExecProcess, UnifiedExecError> {
         let inherited_fds = spawn_lifecycle.inherited_fds();
 

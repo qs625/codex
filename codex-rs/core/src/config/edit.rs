@@ -1,10 +1,10 @@
 use crate::path_utils::resolve_symlink_write_paths;
 use crate::path_utils::write_atomically;
 use anyhow::Context;
-use codex_config::CONFIG_TOML_FILE;
-use codex_config::types::McpServerConfig;
-use codex_config::types::SessionPickerViewMode;
-use codex_config::types::ToolSuggestDisabledTool;
+use codex_config_edit::CONFIG_TOML_FILE;
+use codex_config_types::McpServerConfig;
+use codex_config_types::SessionPickerViewMode;
+use codex_config_types::ToolSuggestDisabledTool;
 use codex_features::FEATURES;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ServiceTier;
@@ -202,13 +202,13 @@ pub fn model_availability_nux_count_edits(shown_count: &HashMap<String, u32>) ->
 
 // TODO(jif) move to a dedicated file
 mod document_helpers {
-    use codex_config::types::AppToolApproval;
-    use codex_config::types::McpServerConfig;
-    use codex_config::types::McpServerEnvVar;
-    use codex_config::types::McpServerToolConfig;
-    use codex_config::types::McpServerTransportConfig;
-    use codex_config::types::ToolSuggestDisabledTool;
-    use codex_config::types::ToolSuggestDiscoverableType;
+    use codex_config_types::AppToolApproval;
+    use codex_config_types::McpServerConfig;
+    use codex_config_types::McpServerEnvVar;
+    use codex_config_types::McpServerToolConfig;
+    use codex_config_types::McpServerTransportConfig;
+    use codex_config_types::ToolSuggestDisabledTool;
+    use codex_config_types::ToolSuggestDiscoverableType;
     use toml_edit::Array as TomlArray;
     use toml_edit::InlineTable;
     use toml_edit::Item as TomlItem;

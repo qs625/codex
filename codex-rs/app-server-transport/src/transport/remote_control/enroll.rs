@@ -2,7 +2,7 @@ use super::protocol::EnrollRemoteServerRequest;
 use super::protocol::EnrollRemoteServerResponse;
 use super::protocol::RemoteControlTarget;
 use axum::http::HeaderMap;
-use codex_api::SharedAuthProvider;
+use codex_api_provider::SharedAuthProvider;
 use codex_login::default_client::build_reqwest_client;
 use codex_state::RemoteControlEnrollmentRecord;
 use codex_state::StateRuntime;
@@ -460,7 +460,7 @@ mod tests {
         let err = enroll_remote_control_server(
             &remote_control_target,
             &RemoteControlConnectionAuth {
-                auth_provider: codex_model_provider::unauthenticated_auth_provider(),
+                auth_provider: codex_model_provider_api::unauthenticated_auth_provider(),
                 account_id: "account_id".to_string(),
             },
             "11111111-1111-4111-8111-111111111111",

@@ -1,5 +1,4 @@
-use codex_core::config::Config;
-use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
+use codex_model_provider_info::ModelProviderInfo;
 use std::io;
 use std::path::Path;
 
@@ -12,16 +11,7 @@ pub struct LMStudioClient {
 const LMSTUDIO_CONNECTION_ERROR: &str = "LM Studio is not responding. Install from https://lmstudio.ai/download and run 'lms server start'.";
 
 impl LMStudioClient {
-    pub async fn try_from_provider(config: &Config) -> std::io::Result<Self> {
-        let provider = config
-            .model_providers
-            .get(LMSTUDIO_OSS_PROVIDER_ID)
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("Built-in provider {LMSTUDIO_OSS_PROVIDER_ID} not found",),
-                )
-            })?;
+    pub async fn try_from_provider(provider: &ModelProviderInfo) -> std::io::Result<Self> {
         let base_url = provider.base_url.as_ref().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,

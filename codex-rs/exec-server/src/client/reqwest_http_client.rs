@@ -7,8 +7,11 @@
 
 use std::time::Duration;
 
-use codex_app_server_protocol::JSONRPCErrorError;
 use codex_client::build_reqwest_client_with_custom_ca;
+use codex_exec_server_api::ExecRuntimeError;
+use codex_exec_server_api::HttpClient;
+use codex_exec_server_api::HttpResponseBodyStream as ApiHttpResponseBodyStream;
+use codex_jsonrpc_types::JSONRPCErrorError;
 use futures::FutureExt;
 use futures::StreamExt;
 use futures::future::BoxFuture;
@@ -20,7 +23,6 @@ use reqwest::header::HeaderValue;
 
 use super::HttpResponseBodyStream;
 use super::response_body_stream::send_body_delta;
-use crate::HttpClient;
 use crate::client::ExecServerError;
 use crate::protocol::HttpHeader;
 use crate::protocol::HttpRequestBodyDeltaNotification;
@@ -65,17 +67,17 @@ impl HttpClient for ReqwestHttpClient {
     fn http_request(
         &self,
         params: HttpRequestParams,
-    ) -> BoxFuture<'_, Result<HttpRequestResponse, ExecServerError>> {
+    ) -> BoxFuture<'_, Result<HttpRequestResponse, ExecRuntimeError>> {
         async move {
             let runner = ReqwestHttpRequestRunner::new(params.timeout_ms)
-                .map_err(|error| ExecServerError::HttpRequest(error.message))?;
+                .map_err(|error| ExecRuntimeError::HttpRequest(error.message))?;
             let (response, _) = runner
                 .run(HttpRequestParams {
                     stream_response: false,
                     ..params
                 })
                 .await
-                .map_err(|error| ExecServerError::HttpRequest(error.message))?;
+                .map_err(|error| ExecRuntimeError::HttpRequest(error.message))?;
             Ok(response)
         }
         .boxed()
@@ -84,25 +86,27 @@ impl HttpClient for ReqwestHttpClient {
     fn http_request_stream(
         &self,
         params: HttpRequestParams,
-    ) -> BoxFuture<'_, Result<(HttpRequestResponse, HttpResponseBodyStream), ExecServerError>> {
+    ) -> BoxFuture<'_, Result<(HttpRequestResponse, ApiHttpResponseBodyStream), ExecRuntimeError>>
+    {
         async move {
             let runner = ReqwestHttpRequestRunner::new(params.timeout_ms)
-                .map_err(|error| ExecServerError::HttpRequest(error.message))?;
+                .map_err(|error| ExecRuntimeError::HttpRequest(error.message))?;
             let (response, pending_stream) = runner
                 .run(HttpRequestParams {
                     stream_response: true,
                     ..params
                 })
                 .await
-                .map_err(|error| ExecServerError::HttpRequest(error.message))?;
+                .map_err(|error| ExecRuntimeError::HttpRequest(error.message))?;
             let pending_stream = pending_stream.ok_or_else(|| {
-                ExecServerError::Protocol(
+                ExecRuntimeError::Protocol(
                     "http request stream did not return a response body stream".to_string(),
                 )
             })?;
             Ok((
                 response,
-                HttpResponseBodyStream::local(pending_stream.response),
+                Box::new(HttpResponseBodyStream::local(pending_stream.response))
+                    as ApiHttpResponseBodyStream,
             ))
         }
         .boxed()

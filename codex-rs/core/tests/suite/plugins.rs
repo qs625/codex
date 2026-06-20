@@ -426,7 +426,7 @@ async fn explicit_plugin_mentions_track_plugin_used_analytics() -> Result<()> {
     );
     assert_eq!(
         event["event_params"]["product_client_id"],
-        serde_json::json!(codex_login::default_client::originator().value)
+        serde_json::json!(codex_default_client::originator().value)
     );
     assert_eq!(event["event_params"]["model_slug"], "gpt-5.2");
     assert!(event["event_params"]["thread_id"].as_str().is_some());

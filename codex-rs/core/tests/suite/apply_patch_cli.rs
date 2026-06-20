@@ -12,8 +12,8 @@ use std::sync::atomic::AtomicI32;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use codex_exec_server::CreateDirectoryOptions;
 use codex_features::Feature;
+use codex_file_system::CreateDirectoryOptions;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;

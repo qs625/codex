@@ -11,11 +11,11 @@ use crate::AttestationContext;
 use crate::AttestationProvider;
 use crate::GenerateAttestationFuture;
 use codex_api::ApiError;
-use codex_api::ResponseEvent;
-use codex_app_server_protocol::AuthMode;
+use codex_api_types::ResponseEvent;
+use codex_auth_types::AuthMode;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
-use codex_model_provider::BearerAuthProvider;
+use codex_model_provider_api::BearerAuthProvider;
 use codex_model_provider_info::CHATGPT_CODEX_BASE_URL;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::WireApi;
@@ -68,6 +68,7 @@ fn test_model_client(session_source: SessionSource) -> ModelClient {
         thread_id.into(),
         thread_id,
         /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
+        crate::test_support::model_provider_factory_for_tests(),
         provider,
         session_source,
         /*model_verbosity*/ None,
@@ -519,6 +520,7 @@ fn model_client_with_counting_attestation(
         SessionId::new(),
         ThreadId::new(),
         /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
+        crate::test_support::model_provider_factory_for_tests(),
         provider,
         SessionSource::Exec,
         /*model_verbosity*/ None,

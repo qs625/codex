@@ -2134,8 +2134,15 @@ impl TestClientTracing {
         let config = Config::load_with_cli_overrides(cli_kv_overrides)
             .await
             .context("error loading config")?;
-        let otel_provider = codex_core::otel_init::build_provider(
-            &config,
+        let otel_provider = codex_otel_init::build_provider(
+            codex_otel_init::OtelProviderConfig {
+                codex_home: config.codex_home.as_path(),
+                otel: &config.otel,
+                analytics_enabled: config.analytics_enabled,
+                runtime_metrics_enabled: config
+                    .features
+                    .enabled(codex_features::Feature::RuntimeMetrics),
+            },
             env!("CARGO_PKG_VERSION"),
             Some(OTEL_SERVICE_NAME),
             DEFAULT_ANALYTICS_ENABLED,

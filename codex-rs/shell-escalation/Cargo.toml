@@ -4,17 +4,12 @@ license.workspace = true
 name = "codex-shell-escalation"
 version.workspace = true
 
-[[bin]]
-name = "codex-execve-wrapper"
-path = "src/bin/main_execve_wrapper.rs"
-
 [lints]
 workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
 async-trait = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
 codex-protocol = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 libc = { workspace = true }
@@ -32,7 +27,6 @@ tokio = { workspace = true, features = [
 ] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

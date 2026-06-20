@@ -7,8 +7,6 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
 use crate::agent::next_thread_spawn_depth;
 use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::apply_role_to_config;
-use codex_tools::SpawnAgentToolOptions;
-use codex_tools::create_spawn_agent_tool_v2;
 use crate::tools::handlers::parse_arguments_with_base_path;
 use crate::turn_timing::now_unix_timestamp_ms;
 use codex_protocol::protocol::InterAgentCommunication;
@@ -16,7 +14,9 @@ use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
+use codex_tools::SpawnAgentToolOptions;
 use codex_tools::ToolSpec;
+use codex_tools::create_spawn_agent_tool_v2;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 #[derive(Default)]

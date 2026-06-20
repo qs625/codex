@@ -5,7 +5,7 @@ mod render;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-pub(crate) use codex_plugin::PluginCapabilitySummary;
+pub(crate) use codex_plugin_types::PluginCapabilitySummary;
 
 pub(crate) use discoverable::list_tool_suggest_discoverable_plugins;
 pub(crate) use injection::build_plugin_injections;

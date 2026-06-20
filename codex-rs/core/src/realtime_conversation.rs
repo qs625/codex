@@ -10,22 +10,20 @@ use async_channel::TrySendError;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use codex_api::ApiError;
-use codex_api::Provider as ApiProvider;
-use codex_api::RealtimeAudioFrame;
-use codex_api::RealtimeEvent;
-use codex_api::RealtimeEventParser;
-use codex_api::RealtimeSessionConfig;
-use codex_api::RealtimeSessionMode;
 use codex_api::RealtimeWebsocketClient;
 use codex_api::RealtimeWebsocketEvents;
 use codex_api::RealtimeWebsocketWriter;
 use codex_api::map_api_error;
-use codex_app_server_protocol::AuthMode;
-use codex_config::config_toml::RealtimeWsMode;
-use codex_config::config_toml::RealtimeWsVersion;
+use codex_api_provider::Provider as ApiProvider;
+use codex_api_types::RealtimeEventParser;
+use codex_api_types::RealtimeSessionConfig;
+use codex_api_types::RealtimeSessionMode;
+use codex_auth_types::AuthMode;
+use codex_config_types::RealtimeWsMode;
+use codex_default_client::default_headers;
 use codex_login::CodexAuth;
-use codex_login::default_client::default_headers;
 use codex_login::read_openai_api_key_from_env;
+use codex_model_provider_api::model_provider_info_to_api_provider;
 use codex_model_provider_info::CHATGPT_CODEX_BASE_URL;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_protocol::error::CodexErr;
@@ -38,10 +36,13 @@ use codex_protocol::protocol::ConversationTextParams;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::RealtimeAudioFrame;
 use codex_protocol::protocol::RealtimeConversationClosedEvent;
 use codex_protocol::protocol::RealtimeConversationRealtimeEvent;
 use codex_protocol::protocol::RealtimeConversationSdpEvent;
 use codex_protocol::protocol::RealtimeConversationStartedEvent;
+use codex_protocol::protocol::RealtimeConversationVersion as RealtimeWsVersion;
+use codex_protocol::protocol::RealtimeEvent;
 use codex_protocol::protocol::RealtimeHandoffRequested;
 use codex_protocol::protocol::RealtimeOutputModality;
 use codex_protocol::protocol::RealtimeVoice;
@@ -669,7 +670,7 @@ fn build_realtime_api_provider(
     auth: Option<&CodexAuth>,
     realtime_ws_base_url: Option<&str>,
 ) -> CodexResult<ApiProvider> {
-    let mut api_provider = provider.to_api_provider(Some(AuthMode::ApiKey))?;
+    let mut api_provider = model_provider_info_to_api_provider(provider, Some(AuthMode::ApiKey));
     if auth.is_some_and(CodexAuth::uses_codex_backend)
         && provider.is_openai()
         && provider

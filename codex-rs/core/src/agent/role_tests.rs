@@ -765,7 +765,7 @@ enabled = false
     let outcome = skills_manager
         .skills_for_config(
             &skills_input,
-            Some(Arc::clone(&codex_exec_server::LOCAL_FS)),
+            Some(Arc::clone(&codex_file_system::LOCAL_FS)),
         )
         .await;
     let skill = outcome

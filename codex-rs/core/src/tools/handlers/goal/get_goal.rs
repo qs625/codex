@@ -2,12 +2,12 @@ use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
-use codex_tools::GET_GOAL_TOOL_NAME;
-use codex_tools::create_get_goal_tool;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
+use codex_tools::GET_GOAL_TOOL_NAME;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
+use codex_tools::create_get_goal_tool;
 
 use super::CompletionBudgetReport;
 use super::format_goal_error;

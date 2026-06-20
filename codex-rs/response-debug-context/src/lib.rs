@@ -1,6 +1,5 @@
 use base64::Engine;
-use codex_api::ApiError;
-use codex_api::TransportError;
+use codex_client_types::TransportError;
 
 const REQUEST_ID_HEADER: &str = "x-request-id";
 const OAI_REQUEST_ID_HEADER: &str = "x-oai-request-id";
@@ -53,13 +52,6 @@ pub fn extract_response_debug_context(transport: &TransportError) -> ResponseDeb
     context
 }
 
-pub fn extract_response_debug_context_from_api_error(error: &ApiError) -> ResponseDebugContext {
-    match error {
-        ApiError::Transport(transport) => extract_response_debug_context(transport),
-        _ => ResponseDebugContext::default(),
-    }
-}
-
 pub fn telemetry_transport_error_message(error: &TransportError) -> String {
     match error {
         TransportError::Http { status, .. } => format!("http {}", status.as_u16()),
@@ -70,30 +62,12 @@ pub fn telemetry_transport_error_message(error: &TransportError) -> String {
     }
 }
 
-pub fn telemetry_api_error_message(error: &ApiError) -> String {
-    match error {
-        ApiError::Transport(transport) => telemetry_transport_error_message(transport),
-        ApiError::Api { status, .. } => format!("api error {}", status.as_u16()),
-        ApiError::Stream(err) => err.to_string(),
-        ApiError::ContextWindowExceeded => "context window exceeded".to_string(),
-        ApiError::QuotaExceeded => "quota exceeded".to_string(),
-        ApiError::UsageNotIncluded => "usage not included".to_string(),
-        ApiError::Retryable { .. } => "retryable error".to_string(),
-        ApiError::RateLimit(_) => "rate limit".to_string(),
-        ApiError::InvalidRequest { .. } => "invalid request".to_string(),
-        ApiError::CyberPolicy { .. } => "cyber policy".to_string(),
-        ApiError::ServerOverloaded => "server overloaded".to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::ResponseDebugContext;
     use super::extract_response_debug_context;
-    use super::telemetry_api_error_message;
     use super::telemetry_transport_error_message;
-    use codex_api::ApiError;
-    use codex_api::TransportError;
+    use codex_client_types::TransportError;
     use http::HeaderMap;
     use http::HeaderValue;
     use http::StatusCode;
@@ -141,17 +115,12 @@ mod tests {
         };
 
         assert_eq!(telemetry_transport_error_message(&transport), "http 401");
-        assert_eq!(
-            telemetry_api_error_message(&ApiError::Transport(transport)),
-            "http 401"
-        );
     }
 
     #[test]
     fn telemetry_error_messages_preserve_non_http_details() {
         let network = TransportError::Network("dns lookup failed".to_string());
         let build = TransportError::Build("invalid header value".to_string());
-        let stream = ApiError::Stream("socket closed".to_string());
 
         assert_eq!(
             telemetry_transport_error_message(&network),
@@ -161,6 +130,5 @@ mod tests {
             telemetry_transport_error_message(&build),
             "invalid header value"
         );
-        assert_eq!(telemetry_api_error_message(&stream), "socket closed");
     }
 }

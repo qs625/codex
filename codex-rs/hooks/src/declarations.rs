@@ -1,5 +1,7 @@
-use codex_plugin::PluginHookSource;
+use codex_plugin_types::PluginHookSource;
 use codex_protocol::protocol::HookEventName;
+
+use crate::event_projection::hook_events_into_matcher_groups;
 
 /// Minimal declaration metadata for one bundled plugin hook handler.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,7 +19,7 @@ pub fn plugin_hook_declarations(hook_sources: &[PluginHookSource]) -> Vec<Plugin
             source.plugin_id.as_key().as_str(),
             source.source_relative_path.as_str(),
         );
-        for (event_name, groups) in source.hooks.clone().into_matcher_groups() {
+        for (event_name, groups) in hook_events_into_matcher_groups(source.hooks.clone()) {
             for (group_index, group) in groups.iter().enumerate() {
                 for (handler_index, _) in group.hooks.iter().enumerate() {
                     declarations.push(PluginHookDeclaration {
@@ -41,7 +43,7 @@ mod tests {
     use codex_config::HookEventsToml;
     use codex_config::HookHandlerConfig;
     use codex_config::MatcherGroup;
-    use codex_plugin::PluginId;
+    use codex_plugin_types::PluginId;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;

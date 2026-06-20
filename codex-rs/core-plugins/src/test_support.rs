@@ -6,8 +6,8 @@ use crate::PluginsConfigInput;
 use codex_config::CloudRequirementsLoader;
 use codex_config::LoaderOverrides;
 use codex_config::NoopThreadConfigLoader;
-use codex_config::loader::load_config_layers_state;
-use codex_exec_server::LOCAL_FS;
+use codex_config_local_loader::load_config_layers_state;
+use codex_file_system::LOCAL_FS;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use toml::Value;
 
@@ -113,7 +113,7 @@ pub(crate) async fn load_plugins_config(codex_home: &Path, cwd: &Path) -> Plugin
     .expect("config should load");
     let effective_config = config_layer_stack.effective_config();
     PluginsConfigInput::new(
-        config_layer_stack,
+        config_layer_stack.into(),
         feature_enabled(&effective_config, "plugins", /*default_enabled*/ true),
         feature_enabled(
             &effective_config,

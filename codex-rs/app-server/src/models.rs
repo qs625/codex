@@ -6,8 +6,8 @@ use codex_app_server_protocol::ModelUpgradeInfo;
 use codex_app_server_protocol::ReasoningEffortOption;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
-use codex_models_manager::manager::RefreshStrategy;
 use codex_models_manager::model_info;
+use codex_models_manager_api::RefreshStrategy;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::openai_models::ReasoningEffortPreset;
@@ -78,8 +78,13 @@ fn add_active_configured_model(models: &mut Vec<Model>, config: &Config, model: 
         model_option.provider == config.model_provider_id && model_option.model == model
     }) {
         let model = configured_model_from_option(
-            &model_option.provider,
-            model_option,
+            ConfiguredModelOptionView {
+                provider_id: &model_option.provider,
+                model: &model_option.model,
+                max_context_window: model_option.max_context_window,
+                context_window: model_option.context_window,
+                auto_compact_token_limit: model_option.auto_compact_token_limit,
+            },
             config.model_reasoning_effort,
             configured_model_description(provider_name.as_deref()),
         );
@@ -121,8 +126,13 @@ fn add_configured_model_options(models: &mut Vec<Model>, config: &Config) {
         let provider = config.model_providers.get(&model_option.provider);
         let provider_name = provider.and_then(|provider| configured_provider_name(&provider.name));
         let model = configured_model_from_option(
-            &model_option.provider,
-            model_option,
+            ConfiguredModelOptionView {
+                provider_id: &model_option.provider,
+                model: &model_option.model,
+                max_context_window: model_option.max_context_window,
+                context_window: model_option.context_window,
+                auto_compact_token_limit: model_option.auto_compact_token_limit,
+            },
             config.model_reasoning_effort,
             configured_model_option_description(provider_name.as_deref()),
         );
@@ -138,12 +148,11 @@ fn add_configured_model_options(models: &mut Vec<Model>, config: &Config) {
 }
 
 fn configured_model_from_option(
-    provider_id: &str,
-    model_option: &codex_config::config_toml::ModelOptionToml,
+    model_option: ConfiguredModelOptionView<'_>,
     model_reasoning_effort: Option<ReasoningEffort>,
     description: String,
 ) -> Model {
-    let mut model_info = model_info::model_info_from_slug(&model_option.model);
+    let mut model_info = model_info::model_info_from_slug(model_option.model);
     model_info.visibility = codex_protocol::openai_models::ModelVisibility::List;
     if let Some(max_context_window) = model_option.max_context_window {
         model_info.max_context_window = Some(max_context_window);
@@ -163,7 +172,15 @@ fn configured_model_from_option(
     if let Some(reasoning_effort) = model_reasoning_effort {
         model_info.default_reasoning_level = Some(reasoning_effort);
     }
-    configured_model_from_preset(provider_id, model_info.into(), description)
+    configured_model_from_preset(model_option.provider_id, model_info.into(), description)
+}
+
+struct ConfiguredModelOptionView<'a> {
+    provider_id: &'a str,
+    model: &'a str,
+    max_context_window: Option<i64>,
+    context_window: Option<i64>,
+    auto_compact_token_limit: Option<i64>,
 }
 
 fn configured_model_from_preset(

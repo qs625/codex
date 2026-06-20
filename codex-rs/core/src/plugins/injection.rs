@@ -8,8 +8,8 @@ use crate::context::ContextualUserFragment;
 use crate::context::PluginInstructions;
 use crate::plugins::PluginCapabilitySummary;
 use crate::plugins::render_explicit_plugin_instructions;
-use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
-use codex_mcp::ToolInfo;
+use codex_mcp_tool_types::ToolInfo;
+use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
 
 pub(crate) fn build_plugin_injections(
     mentioned_plugins: &[PluginCapabilitySummary],

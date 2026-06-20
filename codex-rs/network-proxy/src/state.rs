@@ -1,7 +1,4 @@
-use crate::config::NetworkDomainPermissions;
-use crate::config::NetworkMode;
 use crate::config::NetworkProxyConfig;
-use crate::config::NetworkUnixSocketPermissions;
 use crate::mitm::MitmState;
 use crate::mitm::MitmUpstreamConfig;
 use crate::policy::DomainPattern;
@@ -9,7 +6,9 @@ use crate::policy::compile_allowlist_globset;
 use crate::policy::compile_denylist_globset;
 use crate::policy::is_global_wildcard_domain_pattern;
 use crate::runtime::ConfigState;
-use serde::Deserialize;
+use codex_network_proxy_api::NetworkMode;
+use codex_network_proxy_api::NetworkProxyConstraintError;
+use codex_network_proxy_api::NetworkProxyConstraints;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -20,41 +19,6 @@ pub use crate::runtime::NetworkProxyState;
 #[cfg(test)]
 pub(crate) use crate::runtime::network_proxy_state_for_policy;
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct NetworkProxyConstraints {
-    pub enabled: Option<bool>,
-    pub mode: Option<NetworkMode>,
-    pub allow_upstream_proxy: Option<bool>,
-    pub dangerously_allow_non_loopback_proxy: Option<bool>,
-    pub dangerously_allow_all_unix_sockets: Option<bool>,
-    pub allowed_domains: Option<Vec<String>>,
-    pub allowlist_expansion_enabled: Option<bool>,
-    pub denied_domains: Option<Vec<String>>,
-    pub denylist_expansion_enabled: Option<bool>,
-    pub allow_unix_sockets: Option<Vec<String>>,
-    pub allow_local_binding: Option<bool>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct PartialNetworkProxyConfig {
-    #[serde(default)]
-    pub network: PartialNetworkConfig,
-}
-
-#[derive(Debug, Default, Clone, Deserialize)]
-pub struct PartialNetworkConfig {
-    pub enabled: Option<bool>,
-    pub mode: Option<NetworkMode>,
-    pub allow_upstream_proxy: Option<bool>,
-    pub dangerously_allow_non_loopback_proxy: Option<bool>,
-    pub dangerously_allow_all_unix_sockets: Option<bool>,
-    #[serde(default)]
-    pub domains: Option<NetworkDomainPermissions>,
-    #[serde(default)]
-    pub unix_sockets: Option<NetworkUnixSocketPermissions>,
-    pub allow_local_binding: Option<bool>,
-}
-
 pub fn build_config_state(
     config: NetworkProxyConfig,
     constraints: NetworkProxyConstraints,
@@ -63,7 +27,7 @@ pub fn build_config_state(
     let allowed_domains = config.network.allowed_domains().unwrap_or_default();
     let denied_domains = config.network.denied_domains().unwrap_or_default();
     validate_non_global_wildcard_domain_patterns("network.denied_domains", &denied_domains)
-        .map_err(NetworkProxyConstraintError::into_anyhow)?;
+        .map_err(anyhow::Error::from)?;
     let deny_set = compile_denylist_globset(&denied_domains)?;
     let allow_set = compile_allowlist_globset(&allowed_domains)?;
     let mitm = if config.network.mitm {
@@ -392,22 +356,6 @@ fn validate_non_global_wildcard_domain_patterns(
         });
     }
     Ok(())
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum NetworkProxyConstraintError {
-    #[error("invalid value for {field_name}: {candidate} (allowed {allowed})")]
-    InvalidValue {
-        field_name: &'static str,
-        candidate: String,
-        allowed: String,
-    },
-}
-
-impl NetworkProxyConstraintError {
-    pub fn into_anyhow(self) -> anyhow::Error {
-        anyhow::anyhow!(self)
-    }
 }
 
 fn network_mode_rank(mode: NetworkMode) -> u8 {

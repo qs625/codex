@@ -33,26 +33,28 @@ use crate::tools::handlers::WriteStdinHandler;
 use crate::tools::handlers::agent_jobs::ReportAgentJobResultHandler;
 use crate::tools::handlers::agent_jobs::SpawnAgentsOnCsvHandler;
 use crate::tools::handlers::extension_tools::ExtensionToolHandler;
-use codex_tools::SpawnAgentToolOptions;
 use crate::tools::handlers::multi_agents_v2::CloseAgentHandler as CloseAgentHandlerV2;
 use crate::tools::handlers::multi_agents_v2::FollowupTaskHandler as FollowupTaskHandlerV2;
 use crate::tools::handlers::multi_agents_v2::ListAgentsHandler as ListAgentsHandlerV2;
 use crate::tools::handlers::multi_agents_v2::WaitAgentHandler as WaitAgentHandlerV2;
-use codex_tools::ViewImageToolOptions;
 use crate::tools::registry::RegisteredTool;
 use crate::tools::registry::ToolExposure;
 use crate::tools::registry::ToolRegistryBuilder;
 use crate::tools::registry::override_tool_exposure;
 use crate::tools::spec_plan_types::ToolRegistryBuildParams;
 use crate::tools::spec_plan_types::agent_type_description;
+use codex_code_mode_api::PUBLIC_TOOL_NAME as CODE_MODE_PUBLIC_TOOL_NAME;
+use codex_code_mode_api::WAIT_TOOL_NAME as CODE_MODE_WAIT_TOOL_NAME;
 use codex_extension_api::ExtensionToolExecutor;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_tools::CodeModeExecPlan;
+use codex_tools::SpawnAgentToolOptions;
 use codex_tools::TOOL_SEARCH_TOOL_NAME;
 use codex_tools::ToolEnvironmentMode;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use codex_tools::ToolsConfig;
+use codex_tools::ViewImageToolOptions;
 use codex_tools::code_mode_exec_plan_for_specs;
 use codex_tools::create_code_mode_tool;
 use codex_tools::filter_tool_specs_for_agent;
@@ -377,8 +379,8 @@ fn append_extension_tool_executors(
         .map(|executor| executor.tool_name())
         .collect::<HashSet<_>>();
     if config.code_mode_enabled {
-        reserved_tool_names.insert(ToolName::plain(codex_code_mode::PUBLIC_TOOL_NAME));
-        reserved_tool_names.insert(ToolName::plain(codex_code_mode::WAIT_TOOL_NAME));
+        reserved_tool_names.insert(ToolName::plain(CODE_MODE_PUBLIC_TOOL_NAME));
+        reserved_tool_names.insert(ToolName::plain(CODE_MODE_WAIT_TOOL_NAME));
     }
     if config.search_tool
         && config.namespace_tools

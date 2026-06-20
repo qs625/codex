@@ -3,8 +3,6 @@ use std::io;
 use std::num::NonZeroUsize;
 use std::path::Path;
 
-use codex_utils_image::PromptImageMode;
-use codex_utils_image::load_for_prompt_bytes;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
@@ -21,7 +19,6 @@ use crate::permissions::NetworkSandboxPolicy;
 use crate::protocol::SandboxPolicy;
 use crate::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use codex_utils_image::ImageProcessingError;
 use schemars::JsonSchema;
 
 use crate::event_command::EventCommandEvent;
@@ -1149,26 +1146,12 @@ fn should_serialize_reasoning_content(content: &Option<Vec<ReasoningItemContent>
     }
 }
 
-fn local_image_error_placeholder(
-    path: &std::path::Path,
-    error: impl std::fmt::Display,
-) -> ContentItem {
-    ContentItem::InputText {
-        text: format!(
-            "Codex could not read the local image at `{}`: {}",
-            path.display(),
-            error
-        ),
-    }
-}
-
 pub const VIEW_IMAGE_TOOL_NAME: &str = "view_image";
 
 const IMAGE_OPEN_TAG: &str = "<image>";
 const IMAGE_CLOSE_TAG: &str = "</image>";
 const LOCAL_IMAGE_OPEN_TAG_PREFIX: &str = "<image name=";
 const LOCAL_IMAGE_OPEN_TAG_SUFFIX: &str = ">";
-const LOCAL_IMAGE_CLOSE_TAG: &str = IMAGE_CLOSE_TAG;
 
 pub fn image_open_tag_text() -> String {
     IMAGE_OPEN_TAG.to_string()
@@ -1202,71 +1185,6 @@ pub fn is_image_open_tag_text(text: &str) -> bool {
 
 pub fn is_image_close_tag_text(text: &str) -> bool {
     text == IMAGE_CLOSE_TAG
-}
-
-fn invalid_image_error_placeholder(
-    path: &std::path::Path,
-    error: impl std::fmt::Display,
-) -> ContentItem {
-    ContentItem::InputText {
-        text: format!(
-            "Image located at `{}` is invalid: {}",
-            path.display(),
-            error
-        ),
-    }
-}
-
-fn unsupported_image_error_placeholder(path: &std::path::Path, mime: &str) -> ContentItem {
-    ContentItem::InputText {
-        text: format!(
-            "Codex cannot attach image at `{}`: unsupported image `{}`.",
-            path.display(),
-            mime
-        ),
-    }
-}
-
-pub fn local_image_content_items_with_label_number(
-    path: &std::path::Path,
-    file_bytes: Vec<u8>,
-    label_number: Option<usize>,
-    mode: PromptImageMode,
-) -> Vec<ContentItem> {
-    match load_for_prompt_bytes(path, file_bytes, mode) {
-        Ok(image) => {
-            let mut items = Vec::with_capacity(3);
-            if let Some(label_number) = label_number {
-                items.push(ContentItem::InputText {
-                    text: local_image_open_tag_text(label_number),
-                });
-            }
-            items.push(ContentItem::InputImage {
-                image_url: image.into_data_url(),
-                detail: Some(DEFAULT_IMAGE_DETAIL),
-            });
-            if label_number.is_some() {
-                items.push(ContentItem::InputText {
-                    text: LOCAL_IMAGE_CLOSE_TAG.to_string(),
-                });
-            }
-            items
-        }
-        Err(err) => match &err {
-            ImageProcessingError::Read { .. } | ImageProcessingError::Encode { .. } => {
-                vec![local_image_error_placeholder(path, &err)]
-            }
-            ImageProcessingError::Decode { .. } if err.is_invalid_image() => {
-                vec![invalid_image_error_placeholder(path, &err)]
-            }
-            ImageProcessingError::Decode { .. } => {
-                vec![local_image_error_placeholder(path, &err)]
-            }
-            ImageProcessingError::UnsupportedImageFormat { mime } => {
-                vec![unsupported_image_error_placeholder(path, mime)]
-            }
-        },
-    }
 }
 
 impl From<ResponseInputItem> for ResponseItem {
@@ -1381,39 +1299,31 @@ pub enum ReasoningItemContent {
 
 impl From<Vec<UserInput>> for ResponseInputItem {
     fn from(items: Vec<UserInput>) -> Self {
-        let mut image_index = 0;
         Self::Message {
             role: "user".to_string(),
             content: items
                 .into_iter()
                 .flat_map(|c| match c {
                     UserInput::Text { text, .. } => vec![ContentItem::InputText { text }],
-                    UserInput::Image { image_url } => {
-                        image_index += 1;
-                        vec![
-                            ContentItem::InputText {
-                                text: image_open_tag_text(),
-                            },
-                            ContentItem::InputImage {
-                                image_url,
-                                detail: Some(DEFAULT_IMAGE_DETAIL),
-                            },
-                            ContentItem::InputText {
-                                text: image_close_tag_text(),
-                            },
-                        ]
-                    }
+                    UserInput::Image { image_url } => vec![
+                        ContentItem::InputText {
+                            text: image_open_tag_text(),
+                        },
+                        ContentItem::InputImage {
+                            image_url,
+                            detail: Some(DEFAULT_IMAGE_DETAIL),
+                        },
+                        ContentItem::InputText {
+                            text: image_close_tag_text(),
+                        },
+                    ],
                     UserInput::LocalImage { path } => {
-                        image_index += 1;
-                        match std::fs::read(&path) {
-                            Ok(file_bytes) => local_image_content_items_with_label_number(
-                                &path,
-                                file_bytes,
-                                Some(image_index),
-                                PromptImageMode::ResizeToFit,
+                        vec![ContentItem::InputText {
+                            text: format!(
+                                "Local image at `{}` must be processed by the model input adapter before it can be attached.",
+                                path.display()
                             ),
-                            Err(err) => vec![local_image_error_placeholder(&path, err)],
-                        }
+                        }]
                     }
                     UserInput::Skill { .. } | UserInput::Mention { .. } => Vec::new(), // Tool bodies are injected later in core
                 })
@@ -2887,169 +2797,6 @@ mod tests {
                 tools: vec![],
             }
         );
-
-        Ok(())
-    }
-
-    #[test]
-    fn mixed_remote_and_local_images_share_label_sequence() -> Result<()> {
-        let image_url = "data:image/png;base64,abc".to_string();
-        let dir = tempdir()?;
-        let local_path = dir.path().join("local.png");
-        // A tiny valid PNG (1x1) so this test doesn't depend on cross-crate file paths, which
-        // break under Bazel sandboxing.
-        const TINY_PNG_BYTES: &[u8] = &[
-            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1,
-            8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 11, 73, 68, 65, 84, 120, 156, 99, 96, 0, 2,
-            0, 0, 5, 0, 1, 122, 94, 171, 63, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
-        ];
-        std::fs::write(&local_path, TINY_PNG_BYTES)?;
-
-        let item = ResponseInputItem::from(vec![
-            UserInput::Image {
-                image_url: image_url.clone(),
-            },
-            UserInput::LocalImage { path: local_path },
-        ]);
-
-        match item {
-            ResponseInputItem::Message { content, .. } => {
-                assert_eq!(
-                    content.first(),
-                    Some(&ContentItem::InputText {
-                        text: image_open_tag_text(),
-                    })
-                );
-                assert_eq!(
-                    content.get(1),
-                    Some(&ContentItem::InputImage {
-                        image_url,
-                        detail: Some(DEFAULT_IMAGE_DETAIL),
-                    })
-                );
-                assert_eq!(
-                    content.get(2),
-                    Some(&ContentItem::InputText {
-                        text: image_close_tag_text(),
-                    })
-                );
-                assert_eq!(
-                    content.get(3),
-                    Some(&ContentItem::InputText {
-                        text: local_image_open_tag_text(/*label_number*/ 2),
-                    })
-                );
-                assert!(matches!(
-                    content.get(4),
-                    Some(ContentItem::InputImage { .. })
-                ));
-                assert_eq!(
-                    content.get(5),
-                    Some(&ContentItem::InputText {
-                        text: image_close_tag_text(),
-                    })
-                );
-            }
-            other => panic!("expected message response but got {other:?}"),
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn local_image_read_error_adds_placeholder() -> Result<()> {
-        let dir = tempdir()?;
-        let missing_path = dir.path().join("missing-image.png");
-
-        let item = ResponseInputItem::from(vec![UserInput::LocalImage {
-            path: missing_path.clone(),
-        }]);
-
-        match item {
-            ResponseInputItem::Message { content, .. } => {
-                assert_eq!(content.len(), 1);
-                match &content[0] {
-                    ContentItem::InputText { text } => {
-                        let display_path = missing_path.display().to_string();
-                        assert!(
-                            text.contains(&display_path),
-                            "placeholder should mention missing path: {text}"
-                        );
-                        assert!(
-                            text.contains("could not read"),
-                            "placeholder should mention read issue: {text}"
-                        );
-                    }
-                    other => panic!("expected placeholder text but found {other:?}"),
-                }
-            }
-            other => panic!("expected message response but got {other:?}"),
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn local_image_non_image_adds_placeholder() -> Result<()> {
-        let dir = tempdir()?;
-        let json_path = dir.path().join("example.json");
-        std::fs::write(&json_path, br#"{"hello":"world"}"#)?;
-
-        let item = ResponseInputItem::from(vec![UserInput::LocalImage {
-            path: json_path.clone(),
-        }]);
-
-        match item {
-            ResponseInputItem::Message { content, .. } => {
-                assert_eq!(content.len(), 1);
-                match &content[0] {
-                    ContentItem::InputText { text } => {
-                        assert!(
-                            text.contains("unsupported image `application/json`"),
-                            "placeholder should mention unsupported image MIME: {text}"
-                        );
-                        assert!(
-                            text.contains(&json_path.display().to_string()),
-                            "placeholder should mention path: {text}"
-                        );
-                    }
-                    other => panic!("expected placeholder text but found {other:?}"),
-                }
-            }
-            other => panic!("expected message response but got {other:?}"),
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn local_image_unsupported_image_format_adds_placeholder() -> Result<()> {
-        let dir = tempdir()?;
-        let svg_path = dir.path().join("example.svg");
-        std::fs::write(
-            &svg_path,
-            br#"<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>"#,
-        )?;
-
-        let item = ResponseInputItem::from(vec![UserInput::LocalImage {
-            path: svg_path.clone(),
-        }]);
-
-        match item {
-            ResponseInputItem::Message { content, .. } => {
-                assert_eq!(content.len(), 1);
-                let expected = format!(
-                    "Codex cannot attach image at `{}`: unsupported image `image/svg+xml`.",
-                    svg_path.display()
-                );
-                match &content[0] {
-                    ContentItem::InputText { text } => assert_eq!(text, &expected),
-                    other => panic!("expected placeholder text but found {other:?}"),
-                }
-            }
-            other => panic!("expected message response but got {other:?}"),
-        }
 
         Ok(())
     }

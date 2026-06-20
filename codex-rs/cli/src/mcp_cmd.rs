@@ -6,9 +6,10 @@ use anyhow::Result;
 use anyhow::anyhow;
 use anyhow::bail;
 use clap::ArgGroup;
-use codex_config::types::AppToolApproval;
-use codex_config::types::McpServerConfig;
-use codex_config::types::McpServerTransportConfig;
+use codex_config_types::AppToolApproval;
+use codex_config_types::McpServerConfig;
+use codex_config_types::McpServerTransportConfig;
+use codex_config_types::OAuthCredentialsStoreMode;
 use codex_core::McpManager;
 use codex_core::config::Config;
 use codex_core::config::edit::ConfigEditsBuilder;
@@ -195,7 +196,7 @@ impl McpCli {
 async fn perform_oauth_login_retry_without_scopes(
     name: &str,
     url: &str,
-    store_mode: codex_config::types::OAuthCredentialsStoreMode,
+    store_mode: OAuthCredentialsStoreMode,
     http_headers: Option<HashMap<String, String>>,
     env_http_headers: Option<HashMap<String, String>>,
     resolved_scopes: &ResolvedMcpOAuthScopes,

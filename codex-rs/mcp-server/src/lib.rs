@@ -78,8 +78,15 @@ pub async fn run_main(
             std::io::Error::new(ErrorKind::InvalidData, format!("error loading config: {e}"))
         })?;
     set_default_client_residency_requirement(config.enforce_residency.value());
-    let otel = codex_core::otel_init::build_provider(
-        &config,
+    let otel = codex_otel_init::build_provider(
+        codex_otel_init::OtelProviderConfig {
+            codex_home: config.codex_home.as_path(),
+            otel: &config.otel,
+            analytics_enabled: config.analytics_enabled,
+            runtime_metrics_enabled: config
+                .features
+                .enabled(codex_features::Feature::RuntimeMetrics),
+        },
         env!("CARGO_PKG_VERSION"),
         Some(OTEL_SERVICE_NAME),
         DEFAULT_ANALYTICS_ENABLED,
@@ -90,8 +97,8 @@ pub async fn run_main(
             format!("error loading otel config: {e}"),
         )
     })?;
-    codex_core::otel_init::record_process_start(otel.as_ref(), OTEL_SERVICE_NAME);
-    codex_core::otel_init::install_sqlite_telemetry(otel.as_ref(), OTEL_SERVICE_NAME);
+    codex_otel_init::record_process_start(otel.as_ref(), OTEL_SERVICE_NAME);
+    codex_otel_init::install_sqlite_telemetry(otel.as_ref(), OTEL_SERVICE_NAME);
     let state_db = codex_core::init_state_db(&config).await;
     let environment_manager = Arc::new(
         EnvironmentManager::from_codex_home(
@@ -205,7 +212,7 @@ pub async fn run_main(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_config::types::OtelExporterKind;
+    use codex_config_types::OtelExporterKind;
     use codex_core::config::ConfigBuilder;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
@@ -233,8 +240,15 @@ mod tests {
         config.otel.metrics_exporter = exporter;
         config.analytics_enabled = None;
 
-        let provider = codex_core::otel_init::build_provider(
-            &config,
+        let provider = codex_otel_init::build_provider(
+            codex_otel_init::OtelProviderConfig {
+                codex_home: config.codex_home.as_path(),
+                otel: &config.otel,
+                analytics_enabled: config.analytics_enabled,
+                runtime_metrics_enabled: config
+                    .features
+                    .enabled(codex_features::Feature::RuntimeMetrics),
+            },
             "0.0.0-test",
             Some(OTEL_SERVICE_NAME),
             DEFAULT_ANALYTICS_ENABLED,

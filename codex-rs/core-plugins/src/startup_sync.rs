@@ -5,8 +5,8 @@ use std::process::Output;
 use std::process::Stdio;
 use std::time::Duration;
 
-use codex_otel::CURATED_PLUGINS_STARTUP_SYNC_FINAL_METRIC;
-use codex_otel::CURATED_PLUGINS_STARTUP_SYNC_METRIC;
+use codex_metrics_api::CURATED_PLUGINS_STARTUP_SYNC_FINAL_METRIC;
+use codex_metrics_api::CURATED_PLUGINS_STARTUP_SYNC_METRIC;
 use reqwest::Client;
 use serde::Deserialize;
 use tempfile::TempDir;
@@ -361,11 +361,8 @@ fn emit_curated_plugins_startup_sync_counter(
     transport: &'static str,
     status: &'static str,
 ) {
-    let Some(metrics) = codex_otel::global() else {
-        return;
-    };
     let tags = [("transport", transport), ("status", status)];
-    let _ = metrics.counter(metric_name, /*inc*/ 1, &tags);
+    codex_metrics_api::record_global_counter(metric_name, /*inc*/ 1, &tags);
 }
 
 fn ensure_marketplace_manifest_exists(repo_path: &Path) -> Result<(), String> {

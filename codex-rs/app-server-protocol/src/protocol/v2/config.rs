@@ -2,6 +2,9 @@ use super::ApprovalsReviewer;
 use super::AskForApproval;
 use super::SandboxMode;
 use super::shared::default_enabled;
+pub use codex_config_types::ConfigLayer;
+pub use codex_config_types::ConfigLayerMetadata;
+pub use codex_config_types::ConfigLayerSource;
 use codex_experimental_api_macros::ExperimentalApi;
 use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::ReasoningSummary;
@@ -18,98 +21,6 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use ts_rs::TS;
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
-#[serde(tag = "type", rename_all = "camelCase")]
-#[ts(tag = "type")]
-#[ts(export_to = "v2/")]
-pub enum ConfigLayerSource {
-    /// Managed preferences layer delivered by MDM (macOS only).
-    #[serde(rename_all = "camelCase")]
-    #[ts(rename_all = "camelCase")]
-    Mdm {
-        domain: String,
-        key: String,
-    },
-
-    /// Managed config layer from a file (usually `managed_config.toml`).
-    #[serde(rename_all = "camelCase")]
-    #[ts(rename_all = "camelCase")]
-    System {
-        /// This is the path to the system config.toml file, though it is not
-        /// guaranteed to exist.
-        file: AbsolutePathBuf,
-    },
-
-    /// User config layer from $CODEX_HOME/config.toml. This layer is special
-    /// in that it is expected to be:
-    /// - writable by the user
-    /// - generally outside the workspace directory
-    #[serde(rename_all = "camelCase")]
-    #[ts(rename_all = "camelCase")]
-    User {
-        /// This is the path to the user's config.toml file, though it is not
-        /// guaranteed to exist.
-        file: AbsolutePathBuf,
-
-        /// Name of the selected profile-v2 config layered on top of the base
-        /// user config, when this layer represents one.
-        profile: Option<String>,
-    },
-
-    /// Path to a .codex/ folder within a project. There could be multiple of
-    /// these between `cwd` and the project/repo root.
-    #[serde(rename_all = "camelCase")]
-    #[ts(rename_all = "camelCase")]
-    Project {
-        dot_codex_folder: AbsolutePathBuf,
-    },
-
-    /// Session-layer overrides supplied via `-c`/`--config`.
-    SessionFlags,
-
-    /// `managed_config.toml` was designed to be a config that was loaded
-    /// as the last layer on top of everything else. This scheme did not quite
-    /// work out as intended, but we keep this variant as a "best effort" while
-    /// we phase out `managed_config.toml` in favor of `requirements.toml`.
-    #[serde(rename_all = "camelCase")]
-    #[ts(rename_all = "camelCase")]
-    LegacyManagedConfigTomlFromFile {
-        file: AbsolutePathBuf,
-    },
-
-    LegacyManagedConfigTomlFromMdm,
-}
-
-impl ConfigLayerSource {
-    /// A settings from a layer with a higher precedence will override a setting
-    /// from a layer with a lower precedence.
-    pub fn precedence(&self) -> i16 {
-        match self {
-            ConfigLayerSource::Mdm { .. } => 0,
-            ConfigLayerSource::System { .. } => 10,
-            ConfigLayerSource::User { profile, .. } => {
-                if profile.is_some() {
-                    21
-                } else {
-                    20
-                }
-            }
-            ConfigLayerSource::Project { .. } => 25,
-            ConfigLayerSource::SessionFlags => 30,
-            ConfigLayerSource::LegacyManagedConfigTomlFromFile { .. } => 40,
-            ConfigLayerSource::LegacyManagedConfigTomlFromMdm => 50,
-        }
-    }
-}
-
-/// Compares [ConfigLayerSource] by precedence, so `A < B` means settings from
-/// layer `A` will be overridden by settings from layer `B`.
-impl PartialOrd for ConfigLayerSource {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.precedence().cmp(&other.precedence()))
-    }
-}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
@@ -282,25 +193,6 @@ pub struct Config {
     pub desktop: Option<HashMap<String, JsonValue>>,
     #[serde(default, flatten)]
     pub additional: HashMap<String, JsonValue>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "v2/")]
-pub struct ConfigLayerMetadata {
-    pub name: ConfigLayerSource,
-    pub version: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "v2/")]
-pub struct ConfigLayer {
-    pub name: ConfigLayerSource,
-    pub version: String,
-    pub config: JsonValue,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub disabled_reason: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]

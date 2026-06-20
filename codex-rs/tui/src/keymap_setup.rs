@@ -31,9 +31,9 @@ pub(crate) use picker::build_keymap_picker_params_for_selected_action;
 pub(crate) use picker::build_keymap_picker_params_for_selected_action_with_filter;
 pub(crate) use picker::build_keymap_picker_params_with_filter;
 
-use codex_config::types::KeybindingSpec;
-use codex_config::types::KeybindingsSpec;
-use codex_config::types::TuiKeymap;
+use codex_config_types::KeybindingSpec;
+use codex_config_types::KeybindingsSpec;
+use codex_config_types::TuiKeymap;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;

@@ -91,7 +91,11 @@ fn merge_tool_specs_into_namespaces_merges_sorts_and_fills_description() {
         merge_tool_specs_into_namespaces(vec![
             namespace_spec("test_server/", "", vec![function_tool("zebra", "z")]),
             ToolSpec::Function(function_tool("plain", "Plain tool")),
-            namespace_spec("test_server/", "Test server tools.", vec![function_tool("alpha", "a")]),
+            namespace_spec(
+                "test_server/",
+                "Test server tools.",
+                vec![function_tool("alpha", "a")]
+            ),
             namespace_spec("empty_server/", "", vec![function_tool("echo", "Echo")]),
         ]),
         vec![
@@ -116,7 +120,10 @@ fn code_mode_exec_plan_sorts_namespaced_tools_after_plain_tools() {
         namespace_spec(
             "beta_",
             "Beta tools",
-            vec![function_tool("zulu", "Zulu"), function_tool("alpha", "Alpha")],
+            vec![
+                function_tool("zulu", "Zulu"),
+                function_tool("alpha", "Alpha"),
+            ],
         ),
         ToolSpec::Function(function_tool("plain", "Plain tool")),
         namespace_spec("alpha_", "Alpha tools", vec![function_tool("echo", "Echo")]),

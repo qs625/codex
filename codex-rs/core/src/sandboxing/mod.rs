@@ -37,7 +37,7 @@ pub(crate) struct ExecOptions {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ExecServerEnvConfig {
-    pub(crate) policy: codex_exec_server::ExecEnvPolicy,
+    pub(crate) policy: codex_exec_server_protocol::ExecEnvPolicy,
     pub(crate) local_policy_env: HashMap<String, String>,
 }
 
@@ -112,12 +112,13 @@ impl ExecRequest {
         request: SandboxExecRequest,
         options: ExecOptions,
         windows_sandbox_policy_cwd: AbsolutePathBuf,
+        network: Option<NetworkProxy>,
     ) -> Self {
         let SandboxExecRequest {
             command,
             cwd,
             mut env,
-            network,
+            network: _,
             sandbox,
             windows_sandbox_level,
             windows_sandbox_private_desktop,

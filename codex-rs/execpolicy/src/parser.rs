@@ -18,22 +18,24 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::decision::Decision;
 use crate::error::Error;
 use crate::error::ErrorLocation;
 use crate::error::Result;
 use crate::error::TextPosition;
 use crate::error::TextRange;
-use crate::executable_name::executable_lookup_key;
-use crate::executable_name::executable_path_lookup_key;
-use crate::rule::NetworkRule;
-use crate::rule::NetworkRuleProtocol;
-use crate::rule::PatternToken;
-use crate::rule::PrefixPattern;
-use crate::rule::PrefixRule;
-use crate::rule::RuleRef;
-use crate::rule::validate_match_examples;
-use crate::rule::validate_not_match_examples;
+use codex_execpolicy_api::Decision;
+use codex_execpolicy_api::Policy;
+use codex_execpolicy_api::executable_name::executable_lookup_key;
+use codex_execpolicy_api::executable_name::executable_path_lookup_key;
+use codex_execpolicy_api::rule::NetworkRule;
+use codex_execpolicy_api::rule::NetworkRuleProtocol;
+use codex_execpolicy_api::rule::PatternToken;
+use codex_execpolicy_api::rule::PrefixPattern;
+use codex_execpolicy_api::rule::PrefixRule;
+use codex_execpolicy_api::rule::RuleRef;
+use codex_execpolicy_api::rule::normalize_network_rule_host;
+use codex_execpolicy_api::rule::validate_match_examples;
+use codex_execpolicy_api::rule::validate_not_match_examples;
 
 pub struct PolicyParser {
     builder: RefCell<PolicyBuilder>,
@@ -77,7 +79,7 @@ impl PolicyParser {
         Ok(())
     }
 
-    pub fn build(self) -> crate::policy::Policy {
+    pub fn build(self) -> Policy {
         self.builder.into_inner().build()
     }
 }
@@ -136,7 +138,7 @@ impl PolicyBuilder {
                 rules_by_program.insert(rule.program().to_string(), rule.clone());
             }
 
-            let policy = crate::policy::Policy::from_parts(
+            let policy = Policy::from_parts(
                 rules_by_program,
                 Vec::new(),
                 self.host_executables_by_name.clone(),
@@ -150,8 +152,8 @@ impl PolicyBuilder {
         Ok(())
     }
 
-    fn build(self) -> crate::policy::Policy {
-        crate::policy::Policy::from_parts(
+    fn build(self) -> Policy {
+        Policy::from_parts(
             self.rules_by_program,
             self.network_rules,
             self.host_executables_by_name,
@@ -252,7 +254,7 @@ fn validate_host_executable_name(name: &str) -> Result<()> {
 fn parse_network_rule_decision(raw: &str) -> Result<Decision> {
     match raw {
         "deny" => Ok(Decision::Forbidden),
-        other => Decision::parse(other),
+        other => Ok(Decision::parse(other)?),
     }
 }
 
@@ -273,7 +275,8 @@ fn error_location_from_file_span(span: FileSpan) -> ErrorLocation {
     }
 }
 
-fn attach_validation_location(error: Error, location: Option<ErrorLocation>) -> Error {
+fn attach_validation_location(error: impl Into<Error>, location: Option<ErrorLocation>) -> Error {
+    let error = error.into();
     match location {
         Some(location) => error.with_location(location),
         None => error,
@@ -425,7 +428,7 @@ fn policy_builtins(builder: &mut GlobalsBuilder) {
 
         let mut builder = policy_builder(eval);
         builder.add_network_rule(NetworkRule {
-            host: crate::rule::normalize_network_rule_host(host)?,
+            host: normalize_network_rule_host(host)?,
             protocol,
             decision,
             justification,

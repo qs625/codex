@@ -1,5 +1,5 @@
+use codex_auth_types::AuthEnvTelemetryMetadata;
 use codex_model_provider_info::ModelProviderInfo;
-use codex_otel::AuthEnvTelemetryMetadata;
 
 use crate::CODEX_API_KEY_ENV_VAR;
 use crate::OPENAI_API_KEY_ENV_VAR;

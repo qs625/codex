@@ -1,12 +1,12 @@
 use super::AgentCapabilityAllowlist;
 use super::AgentRoleConfig;
 use super::AgentRoleSource;
-use codex_config::ConfigLayerStack;
-use codex_config::ConfigLayerStackOrdering;
-use codex_config::config_toml::AgentRoleToml;
-use codex_config::config_toml::AgentsToml;
-use codex_config::config_toml::ConfigToml;
-use codex_exec_server::ExecutorFileSystem;
+use codex_config_state::ConfigLayerStack;
+use codex_config_state::ConfigLayerStackOrdering;
+use codex_config_toml::config_toml::ConfigToml;
+use codex_config_types::AgentRoleToml;
+use codex_config_types::AgentsToml;
+use codex_file_system::ExecutorFileSystem;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
 use serde::Deserialize;
@@ -164,6 +164,12 @@ pub(crate) async fn merge_missing_agent_roles_from_plugin_dirs(
         )
         .await?
         {
+            if let Err(err) =
+                validate_required_agent_role_description(&role_name, role.description.as_deref())
+            {
+                push_agent_role_warning(startup_warnings, err);
+                continue;
+            }
             if plugin_roles.contains_key(&role_name) {
                 push_agent_role_warning(
                     startup_warnings,
@@ -489,7 +495,7 @@ fn parse_markdown_agent_role_file_contents(
         ));
     }
 
-    let description = normalize_agent_role_description(
+    let description = normalize_markdown_agent_role_description(
         &format!("agent role file {}.description", role_file_label.display()),
         parsed.description.as_deref(),
     )?;

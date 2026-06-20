@@ -13,22 +13,21 @@ use crate::session::turn_context::TurnContext;
 use crate::state::ActiveTurn;
 use crate::state::TurnState;
 use crate::tasks::RegularTask;
-use codex_tools::UPDATE_GOAL_TOOL_NAME;
 use anyhow::Context;
 use codex_features::Feature;
-use codex_otel::GOAL_BUDGET_LIMITED_METRIC;
-use codex_otel::GOAL_COMPLETED_METRIC;
-use codex_otel::GOAL_CREATED_METRIC;
-use codex_otel::GOAL_DURATION_SECONDS_METRIC;
-use codex_otel::GOAL_TOKEN_COUNT_METRIC;
+use codex_metrics_api::GOAL_BUDGET_LIMITED_METRIC;
+use codex_metrics_api::GOAL_COMPLETED_METRIC;
+use codex_metrics_api::GOAL_CREATED_METRIC;
+use codex_metrics_api::GOAL_DURATION_SECONDS_METRIC;
+use codex_metrics_api::GOAL_TOKEN_COUNT_METRIC;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::models::ThreadGoalUpdateEventAction;
+use codex_protocol::models::ThreadGoalUpdateEventSource;
 use codex_protocol::models::ThreadGoalUpdateGoal;
 use codex_protocol::models::ThreadGoalUpdateGoalStatus;
-use codex_protocol::models::ThreadGoalUpdateEventSource;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ThreadGoal;
@@ -39,6 +38,7 @@ use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::validate_thread_goal_objective;
 use codex_rollout::state_db::reconcile_rollout;
 use codex_thread_store::LocalThreadStore;
+use codex_tools::UPDATE_GOAL_TOOL_NAME;
 use codex_utils_template::Template;
 use futures::future::BoxFuture;
 use std::sync::Arc;
@@ -661,11 +661,8 @@ impl Session {
             previous_status: previous_status.map(thread_goal_update_status_from_state),
             goal: thread_goal_update_goal_from_protocol(goal),
         };
-        self.record_model_items_and_emit_display_events(
-            turn_context,
-            std::slice::from_ref(&item),
-        )
-        .await;
+        self.record_model_items_and_emit_display_events(turn_context, std::slice::from_ref(&item))
+            .await;
     }
 
     async fn apply_external_thread_goal_status(self: &Arc<Self>, external_set: ExternalGoalSet) {
@@ -1440,7 +1437,9 @@ impl Session {
             },
             codex_state::ThreadGoalStatus::Complete
             | codex_state::ThreadGoalStatus::Paused
-            | codex_state::ThreadGoalStatus::BudgetLimited => self.thread_idle_or_completion().await,
+            | codex_state::ThreadGoalStatus::BudgetLimited => {
+                self.thread_idle_or_completion().await
+            }
         }
     }
 
@@ -1662,9 +1661,7 @@ fn thread_goal_update_goal_from_protocol(goal: ThreadGoal) -> ThreadGoalUpdateGo
     }
 }
 
-fn thread_goal_update_status_from_protocol(
-    status: ThreadGoalStatus,
-) -> ThreadGoalUpdateGoalStatus {
+fn thread_goal_update_status_from_protocol(status: ThreadGoalStatus) -> ThreadGoalUpdateGoalStatus {
     match status {
         ThreadGoalStatus::Active => ThreadGoalUpdateGoalStatus::Active,
         ThreadGoalStatus::Paused => ThreadGoalUpdateGoalStatus::Paused,

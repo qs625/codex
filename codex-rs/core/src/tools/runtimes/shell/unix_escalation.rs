@@ -21,11 +21,11 @@ use crate::tools::sandboxing::SandboxAttempt;
 use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
 use crate::tools::sandboxing::managed_network_for_sandbox_permissions;
-use codex_execpolicy::Decision;
-use codex_execpolicy::Evaluation;
-use codex_execpolicy::MatchOptions;
-use codex_execpolicy::Policy;
-use codex_execpolicy::RuleMatch;
+use codex_execpolicy_api::Decision;
+use codex_execpolicy_api::Evaluation;
+use codex_execpolicy_api::MatchOptions;
+use codex_execpolicy_api::Policy;
+use codex_execpolicy_api::RuleMatch;
 use codex_features::Feature;
 use codex_hooks::PermissionRequestDecision;
 use codex_protocol::config_types::WindowsSandboxLevel;
@@ -916,12 +916,16 @@ impl CoreShellCommandExecutor {
             expiration: ExecExpiration::DefaultTimeout,
             capture_policy: ExecCapturePolicy::ShellTool,
         };
+        let network_snapshot = self
+            .network
+            .as_ref()
+            .map(|network| network.runtime_snapshot());
         let exec_request = sandbox_manager.transform(SandboxTransformRequest {
             command,
             permissions: permission_profile,
             sandbox,
             enforce_managed_network: self.network.is_some(),
-            network: self.network.as_ref(),
+            network: network_snapshot.as_ref(),
             sandbox_policy_cwd: &self.sandbox_policy_cwd,
             codex_linux_sandbox_exe: self.codex_linux_sandbox_exe.as_deref(),
             use_legacy_landlock: self.use_legacy_landlock,
@@ -932,6 +936,7 @@ impl CoreShellCommandExecutor {
             exec_request,
             options,
             self.sandbox_policy_cwd.clone(),
+            self.network.clone(),
         );
         if let Some(network) = exec_request.network.as_ref() {
             network.apply_to_env(&mut exec_request.env);

@@ -1,0 +1,17 @@
+[package]
+name = "codex-openai-files-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "OpenAI file upload API traits for Codex."
+
+[dependencies]
+codex-api-provider = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false
+path = "src/lib.rs"

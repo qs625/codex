@@ -4,7 +4,6 @@ mod pull;
 mod url;
 
 pub use client::OllamaClient;
-use codex_core::config::Config;
 use codex_model_provider_info::ModelProviderInfo;
 pub use pull::CliProgressReporter;
 pub use pull::PullEvent;
@@ -19,15 +18,18 @@ pub const DEFAULT_OSS_MODEL: &str = "gpt-oss:20b";
 ///
 /// - Ensures a local Ollama server is reachable.
 /// - Checks if the model exists locally and pulls it if missing.
-pub async fn ensure_oss_ready(config: &Config) -> std::io::Result<()> {
+pub async fn ensure_oss_ready(
+    model: Option<&str>,
+    provider: &ModelProviderInfo,
+) -> std::io::Result<()> {
     // Only download when the requested model is the default OSS model (or when -m is not provided).
-    let model = match config.model.as_ref() {
+    let model = match model {
         Some(model) => model,
         None => DEFAULT_OSS_MODEL,
     };
 
     // Verify local Ollama is reachable.
-    let ollama_client = crate::OllamaClient::try_from_oss_provider(config).await?;
+    let ollama_client = crate::OllamaClient::try_from_provider(provider).await?;
 
     // If the model is not present locally, pull it.
     match ollama_client.fetch_models().await {

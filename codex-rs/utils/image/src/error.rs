@@ -17,6 +17,11 @@ pub enum ImageProcessingError {
         #[source]
         source: image::ImageError,
     },
+    #[error("failed to decode image bytes: {source}")]
+    DecodeMemory {
+        #[source]
+        source: image::ImageError,
+    },
     #[error("failed to encode image as {format:?}: {source}")]
     Encode {
         format: ImageFormat,
@@ -49,6 +54,8 @@ impl ImageProcessingError {
             ImageProcessingError::Decode {
                 source: ImageError::Decoding(_),
                 ..
+            } | ImageProcessingError::DecodeMemory {
+                source: ImageError::Decoding(_),
             }
         )
     }

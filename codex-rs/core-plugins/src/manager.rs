@@ -1,6 +1,7 @@
 use super::PluginLoadOutcome;
 use super::startup_remote_sync::start_startup_remote_plugin_sync_once;
 use crate::OPENAI_CURATED_MARKETPLACE_NAME;
+use crate::config_layers::PluginConfigLayerStack;
 use crate::installed_marketplaces::installed_marketplace_roots_from_layer_stack;
 use crate::loader::configured_curated_plugin_ids_from_codex_home;
 use crate::loader::curated_plugin_cache_version;
@@ -17,6 +18,7 @@ use crate::loader::refresh_curated_plugin_cache;
 use crate::loader::refresh_non_curated_plugin_cache;
 use crate::loader::refresh_non_curated_plugin_cache_force_reinstall;
 use crate::loader::remote_installed_plugins_to_config;
+use crate::loader::skill_config_layer_stack_from_config_layer_stack;
 use crate::manifest::PluginManifestInterface;
 use crate::manifest::load_plugin_manifest;
 use crate::marketplace::MarketplaceError;
@@ -46,14 +48,12 @@ use crate::startup_sync::sync_openai_plugins_repo;
 use crate::store::PluginInstallResult as StorePluginInstallResult;
 use crate::store::PluginStore;
 use crate::store::PluginStoreError;
-use codex_analytics::AnalyticsEventsClient;
-use codex_config::ConfigLayerStack;
-use codex_config::PluginConfigEdit;
-use codex_config::apply_user_plugin_config_edits;
-use codex_config::clear_user_plugin;
-use codex_config::set_user_plugin_enabled;
-use codex_config::types::PluginConfig;
-use codex_config::version_for_toml;
+use codex_config_edit::PluginConfigEdit;
+use codex_config_edit::apply_user_plugin_config_edits;
+use codex_config_edit::clear_user_plugin;
+use codex_config_edit::set_user_plugin_enabled;
+use codex_config_edit::version_for_toml;
+use codex_config_types::PluginConfig;
 use codex_core_skills::SkillMetadata;
 use codex_hooks::plugin_hook_declarations;
 use codex_login::AuthManager;
@@ -62,6 +62,7 @@ use codex_plugin::AppConnectorId;
 use codex_plugin::PluginCapabilitySummary;
 use codex_plugin::PluginId;
 use codex_plugin::PluginIdError;
+use codex_plugin::PluginTelemetryMetadata;
 use codex_plugin::prompt_safe_plugin_description;
 use codex_protocol::protocol::HookEventName;
 use codex_protocol::protocol::Product;
@@ -85,7 +86,7 @@ const FEATURED_PLUGIN_IDS_CACHE_TTL: std::time::Duration =
 
 #[derive(Debug, Clone)]
 pub struct PluginsConfigInput {
-    pub config_layer_stack: ConfigLayerStack,
+    pub config_layer_stack: PluginConfigLayerStack,
     pub plugins_enabled: bool,
     pub remote_plugin_enabled: bool,
     pub plugin_hooks_enabled: bool,
@@ -94,7 +95,7 @@ pub struct PluginsConfigInput {
 
 impl PluginsConfigInput {
     pub fn new(
-        config_layer_stack: ConfigLayerStack,
+        config_layer_stack: PluginConfigLayerStack,
         plugins_enabled: bool,
         remote_plugin_enabled: bool,
         plugin_hooks_enabled: bool,
@@ -406,7 +407,13 @@ pub struct PluginsManager {
     remote_installed_plugins_cache_refresh_state: RwLock<RemoteInstalledPluginsCacheRefreshState>,
     remote_sync_lock: Semaphore,
     restriction_product: Option<Product>,
-    analytics_events_client: RwLock<Option<AnalyticsEventsClient>>,
+    analytics_event_sink: RwLock<Option<Arc<dyn PluginAnalyticsEventSink>>>,
+}
+
+/// Receives plugin lifecycle analytics events from `PluginsManager`.
+pub trait PluginAnalyticsEventSink: Send + Sync {
+    fn track_plugin_installed(&self, plugin: PluginTelemetryMetadata);
+    fn track_plugin_uninstalled(&self, plugin: PluginTelemetryMetadata);
 }
 
 #[derive(Clone)]
@@ -447,16 +454,19 @@ impl PluginsManager {
             ),
             remote_sync_lock: Semaphore::new(/*permits*/ 1),
             restriction_product,
-            analytics_events_client: RwLock::new(None),
+            analytics_event_sink: RwLock::new(None),
         }
     }
 
-    pub fn set_analytics_events_client(&self, analytics_events_client: AnalyticsEventsClient) {
-        let mut stored_client = match self.analytics_events_client.write() {
+    pub fn set_plugin_analytics_event_sink(
+        &self,
+        analytics_event_sink: Arc<dyn PluginAnalyticsEventSink>,
+    ) {
+        let mut stored_client = match self.analytics_event_sink.write() {
             Ok(client_guard) => client_guard,
             Err(err) => err.into_inner(),
         };
-        *stored_client = Some(analytics_events_client);
+        *stored_client = Some(analytics_event_sink);
     }
 
     fn restriction_product_matches(&self, products: Option<&[Product]>) -> bool {
@@ -533,7 +543,7 @@ impl PluginsManager {
     /// Load plugins for a config layer stack without touching the plugins cache.
     pub async fn plugins_for_layer_stack(
         &self,
-        config_layer_stack: &ConfigLayerStack,
+        config_layer_stack: &PluginConfigLayerStack,
         config: &PluginsConfigInput,
         plugin_hooks_feature_enabled: bool,
     ) -> PluginLoadOutcome {
@@ -553,7 +563,7 @@ impl PluginsManager {
     /// Resolve plugin skill roots for a config layer stack without touching the plugins cache.
     pub async fn effective_skill_roots_for_layer_stack(
         &self,
-        config_layer_stack: &ConfigLayerStack,
+        config_layer_stack: &PluginConfigLayerStack,
         config: &PluginsConfigInput,
     ) -> Vec<PluginSkillRoot> {
         self.plugins_for_layer_stack(config_layer_stack, config, config.plugin_hooks_enabled)
@@ -870,12 +880,12 @@ impl PluginsManager {
         .await
         .map_err(anyhow::Error::from)?;
 
-        let analytics_events_client = match self.analytics_events_client.read() {
+        let analytics_event_sink = match self.analytics_event_sink.read() {
             Ok(client) => client.clone(),
             Err(err) => err.into_inner().clone(),
         };
-        if let Some(analytics_events_client) = analytics_events_client {
-            analytics_events_client.track_plugin_installed(
+        if let Some(analytics_event_sink) = analytics_event_sink {
+            analytics_event_sink.track_plugin_installed(
                 plugin_telemetry_metadata_from_root(&result.plugin_id, &result.installed_path)
                     .await,
             );
@@ -931,14 +941,14 @@ impl PluginsManager {
             .await
             .map_err(anyhow::Error::from)?;
 
-        let analytics_events_client = match self.analytics_events_client.read() {
+        let analytics_event_sink = match self.analytics_event_sink.read() {
             Ok(client) => client.clone(),
             Err(err) => err.into_inner().clone(),
         };
         if let Some(plugin_telemetry) = plugin_telemetry
-            && let Some(analytics_events_client) = analytics_events_client
+            && let Some(analytics_event_sink) = analytics_event_sink
         {
-            analytics_events_client.track_plugin_uninstalled(plugin_telemetry);
+            analytics_event_sink.track_plugin_uninstalled(plugin_telemetry);
         }
 
         Ok(())
@@ -1379,14 +1389,17 @@ impl PluginsManager {
             manifest.interface.clone(),
             marketplace_category,
         );
+        let skill_config_layer_stack =
+            skill_config_layer_stack_from_config_layer_stack(&config.config_layer_stack);
+        let skill_config_rules = codex_core_skills::config_rules::skill_config_rules_from_stack(
+            &skill_config_layer_stack,
+        );
         let resolved_skills = load_plugin_skills(
             &source_path,
             &plugin_id,
             &manifest.paths,
             self.restriction_product,
-            &codex_core_skills::config_rules::skill_config_rules_from_stack(
-                &config.config_layer_stack,
-            ),
+            &skill_config_rules,
         )
         .await;
         let hooks = if config.plugin_hooks_enabled {
@@ -1994,7 +2007,7 @@ impl PluginUninstallError {
 }
 
 pub(crate) fn configured_plugins_from_stack(
-    config_layer_stack: &ConfigLayerStack,
+    config_layer_stack: &PluginConfigLayerStack,
 ) -> HashMap<String, PluginConfig> {
     // Plugin entries remain persisted user config only.
     let Some(user_config) = config_layer_stack.effective_user_config() else {

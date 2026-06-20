@@ -18,12 +18,12 @@ use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::handlers::resolve_tool_environment;
-use codex_tools::ViewImageToolOptions;
-use codex_tools::create_view_image_tool;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
+use codex_tools::ViewImageToolOptions;
+use codex_tools::create_view_image_tool;
 
 pub struct ViewImageHandler {
     options: ViewImageToolOptions,

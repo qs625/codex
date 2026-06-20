@@ -2,8 +2,6 @@
 
 mod common;
 
-use codex_app_server_protocol::JSONRPCMessage;
-use codex_app_server_protocol::JSONRPCResponse;
 use codex_exec_server::ExecResponse;
 use codex_exec_server::InitializeParams;
 use codex_exec_server::InitializeResponse;
@@ -12,6 +10,8 @@ use codex_exec_server::ReadResponse;
 use codex_exec_server::TerminateResponse;
 use codex_exec_server::WriteResponse;
 use codex_exec_server::WriteStatus;
+use codex_jsonrpc_types::JSONRPCMessage;
+use codex_jsonrpc_types::JSONRPCResponse;
 use common::exec_server::exec_server;
 use pretty_assertions::assert_eq;
 

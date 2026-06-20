@@ -652,7 +652,7 @@ mod tests {
     use super::*;
     use crate::session::tests::make_session_and_context_with_dynamic_tools_and_rx;
     use crate::turn_diff_tracker::TurnDiffTracker;
-    use codex_exec_server::LOCAL_FS;
+    use codex_file_system::LOCAL_FS;
     use codex_protocol::error::CodexErr;
     use codex_protocol::error::SandboxErr;
     use codex_protocol::exec_output::ExecToolCallOutput;

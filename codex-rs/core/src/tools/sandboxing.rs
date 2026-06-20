@@ -399,13 +399,14 @@ impl<'a> SandboxAttempt<'a> {
         options: ExecOptions,
         network: Option<&NetworkProxy>,
     ) -> Result<crate::sandboxing::ExecRequest, SandboxTransformError> {
+        let network_snapshot = network.map(NetworkProxy::runtime_snapshot);
         self.manager
             .transform(SandboxTransformRequest {
                 command,
                 permissions: self.permissions,
                 sandbox: self.sandbox,
                 enforce_managed_network: self.enforce_managed_network,
-                network,
+                network: network_snapshot.as_ref(),
                 sandbox_policy_cwd: self.sandbox_cwd,
                 codex_linux_sandbox_exe: self
                     .codex_linux_sandbox_exe
@@ -424,6 +425,7 @@ impl<'a> SandboxAttempt<'a> {
                     request,
                     options,
                     windows_sandbox_policy_cwd,
+                    network.cloned(),
                 )
             })
     }

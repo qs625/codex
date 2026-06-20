@@ -4,6 +4,9 @@ use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
+use codex_code_mode_api::ExecuteRequest;
+use codex_code_mode_api::RuntimeResponse;
+use codex_code_mode_api::parse_exec_source;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 
@@ -32,8 +35,7 @@ impl CodeModeExecuteHandler {
         call_id: String,
         code: String,
     ) -> Result<FunctionToolOutput, FunctionCallError> {
-        let args =
-            codex_code_mode::parse_exec_source(&code).map_err(FunctionCallError::RespondToModel)?;
+        let args = parse_exec_source(&code).map_err(FunctionCallError::RespondToModel)?;
         let exec = ExecContext { session, turn };
         let enabled_tools =
             codex_tools::collect_code_mode_tool_definitions(&self.nested_tool_specs);
@@ -61,7 +63,7 @@ impl CodeModeExecuteHandler {
             .session
             .services
             .code_mode_service
-            .execute(codex_code_mode::ExecuteRequest {
+            .execute(ExecuteRequest {
                 cell_id: runtime_cell_id,
                 tool_call_id: call_id,
                 enabled_tools,
@@ -78,7 +80,7 @@ impl CodeModeExecuteHandler {
         code_cell_trace.record_initial_response(&response);
         // Yielded cells keep running, so terminal lifecycle is only emitted
         // here when the first response also ended the runtime.
-        if !matches!(response, codex_code_mode::RuntimeResponse::Yielded { .. }) {
+        if !matches!(response, RuntimeResponse::Yielded { .. }) {
             code_cell_trace.record_ended(&response);
         }
         handle_runtime_response(&exec, response, args.max_output_tokens, started_at)

@@ -1,0 +1,17 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-network-proxy-api"
+version.workspace = true
+description = "Lightweight network proxy API types shared across Codex crates."
+
+[lib]
+doctest = false
+name = "codex_network_proxy_api"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }

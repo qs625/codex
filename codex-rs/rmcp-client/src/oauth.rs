@@ -19,7 +19,7 @@
 use anyhow::Context;
 use anyhow::Error;
 use anyhow::Result;
-use codex_config::types::OAuthCredentialsStoreMode;
+use codex_config_types::OAuthCredentialsStoreMode;
 use oauth2::AccessToken;
 use oauth2::EmptyExtraTokenFields;
 use oauth2::RefreshToken;

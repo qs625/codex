@@ -5,23 +5,25 @@ mod mantle;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use codex_api::Provider;
-use codex_api::SharedAuthProvider;
+use codex_api_provider::Provider;
+use codex_api_provider::SharedAuthProvider;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
+use codex_model_provider_api::ModelProvider;
+use codex_model_provider_api::ModelProviderFuture;
+use codex_model_provider_api::ProviderAccountResult;
+use codex_model_provider_api::ProviderAccountState;
+use codex_model_provider_api::ProviderCapabilities;
 use codex_model_provider_info::AMAZON_BEDROCK_GPT_5_4_MODEL_ID;
 use codex_model_provider_info::ModelProviderAwsAuthInfo;
 use codex_model_provider_info::ModelProviderInfo;
-use codex_models_manager::manager::SharedModelsManager;
 use codex_models_manager::manager::StaticModelsManager;
+use codex_models_manager_api::SharedModelsManager;
 use codex_protocol::account::ProviderAccount;
 use codex_protocol::error::Result;
 use codex_protocol::openai_models::ModelsResponse;
 
-use crate::provider::ModelProvider;
-use crate::provider::ProviderAccountResult;
-use crate::provider::ProviderAccountState;
-use crate::provider::ProviderCapabilities;
+use crate::provider::model_provider_info_to_api_provider;
 use auth::resolve_provider_auth;
 pub(crate) use catalog::static_model_catalog;
 use mantle::runtime_base_url;
@@ -49,7 +51,6 @@ impl AmazonBedrockModelProvider {
     }
 }
 
-#[async_trait::async_trait]
 impl ModelProvider for AmazonBedrockModelProvider {
     fn info(&self) -> &ModelProviderInfo {
         &self.info
@@ -71,8 +72,8 @@ impl ModelProvider for AmazonBedrockModelProvider {
         None
     }
 
-    async fn auth(&self) -> Option<CodexAuth> {
-        None
+    fn auth(&self) -> ModelProviderFuture<'_, Option<CodexAuth>> {
+        Box::pin(async { None })
     }
 
     fn account_state(&self) -> ProviderAccountResult {
@@ -82,18 +83,20 @@ impl ModelProvider for AmazonBedrockModelProvider {
         })
     }
 
-    async fn api_provider(&self) -> Result<Provider> {
-        let mut api_provider_info = self.info.clone();
-        api_provider_info.base_url = Some(runtime_base_url(&self.aws).await?);
-        api_provider_info.to_api_provider(/*auth_mode*/ None)
+    fn api_provider(&self) -> ModelProviderFuture<'_, Result<Provider>> {
+        Box::pin(async move {
+            let mut api_provider_info = self.info.clone();
+            api_provider_info.base_url = Some(runtime_base_url(&self.aws).await?);
+            model_provider_info_to_api_provider(&api_provider_info, /*auth_mode*/ None)
+        })
     }
 
-    async fn runtime_base_url(&self) -> Result<Option<String>> {
-        Ok(Some(runtime_base_url(&self.aws).await?))
+    fn runtime_base_url(&self) -> ModelProviderFuture<'_, Result<Option<String>>> {
+        Box::pin(async move { Ok(Some(runtime_base_url(&self.aws).await?)) })
     }
 
-    async fn api_auth(&self) -> Result<SharedAuthProvider> {
-        resolve_provider_auth(&self.aws).await
+    fn api_auth(&self) -> ModelProviderFuture<'_, Result<SharedAuthProvider>> {
+        Box::pin(async move { resolve_provider_auth(&self.aws).await })
     }
 
     fn models_manager(
@@ -120,9 +123,9 @@ mod tests {
         let mut api_provider_info =
             ModelProviderInfo::create_amazon_bedrock_provider(/*aws*/ None);
         api_provider_info.base_url = Some(mantle::base_url(region).expect("supported region"));
-        let api_provider = api_provider_info
-            .to_api_provider(/*auth_mode*/ None)
-            .expect("api provider should build");
+        let api_provider =
+            model_provider_info_to_api_provider(&api_provider_info, /*auth_mode*/ None)
+                .expect("api provider should build");
 
         assert_eq!(
             api_provider.base_url,

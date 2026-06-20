@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::anyhow;
-use codex_analytics::GuardianReviewAnalyticsResult;
-use codex_analytics::GuardianReviewSessionKind;
+use codex_analytics_api::GuardianReviewAnalyticsResult;
+use codex_analytics_api::GuardianReviewSessionKind;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::models::ResponseItem;
@@ -37,9 +37,10 @@ use crate::context::GuardianFollowupReviewReminder;
 use crate::session::Codex;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use codex_config::types::McpServerConfig;
+use codex_config_types::McpServerConfig;
 use codex_features::Feature;
 use codex_model_provider_info::ModelProviderInfo;
+use codex_network_proxy_api::NetworkProxyConfig;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 use super::GUARDIAN_REVIEW_TIMEOUT;
@@ -875,7 +876,7 @@ fn event_matches_turn(event: &Event, expected_turn_id: &str) -> bool {
 
 pub(crate) fn build_guardian_review_session_config(
     parent_config: &Config,
-    live_network_config: Option<codex_network_proxy::NetworkProxyConfig>,
+    live_network_config: Option<NetworkProxyConfig>,
     active_model: &str,
     reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
 ) -> anyhow::Result<Config> {

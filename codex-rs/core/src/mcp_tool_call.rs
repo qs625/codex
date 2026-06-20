@@ -3,11 +3,10 @@ use std::collections::HashMap;
 use std::time::Duration;
 use std::time::Instant;
 
-use codex_app_server_protocol::ConfigLayerSource;
-use codex_app_server_protocol::McpElicitationObjectType;
-use codex_app_server_protocol::McpElicitationSchema;
-use codex_app_server_protocol::McpServerElicitationRequest;
-use codex_app_server_protocol::McpServerElicitationRequestParams;
+use codex_mcp_types::McpElicitationObjectType;
+use codex_mcp_types::McpElicitationSchema;
+use codex_mcp_types::McpServerElicitationRequest;
+use codex_mcp_types::McpServerElicitationRequestParams;
 use tracing::error;
 
 use crate::arc_monitor::ArcMonitorOutcome;
@@ -33,21 +32,25 @@ use crate::session::turn_context::TurnContext;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::sandboxing::PermissionRequestPayload;
 use crate::turn_metadata::McpTurnMetadataContext;
-use codex_analytics::AppInvocation;
-use codex_analytics::InvocationType;
-use codex_analytics::build_track_events_context;
-use codex_config::types::AppToolApproval;
+use codex_analytics_api::AppInvocation;
+use codex_analytics_api::InvocationType;
+use codex_analytics_api::build_track_events_context;
+use codex_config_types::AppToolApproval;
+use codex_config_types::ConfigLayerSource;
+use codex_config_types::McpServerConfig;
 use codex_features::Feature;
 use codex_hooks::PermissionRequestDecision;
-use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
-use codex_mcp::MCP_TOOL_CODEX_APPS_META_KEY;
 use codex_mcp::McpPermissionPromptAutoApproveContext;
-use codex_mcp::SandboxState;
 use codex_mcp::auth_elicitation_completed_result;
 use codex_mcp::build_auth_elicitation_plan;
-use codex_mcp::declared_openai_file_input_param_names;
 use codex_mcp::mcp_permission_prompt_is_auto_approved;
-use codex_otel::sanitize_metric_tag_value;
+use codex_mcp_tool_types::declared_openai_file_input_param_names;
+use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
+use codex_mcp_types::ElicitationAction;
+use codex_mcp_types::ElicitationResponse;
+use codex_mcp_types::MCP_SANDBOX_STATE_META_CAPABILITY;
+use codex_mcp_types::MCP_TOOL_CODEX_APPS_META_KEY;
+use codex_mcp_types::SandboxState;
 use codex_protocol::items::McpToolCallError;
 use codex_protocol::items::McpToolCallItem;
 use codex_protocol::items::McpToolCallStatus;
@@ -76,13 +79,12 @@ use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_protocol::request_user_input::RequestUserInputQuestion;
 use codex_protocol::request_user_input::RequestUserInputQuestionOption;
 use codex_protocol::request_user_input::RequestUserInputResponse;
-use codex_rmcp_client::ElicitationAction;
-use codex_rmcp_client::ElicitationResponse;
 use codex_rollout::state_db;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::truncate_text;
 use codex_utils_pty::DEFAULT_OUTPUT_BYTES_CAP;
+use codex_utils_string::sanitize_metric_tag_value;
 use rmcp::model::ToolAnnotations;
 use serde::Deserialize;
 use serde::Serialize;
@@ -731,18 +733,12 @@ async fn augment_mcp_tool_request_meta_with_sandbox_state(
 
     match meta.as_mut() {
         Some(serde_json::Value::Object(map)) => {
-            map.insert(
-                codex_mcp::MCP_SANDBOX_STATE_META_CAPABILITY.to_string(),
-                sandbox_state,
-            );
+            map.insert(MCP_SANDBOX_STATE_META_CAPABILITY.to_string(), sandbox_state);
         }
         Some(_) => {}
         None => {
             let mut map = serde_json::Map::new();
-            map.insert(
-                codex_mcp::MCP_SANDBOX_STATE_META_CAPABILITY.to_string(),
-                sandbox_state,
-            );
+            map.insert(MCP_SANDBOX_STATE_META_CAPABILITY.to_string(), sandbox_state);
             meta = Some(serde_json::Value::Object(map));
         }
     }
@@ -998,9 +994,7 @@ async fn custom_mcp_tool_approval_mode(
         .as_table()
         .and_then(|table| table.get("mcp_servers"))
         .cloned()
-        .and_then(|value| {
-            HashMap::<String, codex_config::types::McpServerConfig>::deserialize(value).ok()
-        })
+        .and_then(|value| HashMap::<String, McpServerConfig>::deserialize(value).ok())
         .and_then(|servers| {
             let server_config = servers.get(server)?;
             Some(
@@ -1497,11 +1491,12 @@ pub(crate) async fn lookup_mcp_tool_metadata(
         .await
         {
             Some(connectors) => Some(connectors),
-            None => {
-                connectors::list_accessible_connectors_from_mcp_tools(turn_context.config.as_ref())
-                    .await
-                    .ok()
-            }
+            None => connectors::list_accessible_connectors_from_mcp_tools(
+                turn_context.config.as_ref(),
+                sess.services.environment_manager.as_ref(),
+            )
+            .await
+            .ok(),
         };
         connectors.and_then(|connectors| {
             let connector_id = tool_info.connector_id.as_deref()?;
@@ -2135,8 +2130,7 @@ fn user_mcp_server_is_configured(config: &Config, server: &str) -> anyhow::Resul
     else {
         return Ok(false);
     };
-    let servers =
-        HashMap::<String, codex_config::types::McpServerConfig>::deserialize(mcp_servers_toml)?;
+    let servers = HashMap::<String, McpServerConfig>::deserialize(mcp_servers_toml)?;
     Ok(servers.contains_key(server))
 }
 
@@ -2158,9 +2152,7 @@ fn project_mcp_tool_approval_config_folder(
                 .as_table()
                 .and_then(|table| table.get("mcp_servers"))
                 .cloned()
-                .and_then(|value| {
-                    HashMap::<String, codex_config::types::McpServerConfig>::deserialize(value).ok()
-                })?;
+                .and_then(|value| HashMap::<String, McpServerConfig>::deserialize(value).ok())?;
             if servers.contains_key(server) {
                 layer.config_folder()
             } else {

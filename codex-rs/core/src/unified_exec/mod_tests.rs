@@ -740,8 +740,8 @@ async fn command_wait_resets_backoff_after_notification() -> anyhow::Result<()> 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn command_wait_begin_keeps_window_if_process_is_released_before_finish()
--> anyhow::Result<()> {
+async fn command_wait_begin_keeps_window_if_process_is_released_before_finish() -> anyhow::Result<()>
+{
     skip_if_sandbox!(Ok(()));
 
     let (session, turn) = test_session_and_turn().await;

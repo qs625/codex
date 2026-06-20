@@ -16,8 +16,8 @@ use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use serde::Deserialize;
 use serde::Serialize;
-use std::time::SystemTime;
 use std::time::Duration;
+use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 use codex_tools::create_command_wait_tool;

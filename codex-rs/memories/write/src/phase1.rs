@@ -7,7 +7,7 @@ use crate::runtime::MemoryStartupContext;
 use crate::runtime::MemoryStartupSettings;
 use crate::runtime::StageOnePromptRequest;
 use crate::runtime::StageOneRequestContext;
-use codex_config::types::MemoriesConfig;
+use codex_config_types::MemoriesConfig;
 use codex_protocol::error::CodexErr;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;

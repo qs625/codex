@@ -12,7 +12,7 @@ use std::time::Duration;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
-use codex_config::CloudRequirementsLoader;
+use codex_config_requirements::CloudRequirementsLoader;
 use codex_core::CodexThread;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
@@ -20,10 +20,10 @@ use codex_core::resolve_installation_id;
 use codex_core::shell::Shell;
 use codex_core::shell::get_shell_by_model_provided_path;
 use codex_core::thread_store_from_config;
-use codex_exec_server::CreateDirectoryOptions;
-use codex_exec_server::ExecutorFileSystem;
-use codex_exec_server::RemoveOptions;
 use codex_extension_api::empty_extension_registry;
+use codex_file_system::CreateDirectoryOptions;
+use codex_file_system::ExecutorFileSystem;
+use codex_file_system::RemoveOptions;
 use codex_login::CodexAuth;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::built_in_model_providers;
@@ -420,7 +420,7 @@ impl TestCodexBuilder {
         );
         #[cfg(not(target_os = "linux"))]
         let codex_linux_sandbox_exe = None;
-        let local_runtime_paths = codex_exec_server::ExecServerRuntimePaths::new(
+        let local_runtime_paths = codex_exec_server_api::ExecServerRuntimePaths::new(
             std::env::current_exe()?,
             codex_linux_sandbox_exe,
         )?;
@@ -468,17 +468,25 @@ impl TestCodexBuilder {
         let state_db = codex_core::init_state_db(&config).await;
         let thread_store = thread_store_from_config(&config, state_db.clone());
         let installation_id = resolve_installation_id(&config.codex_home).await?;
-        let thread_manager = ThreadManager::new(
+        let environment_provider: Arc<dyn codex_exec_server_api::ExecEnvironmentProvider> =
+            environment_manager.clone();
+        let thread_manager = ThreadManager::new_with_workflow_runs_and_openai_file_uploader(
             &config,
             codex_core::test_support::auth_manager_from_auth(auth.clone()),
             SessionSource::Exec,
-            Arc::clone(&environment_manager),
+            environment_provider,
             empty_extension_registry(),
             /*analytics_events_client*/ None,
             thread_store,
             state_db.clone(),
             installation_id,
             /*attestation_provider*/ None,
+            codex_core::test_support::model_provider_factory_for_tests(),
+            Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+            Arc::new(codex_workflow::WorkflowRunManager::new(
+                config.codex_home.clone(),
+            )),
+            Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
         );
         let thread_manager = Arc::new(thread_manager);
         let user_shell_override = self.user_shell_override.clone();

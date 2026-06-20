@@ -2,7 +2,6 @@ use crate::function_tool::FunctionCallError;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::context::ToolSearchOutput;
-use codex_tools::create_tool_search_tool;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
 use crate::tools::tool_search_entry::ToolSearchEntry;
@@ -18,6 +17,7 @@ use codex_tools::ToolName;
 use codex_tools::ToolSearchSourceInfo;
 use codex_tools::ToolSpec;
 use codex_tools::coalesce_loadable_tool_specs;
+use codex_tools::create_tool_search_tool;
 
 pub struct ToolSearchHandler {
     entries: Vec<ToolSearchEntry>,
@@ -142,7 +142,7 @@ mod tests {
     use super::*;
     use crate::tools::handlers::DynamicToolHandler;
     use crate::tools::handlers::McpHandler;
-    use codex_mcp::ToolInfo;
+    use codex_mcp_tool_types::ToolInfo;
     use codex_protocol::dynamic_tools::DynamicToolSpec;
     use codex_tools::ResponsesApiNamespace;
     use codex_tools::ResponsesApiNamespaceTool;

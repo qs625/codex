@@ -77,21 +77,24 @@ use crate::tools::handlers::UpdateGoalHandler;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::router::ToolCallSource;
 use crate::turn_diff_tracker::TurnDiffTracker;
-use codex_app_server_protocol::AppInfo;
-use codex_app_server_protocol::McpElicitationSchema;
+use codex_auth_types::TelemetryAuthMode;
 use codex_config::config_toml::ConfigToml;
-use codex_config::config_toml::ProjectConfig;
-use codex_execpolicy::Decision;
-use codex_execpolicy::NetworkRuleProtocol;
-use codex_execpolicy::Policy;
-use codex_network_proxy::NetworkProxyConfig;
+use codex_config_loader::ProjectConfig;
+use codex_connectors_types::AppInfo;
+use codex_execpolicy_api::Decision;
+use codex_execpolicy_api::NetworkRuleProtocol;
+use codex_execpolicy_api::Policy;
+use codex_mcp_types::ElicitationAction;
+use codex_mcp_types::McpElicitationSchema;
+use codex_metrics_api::THREAD_SKILLS_DESCRIPTION_TRUNCATED_CHARS_METRIC;
+use codex_metrics_api::THREAD_SKILLS_ENABLED_TOTAL_METRIC;
+use codex_metrics_api::THREAD_SKILLS_KEPT_TOTAL_METRIC;
+use codex_metrics_api::THREAD_SKILLS_TRUNCATED_METRIC;
+use codex_network_proxy_api::NetworkDecision;
+use codex_network_proxy_api::NetworkPolicyDecider;
+use codex_network_proxy_api::NetworkProxyConfig;
 use codex_otel::MetricsClient;
 use codex_otel::MetricsConfig;
-use codex_otel::THREAD_SKILLS_DESCRIPTION_TRUNCATED_CHARS_METRIC;
-use codex_otel::THREAD_SKILLS_ENABLED_TOTAL_METRIC;
-use codex_otel::THREAD_SKILLS_KEPT_TOTAL_METRIC;
-use codex_otel::THREAD_SKILLS_TRUNCATED_METRIC;
-use codex_otel::TelemetryAuthMode;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Settings;
@@ -135,7 +138,6 @@ use codex_protocol::protocol::UserMessageEvent;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_protocol::request_user_input::RequestUserInputAnswer;
 use codex_protocol::request_user_input::RequestUserInputResponse;
-use codex_rmcp_client::ElicitationAction;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use core_test_support::context_snapshot;
@@ -410,6 +412,7 @@ fn test_model_client_session() -> crate::client::ModelClientSession {
         thread_id.into(),
         thread_id,
         /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
+        crate::test_support::model_provider_factory_for_tests(),
         ModelProviderInfo::create_openai_provider(/* base_url */ /*base_url*/ None),
         codex_protocol::protocol::SessionSource::Exec,
         /*model_verbosity*/ None,
@@ -503,7 +506,7 @@ async fn write_project_trust_config(
     trusted_projects: &[(&Path, TrustLevel)],
 ) -> std::io::Result<()> {
     tokio::fs::write(
-        codex_home.join(codex_config::CONFIG_TOML_FILE),
+        codex_home.join(codex_config_edit::CONFIG_TOML_FILE),
         toml::to_string(&ConfigToml {
             projects: Some(
                 trusted_projects
@@ -530,7 +533,11 @@ async fn preview_session_start_hooks(
 ) -> std::io::Result<Vec<codex_protocol::protocol::HookRunSummary>> {
     let hooks = Hooks::new(HooksConfig {
         feature_enabled: true,
-        config_layer_stack: Some(config.config_layer_stack.clone()),
+        config_layer_stack: Some(
+            crate::config::hook_config_layer_stack_from_config_layer_stack(
+                &config.config_layer_stack,
+            ),
+        ),
         ..HooksConfig::default()
     });
 
@@ -777,11 +784,11 @@ async fn managed_network_proxy_decider_survives_full_access_start() -> anyhow::R
     )?;
     let exec_policy = Policy::empty();
     let decider_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let network_policy_decider: Arc<dyn codex_network_proxy::NetworkPolicyDecider> = Arc::new({
+    let network_policy_decider: Arc<dyn NetworkPolicyDecider> = Arc::new({
         let decider_calls = Arc::clone(&decider_calls);
         move |_request| {
             decider_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            async { codex_network_proxy::NetworkDecision::ask("not_allowed") }
+            async { NetworkDecision::ask("not_allowed") }
         }
     });
 
@@ -1332,9 +1339,11 @@ async fn reload_user_config_layer_refreshes_hooks() -> anyhow::Result<()> {
     let hook_list = codex_hooks::list_hooks(codex_hooks::HooksConfig {
         feature_enabled: true,
         config_layer_stack: Some(
-            config
-                .config_layer_stack
-                .with_user_config(&config_toml_path, user_config.clone()),
+            crate::config::hook_config_layer_stack_from_config_layer_stack(
+                &config
+                    .config_layer_stack
+                    .with_user_config(&config_toml_path, user_config.clone()),
+            ),
         ),
         ..codex_hooks::HooksConfig::default()
     });
@@ -3724,12 +3733,12 @@ pub(crate) async fn make_session_configuration_for_tests() -> SessionConfigurati
 }
 
 fn turn_environments_for_tests(
-    environment: &Arc<codex_exec_server::Environment>,
+    environment: &Arc<dyn codex_exec_server_api::ExecEnvironment>,
     cwd: &codex_utils_absolute_path::AbsolutePathBuf,
 ) -> crate::environment_selection::ResolvedTurnEnvironments {
     crate::environment_selection::ResolvedTurnEnvironments {
         turn_environments: vec![TurnEnvironment {
-            environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
+            environment_id: codex_exec_server_api::LOCAL_ENVIRONMENT_ID.to_string(),
             environment: Arc::clone(environment),
             cwd: cwd.clone(),
             shell: None,
@@ -4000,7 +4009,7 @@ async fn new_default_turn_uses_config_aware_skills_for_role_overrides() {
         .environment_manager
         .default_environment()
         .map(|environment| environment.get_filesystem())
-        .unwrap_or_else(|| std::sync::Arc::clone(&codex_exec_server::LOCAL_FS));
+        .unwrap_or_else(|| std::sync::Arc::clone(&codex_file_system::LOCAL_FS));
     let parent_outcome = session
         .services
         .skills_manager
@@ -4241,7 +4250,7 @@ async fn cwd_update_does_not_rewrite_sticky_environment_cwd() {
         let original_cwd = state.session_configuration.cwd.clone();
         let environment_cwd = original_cwd.join("environment");
         state.session_configuration.environments = vec![TurnEnvironmentSelection {
-            environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
+            environment_id: codex_exec_server_api::LOCAL_ENVIRONMENT_ID.to_string(),
             cwd: environment_cwd.clone(),
         }];
         (original_cwd, environment_cwd)
@@ -4280,7 +4289,7 @@ async fn absolute_cwd_update_with_turn_environment_is_allowed() {
             SessionSettingsUpdate {
                 cwd: Some(absolute_cwd.to_path_buf()),
                 environments: Some(vec![TurnEnvironmentSelection {
-                    environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
+                    environment_id: codex_exec_server_api::LOCAL_ENVIRONMENT_ID.to_string(),
                     cwd: absolute_cwd.clone(),
                 }]),
                 ..Default::default()
@@ -4371,6 +4380,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         Arc::clone(&config),
         "11111111-1111-4111-8111-111111111111".to_string(),
         auth_manager,
+        crate::test_support::model_provider_factory_for_tests(),
         models_manager,
         Arc::new(ExecPolicyManager::default()),
         tx_event,
@@ -4391,6 +4401,10 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         codex_rollout_trace::ThreadTraceContext::disabled(),
         /*attestation_provider*/ None,
         Arc::new(crate::ActiveEventSubscriptionTracker::default()),
+        Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
     )
     .await;
 
@@ -4431,7 +4445,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         },
     };
     let default_environments = vec![TurnEnvironmentSelection {
-        environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
+        environment_id: codex_exec_server_api::LOCAL_ENVIRONMENT_ID.to_string(),
         cwd: config.cwd.clone(),
     }];
     let session_configuration = SessionConfiguration {
@@ -4488,7 +4502,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         /*bundled_skills_enabled*/ true,
     ));
     let network_approval = Arc::new(NetworkApprovalService::default());
-    let environment = Arc::new(
+    let environment: Arc<dyn codex_exec_server_api::ExecEnvironment> = Arc::new(
         codex_exec_server::Environment::create_for_tests(/*exec_server_url*/ None)
             .expect("create environment"),
     );
@@ -4506,11 +4520,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         )),
         shell_zsh_path: None,
         main_execve_wrapper_exe: config.main_execve_wrapper_exe.clone(),
-        analytics_events_client: AnalyticsEventsClient::new(
-            Arc::clone(&auth_manager),
-            config.chatgpt_base_url.trim_end_matches('/').to_string(),
-            config.analytics_enabled,
-        ),
+        analytics_events_client: AnalyticsEventsClient::disabled(),
         hooks: arc_swap::ArcSwap::from_pointee(Hooks::new(HooksConfig {
             legacy_notify_argv: config.notify.clone(),
             ..HooksConfig::default()
@@ -4521,6 +4531,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         show_raw_agent_reasoning: config.show_raw_agent_reasoning,
         exec_policy,
         auth_manager: auth_manager.clone(),
+        model_provider_factory: crate::test_support::model_provider_factory_for_tests(),
         session_telemetry: session_telemetry.clone(),
         models_manager: Arc::clone(&models_manager),
         tool_approvals: Mutex::new(ApprovalStore::default()),
@@ -4551,6 +4562,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             thread_id.into(),
             thread_id,
             /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
+            crate::test_support::model_provider_factory_for_tests(),
             session_configuration.provider.clone(),
             session_configuration.session_source.clone(),
             config.model_verbosity,
@@ -4569,7 +4581,9 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             Session::build_model_client_beta_features_header(config.as_ref()),
             /*attestation_provider*/ None,
         ),
-        code_mode_service: crate::tools::code_mode::CodeModeService::new(),
+        openai_file_uploader: Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
+        code_mode_service: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
+        code_mode_runtime_factory: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
         environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     };
 
@@ -4592,6 +4606,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         thread_id,
         SessionId::from(thread_id),
         Some(Arc::clone(&auth_manager)),
+        services.model_provider_factory.as_ref(),
         &session_telemetry,
         session_configuration.provider.clone(),
         &session_configuration,
@@ -4627,7 +4642,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         idle_pending_input: Mutex::new(Vec::new()),
         goal_runtime: crate::goals::GoalRuntimeState::new(),
         guardian_review_session: crate::guardian::GuardianReviewSessionManager::default(),
-        workflow_runs: crate::workflow_runs::WorkflowRunManager::default(),
+        workflow_runs: Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
         services,
         next_internal_sub_id: AtomicU64::new(0),
         parent_child_completion_active: std::sync::atomic::AtomicBool::new(true),
@@ -4680,7 +4695,7 @@ async fn make_session_with_config_and_rx(
         },
     };
     let default_environments = vec![TurnEnvironmentSelection {
-        environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
+        environment_id: codex_exec_server_api::LOCAL_ENVIRONMENT_ID.to_string(),
         cwd: config.cwd.clone(),
     }];
     let session_configuration = SessionConfiguration {
@@ -4731,6 +4746,7 @@ async fn make_session_with_config_and_rx(
         Arc::clone(&config),
         "11111111-1111-4111-8111-111111111111".to_string(),
         auth_manager,
+        crate::test_support::model_provider_factory_for_tests(),
         models_manager,
         Arc::new(ExecPolicyManager::default()),
         tx_event,
@@ -4751,6 +4767,10 @@ async fn make_session_with_config_and_rx(
         codex_rollout_trace::ThreadTraceContext::disabled(),
         /*attestation_provider*/ None,
         Arc::new(crate::ActiveEventSubscriptionTracker::default()),
+        Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
     )
     .await?;
 
@@ -4784,7 +4804,7 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         },
     };
     let default_environments = vec![TurnEnvironmentSelection {
-        environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
+        environment_id: codex_exec_server_api::LOCAL_ENVIRONMENT_ID.to_string(),
         cwd: config.cwd.clone(),
     }];
     let session_configuration = SessionConfiguration {
@@ -4835,6 +4855,7 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         Arc::clone(&config),
         "11111111-1111-4111-8111-111111111111".to_string(),
         auth_manager,
+        crate::test_support::model_provider_factory_for_tests(),
         models_manager,
         Arc::new(ExecPolicyManager::default()),
         tx_event,
@@ -4862,6 +4883,10 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         codex_rollout_trace::ThreadTraceContext::disabled(),
         /*attestation_provider*/ None,
         Arc::new(crate::ActiveEventSubscriptionTracker::default()),
+        Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
     )
     .await?;
 
@@ -5832,8 +5857,9 @@ async fn spawn_task_turn_span_inherits_dispatch_trace_context() {
         .clone()
         .expect("turn task should capture the current span trace context");
     let submission_context =
-        codex_otel::context_from_w3c_trace_context(&submission_trace).expect("submission");
-    let task_context = codex_otel::context_from_w3c_trace_context(&task_trace).expect("task trace");
+        codex_trace_context::context_from_w3c_trace_context(&submission_trace).expect("submission");
+    let task_context =
+        codex_trace_context::context_from_w3c_trace_context(&task_trace).expect("task trace");
 
     assert_eq!(
         task_context.span().span_context().trace_id(),
@@ -6305,7 +6331,7 @@ where
         },
     };
     let default_environments = vec![TurnEnvironmentSelection {
-        environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
+        environment_id: codex_exec_server_api::LOCAL_ENVIRONMENT_ID.to_string(),
         cwd: config.cwd.clone(),
     }];
     let session_configuration = SessionConfiguration {
@@ -6362,7 +6388,7 @@ where
         /*bundled_skills_enabled*/ true,
     ));
     let network_approval = Arc::new(NetworkApprovalService::default());
-    let environment = Arc::new(
+    let environment: Arc<dyn codex_exec_server_api::ExecEnvironment> = Arc::new(
         codex_exec_server::Environment::create_for_tests(/*exec_server_url*/ None)
             .expect("create environment"),
     );
@@ -6380,11 +6406,7 @@ where
         )),
         shell_zsh_path: None,
         main_execve_wrapper_exe: config.main_execve_wrapper_exe.clone(),
-        analytics_events_client: AnalyticsEventsClient::new(
-            Arc::clone(&auth_manager),
-            config.chatgpt_base_url.trim_end_matches('/').to_string(),
-            config.analytics_enabled,
-        ),
+        analytics_events_client: AnalyticsEventsClient::disabled(),
         hooks: arc_swap::ArcSwap::from_pointee(Hooks::new(HooksConfig {
             legacy_notify_argv: config.notify.clone(),
             ..HooksConfig::default()
@@ -6395,6 +6417,7 @@ where
         show_raw_agent_reasoning: config.show_raw_agent_reasoning,
         exec_policy,
         auth_manager: Arc::clone(&auth_manager),
+        model_provider_factory: crate::test_support::model_provider_factory_for_tests(),
         session_telemetry: session_telemetry.clone(),
         models_manager: Arc::clone(&models_manager),
         tool_approvals: Mutex::new(ApprovalStore::default()),
@@ -6425,6 +6448,7 @@ where
             thread_id.into(),
             thread_id,
             /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
+            crate::test_support::model_provider_factory_for_tests(),
             session_configuration.provider.clone(),
             session_configuration.session_source.clone(),
             config.model_verbosity,
@@ -6443,7 +6467,9 @@ where
             Session::build_model_client_beta_features_header(config.as_ref()),
             /*attestation_provider*/ None,
         ),
-        code_mode_service: crate::tools::code_mode::CodeModeService::new(),
+        openai_file_uploader: Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
+        code_mode_service: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
+        code_mode_runtime_factory: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
         environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     };
 
@@ -6466,6 +6492,7 @@ where
         thread_id,
         SessionId::from(thread_id),
         Some(Arc::clone(&auth_manager)),
+        services.model_provider_factory.as_ref(),
         &session_telemetry,
         session_configuration.provider.clone(),
         &session_configuration,
@@ -6501,7 +6528,7 @@ where
         idle_pending_input: Mutex::new(Vec::new()),
         goal_runtime: crate::goals::GoalRuntimeState::new(),
         guardian_review_session: crate::guardian::GuardianReviewSessionManager::default(),
-        workflow_runs: crate::workflow_runs::WorkflowRunManager::default(),
+        workflow_runs: Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
         services,
         next_internal_sub_id: AtomicU64::new(0),
         parent_child_completion_active: std::sync::atomic::AtomicBool::new(true),
@@ -7323,7 +7350,8 @@ Use this workflow when feature work needs a structured process.
             .any(|text| text.contains("<workflows_instructions>")
                 && text.contains("- feature-dev (project)")
                 && text.contains("structured feature workflow")
-                && text.contains("Use this workflow when feature work needs a structured process.")),
+                && text
+                    .contains("Use this workflow when feature work needs a structured process.")),
         "expected project workflow in initial context, got {developer_texts:?}"
     );
 }
@@ -10377,7 +10405,8 @@ async fn sample_rollout(
 
 #[tokio::test]
 async fn create_goal_tool_rejects_existing_goal() {
-    let (session, turn_context, mut rx, _codex_home) = make_goal_session_and_context_with_rx().await;
+    let (session, turn_context, mut rx, _codex_home) =
+        make_goal_session_and_context_with_rx().await;
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
     let handler = CreateGoalHandler;
 
@@ -10523,7 +10552,8 @@ async fn update_goal_tool_rejects_pausing_goal() {
 
 #[tokio::test]
 async fn update_goal_tool_marks_goal_complete() {
-    let (session, turn_context, mut rx, _codex_home) = make_goal_session_and_context_with_rx().await;
+    let (session, turn_context, mut rx, _codex_home) =
+        make_goal_session_and_context_with_rx().await;
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
     let create_handler = CreateGoalHandler;
     let update_handler = UpdateGoalHandler;
@@ -10818,7 +10848,11 @@ async fn session_start_hooks_only_load_from_trusted_project_layers() -> std::io:
 
     let hook_list = codex_hooks::list_hooks(codex_hooks::HooksConfig {
         feature_enabled: true,
-        config_layer_stack: Some(config.config_layer_stack.clone()),
+        config_layer_stack: Some(
+            crate::config::hook_config_layer_stack_from_config_layer_stack(
+                &config.config_layer_stack,
+            ),
+        ),
         ..codex_hooks::HooksConfig::default()
     });
     let expected_source_path = codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
@@ -10878,7 +10912,11 @@ async fn session_start_hooks_require_project_trust_without_config_toml() -> std:
 
         let hook_list = codex_hooks::list_hooks(codex_hooks::HooksConfig {
             feature_enabled: true,
-            config_layer_stack: Some(config.config_layer_stack.clone()),
+            config_layer_stack: Some(
+                crate::config::hook_config_layer_stack_from_config_layer_stack(
+                    &config.config_layer_stack,
+                ),
+            ),
             ..codex_hooks::HooksConfig::default()
         });
         assert_eq!(

@@ -1,0 +1,27 @@
+[package]
+name = "codex-config-edit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+doctest = false
+name = "codex_config_edit"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-config-types = { workspace = true }
+codex-utils-path = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true, features = ["fs", "rt"] }
+toml = { workspace = true }
+toml_edit = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }

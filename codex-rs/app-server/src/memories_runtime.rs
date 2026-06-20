@@ -3,7 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use codex_api::ResponseEvent;
-use codex_config::Constrained;
+use codex_auth_types::TelemetryAuthMode;
+use codex_config_types::Constrained;
 use codex_core::CodexThread;
 use codex_core::ModelClient;
 use codex_core::NewThread;
@@ -24,7 +25,6 @@ use codex_memories_write::MemoryStartupSettings;
 use codex_memories_write::StageOnePromptRequest;
 use codex_memories_write::StageOneRequestContext;
 use codex_otel::SessionTelemetry;
-use codex_otel::TelemetryAuthMode;
 use codex_otel::Timer;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
@@ -156,6 +156,7 @@ impl MemoryStartupRuntime for CoreMemoryStartupRuntime {
                 SessionId::from(self.thread_id),
                 self.thread_id,
                 installation_id,
+                Arc::new(codex_model_provider::DefaultModelProviderFactory),
                 self.config.model_provider.clone(),
                 session_source,
                 self.config.model_verbosity,

@@ -17,7 +17,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use anyhow::Context as _;
-use codex_config::types::OAuthCredentialsStoreMode;
+use codex_config_types::OAuthCredentialsStoreMode;
 use codex_exec_server::Environment;
 use codex_exec_server::ExecServerClient;
 use codex_exec_server::RemoteExecServerConnectArgs;

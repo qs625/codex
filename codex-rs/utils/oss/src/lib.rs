@@ -1,8 +1,9 @@
 //! OSS provider utilities shared between TUI and exec.
 
-use codex_core::config::Config;
 use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
+use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
+use std::collections::HashMap;
 
 /// Returns the default model for a given OSS provider.
 pub fn get_default_model_for_oss_provider(provider_id: &str) -> Option<&'static str> {
@@ -16,17 +17,25 @@ pub fn get_default_model_for_oss_provider(provider_id: &str) -> Option<&'static 
 /// Ensures the specified OSS provider is ready (models downloaded, service reachable).
 pub async fn ensure_oss_provider_ready(
     provider_id: &str,
-    config: &Config,
+    model: Option<&str>,
+    model_providers: &HashMap<String, ModelProviderInfo>,
 ) -> Result<(), std::io::Error> {
+    let provider = model_providers.get(provider_id).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Built-in provider {provider_id} not found"),
+        )
+    })?;
+
     match provider_id {
         LMSTUDIO_OSS_PROVIDER_ID => {
-            codex_lmstudio::ensure_oss_ready(config)
+            codex_lmstudio::ensure_oss_ready(model, provider)
                 .await
                 .map_err(|e| std::io::Error::other(format!("OSS setup failed: {e}")))?;
         }
         OLLAMA_OSS_PROVIDER_ID => {
-            codex_ollama::ensure_responses_supported(&config.model_provider).await?;
-            codex_ollama::ensure_oss_ready(config)
+            codex_ollama::ensure_responses_supported(provider).await?;
+            codex_ollama::ensure_oss_ready(model, provider)
                 .await
                 .map_err(|e| std::io::Error::other(format!("OSS setup failed: {e}")))?;
         }

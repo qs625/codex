@@ -118,6 +118,12 @@ pub fn load_for_prompt_bytes(
     })
 }
 
+pub fn dimensions_from_memory(bytes: &[u8]) -> Result<(u32, u32), ImageProcessingError> {
+    let dynamic = image::load_from_memory(bytes)
+        .map_err(|source| ImageProcessingError::DecodeMemory { source })?;
+    Ok(dynamic.dimensions())
+}
+
 fn can_preserve_source_bytes(format: ImageFormat) -> bool {
     // Public API docs explicitly call out non-animated GIF support only.
     // Preserve byte-for-byte only for formats we can safely pass through.
@@ -312,6 +318,16 @@ mod tests {
             ImageProcessingError::Decode { .. }
                 | ImageProcessingError::UnsupportedImageFormat { .. }
         ));
+    }
+
+    #[test]
+    fn returns_dimensions_from_memory() {
+        let image = ImageBuffer::from_pixel(17, 23, Rgba([10u8, 20, 30, 255]));
+        let bytes = image_bytes(&image, ImageFormat::Png);
+
+        let dimensions = dimensions_from_memory(&bytes).expect("decode dimensions");
+
+        assert_eq!(dimensions, (17, 23));
     }
 
     #[tokio::test(flavor = "multi_thread")]

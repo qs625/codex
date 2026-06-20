@@ -6,18 +6,18 @@ use codex_api::ModelsClient;
 use codex_api::RequestTelemetry;
 use codex_api::ReqwestTransport;
 use codex_api::TransportError;
-use codex_api::auth_header_telemetry;
 use codex_api::map_api_error;
-use codex_feedback::FeedbackRequestTags;
-use codex_feedback::emit_feedback_request_tags_with_auth_env;
-use codex_login::AuthEnvTelemetry;
+use codex_api_provider::auth_header_telemetry;
+use codex_auth_types::AuthEnvTelemetryMetadata;
+use codex_auth_types::TelemetryAuthMode;
+use codex_feedback_api::FeedbackRequestTags;
+use codex_feedback_api::emit_feedback_request_tags_with_auth_env;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::collect_auth_env_telemetry;
 use codex_login::default_client::build_reqwest_client;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_models_manager::manager::ModelsEndpointClient;
-use codex_otel::TelemetryAuthMode;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CoreResult;
 use codex_protocol::openai_models::ModelInfo;
@@ -27,6 +27,7 @@ use http::HeaderMap;
 use tokio::time::timeout;
 
 use crate::auth::resolve_provider_auth;
+use crate::provider::model_provider_info_to_api_provider;
 
 const MODELS_REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
 const MODELS_ENDPOINT: &str = "/models";
@@ -56,12 +57,13 @@ impl OpenAiModelsEndpoint {
         }
     }
 
-    fn auth_env(&self) -> AuthEnvTelemetry {
+    fn auth_env(&self) -> AuthEnvTelemetryMetadata {
         let codex_api_key_env_enabled = self
             .auth_manager
             .as_ref()
             .is_some_and(|auth_manager| auth_manager.codex_api_key_env_enabled());
         collect_auth_env_telemetry(&self.provider_info, codex_api_key_env_enabled)
+            .to_otel_metadata()
     }
 }
 
@@ -86,7 +88,7 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
             codex_otel::start_global_timer("codex.remote_models.fetch_update.duration_ms", &[]);
         let auth = self.auth().await;
         let auth_mode = auth.as_ref().map(CodexAuth::auth_mode);
-        let api_provider = self.provider_info.to_api_provider(auth_mode)?;
+        let api_provider = model_provider_info_to_api_provider(&self.provider_info, auth_mode)?;
         let api_auth = resolve_provider_auth(auth.as_ref(), &self.provider_info)?;
         let transport = ReqwestTransport::new(build_reqwest_client());
         let auth_telemetry = auth_header_telemetry(api_auth.as_ref());
@@ -114,7 +116,7 @@ struct ModelsRequestTelemetry {
     auth_mode: Option<String>,
     auth_header_attached: bool,
     auth_header_name: Option<&'static str>,
-    auth_env: AuthEnvTelemetry,
+    auth_env: AuthEnvTelemetryMetadata,
 }
 
 impl RequestTelemetry for ModelsRequestTelemetry {

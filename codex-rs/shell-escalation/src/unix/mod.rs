@@ -57,7 +57,6 @@ pub(crate) mod escalate_client;
 pub(crate) mod escalate_protocol;
 pub(crate) mod escalate_server;
 pub(crate) mod escalation_policy;
-pub(crate) mod execve_wrapper;
 pub(crate) mod socket;
 pub(crate) mod stopwatch;
 
@@ -73,7 +72,6 @@ pub use self::escalate_server::ExecResult;
 pub use self::escalate_server::PreparedExec;
 pub use self::escalate_server::ShellCommandExecutor;
 pub use self::escalation_policy::EscalationPolicy;
-pub use self::execve_wrapper::main_execve_wrapper;
 pub use self::stopwatch::Stopwatch;
 pub use codex_protocol::approvals::EscalationPermissions;
 pub use codex_protocol::approvals::ResolvedPermissionProfile;

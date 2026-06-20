@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use codex_app_server_protocol::JSONRPCMessage;
+use codex_jsonrpc_types::JSONRPCMessage;
 use futures::SinkExt;
 use futures::StreamExt;
 use prost::Message as ProstMessage;

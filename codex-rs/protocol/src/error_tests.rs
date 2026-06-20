@@ -5,12 +5,8 @@ use chrono::DateTime;
 use chrono::Duration as ChronoDuration;
 use chrono::TimeZone;
 use chrono::Utc;
-use http::Response as HttpResponse;
+use http::StatusCode;
 use pretty_assertions::assert_eq;
-use reqwest::Response;
-use reqwest::ResponseBuilderExt;
-use reqwest::StatusCode;
-use reqwest::Url;
 
 fn rate_limit_snapshot() -> RateLimitSnapshot {
     let primary_reset_at = Utc
@@ -125,14 +121,10 @@ fn sandbox_denied_reports_stdout_when_no_stderr() {
 
 #[test]
 fn to_error_event_handles_response_stream_failed() {
-    let response = HttpResponse::builder()
-        .status(StatusCode::TOO_MANY_REQUESTS)
-        .url(Url::parse("http://example.com").unwrap())
-        .body("")
-        .unwrap();
-    let source = Response::from(response).error_for_status_ref().unwrap_err();
     let err = CodexErr::ResponseStreamFailed(ResponseStreamFailed {
-        source,
+        message: "HTTP status client error (429 Too Many Requests) for url (http://example.com/)"
+            .to_string(),
+        status: Some(StatusCode::TOO_MANY_REQUESTS),
         request_id: Some("req-123".to_string()),
     });
 

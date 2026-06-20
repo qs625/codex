@@ -7,7 +7,7 @@ use crate::landlock::allow_network_for_proxy;
 use crate::landlock::create_linux_sandbox_command_args_for_permission_profile;
 use crate::policy_transforms::effective_permission_profile;
 use crate::policy_transforms::should_require_platform_sandbox;
-use codex_network_proxy::NetworkProxy;
+use codex_network_proxy_api::NetworkProxyRuntimeSnapshot;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::PermissionProfile;
@@ -75,7 +75,7 @@ pub struct SandboxExecRequest {
     pub command: Vec<String>,
     pub cwd: AbsolutePathBuf,
     pub env: HashMap<String, String>,
-    pub network: Option<NetworkProxy>,
+    pub network: Option<NetworkProxyRuntimeSnapshot>,
     pub sandbox: SandboxType,
     pub windows_sandbox_level: WindowsSandboxLevel,
     pub windows_sandbox_private_desktop: bool,
@@ -93,9 +93,7 @@ pub struct SandboxTransformRequest<'a> {
     pub permissions: &'a PermissionProfile,
     pub sandbox: SandboxType,
     pub enforce_managed_network: bool,
-    // TODO(viyatb): Evaluate switching this to Option<Arc<NetworkProxy>>
-    // to make shared ownership explicit across runtime/sandbox plumbing.
-    pub network: Option<&'a NetworkProxy>,
+    pub network: Option<&'a NetworkProxyRuntimeSnapshot>,
     pub sandbox_policy_cwd: &'a Path,
     pub codex_linux_sandbox_exe: Option<&'a Path>,
     pub use_legacy_landlock: bool,

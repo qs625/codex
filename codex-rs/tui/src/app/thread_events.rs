@@ -333,7 +333,7 @@ mod tests {
     use codex_app_server_protocol::RequestId as AppServerRequestId;
     use codex_app_server_protocol::TurnCompletedNotification;
     use codex_app_server_protocol::TurnStartedNotification;
-    use codex_config::types::ApprovalsReviewer;
+    use codex_protocol::config_types::ApprovalsReviewer;
     use codex_protocol::models::PermissionProfile;
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;

@@ -1,0 +1,15 @@
+[package]
+name = "codex-feedback-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-auth-types = { workspace = true }
+tracing = { workspace = true }
+
+[lib]
+doctest = false

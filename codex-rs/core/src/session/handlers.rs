@@ -3,8 +3,8 @@ use crate::realtime_conversation::handle_close as handle_realtime_conversation_c
 use crate::realtime_conversation::handle_start as handle_realtime_conversation_start;
 use crate::realtime_conversation::handle_text as handle_realtime_conversation_text;
 use async_channel::Receiver;
-use codex_otel::set_parent_from_w3c_trace_context;
 use codex_protocol::protocol::Submission;
+use codex_trace_context::set_parent_from_w3c_trace_context;
 use tracing::Instrument;
 use tracing::debug_span;
 use tracing::info_span;
@@ -49,6 +49,8 @@ use codex_protocol::request_permissions::RequestPermissionsResponse;
 use codex_protocol::request_user_input::RequestUserInputResponse;
 
 use crate::context_manager::is_user_turn_boundary;
+use codex_mcp_types::ElicitationAction;
+use codex_mcp_types::ElicitationResponse;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Settings;
@@ -56,8 +58,6 @@ use codex_protocol::dynamic_tools::DynamicToolResponse;
 use codex_protocol::items::UserMessageItem;
 use codex_protocol::mcp::RequestId as ProtocolRequestId;
 use codex_protocol::user_input::UserInput;
-use codex_rmcp_client::ElicitationAction;
-use codex_rmcp_client::ElicitationResponse;
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::debug;

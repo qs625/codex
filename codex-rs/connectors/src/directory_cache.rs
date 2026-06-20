@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use codex_app_server_protocol::AppInfo;
+use codex_connectors_types::AppInfo;
 use serde::Deserialize;
 use serde::Serialize;
 use sha1::Digest;

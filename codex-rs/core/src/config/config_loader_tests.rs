@@ -1,8 +1,6 @@
 use crate::config::ConfigBuilder;
 use crate::config::ConfigOverrides;
 use crate::config::ConstraintError;
-use codex_app_server_protocol::ConfigLayerSource;
-use codex_config::CONFIG_TOML_FILE;
 use codex_config::CloudRequirementsLoadError;
 use codex_config::CloudRequirementsLoader;
 use codex_config::ConfigError;
@@ -21,10 +19,12 @@ use codex_config::ThreadConfigSource;
 use codex_config::config_error_from_ignored_toml_fields;
 use codex_config::config_error_from_toml;
 use codex_config::config_toml::ConfigToml;
-use codex_config::config_toml::ProjectConfig;
 use codex_config::loader::load_config_layers_state;
 use codex_config::loader::load_requirements_toml;
-use codex_exec_server::LOCAL_FS;
+use codex_config_edit::CONFIG_TOML_FILE;
+use codex_config_loader::ProjectConfig;
+use codex_config_types::ConfigLayerSource;
+use codex_file_system::LOCAL_FS;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::models::PermissionProfile;
@@ -2865,7 +2865,6 @@ async fn project_root_markers_supports_alternate_markers() -> std::io::Result<()
 
 mod requirements_exec_policy_tests {
     use crate::exec_policy::load_exec_policy;
-    use codex_app_server_protocol::ConfigLayerSource;
     use codex_config::ConfigLayerEntry;
     use codex_config::ConfigLayerStack;
     use codex_config::ConfigRequirements;
@@ -2877,9 +2876,10 @@ mod requirements_exec_policy_tests {
     use codex_config::RequirementsExecPolicyPatternTokenToml;
     use codex_config::RequirementsExecPolicyPrefixRuleToml;
     use codex_config::RequirementsExecPolicyToml;
-    use codex_execpolicy::Decision;
-    use codex_execpolicy::Evaluation;
-    use codex_execpolicy::RuleMatch;
+    use codex_config_types::ConfigLayerSource;
+    use codex_execpolicy_api::Decision;
+    use codex_execpolicy_api::Evaluation;
+    use codex_execpolicy_api::RuleMatch;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
     use std::path::Path;

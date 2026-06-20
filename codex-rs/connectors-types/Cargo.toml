@@ -1,0 +1,19 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-connectors-types"
+version.workspace = true
+description = "Lightweight connector app metadata types shared across Codex crates."
+
+[lib]
+doctest = false
+name = "codex_connectors_types"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+ts-rs = { workspace = true }

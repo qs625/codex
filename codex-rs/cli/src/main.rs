@@ -25,7 +25,7 @@ use codex_cloud_tasks::Cli as CloudTasksCli;
 use codex_exec::Cli as ExecCli;
 use codex_exec::Command as ExecCommand;
 use codex_exec::ReviewArgs;
-use codex_execpolicy::ExecPolicyCheckCommand;
+use codex_execpolicy_cli::ExecPolicyCheckCommand;
 use codex_responses_api_proxy::Args as ResponsesApiProxyArgs;
 use codex_rollout_trace::REDUCED_STATE_FILE_NAME;
 use codex_rollout_trace::replay_bundle;
@@ -42,6 +42,7 @@ use codex_utils_cli::resume_command;
 use owo_colors::OwoColorize;
 use std::io::IsTerminal;
 use std::path::PathBuf;
+use std::sync::Arc;
 use supports_color::Stream;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -62,20 +63,23 @@ use crate::plugin_cmd::PluginSubcommand;
 use doctor::DoctorCommand;
 use state_db_recovery as local_state_db;
 
-use codex_config::LoaderOverrides;
+use codex_config_edit::CONFIG_TOML_FILE;
+use codex_config_loader::LoaderOverrides;
 use codex_core::build_models_manager;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::find_codex_home;
 use codex_core::config::resolve_profile_v2_config_path;
+use codex_exec_server::EnvironmentManager;
+use codex_exec_server_api::ExecServerRuntimePaths;
 use codex_features::FEATURES;
 use codex_features::Stage;
 use codex_features::is_known_feature_key;
 use codex_login::AuthManager;
 use codex_memories_write::clear_memory_roots_contents;
 use codex_models_manager::bundled_models_response;
-use codex_models_manager::manager::RefreshStrategy;
+use codex_models_manager_api::RefreshStrategy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::user_input::UserInput;
 use codex_terminal_detection::TerminalName;
@@ -1490,10 +1494,8 @@ async fn run_exec_server_command(
         .codex_self_exe
         .clone()
         .ok_or_else(|| anyhow::anyhow!("Codex executable path is not configured"))?;
-    let runtime_paths = codex_exec_server::ExecServerRuntimePaths::new(
-        codex_self_exe,
-        arg0_paths.codex_linux_sandbox_exe.clone(),
-    )?;
+    let runtime_paths =
+        ExecServerRuntimePaths::new(codex_self_exe, arg0_paths.codex_linux_sandbox_exe.clone())?;
     if let Some(base_url) = cmd.remote {
         let executor_id = cmd
             .executor_id
@@ -1572,7 +1574,7 @@ fn maybe_print_under_development_feature_warning(
         return;
     }
 
-    let config_path = codex_home.join(codex_config::CONFIG_TOML_FILE);
+    let config_path = codex_home.join(CONFIG_TOML_FILE);
     eprintln!(
         "Under-development features enabled: {feature}. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in {}.",
         config_path.display()
@@ -1655,7 +1657,22 @@ async fn run_debug_prompt_input_command(
         });
     }
 
-    let prompt_input = codex_core::build_prompt_input(config, input, /*state_db*/ None).await?;
+    let local_runtime_paths = ExecServerRuntimePaths::from_optional_paths(
+        config.codex_self_exe.clone(),
+        config.codex_linux_sandbox_exe.clone(),
+    )?;
+    let environment_provider = Arc::new(
+        EnvironmentManager::from_codex_home(config.codex_home.clone(), local_runtime_paths).await?,
+    );
+
+    let prompt_input = codex_core::build_prompt_input(
+        config,
+        input,
+        /*state_db*/ None,
+        environment_provider,
+        Arc::new(codex_model_provider::DefaultModelProviderFactory),
+    )
+    .await?;
     println!("{}", serde_json::to_string_pretty(&prompt_input)?);
 
     Ok(())
@@ -1677,7 +1694,11 @@ async fn run_debug_models_command(
             .await?;
         let auth_manager =
             AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ true).await;
-        let models_manager = build_models_manager(&config, auth_manager);
+        let models_manager = build_models_manager(
+            &config,
+            auth_manager,
+            &codex_model_provider::DefaultModelProviderFactory,
+        );
         models_manager
             .raw_model_catalog(RefreshStrategy::OnlineIfUncached)
             .await
@@ -1986,7 +2007,7 @@ async fn run_interactive_tui(
         codex_tui::run_main(
             interactive.clone(),
             arg0_paths.clone(),
-            codex_config::LoaderOverrides::default(),
+            LoaderOverrides::default(),
             remote_endpoint.clone(),
         )
     };

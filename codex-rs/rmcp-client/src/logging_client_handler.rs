@@ -18,6 +18,7 @@ use tracing::info;
 use tracing::warn;
 
 use crate::rmcp_client::SendElicitation;
+use crate::rmcp_client::create_elicitation_result_from_response;
 
 #[derive(Clone)]
 pub(crate) struct LoggingClientHandler {
@@ -42,7 +43,7 @@ impl ClientHandler for LoggingClientHandler {
     ) -> Result<CreateElicitationResult, rmcp::ErrorData> {
         (self.send_elicitation)(context.id, request)
             .await
-            .map(Into::into)
+            .map(create_elicitation_result_from_response)
             .map_err(|err| rmcp::ErrorData::internal_error(err.to_string(), None))
     }
 

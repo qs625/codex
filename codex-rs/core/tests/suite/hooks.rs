@@ -80,7 +80,11 @@ fn trust_plugin_hooks(config: &mut Config, plugin_hook_sources: Vec<PluginHookSo
     }
     let listed = codex_hooks::list_hooks(codex_hooks::HooksConfig {
         feature_enabled: true,
-        config_layer_stack: Some(config.config_layer_stack.clone()),
+        config_layer_stack: Some(
+            codex_core::config::hook_config_layer_stack_from_config_layer_stack(
+                &config.config_layer_stack,
+            ),
+        ),
         plugin_hook_sources,
         ..codex_hooks::HooksConfig::default()
     });

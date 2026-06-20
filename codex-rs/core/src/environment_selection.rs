@@ -1,8 +1,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use codex_exec_server::EnvironmentManager;
-use codex_exec_server::ExecutorFileSystem;
+use codex_exec_server_api::ExecEnvironment;
+use codex_exec_server_api::ExecEnvironmentProvider;
+use codex_file_system::ExecutorFileSystem;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::protocol::TurnEnvironmentSelection;
@@ -11,7 +12,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use crate::session::turn_context::TurnEnvironment;
 
 pub(crate) fn default_thread_environment_selections(
-    environment_manager: &EnvironmentManager,
+    environment_manager: &dyn ExecEnvironmentProvider,
     cwd: &AbsolutePathBuf,
 ) -> Vec<TurnEnvironmentSelection> {
     environment_manager
@@ -41,7 +42,7 @@ impl ResolvedTurnEnvironments {
         self.turn_environments.first()
     }
 
-    pub(crate) fn primary_environment(&self) -> Option<Arc<codex_exec_server::Environment>> {
+    pub(crate) fn primary_environment(&self) -> Option<Arc<dyn ExecEnvironment>> {
         self.primary()
             .map(|environment| Arc::clone(&environment.environment))
     }
@@ -53,7 +54,7 @@ impl ResolvedTurnEnvironments {
 }
 
 pub(crate) fn resolve_environment_selections(
-    environment_manager: &EnvironmentManager,
+    environment_manager: &dyn ExecEnvironmentProvider,
     environments: &[TurnEnvironmentSelection],
 ) -> CodexResult<ResolvedTurnEnvironments> {
     let mut seen_environment_ids = HashSet::with_capacity(environments.len());
@@ -84,9 +85,10 @@ pub(crate) fn resolve_environment_selections(
 
 #[cfg(test)]
 mod tests {
-    use codex_exec_server::ExecServerRuntimePaths;
-    use codex_exec_server::LOCAL_ENVIRONMENT_ID;
-    use codex_exec_server::REMOTE_ENVIRONMENT_ID;
+    use codex_exec_server::EnvironmentManager;
+    use codex_exec_server_api::ExecServerRuntimePaths;
+    use codex_exec_server_api::LOCAL_ENVIRONMENT_ID;
+    use codex_exec_server_api::REMOTE_ENVIRONMENT_ID;
     use codex_protocol::protocol::TurnEnvironmentSelection;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;

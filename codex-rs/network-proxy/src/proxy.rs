@@ -8,7 +8,6 @@ use crate::socks5;
 use crate::state::NetworkProxyState;
 use anyhow::Context;
 use anyhow::Result;
-use clap::Parser;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::net::TcpListener as StdTcpListener;
@@ -18,8 +17,7 @@ use std::sync::RwLock;
 use tokio::task::JoinHandle;
 use tracing::warn;
 
-#[derive(Debug, Clone, Parser)]
-#[command(name = "codex-network-proxy", about = "Codex network sandbox proxy")]
+#[derive(Debug, Clone)]
 pub struct Args {}
 
 #[derive(Debug)]
@@ -343,217 +341,6 @@ impl PartialEq for NetworkProxy {
 
 impl Eq for NetworkProxy {}
 
-pub const PROXY_URL_ENV_KEYS: &[&str] = &[
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "WS_PROXY",
-    "WSS_PROXY",
-    "ALL_PROXY",
-    "FTP_PROXY",
-    "YARN_HTTP_PROXY",
-    "YARN_HTTPS_PROXY",
-    "NPM_CONFIG_HTTP_PROXY",
-    "NPM_CONFIG_HTTPS_PROXY",
-    "NPM_CONFIG_PROXY",
-    "BUNDLE_HTTP_PROXY",
-    "BUNDLE_HTTPS_PROXY",
-    "PIP_PROXY",
-    "DOCKER_HTTP_PROXY",
-    "DOCKER_HTTPS_PROXY",
-];
-
-pub const ALL_PROXY_ENV_KEYS: &[&str] = &["ALL_PROXY", "all_proxy"];
-pub const PROXY_ACTIVE_ENV_KEY: &str = "CODEX_NETWORK_PROXY_ACTIVE";
-pub const ALLOW_LOCAL_BINDING_ENV_KEY: &str = "CODEX_NETWORK_ALLOW_LOCAL_BINDING";
-const ELECTRON_GET_USE_PROXY_ENV_KEY: &str = "ELECTRON_GET_USE_PROXY";
-#[cfg(any(target_os = "macos", test))]
-const GIT_SSH_COMMAND_ENV_KEY: &str = "GIT_SSH_COMMAND";
-pub const PROXY_ENV_KEYS: &[&str] = &[
-    PROXY_ACTIVE_ENV_KEY,
-    ALLOW_LOCAL_BINDING_ENV_KEY,
-    ELECTRON_GET_USE_PROXY_ENV_KEY,
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "http_proxy",
-    "https_proxy",
-    "YARN_HTTP_PROXY",
-    "YARN_HTTPS_PROXY",
-    "npm_config_http_proxy",
-    "npm_config_https_proxy",
-    "npm_config_proxy",
-    "NPM_CONFIG_HTTP_PROXY",
-    "NPM_CONFIG_HTTPS_PROXY",
-    "NPM_CONFIG_PROXY",
-    "BUNDLE_HTTP_PROXY",
-    "BUNDLE_HTTPS_PROXY",
-    "PIP_PROXY",
-    "DOCKER_HTTP_PROXY",
-    "DOCKER_HTTPS_PROXY",
-    "WS_PROXY",
-    "WSS_PROXY",
-    "ws_proxy",
-    "wss_proxy",
-    "NO_PROXY",
-    "no_proxy",
-    "npm_config_noproxy",
-    "NPM_CONFIG_NOPROXY",
-    "YARN_NO_PROXY",
-    "BUNDLE_NO_PROXY",
-    "ALL_PROXY",
-    "all_proxy",
-    "FTP_PROXY",
-    "ftp_proxy",
-];
-
-#[cfg(target_os = "macos")]
-pub const PROXY_GIT_SSH_COMMAND_ENV_KEY: &str = GIT_SSH_COMMAND_ENV_KEY;
-
-const FTP_PROXY_ENV_KEYS: &[&str] = &["FTP_PROXY", "ftp_proxy"];
-const WEBSOCKET_PROXY_ENV_KEYS: &[&str] = &["WS_PROXY", "WSS_PROXY", "ws_proxy", "wss_proxy"];
-
-pub const NO_PROXY_ENV_KEYS: &[&str] = &[
-    "NO_PROXY",
-    "no_proxy",
-    "npm_config_noproxy",
-    "NPM_CONFIG_NOPROXY",
-    "YARN_NO_PROXY",
-    "BUNDLE_NO_PROXY",
-];
-
-pub const DEFAULT_NO_PROXY_VALUE: &str = concat!(
-    "localhost,127.0.0.1,::1,",
-    "10.0.0.0/8,",
-    "172.16.0.0/12,",
-    "192.168.0.0/16"
-);
-
-#[cfg(target_os = "macos")]
-pub const CODEX_PROXY_GIT_SSH_COMMAND_MARKER: &str = "CODEX_PROXY_GIT_SSH_COMMAND=1 ";
-#[cfg(target_os = "macos")]
-const CODEX_PROXY_GIT_SSH_COMMAND_PREFIX: &str =
-    "CODEX_PROXY_GIT_SSH_COMMAND=1 ssh -o ProxyCommand='nc -X 5 -x ";
-#[cfg(target_os = "macos")]
-const CODEX_PROXY_GIT_SSH_COMMAND_SUFFIX: &str = " %h %p'";
-
-pub fn proxy_url_env_value<'a>(
-    env: &'a HashMap<String, String>,
-    canonical_key: &str,
-) -> Option<&'a str> {
-    if let Some(value) = env.get(canonical_key) {
-        return Some(value.as_str());
-    }
-    let lower_key = canonical_key.to_ascii_lowercase();
-    env.get(lower_key.as_str()).map(String::as_str)
-}
-
-pub fn has_proxy_url_env_vars(env: &HashMap<String, String>) -> bool {
-    PROXY_URL_ENV_KEYS
-        .iter()
-        .any(|key| proxy_url_env_value(env, key).is_some_and(|value| !value.trim().is_empty()))
-}
-
-fn set_env_keys(env: &mut HashMap<String, String>, keys: &[&str], value: &str) {
-    for key in keys {
-        env.insert((*key).to_string(), value.to_string());
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn codex_proxy_git_ssh_command(socks_addr: SocketAddr) -> String {
-    format!("{CODEX_PROXY_GIT_SSH_COMMAND_PREFIX}{socks_addr}{CODEX_PROXY_GIT_SSH_COMMAND_SUFFIX}")
-}
-
-#[cfg(target_os = "macos")]
-fn is_codex_proxy_git_ssh_command(command: &str) -> bool {
-    command.starts_with(CODEX_PROXY_GIT_SSH_COMMAND_PREFIX)
-        && command.ends_with(CODEX_PROXY_GIT_SSH_COMMAND_SUFFIX)
-}
-
-fn apply_proxy_env_overrides(
-    env: &mut HashMap<String, String>,
-    http_addr: SocketAddr,
-    socks_addr: SocketAddr,
-    socks_enabled: bool,
-    allow_local_binding: bool,
-) {
-    let http_proxy_url = format!("http://{http_addr}");
-    let socks_proxy_url = format!("socks5h://{socks_addr}");
-    env.insert(PROXY_ACTIVE_ENV_KEY.to_string(), "1".to_string());
-    env.insert(
-        ALLOW_LOCAL_BINDING_ENV_KEY.to_string(),
-        if allow_local_binding {
-            "1".to_string()
-        } else {
-            "0".to_string()
-        },
-    );
-
-    // HTTP-based clients are best served by explicit HTTP proxy URLs.
-    set_env_keys(
-        env,
-        &[
-            "HTTP_PROXY",
-            "HTTPS_PROXY",
-            "http_proxy",
-            "https_proxy",
-            "YARN_HTTP_PROXY",
-            "YARN_HTTPS_PROXY",
-            "npm_config_http_proxy",
-            "npm_config_https_proxy",
-            "npm_config_proxy",
-            "NPM_CONFIG_HTTP_PROXY",
-            "NPM_CONFIG_HTTPS_PROXY",
-            "NPM_CONFIG_PROXY",
-            "BUNDLE_HTTP_PROXY",
-            "BUNDLE_HTTPS_PROXY",
-            "PIP_PROXY",
-            "DOCKER_HTTP_PROXY",
-            "DOCKER_HTTPS_PROXY",
-        ],
-        &http_proxy_url,
-    );
-    // Some websocket clients look for dedicated WS/WSS proxy environment variables instead of
-    // HTTP(S)_PROXY. Keep them aligned with the managed HTTP proxy endpoint.
-    set_env_keys(env, WEBSOCKET_PROXY_ENV_KEYS, &http_proxy_url);
-
-    // Keep loopback and IP-literal private targets direct so local IPC/LAN access avoids the proxy.
-    // Do not include hostname suffixes here: those can force clients to resolve internal names
-    // locally instead of letting the proxy resolve them.
-    set_env_keys(env, NO_PROXY_ENV_KEYS, DEFAULT_NO_PROXY_VALUE);
-
-    env.insert(
-        ELECTRON_GET_USE_PROXY_ENV_KEY.to_string(),
-        "true".to_string(),
-    );
-
-    // Keep HTTP_PROXY/HTTPS_PROXY as HTTP endpoints. A lot of clients break if
-    // those vars contain SOCKS URLs. We only switch ALL_PROXY here.
-    //
-    if socks_enabled {
-        set_env_keys(env, ALL_PROXY_ENV_KEYS, &socks_proxy_url);
-        set_env_keys(env, FTP_PROXY_ENV_KEYS, &socks_proxy_url);
-    } else {
-        set_env_keys(env, ALL_PROXY_ENV_KEYS, &http_proxy_url);
-        set_env_keys(env, FTP_PROXY_ENV_KEYS, &http_proxy_url);
-    }
-
-    #[cfg(target_os = "macos")]
-    if socks_enabled {
-        // Preserve existing SSH wrappers (for example: Secretive/Teleport setups)
-        // but refresh a previously injected Codex fallback so it cannot point
-        // at a stale proxy port after the proxy is restarted.
-        match env.get(GIT_SSH_COMMAND_ENV_KEY) {
-            Some(command) if !is_codex_proxy_git_ssh_command(command) => {}
-            _ => {
-                env.insert(
-                    GIT_SSH_COMMAND_ENV_KEY.to_string(),
-                    codex_proxy_git_ssh_command(socks_addr),
-                );
-            }
-        }
-    }
-}
-
 impl NetworkProxy {
     pub fn builder() -> NetworkProxyBuilder {
         NetworkProxyBuilder::default()
@@ -591,17 +378,20 @@ impl NetworkProxy {
         self.runtime_settings().dangerously_allow_all_unix_sockets
     }
 
+    pub fn runtime_snapshot(&self) -> codex_network_proxy_api::NetworkProxyRuntimeSnapshot {
+        let settings = self.runtime_settings();
+        codex_network_proxy_api::NetworkProxyRuntimeSnapshot {
+            http_addr: self.http_addr,
+            socks_addr: self.socks_addr,
+            socks_enabled: self.socks_enabled,
+            allow_local_binding: settings.allow_local_binding,
+            allow_unix_sockets: settings.allow_unix_sockets.iter().cloned().collect(),
+            dangerously_allow_all_unix_sockets: settings.dangerously_allow_all_unix_sockets,
+        }
+    }
+
     pub fn apply_to_env(&self, env: &mut HashMap<String, String>) {
-        let allow_local_binding = self.allow_local_binding();
-        // Enforce proxying for child processes. We intentionally override existing values so
-        // command-level environment cannot bypass the managed proxy endpoint.
-        apply_proxy_env_overrides(
-            env,
-            self.http_addr,
-            self.socks_addr,
-            self.socks_enabled,
-            allow_local_binding,
-        );
+        self.runtime_snapshot().apply_to_env(env);
     }
 
     pub async fn replace_config_state(&self, new_state: ConfigState) -> Result<()> {
@@ -784,9 +574,40 @@ mod tests {
     use super::*;
     use crate::config::NetworkProxySettings;
     use crate::state::network_proxy_state_for_policy;
+    use codex_network_proxy_api::ALLOW_LOCAL_BINDING_ENV_KEY;
+    use codex_network_proxy_api::DEFAULT_NO_PROXY_VALUE;
+    use codex_network_proxy_api::ELECTRON_GET_USE_PROXY_ENV_KEY;
+    use codex_network_proxy_api::NetworkProxyRuntimeSnapshot;
+    use codex_network_proxy_api::PROXY_ACTIVE_ENV_KEY;
+    use codex_network_proxy_api::has_proxy_url_env_vars;
+    use codex_network_proxy_api::proxy_url_env_value;
     use pretty_assertions::assert_eq;
     use std::net::IpAddr;
     use std::net::Ipv4Addr;
+
+    const GIT_SSH_COMMAND_ENV_KEY: &str = "GIT_SSH_COMMAND";
+
+    fn codex_proxy_git_ssh_command(socks_addr: SocketAddr) -> String {
+        format!("CODEX_PROXY_GIT_SSH_COMMAND=1 ssh -o ProxyCommand='nc -X 5 -x {socks_addr} %h %p'")
+    }
+
+    fn apply_proxy_env_overrides(
+        env: &mut HashMap<String, String>,
+        http_addr: SocketAddr,
+        socks_addr: SocketAddr,
+        socks_enabled: bool,
+        allow_local_binding: bool,
+    ) {
+        NetworkProxyRuntimeSnapshot {
+            http_addr,
+            socks_addr,
+            socks_enabled,
+            allow_local_binding,
+            allow_unix_sockets: Vec::new(),
+            dangerously_allow_all_unix_sockets: false,
+        }
+        .apply_to_env(env);
+    }
 
     #[tokio::test]
     async fn managed_proxy_builder_uses_loopback_ports() {
@@ -1043,7 +864,8 @@ mod tests {
             let is_managed_git_ssh_key =
                 cfg!(target_os = "macos") && key == GIT_SSH_COMMAND_ENV_KEY;
             assert!(
-                PROXY_ENV_KEYS.contains(&key.as_str()) || is_managed_git_ssh_key,
+                codex_network_proxy_api::PROXY_ENV_KEYS.contains(&key.as_str())
+                    || is_managed_git_ssh_key,
                 "proxy env writer set unexpected key: {key}"
             );
         }

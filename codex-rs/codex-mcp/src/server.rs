@@ -1,5 +1,5 @@
-use codex_config::McpServerConfig;
-use codex_config::McpServerTransportConfig;
+use codex_config_types::McpServerConfig;
+use codex_config_types::McpServerTransportConfig;
 
 /// The runtime launch strategy for an effective MCP server.
 #[derive(Debug, Clone)]

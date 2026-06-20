@@ -630,6 +630,7 @@ async fn create_seatbelt_args_merges_proxy_and_explicit_unix_socket_paths() -> a
         .managed_by_codex(/*managed_by_codex*/ false)
         .build()
         .await?;
+    let network_snapshot = network_proxy.runtime_snapshot();
     let extra_allow_unix_sockets = vec![absolute_path(explicit_socket)];
 
     let args = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
@@ -638,7 +639,7 @@ async fn create_seatbelt_args_merges_proxy_and_explicit_unix_socket_paths() -> a
         network_sandbox_policy: NetworkSandboxPolicy::Restricted,
         sandbox_policy_cwd: cwd.path(),
         enforce_managed_network: false,
-        network: Some(&network_proxy),
+        network: Some(&network_snapshot),
         extra_allow_unix_sockets: &extra_allow_unix_sockets,
     });
 

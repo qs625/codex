@@ -3,8 +3,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::RwLock;
 
-use codex_config::ConfigLayerStack;
-use codex_exec_server::ExecutorFileSystem;
+use codex_file_system::ExecutorFileSystem;
 use codex_protocol::protocol::Product;
 use codex_protocol::protocol::SkillScope;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -14,6 +13,7 @@ use tracing::warn;
 
 use crate::SkillLoadOutcome;
 use crate::build_implicit_skill_path_indexes;
+use crate::config_layers::SkillConfigLayerStack;
 use crate::config_rules::SkillConfigRules;
 use crate::config_rules::resolve_disabled_skill_paths;
 use crate::config_rules::skill_config_rules_from_stack;
@@ -22,13 +22,13 @@ use crate::loader::load_skills_from_roots;
 use crate::loader::skill_roots;
 use crate::system::install_system_skills;
 use crate::system::uninstall_system_skills;
-use codex_config::SkillsConfig;
+use codex_config_types::SkillsConfig;
 
 #[derive(Debug, Clone)]
 pub struct SkillsLoadInput {
     pub cwd: AbsolutePathBuf,
     pub effective_skill_roots: Vec<PluginSkillRoot>,
-    pub config_layer_stack: ConfigLayerStack,
+    pub config_layer_stack: SkillConfigLayerStack,
     pub bundled_skills_enabled: bool,
     pub allowlist_patterns: Option<Vec<String>>,
 }
@@ -37,7 +37,7 @@ impl SkillsLoadInput {
     pub fn new(
         cwd: AbsolutePathBuf,
         effective_skill_roots: Vec<PluginSkillRoot>,
-        config_layer_stack: ConfigLayerStack,
+        config_layer_stack: SkillConfigLayerStack,
         bundled_skills_enabled: bool,
     ) -> Self {
         Self {
@@ -257,9 +257,7 @@ struct ConfigSkillsCacheKey {
     allowlist_patterns: Option<Vec<String>>,
 }
 
-pub fn bundled_skills_enabled_from_stack(
-    config_layer_stack: &codex_config::ConfigLayerStack,
-) -> bool {
+pub fn bundled_skills_enabled_from_stack(config_layer_stack: &SkillConfigLayerStack) -> bool {
     let effective_config = config_layer_stack.effective_config();
     let Some(skills_value) = effective_config
         .as_table()

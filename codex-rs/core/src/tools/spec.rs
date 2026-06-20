@@ -4,12 +4,12 @@ use crate::tools::registry::RegisteredTool;
 use crate::tools::spec_plan::collect_tool_executors;
 use crate::tools::spec_plan_types::ToolRegistryBuildParams;
 use codex_extension_api::ExtensionToolExecutor;
-use codex_mcp::ToolInfo;
+use codex_mcp_tool_types::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_tools::DiscoverableTool;
-use codex_tools::hosted_model_tool_specs;
 use codex_tools::ToolUserShellType;
 use codex_tools::ToolsConfig;
+use codex_tools::hosted_model_tool_specs;
 use std::sync::Arc;
 
 pub(crate) fn tool_user_shell_type(user_shell: &Shell) -> ToolUserShellType {

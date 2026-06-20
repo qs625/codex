@@ -4,13 +4,13 @@ use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
-use codex_tools::create_read_mcp_resource_tool;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
 use codex_protocol::models::function_call_output_content_items_to_text;
 use codex_protocol::protocol::McpInvocation;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
+use codex_tools::create_read_mcp_resource_tool;
 
 use rmcp::model::ReadResourceRequestParams;
 

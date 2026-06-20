@@ -6,6 +6,7 @@ use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::user_input::UserInput;
 use pretty_assertions::assert_eq;
+use std::sync::Arc;
 use tempfile::TempDir;
 
 #[tokio::test]
@@ -23,6 +24,18 @@ async fn build_prompt_input_includes_context_and_user_message() -> Result<()> {
         .await?;
     config.user_instructions = Some("Project-specific test instructions".to_string());
 
+    let runtime_paths = codex_exec_server_api::ExecServerRuntimePaths::new(
+        std::env::current_exe()?,
+        /*codex_linux_sandbox_exe*/ None,
+    )?;
+    let environment_provider = Arc::new(
+        codex_exec_server::EnvironmentManager::from_codex_home(
+            config.codex_home.clone(),
+            runtime_paths,
+        )
+        .await?,
+    );
+
     let input = build_prompt_input(
         config,
         vec![UserInput::Text {
@@ -30,6 +43,8 @@ async fn build_prompt_input_includes_context_and_user_message() -> Result<()> {
             text_elements: Vec::new(),
         }],
         /*state_db*/ None,
+        environment_provider,
+        codex_core::test_support::model_provider_factory_for_tests(),
     )
     .await?;
 

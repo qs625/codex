@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use codex_api::AuthError;
-use codex_api::AuthProvider;
-use codex_api::SharedAuthProvider;
+use codex_api_provider::AuthError;
+use codex_api_provider::AuthProvider;
+use codex_api_provider::AuthProviderFuture;
+use codex_api_provider::SharedAuthProvider;
 use codex_aws_auth::AwsAuthContext;
 use codex_aws_auth::AwsAuthError;
 use codex_aws_auth::AwsRequestToSign;
@@ -112,36 +113,40 @@ impl BedrockMantleSigV4AuthProvider {
     }
 }
 
-#[async_trait::async_trait]
 impl AuthProvider for BedrockMantleSigV4AuthProvider {
     fn add_auth_headers(&self, _headers: &mut HeaderMap) {}
 
-    async fn apply_auth(&self, request: Request) -> std::result::Result<Request, AuthError> {
-        let mut request = request;
-        remove_headers_not_preserved_by_bedrock_mantle(&mut request.headers);
-        let prepared = request.prepare_body_for_send().map_err(AuthError::Build)?;
-        let signed = self
-            .context
-            .sign(AwsRequestToSign {
-                method: request.method.clone(),
-                url: request.url.clone(),
-                headers: prepared.headers.clone(),
-                body: prepared.body_bytes(),
-            })
-            .await
-            .map_err(aws_auth_error_to_auth_error)?;
+    fn apply_auth(
+        &self,
+        request: Request,
+    ) -> AuthProviderFuture<'_, std::result::Result<Request, AuthError>> {
+        Box::pin(async move {
+            let mut request = request;
+            remove_headers_not_preserved_by_bedrock_mantle(&mut request.headers);
+            let prepared = request.prepare_body_for_send().map_err(AuthError::Build)?;
+            let signed = self
+                .context
+                .sign(AwsRequestToSign {
+                    method: request.method.clone(),
+                    url: request.url.clone(),
+                    headers: prepared.headers.clone(),
+                    body: prepared.body_bytes(),
+                })
+                .await
+                .map_err(aws_auth_error_to_auth_error)?;
 
-        request.url = signed.url;
-        request.headers = signed.headers;
-        request.body = prepared.body.map(RequestBody::Raw);
-        request.compression = RequestCompression::None;
-        Ok(request)
+            request.url = signed.url;
+            request.headers = signed.headers;
+            request.body = prepared.body.map(RequestBody::Raw);
+            request.compression = RequestCompression::None;
+            Ok(request)
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use codex_api::AuthProvider;
+    use codex_api_provider::AuthProvider;
     use http::HeaderValue;
     use pretty_assertions::assert_eq;
 

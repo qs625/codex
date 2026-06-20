@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use async_channel::Receiver;
 use async_channel::Sender;
-use codex_analytics::GuardianApprovalRequestSource;
+use codex_analytics_api::GuardianApprovalRequestSource;
 use codex_async_utils::OrCancelExt;
 use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
 use codex_protocol::protocol::Event;
@@ -49,7 +49,7 @@ use crate::session::emit_subagent_session_started;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use codex_login::AuthManager;
-use codex_models_manager::manager::SharedModelsManager;
+use codex_models_manager_api::SharedModelsManager;
 use codex_protocol::error::CodexErr;
 use codex_protocol::protocol::InitialHistory;
 
@@ -78,6 +78,7 @@ pub(crate) async fn run_codex_thread_interactive(
         config,
         installation_id: parent_session.installation_id.clone(),
         auth_manager,
+        model_provider_factory: Arc::clone(&parent_session.services.model_provider_factory),
         models_manager,
         environment_manager: Arc::clone(&parent_session.services.environment_manager),
         skills_manager: Arc::clone(&parent_session.services.skills_manager),
@@ -101,9 +102,17 @@ pub(crate) async fn run_codex_thread_interactive(
         thread_store: Arc::clone(&parent_session.services.thread_store),
         attestation_provider: parent_session.services.attestation_provider.clone(),
         active_event_subscriptions: Arc::clone(&parent_session.services.active_event_subscriptions),
+        openai_file_uploader: Arc::clone(&parent_session.services.openai_file_uploader),
+        code_mode_service: parent_session
+            .services
+            .code_mode_runtime_factory
+            .create_service(),
+        code_mode_runtime_factory: Arc::clone(&parent_session.services.code_mode_runtime_factory),
+        workflow_runs: Arc::clone(&parent_session.workflow_runs),
     }))
     .or_cancel(&cancel_token)
-    .await??;
+    .await
+    .map_err(|_| CodexErr::TurnAborted)??;
     let thread_config = codex.thread_config_snapshot().await;
     let client_metadata = parent_session.app_server_client_metadata().await;
     emit_subagent_session_started(

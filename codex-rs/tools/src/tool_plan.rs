@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 
 /// Pure code-mode planning result derived from model-visible nested tool specs.
 pub struct CodeModeExecPlan {
-    pub enabled_tools: Vec<codex_code_mode::ToolDefinition>,
-    pub namespace_descriptions: BTreeMap<String, codex_code_mode::ToolNamespaceDescription>,
+    pub enabled_tools: Vec<codex_code_mode_api::ToolDefinition>,
+    pub namespace_descriptions: BTreeMap<String, codex_code_mode_api::ToolNamespaceDescription>,
 }
 
 pub fn filter_tool_specs_for_agent(config: &ToolsConfig, specs: Vec<ToolSpec>) -> Vec<ToolSpec> {
@@ -121,9 +121,8 @@ pub fn merge_tool_specs_into_namespaces(specs: Vec<ToolSpec>) -> Vec<ToolSpec> {
 pub fn code_mode_exec_plan_for_specs(specs: &[ToolSpec]) -> CodeModeExecPlan {
     let namespace_descriptions = code_mode_namespace_descriptions(specs);
     let mut enabled_tools = collect_code_mode_exec_prompt_tool_definitions(specs.iter());
-    enabled_tools.sort_by(|left, right| {
-        compare_code_mode_tools(left, right, &namespace_descriptions)
-    });
+    enabled_tools
+        .sort_by(|left, right| compare_code_mode_tools(left, right, &namespace_descriptions));
 
     CodeModeExecPlan {
         enabled_tools,
@@ -133,7 +132,7 @@ pub fn code_mode_exec_plan_for_specs(specs: &[ToolSpec]) -> CodeModeExecPlan {
 
 fn code_mode_namespace_descriptions(
     specs: &[ToolSpec],
-) -> BTreeMap<String, codex_code_mode::ToolNamespaceDescription> {
+) -> BTreeMap<String, codex_code_mode_api::ToolNamespaceDescription> {
     let mut namespace_descriptions = BTreeMap::new();
     for spec in specs {
         let ToolSpec::Namespace(namespace) = spec else {
@@ -142,7 +141,7 @@ fn code_mode_namespace_descriptions(
 
         let entry = namespace_descriptions
             .entry(namespace.name.clone())
-            .or_insert_with(|| codex_code_mode::ToolNamespaceDescription {
+            .or_insert_with(|| codex_code_mode_api::ToolNamespaceDescription {
                 name: namespace.name.clone(),
                 description: namespace.description.clone(),
             });
@@ -154,9 +153,9 @@ fn code_mode_namespace_descriptions(
 }
 
 fn compare_code_mode_tools(
-    left: &codex_code_mode::ToolDefinition,
-    right: &codex_code_mode::ToolDefinition,
-    namespace_descriptions: &BTreeMap<String, codex_code_mode::ToolNamespaceDescription>,
+    left: &codex_code_mode_api::ToolDefinition,
+    right: &codex_code_mode_api::ToolDefinition,
+    namespace_descriptions: &BTreeMap<String, codex_code_mode_api::ToolNamespaceDescription>,
 ) -> std::cmp::Ordering {
     let left_namespace = code_mode_namespace_name(left, namespace_descriptions);
     let right_namespace = code_mode_namespace_name(right, namespace_descriptions);
@@ -168,8 +167,8 @@ fn compare_code_mode_tools(
 }
 
 fn code_mode_namespace_name<'a>(
-    tool: &codex_code_mode::ToolDefinition,
-    namespace_descriptions: &'a BTreeMap<String, codex_code_mode::ToolNamespaceDescription>,
+    tool: &codex_code_mode_api::ToolDefinition,
+    namespace_descriptions: &'a BTreeMap<String, codex_code_mode_api::ToolNamespaceDescription>,
 ) -> Option<&'a str> {
     tool.tool_name
         .namespace

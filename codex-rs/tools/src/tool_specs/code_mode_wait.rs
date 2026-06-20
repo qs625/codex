@@ -31,11 +31,11 @@ pub fn create_wait_tool() -> ToolSpec {
     ]);
 
     ToolSpec::Function(ResponsesApiTool {
-        name: codex_code_mode::WAIT_TOOL_NAME.to_string(),
+        name: codex_code_mode_api::WAIT_TOOL_NAME.to_string(),
         description: format!(
             "Waits on a yielded `{}` cell and returns new output or completion.\n{}",
-            codex_code_mode::PUBLIC_TOOL_NAME,
-            codex_code_mode::build_wait_tool_description().trim()
+            codex_code_mode_api::PUBLIC_TOOL_NAME,
+            codex_code_mode_api::build_wait_tool_description().trim()
         ),
         strict: false,
         parameters: JsonSchema::object(
@@ -58,11 +58,11 @@ mod tests {
         assert_eq!(
             create_wait_tool(),
             ToolSpec::Function(ResponsesApiTool {
-                name: codex_code_mode::WAIT_TOOL_NAME.to_string(),
+                name: codex_code_mode_api::WAIT_TOOL_NAME.to_string(),
                 description: format!(
                     "Waits on a yielded `{}` cell and returns new output or completion.\n{}",
-                    codex_code_mode::PUBLIC_TOOL_NAME,
-                    codex_code_mode::build_wait_tool_description().trim()
+                    codex_code_mode_api::PUBLIC_TOOL_NAME,
+                    codex_code_mode_api::build_wait_tool_description().trim()
                 ),
                 strict: false,
                 defer_loading: None,

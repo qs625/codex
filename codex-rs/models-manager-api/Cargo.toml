@@ -1,0 +1,17 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-models-manager-api"
+version.workspace = true
+description = "Lightweight model catalog manager API shared across Codex crates."
+
+[lib]
+doctest = false
+name = "codex_models_manager_api"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-protocol = { workspace = true }

@@ -4,9 +4,9 @@ use crate::config::ManagedFeatures;
 use crate::session::tests::make_session_and_context;
 use crate::session::tests::make_session_and_context_with_rx;
 use crate::state::ActiveTurn;
+use crate::test_support::create_model_provider_for_tests;
 use crate::test_support::models_manager_with_provider;
 use crate::turn_metadata::McpTurnMetadataContext;
-use codex_config::CONFIG_TOML_FILE;
 use codex_config::config_toml::ConfigToml;
 use codex_config::types::AppConfig;
 use codex_config::types::AppToolConfig;
@@ -15,10 +15,10 @@ use codex_config::types::ApprovalsReviewer;
 use codex_config::types::AppsConfigToml;
 use codex_config::types::McpServerConfig;
 use codex_config::types::McpServerToolConfig;
+use codex_config_edit::CONFIG_TOML_FILE;
 use codex_features::Features;
 use codex_hooks::Hooks;
 use codex_hooks::HooksConfig;
-use codex_model_provider::create_model_provider;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
@@ -240,7 +240,11 @@ print({hook_output:?})
     .expect("write hooks.json");
     let hook_list = codex_hooks::list_hooks(HooksConfig {
         feature_enabled: true,
-        config_layer_stack: Some(turn_context.config.config_layer_stack.clone()),
+        config_layer_stack: Some(
+            crate::config::hook_config_layer_stack_from_config_layer_stack(
+                &turn_context.config.config_layer_stack,
+            ),
+        ),
         ..HooksConfig::default()
     });
     assert_eq!(hook_list.hooks.len(), 1);
@@ -255,7 +259,11 @@ print({hook_output:?})
         .hooks
         .store(Arc::new(Hooks::new(HooksConfig {
             feature_enabled: true,
-            config_layer_stack: Some(trusted_config_layer_stack),
+            config_layer_stack: Some(
+                crate::config::hook_config_layer_stack_from_config_layer_stack(
+                    &trusted_config_layer_stack,
+                ),
+            ),
             shell_program: (!cfg!(windows)).then_some("/bin/sh".to_string()),
             shell_args: if cfg!(windows) {
                 Vec::new()
@@ -1207,11 +1215,12 @@ fn codex_apps_auth_failure_metadata() -> McpToolApprovalMetadata {
 
 async fn install_host_owned_codex_apps_manager(session: &Session, turn_context: &TurnContext) {
     let auth = session.services.auth_manager.auth().await;
+    let local_environment = session.services.environment_manager.local_environment();
     let environment = session
         .services
         .environment_manager
         .default_environment()
-        .unwrap_or_else(|| session.services.environment_manager.local_environment());
+        .unwrap_or_else(|| Arc::clone(&local_environment));
     let (manager, _cancel_token) = codex_mcp::McpConnectionManager::new(
         &HashMap::new(),
         turn_context.config.mcp_oauth_credentials_store_mode,
@@ -1220,7 +1229,7 @@ async fn install_host_owned_codex_apps_manager(session: &Session, turn_context: 
         turn_context.sub_id.clone(),
         session.get_tx_event(),
         turn_context.permission_profile(),
-        codex_mcp::McpRuntimeEnvironment::new(environment, {
+        crate::mcp::mcp_runtime_environment(environment, local_environment, {
             #[allow(deprecated)]
             turn_context.cwd.to_path_buf()
         }),
@@ -2342,7 +2351,7 @@ async fn guardian_mode_skips_auto_when_annotations_do_not_require_approval() {
     );
     session.services.models_manager = models_manager;
     turn_context.config = Arc::clone(&config);
-    turn_context.provider = create_model_provider(
+    turn_context.provider = create_model_provider_for_tests(
         config.model_provider.clone(),
         turn_context.auth_manager.clone(),
     );
@@ -2623,7 +2632,7 @@ async fn guardian_mode_mcp_denial_returns_rationale_message() {
     );
     session.services.models_manager = models_manager;
     turn_context.config = Arc::clone(&config);
-    turn_context.provider = create_model_provider(
+    turn_context.provider = create_model_provider_for_tests(
         config.model_provider.clone(),
         turn_context.auth_manager.clone(),
     );
@@ -3086,7 +3095,7 @@ async fn approve_mode_skips_arc_and_guardian_in_every_permission_mode() {
         );
         session.services.models_manager = models_manager;
         turn_context.config = Arc::clone(&config);
-        turn_context.provider = create_model_provider(
+        turn_context.provider = create_model_provider_for_tests(
             config.model_provider.clone(),
             turn_context.auth_manager.clone(),
         );

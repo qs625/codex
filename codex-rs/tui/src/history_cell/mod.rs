@@ -57,7 +57,7 @@ use codex_app_server_protocol::PermissionProfileNetworkPermissions;
 use codex_app_server_protocol::ToolRequestUserInputAnswer;
 use codex_app_server_protocol::ToolRequestUserInputQuestion;
 use codex_app_server_protocol::WebSearchAction;
-use codex_config::types::McpServerTransportConfig;
+use codex_config_types::McpServerTransportConfig;
 #[cfg(test)]
 use codex_mcp::qualified_mcp_tool_name_prefix;
 use codex_otel::RuntimeMetricsSummary;

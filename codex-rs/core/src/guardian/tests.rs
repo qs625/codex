@@ -9,7 +9,8 @@ use crate::guardian::approval_request::guardian_request_target_item_id;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::test_support;
-use codex_analytics::GuardianApprovalRequestSource;
+use crate::test_support::create_model_provider_for_tests;
+use codex_analytics_api::GuardianApprovalRequestSource;
 use codex_config::ConfigLayerStack;
 use codex_config::FeatureRequirementsToml;
 use codex_config::NetworkConstraints;
@@ -19,13 +20,12 @@ use codex_config::RequirementSource;
 use codex_config::Sourced;
 use codex_config::config_toml::ConfigToml;
 use codex_config::types::McpServerConfig;
-use codex_exec_server::LOCAL_FS;
 use codex_features::Feature;
-use codex_model_provider::create_model_provider;
+use codex_file_system::LOCAL_FS;
 use codex_model_provider_info::AMAZON_BEDROCK_GPT_5_4_MODEL_ID;
 use codex_model_provider_info::AMAZON_BEDROCK_PROVIDER_ID;
 use codex_model_provider_info::ModelProviderInfo;
-use codex_network_proxy::NetworkProxyConfig;
+use codex_network_proxy_api::NetworkProxyConfig;
 use codex_protocol::ThreadId;
 use codex_protocol::approvals::NetworkApprovalProtocol;
 use codex_protocol::config_types::ApprovalsReviewer;
@@ -184,7 +184,8 @@ async fn guardian_test_session_and_turn_with_base_url(
     );
     session.services.models_manager = models_manager;
     turn.config = Arc::clone(&config);
-    turn.provider = create_model_provider(config.model_provider.clone(), turn.auth_manager.clone());
+    turn.provider =
+        create_model_provider_for_tests(config.model_provider.clone(), turn.auth_manager.clone());
     turn.user_instructions = None;
 
     (Arc::new(session), Arc::new(turn))
@@ -1263,7 +1264,8 @@ async fn guardian_review_request_layout_matches_model_visible_request_snapshot()
     );
     session.services.models_manager = models_manager;
     turn.config = Arc::clone(&config);
-    turn.provider = create_model_provider(config.model_provider.clone(), turn.auth_manager.clone());
+    turn.provider =
+        create_model_provider_for_tests(config.model_provider.clone(), turn.auth_manager.clone());
     let session = Arc::new(session);
     let turn = Arc::new(turn);
     seed_guardian_parent_history(&session, &turn).await;
@@ -1303,7 +1305,7 @@ async fn guardian_review_request_layout_matches_model_visible_request_snapshot()
     ThreadId::from_string(guardian_thread_id).expect("guardian thread id should be a valid UUID");
     assert!(matches!(
         metadata.guardian_session_kind,
-        Some(codex_analytics::GuardianReviewSessionKind::TrunkNew)
+        Some(codex_analytics_api::GuardianReviewSessionKind::TrunkNew)
     ));
     let request = request_log.single_request();
     let request_body = request.body_json();
@@ -1569,15 +1571,15 @@ async fn guardian_reuses_prompt_cache_key_and_appends_prior_reviews() -> anyhow:
     assert_eq!(third_assessment.outcome, GuardianAssessmentOutcome::Allow);
     assert!(matches!(
         first_metadata.guardian_session_kind,
-        Some(codex_analytics::GuardianReviewSessionKind::TrunkNew)
+        Some(codex_analytics_api::GuardianReviewSessionKind::TrunkNew)
     ));
     assert!(matches!(
         second_metadata.guardian_session_kind,
-        Some(codex_analytics::GuardianReviewSessionKind::TrunkReused)
+        Some(codex_analytics_api::GuardianReviewSessionKind::TrunkReused)
     ));
     assert!(matches!(
         third_metadata.guardian_session_kind,
-        Some(codex_analytics::GuardianReviewSessionKind::TrunkReused)
+        Some(codex_analytics_api::GuardianReviewSessionKind::TrunkReused)
     ));
     ThreadId::from_string(
         first_metadata
@@ -1750,7 +1752,7 @@ async fn guardian_reused_trunk_ignores_stale_prior_turn_completion() -> anyhow::
     assert_eq!(first_assessment.rationale, "first guardian rationale");
     assert!(matches!(
         first_metadata.guardian_session_kind,
-        Some(codex_analytics::GuardianReviewSessionKind::TrunkNew)
+        Some(codex_analytics_api::GuardianReviewSessionKind::TrunkNew)
     ));
 
     session
@@ -1794,7 +1796,7 @@ async fn guardian_reused_trunk_ignores_stale_prior_turn_completion() -> anyhow::
     assert_eq!(second_assessment.rationale, "second guardian rationale");
     assert!(matches!(
         second_metadata.guardian_session_kind,
-        Some(codex_analytics::GuardianReviewSessionKind::TrunkReused)
+        Some(codex_analytics_api::GuardianReviewSessionKind::TrunkReused)
     ));
 
     assert_eq!(
@@ -1842,8 +1844,10 @@ async fn guardian_review_surfaces_responses_api_errors_in_rejection_reason() -> 
         .models_manager = models_manager;
     let turn_mut = Arc::get_mut(&mut turn).expect("turn should be uniquely owned");
     turn_mut.config = Arc::clone(&config);
-    turn_mut.provider =
-        create_model_provider(config.model_provider.clone(), turn_mut.auth_manager.clone());
+    turn_mut.provider = create_model_provider_for_tests(
+        config.model_provider.clone(),
+        turn_mut.auth_manager.clone(),
+    );
     turn_mut.user_instructions = None;
 
     seed_guardian_parent_history(&session, &turn).await;

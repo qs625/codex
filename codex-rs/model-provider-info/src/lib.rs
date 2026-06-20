@@ -5,20 +5,15 @@
 //!   2. User-defined entries inside `~/.codex/config.toml` under the `model_providers`
 //!      key. These override or extend the defaults at runtime.
 
-use codex_api::Provider as ApiProvider;
-use codex_api::RetryConfig as ApiRetryConfig;
-use codex_api::is_azure_responses_provider;
-use codex_app_server_protocol::AuthMode;
 use codex_protocol::config_types::ModelProviderAuthInfo;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::EnvVarError;
 use codex_protocol::error::Result as CodexResult;
-use http::HeaderMap;
-use http::header::HeaderName;
-use http::header::HeaderValue;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use serde::Deserializer;
 use serde::Serialize;
+use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::fmt;
 use std::time::Duration;
@@ -160,6 +155,87 @@ pub struct ModelProviderAwsAuthInfo {
     pub region: Option<String>,
 }
 
+/// User-visible model picker entry backed by a configured provider.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ModelOptionToml {
+    /// Upstream model identifier sent to the provider.
+    pub model: String,
+    /// Provider ID to use for this model option.
+    pub provider: String,
+    /// Optional provider base URL. When present, Codex can synthesize the provider entry.
+    pub base_url: Option<String>,
+    /// Optional ModelHub-style query parameter key appended as `ak`.
+    pub ak: Option<String>,
+    /// Optional environment variable containing the provider API key.
+    pub env_key: Option<String>,
+    /// Optional help text for configuring `env_key`.
+    pub env_key_instructions: Option<String>,
+    /// Optional bearer token literal.
+    pub experimental_bearer_token: Option<String>,
+    /// Optional wire protocol override for the synthesized provider.
+    pub wire_api: Option<WireApi>,
+    /// Optional query parameters appended to the provider URL.
+    pub query_params: Option<HashMap<String, String>>,
+    /// Optional literal HTTP headers sent to the provider.
+    pub http_headers: Option<HashMap<String, String>>,
+    /// Optional HTTP headers read from environment variables.
+    pub env_http_headers: Option<HashMap<String, String>>,
+    /// Optional provider request retry override.
+    pub request_max_retries: Option<u64>,
+    /// Optional provider stream retry override.
+    pub stream_max_retries: Option<u64>,
+    /// Optional stream idle timeout override in milliseconds.
+    pub stream_idle_timeout_ms: Option<u64>,
+    /// Optional websocket connect timeout override in milliseconds.
+    pub websocket_connect_timeout_ms: Option<u64>,
+    /// Size of the model context window, in tokens.
+    pub context_window: Option<i64>,
+    /// Maximum context window supported by the model, in tokens.
+    pub max_context_window: Option<i64>,
+    /// Token usage threshold triggering auto-compaction for this model.
+    pub auto_compact_token_limit: Option<i64>,
+    /// Chat Completions `max_tokens` value for this model option.
+    pub max_tokens: Option<u64>,
+    /// Additional Chat Completions request body fields for this model option.
+    pub extra_body: Option<HashMap<String, JsonValue>>,
+}
+
+impl ModelOptionToml {
+    pub fn has_inline_provider_config(&self) -> bool {
+        self.base_url.is_some()
+    }
+
+    pub fn to_provider_info(&self) -> ModelProviderInfo {
+        let query_params = match (self.ak.as_ref(), self.query_params.as_ref()) {
+            (None, None) => None,
+            (ak, query_params) => {
+                let mut merged = query_params.cloned().unwrap_or_default();
+                if let Some(ak) = ak {
+                    merged.insert("ak".to_string(), ak.clone());
+                }
+                Some(merged)
+            }
+        };
+        ModelProviderInfo {
+            name: self.provider.clone(),
+            base_url: self.base_url.clone(),
+            env_key: self.env_key.clone(),
+            env_key_instructions: self.env_key_instructions.clone(),
+            experimental_bearer_token: self.experimental_bearer_token.clone(),
+            wire_api: self.wire_api.unwrap_or(WireApi::AzureChatCompletions),
+            query_params,
+            http_headers: self.http_headers.clone(),
+            env_http_headers: self.env_http_headers.clone(),
+            request_max_retries: self.request_max_retries,
+            stream_max_retries: self.stream_max_retries,
+            stream_idle_timeout_ms: self.stream_idle_timeout_ms,
+            websocket_connect_timeout_ms: self.websocket_connect_timeout_ms,
+            ..Default::default()
+        }
+    }
+}
+
 impl ModelProviderInfo {
     pub fn validate(&self) -> std::result::Result<(), String> {
         if self.aws.is_some() {
@@ -219,66 +295,6 @@ impl ModelProviderInfo {
                 conflicts.join(", ")
             ))
         }
-    }
-
-    fn build_header_map(&self) -> CodexResult<HeaderMap> {
-        let capacity = self.http_headers.as_ref().map_or(0, HashMap::len)
-            + self.env_http_headers.as_ref().map_or(0, HashMap::len);
-        let mut headers = HeaderMap::with_capacity(capacity);
-        if let Some(extra) = &self.http_headers {
-            for (k, v) in extra {
-                if let (Ok(name), Ok(value)) = (HeaderName::try_from(k), HeaderValue::try_from(v)) {
-                    headers.insert(name, value);
-                }
-            }
-        }
-
-        if let Some(env_headers) = &self.env_http_headers {
-            for (header, env_var) in env_headers {
-                if let Ok(val) = std::env::var(env_var)
-                    && !val.trim().is_empty()
-                    && let (Ok(name), Ok(value)) =
-                        (HeaderName::try_from(header), HeaderValue::try_from(val))
-                {
-                    headers.insert(name, value);
-                }
-            }
-        }
-
-        Ok(headers)
-    }
-
-    pub fn to_api_provider(&self, auth_mode: Option<AuthMode>) -> CodexResult<ApiProvider> {
-        let default_base_url = if matches!(
-            auth_mode,
-            Some(AuthMode::Chatgpt | AuthMode::ChatgptAuthTokens | AuthMode::AgentIdentity)
-        ) {
-            CHATGPT_CODEX_BASE_URL
-        } else {
-            "https://api.openai.com/v1"
-        };
-        let base_url = self
-            .base_url
-            .clone()
-            .unwrap_or_else(|| default_base_url.to_string());
-
-        let headers = self.build_header_map()?;
-        let retry = ApiRetryConfig {
-            max_attempts: self.request_max_retries(),
-            base_delay: Duration::from_millis(200),
-            retry_429: false,
-            retry_5xx: true,
-            retry_transport: true,
-        };
-
-        Ok(ApiProvider {
-            name: self.name.clone(),
-            base_url,
-            query_params: self.query_params.clone(),
-            headers,
-            retry,
-            stream_idle_timeout: self.stream_idle_timeout(),
-        })
     }
 
     /// If `env_key` is Some, returns the API key for this provider if present
@@ -414,6 +430,29 @@ impl ModelProviderInfo {
     }
 }
 
+fn is_azure_responses_provider(name: &str, base_url: Option<&str>) -> bool {
+    if name.eq_ignore_ascii_case("azure") {
+        true
+    } else if let Some(base_url) = base_url {
+        matches_azure_responses_base_url(base_url)
+    } else {
+        false
+    }
+}
+
+fn matches_azure_responses_base_url(base_url: &str) -> bool {
+    let base_url = base_url.to_ascii_lowercase();
+    const AZURE_MARKERS: [&str; 6] = [
+        "openai.azure.",
+        "cognitiveservices.azure.",
+        "aoai.azure.",
+        "azure-api.",
+        "azurefd.",
+        "windows.net/openai",
+    ];
+    AZURE_MARKERS.iter().any(|marker| base_url.contains(marker))
+}
+
 pub const DEFAULT_LMSTUDIO_PORT: u16 = 1234;
 pub const DEFAULT_OLLAMA_PORT: u16 = 11434;
 
@@ -485,6 +524,84 @@ pub fn merge_configured_model_providers(
     }
 
     Ok(model_providers)
+}
+
+pub fn validate_reserved_model_provider_ids(
+    model_providers: &HashMap<String, ModelProviderInfo>,
+) -> Result<(), String> {
+    let mut conflicts = model_providers
+        .keys()
+        .filter(|key| {
+            key.as_str() != AMAZON_BEDROCK_PROVIDER_ID
+                && matches!(
+                    key.as_str(),
+                    OPENAI_PROVIDER_ID | OLLAMA_OSS_PROVIDER_ID | LMSTUDIO_OSS_PROVIDER_ID
+                )
+        })
+        .map(|key| format!("`{key}`"))
+        .collect::<Vec<_>>();
+    conflicts.sort_unstable();
+    if conflicts.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "model_providers contains reserved built-in provider IDs: {}. \
+Built-in providers cannot be overridden. Rename your custom provider (for example, `openai-custom`).",
+            conflicts.join(", ")
+        ))
+    }
+}
+
+pub fn validate_model_providers(
+    model_providers: &HashMap<String, ModelProviderInfo>,
+) -> Result<(), String> {
+    validate_reserved_model_provider_ids(model_providers)?;
+    for (key, provider) in model_providers {
+        if key == AMAZON_BEDROCK_PROVIDER_ID {
+            continue;
+        }
+        if provider.aws.is_some() {
+            return Err(format!(
+                "model_providers.{key}: provider aws is only supported for `{AMAZON_BEDROCK_PROVIDER_ID}`"
+            ));
+        }
+        if provider.name.trim().is_empty() {
+            return Err(format!(
+                "model_providers.{key}: provider name must not be empty"
+            ));
+        }
+        provider
+            .validate()
+            .map_err(|message| format!("model_providers.{key}: {message}"))?;
+    }
+    Ok(())
+}
+
+pub fn deserialize_model_providers<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<String, ModelProviderInfo>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let model_providers = HashMap::<String, ModelProviderInfo>::deserialize(deserializer)?;
+    validate_model_providers(&model_providers).map_err(serde::de::Error::custom)?;
+    Ok(model_providers)
+}
+
+pub fn validate_oss_provider(provider: &str) -> std::io::Result<()> {
+    match provider {
+        LMSTUDIO_OSS_PROVIDER_ID | OLLAMA_OSS_PROVIDER_ID => Ok(()),
+        LEGACY_OLLAMA_CHAT_PROVIDER_ID => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            OLLAMA_CHAT_PROVIDER_REMOVED_ERROR,
+        )),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "Invalid OSS provider '{provider}'. Must be one of: {LMSTUDIO_OSS_PROVIDER_ID}, {OLLAMA_OSS_PROVIDER_ID}"
+            ),
+        )),
+    }
 }
 
 pub fn create_oss_provider(default_provider_port: u16, wire_api: WireApi) -> ModelProviderInfo {

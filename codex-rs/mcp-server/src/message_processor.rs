@@ -63,18 +63,26 @@ impl MessageProcessor {
             /*enable_codex_api_key_env*/ false,
         )
         .await;
-        let thread_manager = Arc::new(ThreadManager::new(
-            config.as_ref(),
-            auth_manager,
-            SessionSource::Mcp,
-            environment_manager,
-            empty_extension_registry(),
-            /*analytics_events_client*/ None,
-            codex_core::thread_store_from_config(config.as_ref(), state_db.clone()),
-            state_db.clone(),
-            installation_id,
-            /*attestation_provider*/ None,
-        ));
+        let thread_manager = Arc::new(
+            ThreadManager::new_with_workflow_runs_and_openai_file_uploader(
+                config.as_ref(),
+                auth_manager,
+                SessionSource::Mcp,
+                environment_manager,
+                empty_extension_registry(),
+                /*analytics_events_client*/ None,
+                codex_core::thread_store_from_config(config.as_ref(), state_db.clone()),
+                state_db.clone(),
+                installation_id,
+                /*attestation_provider*/ None,
+                Arc::new(codex_model_provider::DefaultModelProviderFactory),
+                Arc::new(codex_code_mode::V8CodeModeRuntimeFactory),
+                Arc::new(codex_workflow::WorkflowRunManager::new(
+                    config.codex_home.clone(),
+                )),
+                Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
+            ),
+        );
         Self {
             outgoing,
             initialized: false,

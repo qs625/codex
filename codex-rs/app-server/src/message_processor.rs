@@ -48,7 +48,6 @@ use crate::transport::RemoteControlHandle;
 use async_trait::async_trait;
 use codex_analytics::AnalyticsEventsClient;
 use codex_analytics::AppServerRpcTransport;
-use codex_app_server_protocol::AuthMode as LoginAuthMode;
 use codex_app_server_protocol::ChatgptAuthTokensRefreshParams;
 use codex_app_server_protocol::ChatgptAuthTokensRefreshReason;
 use codex_app_server_protocol::ChatgptAuthTokensRefreshResponse;
@@ -65,16 +64,20 @@ use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::ServerRequestPayload;
 use codex_app_server_protocol::experimental_required_message;
 use codex_arg0::Arg0DispatchPaths;
+use codex_auth_types::AuthMode as LoginAuthMode;
 use codex_chatgpt::workspace_settings;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
+use codex_core_plugins::PluginAnalyticsEventSink;
 use codex_exec_server::EnvironmentManager;
+use codex_exec_server_api::ExecEnvironmentProvider;
 use codex_feedback::CodexFeedback;
 use codex_login::AuthManager;
 use codex_login::auth::ExternalAuth;
 use codex_login::auth::ExternalAuthRefreshContext;
 use codex_login::auth::ExternalAuthRefreshReason;
 use codex_login::auth::ExternalAuthTokens;
+use codex_plugin::PluginTelemetryMetadata;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::W3cTraceContext;
@@ -93,6 +96,21 @@ const EXTERNAL_AUTH_REFRESH_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Clone)]
 struct ExternalAuthRefreshBridge {
     outgoing: Arc<OutgoingMessageSender>,
+}
+
+struct AppServerPluginAnalyticsEventSink {
+    analytics_events_client: AnalyticsEventsClient,
+}
+
+impl PluginAnalyticsEventSink for AppServerPluginAnalyticsEventSink {
+    fn track_plugin_installed(&self, plugin: PluginTelemetryMetadata) {
+        self.analytics_events_client.track_plugin_installed(plugin);
+    }
+
+    fn track_plugin_uninstalled(&self, plugin: PluginTelemetryMetadata) {
+        self.analytics_events_client
+            .track_plugin_uninstalled(plugin);
+    }
 }
 
 impl ExternalAuthRefreshBridge {
@@ -308,18 +326,20 @@ impl MessageProcessor {
         let thread_watch_manager =
             crate::thread_status::ThreadWatchManager::new_with_outgoing(outgoing.clone());
         let thread_manager = Arc::new_cyclic(|thread_manager| {
-            ThreadManager::new(
+            let runtime_environment_provider: Arc<dyn ExecEnvironmentProvider> =
+                environment_manager.clone();
+            ThreadManager::new_with_workflow_runs_and_openai_file_uploader(
                 config.as_ref(),
                 auth_manager.clone(),
                 session_source,
-                environment_manager,
+                runtime_environment_provider,
                 thread_extensions(
                     guardian_agent_spawner(thread_manager.clone()),
                     shared_file_watcher,
                     thread_manager.clone(),
                     thread_watch_manager.clone(),
                 ),
-                Some(analytics_events_client.clone()),
+                Some(analytics_events_client.api_client()),
                 Arc::clone(&thread_store),
                 state_db.clone(),
                 installation_id,
@@ -327,11 +347,19 @@ impl MessageProcessor {
                     outgoing.clone(),
                     thread_state_manager.clone(),
                 )),
+                Arc::new(codex_model_provider::DefaultModelProviderFactory),
+                Arc::new(codex_code_mode::V8CodeModeRuntimeFactory),
+                Arc::new(codex_workflow::WorkflowRunManager::new(
+                    config.codex_home.clone(),
+                )),
+                Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
             )
         });
         thread_manager
             .plugins_manager()
-            .set_analytics_events_client(analytics_events_client.clone());
+            .set_plugin_analytics_event_sink(Arc::new(AppServerPluginAnalyticsEventSink {
+                analytics_events_client: analytics_events_client.clone(),
+            }));
         let skills_watcher = SkillsWatcher::new(thread_manager.skills_manager(), outgoing.clone());
 
         let pending_thread_unloads = Arc::new(Mutex::new(HashSet::new()));
@@ -350,6 +378,7 @@ impl MessageProcessor {
             Arc::clone(&thread_manager),
             outgoing.clone(),
             config_manager.clone(),
+            Arc::clone(&environment_manager),
             Arc::clone(&workspace_settings_cache),
         );
         let catalog_processor = CatalogRequestProcessor::new(
@@ -357,6 +386,7 @@ impl MessageProcessor {
             Arc::clone(&thread_manager),
             Arc::clone(&config),
             config_manager.clone(),
+            Arc::clone(&environment_manager),
             Arc::clone(&workspace_settings_cache),
         );
         let command_exec_processor = CommandExecRequestProcessor::new(
@@ -391,6 +421,7 @@ impl MessageProcessor {
             Arc::clone(&thread_manager),
             outgoing.clone(),
             config_manager.clone(),
+            Arc::clone(&environment_manager),
         );
         let plugin_processor = PluginRequestProcessor::new(
             auth_manager.clone(),
@@ -398,6 +429,7 @@ impl MessageProcessor {
             outgoing.clone(),
             analytics_events_client.clone(),
             config_manager.clone(),
+            Arc::clone(&environment_manager),
             workspace_settings_cache,
         );
         let remote_control_processor = RemoteControlRequestProcessor::new(remote_control_handle);
@@ -456,6 +488,7 @@ impl MessageProcessor {
             config_manager.clone(),
             auth_manager,
             thread_manager.clone(),
+            Arc::clone(&environment_manager),
             analytics_events_client,
         );
         let external_agent_config_processor = ExternalAgentConfigRequestProcessor::new(
@@ -467,12 +500,9 @@ impl MessageProcessor {
             config.codex_home.to_path_buf(),
         );
         let environment_processor =
-            EnvironmentRequestProcessor::new(thread_manager.environment_manager());
+            EnvironmentRequestProcessor::new(Arc::clone(&environment_manager));
         let fs_processor = FsRequestProcessor::new(
-            thread_manager
-                .environment_manager()
-                .local_environment()
-                .get_filesystem(),
+            environment_manager.local_environment().get_filesystem(),
             fs_watch_manager,
         );
         let windows_sandbox_processor = WindowsSandboxRequestProcessor::new(

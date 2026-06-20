@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::ConfigBuilder;
-use codex_exec_server::LOCAL_FS;
 use codex_features::Feature;
+use codex_file_system::LOCAL_FS;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::PathBufExt;
 use core_test_support::TempDirExt;

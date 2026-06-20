@@ -2,33 +2,37 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use codex_config::CONFIG_TOML_FILE;
-use codex_config::ConfigLayerEntry;
-use codex_config::ConfigLayerSource;
-use codex_config::ConfigLayerStack;
-use codex_config::ConfigLayerStackOrdering;
-use codex_config::HookEventsToml;
-use codex_config::HookHandlerConfig;
-use codex_config::HookStateToml;
-use codex_config::HooksFile;
-use codex_config::ManagedHooksRequirementsToml;
-use codex_config::MatcherGroup;
-use codex_config::RequirementSource;
-use codex_config::TomlValue;
-use codex_config::version_for_toml;
-use codex_plugin::PluginHookSource;
+use codex_config_types::ConfigLayerSource;
+use codex_config_types::HookEventsToml;
+use codex_config_types::HookHandlerConfig;
+use codex_config_types::HookStateToml;
+use codex_config_types::HooksFile;
+use codex_config_types::ManagedHooksRequirementsToml;
+use codex_config_types::MatcherGroup;
+use codex_config_types::RequirementSource;
+use codex_plugin_types::PluginHookSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::Value as JsonValue;
+use sha2::Digest;
+use sha2::Sha256;
+use toml::Value as TomlValue;
 
 use super::ConfiguredHandler;
 use super::HookListEntry;
+use crate::config_layers::HookConfigLayerEntry;
+use crate::config_layers::HookConfigLayerStack;
+use crate::config_layers::HookConfigLayerStackOrdering;
 use crate::config_rules::hook_states_from_stack;
+use crate::event_projection::hook_events_into_matcher_groups;
 use crate::events::common::matcher_pattern_for_event;
 use crate::events::common::validate_matcher_pattern;
 use codex_protocol::protocol::HookHandlerType;
 use codex_protocol::protocol::HookSource;
 use codex_protocol::protocol::HookTrustStatus;
+
+const CONFIG_TOML_FILE: &str = "config.toml";
 
 pub(crate) struct DiscoveryResult {
     pub handlers: Vec<ConfiguredHandler>,
@@ -60,7 +64,7 @@ impl HookDiscoveryPolicy {
 }
 
 pub(crate) fn discover_handlers(
-    config_layer_stack: Option<&ConfigLayerStack>,
+    config_layer_stack: Option<&HookConfigLayerStack>,
     plugin_hook_sources: Vec<PluginHookSource>,
     plugin_hook_load_warnings: Vec<String>,
     bypass_hook_trust: bool,
@@ -71,13 +75,8 @@ pub(crate) fn discover_handlers(
     let mut display_order = 0_i64;
     let hook_states = hook_states_from_stack(config_layer_stack);
     let policy = HookDiscoveryPolicy {
-        allow_managed_hooks_only: config_layer_stack.is_some_and(|config_layer_stack| {
-            config_layer_stack
-                .requirements()
-                .allow_managed_hooks_only
-                .as_ref()
-                .is_some_and(|requirement| requirement.value)
-        }),
+        allow_managed_hooks_only: config_layer_stack
+            .is_some_and(HookConfigLayerStack::allow_managed_hooks_only),
         bypass_hook_trust,
     };
 
@@ -93,7 +92,7 @@ pub(crate) fn discover_handlers(
         );
 
         for layer in config_layer_stack.get_layers(
-            ConfigLayerStackOrdering::LowestPrecedenceFirst,
+            HookConfigLayerStackOrdering::LowestPrecedenceFirst,
             /*include_disabled*/ false,
         ) {
             let (hook_source, is_managed) = hook_metadata_for_config_layer_source(&layer.name);
@@ -171,14 +170,15 @@ fn append_managed_requirement_handlers(
     hook_entries: &mut Vec<HookListEntry>,
     warnings: &mut Vec<String>,
     display_order: &mut i64,
-    config_layer_stack: &ConfigLayerStack,
+    config_layer_stack: &HookConfigLayerStack,
     hook_states: &HashMap<String, HookStateToml>,
     policy: HookDiscoveryPolicy,
 ) {
-    let Some(managed_hooks) = config_layer_stack.requirements().managed_hooks.as_ref() else {
+    let Some(managed_hooks) = config_layer_stack.managed_hooks() else {
         return;
     };
-    let source_path = managed_hooks_source_path(managed_hooks.get(), managed_hooks.source.as_ref());
+    let source_path =
+        managed_hooks_source_path(&managed_hooks.value, managed_hooks.source.as_ref());
     append_hook_events(
         handlers,
         hook_entries,
@@ -194,7 +194,7 @@ fn append_managed_requirement_handlers(
             env: HashMap::new(),
             plugin_id: None,
         },
-        managed_hooks.get().hooks.clone(),
+        managed_hooks.value.hooks.clone(),
         policy,
     );
 }
@@ -330,7 +330,7 @@ fn load_hooks_json(
 }
 
 fn load_toml_hooks_from_layer(
-    layer: &ConfigLayerEntry,
+    layer: &HookConfigLayerEntry,
     warnings: &mut Vec<String>,
 ) -> Option<(AbsolutePathBuf, HookEventsToml)> {
     let source_path = config_toml_source_path(layer);
@@ -349,7 +349,7 @@ fn load_toml_hooks_from_layer(
     (!parsed.is_empty()).then_some((source_path, parsed))
 }
 
-fn config_toml_source_path(layer: &ConfigLayerEntry) -> AbsolutePathBuf {
+fn config_toml_source_path(layer: &HookConfigLayerEntry) -> AbsolutePathBuf {
     match &layer.name {
         ConfigLayerSource::System { file }
         | ConfigLayerSource::User { file, .. }
@@ -393,7 +393,7 @@ fn append_hook_events(
         return;
     }
 
-    for (event_name, groups) in hook_events.into_matcher_groups() {
+    for (event_name, groups) in hook_events_into_matcher_groups(hook_events) {
         append_matcher_groups(
             handlers,
             hook_entries,
@@ -554,6 +554,38 @@ fn command_hook_hash(
     version_for_toml(&value)
 }
 
+fn version_for_toml(value: &TomlValue) -> String {
+    let json = serde_json::to_value(value).unwrap_or(JsonValue::Null);
+    let canonical = canonical_json(&json);
+    let serialized = serde_json::to_vec(&canonical).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(serialized);
+    let hash = hasher.finalize();
+    let hex = hash
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("sha256:{hex}")
+}
+
+fn canonical_json(value: &JsonValue) -> JsonValue {
+    match value {
+        JsonValue::Object(map) => {
+            let mut sorted = serde_json::Map::new();
+            let mut keys = map.keys().cloned().collect::<Vec<_>>();
+            keys.sort();
+            for key in keys {
+                if let Some(val) = map.get(&key) {
+                    sorted.insert(key, canonical_json(val));
+                }
+            }
+            JsonValue::Object(sorted)
+        }
+        JsonValue::Array(items) => JsonValue::Array(items.iter().map(canonical_json).collect()),
+        other => other.clone(),
+    }
+}
+
 fn hook_trust_status(
     is_managed: bool,
     current_hash: &str,
@@ -613,7 +645,6 @@ fn hook_source_for_requirement_source(source: Option<&RequirementSource>) -> Hoo
 
 #[cfg(test)]
 mod tests {
-    use codex_config::ConfigLayerEntry;
     use codex_config::ConfigLayerSource;
     use codex_config::HookEventsToml;
     use codex_protocol::protocol::HookEventName;
@@ -870,7 +901,7 @@ mod tests {
 
     #[test]
     fn toml_hook_discovery_ignores_malformed_state_entries() {
-        let layer = ConfigLayerEntry::new(
+        let layer = crate::HookConfigLayerEntry::new(
             ConfigLayerSource::User {
                 file: test_path_buf("/tmp/config.toml").abs(),
                 profile: None,

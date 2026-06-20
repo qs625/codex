@@ -33,20 +33,20 @@ use crate::runtime::emit_duration;
 use crate::server::EffectiveMcpServer;
 use crate::server::McpServerLaunch;
 use crate::tools::ToolFilter;
-use crate::tools::ToolInfo;
 use crate::tools::filter_tools;
-use crate::tools::tool_with_model_visible_input_schema;
 use anyhow::Result;
 use anyhow::anyhow;
 use async_channel::Sender;
-use codex_api::SharedAuthProvider;
+use codex_api_provider::SharedAuthProvider;
 use codex_async_utils::CancelErr;
 use codex_async_utils::OrCancelExt;
-use codex_config::McpServerConfig;
-use codex_config::McpServerTransportConfig;
-use codex_config::types::OAuthCredentialsStoreMode;
-use codex_exec_server::HttpClient;
-use codex_exec_server::ReqwestHttpClient;
+use codex_config_types::McpServerConfig;
+use codex_config_types::McpServerTransportConfig;
+use codex_config_types::OAuthCredentialsStoreMode;
+use codex_exec_server_api::HttpClient;
+use codex_mcp_tool_types::ToolInfo;
+use codex_mcp_tool_types::tool_with_model_visible_input_schema;
+pub use codex_mcp_types::MCP_SANDBOX_STATE_META_CAPABILITY;
 use codex_protocol::protocol::Event;
 use codex_rmcp_client::ExecutorStdioServerLauncher;
 use codex_rmcp_client::LocalStdioServerLauncher;
@@ -63,10 +63,6 @@ use rmcp::model::ProtocolVersion;
 use rmcp::model::Tool as RmcpTool;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
-
-/// MCP server capability indicating that Codex should include [`SandboxState`]
-/// in tool-call request `_meta` under this key.
-pub const MCP_SANDBOX_STATE_META_CAPABILITY: &str = "codex/sandbox-state-meta";
 
 pub(crate) const MCP_TOOLS_LIST_DURATION_METRIC: &str = "codex.mcp.tools.list.duration_ms";
 pub(crate) const MCP_TOOLS_FETCH_UNCACHED_DURATION_METRIC: &str =
@@ -574,7 +570,7 @@ async fn make_rmcp_client(
     let remote_environment = match experimental_environment.as_deref() {
         None | Some("local") => false,
         Some("remote") => {
-            if !runtime_environment.environment().is_remote() {
+            if !runtime_environment.remote_available() {
                 return Err(StartupOutcomeError::from(anyhow!(
                     "remote MCP server `{server_name}` requires a remote environment"
                 )));
@@ -605,7 +601,7 @@ async fn make_rmcp_client(
             });
             let launcher = if remote_environment {
                 Arc::new(ExecutorStdioServerLauncher::new(
-                    runtime_environment.environment().get_exec_backend(),
+                    runtime_environment.remote_exec_backend(),
                     runtime_environment.fallback_cwd(),
                 ))
             } else {
@@ -627,11 +623,8 @@ async fn make_rmcp_client(
             env_http_headers,
             bearer_token_env_var,
         } => {
-            let http_client: Arc<dyn HttpClient> = if remote_environment {
-                runtime_environment.environment().get_http_client()
-            } else {
-                Arc::new(ReqwestHttpClient)
-            };
+            let http_client: Arc<dyn HttpClient> =
+                runtime_environment.http_client(remote_environment);
             let resolved_bearer_token =
                 match resolve_bearer_token(server_name, bearer_token_env_var.as_deref()) {
                     Ok(token) => token,

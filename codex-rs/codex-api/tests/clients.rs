@@ -8,6 +8,7 @@ use bytes::Bytes;
 use codex_api::ApiError;
 use codex_api::AuthError;
 use codex_api::AuthProvider;
+use codex_api::AuthProviderFuture;
 use codex_api::ChatCompletionsClient;
 use codex_api::ChatCompletionsPath;
 use codex_api::Compression;
@@ -278,25 +279,26 @@ impl FailsOnceAuth {
     }
 }
 
-#[async_trait]
 impl AuthProvider for FailsOnceAuth {
     fn add_auth_headers(&self, _headers: &mut HeaderMap) {}
 
-    async fn apply_auth(&self, request: Request) -> Result<Request, AuthError> {
-        let mut attempts = self
-            .attempts
-            .lock()
-            .unwrap_or_else(|err| panic!("mutex poisoned: {err}"));
-        *attempts += 1;
+    fn apply_auth(&self, request: Request) -> AuthProviderFuture<'_, Result<Request, AuthError>> {
+        Box::pin(async move {
+            let mut attempts = self
+                .attempts
+                .lock()
+                .unwrap_or_else(|err| panic!("mutex poisoned: {err}"));
+            *attempts += 1;
 
-        if *attempts == 1 {
-            return match self.error.as_ref() {
-                AuthError::Build(message) => Err(AuthError::Build(message.clone())),
-                AuthError::Transient(message) => Err(AuthError::Transient(message.clone())),
-            };
-        }
+            if *attempts == 1 {
+                return match self.error.as_ref() {
+                    AuthError::Build(message) => Err(AuthError::Build(message.clone())),
+                    AuthError::Transient(message) => Err(AuthError::Transient(message.clone())),
+                };
+            }
 
-        Ok(request)
+            Ok(request)
+        })
     }
 }
 

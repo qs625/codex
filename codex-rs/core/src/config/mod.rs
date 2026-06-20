@@ -6,57 +6,62 @@ use crate::unified_exec::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
 use crate::windows_sandbox::resolve_windows_sandbox_mode;
 use crate::windows_sandbox::resolve_windows_sandbox_private_desktop;
-use codex_config::CloudRequirementsLoader;
-use codex_config::ConfigLayerSource;
-use codex_config::ConfigLayerStack;
-use codex_config::ConfigLayerStackOrdering;
-use codex_config::ConfigRequirements;
-use codex_config::ConfigRequirementsToml;
-use codex_config::ConstrainedWithSource;
-use codex_config::FeatureRequirementsToml;
-use codex_config::McpServerIdentity;
-use codex_config::McpServerRequirement;
-use codex_config::PluginRequirementsToml;
-use codex_config::ProfileV2Name;
-use codex_config::ResidencyRequirement;
-use codex_config::SandboxModeRequirement;
-use codex_config::Sourced;
-use codex_config::ThreadConfigLoader;
-use codex_config::config_toml::ConfigLockfileToml;
-use codex_config::config_toml::ConfigToml;
-use codex_config::config_toml::DEFAULT_PROJECT_DOC_MAX_BYTES;
-use codex_config::config_toml::ModelOptionToml;
-use codex_config::config_toml::ProjectConfig;
-use codex_config::config_toml::RealtimeAudioConfig;
-use codex_config::config_toml::RealtimeConfig;
-use codex_config::config_toml::ThreadStoreToml;
-use codex_config::config_toml::validate_model_providers;
-use codex_config::loader::load_config_layers_state;
-use codex_config::loader::project_trust_key;
-use codex_config::profile_toml::ConfigProfile;
-use codex_config::sandbox_mode_requirement_for_permission_profile;
-use codex_config::types::ApprovalsReviewer;
-use codex_config::types::AuthCredentialsStoreMode;
-use codex_config::types::History;
-use codex_config::types::McpServerConfig;
-use codex_config::types::McpServerDisabledReason;
-use codex_config::types::McpServerTransportConfig;
-use codex_config::types::MemoriesConfig;
-use codex_config::types::ModelAvailabilityNuxConfig;
-use codex_config::types::Notice;
-use codex_config::types::OAuthCredentialsStoreMode;
-use codex_config::types::SessionPickerViewMode;
-use codex_config::types::ToolSuggestConfig;
-use codex_config::types::ToolSuggestDisabledTool;
-use codex_config::types::ToolSuggestDiscoverable;
-use codex_config::types::TuiKeymap;
-use codex_config::types::TuiNotificationSettings;
-use codex_config::types::TuiPetAnchor;
-use codex_config::types::UriBasedFileOpener;
-use codex_config::types::WindowsSandboxModeToml;
+use codex_auth_types::ForcedChatgptWorkspaceIds;
+use codex_config_diagnostics::io_error_from_config_error;
+use codex_config_loader::NoopThreadConfigLoader;
+use codex_config_loader::ThreadConfigLoader;
+use codex_config_loader::build_cli_overrides_layer;
+use codex_config_loader::project_trust_key;
+use codex_config_local_loader::load_config_layers_state;
+use codex_config_requirements::CloudRequirementsLoader;
+use codex_config_requirements::ConfigRequirements;
+use codex_config_requirements::ConfigRequirementsToml;
+use codex_config_requirements::ConstrainedWithSource;
+use codex_config_requirements::FeatureRequirementsToml;
+use codex_config_requirements::FilesystemConstraints;
+use codex_config_requirements::McpServerIdentity;
+use codex_config_requirements::McpServerRequirement;
+use codex_config_requirements::PluginRequirementsToml;
+use codex_config_requirements::SandboxModeRequirement;
+use codex_config_requirements::Sourced;
+use codex_config_requirements::sandbox_mode_requirement_for_permission_profile;
+pub use codex_config_state::ConfigLayerStack;
+use codex_config_state::ConfigLayerStackOrdering;
+use codex_config_state::first_layer_config_error;
+use codex_config_state::merge_toml_values;
+use codex_config_toml::config_toml::ConfigToml;
+use codex_config_toml::config_toml::DEFAULT_PROJECT_DOC_MAX_BYTES;
+pub use codex_config_toml::config_toml::RealtimeConfig;
+use codex_config_toml::profile_toml::ConfigProfile;
+use codex_config_types::AuthCredentialsStoreMode;
+use codex_config_types::ConfigLayerSource;
+use codex_config_types::ConfigLockfileToml;
+use codex_config_types::History;
+use codex_config_types::McpServerConfig;
+use codex_config_types::McpServerDisabledReason;
+use codex_config_types::McpServerTransportConfig;
+use codex_config_types::MemoriesConfig;
+use codex_config_types::ModelAvailabilityNuxConfig;
+use codex_config_types::Notice;
+use codex_config_types::OAuthCredentialsStoreMode;
+use codex_config_types::OtelConfig;
+pub use codex_config_types::RealtimeAudioConfig;
+use codex_config_types::ResidencyRequirement;
+use codex_config_types::SessionPickerViewMode;
+use codex_config_types::ThreadStoreToml;
+use codex_config_types::ToolSuggestConfig;
+use codex_config_types::ToolSuggestDisabledTool;
+use codex_config_types::ToolSuggestDiscoverable;
+use codex_config_types::TuiKeymap;
+use codex_config_types::TuiNotificationSettings;
+use codex_config_types::TuiPetAnchor;
+use codex_config_types::UriBasedFileOpener;
+use codex_config_types::WindowsSandboxModeToml;
+use codex_core_plugins::PluginConfigLayerEntry;
+use codex_core_plugins::PluginConfigLayerStack;
 use codex_core_plugins::PluginsConfigInput;
-use codex_exec_server::ExecutorFileSystem;
-use codex_exec_server::LOCAL_FS;
+use codex_core_skills::SkillConfigLayerEntry;
+use codex_core_skills::SkillConfigLayerStack;
 use codex_features::AppsMcpPathOverrideConfigToml;
 use codex_features::Feature;
 use codex_features::FeatureConfigSource;
@@ -66,20 +71,30 @@ use codex_features::Features;
 use codex_features::FeaturesToml;
 use codex_features::MultiAgentV2ConfigToml;
 use codex_features::NetworkProxyConfigToml;
+use codex_file_system::ExecutorFileSystem;
+use codex_file_system::LOCAL_FS;
 use codex_git_utils::resolve_root_git_project_for_trust;
+use codex_hooks::HookConfigLayerEntry;
+use codex_hooks::HookConfigLayerStack;
+use codex_hooks::HookManagedHooksRequirement;
 use codex_login::AuthManagerConfig;
 use codex_mcp::McpConfig;
 use codex_memories_read::memory_root;
 use codex_model_provider_info::LEGACY_OLLAMA_CHAT_PROVIDER_ID;
+use codex_model_provider_info::ModelOptionToml;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::OLLAMA_CHAT_PROVIDER_REMOVED_ERROR;
 use codex_model_provider_info::built_in_model_providers;
 use codex_model_provider_info::merge_configured_model_providers;
-use codex_models_manager::ModelMetadataOverride;
-use codex_models_manager::ModelsManagerConfig;
+use codex_model_provider_info::validate_model_providers;
+use codex_model_provider_info::validate_oss_provider;
+use codex_models_manager_api::ModelMetadataOverride;
+use codex_models_manager_api::ModelsManagerConfig;
 use codex_protocol::config_types::AltScreenMode;
+use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::ProfileV2Name;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::config_types::ServiceTier;
@@ -125,7 +140,7 @@ use crate::config::permissions::validate_user_permission_profile_names;
 use crate::config_lock::config_without_lock_controls;
 use crate::config_lock::lock_layer_from_config;
 use crate::config_lock::read_config_lock_from_path;
-use codex_network_proxy::NetworkProxyConfig;
+use codex_network_proxy_api::NetworkProxyConfig;
 use toml::Value as TomlValue;
 use toml_edit::DocumentMut;
 
@@ -138,12 +153,13 @@ mod permissions;
 mod resolved_permission_profile;
 #[cfg(test)]
 mod schema;
-pub use codex_config::ConfigLoadOptions;
-pub use codex_config::Constrained;
-pub use codex_config::ConstraintError;
-pub use codex_config::ConstraintResult;
-pub use codex_config::LoaderOverrides;
-pub use codex_network_proxy::NetworkProxyAuditMetadata;
+pub use codex_config_loader::ConfigLoadOptions;
+pub use codex_config_loader::LoaderOverrides;
+pub use codex_config_loader::ProjectConfig;
+pub use codex_config_types::Constrained;
+pub use codex_config_types::ConstraintError;
+pub use codex_config_types::ConstraintResult;
+pub use codex_network_proxy_api::NetworkProxyAuditMetadata;
 use codex_sandboxing::compatibility_sandbox_policy_for_permission_profile;
 pub use codex_sandboxing::system_bwrap_warning;
 pub use managed_features::ManagedFeatures;
@@ -188,6 +204,85 @@ pub(crate) const HARD_MAX_MULTI_AGENT_V2_TIMEOUT_MS: i64 =
     DEFAULT_MULTI_AGENT_V2_MAX_WAIT_TIMEOUT_MS;
 pub(crate) const DEFAULT_AGENT_MAX_DEPTH: i32 = 1;
 pub(crate) const DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS: Option<u64> = None;
+
+pub fn hook_config_layer_stack_from_config_layer_stack(
+    config_layer_stack: &ConfigLayerStack,
+) -> HookConfigLayerStack {
+    let layers = config_layer_stack
+        .get_layers(
+            ConfigLayerStackOrdering::LowestPrecedenceFirst,
+            /*include_disabled*/ true,
+        )
+        .into_iter()
+        .map(|layer| {
+            HookConfigLayerEntry::new_with_hooks_config_folder(
+                layer.name.clone(),
+                layer.config.clone(),
+                layer.hooks_config_folder(),
+                layer.is_disabled(),
+            )
+        })
+        .collect();
+    let requirements = config_layer_stack.requirements();
+    let managed_hooks =
+        requirements
+            .managed_hooks
+            .as_ref()
+            .map(|managed_hooks| HookManagedHooksRequirement {
+                value: managed_hooks.get().clone(),
+                source: managed_hooks.source.clone(),
+            });
+    HookConfigLayerStack::new(
+        layers,
+        requirements
+            .allow_managed_hooks_only
+            .as_ref()
+            .is_some_and(|requirement| requirement.value),
+        managed_hooks,
+    )
+}
+
+pub fn skill_config_layer_stack_from_config_layer_stack(
+    config_layer_stack: &ConfigLayerStack,
+) -> SkillConfigLayerStack {
+    let layers = config_layer_stack
+        .get_layers(
+            ConfigLayerStackOrdering::LowestPrecedenceFirst,
+            /*include_disabled*/ true,
+        )
+        .into_iter()
+        .map(|layer| {
+            SkillConfigLayerEntry::new_with_config_folder(
+                layer.name.clone(),
+                layer.config.clone(),
+                layer.config_folder(),
+                layer.is_disabled(),
+            )
+        })
+        .collect();
+    SkillConfigLayerStack::new(layers)
+}
+
+pub fn plugin_config_layer_stack_from_config_layer_stack(
+    config_layer_stack: &ConfigLayerStack,
+) -> PluginConfigLayerStack {
+    let layers = config_layer_stack
+        .get_layers(
+            ConfigLayerStackOrdering::LowestPrecedenceFirst,
+            /*include_disabled*/ true,
+        )
+        .into_iter()
+        .map(|layer| {
+            PluginConfigLayerEntry::new_with_config_folder(
+                layer.name.clone(),
+                layer.config.clone(),
+                layer.config_folder(),
+                layer.is_disabled(),
+            )
+        })
+        .collect();
+    PluginConfigLayerStack::new(layers)
+}
 const LOCAL_DEV_BUILD_VERSION: &str = "0.0.0";
 
 pub const CONFIG_TOML_FILE: &str = "config.toml";
@@ -811,7 +906,7 @@ pub struct Config {
     pub config_lock_save_fields_resolved_from_model_catalog: bool,
 
     /// Effective config lock used for strict replay validation.
-    pub config_lock_toml: Option<Arc<ConfigLockfileToml>>,
+    pub config_lock_toml: Option<Arc<ConfigLockfileToml<ConfigToml>>>,
 
     /// Settings that govern if and what will be written to `~/.codex/history.jsonl`.
     pub history: History,
@@ -975,7 +1070,7 @@ pub struct Config {
     pub tool_suggest: ToolSuggestConfig,
 
     /// OTEL configuration (exporter type, endpoint, headers, etc.).
-    pub otel: codex_config::types::OtelConfig,
+    pub otel: OtelConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1141,7 +1236,7 @@ impl ConfigBuilder {
             cloud_requirements,
             thread_config_loader
                 .as_deref()
-                .unwrap_or(&codex_config::NoopThreadConfigLoader),
+                .unwrap_or(&NoopThreadConfigLoader),
         )
         .await?;
         let merged_toml = config_layer_stack.effective_config();
@@ -1153,13 +1248,11 @@ impl ConfigBuilder {
         let config_toml: ConfigToml = match merged_toml.try_into() {
             Ok(config_toml) => config_toml,
             Err(err) => {
-                if let Some(config_error) = codex_config::first_layer_config_error::<ConfigToml>(
-                    &config_layer_stack,
-                    codex_config::CONFIG_TOML_FILE,
-                )
-                .await
+                if let Some(config_error) =
+                    first_layer_config_error::<ConfigToml>(&config_layer_stack, CONFIG_TOML_FILE)
+                        .await
                 {
-                    return Err(codex_config::io_error_from_config_error(
+                    return Err(io_error_from_config_error(
                         std::io::ErrorKind::InvalidData,
                         config_error,
                         Some(err),
@@ -1271,7 +1364,7 @@ impl Config {
     /// Build the plugin-manager input from the effective config.
     pub fn plugins_config_input(&self) -> PluginsConfigInput {
         PluginsConfigInput::new(
-            self.config_layer_stack.clone(),
+            plugin_config_layer_stack_from_config_layer_stack(&self.config_layer_stack),
             self.features.enabled(Feature::Plugins),
             self.features.enabled(Feature::RemotePlugin),
             self.features.enabled(Feature::PluginHooks),
@@ -1428,8 +1521,8 @@ impl Config {
                 format!("failed to serialize default config: {e}"),
             )
         })?;
-        let cli_layer = codex_config::build_cli_overrides_layer(&cli_overrides);
-        codex_config::merge_toml_values(&mut merged, &cli_layer);
+        let cli_layer = build_cli_overrides_layer(&cli_overrides);
+        merge_toml_values(&mut merged, &cli_layer);
         let codex_home = AbsolutePathBuf::from_absolute_path_checked(codex_home)?;
         let config_toml = deserialize_config_toml_with_base(merged, &codex_home)?;
         Self::load_config_with_layer_stack(
@@ -1520,7 +1613,7 @@ pub async fn load_config_as_toml_with_cli_and_load_options(
         &cli_overrides,
         options,
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &NoopThreadConfigLoader,
     )
     .await?;
 
@@ -1731,7 +1824,7 @@ pub async fn load_global_mcp_servers(
         &cli_overrides,
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &NoopThreadConfigLoader,
     )
     .await?;
     let merged_toml = config_layer_stack.effective_config();
@@ -1853,7 +1946,7 @@ pub fn set_project_trust_level(
 
 /// Save the default OSS provider preference to config.toml
 pub fn set_default_oss_provider(codex_home: &Path, provider: &str) -> std::io::Result<()> {
-    codex_config::config_toml::validate_oss_provider(provider)?;
+    validate_oss_provider(provider)?;
     use toml_edit::value;
 
     let edits = [ConfigEdit::SetPath {
@@ -2070,7 +2163,7 @@ fn resolve_permission_config_syntax(
 
 fn apply_managed_filesystem_constraints(
     file_system_sandbox_policy: &mut FileSystemSandboxPolicy,
-    filesystem_constraints: &codex_config::FilesystemConstraints,
+    filesystem_constraints: &FilesystemConstraints,
 ) {
     for deny_read in &filesystem_constraints.deny_read {
         let deny_entry = if deny_read.contains_glob() {
@@ -3087,7 +3180,7 @@ impl Config {
         let forced_chatgpt_workspace_id = cfg
             .forced_chatgpt_workspace_id
             .clone()
-            .map(codex_config::config_toml::ForcedChatgptWorkspaceIds::into_vec)
+            .map(ForcedChatgptWorkspaceIds::into_vec)
             .map(|values| {
                 values
                     .into_iter()
@@ -3662,7 +3755,9 @@ impl Config {
     }
 
     pub fn bundled_skills_enabled(&self) -> bool {
-        crate::manager::bundled_skills_enabled_from_stack(&self.config_layer_stack)
+        crate::manager::bundled_skills_enabled_from_stack(
+            &skill_config_layer_stack_from_config_layer_stack(&self.config_layer_stack),
+        )
     }
 }
 

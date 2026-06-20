@@ -62,13 +62,13 @@ use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::turn_timing::record_turn_ttft_metric;
 use crate::util::backoff;
 use crate::util::error_or_panic;
-use codex_analytics::AppInvocation;
-use codex_analytics::CompactionPhase;
-use codex_analytics::CompactionReason;
-use codex_analytics::InvocationType;
-use codex_analytics::SkillInvocation;
-use codex_analytics::TurnResolvedConfigFact;
-use codex_analytics::build_track_events_context;
+use codex_analytics_api::AppInvocation;
+use codex_analytics_api::CompactionPhase;
+use codex_analytics_api::CompactionReason;
+use codex_analytics_api::InvocationType;
+use codex_analytics_api::SkillInvocation;
+use codex_analytics_api::TurnResolvedConfigFact;
+use codex_analytics_api::build_track_events_context;
 use codex_async_utils::OrCancelExt;
 use codex_git_utils::get_git_repo_root;
 use codex_hooks::HookEvent;
@@ -265,27 +265,28 @@ pub(crate) async fn run_turn(
     let SkillInjections {
         items: skill_injections,
         warnings: skill_warnings,
-    } = build_skill_injections(
-        &mentioned_skills,
-        skills_outcome,
-        Some(&session_telemetry),
-        &sess.services.analytics_events_client,
-        tracking.clone(),
-    )
-    .await;
+        invocations: skill_invocations,
+    } = build_skill_injections(&mentioned_skills, skills_outcome, Some(&session_telemetry)).await;
+    let analytics_skill_invocations = skill_invocations
+        .iter()
+        .map(|invocation| SkillInvocation {
+            skill_name: invocation.skill_name.clone(),
+            skill_scope: invocation.skill_scope,
+            skill_path: invocation.skill_path.clone(),
+            plugin_id: invocation.plugin_id.clone(),
+            invocation_type: match invocation.invocation_type {
+                crate::injection::SkillInvocationType::Explicit => InvocationType::Explicit,
+                crate::injection::SkillInvocationType::Implicit => InvocationType::Implicit,
+            },
+        })
+        .collect::<Vec<_>>();
+    sess.services
+        .analytics_events_client
+        .track_skill_invocations(tracking.clone(), analytics_skill_invocations.clone());
     emit_thread_skills_update(
         sess.as_ref(),
         turn_context.as_ref(),
-        &skill_injections
-            .iter()
-            .map(|skill| SkillInvocation {
-                skill_name: skill.name.clone(),
-                skill_scope: codex_protocol::protocol::SkillScope::User,
-                skill_path: std::path::PathBuf::from(skill.path.clone()),
-                plugin_id: None,
-                invocation_type: InvocationType::Explicit,
-            })
-            .collect::<Vec<_>>(),
+        &analytics_skill_invocations,
     )
     .await;
 
@@ -333,7 +334,8 @@ pub(crate) async fn run_turn(
     let additional_contexts = if input.is_empty() {
         Vec::new()
     } else {
-        let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input.clone());
+        let initial_input_for_turn: ResponseInputItem =
+            codex_model_input::response_input_item_from_user_input(input.clone());
         let response_item: ResponseItem = initial_input_for_turn.clone().into();
         let user_prompt_submit_outcome = run_user_prompt_submit_hooks(
             &sess,
@@ -1040,16 +1042,13 @@ async fn run_sampling_request(
         Arc::clone(&turn_context),
         Arc::clone(&turn_diff_tracker),
     );
-    let _code_mode_worker = sess
-        .services
-        .code_mode_service
-        .start_turn_worker(
-            &sess,
-            &turn_context,
-            Arc::clone(&router),
-            Arc::clone(&turn_diff_tracker),
-        )
-        .await;
+    let _code_mode_worker = crate::tools::code_mode::start_turn_worker(
+        &sess.services.code_mode_service,
+        &sess,
+        &turn_context,
+        Arc::clone(&router),
+        Arc::clone(&turn_diff_tracker),
+    );
     let mut retries = 0;
     let mut initial_input = Some(input);
     loop {
@@ -1170,7 +1169,8 @@ pub(crate) async fn built_tools(
     let all_mcp_tools = mcp_connection_manager
         .list_all_tools()
         .or_cancel(cancellation_token)
-        .await?;
+        .await
+        .map_err(|_| CodexErr::TurnAborted)?;
     drop(mcp_connection_manager);
     let loaded_plugins = sess
         .services
@@ -1901,7 +1901,8 @@ async fn try_run_sampling_request(
         )
         .instrument(trace_span!("stream_request"))
         .or_cancel(&cancellation_token)
-        .await??;
+        .await
+        .map_err(|_| CodexErr::TurnAborted)??;
     let mut in_flight: FuturesOrdered<BoxFuture<'static, CodexResult<ResponseItem>>> =
         FuturesOrdered::new();
     let mut needs_follow_up = false;

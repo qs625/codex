@@ -1363,7 +1363,7 @@ async fn ambient_pet_stays_hidden_until_a_pet_is_selected() {
 #[tokio::test]
 #[serial]
 async fn ambient_pet_screen_bottom_anchor_uses_terminal_bottom() {
-    use codex_config::types::TuiPetAnchor;
+    use codex_config_types::TuiPetAnchor;
     use ratatui::layout::Rect;
 
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;

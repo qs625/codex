@@ -8,6 +8,9 @@ use rand::rng;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 
+pub mod output_decoding;
+pub use output_decoding::bytes_to_string_smart;
+
 pub const MIN_YIELD_TIME_MS: u64 = 250;
 pub const MAX_YIELD_TIME_MS: u64 = 30_000;
 pub const DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS: u64 = 300_000;

@@ -1,0 +1,34 @@
+[package]
+name = "codex-config-toml"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Schema-heavy config.toml shapes shared by Codex config loaders and consumers."
+
+[lib]
+doctest = false
+name = "codex_config_toml"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+codex-auth-types = { workspace = true }
+codex-config-loader = { workspace = true }
+codex-config-permissions = { workspace = true }
+codex-config-types = { workspace = true }
+codex-features = { workspace = true }
+codex-model-provider-info = { workspace = true }
+codex-protocol = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+codex-utils-path = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

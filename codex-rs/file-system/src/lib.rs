@@ -11,6 +11,16 @@ use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::io;
 use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::LazyLock;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
+
+const MAX_READ_FILE_BYTES: u64 = 512 * 1024 * 1024;
+
+pub static LOCAL_FS: LazyLock<Arc<dyn ExecutorFileSystem>> =
+    LazyLock::new(|| -> Arc<dyn ExecutorFileSystem> { Arc::new(LocalFileSystem) });
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CreateDirectoryOptions {
@@ -189,4 +199,264 @@ pub trait ExecutorFileSystem: Send + Sync {
         copy_options: CopyOptions,
         sandbox: Option<&FileSystemSandboxContext>,
     ) -> FileSystemResult<()>;
+}
+
+/// Unsandboxed local filesystem implementation for loaders and other local-only
+/// runtime code.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LocalFileSystem;
+
+#[async_trait]
+impl ExecutorFileSystem for LocalFileSystem {
+    async fn read_file(
+        &self,
+        path: &AbsolutePathBuf,
+        sandbox: Option<&FileSystemSandboxContext>,
+    ) -> FileSystemResult<Vec<u8>> {
+        reject_sandbox_context(sandbox)?;
+        let metadata = std::fs::metadata(path.as_path())?;
+        if metadata.len() > MAX_READ_FILE_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("file is too large to read: limit is {MAX_READ_FILE_BYTES} bytes"),
+            ));
+        }
+        std::fs::read(path.as_path())
+    }
+
+    async fn write_file(
+        &self,
+        path: &AbsolutePathBuf,
+        contents: Vec<u8>,
+        sandbox: Option<&FileSystemSandboxContext>,
+    ) -> FileSystemResult<()> {
+        reject_sandbox_context(sandbox)?;
+        std::fs::write(path.as_path(), contents)
+    }
+
+    async fn create_directory(
+        &self,
+        path: &AbsolutePathBuf,
+        options: CreateDirectoryOptions,
+        sandbox: Option<&FileSystemSandboxContext>,
+    ) -> FileSystemResult<()> {
+        reject_sandbox_context(sandbox)?;
+        if options.recursive {
+            std::fs::create_dir_all(path.as_path())?;
+        } else {
+            std::fs::create_dir(path.as_path())?;
+        }
+        Ok(())
+    }
+
+    async fn get_metadata(
+        &self,
+        path: &AbsolutePathBuf,
+        sandbox: Option<&FileSystemSandboxContext>,
+    ) -> FileSystemResult<FileMetadata> {
+        reject_sandbox_context(sandbox)?;
+        let metadata = std::fs::metadata(path.as_path())?;
+        let symlink_metadata = std::fs::symlink_metadata(path.as_path())?;
+        Ok(FileMetadata {
+            is_directory: metadata.is_dir(),
+            is_file: metadata.is_file(),
+            is_symlink: symlink_metadata.file_type().is_symlink(),
+            created_at_ms: metadata.created().ok().map_or(0, system_time_to_unix_ms),
+            modified_at_ms: metadata.modified().ok().map_or(0, system_time_to_unix_ms),
+        })
+    }
+
+    async fn read_directory(
+        &self,
+        path: &AbsolutePathBuf,
+        sandbox: Option<&FileSystemSandboxContext>,
+    ) -> FileSystemResult<Vec<ReadDirectoryEntry>> {
+        reject_sandbox_context(sandbox)?;
+        let mut entries = Vec::new();
+        for entry in std::fs::read_dir(path.as_path())? {
+            let entry = entry?;
+            let Ok(metadata) = std::fs::metadata(entry.path()) else {
+                continue;
+            };
+            entries.push(ReadDirectoryEntry {
+                file_name: entry.file_name().to_string_lossy().into_owned(),
+                is_directory: metadata.is_dir(),
+                is_file: metadata.is_file(),
+            });
+        }
+        Ok(entries)
+    }
+
+    async fn remove(
+        &self,
+        path: &AbsolutePathBuf,
+        options: RemoveOptions,
+        sandbox: Option<&FileSystemSandboxContext>,
+    ) -> FileSystemResult<()> {
+        reject_sandbox_context(sandbox)?;
+        match std::fs::symlink_metadata(path.as_path()) {
+            Ok(metadata) => {
+                let file_type = metadata.file_type();
+                if file_type.is_dir() {
+                    if options.recursive {
+                        std::fs::remove_dir_all(path.as_path())?;
+                    } else {
+                        std::fs::remove_dir(path.as_path())?;
+                    }
+                } else {
+                    std::fs::remove_file(path.as_path())?;
+                }
+                Ok(())
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound && options.force => Ok(()),
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn copy(
+        &self,
+        source_path: &AbsolutePathBuf,
+        destination_path: &AbsolutePathBuf,
+        options: CopyOptions,
+        sandbox: Option<&FileSystemSandboxContext>,
+    ) -> FileSystemResult<()> {
+        reject_sandbox_context(sandbox)?;
+        let metadata = std::fs::symlink_metadata(source_path.as_path())?;
+        let file_type = metadata.file_type();
+
+        if file_type.is_dir() {
+            if !options.recursive {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "fs/copy requires recursive: true when sourcePath is a directory",
+                ));
+            }
+            if destination_is_same_or_descendant_of_source(
+                source_path.as_path(),
+                destination_path.as_path(),
+            )? {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "fs/copy cannot copy a directory to itself or one of its descendants",
+                ));
+            }
+            copy_dir_recursive(source_path.as_path(), destination_path.as_path())?;
+            return Ok(());
+        }
+
+        if file_type.is_symlink() {
+            copy_symlink(source_path.as_path(), destination_path.as_path())?;
+            return Ok(());
+        }
+
+        if file_type.is_file() {
+            std::fs::copy(source_path.as_path(), destination_path.as_path())?;
+            return Ok(());
+        }
+
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "fs/copy only supports regular files, directories, and symlinks",
+        ))
+    }
+}
+
+fn reject_sandbox_context(sandbox: Option<&FileSystemSandboxContext>) -> io::Result<()> {
+    if sandbox.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "direct filesystem operations do not accept sandbox context",
+        ));
+    }
+    Ok(())
+}
+
+fn copy_dir_recursive(source: &Path, target: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(target)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            copy_dir_recursive(&source_path, &target_path)?;
+        } else if file_type.is_file() {
+            std::fs::copy(&source_path, &target_path)?;
+        } else if file_type.is_symlink() {
+            copy_symlink(&source_path, &target_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn destination_is_same_or_descendant_of_source(
+    source: &Path,
+    destination: &Path,
+) -> io::Result<bool> {
+    let source = std::fs::canonicalize(source)?;
+    let destination = resolve_existing_path(destination)?;
+    Ok(destination.starts_with(&source))
+}
+
+fn resolve_existing_path(path: &Path) -> io::Result<PathBuf> {
+    let mut unresolved_suffix = Vec::new();
+    let mut existing_path = path;
+    while !existing_path.exists() {
+        let Some(file_name) = existing_path.file_name() else {
+            break;
+        };
+        unresolved_suffix.push(file_name.to_os_string());
+        let Some(parent) = existing_path.parent() else {
+            break;
+        };
+        existing_path = parent;
+    }
+
+    let mut resolved = std::fs::canonicalize(existing_path)?;
+    for file_name in unresolved_suffix.iter().rev() {
+        resolved.push(file_name);
+    }
+    Ok(resolved)
+}
+
+fn copy_symlink(source: &Path, target: &Path) -> io::Result<()> {
+    let link_target = std::fs::read_link(source)?;
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&link_target, target)
+    }
+    #[cfg(windows)]
+    {
+        if symlink_points_to_directory(source)? {
+            std::os::windows::fs::symlink_dir(&link_target, target)
+        } else {
+            std::os::windows::fs::symlink_file(&link_target, target)
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = link_target;
+        let _ = target;
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "copying symlinks is unsupported on this platform",
+        ))
+    }
+}
+
+#[cfg(windows)]
+fn symlink_points_to_directory(source: &Path) -> io::Result<bool> {
+    use std::os::windows::fs::FileTypeExt;
+
+    Ok(std::fs::symlink_metadata(source)?
+        .file_type()
+        .is_symlink_dir())
+}
+
+fn system_time_to_unix_ms(time: SystemTime) -> i64 {
+    time.duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+        .unwrap_or(0)
 }

@@ -2,7 +2,6 @@ use crate::function_tool::FunctionCallError;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
-use codex_tools::create_update_plan_tool;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
 use codex_protocol::config_types::ModeKind;
@@ -12,6 +11,7 @@ use codex_protocol::plan_tool::UpdatePlanArgs;
 use codex_protocol::protocol::EventMsg;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
+use codex_tools::create_update_plan_tool;
 use serde_json::Value as JsonValue;
 
 pub struct PlanHandler;

@@ -10,10 +10,11 @@ use crate::config::Constrained;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::tests::make_session_and_context;
 use anyhow::Context;
-use codex_execpolicy::Decision;
-use codex_execpolicy::Evaluation;
 use codex_execpolicy::PolicyParser;
-use codex_execpolicy::RuleMatch;
+use codex_execpolicy_api::Decision;
+use codex_execpolicy_api::Evaluation;
+use codex_execpolicy_api::Policy;
+use codex_execpolicy_api::RuleMatch;
 use codex_hooks::Hooks;
 use codex_hooks::HooksConfig;
 use codex_protocol::models::AdditionalPermissionProfile;
@@ -374,10 +375,14 @@ async fn execve_permission_request_hook_short_circuits_prompt() -> anyhow::Resul
     let config_toml_path = turn_context
         .config
         .codex_home
-        .join(codex_config::CONFIG_TOML_FILE);
+        .join(codex_config_edit::CONFIG_TOML_FILE);
     let hook_list = codex_hooks::list_hooks(HooksConfig {
         feature_enabled: true,
-        config_layer_stack: Some(turn_context.config.config_layer_stack.clone()),
+        config_layer_stack: Some(
+            crate::config::hook_config_layer_stack_from_config_layer_stack(
+                &turn_context.config.config_layer_stack,
+            ),
+        ),
         ..HooksConfig::default()
     });
     assert_eq!(hook_list.hooks.len(), 1);
@@ -405,7 +410,11 @@ async fn execve_permission_request_hook_short_circuits_prompt() -> anyhow::Resul
         .hooks
         .store(Arc::new(Hooks::new(HooksConfig {
             feature_enabled: true,
-            config_layer_stack: Some(trusted_config_layer_stack),
+            config_layer_stack: Some(
+                crate::config::hook_config_layer_stack_from_config_layer_stack(
+                    &trusted_config_layer_stack,
+                ),
+            ),
             shell_program: Some(hook_shell_program),
             shell_args: hook_shell_argv,
             ..HooksConfig::default()
@@ -423,7 +432,7 @@ async fn execve_permission_request_hook_short_circuits_prompt() -> anyhow::Resul
     let expected_hook_command =
         codex_shell_command::parse_command::shlex_join(&["/usr/bin/touch".to_string(), target_str]);
     let provider = CoreShellActionProvider {
-        policy: std::sync::Arc::new(RwLock::new(codex_execpolicy::Policy::empty())),
+        policy: std::sync::Arc::new(RwLock::new(Policy::empty())),
         session: std::sync::Arc::new(session),
         turn: std::sync::Arc::new(turn_context),
         call_id: "execve-hook-call".to_string(),

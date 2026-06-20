@@ -11,25 +11,25 @@ use crate::policy::unscoped_ip_literal;
 use crate::reasons::REASON_DENIED;
 use crate::reasons::REASON_NOT_ALLOWED;
 use crate::reasons::REASON_NOT_ALLOWED_LOCAL;
-use crate::state::NetworkProxyConstraintError;
-use crate::state::NetworkProxyConstraints;
 use crate::state::build_config_state;
 use crate::state::validate_policy_against_constraints;
 use anyhow::Context;
 use anyhow::Result;
 use async_trait::async_trait;
+pub use codex_network_proxy_api::BlockedRequest;
+pub use codex_network_proxy_api::BlockedRequestArgs;
+pub use codex_network_proxy_api::BlockedRequestObserver;
+pub use codex_network_proxy_api::NetworkProxyAuditMetadata;
+use codex_network_proxy_api::NetworkProxyConstraints;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use globset::GlobSet;
-use serde::Serialize;
 use std::collections::HashSet;
 use std::collections::VecDeque;
-use std::future::Future;
 use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-use time::OffsetDateTime;
 use tokio::net::lookup_host;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
@@ -40,19 +40,6 @@ use tracing::warn;
 const MAX_BLOCKED_EVENTS: usize = 200;
 const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
 const NETWORK_POLICY_VIOLATION_PREFIX: &str = "CODEX_NETWORK_POLICY_VIOLATION";
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct NetworkProxyAuditMetadata {
-    pub conversation_id: Option<String>,
-    pub app_version: Option<String>,
-    pub user_account_id: Option<String>,
-    pub auth_mode: Option<String>,
-    pub originator: Option<String>,
-    pub user_email: Option<String>,
-    pub terminal_type: Option<String>,
-    pub model: Option<String>,
-    pub slug: Option<String>,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostBlockReason {
@@ -81,63 +68,6 @@ impl std::fmt::Display for HostBlockReason {
 pub enum HostBlockDecision {
     Allowed,
     Blocked(HostBlockReason),
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct BlockedRequest {
-    pub host: String,
-    pub reason: String,
-    pub client: Option<String>,
-    pub method: Option<String>,
-    pub mode: Option<NetworkMode>,
-    pub protocol: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub decision: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub port: Option<u16>,
-    pub timestamp: i64,
-}
-
-pub struct BlockedRequestArgs {
-    pub host: String,
-    pub reason: String,
-    pub client: Option<String>,
-    pub method: Option<String>,
-    pub mode: Option<NetworkMode>,
-    pub protocol: String,
-    pub decision: Option<String>,
-    pub source: Option<String>,
-    pub port: Option<u16>,
-}
-
-impl BlockedRequest {
-    pub fn new(args: BlockedRequestArgs) -> Self {
-        let BlockedRequestArgs {
-            host,
-            reason,
-            client,
-            method,
-            mode,
-            protocol,
-            decision,
-            source,
-            port,
-        } = args;
-        Self {
-            host,
-            reason,
-            client,
-            method,
-            mode,
-            protocol,
-            decision,
-            source,
-            port,
-            timestamp: unix_timestamp(),
-        }
-    }
 }
 
 fn blocked_request_violation_log_line(entry: &BlockedRequest) -> String {
@@ -174,29 +104,6 @@ pub trait ConfigReloader: Send + Sync {
 
     /// Force a reload, regardless of whether a change was detected.
     async fn reload_now(&self) -> Result<ConfigState>;
-}
-
-#[async_trait]
-pub trait BlockedRequestObserver: Send + Sync + 'static {
-    async fn on_blocked_request(&self, request: BlockedRequest);
-}
-
-#[async_trait]
-impl<O: BlockedRequestObserver + ?Sized> BlockedRequestObserver for Arc<O> {
-    async fn on_blocked_request(&self, request: BlockedRequest) {
-        (**self).on_blocked_request(request).await
-    }
-}
-
-#[async_trait]
-impl<F, Fut> BlockedRequestObserver for F
-where
-    F: Fn(BlockedRequest) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = ()> + Send,
-{
-    async fn on_blocked_request(&self, request: BlockedRequest) {
-        (self)(request).await
-    }
 }
 
 pub struct NetworkProxyState {
@@ -565,7 +472,7 @@ impl NetworkProxyState {
             };
 
             validate_policy_against_constraints(&candidate, &constraints)
-                .map_err(NetworkProxyConstraintError::into_anyhow)
+                .map_err(anyhow::Error::from)
                 .context("network.mode constrained by managed config")?;
 
             let mut guard = self.state.write().await;
@@ -631,7 +538,7 @@ impl NetworkProxyState {
             );
 
             validate_policy_against_constraints(&candidate, &constraints)
-                .map_err(NetworkProxyConstraintError::into_anyhow)
+                .map_err(anyhow::Error::from)
                 .with_context(|| format!("{constraint_field} constrained by managed config"))?;
 
             let mut new_state = build_config_state(candidate.clone(), constraints.clone())
@@ -837,10 +744,6 @@ fn is_explicit_local_allowlisted(allowed_domains: &[String], host: &Host) -> boo
     })
 }
 
-fn unix_timestamp() -> i64 {
-    OffsetDateTime::now_utc().unix_timestamp()
-}
-
 #[cfg(test)]
 pub(crate) fn network_proxy_state_for_policy(
     mut network: crate::config::NetworkProxySettings,
@@ -880,9 +783,9 @@ mod tests {
     use crate::config::NetworkProxySettings;
     use crate::policy::compile_allowlist_globset;
     use crate::policy::compile_denylist_globset;
-    use crate::state::NetworkProxyConstraints;
     use crate::state::build_config_state;
     use crate::state::validate_policy_against_constraints;
+    use codex_network_proxy_api::NetworkProxyConstraints;
     use pretty_assertions::assert_eq;
 
     fn strings(entries: &[&str]) -> Vec<String> {

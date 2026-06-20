@@ -34,15 +34,15 @@ use crate::session::turn_context::TurnContext;
 use crate::state::ActiveTurn;
 use crate::state::RunningTask;
 use crate::state::TaskKind;
-use codex_analytics::TurnTokenUsageFact;
+use codex_analytics_api::TurnTokenUsageFact;
 use codex_login::AuthManager;
-use codex_models_manager::manager::SharedModelsManager;
-use codex_otel::SessionTelemetry;
-use codex_otel::TURN_E2E_DURATION_METRIC;
-use codex_otel::TURN_MEMORY_METRIC;
-use codex_otel::TURN_NETWORK_PROXY_METRIC;
-use codex_otel::TURN_TOKEN_USAGE_METRIC;
-use codex_otel::TURN_TOOL_CALL_METRIC;
+use codex_metrics_api::MetricsSink;
+use codex_metrics_api::TURN_E2E_DURATION_METRIC;
+use codex_metrics_api::TURN_MEMORY_METRIC;
+use codex_metrics_api::TURN_NETWORK_PROXY_METRIC;
+use codex_metrics_api::TURN_TOKEN_USAGE_METRIC;
+use codex_metrics_api::TURN_TOOL_CALL_METRIC;
+use codex_models_manager_api::SharedModelsManager;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::RolloutItem;
@@ -107,7 +107,7 @@ pub(crate) fn interrupted_turn_history_marker(
 }
 
 fn emit_turn_network_proxy_metric(
-    session_telemetry: &SessionTelemetry,
+    metrics: &dyn MetricsSink,
     network_proxy_active: bool,
     tmp_mem: (&str, &str),
 ) {
@@ -116,7 +116,7 @@ fn emit_turn_network_proxy_metric(
     } else {
         "false"
     };
-    session_telemetry.counter(
+    metrics.counter(
         TURN_NETWORK_PROXY_METRIC,
         /*inc*/ 1,
         &[("active", active), tmp_mem],
@@ -124,13 +124,13 @@ fn emit_turn_network_proxy_metric(
 }
 
 fn emit_turn_memory_metric(
-    session_telemetry: &SessionTelemetry,
+    metrics: &dyn MetricsSink,
     feature_enabled: bool,
     config_enabled: bool,
     has_citations: bool,
 ) {
     let read_allowed = feature_enabled && config_enabled;
-    session_telemetry.counter(
+    metrics.counter(
         TURN_MEMORY_METRIC,
         /*inc*/ 1,
         &[
@@ -432,6 +432,7 @@ impl Session {
         let timer = turn_context
             .session_telemetry
             .start_timer(TURN_E2E_DURATION_METRIC, &[])
+            .map(|timer| Box::new(timer) as Box<dyn Send + Sync>)
             .ok();
         let running_task = RunningTask {
             done,

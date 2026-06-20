@@ -1,4 +1,6 @@
 use super::*;
+use codex_config_types::HooksFile;
+use codex_config_types::McpServerConfig;
 use pretty_assertions::assert_eq;
 use std::io;
 use tempfile::TempDir;
@@ -561,10 +563,7 @@ STATIC = "yes"
         .cloned()
         .ok_or_else(|| io::Error::other("missing mcp_servers"))
         .expect("mcp servers");
-    let _supported_mcp_config: std::collections::HashMap<
-        String,
-        codex_config::types::McpServerConfig,
-    > = mcp_servers
+    let _supported_mcp_config: std::collections::HashMap<String, McpServerConfig> = mcp_servers
         .try_into()
         .expect("migrated MCP config should be supported");
 
@@ -572,7 +571,7 @@ STATIC = "yes"
         &fs::read_to_string(repo_root.join(".codex").join("hooks.json")).expect("read hooks"),
     )
     .expect("parse hooks");
-    let _supported_hooks: codex_config::HooksFile =
+    let _supported_hooks: HooksFile =
         serde_json::from_value(hooks.clone()).expect("migrated hooks should be supported");
     assert_eq!(
         hooks,

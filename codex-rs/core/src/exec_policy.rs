@@ -5,20 +5,21 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 
-use codex_app_server_protocol::ConfigLayerSource;
-use codex_config::ConfigLayerStack;
-use codex_config::ConfigLayerStackOrdering;
-use codex_execpolicy::AmendError;
-use codex_execpolicy::Decision;
-use codex_execpolicy::Error as ExecPolicyRuleError;
-use codex_execpolicy::Evaluation;
-use codex_execpolicy::MatchOptions;
-use codex_execpolicy::NetworkRuleProtocol;
-use codex_execpolicy::Policy;
+use codex_config_state::ConfigLayerEntry;
+use codex_config_state::ConfigLayerStack;
+use codex_config_state::ConfigLayerStackOrdering;
+use codex_config_types::ConfigLayerSource;
 use codex_execpolicy::PolicyParser;
-use codex_execpolicy::RuleMatch;
-use codex_execpolicy::blocking_append_allow_prefix_rule;
-use codex_execpolicy::blocking_append_network_rule;
+use codex_execpolicy_api::AmendError;
+use codex_execpolicy_api::Decision;
+use codex_execpolicy_api::Error as ExecPolicyRuleError;
+use codex_execpolicy_api::Evaluation;
+use codex_execpolicy_api::MatchOptions;
+use codex_execpolicy_api::NetworkRuleProtocol;
+use codex_execpolicy_api::Policy;
+use codex_execpolicy_api::RuleMatch;
+use codex_execpolicy_api::blocking_append_allow_prefix_rule;
+use codex_execpolicy_api::blocking_append_network_rule;
 use codex_protocol::approvals::ExecPolicyAmendment;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::FileSystemSandboxKind;
@@ -144,7 +145,7 @@ pub(crate) fn child_uses_parent_exec_policy(parent_config: &Config, child_config
                 /*include_disabled*/ false,
             )
             .into_iter()
-            .filter_map(codex_config::ConfigLayerEntry::config_folder)
+            .filter_map(ConfigLayerEntry::config_folder)
             .collect()
     }
 
@@ -423,7 +424,9 @@ impl ExecPolicyManager {
         }
 
         let mut updated_policy = current_policy.as_ref().clone();
-        updated_policy.add_prefix_rule(&amendment.command, Decision::Allow)?;
+        updated_policy
+            .add_prefix_rule(&amendment.command, Decision::Allow)
+            .map_err(ExecPolicyRuleError::from)?;
         self.policy.store(Arc::new(updated_policy));
         Ok(())
     }
@@ -469,7 +472,9 @@ impl ExecPolicyManager {
         })?;
 
         let mut updated_policy = self.current().as_ref().clone();
-        updated_policy.add_network_rule(&host, protocol, decision, justification)?;
+        updated_policy
+            .add_network_rule(&host, protocol, decision, justification)
+            .map_err(ExecPolicyRuleError::from)?;
         self.policy.store(Arc::new(updated_policy));
         Ok(())
     }

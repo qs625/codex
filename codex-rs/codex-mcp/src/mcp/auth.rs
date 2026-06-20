@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use codex_config::McpServerConfig;
-use codex_config::McpServerTransportConfig;
-use codex_config::types::OAuthCredentialsStoreMode;
+use codex_config_types::McpServerConfig;
+use codex_config_types::McpServerTransportConfig;
+use codex_config_types::OAuthCredentialsStoreMode;
 use codex_login::CodexAuth;
 use codex_protocol::protocol::McpAuthStatus;
 use codex_rmcp_client::OAuthProviderError;

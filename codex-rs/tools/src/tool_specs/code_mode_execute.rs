@@ -1,12 +1,12 @@
-use codex_code_mode::ToolDefinition as CodeModeToolDefinition;
 use crate::FreeformTool;
 use crate::FreeformToolFormat;
 use crate::ToolSpec;
+use codex_code_mode_api::ToolDefinition as CodeModeToolDefinition;
 use std::collections::BTreeMap;
 
 pub fn create_code_mode_tool(
     enabled_tools: &[CodeModeToolDefinition],
-    namespace_descriptions: &BTreeMap<String, codex_code_mode::ToolNamespaceDescription>,
+    namespace_descriptions: &BTreeMap<String, codex_code_mode_api::ToolNamespaceDescription>,
     code_mode_only: bool,
     deferred_tools_available: bool,
 ) -> ToolSpec {
@@ -21,8 +21,8 @@ SOURCE: /[\s\S]+/
 "#;
 
     ToolSpec::Freeform(FreeformTool {
-        name: codex_code_mode::PUBLIC_TOOL_NAME.to_string(),
-        description: codex_code_mode::build_exec_tool_description(
+        name: codex_code_mode_api::PUBLIC_TOOL_NAME.to_string(),
+        description: codex_code_mode_api::build_exec_tool_description(
             enabled_tools,
             namespace_descriptions,
             code_mode_only,
@@ -44,11 +44,11 @@ mod tests {
 
     #[test]
     fn create_code_mode_tool_matches_expected_spec() {
-        let enabled_tools = vec![codex_code_mode::ToolDefinition {
+        let enabled_tools = vec![codex_code_mode_api::ToolDefinition {
             name: "update_plan".to_string(),
             tool_name: ToolName::plain("update_plan"),
             description: "Update the plan".to_string(),
-            kind: codex_code_mode::CodeModeToolKind::Function,
+            kind: codex_code_mode_api::CodeModeToolKind::Function,
             input_schema: None,
             output_schema: None,
         }];
@@ -61,8 +61,8 @@ mod tests {
                 /*deferred_tools_available*/ false,
             ),
             ToolSpec::Freeform(FreeformTool {
-                name: codex_code_mode::PUBLIC_TOOL_NAME.to_string(),
-                description: codex_code_mode::build_exec_tool_description(
+                name: codex_code_mode_api::PUBLIC_TOOL_NAME.to_string(),
+                description: codex_code_mode_api::build_exec_tool_description(
                     &enabled_tools,
                     &BTreeMap::new(),
                     /*code_mode_only*/ true,

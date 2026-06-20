@@ -1,0 +1,20 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-auth-types"
+version.workspace = true
+description = "Lightweight authentication API types shared across Codex crates."
+
+[lib]
+doctest = false
+name = "codex_auth_types"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+strum_macros = { workspace = true }
+ts-rs = { workspace = true }

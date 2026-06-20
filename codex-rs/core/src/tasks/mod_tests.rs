@@ -1,10 +1,10 @@
 use super::emit_turn_memory_metric;
 use super::emit_turn_network_proxy_metric;
+use codex_metrics_api::TURN_MEMORY_METRIC;
+use codex_metrics_api::TURN_NETWORK_PROXY_METRIC;
 use codex_otel::MetricsClient;
 use codex_otel::MetricsConfig;
 use codex_otel::SessionTelemetry;
-use codex_otel::TURN_MEMORY_METRIC;
-use codex_otel::TURN_NETWORK_PROXY_METRIC;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::SessionSource;
 use opentelemetry::KeyValue;

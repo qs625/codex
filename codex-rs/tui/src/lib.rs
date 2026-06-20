@@ -29,18 +29,19 @@ use codex_app_server_client::RemoteAppServerConnectArgs;
 pub use codex_app_server_client::RemoteAppServerEndpoint;
 use codex_app_server_protocol::Account as AppServerAccount;
 use codex_app_server_protocol::AskForApproval;
-use codex_app_server_protocol::AuthMode as AppServerAuthMode;
 use codex_app_server_protocol::ConfigWarningNotification;
 use codex_app_server_protocol::Thread as AppServerThread;
 use codex_app_server_protocol::ThreadListCwdFilter;
 use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadSortKey as AppServerThreadSortKey;
 use codex_app_server_protocol::ThreadSourceKind;
+use codex_auth_types::AuthMode as AppServerAuthMode;
 use codex_cloud_requirements::cloud_requirements_loader_for_storage;
-use codex_config::CloudRequirementsLoader;
-use codex_config::ConfigLoadError;
-use codex_config::LoaderOverrides;
-use codex_config::format_config_error_with_source;
+use codex_config_diagnostics::ConfigLoadError;
+use codex_config_diagnostics::format_config_error_with_source;
+use codex_config_loader::ConfigLoadOptions;
+use codex_config_loader::LoaderOverrides;
+use codex_config_requirements::CloudRequirementsLoader;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimePaths;
 use codex_login::AuthConfig;
@@ -872,7 +873,7 @@ pub async fn run_main(
         &codex_home,
         config_cwd.as_ref(),
         cli_kv_overrides.clone(),
-        codex_config::ConfigLoadOptions {
+        ConfigLoadOptions {
             loader_overrides: loader_overrides.clone(),
             strict_config,
         },
@@ -978,8 +979,15 @@ pub async fn run_main(
 
     let otel_originator = originator().value;
     let otel = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        crate::legacy_core::otel_init::build_provider(
-            &config,
+        codex_otel_init::build_provider(
+            codex_otel_init::OtelProviderConfig {
+                codex_home: config.codex_home.as_path(),
+                otel: &config.otel,
+                analytics_enabled: config.analytics_enabled,
+                runtime_metrics_enabled: config
+                    .features
+                    .enabled(codex_features::Feature::RuntimeMetrics),
+            },
             env!("CARGO_PKG_VERSION"),
             /*service_name_override*/ None,
             /*default_analytics_enabled*/ true,
@@ -1001,11 +1009,8 @@ pub async fn run_main(
             None
         }
     };
-    crate::legacy_core::otel_init::record_process_start(otel.as_ref(), otel_originator.as_str());
-    crate::legacy_core::otel_init::install_sqlite_telemetry(
-        otel.as_ref(),
-        otel_originator.as_str(),
-    );
+    codex_otel_init::record_process_start(otel.as_ref(), otel_originator.as_str());
+    codex_otel_init::install_sqlite_telemetry(otel.as_ref(), otel_originator.as_str());
     let state_db = init_state_db_for_app_server_target(&config, &app_server_target).await?;
 
     let effective_toml = config.config_layer_stack.effective_config();
@@ -1144,7 +1149,12 @@ pub async fn run_main(
                 ));
             }
         };
-        ensure_oss_provider_ready(provider_id, &config).await?;
+        ensure_oss_provider_ready(
+            provider_id,
+            config.model.as_deref(),
+            &config.model_providers,
+        )
+        .await?;
     }
 
     let otel_logger_layer = otel.as_ref().and_then(|o| o.logger_layer());
@@ -1817,12 +1827,12 @@ mod tests {
     use super::*;
     use crate::legacy_core::config::ConfigBuilder;
     use crate::legacy_core::config::ConfigOverrides;
+    use crate::legacy_core::config::ProjectConfig;
     use codex_app_server_protocol::AskForApproval;
     use codex_app_server_protocol::ClientRequest;
     use codex_app_server_protocol::RequestId;
     use codex_app_server_protocol::ThreadStartParams;
     use codex_app_server_protocol::ThreadStartResponse;
-    use codex_config::config_toml::ProjectConfig;
     use pretty_assertions::assert_eq;
     use serial_test::serial;
     use tempfile::TempDir;

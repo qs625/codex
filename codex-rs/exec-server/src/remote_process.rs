@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
+use codex_exec_server_api::ExecRuntimeError;
+use futures::FutureExt;
+use futures::future::BoxFuture;
 use tokio::sync::watch;
 use tracing::trace;
 
 use crate::ExecBackend;
 use crate::ExecProcess;
 use crate::ExecProcessEventReceiver;
-use crate::ExecServerError;
 use crate::StartedExecProcess;
 use crate::client::LazyRemoteExecServerClient;
 use crate::client::Session;
@@ -31,24 +32,31 @@ impl RemoteProcess {
     }
 }
 
-#[async_trait]
 impl ExecBackend for RemoteProcess {
-    async fn start(&self, params: ExecParams) -> Result<StartedExecProcess, ExecServerError> {
-        let process_id = params.process_id.clone();
-        let client = self.client.get().await?;
-        let session = client.register_session(&process_id).await?;
-        if let Err(err) = client.exec(params).await {
-            session.unregister().await;
-            return Err(err);
-        }
+    fn start(
+        &self,
+        params: ExecParams,
+    ) -> BoxFuture<'_, Result<StartedExecProcess, ExecRuntimeError>> {
+        async move {
+            let process_id = params.process_id.clone();
+            let client = self.client.get().await.map_err(ExecRuntimeError::from)?;
+            let session = client
+                .register_session(&process_id)
+                .await
+                .map_err(ExecRuntimeError::from)?;
+            if let Err(err) = client.exec(params).await {
+                session.unregister().await;
+                return Err(ExecRuntimeError::from(err));
+            }
 
-        Ok(StartedExecProcess {
-            process: Arc::new(RemoteExecProcess { session }),
-        })
+            Ok(StartedExecProcess {
+                process: Arc::new(RemoteExecProcess { session }),
+            })
+        }
+        .boxed()
     }
 }
 
-#[async_trait]
 impl ExecProcess for RemoteExecProcess {
     fn process_id(&self) -> &crate::ProcessId {
         self.session.process_id()
@@ -62,23 +70,41 @@ impl ExecProcess for RemoteExecProcess {
         self.session.subscribe_events()
     }
 
-    async fn read(
+    fn read(
         &self,
         after_seq: Option<u64>,
         max_bytes: Option<usize>,
         wait_ms: Option<u64>,
-    ) -> Result<ReadResponse, ExecServerError> {
-        self.session.read(after_seq, max_bytes, wait_ms).await
+    ) -> BoxFuture<'_, Result<ReadResponse, ExecRuntimeError>> {
+        async move {
+            self.session
+                .read(after_seq, max_bytes, wait_ms)
+                .await
+                .map_err(ExecRuntimeError::from)
+        }
+        .boxed()
     }
 
-    async fn write(&self, chunk: Vec<u8>) -> Result<WriteResponse, ExecServerError> {
-        trace!("exec process write");
-        self.session.write(chunk).await
+    fn write(&self, chunk: Vec<u8>) -> BoxFuture<'_, Result<WriteResponse, ExecRuntimeError>> {
+        async move {
+            trace!("exec process write");
+            self.session
+                .write(chunk)
+                .await
+                .map_err(ExecRuntimeError::from)
+        }
+        .boxed()
     }
 
-    async fn terminate(&self) -> Result<(), ExecServerError> {
-        trace!("exec process terminate");
-        self.session.terminate().await
+    fn terminate(&self) -> BoxFuture<'_, Result<(), ExecRuntimeError>> {
+        async move {
+            trace!("exec process terminate");
+            self.session
+                .terminate()
+                .await
+                .map_err(ExecRuntimeError::from)
+        }
+        .boxed()
     }
 }
 

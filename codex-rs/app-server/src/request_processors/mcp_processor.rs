@@ -2,12 +2,28 @@ use super::*;
 
 const MCP_TOOL_THREAD_ID_META_KEY: &str = "threadId";
 
+fn mcp_runtime_environment(
+    environment: Arc<codex_exec_server::Environment>,
+    fallback_cwd: std::path::PathBuf,
+) -> McpRuntimeEnvironment {
+    let local_http_client: Arc<dyn codex_exec_server_api::HttpClient> =
+        Arc::new(codex_exec_server::ReqwestHttpClient);
+    McpRuntimeEnvironment::new(codex_mcp::McpRuntimeEnvironmentParams {
+        remote_available: environment.is_remote(),
+        remote_exec_backend: environment.get_exec_backend(),
+        local_http_client,
+        remote_http_client: environment.get_http_client(),
+        fallback_cwd,
+    })
+}
+
 #[derive(Clone)]
 pub(crate) struct McpRequestProcessor {
     auth_manager: Arc<AuthManager>,
     thread_manager: Arc<ThreadManager>,
     outgoing: Arc<OutgoingMessageSender>,
     config_manager: ConfigManager,
+    environment_manager: Arc<EnvironmentManager>,
 }
 
 impl McpRequestProcessor {
@@ -16,12 +32,14 @@ impl McpRequestProcessor {
         thread_manager: Arc<ThreadManager>,
         outgoing: Arc<OutgoingMessageSender>,
         config_manager: ConfigManager,
+        environment_manager: Arc<EnvironmentManager>,
     ) -> Self {
         Self {
             auth_manager,
             thread_manager,
             outgoing,
             config_manager,
+            environment_manager,
         }
     }
 
@@ -204,14 +222,14 @@ impl McpRequestProcessor {
             .to_mcp_config(self.thread_manager.plugins_manager().as_ref())
             .await;
         let auth = self.auth_manager.auth().await;
-        let environment_manager = self.thread_manager.environment_manager();
+        let environment_manager = Arc::clone(&self.environment_manager);
         let runtime_environment = match environment_manager.default_environment() {
             Some(environment) => {
                 // Status listing has no turn cwd. This fallback is used only
                 // by executor-backed stdio MCPs whose config omits `cwd`.
-                McpRuntimeEnvironment::new(environment, config.cwd.to_path_buf())
+                mcp_runtime_environment(environment, config.cwd.to_path_buf())
             }
-            None => McpRuntimeEnvironment::new(
+            None => mcp_runtime_environment(
                 environment_manager.local_environment(),
                 config.cwd.to_path_buf(),
             ),
@@ -370,13 +388,13 @@ impl McpRequestProcessor {
             .await;
         let auth = self.auth_manager.auth().await;
         let runtime_environment = {
-            let environment_manager = self.thread_manager.environment_manager();
+            let environment_manager = Arc::clone(&self.environment_manager);
             let environment = environment_manager
                 .default_environment()
                 .unwrap_or_else(|| environment_manager.local_environment());
             // Resource reads without a thread have no turn cwd. This fallback
             // is used only by executor-backed stdio MCPs whose config omits `cwd`.
-            McpRuntimeEnvironment::new(environment, config.cwd.to_path_buf())
+            mcp_runtime_environment(environment, config.cwd.to_path_buf())
         };
         let request_id = request_id.clone();
 

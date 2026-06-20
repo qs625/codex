@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use codex_analytics::GuardianReviewedAction;
+use codex_analytics_api::GuardianReviewedAction;
 use codex_protocol::approvals::GuardianAssessmentAction;
 use codex_protocol::approvals::GuardianCommandSource;
 use codex_protocol::approvals::NetworkApprovalProtocol;

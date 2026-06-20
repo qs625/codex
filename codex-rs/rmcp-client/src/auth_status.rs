@@ -15,7 +15,7 @@ use tracing::debug;
 use crate::oauth::has_oauth_tokens;
 use crate::utils::apply_default_headers;
 use crate::utils::build_default_headers;
-use codex_config::types::OAuthCredentialsStoreMode;
+use codex_config_types::OAuthCredentialsStoreMode;
 
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 const OAUTH_DISCOVERY_HEADER: &str = "MCP-Protocol-Version";

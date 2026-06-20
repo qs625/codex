@@ -5,7 +5,7 @@ use anyhow::Context;
 use anyhow::Result;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use codex_otel::StatsigMetricsSettings;
+use codex_metrics_api::StatsigMetricsSettings;
 use codex_windows_sandbox::LOG_FILE_NAME;
 use codex_windows_sandbox::SETUP_VERSION;
 use codex_windows_sandbox::SetupErrorCode;
@@ -965,7 +965,7 @@ mod tests {
     use super::Payload;
     use super::SETUP_VERSION;
     use super::workspace_write_cap_sids_for_path;
-    use codex_otel::StatsigMetricsSettings;
+    use codex_metrics_api::StatsigMetricsSettings;
     use codex_windows_sandbox::load_or_create_cap_sids;
     use codex_windows_sandbox::workspace_write_cap_sid_for_root;
     use pretty_assertions::assert_eq;

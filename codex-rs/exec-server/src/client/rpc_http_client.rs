@@ -7,13 +7,15 @@
 
 use std::sync::Arc;
 
+use codex_exec_server_api::ExecRuntimeError;
+use codex_exec_server_api::HttpClient;
+use codex_exec_server_api::HttpResponseBodyStream as ApiHttpResponseBodyStream;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use tokio::sync::mpsc;
 
 use super::HttpResponseBodyStream;
 use super::response_body_stream::HttpBodyStreamRegistration;
-use crate::HttpClient;
 use crate::client::ExecServerClient;
 use crate::client::ExecServerError;
 use crate::protocol::HTTP_REQUEST_METHOD;
@@ -73,8 +75,13 @@ impl HttpClient for ExecServerClient {
     fn http_request(
         &self,
         params: HttpRequestParams,
-    ) -> BoxFuture<'_, Result<HttpRequestResponse, ExecServerError>> {
-        async move { ExecServerClient::http_request(self, params).await }.boxed()
+    ) -> BoxFuture<'_, Result<HttpRequestResponse, ExecRuntimeError>> {
+        async move {
+            ExecServerClient::http_request(self, params)
+                .await
+                .map_err(ExecRuntimeError::from)
+        }
+        .boxed()
     }
 
     /// Orchestrator-side adapter that forwards streamed HTTP requests to the
@@ -82,7 +89,14 @@ impl HttpClient for ExecServerClient {
     fn http_request_stream(
         &self,
         params: HttpRequestParams,
-    ) -> BoxFuture<'_, Result<(HttpRequestResponse, HttpResponseBodyStream), ExecServerError>> {
-        async move { ExecServerClient::http_request_stream(self, params).await }.boxed()
+    ) -> BoxFuture<'_, Result<(HttpRequestResponse, ApiHttpResponseBodyStream), ExecRuntimeError>>
+    {
+        async move {
+            let (response, stream) = ExecServerClient::http_request_stream(self, params)
+                .await
+                .map_err(ExecRuntimeError::from)?;
+            Ok((response, Box::new(stream) as ApiHttpResponseBodyStream))
+        }
+        .boxed()
     }
 }

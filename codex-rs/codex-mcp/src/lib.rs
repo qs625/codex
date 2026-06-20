@@ -1,11 +1,13 @@
+pub use codex_mcp_tool_types::ToolInfo;
+pub use codex_mcp_tool_types::declared_openai_file_input_param_names;
 pub use connection_manager::McpConnectionManager;
 pub use elicitation::ElicitationReviewRequest;
 pub use elicitation::ElicitationReviewer;
 pub use elicitation::ElicitationReviewerHandle;
 pub use rmcp_client::MCP_SANDBOX_STATE_META_CAPABILITY;
 pub use runtime::McpRuntimeEnvironment;
+pub use runtime::McpRuntimeEnvironmentParams;
 pub use runtime::SandboxState;
-pub use tools::ToolInfo;
 
 pub use mcp::CODEX_APPS_MCP_SERVER_NAME;
 pub use mcp::McpConfig;
@@ -35,6 +37,7 @@ pub use mcp::McpSnapshotDetail;
 pub use mcp::collect_mcp_server_status_snapshot_with_detail;
 pub use mcp::read_mcp_resource;
 
+pub use codex_rmcp_client::perform_oauth_login;
 pub use mcp::McpAuthStatusEntry;
 pub use mcp::McpOAuthLoginConfig;
 pub use mcp::McpOAuthLoginSupport;
@@ -49,8 +52,6 @@ pub use mcp::should_retry_without_scopes;
 pub use mcp::McpPermissionPromptAutoApproveContext;
 pub use mcp::mcp_permission_prompt_is_auto_approved;
 pub use mcp::qualified_mcp_tool_name_prefix;
-pub use tools::declared_openai_file_input_param_names;
-
 pub(crate) mod auth_elicitation;
 pub(crate) mod codex_apps;
 pub(crate) mod connection_manager;

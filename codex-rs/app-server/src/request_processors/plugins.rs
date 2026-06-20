@@ -5,7 +5,7 @@ use codex_app_server_protocol::PluginAvailability;
 use codex_app_server_protocol::PluginInstallPolicy;
 use codex_app_server_protocol::PluginSharePrincipalRole;
 use codex_app_server_protocol::PluginShareTargetRole;
-use codex_config::types::McpServerConfig;
+use codex_config_types::McpServerConfig;
 use codex_core_plugins::remote::is_valid_remote_plugin_id;
 use codex_core_plugins::remote::validate_remote_plugin_id;
 use codex_mcp::McpOAuthLoginSupport;
@@ -20,7 +20,12 @@ pub(crate) struct PluginRequestProcessor {
     outgoing: Arc<OutgoingMessageSender>,
     analytics_events_client: AnalyticsEventsClient,
     config_manager: ConfigManager,
+    environment_manager: Arc<EnvironmentManager>,
     workspace_settings_cache: Arc<workspace_settings::WorkspaceSettingsCache>,
+}
+
+fn validate_remote_plugin_id_for_request(plugin_id: &str) -> Result<(), JSONRPCErrorError> {
+    validate_remote_plugin_id(plugin_id).map_err(|err| invalid_request(err.to_string()))
 }
 
 fn plugin_skills_to_info(
@@ -247,6 +252,7 @@ impl PluginRequestProcessor {
         outgoing: Arc<OutgoingMessageSender>,
         analytics_events_client: AnalyticsEventsClient,
         config_manager: ConfigManager,
+        environment_manager: Arc<EnvironmentManager>,
         workspace_settings_cache: Arc<workspace_settings::WorkspaceSettingsCache>,
     ) -> Self {
         Self {
@@ -255,6 +261,7 @@ impl PluginRequestProcessor {
             outgoing,
             analytics_events_client,
             config_manager,
+            environment_manager,
             workspace_settings_cache,
         }
     }
@@ -722,7 +729,7 @@ impl PluginRequestProcessor {
                     }
                     None => None,
                 };
-                let environment_manager = self.thread_manager.environment_manager();
+                let environment_manager = Arc::clone(&self.environment_manager);
                 let app_summaries =
                     load_plugin_app_summaries(&config, &outcome.plugin.apps, &environment_manager)
                         .await;
@@ -783,7 +790,7 @@ impl PluginRequestProcessor {
                 let remote_plugin_service_config = RemotePluginServiceConfig {
                     chatgpt_base_url: config.chatgpt_base_url.clone(),
                 };
-                validate_remote_plugin_id(&plugin_name)?;
+                validate_remote_plugin_id_for_request(&plugin_name)?;
                 let remote_detail = codex_core_plugins::remote::fetch_remote_plugin_detail(
                     &remote_plugin_service_config,
                     auth.as_ref(),
@@ -800,7 +807,7 @@ impl PluginRequestProcessor {
                     .cloned()
                     .map(codex_plugin::AppConnectorId)
                     .collect::<Vec<_>>();
-                let environment_manager = self.thread_manager.environment_manager();
+                let environment_manager = Arc::clone(&self.environment_manager);
                 let app_summaries =
                     load_plugin_app_summaries(&config, &plugin_apps, &environment_manager).await;
                 remote_plugin_detail_to_info(remote_detail, app_summaries)
@@ -826,7 +833,7 @@ impl PluginRequestProcessor {
                 "remote plugin skill read is not enabled for marketplace {remote_marketplace_name}"
             )));
         }
-        validate_remote_plugin_id(&remote_plugin_id)?;
+        validate_remote_plugin_id_for_request(&remote_plugin_id)?;
         if skill_name.is_empty() {
             return Err(invalid_request(
                 "invalid remote plugin skill name: cannot be empty",
@@ -1149,7 +1156,7 @@ impl PluginRequestProcessor {
                 "remote plugin install is not enabled for marketplace {remote_marketplace_name}"
             )));
         }
-        validate_remote_plugin_id(&remote_plugin_id)?;
+        validate_remote_plugin_id_for_request(&remote_plugin_id)?;
 
         let auth = self.auth_manager.auth().await;
         let remote_plugin_service_config = RemotePluginServiceConfig {
@@ -1263,14 +1270,14 @@ impl PluginRequestProcessor {
             return Vec::new();
         }
 
-        let environment_manager = self.thread_manager.environment_manager();
+        let environment_manager = Arc::clone(&self.environment_manager);
         let chatgpt_config = chatgpt_config_from_core(config);
         let (all_connectors_result, accessible_connectors_result) = tokio::join!(
             chatgpt_connectors::list_all_connectors_with_options(
                 &chatgpt_config,
                 /*force_refetch*/ true,
             ),
-            core_connectors::list_accessible_connectors_from_mcp_tools_with_environment_manager(
+            core_connectors::list_accessible_connectors_from_mcp_tools_with_environment_provider(
                 config,
                 /*force_refetch*/ true,
                 &environment_manager
@@ -1501,7 +1508,7 @@ impl PluginRequestProcessor {
         if !config.features.enabled(Feature::Plugins) {
             return Err(invalid_request("remote plugin uninstall is not enabled"));
         }
-        validate_remote_plugin_id(&plugin_id)?;
+        validate_remote_plugin_id_for_request(&plugin_id)?;
 
         let auth = self.auth_manager.auth().await;
         let remote_plugin_service_config = RemotePluginServiceConfig {
@@ -1565,7 +1572,7 @@ async fn load_plugin_app_summaries(
     let plugin_connectors = chatgpt_connectors::connectors_for_plugin_apps(connectors, plugin_apps);
 
     let accessible_connectors =
-        match core_connectors::list_accessible_connectors_from_mcp_tools_with_environment_manager(
+        match core_connectors::list_accessible_connectors_from_mcp_tools_with_environment_provider(
             config,
             /*force_refetch*/ false,
             environment_manager,

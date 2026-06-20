@@ -2,12 +2,12 @@ use super::*;
 use crate::SkillMetadata;
 use crate::config_rules::resolve_disabled_skill_paths;
 use crate::config_rules::skill_config_rules_from_stack;
-use codex_app_server_protocol::ConfigLayerSource;
 use codex_config::CONFIG_TOML_FILE;
 use codex_config::ConfigLayerEntry;
 use codex_config::ConfigLayerStack;
 use codex_config::ConfigRequirementsToml;
-use codex_exec_server::LOCAL_FS;
+use codex_config_types::ConfigLayerSource;
+use codex_file_system::LOCAL_FS;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::test_support::PathBufExt;
 use codex_utils_absolute_path::test_support::PathExt;
@@ -18,6 +18,14 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
+
+fn skill_stack(config_layer_stack: &ConfigLayerStack) -> SkillConfigLayerStack {
+    config_layer_stack.clone().into()
+}
+
+fn bundled_skills_enabled_from_config_stack(config_layer_stack: &ConfigLayerStack) -> bool {
+    bundled_skills_enabled_from_stack(&skill_stack(config_layer_stack))
+}
 
 fn write_user_skill(codex_home: &TempDir, dir: &str, name: &str, description: &str) {
     let skill_dir = codex_home.path().join("skills").join(dir);
@@ -158,8 +166,8 @@ async fn skills_for_config_with_stack(
                 plugin_id: "test-plugin@test".to_string(),
             })
             .collect(),
-        config_layer_stack.clone(),
-        bundled_skills_enabled_from_stack(config_layer_stack),
+        skill_stack(config_layer_stack),
+        bundled_skills_enabled_from_config_stack(config_layer_stack),
     );
     skills_manager
         .skills_for_config(&skills_input, Some(Arc::clone(&LOCAL_FS)))
@@ -284,8 +292,8 @@ async fn skills_for_config_applies_allowlist_patterns() {
     let skills_input = SkillsLoadInput::new(
         cwd.path().abs(),
         Vec::new(),
-        config_layer_stack.clone(),
-        bundled_skills_enabled_from_stack(&config_layer_stack),
+        skill_stack(&config_layer_stack),
+        bundled_skills_enabled_from_config_stack(&config_layer_stack),
     )
     .with_allowlist_patterns(Some(vec!["agent-test*".to_string()]));
 
@@ -346,8 +354,8 @@ async fn skills_for_cwd_loads_repo_and_user_roots_with_local_fs() {
     let skills_input = SkillsLoadInput::new(
         cwd.path().abs(),
         Vec::new(),
-        config_layer_stack.clone(),
-        bundled_skills_enabled_from_stack(&config_layer_stack),
+        skill_stack(&config_layer_stack),
+        bundled_skills_enabled_from_config_stack(&config_layer_stack),
     );
     let skills_manager = SkillsManager::new(
         codex_home.path().abs(),
@@ -416,8 +424,8 @@ async fn skills_for_cwd_without_fs_falls_back_to_local_repo_roots() {
     let skills_input = SkillsLoadInput::new(
         cwd.path().abs(),
         Vec::new(),
-        config_layer_stack.clone(),
-        bundled_skills_enabled_from_stack(&config_layer_stack),
+        skill_stack(&config_layer_stack),
+        bundled_skills_enabled_from_config_stack(&config_layer_stack),
     );
     let skills_manager = SkillsManager::new(
         codex_home.path().abs(),
@@ -498,8 +506,8 @@ async fn skills_for_cwd_uses_cached_result_until_force_reload() {
     let base_input = SkillsLoadInput::new(
         cwd.path().abs(),
         Vec::new(),
-        config_layer_stack.clone(),
-        bundled_skills_enabled_from_stack(&config_layer_stack),
+        skill_stack(&config_layer_stack),
+        bundled_skills_enabled_from_config_stack(&config_layer_stack),
     );
     let outcome_a = skills_manager
         .skills_for_cwd(
@@ -574,7 +582,7 @@ fn disabled_paths_for_skills_allows_session_flags_to_override_user_layer() {
     )
     .expect("valid config layer stack");
 
-    let skill_config_rules = skill_config_rules_from_stack(&stack);
+    let skill_config_rules = skill_config_rules_from_stack(&skill_stack(&stack));
     assert_eq!(
         resolve_disabled_skill_paths(&[skill], &skill_config_rules),
         HashSet::new()
@@ -609,7 +617,7 @@ fn disabled_paths_for_skills_allows_session_flags_to_disable_user_enabled_skill(
     )
     .expect("valid config layer stack");
 
-    let skill_config_rules = skill_config_rules_from_stack(&stack);
+    let skill_config_rules = skill_config_rules_from_stack(&skill_stack(&stack));
     assert_eq!(
         resolve_disabled_skill_paths(&[skill], &skill_config_rules),
         HashSet::from([skill_path
@@ -642,7 +650,7 @@ fn disabled_paths_for_skills_disables_matching_name_selectors() {
     )
     .expect("valid config layer stack");
 
-    let skill_config_rules = skill_config_rules_from_stack(&stack);
+    let skill_config_rules = skill_config_rules_from_stack(&skill_stack(&stack));
     assert_eq!(
         resolve_disabled_skill_paths(&[skill], &skill_config_rules),
         HashSet::from([skill_path
@@ -680,7 +688,7 @@ fn disabled_paths_for_skills_allows_name_selector_to_override_path_selector() {
     )
     .expect("valid config layer stack");
 
-    let skill_config_rules = skill_config_rules_from_stack(&stack);
+    let skill_config_rules = skill_config_rules_from_stack(&skill_stack(&stack));
     assert_eq!(
         resolve_disabled_skill_paths(&[skill], &skill_config_rules),
         HashSet::new()
@@ -712,8 +720,8 @@ async fn skills_for_config_ignores_cwd_cache_when_session_flags_reenable_skill()
     let parent_input = SkillsLoadInput::new(
         cwd.path().abs(),
         Vec::new(),
-        parent_stack.clone(),
-        bundled_skills_enabled_from_stack(&parent_stack),
+        skill_stack(&parent_stack),
+        bundled_skills_enabled_from_config_stack(&parent_stack),
     );
 
     let parent_outcome = skills_manager

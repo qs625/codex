@@ -1,0 +1,26 @@
+[package]
+name = "codex-execpolicy-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Lightweight exec policy API types shared across Codex crates."
+
+[lib]
+name = "codex_execpolicy_api"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-utils-absolute-path = { workspace = true }
+multimap = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+shlex = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }

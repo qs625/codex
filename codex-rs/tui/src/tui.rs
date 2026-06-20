@@ -47,8 +47,8 @@ use crate::tui::event_stream::EventBroker;
 use crate::tui::event_stream::TuiEventStream;
 #[cfg(unix)]
 use crate::tui::job_control::SuspendContext;
-use codex_config::types::NotificationCondition;
-use codex_config::types::NotificationMethod;
+use codex_config_types::NotificationCondition;
+use codex_config_types::NotificationMethod;
 
 mod event_stream;
 mod frame_rate_limiter;
@@ -90,7 +90,7 @@ mod tests {
     use super::should_emit_notification;
     use crate::custom_terminal::Terminal as CustomTerminal;
     use crate::test_backend::VT100Backend;
-    use codex_config::types::NotificationCondition;
+    use codex_config_types::NotificationCondition;
     use ratatui::layout::Position;
     use ratatui::layout::Rect;
 

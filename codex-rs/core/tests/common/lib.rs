@@ -8,10 +8,10 @@ use ctor::ctor;
 use std::sync::OnceLock;
 use tempfile::TempDir;
 
-use codex_config::CloudRequirementsLoader;
-use codex_config::ConfigRequirementsToml;
-use codex_config::LoaderOverrides;
-use codex_config::NetworkRequirementsToml;
+use codex_config_loader::LoaderOverrides;
+use codex_config_requirements::CloudRequirementsLoader;
+use codex_config_requirements::ConfigRequirementsToml;
+use codex_config_requirements::NetworkRequirementsToml;
 use codex_core::CodexThread;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;

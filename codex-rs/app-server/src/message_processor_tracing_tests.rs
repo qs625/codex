@@ -23,8 +23,9 @@ use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::UserInput;
 use codex_arg0::Arg0DispatchPaths;
-use codex_config::CloudRequirementsLoader;
-use codex_config::LoaderOverrides;
+use codex_config_loader::LoaderOverrides;
+use codex_config_loader::NoopThreadConfigLoader;
+use codex_config_requirements::CloudRequirementsLoader;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_exec_server::EnvironmentManager;
@@ -243,7 +244,7 @@ async fn build_test_processor(
         /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         Arg0DispatchPaths::default(),
-        Arc::new(codex_config::NoopThreadConfigLoader),
+        Arc::new(NoopThreadConfigLoader),
     );
     let analytics_events_client =
         analytics_events_client_from_config(Arc::clone(&auth_manager), config.as_ref());

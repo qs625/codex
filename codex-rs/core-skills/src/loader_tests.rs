@@ -4,7 +4,7 @@ use codex_config::ConfigLayerEntry;
 use codex_config::ConfigLayerStack;
 use codex_config::ConfigRequirements;
 use codex_config::ConfigRequirementsToml;
-use codex_exec_server::LOCAL_FS;
+use codex_file_system::LOCAL_FS;
 use codex_protocol::protocol::Product;
 use codex_protocol::protocol::SkillScope;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -1867,10 +1867,11 @@ async fn loads_skills_from_system_cache_when_present() {
 async fn skill_roots_include_admin_with_lowest_priority() {
     let codex_home = tempfile::tempdir().expect("tempdir");
     let cfg = make_config(&codex_home).await;
+    let config_layer_stack = crate::SkillConfigLayerStack::from(cfg.config_layer_stack.clone());
 
     let scopes: Vec<SkillScope> = super::skill_roots(
         Some(Arc::clone(&LOCAL_FS)),
-        &cfg.config_layer_stack,
+        &config_layer_stack,
         &cfg.cwd,
         Vec::new(),
     )

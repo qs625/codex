@@ -34,7 +34,6 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
 use codex_api::ApiError;
-use codex_api::AuthProvider;
 use codex_api::ChatCompletionsClient as ApiChatCompletionsClient;
 use codex_api::ChatCompletionsPath as ApiChatCompletionsPath;
 use codex_api::CompactClient as ApiCompactClient;
@@ -43,36 +42,39 @@ use codex_api::Compression;
 use codex_api::MemoriesClient as ApiMemoriesClient;
 use codex_api::MemorySummarizeInput as ApiMemorySummarizeInput;
 use codex_api::MemorySummarizeOutput as ApiMemorySummarizeOutput;
-use codex_api::Provider as ApiProvider;
 use codex_api::RawMemory as ApiRawMemory;
 use codex_api::RealtimeCallClient as ApiRealtimeCallClient;
-use codex_api::RealtimeSessionConfig as ApiRealtimeSessionConfig;
-use codex_api::Reasoning;
 use codex_api::RequestTelemetry;
 use codex_api::ReqwestTransport;
-use codex_api::ResponseCreateWsRequest;
-use codex_api::ResponsesApiRequest;
 use codex_api::ResponsesClient as ApiResponsesClient;
 use codex_api::ResponsesOptions as ApiResponsesOptions;
 use codex_api::ResponsesWebsocketClient as ApiWebSocketResponsesClient;
 use codex_api::ResponsesWebsocketConnection as ApiWebSocketConnection;
-use codex_api::ResponsesWsRequest;
-use codex_api::SharedAuthProvider;
 use codex_api::SseTelemetry;
 use codex_api::TransportError;
 use codex_api::WebsocketTelemetry;
-use codex_api::auth_header_telemetry;
-use codex_api::build_session_headers;
-use codex_api::create_text_param_for_request;
-use codex_api::response_create_client_metadata;
-use codex_app_server_protocol::AuthMode;
+use codex_api_provider::AuthProvider;
+use codex_api_provider::Provider as ApiProvider;
+use codex_api_provider::SharedAuthProvider;
+use codex_api_provider::auth_header_telemetry;
+use codex_api_provider::build_session_headers;
+use codex_api_types::RealtimeSessionConfig as ApiRealtimeSessionConfig;
+use codex_api_types::Reasoning;
+use codex_api_types::ResponseCreateWsRequest;
+use codex_api_types::ResponsesApiRequest;
+use codex_api_types::ResponsesWsRequest;
+use codex_api_types::SseEventTelemetry;
+use codex_api_types::WebsocketEventTelemetry;
+use codex_api_types::create_text_param_for_request;
+use codex_api_types::response_create_client_metadata;
+use codex_auth_types::AuthMode;
+use codex_default_client::build_reqwest_client;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::RefreshTokenError;
 use codex_login::UnauthorizedRecovery;
-use codex_login::default_client::build_reqwest_client;
 use codex_otel::SessionTelemetry;
-use codex_otel::current_span_w3c_trace_context;
+use codex_trace_context::current_span_w3c_trace_context;
 
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
@@ -89,20 +91,15 @@ use codex_rollout_trace::CompactionTraceContext;
 use codex_rollout_trace::InferenceTraceAttempt;
 use codex_rollout_trace::InferenceTraceContext;
 use codex_tools::create_tools_json_for_responses_api;
-use eventsource_stream::Event;
-use eventsource_stream::EventStreamError;
 use futures::StreamExt;
 use http::HeaderMap as ApiHeaderMap;
 use http::HeaderValue;
 use http::StatusCode as HttpStatusCode;
-use reqwest::StatusCode;
 use std::time::Duration;
 use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::error::TryRecvError;
-use tokio_tungstenite::tungstenite::Error;
-use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::instrument;
@@ -117,13 +114,15 @@ use crate::client_common::ResponseEvent;
 use crate::client_common::ResponseStream;
 use crate::feedback_tags;
 use crate::util::emit_feedback_auth_recovery_tags;
+use codex_api::extract_response_debug_context_from_api_error;
 use codex_api::map_api_error;
-use codex_feedback::FeedbackRequestTags;
-use codex_feedback::emit_feedback_request_tags_with_auth_env;
+use codex_api::telemetry_api_error_message;
+use codex_feedback_api::FeedbackRequestTags;
+use codex_feedback_api::emit_feedback_request_tags_with_auth_env;
 use codex_login::auth_env_telemetry::AuthEnvTelemetry;
 use codex_login::auth_env_telemetry::collect_auth_env_telemetry;
-use codex_model_provider::SharedModelProvider;
-use codex_model_provider::create_model_provider;
+use codex_model_provider_api::SharedModelProvider;
+use codex_model_provider_api::SharedModelProviderFactory;
 #[cfg(test)]
 use codex_model_provider_info::DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS;
 use codex_model_provider_info::ModelProviderInfo;
@@ -131,8 +130,6 @@ use codex_model_provider_info::WireApi;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result;
 use codex_response_debug_context::extract_response_debug_context;
-use codex_response_debug_context::extract_response_debug_context_from_api_error;
-use codex_response_debug_context::telemetry_api_error_message;
 use codex_response_debug_context::telemetry_transport_error_message;
 
 pub const OPENAI_BETA_HEADER: &str = "OpenAI-Beta";
@@ -172,6 +169,7 @@ struct ModelClientState {
     thread_id: ThreadId,
     window_generation: AtomicU64,
     installation_id: String,
+    model_provider_factory: SharedModelProviderFactory,
     provider: SharedModelProvider,
     auth_env_telemetry: AuthEnvTelemetry,
     session_source: SessionSource,
@@ -320,6 +318,7 @@ impl ModelClient {
         session_id: SessionId,
         thread_id: ThreadId,
         installation_id: String,
+        model_provider_factory: SharedModelProviderFactory,
         provider_info: ModelProviderInfo,
         session_source: SessionSource,
         model_verbosity: Option<VerbosityConfig>,
@@ -329,7 +328,8 @@ impl ModelClient {
         beta_features_header: Option<String>,
         attestation_provider: Option<Arc<dyn AttestationProvider>>,
     ) -> Self {
-        let model_provider = create_model_provider(provider_info, auth_manager);
+        let model_provider =
+            model_provider_factory.create_model_provider(provider_info, auth_manager);
         let codex_api_key_env_enabled = model_provider
             .auth_manager()
             .as_ref()
@@ -343,6 +343,7 @@ impl ModelClient {
                 thread_id,
                 window_generation: AtomicU64::new(0),
                 installation_id,
+                model_provider_factory,
                 provider: model_provider,
                 auth_env_telemetry,
                 session_source,
@@ -389,7 +390,10 @@ impl ModelClient {
         auth_manager: Option<Arc<AuthManager>>,
         provider_info: ModelProviderInfo,
     ) -> Self {
-        let model_provider = create_model_provider(provider_info, auth_manager);
+        let model_provider = self
+            .state
+            .model_provider_factory
+            .create_model_provider(provider_info, auth_manager);
         let codex_api_key_env_enabled = model_provider
             .auth_manager()
             .as_ref()
@@ -405,6 +409,7 @@ impl ModelClient {
                     self.state.window_generation.load(Ordering::Relaxed),
                 ),
                 installation_id: self.state.installation_id.clone(),
+                model_provider_factory: Arc::clone(&self.state.model_provider_factory),
                 provider: model_provider,
                 auth_env_telemetry,
                 session_source: self.state.session_source.clone(),
@@ -584,7 +589,7 @@ impl ModelClient {
     pub(crate) async fn create_realtime_call_with_headers(
         &self,
         sdp: String,
-        api_provider: codex_api::Provider,
+        api_provider: ApiProvider,
         session_config: ApiRealtimeSessionConfig,
         mut extra_headers: ApiHeaderMap,
     ) -> Result<RealtimeWebrtcCallStart> {
@@ -778,7 +783,7 @@ impl ModelClient {
 
     fn build_responses_request(
         &self,
-        provider: &codex_api::Provider,
+        provider: &ApiProvider,
         prompt: &Prompt,
         model_info: &ModelInfo,
         effort: Option<ReasoningEffortConfig>,
@@ -876,7 +881,7 @@ impl ModelClient {
     async fn connect_websocket(
         &self,
         session_telemetry: &SessionTelemetry,
-        api_provider: codex_api::Provider,
+        api_provider: ApiProvider,
         api_auth: SharedAuthProvider,
         turn_state: Option<Arc<OnceLock<String>>>,
         turn_metadata_header: Option<&str>,
@@ -898,7 +903,7 @@ impl ModelClient {
             websocket_connect_timeout,
             ApiWebSocketResponsesClient::new(api_provider, api_auth).connect(
                 headers,
-                codex_login::default_client::default_headers(),
+                codex_default_client::default_headers(),
                 turn_state,
                 Some(websocket_telemetry),
             ),
@@ -953,7 +958,7 @@ impl ModelClient {
                     .then_some(status)
                     .flatten(),
             },
-            &self.state.auth_env_telemetry,
+            &self.state.auth_env_telemetry.to_otel_metadata(),
         );
         result
     }
@@ -1347,7 +1352,7 @@ impl ModelClientSession {
                 }
                 Err(ApiError::Transport(
                     unauthorized_transport @ TransportError::Http { status, .. },
-                )) if status == StatusCode::UNAUTHORIZED => {
+                )) if status == HttpStatusCode::UNAUTHORIZED => {
                     let response_debug_context =
                         extract_response_debug_context(&unauthorized_transport);
                     inference_trace_attempt.record_failed(
@@ -1461,13 +1466,13 @@ impl ModelClientSession {
             {
                 Ok(_) => {}
                 Err(ApiError::Transport(TransportError::Http { status, .. }))
-                    if status == StatusCode::UPGRADE_REQUIRED =>
+                    if status == HttpStatusCode::UPGRADE_REQUIRED =>
                 {
                     return Ok(WebsocketStreamOutcome::FallbackToHttp);
                 }
                 Err(ApiError::Transport(
                     unauthorized_transport @ TransportError::Http { status, .. },
-                )) if status == StatusCode::UNAUTHORIZED => {
+                )) if status == HttpStatusCode::UNAUTHORIZED => {
                     pending_retry = PendingUnauthorizedRetry::from_recovery(
                         handle_unauthorized(
                             unauthorized_transport,
@@ -2045,7 +2050,7 @@ impl AuthRequestTelemetryContext {
 
 struct WebsocketConnectParams<'a> {
     session_telemetry: &'a SessionTelemetry,
-    api_provider: codex_api::Provider,
+    api_provider: ApiProvider,
     api_auth: SharedAuthProvider,
     turn_metadata_header: Option<&'a str>,
     options: &'a ApiResponsesOptions,
@@ -2252,21 +2257,14 @@ impl RequestTelemetry for ApiTelemetry {
                     .then_some(status)
                     .flatten(),
             },
-            &self.auth_env_telemetry,
+            &self.auth_env_telemetry.to_otel_metadata(),
         );
     }
 }
 
 impl SseTelemetry for ApiTelemetry {
-    fn on_sse_poll(
-        &self,
-        result: &std::result::Result<
-            Option<std::result::Result<Event, EventStreamError<TransportError>>>,
-            tokio::time::error::Elapsed,
-        >,
-        duration: Duration,
-    ) {
-        self.session_telemetry.log_sse_event(result, duration);
+    fn on_sse_poll(&self, event: Option<&SseEventTelemetry>, duration: Duration) {
+        self.session_telemetry.log_sse_event(event, duration);
     }
 }
 
@@ -2306,17 +2304,13 @@ impl WebsocketTelemetry for ApiTelemetry {
                     .then_some(status)
                     .flatten(),
             },
-            &self.auth_env_telemetry,
+            &self.auth_env_telemetry.to_otel_metadata(),
         );
     }
 
-    fn on_ws_event(
-        &self,
-        result: &std::result::Result<Option<std::result::Result<Message, Error>>, ApiError>,
-        duration: Duration,
-    ) {
+    fn on_ws_event(&self, event: Option<&WebsocketEventTelemetry>, duration: Duration) {
         self.session_telemetry
-            .record_websocket_event(result, duration);
+            .record_websocket_event(event, duration);
     }
 }
 

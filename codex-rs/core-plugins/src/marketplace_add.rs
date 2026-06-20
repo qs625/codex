@@ -246,7 +246,8 @@ mod tests {
                 .is_file()
         );
 
-        let config = fs::read_to_string(codex_home.path().join(codex_config::CONFIG_TOML_FILE))?;
+        let config =
+            fs::read_to_string(codex_home.path().join(codex_config_edit::CONFIG_TOML_FILE))?;
         assert!(config.contains("[marketplaces.debug]"));
         assert!(config.contains("source_type = \"git\""));
         assert!(config.contains("source = \"https://github.com/owner/repo.git\""));
@@ -284,7 +285,8 @@ mod tests {
                 .exists()
         );
 
-        let config = fs::read_to_string(codex_home.path().join(codex_config::CONFIG_TOML_FILE))?;
+        let config =
+            fs::read_to_string(codex_home.path().join(codex_config_edit::CONFIG_TOML_FILE))?;
         let config: toml::Value = toml::from_str(&config)?;
         assert_eq!(
             config["marketplaces"]["debug"]["source_type"].as_str(),
@@ -323,7 +325,7 @@ mod tests {
         assert!(
             !codex_home
                 .path()
-                .join(codex_config::CONFIG_TOML_FILE)
+                .join(codex_config_edit::CONFIG_TOML_FILE)
                 .exists()
         );
         Ok(())

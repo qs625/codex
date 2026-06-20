@@ -1,17 +1,16 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use codex_config::ConfigEditsBuilder;
-use codex_config::McpServerConfig;
-use codex_config::McpServerTransportConfig;
-use codex_config::load_global_mcp_servers;
-use codex_login::default_client::is_first_party_originator;
-use codex_login::default_client::originator;
+use codex_config_edit::ConfigEditsBuilder;
+use codex_config_edit::load_global_mcp_servers;
+use codex_config_types::McpServerConfig;
+use codex_config_types::McpServerTransportConfig;
+use codex_default_client::is_first_party_originator;
+use codex_default_client::originator;
 use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_protocol::request_user_input::RequestUserInputQuestion;
 use codex_protocol::request_user_input::RequestUserInputQuestionOption;
 use codex_protocol::request_user_input::RequestUserInputResponse;
-use codex_rmcp_client::perform_oauth_login;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
@@ -24,6 +23,7 @@ use codex_mcp::McpOAuthLoginSupport;
 use codex_mcp::McpPermissionPromptAutoApproveContext;
 use codex_mcp::mcp_permission_prompt_is_auto_approved;
 use codex_mcp::oauth_login_support;
+use codex_mcp::perform_oauth_login;
 use codex_mcp::resolve_oauth_scopes;
 use codex_mcp::should_retry_without_scopes;
 

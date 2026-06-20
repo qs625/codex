@@ -18,7 +18,7 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-codex-exec-server = { workspace = true }
+codex-file-system = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 similar = { workspace = true }
 thiserror = { workspace = true }

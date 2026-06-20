@@ -1,5 +1,5 @@
 use codex_extension_api::ExtensionToolExecutor;
-use codex_mcp::ToolInfo;
+use codex_mcp_tool_types::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_tools::DiscoverableTool;
 use codex_tools::ToolsConfig;

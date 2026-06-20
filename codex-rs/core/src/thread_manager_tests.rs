@@ -267,6 +267,7 @@ async fn shutdown_all_threads_bounded_submits_shutdown_to_every_thread() {
     let manager = ThreadManager::with_models_provider_and_home_for_tests(
         CodexAuth::from_api_key("dummy"),
         config.model_provider.clone(),
+        crate::test_support::model_provider_factory_for_tests(),
         config.codex_home.to_path_buf(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     );
@@ -301,7 +302,7 @@ async fn start_thread_rejects_explicit_local_environment_when_default_provider_i
     config.cwd = config.codex_home.abs();
     std::fs::create_dir_all(&config.codex_home).expect("create codex home");
 
-    let runtime_paths = codex_exec_server::ExecServerRuntimePaths::new(
+    let runtime_paths = codex_exec_server_api::ExecServerRuntimePaths::new(
         std::env::current_exe().expect("current exe path"),
         /*codex_linux_sandbox_exe*/ None,
     )
@@ -316,6 +317,7 @@ async fn start_thread_rejects_explicit_local_environment_when_default_provider_i
     let manager = ThreadManager::with_models_provider_and_home_for_tests(
         CodexAuth::from_api_key("dummy"),
         config.model_provider.clone(),
+        crate::test_support::model_provider_factory_for_tests(),
         config.codex_home.to_path_buf(),
         environment_manager,
     );
@@ -365,7 +367,7 @@ args = ["dev", "cd /tmp && true"]
     )
     .expect("write environments.toml");
 
-    let runtime_paths = codex_exec_server::ExecServerRuntimePaths::new(
+    let runtime_paths = codex_exec_server_api::ExecServerRuntimePaths::new(
         std::env::current_exe().expect("current exe path"),
         /*codex_linux_sandbox_exe*/ None,
     )
@@ -386,6 +388,7 @@ args = ["dev", "cd /tmp && true"]
     let manager = ThreadManager::with_models_provider_and_home_for_tests(
         CodexAuth::from_api_key("dummy"),
         config.model_provider.clone(),
+        crate::test_support::model_provider_factory_for_tests(),
         config.codex_home.to_path_buf(),
         environment_manager,
     );
@@ -449,6 +452,7 @@ async fn start_thread_keeps_internal_threads_hidden_from_normal_lookups() {
     let manager = ThreadManager::with_models_provider_and_home_for_tests(
         CodexAuth::from_api_key("dummy"),
         config.model_provider.clone(),
+        crate::test_support::model_provider_factory_for_tests(),
         config.codex_home.to_path_buf(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     );
@@ -502,6 +506,8 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
         /*state_db*/ None,
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
+        crate::test_support::model_provider_factory_for_tests(),
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
     );
     let selected_cwd =
         AbsolutePathBuf::try_from(config.cwd.as_path().join("selected")).expect("absolute path");
@@ -620,6 +626,8 @@ async fn explicit_installation_id_skips_codex_home_file() {
         state_db.clone(),
         installation_id.clone(),
         /*attestation_provider*/ None,
+        crate::test_support::model_provider_factory_for_tests(),
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
     );
 
     let thread = manager
@@ -659,6 +667,8 @@ async fn resume_active_thread_from_rollout_returns_running_thread() {
         /*state_db*/ None,
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
+        crate::test_support::model_provider_factory_for_tests(),
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
     );
 
     let source = manager
@@ -716,6 +726,8 @@ async fn resume_stopped_thread_from_rollout_spawns_new_thread() {
         /*state_db*/ None,
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
+        crate::test_support::model_provider_factory_for_tests(),
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
     );
 
     let source = manager
@@ -780,6 +792,8 @@ async fn resume_stopped_thread_from_rollout_preserves_thread_source() {
         state_db.clone(),
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
+        crate::test_support::model_provider_factory_for_tests(),
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
     );
 
     let source = manager
@@ -870,6 +884,8 @@ async fn rollout_path_resume_and_fork_read_history_through_thread_store() {
         state_db,
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
+        crate::test_support::model_provider_factory_for_tests(),
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
     );
 
     let source = manager
@@ -973,6 +989,8 @@ async fn new_uses_active_provider_for_model_refresh() {
         /*state_db*/ None,
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
+        crate::test_support::model_provider_factory_for_tests(),
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
     );
 
     let _ = manager.list_models(RefreshStrategy::Online).await;
@@ -1191,6 +1209,8 @@ async fn interrupted_fork_snapshot_does_not_synthesize_turn_id_for_legacy_histor
         state_db.clone(),
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
+        crate::test_support::model_provider_factory_for_tests(),
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
     );
 
     let source = manager
@@ -1299,6 +1319,8 @@ async fn interrupted_fork_snapshot_preserves_explicit_turn_id() {
         state_db.clone(),
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
+        crate::test_support::model_provider_factory_for_tests(),
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
     );
 
     let source = manager
@@ -1396,6 +1418,8 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
         state_db.clone(),
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
+        crate::test_support::model_provider_factory_for_tests(),
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
     );
 
     let source = manager
@@ -1539,6 +1563,8 @@ async fn resumed_thread_keeps_paused_goal_paused() -> anyhow::Result<()> {
         state_db.clone(),
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
+        crate::test_support::model_provider_factory_for_tests(),
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
     );
 
     let source = manager

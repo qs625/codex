@@ -23,6 +23,7 @@ use crate::sandboxing::SandboxPermissions;
 use crate::spawn::SpawnChildRequest;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
+use codex_command_runtime::bytes_to_string_smart;
 use codex_network_proxy::NetworkProxy;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::error::CodexErr;
@@ -352,6 +353,7 @@ pub fn build_exec_request(
     if let Some(network) = network.as_ref() {
         network.apply_to_env(&mut env);
     }
+    let network_snapshot = network.as_ref().map(NetworkProxy::runtime_snapshot);
     let (program, args) = command.split_first().ok_or_else(|| {
         CodexErr::Io(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -377,7 +379,7 @@ pub fn build_exec_request(
             permissions: permission_profile,
             sandbox: sandbox_type,
             enforce_managed_network,
-            network: network.as_ref(),
+            network: network_snapshot.as_ref(),
             sandbox_policy_cwd: sandbox_cwd,
             codex_linux_sandbox_exe: codex_linux_sandbox_exe.as_deref(),
             use_legacy_landlock,
@@ -387,7 +389,12 @@ pub fn build_exec_request(
         .map(|request| {
             let windows_sandbox_policy_cwd = AbsolutePathBuf::try_from(sandbox_cwd.to_path_buf())
                 .unwrap_or_else(|_| request.cwd.clone());
-            ExecRequest::from_sandbox_exec_request(request, options, windows_sandbox_policy_cwd)
+            ExecRequest::from_sandbox_exec_request(
+                request,
+                options,
+                windows_sandbox_policy_cwd,
+                network.clone(),
+            )
         })
         .map_err(CodexErr::from)?;
     let use_windows_elevated_backend = windows_sandbox_uses_elevated_backend(
@@ -544,18 +551,16 @@ fn record_windows_sandbox_spawn_failure(
     } else {
         "legacy"
     };
-    if let Some(metrics) = codex_otel::global() {
-        let _ = metrics.counter(
-            "codex.windows_sandbox.createprocessasuserw_failed",
-            /*inc*/ 1,
-            &[
-                ("error_code", error_code.as_str()),
-                ("path_kind", path_kind),
-                ("exe", exe.as_str()),
-                ("level", level),
-            ],
-        );
-    }
+    codex_metrics_api::record_global_counter(
+        "codex.windows_sandbox.createprocessasuserw_failed",
+        /*inc*/ 1,
+        &[
+            ("error_code", error_code.as_str()),
+            ("path_kind", path_kind),
+            ("exe", exe.as_str()),
+            ("level", level),
+        ],
+    );
 }
 
 #[cfg(target_os = "windows")]
@@ -733,9 +738,9 @@ fn finalize_exec_result(
                 exit_code = EXEC_TIMEOUT_EXIT_CODE;
             }
 
-            let stdout = raw_output.stdout.from_utf8_lossy();
-            let stderr = raw_output.stderr.from_utf8_lossy();
-            let aggregated_output = raw_output.aggregated_output.from_utf8_lossy();
+            let stdout = decode_stream_output(raw_output.stdout);
+            let stderr = decode_stream_output(raw_output.stderr);
+            let aggregated_output = decode_stream_output(raw_output.aggregated_output);
             let exec_output = ExecToolCallOutput {
                 exit_code,
                 stdout,
@@ -764,6 +769,13 @@ fn finalize_exec_result(
             tracing::error!("exec error: {err}");
             Err(err)
         }
+    }
+}
+
+fn decode_stream_output(output: StreamOutput<Vec<u8>>) -> StreamOutput<String> {
+    StreamOutput {
+        text: bytes_to_string_smart(&output.text),
+        truncated_after_lines: output.truncated_after_lines,
     }
 }
 

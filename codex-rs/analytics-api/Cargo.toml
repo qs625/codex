@@ -1,0 +1,18 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-analytics-api"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "codex_analytics_api"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-plugin-types = { workspace = true }
+codex-protocol = { workspace = true }
+serde = { workspace = true, features = ["derive"] }

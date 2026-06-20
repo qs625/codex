@@ -1,5 +1,5 @@
-use crate::error::StreamError;
 use crate::transport::ByteStream;
+use codex_client_types::StreamError;
 use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use tokio::sync::mpsc;

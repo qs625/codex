@@ -1,14 +1,14 @@
 use std::collections::HashSet;
 
-use codex_app_server_protocol::ConfigLayerSource;
-use codex_config::ConfigLayerStack;
-use codex_config::ConfigLayerStackOrdering;
-use codex_config::SkillConfig;
-use codex_config::SkillsConfig;
+use codex_config_types::ConfigLayerSource;
+use codex_config_types::SkillConfig;
+use codex_config_types::SkillsConfig;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use tracing::warn;
 
 use crate::SkillMetadata;
+use crate::config_layers::SkillConfigLayerStack;
+use crate::config_layers::SkillConfigLayerStackOrdering;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SkillConfigRuleSelector {
@@ -27,10 +27,12 @@ pub struct SkillConfigRules {
     pub entries: Vec<SkillConfigRule>,
 }
 
-pub fn skill_config_rules_from_stack(config_layer_stack: &ConfigLayerStack) -> SkillConfigRules {
+pub fn skill_config_rules_from_stack(
+    config_layer_stack: &SkillConfigLayerStack,
+) -> SkillConfigRules {
     let mut entries = Vec::new();
     for layer in config_layer_stack.get_layers(
-        ConfigLayerStackOrdering::LowestPrecedenceFirst,
+        SkillConfigLayerStackOrdering::LowestPrecedenceFirst,
         /*include_disabled*/ true,
     ) {
         if !matches!(

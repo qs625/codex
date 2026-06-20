@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
-use codex_config::ConfigLayerSource;
-use codex_config::ConfigLayerStack;
-use codex_config::ConfigLayerStackOrdering;
-use codex_config::HookStateToml;
-use codex_config::TomlValue;
+use codex_config_types::ConfigLayerSource;
+use codex_config_types::HookStateToml;
+use toml::Value as TomlValue;
+
+use crate::config_layers::HookConfigLayerStack;
+use crate::config_layers::HookConfigLayerStackOrdering;
 
 /// Build effective hook state from config layers that are allowed to override
 /// user preferences.
@@ -14,7 +15,7 @@ use codex_config::TomlValue;
 /// plugin layers can discover hooks, but they do not get to write user hook
 /// state.
 pub fn hook_states_from_stack(
-    config_layer_stack: Option<&ConfigLayerStack>,
+    config_layer_stack: Option<&HookConfigLayerStack>,
 ) -> HashMap<String, HookStateToml> {
     let Some(config_layer_stack) = config_layer_stack else {
         return HashMap::new();
@@ -22,7 +23,7 @@ pub fn hook_states_from_stack(
 
     let mut states: HashMap<String, HookStateToml> = HashMap::new();
     for layer in config_layer_stack.get_layers(
-        ConfigLayerStackOrdering::LowestPrecedenceFirst,
+        HookConfigLayerStackOrdering::LowestPrecedenceFirst,
         /*include_disabled*/ true,
     ) {
         if !matches!(
@@ -72,6 +73,7 @@ pub fn hook_states_from_stack(
 #[cfg(test)]
 mod tests {
     use codex_config::ConfigLayerEntry;
+    use codex_config::ConfigLayerStack;
     use codex_config::TomlValue;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
@@ -99,7 +101,8 @@ mod tests {
             Default::default(),
             Default::default(),
         )
-        .expect("config layer stack");
+        .expect("config layer stack")
+        .into();
 
         assert_eq!(
             hook_states_from_stack(Some(&stack)),
@@ -145,7 +148,8 @@ mod tests {
             Default::default(),
             Default::default(),
         )
-        .expect("config layer stack");
+        .expect("config layer stack")
+        .into();
 
         assert_eq!(
             hook_states_from_stack(Some(&stack)),
@@ -184,7 +188,8 @@ mod tests {
             Default::default(),
             Default::default(),
         )
-        .expect("config layer stack");
+        .expect("config layer stack")
+        .into();
 
         assert_eq!(
             hook_states_from_stack(Some(&stack)),
@@ -225,7 +230,8 @@ mod tests {
             Default::default(),
             Default::default(),
         )
-        .expect("config layer stack");
+        .expect("config layer stack")
+        .into();
 
         assert_eq!(
             hook_states_from_stack(Some(&stack)),

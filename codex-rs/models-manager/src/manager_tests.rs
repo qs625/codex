@@ -1,7 +1,7 @@
 use super::*;
 use crate::ModelsManagerConfig;
 use chrono::Utc;
-use codex_app_server_protocol::AuthMode;
+use codex_auth_types::AuthMode;
 use codex_login::AuthCredentialsStoreMode;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;

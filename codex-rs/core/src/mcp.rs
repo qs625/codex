@@ -1,15 +1,34 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::config::Config;
-use codex_config::McpServerConfig;
+use codex_config_types::McpServerConfig;
 use codex_core_plugins::PluginsManager;
+use codex_exec_server_api::ExecEnvironment;
 use codex_login::CodexAuth;
 use codex_mcp::EffectiveMcpServer;
+use codex_mcp::McpRuntimeEnvironment;
+use codex_mcp::McpRuntimeEnvironmentParams;
 use codex_mcp::ToolPluginProvenance;
 use codex_mcp::configured_mcp_servers;
 use codex_mcp::effective_mcp_servers;
 use codex_mcp::tool_plugin_provenance as collect_tool_plugin_provenance;
+
+pub(crate) fn mcp_runtime_environment(
+    environment: Arc<dyn ExecEnvironment>,
+    local_environment: Arc<dyn ExecEnvironment>,
+    fallback_cwd: PathBuf,
+) -> McpRuntimeEnvironment {
+    let local_http_client = local_environment.get_http_client();
+    McpRuntimeEnvironment::new(McpRuntimeEnvironmentParams {
+        remote_available: environment.is_remote(),
+        remote_exec_backend: environment.get_exec_backend(),
+        local_http_client,
+        remote_http_client: environment.get_http_client(),
+        fallback_cwd,
+    })
+}
 
 #[derive(Clone)]
 pub struct McpManager {

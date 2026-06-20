@@ -3,13 +3,13 @@ use std::time::Duration;
 
 use crate::chatgpt_client::chatgpt_get_request_with_timeout;
 
-use codex_app_server_protocol::AppInfo;
 use codex_connectors::ConnectorDirectoryCacheContext;
 use codex_connectors::ConnectorDirectoryCacheKey;
 use codex_connectors::DirectoryListResponse;
 use codex_connectors::filter::filter_disallowed_connectors;
 use codex_connectors::merge::merge_connectors;
 use codex_connectors::merge::merge_plugin_connectors;
+use codex_connectors_types::AppInfo;
 use codex_core_plugins::PluginsManager;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;

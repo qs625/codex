@@ -10,11 +10,11 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 
 use codex_extension_api::ExtensionData;
+use codex_mcp_types::ElicitationResponse;
 use codex_protocol::dynamic_tools::DynamicToolResponse;
 use codex_protocol::request_permissions::RequestPermissionProfile;
 use codex_protocol::request_permissions::RequestPermissionsResponse;
 use codex_protocol::request_user_input::RequestUserInputResponse;
-use codex_rmcp_client::ElicitationResponse;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use rmcp::model::RequestId;
 use tokio::sync::oneshot;
@@ -78,7 +78,8 @@ pub(crate) struct RunningTask {
     pub(crate) turn_context: Arc<TurnContext>,
     pub(crate) turn_extension_data: Arc<ExtensionData>,
     // Timer recorded when the task drops to capture the full turn duration.
-    pub(crate) _timer: Option<codex_otel::Timer>,
+    // Boxed so turn state does not expose the concrete telemetry timer type.
+    pub(crate) _timer: Option<Box<dyn Send + Sync>>,
 }
 
 pub(crate) struct RemovedTask {

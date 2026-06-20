@@ -1,3 +1,4 @@
+pub mod config_layers;
 pub mod installed_marketplaces;
 pub mod loader;
 mod manager;
@@ -38,12 +39,15 @@ pub const TOOL_SUGGEST_DISCOVERABLE_PLUGIN_ALLOWLIST: &[&str] = &[
     "computer-use@openai-bundled",
 ];
 
-pub type LoadedPlugin = codex_plugin::LoadedPlugin<codex_config::McpServerConfig>;
-pub type PluginLoadOutcome = codex_plugin::PluginLoadOutcome<codex_config::McpServerConfig>;
+pub type LoadedPlugin = codex_plugin::LoadedPlugin<codex_config_types::McpServerConfig>;
+pub type PluginLoadOutcome = codex_plugin::PluginLoadOutcome<codex_config_types::McpServerConfig>;
 
+pub use config_layers::PluginConfigLayerEntry;
+pub use config_layers::PluginConfigLayerStack;
 pub use manager::ConfiguredMarketplace;
 pub use manager::ConfiguredMarketplaceListOutcome;
 pub use manager::ConfiguredMarketplacePlugin;
+pub use manager::PluginAnalyticsEventSink;
 pub use manager::PluginDetail;
 pub use manager::PluginDetailsUnavailableReason;
 pub use manager::PluginInstallError;

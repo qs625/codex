@@ -14,7 +14,6 @@ use crate::test_support::load_plugins_config as load_plugins_config_input;
 use crate::test_support::write_curated_plugin_sha_with as write_curated_plugin_sha;
 use crate::test_support::write_file;
 use crate::test_support::write_openai_curated_marketplace;
-use codex_app_server_protocol::ConfigLayerSource;
 use codex_config::AppToolApproval;
 use codex_config::CONFIG_TOML_FILE;
 use codex_config::ConfigLayerEntry;
@@ -25,6 +24,7 @@ use codex_config::McpServerConfig;
 use codex_config::McpServerOAuthConfig;
 use codex_config::McpServerToolConfig;
 use codex_config::types::McpServerTransportConfig;
+use codex_config_types::ConfigLayerSource;
 use codex_login::CodexAuth;
 use codex_protocol::protocol::HookEventName;
 use codex_protocol::protocol::Product;
@@ -3676,6 +3676,7 @@ async fn load_plugins_ignores_project_config_files() {
         ConfigRequirementsToml::default(),
     )
     .expect("config layer stack should build");
+    let stack = stack.into();
 
     let outcome = load_plugins_from_layer_stack(
         &stack,

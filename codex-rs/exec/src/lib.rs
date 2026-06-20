@@ -52,10 +52,10 @@ use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStartedNotification;
 use codex_arg0::Arg0DispatchPaths;
 use codex_cloud_requirements::cloud_requirements_loader_for_storage;
-use codex_config::ConfigLoadError;
-use codex_config::ConfigLoadOptions;
-use codex_config::LoaderOverrides;
-use codex_config::format_config_error_with_source;
+use codex_config_diagnostics::ConfigLoadError;
+use codex_config_diagnostics::format_config_error_with_source;
+use codex_config_loader::ConfigLoadOptions;
+use codex_config_loader::LoaderOverrides;
 use codex_core::StateDbHandle;
 use codex_core::check_execpolicy_for_warnings;
 use codex_core::config::Config;
@@ -472,8 +472,15 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
     }
 
     let otel = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        codex_core::otel_init::build_provider(
-            &config,
+        codex_otel_init::build_provider(
+            codex_otel_init::OtelProviderConfig {
+                codex_home: config.codex_home.as_path(),
+                otel: &config.otel,
+                analytics_enabled: config.analytics_enabled,
+                runtime_metrics_enabled: config
+                    .features
+                    .enabled(codex_features::Feature::RuntimeMetrics),
+            },
             env!("CARGO_PKG_VERSION"),
             /*service_name_override*/ None,
             DEFAULT_ANALYTICS_ENABLED,
@@ -489,8 +496,8 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
             None
         }
     };
-    codex_core::otel_init::record_process_start(otel.as_ref(), "codex_exec");
-    codex_core::otel_init::install_sqlite_telemetry(otel.as_ref(), "codex_exec");
+    codex_otel_init::record_process_start(otel.as_ref(), "codex_exec");
+    codex_otel_init::install_sqlite_telemetry(otel.as_ref(), "codex_exec");
 
     let otel_logger_layer = otel.as_ref().and_then(|o| o.logger_layer());
 
@@ -606,9 +613,13 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 ));
             }
         };
-        ensure_oss_provider_ready(provider_id, &config)
-            .await
-            .map_err(|e| anyhow::anyhow!("OSS setup failed: {e}"))?;
+        ensure_oss_provider_ready(
+            provider_id,
+            config.model.as_deref(),
+            &config.model_providers,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("OSS setup failed: {e}"))?;
     }
 
     let default_cwd = config.cwd.to_path_buf();

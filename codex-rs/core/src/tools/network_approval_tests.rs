@@ -1,6 +1,6 @@
 use super::*;
 use crate::sandboxing::SandboxPermissions;
-use codex_network_proxy::BlockedRequestArgs;
+use codex_network_proxy_api::BlockedRequestArgs;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;

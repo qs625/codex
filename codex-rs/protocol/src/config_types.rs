@@ -17,7 +17,6 @@ use std::time::Duration;
 use strum_macros::Display;
 use strum_macros::EnumIter;
 use ts_rs::TS;
-use wildmatch::WildMatchPattern;
 
 use crate::openai_models::ReasoningEffort;
 
@@ -184,7 +183,143 @@ pub enum ShellEnvironmentPolicyInherit {
     None,
 }
 
-pub type EnvironmentVariablePattern = WildMatchPattern<'*', '?'>;
+/// Wildcard pattern used for shell environment variable names.
+///
+/// `*` matches zero or more characters and `?` matches exactly one character.
+/// Matching covers the entire input string.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub struct EnvironmentVariablePattern {
+    pattern: Vec<char>,
+    case_insensitive: bool,
+}
+
+impl EnvironmentVariablePattern {
+    const MULTI_WILDCARD: char = '*';
+    const SINGLE_WILDCARD: char = '?';
+
+    pub fn new(pattern: &str) -> Self {
+        Self {
+            pattern: simplify_environment_pattern(pattern),
+            case_insensitive: false,
+        }
+    }
+
+    pub fn new_case_insensitive(pattern: &str) -> Self {
+        Self {
+            pattern: simplify_environment_pattern(pattern),
+            case_insensitive: true,
+        }
+    }
+
+    pub fn matches(&self, input: &str) -> bool {
+        if self.pattern.is_empty() {
+            return input.is_empty();
+        }
+
+        let mut input_chars = input.chars();
+        let mut pattern_idx = 0;
+
+        if let Some(mut input_char) = input_chars.next() {
+            const NONE: usize = usize::MAX;
+            let mut start_idx = NONE;
+            let mut matched = input_chars.clone();
+
+            loop {
+                if pattern_idx < self.pattern.len()
+                    && self.pattern[pattern_idx] == Self::MULTI_WILDCARD
+                {
+                    start_idx = pattern_idx;
+                    matched = input_chars.clone();
+                    pattern_idx += 1;
+                } else if pattern_idx < self.pattern.len()
+                    && (self.pattern[pattern_idx] == Self::SINGLE_WILDCARD
+                        || chars_match(
+                            self.pattern[pattern_idx],
+                            input_char,
+                            self.case_insensitive,
+                        ))
+                {
+                    pattern_idx += 1;
+                    if let Some(next_char) = input_chars.next() {
+                        input_char = next_char;
+                    } else {
+                        break;
+                    }
+                } else if start_idx != NONE {
+                    pattern_idx = start_idx + 1;
+                    if let Some(next_char) = matched.next() {
+                        input_char = next_char;
+                    } else {
+                        break;
+                    }
+                    input_chars = matched.clone();
+                } else {
+                    return false;
+                }
+            }
+        }
+
+        while pattern_idx < self.pattern.len() && self.pattern[pattern_idx] == Self::MULTI_WILDCARD
+        {
+            pattern_idx += 1;
+        }
+
+        pattern_idx == self.pattern.len()
+    }
+
+    pub fn pattern(&self) -> String {
+        self.pattern.iter().collect()
+    }
+
+    pub fn pattern_chars(&self) -> &[char] {
+        &self.pattern
+    }
+
+    pub fn is_case_insensitive(&self) -> bool {
+        self.case_insensitive
+    }
+}
+
+impl fmt::Display for EnvironmentVariablePattern {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use std::fmt::Write;
+
+        for c in &self.pattern {
+            f.write_char(*c)?;
+        }
+        Ok(())
+    }
+}
+
+impl<'a> PartialEq<&'a str> for EnvironmentVariablePattern {
+    fn eq(&self, other: &&'a str) -> bool {
+        self.matches(other)
+    }
+}
+
+fn simplify_environment_pattern(pattern: &str) -> Vec<char> {
+    let mut simplified = Vec::with_capacity(pattern.chars().count());
+    let mut previous_multi_wildcard = false;
+
+    for c in pattern.chars() {
+        if c == EnvironmentVariablePattern::MULTI_WILDCARD {
+            if !previous_multi_wildcard {
+                simplified.push(c);
+            }
+            previous_multi_wildcard = true;
+        } else {
+            simplified.push(c);
+            previous_multi_wildcard = false;
+        }
+    }
+
+    simplified
+}
+
+fn chars_match(pattern_char: char, input_char: char, case_insensitive: bool) -> bool {
+    pattern_char == input_char
+        || (case_insensitive && pattern_char.to_lowercase().eq(input_char.to_lowercase()))
+}
 
 /// Deriving the `env` based on this policy works as follows:
 /// 1. Create an initial map based on the `inherit` policy.
@@ -806,6 +941,53 @@ mod tests {
         };
 
         assert_eq!(expected, base.merge(&overlay));
+    }
+
+    #[test]
+    fn environment_variable_pattern_matches_entire_input() {
+        let pattern = EnvironmentVariablePattern::new_case_insensitive("*PATH");
+
+        assert!(pattern.matches("PATH"));
+        assert!(pattern.matches("PYTHONPATH"));
+        assert!(!pattern.matches("PATH_EXTRA"));
+    }
+
+    #[test]
+    fn environment_variable_pattern_question_mark_matches_one_char() {
+        let pattern = EnvironmentVariablePattern::new_case_insensitive("TOKEN_?");
+
+        assert!(pattern.matches("token_1"));
+        assert!(!pattern.matches("token_12"));
+        assert!(!pattern.matches("token_"));
+    }
+
+    #[test]
+    fn environment_variable_pattern_collapses_consecutive_multi_wildcards() {
+        let pattern = EnvironmentVariablePattern::new_case_insensitive("A**B");
+
+        assert_eq!("A*B", pattern.to_string());
+        assert_eq!("A*B", pattern.pattern());
+        assert_eq!(&['A', '*', 'B'], pattern.pattern_chars());
+        assert!(pattern.is_case_insensitive());
+        assert!(pattern.matches("axb"));
+    }
+
+    #[test]
+    fn environment_variable_pattern_preserves_unicode_case_insensitive_matching() {
+        let pattern = EnvironmentVariablePattern::new_case_insensitive("КО?");
+
+        assert!(pattern.matches("Кот"));
+        assert!(pattern.matches("кот"));
+        assert!(!pattern.matches("ко"));
+    }
+
+    #[test]
+    fn environment_variable_pattern_empty_pattern_matches_empty_only() {
+        let pattern = EnvironmentVariablePattern::new("");
+
+        assert!(pattern.matches(""));
+        assert!(!pattern.matches("PATH"));
+        assert!(!pattern.is_case_insensitive());
     }
 
     #[test]

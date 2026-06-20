@@ -5,10 +5,14 @@ mod wait_handler;
 use std::sync::Arc;
 use std::time::Duration;
 
-use codex_code_mode::CodeModeNestedToolCall;
-use codex_code_mode::CodeModeToolKind;
-use codex_code_mode::CodeModeTurnHost;
-use codex_code_mode::RuntimeResponse;
+use codex_code_mode_api::CodeModeBoxResultFuture;
+use codex_code_mode_api::CodeModeNestedToolCall;
+use codex_code_mode_api::CodeModeRuntimeService;
+use codex_code_mode_api::CodeModeToolKind;
+use codex_code_mode_api::CodeModeTurnHost;
+use codex_code_mode_api::CodeModeTurnWorker;
+use codex_code_mode_api::DEFAULT_WAIT_YIELD_TIME_MS;
+use codex_code_mode_api::RuntimeResponse;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseInputItem;
@@ -38,9 +42,8 @@ pub(crate) use execute_handler::CodeModeExecuteHandler;
 use response_adapter::into_function_call_output_content_items;
 pub(crate) use wait_handler::CodeModeWaitHandler;
 
-pub(crate) const PUBLIC_TOOL_NAME: &str = codex_code_mode::PUBLIC_TOOL_NAME;
-pub(crate) const WAIT_TOOL_NAME: &str = codex_code_mode::WAIT_TOOL_NAME;
-pub(crate) const DEFAULT_WAIT_YIELD_TIME_MS: u64 = codex_code_mode::DEFAULT_WAIT_YIELD_TIME_MS;
+pub(crate) const PUBLIC_TOOL_NAME: &str = codex_code_mode_api::PUBLIC_TOOL_NAME;
+pub(crate) const WAIT_TOOL_NAME: &str = codex_code_mode_api::WAIT_TOOL_NAME;
 
 /// Returns true for the un-namespaced code-mode `exec` tool.
 pub(crate) fn is_exec_tool_name(tool_name: &ToolName) -> bool {
@@ -53,66 +56,24 @@ pub(crate) struct ExecContext {
     pub(super) turn: Arc<TurnContext>,
 }
 
-pub(crate) struct CodeModeService {
-    inner: codex_code_mode::CodeModeService,
-}
-
-impl CodeModeService {
-    pub(crate) fn new() -> Self {
-        Self {
-            inner: codex_code_mode::CodeModeService::new(),
-        }
+pub(crate) fn start_turn_worker(
+    service: &Arc<dyn CodeModeRuntimeService>,
+    session: &Arc<Session>,
+    turn: &Arc<TurnContext>,
+    router: Arc<ToolRouter>,
+    tracker: SharedTurnDiffTracker,
+) -> Option<Box<dyn CodeModeTurnWorker>> {
+    if !turn.features.enabled(Feature::CodeMode) {
+        return None;
     }
 
-    pub(crate) async fn stored_values(&self) -> std::collections::HashMap<String, JsonValue> {
-        self.inner.stored_values().await
-    }
-
-    pub(crate) async fn replace_stored_values(
-        &self,
-        values: std::collections::HashMap<String, JsonValue>,
-    ) {
-        self.inner.replace_stored_values(values).await;
-    }
-
-    pub(crate) fn allocate_cell_id(&self) -> String {
-        self.inner.allocate_cell_id()
-    }
-
-    pub(crate) async fn execute(
-        &self,
-        request: codex_code_mode::ExecuteRequest,
-    ) -> Result<RuntimeResponse, String> {
-        self.inner.execute(request).await
-    }
-
-    pub(crate) async fn wait(
-        &self,
-        request: codex_code_mode::WaitRequest,
-    ) -> Result<codex_code_mode::WaitOutcome, String> {
-        self.inner.wait(request).await
-    }
-
-    pub(crate) async fn start_turn_worker(
-        &self,
-        session: &Arc<Session>,
-        turn: &Arc<TurnContext>,
-        router: Arc<ToolRouter>,
-        tracker: SharedTurnDiffTracker,
-    ) -> Option<codex_code_mode::CodeModeTurnWorker> {
-        if !turn.features.enabled(Feature::CodeMode) {
-            return None;
-        }
-
-        let exec = ExecContext {
-            session: Arc::clone(session),
-            turn: Arc::clone(turn),
-        };
-        let tool_runtime =
-            ToolCallRuntime::new(router, Arc::clone(session), Arc::clone(turn), tracker);
-        let host = Arc::new(CoreTurnHost { exec, tool_runtime });
-        Some(self.inner.start_turn_worker(host))
-    }
+    let exec = ExecContext {
+        session: Arc::clone(session),
+        turn: Arc::clone(turn),
+    };
+    let tool_runtime = ToolCallRuntime::new(router, Arc::clone(session), Arc::clone(turn), tracker);
+    let host = Arc::new(CoreTurnHost { exec, tool_runtime });
+    Some(service.start_turn_worker(host))
 }
 
 struct CoreTurnHost {
@@ -120,38 +81,44 @@ struct CoreTurnHost {
     tool_runtime: ToolCallRuntime,
 }
 
-#[async_trait::async_trait]
 impl CodeModeTurnHost for CoreTurnHost {
-    async fn invoke_tool(
+    fn invoke_tool(
         &self,
         invocation: CodeModeNestedToolCall,
-        cancellation_token: CancellationToken,
-    ) -> Result<JsonValue, String> {
-        call_nested_tool(
-            self.exec.clone(),
-            self.tool_runtime.clone(),
-            invocation,
-            cancellation_token,
-        )
-        .await
-        .map_err(|error| error.to_string())
+    ) -> CodeModeBoxResultFuture<'_, JsonValue> {
+        let exec = self.exec.clone();
+        let tool_runtime = self.tool_runtime.clone();
+        Box::pin(async move {
+            call_nested_tool(exec, tool_runtime, invocation, CancellationToken::new())
+                .await
+                .map_err(|error| error.to_string())
+        })
     }
 
-    async fn notify(&self, call_id: String, cell_id: String, text: String) -> Result<(), String> {
-        if text.trim().is_empty() {
-            return Ok(());
-        }
-        self.exec
-            .session
-            .inject_hook_inspectable_items(vec![ResponseInputItem::CustomToolCallOutput {
-                call_id,
-                name: Some(PUBLIC_TOOL_NAME.to_string()),
-                output: FunctionCallOutputPayload::from_text(text),
-            }])
-            .await
-            .map_err(|_| {
-                format!("failed to inject exec notify message for cell {cell_id}: no active turn")
-            })
+    fn notify(
+        &self,
+        call_id: String,
+        cell_id: String,
+        text: String,
+    ) -> CodeModeBoxResultFuture<'_, ()> {
+        let exec = self.exec.clone();
+        Box::pin(async move {
+            if text.trim().is_empty() {
+                return Ok(());
+            }
+            exec.session
+                .inject_hook_inspectable_items(vec![ResponseInputItem::CustomToolCallOutput {
+                    call_id,
+                    name: Some(PUBLIC_TOOL_NAME.to_string()),
+                    output: FunctionCallOutputPayload::from_text(text),
+                }])
+                .await
+                .map_err(|_| {
+                    format!(
+                        "failed to inject exec notify message for cell {cell_id}: no active turn"
+                    )
+                })
+        })
     }
 }
 
@@ -344,7 +311,7 @@ fn build_freeform_tool_payload(
 mod tests {
     use super::build_nested_tool_payload;
     use crate::tools::context::ToolPayload;
-    use codex_code_mode::CodeModeToolKind;
+    use codex_code_mode_api::CodeModeToolKind;
     use codex_tools::ToolName;
     use serde_json::json;
 

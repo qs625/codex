@@ -1,7 +1,7 @@
 use anyhow::Context;
-use codex_config::config_toml::ConfigLockfileToml;
-use codex_config::config_toml::ConfigToml;
-use codex_config::types::MemoriesToml;
+use codex_config_toml::config_toml::ConfigToml;
+use codex_config_types::ConfigLockfileToml;
+use codex_config_types::MemoriesToml;
 use codex_features::AppsMcpPathOverrideConfigToml;
 use codex_features::Feature;
 use codex_features::FeatureToml;
@@ -70,7 +70,7 @@ pub(crate) async fn export_config_lock_if_configured(
 }
 
 impl SessionConfiguration {
-    pub(crate) fn to_config_lockfile_toml(&self) -> anyhow::Result<ConfigLockfileToml> {
+    pub(crate) fn to_config_lockfile_toml(&self) -> anyhow::Result<ConfigLockfileToml<ConfigToml>> {
         Ok(config_lockfile(session_configuration_to_lock_config_toml(
             self,
         )?))
@@ -147,7 +147,7 @@ fn save_config_resolved_fields(
     features.materialize_resolved_enabled(config.features.get());
     let mut multi_agent_v2: MultiAgentV2ConfigToml =
         resolved_config_to_toml(&config.multi_agent_v2, "features.multi_agent_v2")?;
-    multi_agent_v2.enabled = Some(true);
+    multi_agent_v2.enabled = Some(config.features.enabled(Feature::MultiAgentV2));
     features.multi_agent_v2 = Some(FeatureToml::Config(multi_agent_v2));
     features.apps_mcp_path_override = Some(FeatureToml::Config(AppsMcpPathOverrideConfigToml {
         enabled: Some(config.features.enabled(Feature::AppsMcpPathOverride)),

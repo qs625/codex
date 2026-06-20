@@ -1,0 +1,19 @@
+[package]
+name = "codex-trace-context"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-config-types = { workspace = true }
+codex-protocol = { workspace = true }
+opentelemetry = { workspace = true, features = ["trace"] }
+opentelemetry_sdk = { workspace = true, features = ["trace"] }
+tracing = { workspace = true }
+tracing-opentelemetry = { workspace = true }

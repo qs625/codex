@@ -1,7 +1,7 @@
 //! Chat widget helpers for ambient terminal pets and the pets picker.
 
 use super::*;
-use codex_config::types::TuiPetAnchor;
+use codex_config_types::TuiPetAnchor;
 
 pub(super) fn load_ambient_pet(
     config: &Config,

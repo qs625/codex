@@ -90,7 +90,7 @@ fn exec_server_params_use_env_policy_overlay_contract() {
             ("CODEX_THREAD_ID".to_string(), "thread-1".to_string()),
         ]),
         exec_server_env_config: Some(ExecServerEnvConfig {
-            policy: codex_exec_server::ExecEnvPolicy {
+            policy: codex_exec_server_protocol::ExecEnvPolicy {
                 inherit: codex_protocol::config_types::ShellEnvironmentPolicyInherit::Core,
                 ignore_default_excludes: false,
                 exclude: Vec::new(),

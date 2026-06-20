@@ -4,41 +4,33 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use serde_json::Value as JsonValue;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
-use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
+use crate::CodeModeBoxFuture;
+use crate::CodeModeBoxResultFuture;
+use crate::CodeModeNestedToolCall;
+use crate::CodeModeRuntimeService;
+use crate::CodeModeTurnHost;
+use crate::CodeModeTurnWorker as CodeModeTurnWorkerTrait;
+use crate::DEFAULT_EXEC_YIELD_TIME_MS;
+use crate::ExecuteRequest;
 use crate::FunctionCallOutputContentItem;
-use crate::runtime::CodeModeNestedToolCall;
-use crate::runtime::DEFAULT_EXEC_YIELD_TIME_MS;
-use crate::runtime::ExecuteRequest;
+use crate::RuntimeResponse;
+use crate::WaitOutcome;
+use crate::WaitRequest;
 use crate::runtime::ExecuteToPendingOutcome;
 use crate::runtime::PendingRuntimeMode;
 use crate::runtime::RuntimeCommand;
 use crate::runtime::RuntimeControlCommand;
 use crate::runtime::RuntimeEvent;
-use crate::runtime::RuntimeResponse;
 use crate::runtime::TurnMessage;
-use crate::runtime::WaitOutcome;
-use crate::runtime::WaitRequest;
 use crate::runtime::WaitToPendingOutcome;
 use crate::runtime::WaitToPendingRequest;
 use crate::runtime::spawn_runtime;
-
-#[async_trait]
-pub trait CodeModeTurnHost: Send + Sync {
-    async fn invoke_tool(
-        &self,
-        invocation: CodeModeNestedToolCall,
-        cancellation_token: CancellationToken,
-    ) -> Result<JsonValue, String>;
-
-    async fn notify(&self, call_id: String, cell_id: String, text: String) -> Result<(), String>;
-}
 
 #[derive(Clone)]
 struct SessionHandle {
@@ -245,7 +237,7 @@ impl CodeModeService {
         }
     }
 
-    pub fn start_turn_worker(&self, host: Arc<dyn CodeModeTurnHost>) -> CodeModeTurnWorker {
+    pub fn start_turn_worker(&self, host: Arc<dyn CodeModeTurnHost>) -> V8CodeModeTurnWorker {
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
         let inner = Arc::clone(&self.inner);
         let turn_message_rx = self.inner.turn_message_rx.clone();
@@ -277,8 +269,7 @@ impl CodeModeService {
                         tokio::spawn(async move {
                             let cell_id = invocation.cell_id.clone();
                             let runtime_tool_call_id = invocation.runtime_tool_call_id.clone();
-                            let response =
-                                host.invoke_tool(invocation, CancellationToken::new()).await;
+                            let response = host.invoke_tool(invocation).await;
                             let runtime_tx = inner
                                 .sessions
                                 .lock()
@@ -305,7 +296,7 @@ impl CodeModeService {
             }
         });
 
-        CodeModeTurnWorker {
+        V8CodeModeTurnWorker {
             shutdown_tx: Some(shutdown_tx),
         }
     }
@@ -317,11 +308,54 @@ impl Default for CodeModeService {
     }
 }
 
-pub struct CodeModeTurnWorker {
+impl CodeModeRuntimeService for CodeModeService {
+    fn stored_values(&self) -> CodeModeBoxFuture<'_, HashMap<String, JsonValue>> {
+        Box::pin(async move { CodeModeService::stored_values(self).await })
+    }
+
+    fn replace_stored_values(
+        &self,
+        values: HashMap<String, JsonValue>,
+    ) -> CodeModeBoxFuture<'_, ()> {
+        Box::pin(async move { CodeModeService::replace_stored_values(self, values).await })
+    }
+
+    fn allocate_cell_id(&self) -> String {
+        CodeModeService::allocate_cell_id(self)
+    }
+
+    fn execute(&self, request: ExecuteRequest) -> CodeModeBoxResultFuture<'_, RuntimeResponse> {
+        Box::pin(async move { CodeModeService::execute(self, request).await })
+    }
+
+    fn wait(&self, request: WaitRequest) -> CodeModeBoxResultFuture<'_, WaitOutcome> {
+        Box::pin(async move { CodeModeService::wait(self, request).await })
+    }
+
+    fn start_turn_worker(
+        &self,
+        host: Arc<dyn CodeModeTurnHost>,
+    ) -> Box<dyn CodeModeTurnWorkerTrait> {
+        Box::new(CodeModeService::start_turn_worker(self, host))
+    }
+}
+
+#[derive(Default)]
+pub struct V8CodeModeRuntimeFactory;
+
+impl crate::CodeModeRuntimeFactory for V8CodeModeRuntimeFactory {
+    fn create_service(&self) -> Arc<dyn CodeModeRuntimeService> {
+        Arc::new(CodeModeService::new())
+    }
+}
+
+pub struct V8CodeModeTurnWorker {
     shutdown_tx: Option<oneshot::Sender<()>>,
 }
 
-impl Drop for CodeModeTurnWorker {
+impl CodeModeTurnWorkerTrait for V8CodeModeTurnWorker {}
+
+impl Drop for V8CodeModeTurnWorker {
     fn drop(&mut self) {
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
             let _ = shutdown_tx.send(());
@@ -692,19 +726,19 @@ mod tests {
     use super::Inner;
     use super::PendingRuntimeMode;
     use super::RuntimeCommand;
-    use super::RuntimeResponse;
     use super::SessionControlCommand;
     use super::SessionControlContext;
     use super::SessionResponseSender;
-    use super::WaitOutcome;
-    use super::WaitRequest;
     use super::WaitToPendingOutcome;
     use super::WaitToPendingRequest;
     use super::run_session_control;
     use crate::CodeModeToolKind;
+    use crate::ExecuteRequest;
     use crate::FunctionCallOutputContentItem;
+    use crate::RuntimeResponse;
     use crate::ToolDefinition;
-    use crate::runtime::ExecuteRequest;
+    use crate::WaitOutcome;
+    use crate::WaitRequest;
     use crate::runtime::ExecuteToPendingOutcome;
     use crate::runtime::RuntimeEvent;
     use crate::runtime::spawn_runtime;

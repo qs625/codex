@@ -1,4 +1,4 @@
-use codex_config::HooksFile;
+use codex_config_types::HooksFile;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_plugins::find_plugin_manifest_path;
 use serde::Deserialize;

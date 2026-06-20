@@ -956,7 +956,8 @@ mod tests {
 
     #[test]
     fn resolves_in_progress_turn_to_active_status() {
-        let status = resolve_thread_status(ThreadStatus::Complete, /*has_in_progress_turn*/ true);
+        let status =
+            resolve_thread_status(ThreadStatus::Complete, /*has_in_progress_turn*/ true);
         assert_eq!(
             status,
             ThreadStatus::Active {

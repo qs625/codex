@@ -1,4 +1,6 @@
 use crate::OPENAI_CURATED_MARKETPLACE_NAME;
+use crate::config_layers::PluginConfigLayerStack;
+use crate::config_layers::PluginConfigLayerStackOrdering;
 use crate::manifest::PluginManifestHooks;
 use crate::manifest::PluginManifestPaths;
 use crate::manifest::load_plugin_manifest;
@@ -8,18 +10,19 @@ use crate::marketplace::load_marketplace;
 use crate::remote::RemoteInstalledPlugin;
 use crate::store::PluginStore;
 use crate::store::plugin_version_for_source;
-use codex_config::ConfigLayerStack;
-use codex_config::HooksFile;
-use codex_config::types::McpServerConfig;
-use codex_config::types::PluginConfig;
-use codex_config::types::PluginMcpServerConfig;
+use codex_config_types::HooksFile;
+use codex_config_types::McpServerConfig;
+use codex_config_types::PluginConfig;
+use codex_config_types::PluginMcpServerConfig;
+use codex_core_skills::SkillConfigLayerEntry;
+use codex_core_skills::SkillConfigLayerStack;
 use codex_core_skills::SkillMetadata;
 use codex_core_skills::config_rules::SkillConfigRules;
 use codex_core_skills::config_rules::resolve_disabled_skill_paths;
 use codex_core_skills::config_rules::skill_config_rules_from_stack;
 use codex_core_skills::loader::SkillRoot;
 use codex_core_skills::loader::load_skills_from_roots;
-use codex_exec_server::LOCAL_FS;
+use codex_file_system::LOCAL_FS;
 use codex_plugin::AppConnectorId;
 use codex_plugin::LoadedPlugin;
 use codex_plugin::PluginCapabilitySummary;
@@ -108,13 +111,15 @@ struct PluginAppConfig {
 }
 
 pub async fn load_plugins_from_layer_stack(
-    config_layer_stack: &ConfigLayerStack,
+    config_layer_stack: &PluginConfigLayerStack,
     extra_plugins: HashMap<String, PluginConfig>,
     store: &PluginStore,
     restriction_product: Option<Product>,
     plugin_hooks_enabled: bool,
 ) -> PluginLoadOutcome<McpServerConfig> {
-    let skill_config_rules = skill_config_rules_from_stack(config_layer_stack);
+    let skill_config_layer_stack =
+        skill_config_layer_stack_from_config_layer_stack(config_layer_stack);
+    let skill_config_rules = skill_config_rules_from_stack(&skill_config_layer_stack);
     let mut configured_plugins = configured_plugins_from_stack(config_layer_stack);
     configured_plugins.extend(extra_plugins);
     let mut configured_plugins: Vec<_> = configured_plugins.into_iter().collect();
@@ -148,6 +153,27 @@ pub async fn load_plugins_from_layer_stack(
     }
 
     PluginLoadOutcome::from_plugins(plugins)
+}
+
+pub(crate) fn skill_config_layer_stack_from_config_layer_stack(
+    config_layer_stack: &PluginConfigLayerStack,
+) -> SkillConfigLayerStack {
+    let layers = config_layer_stack
+        .get_layers(
+            PluginConfigLayerStackOrdering::LowestPrecedenceFirst,
+            /*include_disabled*/ true,
+        )
+        .into_iter()
+        .map(|layer| {
+            SkillConfigLayerEntry::new_with_config_folder(
+                layer.name.clone(),
+                layer.config.clone(),
+                layer.config_folder(),
+                layer.is_disabled(),
+            )
+        })
+        .collect();
+    SkillConfigLayerStack::new(layers)
 }
 
 pub fn remote_installed_plugins_to_config(
@@ -376,7 +402,7 @@ fn refresh_non_curated_plugin_cache_with_mode(
 }
 
 fn configured_plugins_from_stack(
-    config_layer_stack: &ConfigLayerStack,
+    config_layer_stack: &PluginConfigLayerStack,
 ) -> HashMap<String, PluginConfig> {
     let Some(user_config) = config_layer_stack.effective_user_config() else {
         return HashMap::new();

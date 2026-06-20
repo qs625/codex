@@ -14,14 +14,14 @@ use crate::session::session::Session;
 use crate::session::turn::get_last_assistant_message_from_turn;
 use crate::session::turn_context::TurnContext;
 use crate::util::backoff;
-use codex_analytics::CodexCompactionEvent;
-use codex_analytics::CompactionImplementation;
-use codex_analytics::CompactionPhase;
-use codex_analytics::CompactionReason;
-use codex_analytics::CompactionStatus;
-use codex_analytics::CompactionStrategy;
-use codex_analytics::CompactionTrigger;
-use codex_analytics::now_unix_seconds;
+use codex_analytics_api::CodexCompactionEvent;
+use codex_analytics_api::CompactionImplementation;
+use codex_analytics_api::CompactionPhase;
+use codex_analytics_api::CompactionReason;
+use codex_analytics_api::CompactionStatus;
+use codex_analytics_api::CompactionStrategy;
+use codex_analytics_api::CompactionTrigger;
+use codex_analytics_api::now_unix_seconds;
 use codex_features::Feature;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
@@ -178,7 +178,8 @@ async fn run_compact_task_inner_impl(
     let started_compaction_item = TurnItem::ContextCompaction(compaction_item.clone());
     sess.emit_turn_item_started(&turn_context, &started_compaction_item)
         .await;
-    let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
+    let initial_input_for_turn: ResponseInputItem =
+        codex_model_input::response_input_item_from_user_input(input);
 
     let mut history = sess.clone_history().await;
     history.record_items(

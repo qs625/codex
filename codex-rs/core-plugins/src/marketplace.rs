@@ -1,10 +1,10 @@
 use crate::manifest::PluginManifestInterface;
 use crate::manifest::load_plugin_manifest;
-use codex_app_server_protocol::PluginAuthPolicy;
-use codex_app_server_protocol::PluginInstallPolicy;
 use codex_git_utils::get_git_repo_root;
 use codex_plugin::PluginId;
 use codex_plugin::PluginIdError;
+use codex_plugin_types::PluginAuthPolicy;
+use codex_plugin_types::PluginInstallPolicy;
 use codex_protocol::protocol::Product;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;

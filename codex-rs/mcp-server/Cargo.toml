@@ -19,12 +19,17 @@ workspace = true
 [dependencies]
 anyhow = { workspace = true }
 codex-arg0 = { workspace = true }
-codex-config = { workspace = true }
+codex-code-mode = { workspace = true }
 codex-core = { workspace = true }
 codex-exec-server = { workspace = true }
 codex-extension-api = { workspace = true }
+codex-features = { workspace = true }
 codex-login = { workspace = true }
+codex-model-provider = { workspace = true }
+codex-openai-files = { workspace = true }
+codex-otel-init = { workspace = true }
 codex-protocol = { workspace = true }
+codex-workflow = { workspace = true }
 codex-utils-cli = { workspace = true }
 codex-utils-json-to-toml = { workspace = true }
 rmcp = { workspace = true }
@@ -43,6 +48,7 @@ tracing = { workspace = true, features = ["log"] }
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
+codex-config-types = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-shell-command = { workspace = true }
 core_test_support = { workspace = true }

@@ -42,7 +42,7 @@ pub(crate) use codex_command_runtime::WriteStdinRequest;
 pub(crate) use codex_command_runtime::clamp_yield_time;
 pub(crate) use codex_command_runtime::generate_chunk_id;
 pub(crate) use codex_command_runtime::resolve_max_tokens;
-use codex_exec_server::Environment;
+use codex_exec_server_api::ExecEnvironment;
 use codex_network_proxy::NetworkProxy;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -99,7 +99,7 @@ pub(crate) struct ExecCommandRequest {
     pub max_output_tokens: Option<usize>,
     pub cwd: AbsolutePathBuf,
     pub sandbox_cwd: AbsolutePathBuf,
-    pub environment: Arc<Environment>,
+    pub environment: Arc<dyn ExecEnvironment>,
     pub network: Option<NetworkProxy>,
     pub tty: bool,
     pub sandbox_permissions: SandboxPermissions,

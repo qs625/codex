@@ -2,14 +2,9 @@ pub(crate) mod config;
 mod events;
 pub(crate) mod metrics;
 pub(crate) mod provider;
-pub(crate) mod trace_context;
 
 mod otlp;
 mod targets;
-
-use crate::metrics::Result as MetricsResult;
-use serde::Serialize;
-use strum_macros::Display;
 
 pub use crate::config::OtelExporter;
 pub use crate::config::OtelHttpProtocol;
@@ -17,48 +12,39 @@ pub use crate::config::OtelSettings;
 pub use crate::config::OtelTlsConfig;
 pub use crate::config::StatsigMetricsSettings;
 pub use crate::config::validate_span_attributes;
-pub use crate::events::session_telemetry::AuthEnvTelemetryMetadata;
 pub use crate::events::session_telemetry::SessionTelemetry;
 pub use crate::events::session_telemetry::SessionTelemetryMetadata;
+use crate::metrics::Result as MetricsResult;
 pub use crate::metrics::runtime_metrics::RuntimeMetricTotals;
 pub use crate::metrics::runtime_metrics::RuntimeMetricsSummary;
 pub use crate::metrics::timer::Timer;
 pub use crate::metrics::*;
 pub use crate::provider::OtelProvider;
-pub use crate::trace_context::context_from_w3c_trace_context;
-pub use crate::trace_context::current_span_trace_id;
-pub use crate::trace_context::current_span_w3c_trace_context;
-pub use crate::trace_context::set_parent_from_context;
-pub use crate::trace_context::set_parent_from_w3c_trace_context;
-pub use crate::trace_context::span_w3c_trace_context;
-pub use crate::trace_context::traceparent_context_from_env;
-pub use crate::trace_context::validate_tracestate_entries;
-pub use crate::trace_context::validate_tracestate_member;
+pub use codex_auth_types::AuthEnvTelemetryMetadata;
+pub use codex_auth_types::TelemetryAuthMode;
+pub use codex_metrics_api::ToolDecisionSource;
+pub use codex_trace_context::context_from_w3c_trace_context;
+pub use codex_trace_context::current_span_trace_id;
+pub use codex_trace_context::current_span_w3c_trace_context;
+pub use codex_trace_context::set_parent_from_context;
+pub use codex_trace_context::set_parent_from_w3c_trace_context;
+pub use codex_trace_context::span_w3c_trace_context;
+pub use codex_trace_context::traceparent_context_from_env;
+pub use codex_trace_context::validate_tracestate_entries;
+pub use codex_trace_context::validate_tracestate_member;
 pub use codex_utils_string::sanitize_metric_tag_value;
 
-#[derive(Debug, Clone, Serialize, Display)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolDecisionSource {
-    AutomatedReviewer,
-    Config,
-    User,
-}
+impl codex_metrics_api::MetricsSink for SessionTelemetry {
+    fn counter(&self, name: &str, inc: i64, tags: &[(&str, &str)]) {
+        SessionTelemetry::counter(self, name, inc, tags);
+    }
 
-/// Maps to API/auth `AuthMode` to avoid a circular dependency on codex-core.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
-pub enum TelemetryAuthMode {
-    ApiKey,
-    Chatgpt,
-}
+    fn histogram(&self, name: &str, value: i64, tags: &[(&str, &str)]) {
+        SessionTelemetry::histogram(self, name, value, tags);
+    }
 
-impl From<codex_app_server_protocol::AuthMode> for TelemetryAuthMode {
-    fn from(mode: codex_app_server_protocol::AuthMode) -> Self {
-        match mode {
-            codex_app_server_protocol::AuthMode::ApiKey => Self::ApiKey,
-            codex_app_server_protocol::AuthMode::Chatgpt
-            | codex_app_server_protocol::AuthMode::ChatgptAuthTokens
-            | codex_app_server_protocol::AuthMode::AgentIdentity => Self::Chatgpt,
-        }
+    fn record_duration(&self, name: &str, duration: std::time::Duration, tags: &[(&str, &str)]) {
+        SessionTelemetry::record_duration(self, name, duration, tags);
     }
 }
 

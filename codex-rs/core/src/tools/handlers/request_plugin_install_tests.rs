@@ -3,21 +3,22 @@ use crate::plugins::test_support::load_plugins_config;
 use crate::plugins::test_support::write_curated_plugin_sha;
 use crate::plugins::test_support::write_openai_curated_marketplace;
 use crate::plugins::test_support::write_plugins_feature_config;
-use codex_config::CONFIG_TOML_FILE;
 use codex_config::config_toml::ConfigToml;
 use codex_config::types::ToolSuggestConfig;
 use codex_config::types::ToolSuggestDisabledTool;
 use codex_config::types::ToolSuggestDiscoverable;
 use codex_config::types::ToolSuggestDiscoverableType;
+use codex_config_edit::CONFIG_TOML_FILE;
 use codex_core_plugins::PluginInstallRequest;
 use codex_core_plugins::PluginsManager;
 use codex_core_plugins::startup_sync::curated_plugins_repo_path;
-use codex_rmcp_client::ElicitationResponse;
+use codex_mcp_types::ElicitationAction;
+use codex_mcp_types::ElicitationResponse;
 use codex_tools::DiscoverablePluginInfo;
+use codex_tools::REQUEST_PLUGIN_INSTALL_APPROVAL_KIND_VALUE;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::PathExt;
 use pretty_assertions::assert_eq;
-use rmcp::model::ElicitationAction;
 use serde_json::json;
 use tempfile::tempdir;
 
@@ -90,6 +91,54 @@ fn request_plugin_install_response_persists_only_decline_always_mode() {
             content: None,
             meta: None,
         })
+    );
+}
+
+#[test]
+fn request_plugin_install_elicitation_request_projects_to_mcp_form() {
+    let args = RequestPluginInstallArgs {
+        tool_type: DiscoverableToolType::Connector,
+        action_type: DiscoverableToolAction::Install,
+        tool_id: "connector_calendar".to_string(),
+        suggest_reason: "Plan with calendar events".to_string(),
+    };
+    let tool = connector_tool("connector_calendar", "Google Calendar");
+    let request = build_request_plugin_install_elicitation_request(
+        "codex-apps",
+        "thread-1".to_string(),
+        "turn-1".to_string(),
+        &args,
+        "Plan with calendar events",
+        &tool,
+    );
+
+    let params = request_plugin_install_elicitation_request_to_mcp_params(request);
+
+    assert_eq!(
+        params,
+        McpServerElicitationRequestParams {
+            thread_id: "thread-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            server_name: "codex-apps".to_string(),
+            request: McpServerElicitationRequest::Form {
+                meta: Some(json!({
+                    "codex_approval_kind": REQUEST_PLUGIN_INSTALL_APPROVAL_KIND_VALUE,
+                    "persist": REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE,
+                    "tool_type": "connector",
+                    "suggest_type": "install",
+                    "suggest_reason": "Plan with calendar events",
+                    "tool_id": "connector_calendar",
+                    "tool_name": "Google Calendar",
+                })),
+                message: "Plan with calendar events".to_string(),
+                requested_schema: McpElicitationSchema {
+                    schema_uri: None,
+                    type_: McpElicitationObjectType::Object,
+                    properties: BTreeMap::new(),
+                    required: None,
+                },
+            },
+        }
     );
 }
 

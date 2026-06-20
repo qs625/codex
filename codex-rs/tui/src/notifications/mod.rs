@@ -4,7 +4,7 @@ mod osc9;
 use std::io;
 
 use bel::BelBackend;
-use codex_config::types::NotificationMethod;
+use codex_config_types::NotificationMethod;
 use codex_terminal_detection::TerminalInfo;
 use codex_terminal_detection::TerminalName;
 use codex_terminal_detection::terminal_info;
@@ -65,7 +65,7 @@ fn supports_osc9(terminal: &TerminalInfo) -> bool {
 mod tests {
     use super::detect_backend;
     use super::supports_osc9;
-    use codex_config::types::NotificationMethod;
+    use codex_config_types::NotificationMethod;
     use codex_terminal_detection::TerminalInfo;
     use codex_terminal_detection::TerminalName;
     use pretty_assertions::assert_eq;

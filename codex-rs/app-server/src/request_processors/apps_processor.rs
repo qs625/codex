@@ -6,6 +6,7 @@ pub(crate) struct AppsRequestProcessor {
     thread_manager: Arc<ThreadManager>,
     outgoing: Arc<OutgoingMessageSender>,
     config_manager: ConfigManager,
+    environment_manager: Arc<EnvironmentManager>,
     workspace_settings_cache: Arc<workspace_settings::WorkspaceSettingsCache>,
 }
 
@@ -15,6 +16,7 @@ impl AppsRequestProcessor {
         thread_manager: Arc<ThreadManager>,
         outgoing: Arc<OutgoingMessageSender>,
         config_manager: ConfigManager,
+        environment_manager: Arc<EnvironmentManager>,
         workspace_settings_cache: Arc<workspace_settings::WorkspaceSettingsCache>,
     ) -> Self {
         Self {
@@ -22,6 +24,7 @@ impl AppsRequestProcessor {
             thread_manager,
             outgoing,
             config_manager,
+            environment_manager,
             workspace_settings_cache,
         }
     }
@@ -74,7 +77,7 @@ impl AppsRequestProcessor {
 
         let request = request_id.clone();
         let outgoing = Arc::clone(&self.outgoing);
-        let environment_manager = self.thread_manager.environment_manager();
+        let environment_manager = Arc::clone(&self.environment_manager);
         tokio::spawn(async move {
             Self::apps_list_task(outgoing, request, params, config, environment_manager).await;
         });
@@ -124,7 +127,7 @@ impl AppsRequestProcessor {
         let accessible_config = config.clone();
         let accessible_tx = tx.clone();
         tokio::spawn(async move {
-            let result = core_connectors::list_accessible_connectors_from_mcp_tools_with_environment_manager(
+            let result = core_connectors::list_accessible_connectors_from_mcp_tools_with_environment_provider(
                 &accessible_config,
                 force_refetch,
                 &environment_manager,

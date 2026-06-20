@@ -1,5 +1,5 @@
-pub use codex_api::ResponseEvent;
-use codex_config::types::Personality;
+pub use codex_api_types::ResponseEvent;
+use codex_protocol::config_types::Personality;
 use codex_protocol::error::Result;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::FunctionCallOutputBody;

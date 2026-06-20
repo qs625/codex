@@ -7,13 +7,12 @@ use std::time::Duration;
 use std::time::Instant;
 
 use async_channel::unbounded;
-pub use codex_app_server_protocol::AppBranding;
-pub use codex_app_server_protocol::AppInfo;
-pub use codex_app_server_protocol::AppMetadata;
 use codex_connectors::ConnectorDirectoryCacheContext;
 use codex_connectors::ConnectorDirectoryCacheKey;
-use codex_exec_server::EnvironmentManager;
-use codex_exec_server::ExecServerRuntimePaths;
+pub use codex_connectors_types::AppBranding;
+pub use codex_connectors_types::AppInfo;
+pub use codex_connectors_types::AppMetadata;
+use codex_exec_server_api::ExecEnvironmentProvider;
 use codex_protocol::models::PermissionProfile;
 use codex_tools::DiscoverableTool;
 use rmcp::model::ToolAnnotations;
@@ -24,24 +23,23 @@ use crate::config::Config;
 use crate::mcp::McpManager;
 use crate::plugins::list_tool_suggest_discoverable_plugins;
 use crate::session::INITIAL_SUBMIT_ID;
-use codex_config::AppsRequirementsToml;
-use codex_config::types::AppToolApproval;
-use codex_config::types::AppsConfigToml;
-use codex_config::types::ToolSuggestDiscoverableType;
+use codex_config_requirements::AppsRequirementsToml;
+use codex_config_types::AppToolApproval;
+use codex_config_types::AppsConfigToml;
+use codex_config_types::ToolSuggestDiscoverableType;
 use codex_core_plugins::PluginsManager;
+use codex_default_client::originator;
 use codex_features::Feature;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
-use codex_login::default_client::originator;
-use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_mcp::McpConnectionManager;
-use codex_mcp::McpRuntimeEnvironment;
-use codex_mcp::ToolInfo;
 use codex_mcp::ToolPluginProvenance;
 use codex_mcp::codex_apps_tools_cache_key;
 use codex_mcp::compute_auth_statuses;
 use codex_mcp::host_owned_codex_apps_enabled;
 use codex_mcp::with_codex_apps_mcp;
+use codex_mcp_tool_types::ToolInfo;
+use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
 
 const CONNECTORS_READY_TIMEOUT_ON_EMPTY_TOOLS: Duration = Duration::from_secs(30);
 
@@ -86,10 +84,13 @@ pub struct AccessibleConnectorsStatus {
 
 pub async fn list_accessible_connectors_from_mcp_tools(
     config: &Config,
+    environment_provider: &dyn ExecEnvironmentProvider,
 ) -> anyhow::Result<Vec<AppInfo>> {
     Ok(
         list_accessible_connectors_from_mcp_tools_with_options_and_status(
-            config, /*force_refetch*/ false,
+            config,
+            /*force_refetch*/ false,
+            environment_provider,
         )
         .await?
         .connectors,
@@ -178,39 +179,36 @@ pub(crate) fn refresh_accessible_connectors_cache_from_mcp_tools(
 pub async fn list_accessible_connectors_from_mcp_tools_with_options(
     config: &Config,
     force_refetch: bool,
+    environment_provider: &dyn ExecEnvironmentProvider,
 ) -> anyhow::Result<Vec<AppInfo>> {
     Ok(
-        list_accessible_connectors_from_mcp_tools_with_options_and_status(config, force_refetch)
-            .await?
-            .connectors,
+        list_accessible_connectors_from_mcp_tools_with_options_and_status(
+            config,
+            force_refetch,
+            environment_provider,
+        )
+        .await?
+        .connectors,
     )
 }
 
 pub async fn list_accessible_connectors_from_mcp_tools_with_options_and_status(
     config: &Config,
     force_refetch: bool,
+    environment_provider: &dyn ExecEnvironmentProvider,
 ) -> anyhow::Result<AccessibleConnectorsStatus> {
-    // TODO: Wire callers that already own an EnvironmentManager into
-    // list_accessible_connectors_from_mcp_tools_with_environment_manager instead
-    // of constructing a temporary manager here.
-    let local_runtime_paths = ExecServerRuntimePaths::from_optional_paths(
-        config.codex_self_exe.clone(),
-        config.codex_linux_sandbox_exe.clone(),
-    )?;
-    let environment_manager =
-        EnvironmentManager::from_codex_home(config.codex_home.clone(), local_runtime_paths).await?;
-    list_accessible_connectors_from_mcp_tools_with_environment_manager(
+    list_accessible_connectors_from_mcp_tools_with_environment_provider(
         config,
         force_refetch,
-        &environment_manager,
+        environment_provider,
     )
     .await
 }
 
-pub async fn list_accessible_connectors_from_mcp_tools_with_environment_manager(
+pub async fn list_accessible_connectors_from_mcp_tools_with_environment_provider(
     config: &Config,
     force_refetch: bool,
-    environment_manager: &EnvironmentManager,
+    environment_provider: &dyn ExecEnvironmentProvider,
 ) -> anyhow::Result<AccessibleConnectorsStatus> {
     let auth_manager =
         AuthManager::shared_from_config(config, /*enable_codex_api_key_env*/ false).await;
@@ -261,9 +259,10 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_environment_manager(
     let (tx_event, rx_event) = unbounded();
     drop(rx_event);
 
-    let environment = environment_manager
+    let local_environment = environment_provider.local_environment();
+    let environment = environment_provider
         .default_environment()
-        .unwrap_or_else(|| environment_manager.local_environment());
+        .unwrap_or_else(|| Arc::clone(&local_environment));
 
     let (mut mcp_connection_manager, cancel_token) = McpConnectionManager::new(
         &mcp_servers,
@@ -273,7 +272,11 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_environment_manager(
         INITIAL_SUBMIT_ID.to_owned(),
         tx_event,
         PermissionProfile::default(),
-        McpRuntimeEnvironment::new(environment, config.cwd.to_path_buf()),
+        crate::mcp::mcp_runtime_environment(
+            environment,
+            local_environment,
+            config.cwd.to_path_buf(),
+        ),
         config.codex_home.to_path_buf(),
         codex_apps_tools_cache_key(auth.as_ref()),
         host_owned_codex_apps_enabled,

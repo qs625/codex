@@ -1,7 +1,6 @@
 use super::*;
 use crate::DiscoverablePluginInfo;
 use pretty_assertions::assert_eq;
-use serde_json::json;
 
 #[test]
 fn build_request_plugin_install_elicitation_request_uses_expected_shape() {
@@ -41,30 +40,26 @@ fn build_request_plugin_install_elicitation_request_uses_expected_shape() {
 
     assert_eq!(
         request,
-        McpServerElicitationRequestParams {
+        RequestPluginInstallElicitationRequest {
             thread_id: "thread-1".to_string(),
             turn_id: Some("turn-1".to_string()),
             server_name: "codex-apps".to_string(),
-            request: McpServerElicitationRequest::Form {
-                meta: Some(json!(RequestPluginInstallMeta {
+            form: RequestPluginInstallElicitationForm {
+                meta: RequestPluginInstallMeta {
                     codex_approval_kind: REQUEST_PLUGIN_INSTALL_APPROVAL_KIND_VALUE,
                     persist: REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE,
                     tool_type: DiscoverableToolType::Connector,
                     suggest_type: DiscoverableToolAction::Install,
-                    suggest_reason: "Plan and reference events from your calendar",
-                    tool_id: "connector_2128aebfecb84f64a069897515042a44",
-                    tool_name: "Google Calendar",
+                    suggest_reason: "Plan and reference events from your calendar".to_string(),
+                    tool_id: "connector_2128aebfecb84f64a069897515042a44".to_string(),
+                    tool_name: "Google Calendar".to_string(),
                     install_url: Some(
                         "https://chatgpt.com/apps/google-calendar/connector_2128aebfecb84f64a069897515042a44"
+                            .to_string(),
                     ),
-                })),
-                message: "Plan and reference events from your calendar".to_string(),
-                requested_schema: McpElicitationSchema {
-                    schema_uri: None,
-                    type_: McpElicitationObjectType::Object,
-                    properties: BTreeMap::new(),
-                    required: None,
                 },
+                message: "Plan and reference events from your calendar".to_string(),
+                requested_schema: RequestPluginInstallElicitationSchema::EmptyObject,
             },
         },
     );
@@ -98,28 +93,23 @@ fn build_request_plugin_install_elicitation_request_for_plugin_omits_install_url
 
     assert_eq!(
         request,
-        McpServerElicitationRequestParams {
+        RequestPluginInstallElicitationRequest {
             thread_id: "thread-1".to_string(),
             turn_id: Some("turn-1".to_string()),
             server_name: "codex-apps".to_string(),
-            request: McpServerElicitationRequest::Form {
-                meta: Some(json!(RequestPluginInstallMeta {
+            form: RequestPluginInstallElicitationForm {
+                meta: RequestPluginInstallMeta {
                     codex_approval_kind: REQUEST_PLUGIN_INSTALL_APPROVAL_KIND_VALUE,
                     persist: REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE,
                     tool_type: DiscoverableToolType::Plugin,
                     suggest_type: DiscoverableToolAction::Install,
-                    suggest_reason: "Use the sample plugin's skills and MCP server",
-                    tool_id: "sample@openai-curated",
-                    tool_name: "Sample Plugin",
+                    suggest_reason: "Use the sample plugin's skills and MCP server".to_string(),
+                    tool_id: "sample@openai-curated".to_string(),
+                    tool_name: "Sample Plugin".to_string(),
                     install_url: None,
-                })),
-                message: "Use the sample plugin's skills and MCP server".to_string(),
-                requested_schema: McpElicitationSchema {
-                    schema_uri: None,
-                    type_: McpElicitationObjectType::Object,
-                    properties: BTreeMap::new(),
-                    required: None,
                 },
+                message: "Use the sample plugin's skills and MCP server".to_string(),
+                requested_schema: RequestPluginInstallElicitationSchema::EmptyObject,
             },
         },
     );
@@ -132,8 +122,10 @@ fn build_request_plugin_install_meta_uses_expected_shape() {
         DiscoverableToolAction::Install,
         "Find and reference emails from your inbox",
         "connector_68df038e0ba48191908c8434991bbac2",
-        "Gmail",
-        Some("https://chatgpt.com/apps/gmail/connector_68df038e0ba48191908c8434991bbac2"),
+        "Gmail".to_string(),
+        Some(
+            "https://chatgpt.com/apps/gmail/connector_68df038e0ba48191908c8434991bbac2".to_string(),
+        ),
     );
 
     assert_eq!(
@@ -143,11 +135,12 @@ fn build_request_plugin_install_meta_uses_expected_shape() {
             persist: REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE,
             tool_type: DiscoverableToolType::Connector,
             suggest_type: DiscoverableToolAction::Install,
-            suggest_reason: "Find and reference emails from your inbox",
-            tool_id: "connector_68df038e0ba48191908c8434991bbac2",
-            tool_name: "Gmail",
+            suggest_reason: "Find and reference emails from your inbox".to_string(),
+            tool_id: "connector_68df038e0ba48191908c8434991bbac2".to_string(),
+            tool_name: "Gmail".to_string(),
             install_url: Some(
                 "https://chatgpt.com/apps/gmail/connector_68df038e0ba48191908c8434991bbac2"
+                    .to_string(),
             ),
         },
     );

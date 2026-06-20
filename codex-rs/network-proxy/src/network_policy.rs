@@ -1,12 +1,16 @@
-use crate::reasons::REASON_POLICY_DENIED;
 use crate::runtime::HostBlockDecision;
 use crate::runtime::HostBlockReason;
 use crate::state::NetworkProxyState;
 use anyhow::Result;
-use async_trait::async_trait;
 use chrono::SecondsFormat;
 use chrono::Utc;
-use std::future::Future;
+pub use codex_network_proxy_api::NetworkDecision;
+pub use codex_network_proxy_api::NetworkDecisionSource;
+pub use codex_network_proxy_api::NetworkPolicyDecider;
+pub use codex_network_proxy_api::NetworkPolicyDecision;
+pub use codex_network_proxy_api::NetworkPolicyRequest;
+pub use codex_network_proxy_api::NetworkPolicyRequestArgs;
+pub use codex_network_proxy_api::NetworkProtocol;
 use std::sync::Arc;
 
 const AUDIT_TARGET: &str = "codex_otel.network_proxy";
@@ -18,153 +22,6 @@ const POLICY_DECISION_DENY: &str = "deny";
 const POLICY_REASON_ALLOW: &str = "allow";
 const DEFAULT_METHOD: &str = "none";
 const DEFAULT_CLIENT_ADDRESS: &str = "unknown";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NetworkProtocol {
-    Http,
-    HttpsConnect,
-    Socks5Tcp,
-    Socks5Udp,
-}
-
-impl NetworkProtocol {
-    pub const fn as_policy_protocol(self) -> &'static str {
-        match self {
-            Self::Http => "http",
-            Self::HttpsConnect => "https_connect",
-            Self::Socks5Tcp => "socks5_tcp",
-            Self::Socks5Udp => "socks5_udp",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum NetworkPolicyDecision {
-    Deny,
-    Ask,
-}
-
-impl NetworkPolicyDecision {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Deny => "deny",
-            Self::Ask => "ask",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum NetworkDecisionSource {
-    BaselinePolicy,
-    ModeGuard,
-    ProxyState,
-    Decider,
-}
-
-impl NetworkDecisionSource {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::BaselinePolicy => "baseline_policy",
-            Self::ModeGuard => "mode_guard",
-            Self::ProxyState => "proxy_state",
-            Self::Decider => "decider",
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct NetworkPolicyRequest {
-    pub protocol: NetworkProtocol,
-    pub host: String,
-    pub port: u16,
-    pub client_addr: Option<String>,
-    pub method: Option<String>,
-    pub command: Option<String>,
-    pub exec_policy_hint: Option<String>,
-}
-
-pub struct NetworkPolicyRequestArgs {
-    pub protocol: NetworkProtocol,
-    pub host: String,
-    pub port: u16,
-    pub client_addr: Option<String>,
-    pub method: Option<String>,
-    pub command: Option<String>,
-    pub exec_policy_hint: Option<String>,
-}
-
-impl NetworkPolicyRequest {
-    pub fn new(args: NetworkPolicyRequestArgs) -> Self {
-        let NetworkPolicyRequestArgs {
-            protocol,
-            host,
-            port,
-            client_addr,
-            method,
-            command,
-            exec_policy_hint,
-        } = args;
-        Self {
-            protocol,
-            host,
-            port,
-            client_addr,
-            method,
-            command,
-            exec_policy_hint,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum NetworkDecision {
-    Allow,
-    Deny {
-        reason: String,
-        source: NetworkDecisionSource,
-        decision: NetworkPolicyDecision,
-    },
-}
-
-impl NetworkDecision {
-    pub fn deny(reason: impl Into<String>) -> Self {
-        Self::deny_with_source(reason, NetworkDecisionSource::Decider)
-    }
-
-    pub fn ask(reason: impl Into<String>) -> Self {
-        Self::ask_with_source(reason, NetworkDecisionSource::Decider)
-    }
-
-    pub fn deny_with_source(reason: impl Into<String>, source: NetworkDecisionSource) -> Self {
-        let reason = reason.into();
-        let reason = if reason.is_empty() {
-            REASON_POLICY_DENIED.to_string()
-        } else {
-            reason
-        };
-        Self::Deny {
-            reason,
-            source,
-            decision: NetworkPolicyDecision::Deny,
-        }
-    }
-
-    pub fn ask_with_source(reason: impl Into<String>, source: NetworkDecisionSource) -> Self {
-        let reason = reason.into();
-        let reason = if reason.is_empty() {
-            REASON_POLICY_DENIED.to_string()
-        } else {
-            reason
-        };
-        Self::Deny {
-            reason,
-            source,
-            decision: NetworkPolicyDecision::Ask,
-        }
-    }
-}
 
 pub(crate) struct BlockDecisionAuditEventArgs<'a> {
     pub source: NetworkDecisionSource,
@@ -256,34 +113,6 @@ fn emit_policy_audit_event(state: &NetworkProxyState, args: PolicyAuditEventArgs
 
 fn audit_timestamp() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
-}
-
-/// Decide whether a network request should be allowed.
-///
-/// If `command` or `exec_policy_hint` is provided, callers can map exec-policy
-/// approvals to network access (e.g., allow all requests for commands matching
-/// approved prefixes like `curl *`).
-#[async_trait]
-pub trait NetworkPolicyDecider: Send + Sync + 'static {
-    async fn decide(&self, req: NetworkPolicyRequest) -> NetworkDecision;
-}
-
-#[async_trait]
-impl<D: NetworkPolicyDecider + ?Sized> NetworkPolicyDecider for Arc<D> {
-    async fn decide(&self, req: NetworkPolicyRequest) -> NetworkDecision {
-        (**self).decide(req).await
-    }
-}
-
-#[async_trait]
-impl<F, Fut> NetworkPolicyDecider for F
-where
-    F: Fn(NetworkPolicyRequest) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = NetworkDecision> + Send,
-{
-    async fn decide(&self, req: NetworkPolicyRequest) -> NetworkDecision {
-        (self)(req).await
-    }
 }
 
 pub(crate) async fn evaluate_host_policy(
@@ -543,9 +372,10 @@ mod tests {
     use crate::runtime::ConfigReloader;
     use crate::runtime::ConfigState;
     use crate::runtime::NetworkProxyAuditMetadata;
-    use crate::state::NetworkProxyConstraints;
     use crate::state::build_config_state;
     use crate::state::network_proxy_state_for_policy;
+    use async_trait::async_trait;
+    use codex_network_proxy_api::NetworkProxyConstraints;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;

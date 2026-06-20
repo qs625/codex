@@ -13,10 +13,10 @@ use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::exec::is_likely_sandbox_denied;
-use codex_exec_server::ExecProcess;
-use codex_exec_server::ReadResponse as ExecReadResponse;
-use codex_exec_server::StartedExecProcess;
-use codex_exec_server::WriteStatus;
+use codex_exec_server_api::ExecProcess;
+use codex_exec_server_api::StartedExecProcess;
+use codex_exec_server_protocol::ReadResponse as ExecReadResponse;
+use codex_exec_server_protocol::WriteStatus;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::exec_output::StreamOutput;
 use codex_protocol::protocol::TruncationPolicy;

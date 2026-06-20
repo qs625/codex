@@ -1,0 +1,21 @@
+[package]
+name = "codex-otel-init"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "codex_otel_init"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-config-types = { workspace = true }
+codex-default-client = { workspace = true }
+codex-otel = { workspace = true }
+codex-rollout = { workspace = true }
+codex-state = { workspace = true }
+tracing = { workspace = true }

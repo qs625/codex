@@ -1,5 +1,6 @@
 use crate::shell_detect::detect_shell_type;
 use crate::shell_snapshot::ShellSnapshot;
+use codex_shell_command::resolve_executable_in_path;
 use serde::Deserialize;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -183,7 +184,7 @@ fn get_shell_path(
         return Some(default_shell_path);
     }
 
-    if let Ok(path) = which::which(binary_name) {
+    if let Some(path) = resolve_executable_in_path(binary_name) {
         return Some(path);
     }
 

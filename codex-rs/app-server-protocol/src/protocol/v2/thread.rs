@@ -976,7 +976,9 @@ pub enum ThreadStatus {
     NotLoaded,
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
-    Idle { reason: ThreadIdleReason },
+    Idle {
+        reason: ThreadIdleReason,
+    },
     Complete,
     SystemError,
     #[serde(rename_all = "camelCase")]

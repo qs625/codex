@@ -2,9 +2,9 @@
 //!
 //! Production code should not depend on this module.
 
-use crate::ModelsManagerConfig;
 use crate::bundled_models_response;
 use crate::manager::construct_model_info_from_candidates;
+use codex_models_manager_api::ModelsManagerConfig;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelPreset;
 
