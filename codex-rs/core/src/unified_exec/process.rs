@@ -1,11 +1,7 @@
 #![allow(clippy::module_inception)]
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
-use tokio::sync::Mutex;
 use tokio::sync::Notify;
-use tokio::sync::broadcast;
 use tokio::sync::oneshot::error::TryRecvError;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -25,11 +21,10 @@ use codex_utils_output_truncation::formatted_truncate_text;
 use codex_utils_pty::ExecCommandSession;
 use codex_utils_pty::SpawnedPty;
 
-use super::HeadTailBuffer;
 use super::UNIFIED_EXEC_OUTPUT_MAX_TOKENS;
 use super::UnifiedExecError;
-use codex_command_runtime::CommandOutputBuffer as OutputBuffer;
 use codex_command_runtime::CommandOutputHandles as OutputHandles;
+use codex_command_runtime::CommandOutputRuntime;
 use codex_command_runtime::ProcessState;
 
 const EARLY_EXIT_GRACE_PERIOD: Duration = Duration::from_millis(150);
@@ -65,13 +60,7 @@ enum ProcessHandle {
 /// processes.
 pub(crate) struct UnifiedExecProcess {
     process_handle: ProcessHandle,
-    output_tx: broadcast::Sender<Vec<u8>>,
-    output_buffer: OutputBuffer,
-    output_notify: Arc<Notify>,
-    output_closed: Arc<AtomicBool>,
-    output_closed_notify: Arc<Notify>,
-    cancellation_token: CancellationToken,
-    output_drained: Arc<Notify>,
+    output_runtime: CommandOutputRuntime,
     state_tx: watch::Sender<ProcessState>,
     state_rx: watch::Receiver<ProcessState>,
     output_task: Option<JoinHandle<()>>,
@@ -95,24 +84,12 @@ impl UnifiedExecProcess {
         sandbox_type: SandboxType,
         spawn_lifecycle: Option<SpawnLifecycleHandle>,
     ) -> Self {
-        let output_buffer = Arc::new(Mutex::new(HeadTailBuffer::default()));
-        let output_notify = Arc::new(Notify::new());
-        let output_closed = Arc::new(AtomicBool::new(false));
-        let output_closed_notify = Arc::new(Notify::new());
-        let cancellation_token = CancellationToken::new();
-        let output_drained = Arc::new(Notify::new());
-        let (output_tx, _) = broadcast::channel(64);
+        let output_runtime = CommandOutputRuntime::new();
         let (state_tx, state_rx) = watch::channel(ProcessState::default());
 
         Self {
             process_handle,
-            output_tx,
-            output_buffer,
-            output_notify,
-            output_closed,
-            output_closed_notify,
-            cancellation_token,
-            output_drained,
+            output_runtime,
             state_tx,
             state_rx,
             output_task: None,
@@ -135,7 +112,7 @@ impl UnifiedExecProcess {
                         WriteStatus::UnknownProcess | WriteStatus::StdinClosed => {
                             let state = self.state_rx.borrow().clone();
                             let _ = self.state_tx.send_replace(state.exited(state.exit_code));
-                            self.cancellation_token.cancel();
+                            self.output_runtime.cancel();
                             Err(UnifiedExecError::WriteToStdin)
                         }
                         WriteStatus::Starting => Err(UnifiedExecError::WriteToStdin),
@@ -147,25 +124,19 @@ impl UnifiedExecProcess {
     }
 
     pub(super) fn output_handles(&self) -> OutputHandles {
-        OutputHandles {
-            output_buffer: Arc::clone(&self.output_buffer),
-            output_notify: Arc::clone(&self.output_notify),
-            output_closed: Arc::clone(&self.output_closed),
-            output_closed_notify: Arc::clone(&self.output_closed_notify),
-            cancellation_token: self.cancellation_token.clone(),
-        }
+        self.output_runtime.handles()
     }
 
     pub(super) fn output_receiver(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
-        self.output_tx.subscribe()
+        self.output_runtime.receiver()
     }
 
     pub(super) fn cancellation_token(&self) -> CancellationToken {
-        self.cancellation_token.clone()
+        self.output_runtime.cancellation_token()
     }
 
     pub(super) fn output_drained_notify(&self) -> Arc<Notify> {
-        Arc::clone(&self.output_drained)
+        self.output_runtime.output_drained_notify()
     }
 
     pub(super) fn has_exited(&self) -> bool {
@@ -187,8 +158,7 @@ impl UnifiedExecProcess {
     }
 
     pub(super) fn terminate(&self) {
-        self.output_closed.store(true, Ordering::Release);
-        self.output_closed_notify.notify_waiters();
+        self.output_runtime.close_output();
         match &self.process_handle {
             ProcessHandle::Local(process_handle) => process_handle.terminate(),
             ProcessHandle::ExecServer(process_handle) => {
@@ -198,7 +168,7 @@ impl UnifiedExecProcess {
                 });
             }
         }
-        self.cancellation_token.cancel();
+        self.output_runtime.cancel();
         if let Some(output_task) = &self.output_task {
             output_task.abort();
         }
@@ -213,8 +183,7 @@ impl UnifiedExecProcess {
     }
 
     async fn snapshot_output(&self) -> Vec<Vec<u8>> {
-        let guard = self.output_buffer.lock().await;
-        guard.snapshot_chunks()
+        self.output_runtime.snapshot_chunks().await
     }
 
     pub(crate) fn sandbox_type(&self) -> SandboxType {
@@ -226,8 +195,12 @@ impl UnifiedExecProcess {
     }
 
     pub(super) async fn check_for_sandbox_denial(&self) -> Result<(), UnifiedExecError> {
-        let _ =
-            tokio::time::timeout(Duration::from_millis(20), self.output_notify.notified()).await;
+        let output_handles = self.output_handles();
+        let _ = tokio::time::timeout(
+            Duration::from_millis(20),
+            output_handles.output_notify.notified(),
+        )
+        .await;
 
         let collected_chunks = self.snapshot_output().await;
         let mut aggregated: Vec<u8> = Vec::new();
@@ -289,13 +262,11 @@ impl UnifiedExecProcess {
             sandbox_type,
             Some(spawn_lifecycle),
         );
-        managed.output_task = Some(Self::spawn_local_output_task(
-            output_rx,
-            Arc::clone(&managed.output_buffer),
-            Arc::clone(&managed.output_notify),
-            Arc::clone(&managed.output_closed),
-            Arc::clone(&managed.output_closed_notify),
-            managed.output_tx.clone(),
+        managed.output_task = Some(tokio::spawn(
+            managed
+                .output_runtime
+                .clone()
+                .pump_broadcast_receiver(output_rx),
         ));
 
         match exit_rx.try_recv() {
@@ -320,12 +291,12 @@ impl UnifiedExecProcess {
 
         tokio::spawn({
             let state_tx = managed.state_tx.clone();
-            let cancellation_token = managed.cancellation_token.clone();
+            let output_runtime = managed.output_runtime.clone();
             async move {
                 let exit_code = exit_rx.await.ok();
                 let state = state_tx.borrow().clone();
                 let _ = state_tx.send_replace(state.exited(exit_code));
-                cancellation_token.cancel();
+                output_runtime.cancel();
             }
         });
 
@@ -338,11 +309,10 @@ impl UnifiedExecProcess {
     ) -> Result<Self, UnifiedExecError> {
         let process_handle = ProcessHandle::ExecServer(Arc::clone(&started.process));
         let mut managed = Self::new(process_handle, sandbox_type, /*spawn_lifecycle*/ None);
-        let output_handles = managed.output_handles();
+        let output_runtime = managed.output_runtime.clone();
         managed.output_task = Some(Self::spawn_exec_server_output_task(
             started,
-            output_handles,
-            managed.output_tx.clone(),
+            output_runtime,
             managed.state_tx.clone(),
         ));
 
@@ -369,17 +339,9 @@ impl UnifiedExecProcess {
 
     fn spawn_exec_server_output_task(
         started: StartedExecProcess,
-        output_handles: OutputHandles,
-        output_tx: broadcast::Sender<Vec<u8>>,
+        output_runtime: CommandOutputRuntime,
         state_tx: watch::Sender<ProcessState>,
     ) -> JoinHandle<()> {
-        let OutputHandles {
-            output_buffer,
-            output_notify,
-            output_closed,
-            output_closed_notify,
-            cancellation_token,
-        } = output_handles;
         let process = started.process;
         let mut wake_rx = process.subscribe_wake();
         tokio::spawn(async move {
@@ -401,19 +363,14 @@ impl UnifiedExecProcess {
 
                         for chunk in chunks {
                             let bytes = chunk.chunk.into_inner();
-                            let mut guard = output_buffer.lock().await;
-                            guard.push_chunk(bytes.clone());
-                            drop(guard);
-                            let _ = output_tx.send(bytes);
-                            output_notify.notify_waiters();
+                            output_runtime.push_chunk(bytes).await;
                         }
 
                         if let Some(message) = failure {
                             let state = state_tx.borrow().clone();
                             let _ = state_tx.send_replace(state.failed(message));
-                            output_closed.store(true, Ordering::Release);
-                            output_closed_notify.notify_waiters();
-                            cancellation_token.cancel();
+                            output_runtime.close_output();
+                            output_runtime.cancel();
                             break;
                         }
 
@@ -423,22 +380,20 @@ impl UnifiedExecProcess {
                         }
 
                         if closed {
-                            output_closed.store(true, Ordering::Release);
-                            output_closed_notify.notify_waiters();
-                            cancellation_token.cancel();
+                            output_runtime.close_output();
+                            output_runtime.cancel();
                         }
 
                         after_seq = next_seq.checked_sub(1);
-                        if output_closed.load(Ordering::Acquire) {
+                        if closed {
                             break;
                         }
                     }
                     Err(err) => {
                         let state = state_tx.borrow().clone();
                         let _ = state_tx.send_replace(state.failed(err.to_string()));
-                        output_closed.store(true, Ordering::Release);
-                        output_closed_notify.notify_waiters();
-                        cancellation_token.cancel();
+                        output_runtime.close_output();
+                        output_runtime.cancel();
                         break;
                     }
                 }
@@ -447,40 +402,10 @@ impl UnifiedExecProcess {
                     let state = state_tx.borrow().clone();
                     let _ = state_tx
                         .send_replace(state.failed("exec-server wake channel closed".to_string()));
-                    output_closed.store(true, Ordering::Release);
-                    output_closed_notify.notify_waiters();
-                    cancellation_token.cancel();
+                    output_runtime.close_output();
+                    output_runtime.cancel();
                     break;
                 }
-            }
-        })
-    }
-
-    fn spawn_local_output_task(
-        mut receiver: tokio::sync::broadcast::Receiver<Vec<u8>>,
-        buffer: OutputBuffer,
-        output_notify: Arc<Notify>,
-        output_closed: Arc<AtomicBool>,
-        output_closed_notify: Arc<Notify>,
-        output_tx: broadcast::Sender<Vec<u8>>,
-    ) -> JoinHandle<()> {
-        tokio::spawn(async move {
-            loop {
-                match receiver.recv().await {
-                    Ok(chunk) => {
-                        let mut guard = buffer.lock().await;
-                        guard.push_chunk(chunk.clone());
-                        drop(guard);
-                        let _ = output_tx.send(chunk);
-                        output_notify.notify_waiters();
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        output_closed.store(true, Ordering::Release);
-                        output_closed_notify.notify_waiters();
-                        break;
-                    }
-                };
             }
         })
     }
@@ -488,7 +413,7 @@ impl UnifiedExecProcess {
     fn signal_exit(&self, exit_code: Option<i32>) {
         let state = self.state_rx.borrow().clone();
         let _ = self.state_tx.send_replace(state.exited(exit_code));
-        self.cancellation_token.cancel();
+        self.output_runtime.cancel();
     }
 }
 

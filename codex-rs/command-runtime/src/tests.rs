@@ -1,20 +1,11 @@
 use super::*;
 
 use pretty_assertions::assert_eq;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use tokio::time::Duration;
 use tokio::time::Instant;
-use tokio_util::sync::CancellationToken;
 
 fn test_output_handles() -> CommandOutputHandles {
-    CommandOutputHandles {
-        output_buffer: Arc::new(Mutex::new(HeadTailBuffer::default())),
-        output_notify: Arc::new(Notify::new()),
-        output_closed: Arc::new(AtomicBool::new(false)),
-        output_closed_notify: Arc::new(Notify::new()),
-        cancellation_token: CancellationToken::new(),
-    }
+    CommandOutputRuntime::new().handles()
 }
 
 #[test]
@@ -96,6 +87,59 @@ fn fills_head_then_tail_across_multiple_chunks() {
     buf.push_chunk(b"a".to_vec());
     assert_eq!(buf.to_bytes(), b"012346789a".to_vec());
     assert_eq!(buf.omitted_bytes(), 1);
+}
+
+#[test]
+fn split_valid_utf8_prefix_respects_max_bytes_for_ascii() {
+    let mut buf = b"hello word!".to_vec();
+
+    let first =
+        split_valid_utf8_prefix_with_max(&mut buf, /*max_bytes*/ 5).expect("expected prefix");
+    assert_eq!(first, b"hello".to_vec());
+    assert_eq!(buf, b" word!".to_vec());
+
+    let second =
+        split_valid_utf8_prefix_with_max(&mut buf, /*max_bytes*/ 5).expect("expected prefix");
+    assert_eq!(second, b" word".to_vec());
+    assert_eq!(buf, b"!".to_vec());
+}
+
+#[test]
+fn split_valid_utf8_prefix_avoids_splitting_utf8_codepoints() {
+    // "é" is 2 bytes in UTF-8. With a max of 3 bytes, emit only 1 char.
+    let mut buf = "ééé".as_bytes().to_vec();
+
+    let first =
+        split_valid_utf8_prefix_with_max(&mut buf, /*max_bytes*/ 3).expect("expected prefix");
+    assert_eq!(std::str::from_utf8(&first).unwrap(), "é");
+    assert_eq!(buf, "éé".as_bytes().to_vec());
+}
+
+#[test]
+fn split_valid_utf8_prefix_makes_progress_on_invalid_utf8() {
+    let mut buf = vec![0xff, b'a', b'b'];
+
+    let first =
+        split_valid_utf8_prefix_with_max(&mut buf, /*max_bytes*/ 2).expect("expected prefix");
+    assert_eq!(first, vec![0xff]);
+    assert_eq!(buf, b"ab".to_vec());
+}
+
+#[tokio::test]
+async fn output_runtime_pumps_broadcast_chunks_into_shared_buffer() {
+    let runtime = CommandOutputRuntime::new();
+    let handles = runtime.handles();
+    let (tx, rx) = tokio::sync::broadcast::channel(4);
+    let task = tokio::spawn(runtime.pump_broadcast_receiver(rx));
+
+    tx.send(b"chunk".to_vec()).expect("receiver should be open");
+    drop(tx);
+    task.await.expect("pump should finish");
+
+    let collected =
+        collect_output_until_deadline(&handles, None, Instant::now() + Duration::from_millis(1))
+            .await;
+    assert_eq!(collected, b"chunk".to_vec());
 }
 
 #[test]

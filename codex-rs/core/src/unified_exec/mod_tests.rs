@@ -8,7 +8,7 @@ use crate::session::tests::make_session_and_context;
 use crate::session::turn_context::TurnContext;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::unified_exec::WriteStdinRequest;
-use crate::unified_exec::process::OutputHandles;
+use codex_command_runtime::CommandOutputHandles as OutputHandles;
 use codex_command_runtime::DEFAULT_COMMAND_OUTPUT_MAX_BYTES;
 use codex_command_runtime::collect_output_until_deadline;
 use codex_sandboxing_api::SandboxType;
