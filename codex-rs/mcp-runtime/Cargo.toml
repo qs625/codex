@@ -16,13 +16,17 @@ workspace = true
 test-support = []
 
 [dependencies]
+anyhow = { workspace = true }
 codex-api-auth = { workspace = true }
 codex-api-provider = { workspace = true }
 codex-auth-types = { workspace = true }
+codex-client-identity = { workspace = true }
 codex-config = { workspace = true }
+codex-config-edit = { workspace = true }
 codex-config-requirements = { workspace = true }
 codex-config-types = { workspace = true }
 codex-connectors-types = { workspace = true }
+codex-core-skills-api = { workspace = true }
 codex-core-plugins-api = { workspace = true }
 codex-exec-server-api = { workspace = true }
 codex-features = { workspace = true }
@@ -30,10 +34,14 @@ codex-mcp-runtime-api = { workspace = true }
 codex-mcp-tool-types = { workspace = true }
 codex-mcp-types = { workspace = true }
 codex-openai-files-api = { workspace = true }
+codex-protocol = { workspace = true }
 codex-tool-config = { workspace = true }
 http = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros"] }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 codex-openai-files = { workspace = true }

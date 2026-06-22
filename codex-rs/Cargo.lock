@@ -3851,14 +3851,18 @@ dependencies = [
 name = "codex-mcp-runtime"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
  "codex-api-auth",
  "codex-api-provider",
  "codex-auth-types",
+ "codex-client-identity",
  "codex-config",
+ "codex-config-edit",
  "codex-config-requirements",
  "codex-config-types",
  "codex-connectors-types",
  "codex-core-plugins-api",
+ "codex-core-skills-api",
  "codex-exec-server-api",
  "codex-features",
  "codex-mcp-runtime-api",
@@ -3866,6 +3870,7 @@ dependencies = [
  "codex-mcp-types",
  "codex-openai-files",
  "codex-openai-files-api",
+ "codex-protocol",
  "codex-tool-config",
  "http 1.4.0",
  "pretty_assertions",
@@ -3873,6 +3878,8 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
+ "tracing",
  "wiremock",
 ]
 

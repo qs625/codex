@@ -21,6 +21,7 @@ use codex_mcp_types::tool_plugin_provenance as collect_tool_plugin_provenance;
 
 mod app_tools;
 mod openai_file;
+mod skill_dependencies;
 mod tool_exposure;
 
 pub use app_tools::AppToolPolicy;
@@ -37,6 +38,10 @@ pub use app_tools::managed_app_tool_approval;
 pub use app_tools::with_app_enabled_state;
 pub use openai_file::OpenAiFilePathResolver;
 pub use openai_file::rewrite_mcp_tool_arguments_for_openai_files;
+pub use skill_dependencies::McpSkillDependencyHost;
+pub use skill_dependencies::McpSkillDependencyTurnContext;
+pub use skill_dependencies::maybe_install_mcp_dependencies;
+pub use skill_dependencies::maybe_prompt_and_install_mcp_dependencies;
 pub use tool_exposure::DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD;
 pub use tool_exposure::McpToolExposure;
 pub use tool_exposure::build_mcp_tool_exposure;
