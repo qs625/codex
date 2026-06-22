@@ -1,3 +1,4 @@
+mod compact_history;
 mod contextual_user_message;
 mod fragment;
 mod history;
@@ -5,6 +6,14 @@ mod instructions;
 mod normalize;
 mod updates;
 
+pub use compact_history::COMPACT_USER_MESSAGE_MAX_TOKENS;
+pub use compact_history::build_compacted_history;
+pub use compact_history::build_compacted_history_with_limit;
+pub use compact_history::collect_compaction_user_messages;
+pub use compact_history::content_items_to_text;
+pub use compact_history::insert_initial_context_before_last_real_user_or_summary;
+pub use compact_history::is_compaction_summary_message;
+pub use compact_history::is_legacy_compaction_warning_message;
 pub use contextual_user_message::has_non_contextual_dev_message_content;
 pub use contextual_user_message::is_contextual_dev_message_content;
 pub use contextual_user_message::is_contextual_user_fragment;

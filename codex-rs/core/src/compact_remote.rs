@@ -289,17 +289,22 @@ pub(crate) async fn process_compacted_history(
 ///
 /// This intentionally keeps:
 /// - `assistant` messages (future remote compaction models may emit them)
-/// - `user`-role warnings that parse as `TurnItem::UserMessage` and compaction-generated summary
-///   messages. Legacy warning fragments are filtered by `parse_turn_item` before they reach this
-///   check.
+/// - compaction-generated summary messages.
 fn should_keep_compacted_history_item(item: &ResponseItem) -> bool {
     match item {
         ResponseItem::Message { role, .. } if role == "developer" => false,
-        ResponseItem::Message { role, .. } if role == "user" => {
-            matches!(
-                crate::event_mapping::parse_turn_item(item),
-                Some(TurnItem::UserMessage(_) | TurnItem::HookPrompt(_))
-            )
+        ResponseItem::Message { role, content, .. } if role == "user" => {
+            match crate::event_mapping::parse_turn_item(item) {
+                Some(TurnItem::UserMessage(user)) => {
+                    !codex_context_manager::is_legacy_compaction_warning_message(&user.message())
+                }
+                Some(TurnItem::HookPrompt(_)) => {
+                    !codex_context_manager::content_items_to_text(content)
+                        .as_deref()
+                        .is_some_and(codex_context_manager::is_legacy_compaction_warning_message)
+                }
+                _ => false,
+            }
         }
         ResponseItem::Message { role, .. } if role == "assistant" => true,
         ResponseItem::Message { .. } => false,

@@ -1,4 +1,6 @@
 use super::*;
+use codex_context_manager::build_compacted_history_with_limit;
+use codex_context_manager::content_items_to_text;
 use codex_protocol::AgentPath;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::ReasoningSummary;

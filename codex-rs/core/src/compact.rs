@@ -27,7 +27,6 @@ use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::items::ContextCompactionItem;
 use codex_protocol::items::TurnItem;
-use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::CompactedItem;
@@ -36,9 +35,6 @@ use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
 use codex_rollout_trace_api::InferenceTraceContext;
-use codex_utils_output_truncation::TruncationPolicy;
-use codex_utils_output_truncation::approx_token_count;
-use codex_utils_output_truncation::truncate_text;
 use futures::prelude::*;
 use tracing::error;
 
@@ -46,7 +42,6 @@ use codex_model_provider_info::ModelProviderInfo;
 
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
-const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = 20_000;
 
 /// Controls whether compaction replacement history must include initial context.
 ///
@@ -401,100 +396,25 @@ pub(crate) fn compaction_status_from_result<T>(result: &CodexResult<T>) -> Compa
     }
 }
 
-pub fn content_items_to_text(content: &[ContentItem]) -> Option<String> {
-    let mut pieces = Vec::new();
-    for item in content {
-        match item {
-            ContentItem::InputText { text } | ContentItem::OutputText { text } => {
-                if !text.is_empty() {
-                    pieces.push(text.as_str());
-                }
-            }
-            ContentItem::InputImage { .. } => {}
-        }
-    }
-    if pieces.is_empty() {
-        None
-    } else {
-        Some(pieces.join("\n"))
-    }
-}
+pub use codex_context_manager::content_items_to_text;
 
 pub(crate) fn collect_user_messages(items: &[ResponseItem]) -> Vec<String> {
-    items
-        .iter()
-        .filter_map(|item| match crate::event_mapping::parse_turn_item(item) {
-            Some(TurnItem::UserMessage(user)) => {
-                if is_summary_message(&user.message()) {
-                    None
-                } else {
-                    Some(user.message())
-                }
-            }
-            _ => None,
-        })
-        .collect()
+    codex_context_manager::collect_compaction_user_messages(items, Some(SUMMARY_PREFIX))
 }
 
 pub(crate) fn is_summary_message(message: &str) -> bool {
-    message.starts_with(format!("{SUMMARY_PREFIX}\n").as_str())
+    codex_context_manager::is_compaction_summary_message(message, Some(SUMMARY_PREFIX))
 }
 
-/// Inserts canonical initial context into compacted replacement history at the
-/// model-expected boundary.
-///
-/// Placement rules:
-/// - Prefer immediately before the last real user message.
-/// - If no real user messages remain, insert before the compaction summary so
-///   the summary stays last.
-/// - If there are no user messages, insert before the last compaction item so
-///   that item remains last (remote compaction may return only compaction items).
-/// - If there are no user messages or compaction items, append the context.
 pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
-    mut compacted_history: Vec<ResponseItem>,
+    compacted_history: Vec<ResponseItem>,
     initial_context: Vec<ResponseItem>,
 ) -> Vec<ResponseItem> {
-    let mut last_user_or_summary_index = None;
-    let mut last_real_user_index = None;
-    for (i, item) in compacted_history.iter().enumerate().rev() {
-        let Some(TurnItem::UserMessage(user)) = crate::event_mapping::parse_turn_item(item) else {
-            continue;
-        };
-        // Compaction summaries are encoded as user messages, so track both:
-        // the last real user message (preferred insertion point) and the last
-        // user-message-like item (fallback summary insertion point).
-        last_user_or_summary_index.get_or_insert(i);
-        if !is_summary_message(&user.message()) {
-            last_real_user_index = Some(i);
-            break;
-        }
-    }
-    let last_compaction_index = compacted_history
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(i, item)| {
-            matches!(
-                item,
-                ResponseItem::Compaction { .. } | ResponseItem::ContextCompaction { .. }
-            )
-            .then_some(i)
-        });
-    let insertion_index = last_real_user_index
-        .or(last_user_or_summary_index)
-        .or(last_compaction_index);
-
-    // Re-inject canonical context from the current session since we stripped it
-    // from the pre-compaction history. Prefer placing it before the last real
-    // user message; if there is no real user message left, place it before the
-    // summary or compaction item so the compaction item remains last.
-    if let Some(insertion_index) = insertion_index {
-        compacted_history.splice(insertion_index..insertion_index, initial_context);
-    } else {
-        compacted_history.extend(initial_context);
-    }
-
-    compacted_history
+    codex_context_manager::insert_initial_context_before_last_real_user_or_summary(
+        compacted_history,
+        initial_context,
+        Some(SUMMARY_PREFIX),
+    )
 }
 
 pub(crate) fn build_compacted_history(
@@ -502,65 +422,7 @@ pub(crate) fn build_compacted_history(
     user_messages: &[String],
     summary_text: &str,
 ) -> Vec<ResponseItem> {
-    build_compacted_history_with_limit(
-        initial_context,
-        user_messages,
-        summary_text,
-        COMPACT_USER_MESSAGE_MAX_TOKENS,
-    )
-}
-
-fn build_compacted_history_with_limit(
-    mut history: Vec<ResponseItem>,
-    user_messages: &[String],
-    summary_text: &str,
-    max_tokens: usize,
-) -> Vec<ResponseItem> {
-    let mut selected_messages: Vec<String> = Vec::new();
-    if max_tokens > 0 {
-        let mut remaining = max_tokens;
-        for message in user_messages.iter().rev() {
-            if remaining == 0 {
-                break;
-            }
-            let tokens = approx_token_count(message);
-            if tokens <= remaining {
-                selected_messages.push(message.clone());
-                remaining = remaining.saturating_sub(tokens);
-            } else {
-                let truncated = truncate_text(message, TruncationPolicy::Tokens(remaining));
-                selected_messages.push(truncated);
-                break;
-            }
-        }
-        selected_messages.reverse();
-    }
-
-    for message in &selected_messages {
-        history.push(ResponseItem::Message {
-            id: None,
-            role: "user".to_string(),
-            content: vec![ContentItem::InputText {
-                text: message.clone(),
-            }],
-            phase: None,
-        });
-    }
-
-    let summary_text = if summary_text.is_empty() {
-        "(no summary available)".to_string()
-    } else {
-        summary_text.to_string()
-    };
-
-    history.push(ResponseItem::Message {
-        id: None,
-        role: "user".to_string(),
-        content: vec![ContentItem::InputText { text: summary_text }],
-        phase: None,
-    });
-
-    history
+    codex_context_manager::build_compacted_history(initial_context, user_messages, summary_text)
 }
 
 async fn drain_to_completed(

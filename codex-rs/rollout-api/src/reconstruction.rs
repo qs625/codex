@@ -1,18 +1,14 @@
 //! Rollout replay and model-visible history reconstruction.
 
 use codex_context_manager::ContextManager;
-use codex_context_manager::is_contextual_user_message_content;
+use codex_context_manager::build_compacted_history;
+use codex_context_manager::collect_compaction_user_messages;
 use codex_context_manager::is_user_turn_boundary;
-use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::TurnContextItem;
 use codex_utils_output_truncation::TruncationPolicy;
-use codex_utils_output_truncation::approx_token_count;
-use codex_utils_output_truncation::truncate_text;
-
-const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = 20_000;
 
 /// Notes from the previous real user turn.
 ///
@@ -300,8 +296,10 @@ pub fn reconstruct_history_from_rollout(
                     // `reference_context_item`, reinject canonical context at
                     // the end of the resumed conversation, and accept the
                     // temporary out-of-distribution prompt shape.
-                    let user_messages =
-                        collect_user_messages(history.raw_items(), options.summary_prefix);
+                    let user_messages = collect_compaction_user_messages(
+                        history.raw_items(),
+                        options.summary_prefix,
+                    );
                     let rebuilt =
                         build_compacted_history(Vec::new(), &user_messages, &compacted.message);
                     history.replace(rebuilt);
@@ -333,124 +331,6 @@ pub fn reconstruct_history_from_rollout(
         previous_turn_settings,
         reference_context_item,
     }
-}
-
-fn collect_user_messages(items: &[ResponseItem], summary_prefix: Option<&str>) -> Vec<String> {
-    items
-        .iter()
-        .filter_map(user_message_text)
-        .filter(|message| !is_summary_message(message, summary_prefix))
-        .filter(|message| !is_legacy_warning_message(message))
-        .collect()
-}
-
-fn user_message_text(item: &ResponseItem) -> Option<String> {
-    let ResponseItem::Message { role, content, .. } = item else {
-        return None;
-    };
-    if role != "user" || is_contextual_user_message_content(content) {
-        return None;
-    }
-    content_items_to_text(content)
-}
-
-fn content_items_to_text(content: &[ContentItem]) -> Option<String> {
-    let mut pieces = Vec::new();
-    for item in content {
-        match item {
-            ContentItem::InputText { text } | ContentItem::OutputText { text } => {
-                if !text.is_empty() {
-                    pieces.push(text.as_str());
-                }
-            }
-            ContentItem::InputImage { .. } => {}
-        }
-    }
-    if pieces.is_empty() {
-        None
-    } else {
-        Some(pieces.join("\n"))
-    }
-}
-
-fn is_summary_message(message: &str, summary_prefix: Option<&str>) -> bool {
-    summary_prefix.is_some_and(|prefix| message.starts_with(format!("{prefix}\n").as_str()))
-}
-
-fn is_legacy_warning_message(message: &str) -> bool {
-    message.starts_with(
-        "Warning: The maximum number of unified exec processes you can keep open is ",
-    ) || message.starts_with(
-        "Warning: apply_patch was requested via exec_command. Use the apply_patch tool instead of exec_command.",
-    ) || message.starts_with(
-        "Warning: Your account was flagged for potentially high-risk cyber activity",
-    )
-}
-
-fn build_compacted_history(
-    initial_context: Vec<ResponseItem>,
-    user_messages: &[String],
-    summary_text: &str,
-) -> Vec<ResponseItem> {
-    build_compacted_history_with_limit(
-        initial_context,
-        user_messages,
-        summary_text,
-        COMPACT_USER_MESSAGE_MAX_TOKENS,
-    )
-}
-
-fn build_compacted_history_with_limit(
-    mut history: Vec<ResponseItem>,
-    user_messages: &[String],
-    summary_text: &str,
-    max_tokens: usize,
-) -> Vec<ResponseItem> {
-    let mut selected_messages: Vec<String> = Vec::new();
-    if max_tokens > 0 {
-        let mut remaining = max_tokens;
-        for message in user_messages.iter().rev() {
-            if remaining == 0 {
-                break;
-            }
-            let tokens = approx_token_count(message);
-            if tokens <= remaining {
-                selected_messages.push(message.clone());
-                remaining = remaining.saturating_sub(tokens);
-            } else {
-                let truncated = truncate_text(message, TruncationPolicy::Tokens(remaining));
-                selected_messages.push(truncated);
-                break;
-            }
-        }
-        selected_messages.reverse();
-    }
-
-    for message in &selected_messages {
-        history.push(ResponseItem::Message {
-            id: None,
-            role: "user".to_string(),
-            content: vec![ContentItem::InputText {
-                text: message.clone(),
-            }],
-            phase: None,
-        });
-    }
-
-    let summary_text = if summary_text.is_empty() {
-        "(no summary available)".to_string()
-    } else {
-        summary_text.to_string()
-    };
-
-    history.push(ResponseItem::Message {
-        id: None,
-        role: "user".to_string(),
-        content: vec![ContentItem::InputText { text: summary_text }],
-        phase: None,
-    });
-
-    history
 }
 
 #[cfg(test)]
