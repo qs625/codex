@@ -494,7 +494,7 @@ impl TestCodexBuilder {
                 config.codex_home.clone(),
             )),
             Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
-            Arc::new(codex_core::EmptyExecPolicyLoader),
+            Arc::new(codex_execpolicy_loader::StarlarkExecPolicyLoader),
             Arc::new(codex_api::DefaultApiRuntimeFactory),
             Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
             Arc::new(codex_sandboxing::SandboxManager::new()),

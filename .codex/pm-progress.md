@@ -12,7 +12,7 @@
 - owner: root PM direct implementation
 - status: active
 - current_step: 6C
-- current_focus: Step 6C 继续推进 service/domain boundary：command session controller 已 trait 化；MCP registry、Codex Apps auth/runtime helpers、Apps tool policy、MCP tool exposure 规划、Apps SDK OpenAI file 参数重写和 Skill MCP dependency install runtime 已迁到 `codex-mcp-runtime`；agent role built-in catalog、role resolution helper 和 spawn tool description builder 已迁到 `codex-agent-roles`，core 只保留过渡 wrapper/host adapter 和 Config reload adapter。
+- current_focus: Step 6C 继续推进 service/domain boundary：command session controller 已 trait 化；MCP registry、Codex Apps auth/runtime helpers、Apps tool policy、MCP tool exposure 规划、Apps SDK OpenAI file 参数重写和 Skill MCP dependency install runtime 已迁到 `codex-mcp-runtime`；agent role catalog/spec 已迁到 `codex-agent-roles`；exec policy manager/loader trait/update runtime 已迁到 `codex-permissions-runtime`，core 只保留过渡 wrapper/host adapter、Config reload adapter 和 child config policy reuse 判断。
 
 ## Current State
 
@@ -28,9 +28,10 @@
 - Step 6C 第三个切片把 Apps SDK `openai/fileParams` 执行期参数重写、OpenAI file upload auth adapter 和上传 payload 生成迁到 `codex-mcp-runtime::openai_file`；core `mcp_openai_file` 现在只把 `Session`/`TurnContext` 转成 auth/uploader/base URL/path resolver 调用 runtime。
 - Step 6C 第四个切片把 Skill MCP dependency install 的 first-party gating、missing dependency collection、prompt decision、global config persistence、OAuth login retry policy 和 refresh server merge 迁到 `codex-mcp-runtime::skill_dependencies`；core `mcp_skill_dependencies` 现在只实现 `McpSkillDependencyHost`，提供 Session prompt/state、MCP manager/auth runtime 和 live refresh adapter。
 - Step 6C 第五个切片把 built-in agent role declarations、built-in role config content、role resolution helper 和 spawn-agent tool role description builder 迁到 `codex-agent-roles`；core `agent::role` 现在只保留把 resolved role config layer 应用到 `Config` 的 adapter，spawn tool spec、agent nickname resolution 和默认 role 名直接依赖 `codex-agent-roles`。
+- Step 6C 第六个切片把 `ExecPolicyManager`、`ExecPolicyLoader`、`ExecPolicyLoadResult`、`ExecPolicyUpdateError` 和 exec policy rules append/update runtime 迁到 `codex-permissions-runtime`；core `exec_policy.rs` 只保留 `child_uses_parent_exec_policy` 和 test-only Starlark loader helpers，`codex-execpolicy-loader` 直接依赖 `codex-permissions-runtime` trait/result，不再依赖 `codex-core`。
 - `UnifiedExecProcess` / `process_manager` 剩余逻辑仍绑定 exec-server protocol、PTY、sandbox denial detection、core error type、Session/TurnContext、ToolEmitter、ToolOrchestrator 和 network approval；继续迁移前需要 Step 6C 的 trait/service 边界，避免只做小 helper 或把 heavy runtime 间接拉回。
 - Step 6 前基线：`codex-rs/core/src` 约 293 个 Rust 文件、134123 行；`codex-app-server` 冷编译 timing 中 `codex-core` 单 unit 约 197.7s。
-- 当前 `codex-rs/core/src` 约 270 个 Rust 文件、110913 行；`core/src/unified_exec` 剩余最大文件为 `process_manager.rs` 1226 行、`process.rs` 424 行、`async_watcher.rs` 347 行。
+- 当前 `codex-rs/core/src` 约 270 个 Rust 文件、110688 行；`core/src/unified_exec` 剩余最大文件为 `process_manager.rs` 1226 行、`process.rs` 424 行、`async_watcher.rs` 347 行。
 
 ## Last Validation
 
@@ -57,6 +58,11 @@
 - `rtk cargo test -p codex-core agent::role -- --nocapture`：通过，覆盖 core apply-role Config reload adapter。
 - `codex-agent-roles` normal graph grep 门禁：core、app-server protocol、code-mode、network-proxy、exec-server、state/sqlx、codex-api、concrete `codex-openai-files`、concrete `codex-core-skills` 均 absent。
 - workspace 反查 heavy crate 后检查 `codex-agent-roles` 是否出现在反向树：core、app-server protocol、code-mode、network-proxy、exec-server、state/sqlx、codex-api、concrete `codex-openai-files`、concrete `codex-core-skills` 均 PASS。
+- `rtk cargo test -p codex-permissions-runtime -- --nocapture`：通过，覆盖迁入 owner crate 后的 permissions runtime 测试。
+- `rtk cargo check -p codex-execpolicy-loader`：通过，确认 Starlark exec policy loader 不再需要 `codex-core`。
+- `rtk cargo test -p codex-core exec_policy -- --nocapture`：通过，覆盖 core exec policy config reuse、test-only loader 和 integration harness 的真实 Starlark loader。
+- `codex-permissions-runtime` 和 `codex-execpolicy-loader` normal graph grep 门禁：core、app-server protocol、code-mode、network-proxy、exec-server、state/sqlx、codex-api、concrete `codex-openai-files`、concrete `codex-core-skills` 均 absent。
+- workspace 反查 heavy crate 后检查 `codex-permissions-runtime` / `codex-execpolicy-loader` 是否出现在反向树：core、app-server protocol、code-mode、network-proxy、exec-server、state/sqlx、codex-api、concrete `codex-openai-files`、concrete `codex-core-skills` 均 PASS。
 - `rtk just bazel-lock-check`：通过，仅既有 rules_rs well-known crate annotation warnings。
 - `rtk git diff --check`、touched Rust `unsafe` scan：通过。
 - 用户要求后曾执行 `rtk cargo clean`；本轮 MCP runtime 验证已重新生成 `codex-rs/target` 增量缓存，后续 broad Rust 验证不再是完全冷编译。

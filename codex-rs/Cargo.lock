@@ -3461,9 +3461,9 @@ version = "0.0.0"
 dependencies = [
  "codex-config-state",
  "codex-config-types",
- "codex-core",
  "codex-execpolicy",
  "codex-execpolicy-api",
+ "codex-permissions-runtime",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -4366,6 +4366,7 @@ dependencies = [
 name = "codex-permissions-runtime"
 version = "0.0.0"
 dependencies = [
+ "codex-config-state",
  "codex-execpolicy-api",
  "codex-protocol",
  "codex-shell-command",
@@ -4374,6 +4375,8 @@ dependencies = [
  "globset",
  "pretty_assertions",
  "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -5583,6 +5586,7 @@ dependencies = [
  "codex-core-skills-api",
  "codex-exec-server",
  "codex-exec-server-api",
+ "codex-execpolicy-loader",
  "codex-extension-api",
  "codex-features",
  "codex-file-system",

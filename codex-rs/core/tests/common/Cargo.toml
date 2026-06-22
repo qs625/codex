@@ -27,6 +27,7 @@ codex-core = { workspace = true, features = ["test-support"] }
 codex-core-plugins-api = { workspace = true }
 codex-core-skills-api = { workspace = true }
 codex-extension-api = { workspace = true }
+codex-execpolicy-loader = { workspace = true }
 codex-exec-server-api = { workspace = true }
 codex-exec-server = { workspace = true }
 codex-features = { workspace = true }

@@ -13,12 +13,15 @@ doctest = false
 workspace = true
 
 [dependencies]
+codex-config-state = { workspace = true }
 codex-execpolicy-api = { workspace = true }
 codex-protocol = { workspace = true }
 codex-shell-command = { workspace = true }
 codex-shell-utils = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 globset = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync"] }
+tracing = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

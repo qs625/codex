@@ -2,6 +2,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 mod exec_policy;
+mod exec_policy_manager;
 
 pub use exec_policy::ExecPolicyApprovalRequest;
 pub use exec_policy::ExecPolicyCommandOrigin;
@@ -21,6 +22,18 @@ pub use exec_policy::join_program_and_argv;
 pub use exec_policy::profile_is_managed_read_only;
 pub use exec_policy::prompt_is_rejected_by_policy;
 pub use exec_policy::render_decision_for_unmatched_command;
+#[doc(hidden)]
+pub use exec_policy_manager::EmptyExecPolicyLoader;
+#[doc(hidden)]
+pub use exec_policy_manager::ExecPolicyLoadResult;
+#[doc(hidden)]
+pub use exec_policy_manager::ExecPolicyLoader;
+#[doc(hidden)]
+pub use exec_policy_manager::ExecPolicyManager;
+#[doc(hidden)]
+pub use exec_policy_manager::ExecPolicyUpdateError;
+#[doc(hidden)]
+pub use exec_policy_manager::default_policy_path;
 
 use codex_protocol::approvals::ExecPolicyAmendment;
 use codex_protocol::permissions::FileSystemSandboxKind;

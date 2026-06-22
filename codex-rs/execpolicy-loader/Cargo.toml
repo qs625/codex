@@ -16,9 +16,9 @@ workspace = true
 [dependencies]
 codex-config-state = { workspace = true }
 codex-config-types = { workspace = true }
-codex-core = { workspace = true }
 codex-execpolicy = { workspace = true }
 codex-execpolicy-api = { workspace = true }
+codex-permissions-runtime = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["fs"] }
 tracing = { workspace = true, features = ["log"] }

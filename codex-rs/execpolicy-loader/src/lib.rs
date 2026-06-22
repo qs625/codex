@@ -7,10 +7,10 @@ use std::pin::Pin;
 use codex_config_state::ConfigLayerStack;
 use codex_config_state::ConfigLayerStackOrdering;
 use codex_config_types::ConfigLayerSource;
-use codex_core::ExecPolicyLoadResult;
-use codex_core::ExecPolicyLoader;
 use codex_execpolicy::PolicyParser;
 use codex_execpolicy_api::Policy;
+use codex_permissions_runtime::ExecPolicyLoadResult;
+use codex_permissions_runtime::ExecPolicyLoader;
 use thiserror::Error;
 use tokio::fs;
 
