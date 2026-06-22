@@ -110,6 +110,7 @@ codex-thread-store-api = { workspace = true }
 codex-thread-store = { workspace = true, optional = true }
 codex-tool-config = { workspace = true }
 codex-tool-planning = { workspace = true }
+codex-turn-items = { workspace = true }
 codex-trace-context = { workspace = true }
 codex-user-info = { workspace = true }
 codex-utils-absolute-path = { workspace = true }

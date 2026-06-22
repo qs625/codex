@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use codex_context_manager::is_contextual_user_message_content;
 pub(crate) use codex_guardian::GuardianPromptItems;
 pub(crate) use codex_guardian::GuardianPromptMode;
 pub(crate) use codex_guardian::GuardianTranscriptCursor;
@@ -12,7 +13,6 @@ pub(crate) use codex_guardian::parse_guardian_assessment;
 use codex_protocol::models::ResponseItem;
 
 use crate::compact::content_items_to_text;
-use crate::event_mapping::is_contextual_user_message_content;
 use crate::session::session::Session;
 
 use super::AUTO_REVIEW_DENIED_ACTION_APPROVAL_DEVELOPER_PREFIX;

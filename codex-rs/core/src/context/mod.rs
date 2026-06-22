@@ -22,5 +22,4 @@ pub(crate) use codex_context_manager::SkillInstructions;
 pub(crate) use codex_context_manager::SubagentNotification;
 pub(crate) use codex_context_manager::UserInstructions;
 pub(crate) use codex_context_manager::UserShellCommand;
-pub(crate) use codex_context_manager::parse_visible_hook_prompt_message;
 pub(crate) use environment_context::environment_context_from_turn_context;

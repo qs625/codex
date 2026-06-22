@@ -3038,6 +3038,7 @@ dependencies = [
  "codex-tool-config",
  "codex-tool-planning",
  "codex-trace-context",
+ "codex-turn-items",
  "codex-user-info",
  "codex-utils-absolute-path",
  "codex-utils-backoff",
@@ -5085,6 +5086,18 @@ dependencies = [
  "windows-sys 0.52.0",
  "winsplit",
  "wiremock",
+]
+
+[[package]]
+name = "codex-turn-items"
+version = "0.0.0"
+dependencies = [
+ "codex-context-manager",
+ "codex-protocol",
+ "pretty_assertions",
+ "serde_json",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

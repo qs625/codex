@@ -1,16 +1,16 @@
 use std::env;
 use std::time::Duration;
 
-use tracing::warn;
-
-use crate::event_mapping::is_contextual_user_message_content;
-use crate::session::session::Session;
-use crate::session::turn_context::TurnContext;
 use codex_api_auth::auth_provider_from_auth_snapshot;
 use codex_api_types::ArcMonitorResult;
 use codex_api_types::ArcMonitorResultOutcome;
 use codex_api_types::ArcMonitorRuntimeRequest;
 use codex_api_types::build_arc_monitor_request as build_arc_monitor_request_from_history;
+use codex_context_manager::is_contextual_user_message_content;
+use tracing::warn;
+
+use crate::session::session::Session;
+use crate::session::turn_context::TurnContext;
 
 #[cfg(test)]
 pub(crate) use codex_api_types::ArcMonitorChatMessage;

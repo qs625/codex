@@ -152,6 +152,7 @@ members = [
     "tool-planning",
     "tool-types",
     "tools",
+    "turn-items",
     "v8-poc",
     "utils/absolute-path",
     "utils/backoff",
@@ -369,6 +370,7 @@ codex-tool-planning = { path = "tool-planning" }
 codex-tool-types = { path = "tool-types" }
 codex-tools = { path = "tools" }
 codex-tui = { path = "tui" }
+codex-turn-items = { path = "turn-items" }
 codex-uds = { path = "uds" }
 codex-user-info = { path = "user-info" }
 codex-workflow-api = { path = "workflow-api" }
