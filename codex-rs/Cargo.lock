@@ -3852,6 +3852,7 @@ name = "codex-mcp-runtime"
 version = "0.0.0"
 dependencies = [
  "codex-api-auth",
+ "codex-api-provider",
  "codex-auth-types",
  "codex-config",
  "codex-config-requirements",
@@ -3863,8 +3864,16 @@ dependencies = [
  "codex-mcp-runtime-api",
  "codex-mcp-tool-types",
  "codex-mcp-types",
+ "codex-openai-files",
+ "codex-openai-files-api",
  "codex-tool-config",
+ "http 1.4.0",
+ "pretty_assertions",
  "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "wiremock",
 ]
 
 [[package]]
