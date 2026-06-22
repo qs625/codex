@@ -3,7 +3,6 @@
 //! Assumes `apply_patch` verification/approval happened upstream. Reuses the
 //! selected turn environment filesystem for both local and remote turns, with
 //! sandboxing enforced by the explicit filesystem sandbox context.
-use crate::exec::is_likely_sandbox_denied;
 use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::review_approval_request;
 use crate::session::turn_context::TurnEnvironment;
@@ -21,6 +20,7 @@ use crate::tools::sandboxing::with_cached_approval;
 use codex_apply_patch::AppliedPatchDelta;
 use codex_apply_patch::ApplyPatchAction;
 use codex_file_system::FileSystemSandboxContext;
+use codex_process_exec::is_likely_sandbox_denied;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
 use codex_protocol::exec_output::ExecToolCallOutput;

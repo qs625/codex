@@ -12,7 +12,7 @@
 - owner: root PM direct implementation
 - status: active
 - current_step: 6C
-- current_focus: Step 6C 继续推进 service/domain boundary：command session controller、exec timeout/capture policy DTO 已迁到 `codex-command-runtime`；本地进程 output capture/aggregation 已迁到 `codex-process-exec`；MCP runtime、Apps file/skill dependency runtime 已迁到 `codex-mcp-runtime`；agent role catalog/spec 已迁到 `codex-agent-roles`；exec policy manager/loader trait/update runtime 和 network approval 纯状态机已迁到 `codex-permissions-runtime`；Windows sandbox filesystem override 解析已迁到 `codex-sandboxing-api`；unified-exec 专属 exec-server env policy 已从通用 `sandboxing::ExecRequest` 剥离。core 继续保留 session/tool host adapter、Guardian/hook adapter、exec spawn/PTY/event emission 和 sandbox execution glue。
+- current_focus: Step 6C 继续推进 service/domain boundary：command session controller、exec timeout/capture policy DTO 已迁到 `codex-command-runtime`；本地进程 output capture/aggregation 和 process result interpretation 已迁到 `codex-process-exec`；MCP runtime、Apps file/skill dependency runtime 已迁到 `codex-mcp-runtime`；agent role catalog/spec 已迁到 `codex-agent-roles`；exec policy manager/loader trait/update runtime 和 network approval 纯状态机已迁到 `codex-permissions-runtime`；Windows sandbox filesystem override 解析已迁到 `codex-sandboxing-api`；unified-exec 专属 exec-server env policy 已从通用 `sandboxing::ExecRequest` 剥离。core 继续保留 session/tool host adapter、Guardian/hook adapter、exec spawn/PTY/event emission 和 sandbox execution glue。
 
 ## Current State
 
@@ -34,9 +34,10 @@
 - Step 6C 第九个切片把 `ExecExpiration`、`ExecExpirationOutcome`、`ExecCapturePolicy`、默认 exec timeout、IO drain timeout 和 output delta 上限迁到 `codex-command-runtime::exec_control`；core `exec.rs` 短期 re-export 兼容旧测试/外部 crate，app-server streaming/process exec 路径已直接依赖 `codex-command-runtime`，不再通过 `codex-core::exec` 获取这些基础 DTO。
 - Step 6C 第十个切片把 unified-exec 专属 `ExecServerEnvConfig` 从通用 `core::sandboxing::ExecRequest` 中剥离，移动到 `core::unified_exec::process_manager` 边界；`open_session_with_exec_env` 显式接收可选 exec-server env policy，普通 shell/user-shell 和 sandbox execution path 不再被迫携带 `None` 或 destructure 占位字段。这样 `ExecRequest` 更接近纯 sandbox execution DTO，后续可继续评估迁到 `codex-sandboxing-api` 或拆出更稳定 runtime API。
 - Step 6C 第十一个切片新增 `codex-process-exec` owner crate，迁出本地 `tokio::process::Child` output capture、timeout/cancellation kill、stdout/stderr retained-byte cap、aggregation、byte decoding helper 和 output chunk DTO；core `exec.rs` 只保留 spawn/sandbox/Windows sandbox/CodexErr 映射以及 `StdoutStream -> EventMsg::ExecCommandOutputDelta` forwarder，并在返回 exec result 前等待 forwarder drain，避免 live output delta 晚于最终结果。原 `read_output_*` / `aggregate_output_*` 单测迁到 `codex-process-exec`，core 仍保留 process_exec_tool_call 和 sandbox 入口测试。
+- Step 6C 第十二个切片把 process result interpretation 迁到 `codex-process-exec`：`finalize_captured_process_output` 现在负责 byte output decoding、timeout/signal mapping、sandbox denied heuristic 和 `ExecToolCallOutput` / `CodexErr::Sandbox` 构造；core、unified exec、apply_patch 和 shell escalation callsite 直接依赖 `codex_process_exec::is_likely_sandbox_denied`，不再通过 `core::exec` facade。原 sandbox detection 单测迁到 `codex-process-exec`，并保留 raw exec error tracing。
 - `UnifiedExecProcess` / `process_manager` 剩余逻辑仍绑定 exec-server protocol、PTY、sandbox denial detection、core error type、Session/TurnContext、ToolEmitter、ToolOrchestrator 和 network approval；继续迁移前需要 Step 6C 的 trait/service 边界，避免只做小 helper 或把 heavy runtime 间接拉回。
 - Step 6 前基线：`codex-rs/core/src` 约 293 个 Rust 文件、134123 行；`codex-app-server` 冷编译 timing 中 `codex-core` 单 unit 约 197.7s。
-- 当前 `codex-rs/core/src` 约 270 个 Rust 文件、108650 行；`core/src/exec.rs` 已从 1517 行降到 769 行，Windows sandbox override 单测迁到 `codex-sandboxing-api`，exec timeout/capture DTO 单测迁到 `codex-command-runtime`，本地 process output capture 单测迁到 `codex-process-exec`，unified-exec exec-server env policy 不再污染通用 `ExecRequest`；`core/src/unified_exec` 剩余最大文件为 `process_manager.rs`、`process.rs`、`async_watcher.rs`。
+- 当前 `codex-rs/core/src` 约 270 个 Rust 文件、108424 行；`core/src/exec.rs` 已从 1517 行降到 635 行，Windows sandbox override 单测迁到 `codex-sandboxing-api`，exec timeout/capture DTO 单测迁到 `codex-command-runtime`，本地 process output capture 和 sandbox-denial/result interpretation 单测迁到 `codex-process-exec`，unified-exec exec-server env policy 不再污染通用 `ExecRequest`；`core/src/unified_exec` 剩余最大文件为 `process_manager.rs`、`process.rs`、`async_watcher.rs`。
 
 ## Last Validation
 
@@ -106,12 +107,19 @@
 - `rtk just bazel-lock-check`：通过，仅既有 rules_rs well-known crate annotation warnings。
 - `rtk cargo build -p codex-app-server --bin codex-app-server`：通过。
 - `rtk git diff --check`：通过；touched Rust unsafe scan 只命中 `core/src/exec_tests.rs` 既有 `libc::kill(pid, 0)`。
+- `rtk cargo test -p codex-process-exec -- --nocapture`：通过 15 条，覆盖迁出的 read/aggregate output 和 sandbox-denial heuristic。
+- `rtk cargo check -p codex-core --lib`：通过，覆盖 core/unified-exec/apply_patch/shell escalation 对 `codex-process-exec` result interpretation 的接线。
+- `rtk cargo test -p codex-core --lib exec_full_buffer_capture -- --nocapture`：通过 2 条，覆盖 core spawn 到 process-exec finalization 的 full-buffer 桥接。
+- `rtk cargo test -p codex-core --lib process_exec_tool_call_preserves_full_buffer_capture_policy -- --nocapture`：通过，覆盖 sandbox transform 入口到 process-exec finalization 的路径。
+- `codex-process-exec` result interpretation 迁移后 normal graph 精确 grep 门禁和 `cargo tree --workspace --edges normal --invert <heavy>` 反向门禁：core、app-server protocol、code-mode、concrete network-proxy、exec-server、state/sqlx、codex-api、concrete `codex-openai-files`、concrete `codex-core-skills` 均 PASS；normal graph 增加 `codex-protocol` / `codex-sandboxing-api` / `tracing`，仍不依赖 heavy runtime。
+- `rtk just bazel-lock-check`：通过，仅既有 rules_rs well-known crate annotation warnings。
+- `rtk cargo build -p codex-app-server --bin codex-app-server`：通过。
 - 未作为本切片通过门禁：`rtk cargo test -p codex-core --test all permission_request_hook_allows_network_approval_without_prompt -- --nocapture` 当前等待 hook log 超时；普通 `permission_request_hook_allows_shell_command_without_user_approval` 也等待事件超时，说明失败不局限于本次 network approval 状态迁移，后续需要单独排查 integration hook harness。
 - 用户要求后曾执行 `rtk cargo clean`；本轮 Windows sandbox override 验证和 app-server build 已重新生成 `codex-rs/target` 增量缓存，后续 broad Rust 验证不再是完全冷编译。
 
 ## Next Action
 
-继续 Step 6C：在 process capture 和 unified-exec env policy 已拆出/收口后，继续评估 `ExecRequest` / `ExecParams` / Windows sandbox execution glue 的 owner 边界；真实 sandbox selection、core `CodexErr` 映射、EventMsg emission 和 Session/TurnContext 编排暂留 core，避免把 heavy runtime 通过 indirect graph 拉回。
+继续 Step 6C：在 process capture、process result interpretation 和 unified-exec env policy 已拆出/收口后，继续评估 `ExecRequest` / `ExecParams` / Windows sandbox execution glue 的 owner 边界；真实 sandbox selection、EventMsg emission 和 Session/TurnContext 编排暂留 core，避免把 heavy runtime 通过 indirect graph 拉回。
 
 ## Step Plan
 

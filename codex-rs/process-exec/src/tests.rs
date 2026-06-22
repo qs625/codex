@@ -1,8 +1,105 @@
 use codex_command_runtime::DEFAULT_EXEC_OUTPUT_MAX_BYTES as EXEC_OUTPUT_MAX_BYTES;
+use codex_protocol::exec_output::ExecToolCallOutput;
+use codex_protocol::exec_output::StreamOutput;
+use codex_sandboxing_api::SandboxType;
 use pretty_assertions::assert_eq;
+use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
 use super::*;
+
+fn make_exec_output(
+    exit_code: i32,
+    stdout: &str,
+    stderr: &str,
+    aggregated: &str,
+) -> ExecToolCallOutput {
+    ExecToolCallOutput {
+        exit_code,
+        stdout: StreamOutput::new(stdout.to_string()),
+        stderr: StreamOutput::new(stderr.to_string()),
+        aggregated_output: StreamOutput::new(aggregated.to_string()),
+        duration: Duration::from_millis(1),
+        timed_out: false,
+    }
+}
+
+#[test]
+fn sandbox_detection_requires_keywords() {
+    let output = make_exec_output(/*exit_code*/ 1, "", "", "");
+    assert!(!is_likely_sandbox_denied(
+        SandboxType::LinuxSeccomp,
+        &output
+    ));
+}
+
+#[test]
+fn sandbox_detection_identifies_keyword_in_stderr() {
+    let output = make_exec_output(/*exit_code*/ 1, "", "Operation not permitted", "");
+    assert!(is_likely_sandbox_denied(SandboxType::LinuxSeccomp, &output));
+}
+
+#[test]
+fn sandbox_detection_respects_quick_reject_exit_codes() {
+    let output = make_exec_output(/*exit_code*/ 127, "", "command not found", "");
+    assert!(!is_likely_sandbox_denied(
+        SandboxType::LinuxSeccomp,
+        &output
+    ));
+}
+
+#[test]
+fn sandbox_detection_ignores_non_sandbox_mode() {
+    let output = make_exec_output(/*exit_code*/ 1, "", "Operation not permitted", "");
+    assert!(!is_likely_sandbox_denied(SandboxType::None, &output));
+}
+
+#[test]
+fn sandbox_detection_ignores_network_policy_text_in_non_sandbox_mode() {
+    let output = make_exec_output(
+        /*exit_code*/ 0,
+        "",
+        "",
+        r#"CODEX_NETWORK_POLICY_DECISION {"decision":"ask","reason":"not_allowed","source":"decider","protocol":"http","host":"google.com","port":80}"#,
+    );
+    assert!(!is_likely_sandbox_denied(SandboxType::None, &output));
+}
+
+#[test]
+fn sandbox_detection_uses_aggregated_output() {
+    let output = make_exec_output(
+        /*exit_code*/ 101,
+        "",
+        "",
+        "cargo failed: Read-only file system when writing target",
+    );
+    assert!(is_likely_sandbox_denied(
+        SandboxType::MacosSeatbelt,
+        &output
+    ));
+}
+
+#[test]
+fn sandbox_detection_ignores_network_policy_text_with_zero_exit_code() {
+    let output = make_exec_output(
+        /*exit_code*/ 0,
+        "",
+        "",
+        r#"CODEX_NETWORK_POLICY_DECISION {"decision":"ask","source":"decider","protocol":"http","host":"google.com","port":80}"#,
+    );
+
+    assert!(!is_likely_sandbox_denied(
+        SandboxType::LinuxSeccomp,
+        &output
+    ));
+}
+
+#[test]
+fn sandbox_detection_flags_sigsys_exit_code() {
+    let exit_code = EXIT_CODE_SIGNAL_BASE + LINUX_SIGSYS_CODE;
+    let output = make_exec_output(exit_code, "", "", "");
+    assert!(is_likely_sandbox_denied(SandboxType::LinuxSeccomp, &output));
+}
 
 #[tokio::test]
 async fn read_output_limits_retained_bytes_for_shell_capture() {

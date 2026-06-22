@@ -7,6 +7,12 @@ use codex_command_runtime::ExecExpiration;
 use codex_command_runtime::ExecExpirationOutcome;
 use codex_command_runtime::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
 use codex_command_runtime::bytes_to_string_smart;
+use codex_protocol::error::CodexErr;
+use codex_protocol::error::Result;
+use codex_protocol::error::SandboxErr;
+use codex_protocol::exec_output::ExecToolCallOutput;
+use codex_protocol::exec_output::StreamOutput;
+use codex_sandboxing_api::SandboxType;
 use codex_utils_pty::process_group::kill_child_process_group;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
@@ -157,6 +163,127 @@ pub async fn consume_process_output(
         aggregated_output,
         timed_out,
     })
+}
+
+pub fn finalize_captured_process_output(
+    raw_output_result: std::result::Result<CapturedProcessOutput, CodexErr>,
+    sandbox_type: SandboxType,
+    duration: Duration,
+) -> Result<ExecToolCallOutput> {
+    match raw_output_result {
+        Ok(raw_output) => {
+            #[allow(unused_mut)]
+            let mut timed_out = raw_output.timed_out;
+
+            #[cfg(target_family = "unix")]
+            {
+                use std::os::unix::process::ExitStatusExt;
+
+                if let Some(signal) = raw_output.exit_status.signal() {
+                    if signal == TIMEOUT_CODE {
+                        timed_out = true;
+                    } else {
+                        return Err(CodexErr::Sandbox(SandboxErr::Signal(signal)));
+                    }
+                }
+            }
+
+            let mut exit_code = raw_output.exit_status.code().unwrap_or(-1);
+            if timed_out {
+                exit_code = EXEC_TIMEOUT_EXIT_CODE;
+            }
+
+            let stdout = decode_stream_output(raw_output.stdout);
+            let stderr = decode_stream_output(raw_output.stderr);
+            let aggregated_output = decode_stream_output(raw_output.aggregated_output);
+            let exec_output = ExecToolCallOutput {
+                exit_code,
+                stdout,
+                stderr,
+                aggregated_output,
+                duration,
+                timed_out,
+            };
+
+            if timed_out {
+                return Err(CodexErr::Sandbox(SandboxErr::Timeout {
+                    output: Box::new(exec_output),
+                }));
+            }
+
+            if is_likely_sandbox_denied(sandbox_type, &exec_output) {
+                return Err(CodexErr::Sandbox(SandboxErr::Denied {
+                    output: Box::new(exec_output),
+                    network_policy_decision: None,
+                }));
+            }
+
+            Ok(exec_output)
+        }
+        Err(err) => {
+            tracing::error!("exec error: {err}");
+            Err(err)
+        }
+    }
+}
+
+fn decode_stream_output(output: CapturedStreamOutput) -> StreamOutput<String> {
+    let truncated_after_lines = output.truncated_after_lines;
+    StreamOutput {
+        text: output.into_utf8_lossy(),
+        truncated_after_lines,
+    }
+}
+
+/// Conservatively detect output patterns that usually mean the sandbox blocked
+/// a command rather than the command itself failing.
+pub fn is_likely_sandbox_denied(
+    sandbox_type: SandboxType,
+    exec_output: &ExecToolCallOutput,
+) -> bool {
+    if sandbox_type == SandboxType::None || exec_output.exit_code == 0 {
+        return false;
+    }
+
+    const SANDBOX_DENIED_KEYWORDS: [&str; 7] = [
+        "operation not permitted",
+        "permission denied",
+        "read-only file system",
+        "seccomp",
+        "sandbox",
+        "landlock",
+        "failed to write file",
+    ];
+
+    let has_sandbox_keyword = [
+        &exec_output.stderr.text,
+        &exec_output.stdout.text,
+        &exec_output.aggregated_output.text,
+    ]
+    .into_iter()
+    .any(|section| {
+        let lower = section.to_lowercase();
+        SANDBOX_DENIED_KEYWORDS
+            .iter()
+            .any(|needle| lower.contains(needle))
+    });
+
+    if has_sandbox_keyword {
+        return true;
+    }
+
+    const QUICK_REJECT_EXIT_CODES: [i32; 3] = [2, 126, 127];
+    if QUICK_REJECT_EXIT_CODES.contains(&exec_output.exit_code) {
+        return false;
+    }
+
+    if sandbox_type == SandboxType::LinuxSeccomp
+        && exec_output.exit_code == EXIT_CODE_SIGNAL_BASE + LINUX_SIGSYS_CODE
+    {
+        return true;
+    }
+
+    false
 }
 
 pub async fn read_process_output<R: AsyncRead + Unpin + Send + 'static>(

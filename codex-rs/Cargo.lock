@@ -4417,9 +4417,12 @@ name = "codex-process-exec"
 version = "0.0.0"
 dependencies = [
  "codex-command-runtime",
+ "codex-protocol",
+ "codex-sandboxing-api",
  "codex-utils-pty",
  "pretty_assertions",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
