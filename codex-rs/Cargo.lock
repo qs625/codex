@@ -2006,6 +2006,7 @@ dependencies = [
  "codex-otel",
  "codex-otel-init",
  "codex-plugin",
+ "codex-process-exec",
  "codex-protocol",
  "codex-rmcp-client",
  "codex-rollout",
@@ -4418,8 +4419,10 @@ name = "codex-process-exec"
 version = "0.0.0"
 dependencies = [
  "codex-command-runtime",
+ "codex-network-proxy-api",
  "codex-protocol",
  "codex-sandboxing-api",
+ "codex-utils-absolute-path",
  "codex-utils-pty",
  "pretty_assertions",
  "tokio",

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::io;
 #[cfg(target_os = "windows")]
 use std::path::Path;
@@ -20,10 +19,10 @@ pub use codex_command_runtime::ExecExpirationOutcome;
 pub use codex_command_runtime::IO_DRAIN_TIMEOUT_MS;
 pub use codex_command_runtime::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
 pub use codex_command_runtime::cancel_when_either;
-use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_process_exec::CapturedProcessOutput as RawExecToolCallOutput;
 #[cfg(target_os = "windows")]
 use codex_process_exec::CapturedStreamOutput;
+pub use codex_process_exec::ExecParams;
 use codex_process_exec::ProcessOutputChunk;
 use codex_process_exec::ProcessOutputSender;
 use codex_process_exec::ProcessOutputStream;
@@ -55,21 +54,6 @@ use codex_sandboxing_api::resolve_windows_restricted_token_filesystem_overrides;
 use codex_sandboxing_api::windows_sandbox_uses_elevated_backend;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use tokio::task::JoinHandle;
-
-#[derive(Debug)]
-pub struct ExecParams {
-    pub command: Vec<String>,
-    pub cwd: AbsolutePathBuf,
-    pub expiration: ExecExpiration,
-    pub capture_policy: ExecCapturePolicy,
-    pub env: HashMap<String, String>,
-    pub network: Option<SharedNetworkProxyRuntime>,
-    pub sandbox_permissions: SandboxPermissions,
-    pub windows_sandbox_level: codex_protocol::config_types::WindowsSandboxLevel,
-    pub windows_sandbox_private_desktop: bool,
-    pub justification: Option<String>,
-    pub arg0: Option<String>,
-}
 
 fn select_process_exec_tool_sandbox_type(
     sandbox_runtime: &dyn SandboxRuntime,

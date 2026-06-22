@@ -14,8 +14,10 @@ workspace = true
 
 [dependencies]
 codex-command-runtime = { workspace = true }
+codex-network-proxy-api = { workspace = true }
 codex-protocol = { workspace = true }
 codex-sandboxing-api = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
 codex-utils-pty = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "process", "rt", "signal", "sync", "time"] }
 tracing = { workspace = true }

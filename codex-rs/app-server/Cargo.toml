@@ -84,6 +84,7 @@ codex-models-manager-api = { workspace = true }
 codex-models-manager = { workspace = true }
 codex-network-proxy = { workspace = true }
 codex-openai-files = { workspace = true }
+codex-process-exec = { workspace = true }
 codex-protocol = { workspace = true }
 codex-app-server-protocol = { workspace = true }
 codex-app-server-transport = { workspace = true }

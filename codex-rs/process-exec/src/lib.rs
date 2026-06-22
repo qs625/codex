@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io;
 use std::process::ExitStatus;
 use std::time::Duration;
@@ -7,12 +8,15 @@ use codex_command_runtime::ExecExpiration;
 use codex_command_runtime::ExecExpirationOutcome;
 use codex_command_runtime::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
 use codex_command_runtime::bytes_to_string_smart;
+use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result;
 use codex_protocol::error::SandboxErr;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::exec_output::StreamOutput;
+use codex_protocol::models::SandboxPermissions;
 use codex_sandboxing_api::SandboxType;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_pty::process_group::kill_child_process_group;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
@@ -28,6 +32,26 @@ pub const EXEC_TIMEOUT_EXIT_CODE: i32 = 124;
 
 const READ_CHUNK_SIZE: usize = 8192;
 const AGGREGATE_BUFFER_INITIAL_CAPACITY: usize = 8 * 1024;
+
+/// Portable process execution request shared by shell/app-server entrypoints.
+///
+/// This type owns the model/user-facing request shape. Sandbox transformation,
+/// environment marker injection, process spawning, and event emission remain in
+/// the runtime crate that has the relevant host services.
+#[derive(Debug)]
+pub struct ExecParams {
+    pub command: Vec<String>,
+    pub cwd: AbsolutePathBuf,
+    pub expiration: ExecExpiration,
+    pub capture_policy: ExecCapturePolicy,
+    pub env: HashMap<String, String>,
+    pub network: Option<SharedNetworkProxyRuntime>,
+    pub sandbox_permissions: SandboxPermissions,
+    pub windows_sandbox_level: codex_protocol::config_types::WindowsSandboxLevel,
+    pub windows_sandbox_private_desktop: bool,
+    pub justification: Option<String>,
+    pub arg0: Option<String>,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProcessOutputStream {
