@@ -146,7 +146,7 @@ pub(super) fn network_proxy_toml_config(
     }
 }
 
-pub(crate) fn resolve_web_search_mode_for_turn(
+pub fn resolve_web_search_mode_for_turn(
     web_search_mode: &Constrained<WebSearchMode>,
     permission_profile: &PermissionProfile,
 ) -> WebSearchMode {

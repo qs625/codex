@@ -13,10 +13,107 @@ pub mod permissions_toml;
 pub mod profile_toml;
 mod project_root_markers;
 mod requirements_exec_policy;
+mod runtime;
 pub mod schema;
 mod skills_config;
 mod state;
 pub mod types;
+
+#[cfg(test)]
+extern crate self as codex_config;
+
+#[cfg(test)]
+mod agents_md {
+    pub use crate::runtime::DEFAULT_AGENTS_MD_FILENAME;
+    pub use crate::runtime::LOCAL_AGENTS_MD_FILENAME;
+}
+
+#[cfg(test)]
+mod config {
+    pub use crate::*;
+}
+
+#[cfg(test)]
+mod exec_policy {
+    use crate::ConfigLayerStack;
+    use crate::ConfigLayerStackOrdering;
+    use codex_execpolicy_api::Policy;
+    use std::path::Path;
+    use std::path::PathBuf;
+
+    const RULES_DIR_NAME: &str = "rules";
+
+    pub(crate) async fn load_exec_policy(
+        config_stack: &ConfigLayerStack,
+    ) -> anyhow::Result<Policy> {
+        let mut policy_paths = Vec::new();
+        for layer in config_stack.get_layers(
+            ConfigLayerStackOrdering::LowestPrecedenceFirst,
+            /*include_disabled*/ false,
+        ) {
+            if config_stack.ignore_user_and_project_exec_policy_rules()
+                && matches!(
+                    layer.name,
+                    codex_config_types::ConfigLayerSource::User { .. }
+                        | codex_config_types::ConfigLayerSource::Project { .. }
+                )
+            {
+                continue;
+            }
+            if let Some(config_folder) = layer.config_folder() {
+                policy_paths.extend(collect_policy_files(config_folder.join(RULES_DIR_NAME))?);
+            }
+        }
+
+        let mut parser = codex_execpolicy::PolicyParser::new();
+        for policy_path in &policy_paths {
+            let contents = std::fs::read_to_string(policy_path)?;
+            let identifier = policy_path.to_string_lossy().to_string();
+            parser.parse(&identifier, &contents)?;
+        }
+
+        let policy = parser.build();
+        let Some(requirements_policy) = config_stack.requirements().exec_policy.as_deref() else {
+            return Ok(policy);
+        };
+        Ok(policy.merge_overlay(requirements_policy.as_ref()))
+    }
+
+    fn collect_policy_files(dir: impl AsRef<Path>) -> anyhow::Result<Vec<PathBuf>> {
+        let dir = dir.as_ref();
+        let read_dir = match std::fs::read_dir(dir) {
+            Ok(read_dir) => read_dir,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(err) => return Err(err.into()),
+        };
+
+        let mut policy_paths = Vec::new();
+        for entry in read_dir {
+            let entry = entry?;
+            let path = entry.path();
+            let file_type = entry.file_type()?;
+            if path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext == "rules")
+                && file_type.is_file()
+            {
+                policy_paths.push(path);
+            }
+        }
+
+        policy_paths.sort();
+        Ok(policy_paths)
+    }
+}
+
+pub mod agent_roles {
+    pub use crate::runtime::agent_roles::*;
+}
+
+pub mod edit {
+    pub use crate::runtime::edit::*;
+}
 
 pub use cloud_requirements::CloudRequirementsLoadError;
 pub use cloud_requirements::CloudRequirementsLoadErrorCode;
@@ -118,6 +215,43 @@ pub use requirements_exec_policy::RequirementsExecPolicyParseError;
 pub use requirements_exec_policy::RequirementsExecPolicyPatternTokenToml;
 pub use requirements_exec_policy::RequirementsExecPolicyPrefixRuleToml;
 pub use requirements_exec_policy::RequirementsExecPolicyToml;
+pub use runtime::AgentCapabilityAllowlist;
+pub use runtime::AgentRoleConfig;
+pub use runtime::AgentRoleSource;
+pub use runtime::Config;
+pub use runtime::ConfigBuilder;
+pub use runtime::ConfigOverrides;
+pub use runtime::GhostSnapshotConfig;
+pub use runtime::ManagedFeatures;
+pub use runtime::MultiAgentV2Config;
+pub use runtime::NetworkProxyAuditMetadata;
+pub use runtime::NetworkProxySpec;
+pub use runtime::PermissionProfileState;
+pub use runtime::Permissions;
+pub use runtime::ProjectConfig;
+pub use runtime::RealtimeAudioConfig;
+pub use runtime::RealtimeConfig;
+pub use runtime::StartedNetworkProxy;
+pub use runtime::TerminalResizeReflowConfig;
+pub use runtime::TerminalResizeReflowMaxRows;
+pub use runtime::ThreadStoreConfig;
+pub use runtime::deserialize_config_toml_with_base;
+pub use runtime::find_codex_home;
+pub use runtime::hook_config_layer_stack_from_config_layer_stack;
+pub use runtime::load_config_as_toml_with_cli_and_load_options;
+pub use runtime::load_config_as_toml_with_cli_and_load_options_and_layer_loader;
+pub use runtime::load_config_as_toml_with_cli_and_loader_overrides;
+pub use runtime::load_config_as_toml_with_cli_overrides;
+pub use runtime::log_dir;
+pub use runtime::plugin_config_layer_stack_from_config_layer_stack;
+pub use runtime::resolve_oss_provider;
+pub use runtime::resolve_profile_v2_config_path;
+pub use runtime::resolve_tool_suggest_config_from_layer_stack;
+pub use runtime::resolve_web_search_mode_for_turn;
+pub use runtime::set_default_oss_provider;
+pub use runtime::set_project_trust_level;
+pub use runtime::skill_config_layer_stack_from_config_layer_stack;
+pub use runtime::validate_feature_requirements_for_config_toml;
 pub use skills_config::BundledSkillsConfig;
 pub use skills_config::SkillConfig;
 pub use skills_config::SkillsConfig;

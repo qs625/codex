@@ -16,7 +16,7 @@ fn main() -> Result<()> {
     let out_path = args.out.unwrap_or_else(|| {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
-            .join("core")
+            .join("config")
             .join("config.schema.json")
     });
     codex_config_toml::schema::write_config_schema(&out_path)?;

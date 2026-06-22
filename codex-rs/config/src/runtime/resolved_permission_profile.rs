@@ -125,12 +125,12 @@ impl ResolvedPermissionProfile {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct PermissionProfileState {
+pub struct PermissionProfileState {
     resolved_permission_profile: Constrained<ResolvedPermissionProfile>,
 }
 
 impl PermissionProfileState {
-    pub(crate) fn from_constrained_legacy(
+    pub fn from_constrained_legacy(
         constrained_permission_profile: Constrained<PermissionProfile>,
     ) -> ConstraintResult<Self> {
         let resolved =
@@ -138,7 +138,7 @@ impl PermissionProfileState {
         Self::from_constrained_resolved(constrained_permission_profile, resolved)
     }
 
-    pub(crate) fn from_constrained_active_profile(
+    pub fn from_constrained_active_profile(
         constrained_permission_profile: Constrained<PermissionProfile>,
         active_permission_profile: Option<ActivePermissionProfile>,
         profile_workspace_roots: Vec<AbsolutePathBuf>,
@@ -167,23 +167,23 @@ impl PermissionProfileState {
         })
     }
 
-    pub(crate) fn permission_profile(&self) -> &PermissionProfile {
+    pub fn permission_profile(&self) -> &PermissionProfile {
         self.resolved_permission_profile.get().permission_profile()
     }
 
-    pub(crate) fn active_permission_profile(&self) -> Option<ActivePermissionProfile> {
+    pub fn active_permission_profile(&self) -> Option<ActivePermissionProfile> {
         self.resolved_permission_profile
             .get()
             .active_permission_profile()
     }
 
-    pub(crate) fn profile_workspace_roots(&self) -> &[AbsolutePathBuf] {
+    pub fn profile_workspace_roots(&self) -> &[AbsolutePathBuf] {
         self.resolved_permission_profile
             .get()
             .profile_workspace_roots()
     }
 
-    pub(crate) fn can_set_legacy_permission_profile(
+    pub fn can_set_legacy_permission_profile(
         &self,
         permission_profile: &PermissionProfile,
     ) -> ConstraintResult<()> {
@@ -191,7 +191,7 @@ impl PermissionProfileState {
         self.resolved_permission_profile.can_set(&candidate)
     }
 
-    pub(crate) fn set_legacy_permission_profile(
+    pub fn set_legacy_permission_profile(
         &mut self,
         permission_profile: PermissionProfile,
     ) -> ConstraintResult<()> {
@@ -199,7 +199,7 @@ impl PermissionProfileState {
             .set(ResolvedPermissionProfile::legacy(permission_profile))
     }
 
-    pub(crate) fn set_active_permission_profile(
+    pub fn set_active_permission_profile(
         &mut self,
         permission_profile: PermissionProfile,
         active_permission_profile: Option<ActivePermissionProfile>,

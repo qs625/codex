@@ -501,6 +501,28 @@ pub struct Config {
     pub otel: OtelConfig,
 }
 
+impl codex_rollout_api::RolloutConfigView for Config {
+    fn codex_home(&self) -> &std::path::Path {
+        self.codex_home.as_path()
+    }
+
+    fn sqlite_home(&self) -> &std::path::Path {
+        self.sqlite_home.as_path()
+    }
+
+    fn cwd(&self) -> &std::path::Path {
+        self.cwd.as_path()
+    }
+
+    fn model_provider_id(&self) -> &str {
+        self.model_provider_id.as_str()
+    }
+
+    fn generate_memories(&self) -> bool {
+        self.memories.generate_memories
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct MultiAgentV2Config {
     pub max_concurrent_threads_per_session: usize,

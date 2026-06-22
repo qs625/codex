@@ -1310,6 +1310,7 @@
     },
     "ModelOptionToml": {
       "additionalProperties": false,
+      "description": "User-visible model picker entry backed by a configured provider.",
       "properties": {
         "ak": {
           "description": "Optional ModelHub-style query parameter key appended as `ak`.",
@@ -2176,6 +2177,7 @@
     },
     "ProjectConfig": {
       "additionalProperties": false,
+      "description": "Project-local trust decision loaded from the `[projects]` config map.",
       "properties": {
         "trust_level": {
           "$ref": "#/definitions/TrustLevel"

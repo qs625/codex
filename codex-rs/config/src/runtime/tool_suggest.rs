@@ -7,7 +7,7 @@ pub(super) fn resolve_tool_suggest_config(
     resolve_tool_suggest_config_from_config(config_toml.tool_suggest.as_ref(), config_layer_stack)
 }
 
-pub(crate) fn resolve_tool_suggest_config_from_layer_stack(
+pub fn resolve_tool_suggest_config_from_layer_stack(
     config_layer_stack: &ConfigLayerStack,
 ) -> ToolSuggestConfig {
     let tool_suggest = config_layer_stack

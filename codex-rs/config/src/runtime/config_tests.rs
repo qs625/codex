@@ -100,10 +100,9 @@ use serde::Deserialize;
 use tempfile::tempdir;
 
 use super::*;
-use core_test_support::PathBufExt;
-use core_test_support::PathExt;
-use core_test_support::TempDirExt;
-use core_test_support::test_absolute_path;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_absolute_path::test_support::PathBufExt;
+use codex_utils_absolute_path::test_support::PathExt;
 use pretty_assertions::assert_eq;
 
 use std::collections::BTreeMap;
@@ -111,6 +110,36 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 use tempfile::TempDir;
+
+fn test_absolute_path(unix_path: &str) -> AbsolutePathBuf {
+    AbsolutePathBuf::from_absolute_path(test_path_buf(unix_path))
+        .expect("test path should be absolute")
+}
+
+fn test_path_buf(unix_path: &str) -> std::path::PathBuf {
+    if cfg!(windows) {
+        let mut path = std::path::PathBuf::from(r"C:\");
+        path.extend(
+            unix_path
+                .trim_start_matches('/')
+                .split('/')
+                .filter(|segment| !segment.is_empty()),
+        );
+        path
+    } else {
+        std::path::PathBuf::from(unix_path)
+    }
+}
+
+trait TempDirExt {
+    fn abs(&self) -> AbsolutePathBuf;
+}
+
+impl TempDirExt for TempDir {
+    fn abs(&self) -> AbsolutePathBuf {
+        self.path().abs()
+    }
+}
 
 fn active_permission_profile_state(
     permission_profile: PermissionProfile,

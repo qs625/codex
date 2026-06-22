@@ -69,11 +69,11 @@ impl Permissions {
         })
     }
 
-    pub(crate) fn permission_profile_state(&self) -> &PermissionProfileState {
+    pub fn permission_profile_state(&self) -> &PermissionProfileState {
         &self.permission_profile_state
     }
 
-    pub(crate) fn set_permission_profile_state(
+    pub fn set_permission_profile_state(
         &mut self,
         permission_profile_state: PermissionProfileState,
     ) {

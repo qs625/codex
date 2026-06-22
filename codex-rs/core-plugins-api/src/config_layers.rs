@@ -156,25 +156,3 @@ fn merge_toml_values(base: &mut TomlValue, overlay: &TomlValue) {
         *base = overlay.clone();
     }
 }
-
-#[cfg(any(test, feature = "config-test-support"))]
-impl From<codex_config::ConfigLayerStack> for PluginConfigLayerStack {
-    fn from(stack: codex_config::ConfigLayerStack) -> Self {
-        let layers = stack
-            .get_layers(
-                codex_config::ConfigLayerStackOrdering::LowestPrecedenceFirst,
-                /*include_disabled*/ true,
-            )
-            .into_iter()
-            .map(|layer| {
-                PluginConfigLayerEntry::new_with_config_folder(
-                    layer.name.clone(),
-                    layer.config.clone(),
-                    layer.config_folder(),
-                    layer.is_disabled(),
-                )
-            })
-            .collect();
-        Self::new(layers)
-    }
-}

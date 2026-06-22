@@ -15,6 +15,7 @@ workspace = true
 default = []
 test-support = [
     "codex-api",
+    "codex-config/test-support",
     "codex-config-local-loader",
     "codex-default-client",
     "codex-exec-server",
@@ -46,6 +47,7 @@ codex-code-mode-api = { workspace = true }
 codex-client-identity = { workspace = true }
 codex-client-types = { workspace = true }
 codex-command-runtime = { workspace = true }
+codex-config = { workspace = true }
 codex-connectors-api = { workspace = true }
 codex-connectors-types = { workspace = true }
 codex-config-diagnostics = { workspace = true }
@@ -155,7 +157,6 @@ assert_matches = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
 codex-api = { workspace = true }
-codex-config = { workspace = true }
 codex-core-plugins = { workspace = true }
 codex-core-skills = { workspace = true }
 codex-default-client = { workspace = true }

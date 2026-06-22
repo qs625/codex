@@ -2616,6 +2616,12 @@ dependencies = [
 name = "codex-config"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
+ "assert_matches",
+ "base64 0.22.1",
+ "codex-agent-roles",
+ "codex-auth-types",
+ "codex-command-runtime",
  "codex-config-diagnostics",
  "codex-config-edit",
  "codex-config-loader",
@@ -2625,12 +2631,39 @@ dependencies = [
  "codex-config-state",
  "codex-config-toml",
  "codex-config-types",
+ "codex-core-plugins",
+ "codex-core-plugins-api",
+ "codex-core-skills-api",
+ "codex-execpolicy",
+ "codex-execpolicy-api",
+ "codex-features",
+ "codex-file-system",
+ "codex-git-info",
+ "codex-hooks-api",
+ "codex-mcp-types",
+ "codex-memories-read-api",
+ "codex-model-provider-info",
+ "codex-models-manager",
+ "codex-models-manager-api",
+ "codex-network-proxy-api",
  "codex-protocol",
+ "codex-rollout-api",
+ "codex-sandboxing-api",
+ "codex-state-api",
  "codex-utils-absolute-path",
+ "codex-utils-cargo-bin",
+ "codex-utils-home-dir",
+ "codex-utils-path",
+ "dirs",
  "pretty_assertions",
+ "serde",
  "serde_json",
+ "similar",
  "tempfile",
+ "tokio",
  "toml 0.9.11+spec-1.1.0",
+ "toml_edit 0.24.0+spec-1.1.0",
+ "tracing",
 ]
 
 [[package]]
@@ -3106,7 +3139,6 @@ dependencies = [
 name = "codex-core-plugins-api"
 version = "0.0.0"
 dependencies = [
- "codex-config",
  "codex-config-types",
  "codex-plugin-types",
  "codex-utils-absolute-path",
@@ -3666,7 +3698,6 @@ name = "codex-hooks-api"
 version = "0.0.0"
 dependencies = [
  "chrono",
- "codex-config",
  "codex-config-types",
  "codex-plugin-types",
  "codex-protocol",

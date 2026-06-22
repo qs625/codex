@@ -12,11 +12,7 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[features]
-config-test-support = ["dep:codex-config"]
-
 [dependencies]
-codex-config = { workspace = true, optional = true }
 codex-config-types = { workspace = true }
 codex-plugin-types = { workspace = true }
 codex-utils-absolute-path = { workspace = true }

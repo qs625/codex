@@ -43,7 +43,7 @@ impl NetworkProxySpec {
         self.config.network.enable_socks5
     }
 
-    pub(crate) fn from_config_and_constraints(
+    pub fn from_config_and_constraints(
         config: NetworkProxyConfig,
         requirements: Option<NetworkConstraints>,
         permission_profile: &PermissionProfile,
@@ -112,7 +112,7 @@ impl NetworkProxySpec {
             .map_err(|err| std::io::Error::other(format!("failed to start network proxy: {err}")))
     }
 
-    pub(crate) fn recompute_for_permission_profile(
+    pub fn recompute_for_permission_profile(
         &self,
         permission_profile: &PermissionProfile,
     ) -> std::io::Result<Self> {
@@ -123,10 +123,7 @@ impl NetworkProxySpec {
         )
     }
 
-    pub(crate) fn with_exec_policy_network_rules(
-        &self,
-        exec_policy: &Policy,
-    ) -> std::io::Result<Self> {
+    pub fn with_exec_policy_network_rules(&self, exec_policy: &Policy) -> std::io::Result<Self> {
         let mut spec = self.clone();
         apply_exec_policy_network_rules(&mut spec.config, exec_policy);
         validate_policy_against_constraints(&spec.config, &spec.constraints).map_err(|err| {
@@ -138,7 +135,7 @@ impl NetworkProxySpec {
         Ok(spec)
     }
 
-    pub(crate) async fn apply_to_started_proxy(
+    pub async fn apply_to_started_proxy(
         &self,
         started_proxy: &StartedNetworkProxy,
     ) -> std::io::Result<()> {
