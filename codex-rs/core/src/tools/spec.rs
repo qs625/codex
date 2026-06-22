@@ -36,7 +36,7 @@ pub(crate) fn collect_tool_router_parts(
     dynamic_tools: &[DynamicToolSpec],
 ) -> ToolRouterParts {
     let default_agent_type_description =
-        crate::agent::role::spawn_tool_spec::build(&std::collections::BTreeMap::new());
+        codex_agent_roles::spawn_tool_spec::build(&std::collections::BTreeMap::new());
     let executors = collect_tool_executors(
         config,
         ToolRegistryBuildParams {

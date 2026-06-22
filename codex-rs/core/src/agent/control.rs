@@ -2,8 +2,6 @@ use crate::agent::AgentStatus;
 use crate::agent::registry::AgentMetadata;
 use crate::agent::registry::AgentMode;
 use crate::agent::registry::AgentRegistry;
-use crate::agent::role::DEFAULT_ROLE_NAME;
-use crate::agent::role::resolve_role_config;
 use crate::agent::status::is_final;
 use crate::codex_thread::CodexThread;
 use crate::codex_thread::ThreadConfigSnapshot;
@@ -11,6 +9,8 @@ use crate::session::emit_subagent_session_started;
 use crate::shell_snapshot::ShellSnapshot;
 use crate::thread_manager::ResumeThreadWithHistoryOptions;
 use crate::thread_manager::ThreadManagerState;
+use codex_agent_roles::DEFAULT_ROLE_NAME;
+use codex_agent_roles::resolve_role_config;
 use codex_agent_runtime::SpawnAgentForkMode;
 use codex_agent_runtime::select_forked_rollout_items;
 use codex_features::Feature;
@@ -78,8 +78,8 @@ fn agent_nickname_candidates(
     role_name: Option<&str>,
 ) -> Vec<String> {
     let role_name = role_name.unwrap_or(DEFAULT_ROLE_NAME);
-    if let Some(candidates) =
-        resolve_role_config(config, role_name).and_then(|role| role.nickname_candidates.clone())
+    if let Some(candidates) = resolve_role_config(&config.agent_roles, role_name)
+        .and_then(|role| role.nickname_candidates.clone())
     {
         return candidates;
     }

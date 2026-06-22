@@ -14,8 +14,14 @@ use std::path::Path;
 use std::path::PathBuf;
 use toml::Value as TomlValue;
 
+mod built_in;
+pub mod spawn_tool_spec;
+
 const MAX_AGENT_ROLE_DESCRIPTION_LEN: usize = 1024;
 const MAX_MARKDOWN_AGENT_BODY_LEN: usize = 8 * 1024;
+
+/// The role name used when a caller omits `agent_type`.
+pub const DEFAULT_ROLE_NAME: &str = "default";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AgentRoleConfig {
@@ -51,6 +57,26 @@ pub enum AgentCapabilityAllowlist {
     Inherit,
     All,
     Patterns(Vec<String>),
+}
+
+/// Returns built-in role declarations.
+pub fn built_in_configs() -> &'static BTreeMap<String, AgentRoleConfig> {
+    built_in::configs()
+}
+
+/// Resolves a built-in role `config_file` path to embedded content.
+pub fn built_in_config_file_contents(path: &Path) -> Option<&'static str> {
+    built_in::config_file_contents(path)
+}
+
+/// Resolves a role from user-defined declarations first, then built-in declarations.
+pub fn resolve_role_config<'a>(
+    user_defined_agent_roles: &'a BTreeMap<String, AgentRoleConfig>,
+    role_name: &str,
+) -> Option<&'a AgentRoleConfig> {
+    user_defined_agent_roles
+        .get(role_name)
+        .or_else(|| built_in_configs().get(role_name))
 }
 
 pub async fn load_agent_roles(

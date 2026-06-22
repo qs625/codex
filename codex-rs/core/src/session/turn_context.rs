@@ -229,7 +229,7 @@ impl TurnContext {
         .with_max_concurrent_threads_per_session(Some(
             config.multi_agent_v2.max_concurrent_threads_per_session,
         ))
-        .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
+        .with_agent_type_description(codex_agent_roles::spawn_tool_spec::build(
             &config.agent_roles,
         ))
         .with_agent_tool_patterns(config.agent_tool_patterns.clone());
@@ -532,7 +532,7 @@ impl Session {
                 .multi_agent_v2
                 .max_concurrent_threads_per_session,
         ))
-        .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
+        .with_agent_type_description(codex_agent_roles::spawn_tool_spec::build(
             &per_turn_config.agent_roles,
         ))
         .with_agent_tool_patterns(per_turn_config.agent_tool_patterns.clone());
