@@ -157,6 +157,7 @@ assert_matches = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
 codex-api = { workspace = true }
+codex-config = { workspace = true, features = ["test-support"] }
 codex-core-plugins = { workspace = true }
 codex-core-skills = { workspace = true }
 codex-default-client = { workspace = true }

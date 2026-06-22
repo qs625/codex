@@ -198,8 +198,8 @@ impl ConfigBuilder {
         .await
     }
 
-    #[cfg(test)]
-    pub(crate) fn without_managed_config_for_tests() -> Self {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn without_managed_config_for_tests() -> Self {
         Self::default().loader_overrides(LoaderOverrides::without_managed_config_for_tests())
     }
 }

@@ -22,6 +22,7 @@
   `3d7cda6 refactor command output waiting into runtime` 将 command output handles 和 output deadline collector 下沉到 `codex-command-runtime`。
   `81570cb refactor command process ids into runtime` 将 process id reservation、completed process id history 和 pruning policy 下沉到 `codex-command-runtime`。
 - Step 6B 第三个切片已把 command output buffer、output runtime hub、local broadcast pump、UTF-8 output delta splitter 和 transcript aggregation helper 集中到 `codex-command-runtime::output`；core `UnifiedExecProcess` 只持有 `CommandOutputRuntime` 并负责 PTY/exec-server wiring 与 EventMsg emission。
+- 已补上 Step 6A 迁移后的 config test-support 边界：`codex-config/test-support` 公开测试构造 helper，`codex-core` dev build 启用该 feature，恢复 core 单测对 migrated config API 的访问。
 - `UnifiedExecProcess` 仍依赖 exec-server protocol、PTY、sandbox denial detection 和 core error type，不能在没有边界拆分前整体搬迁。
 - Step 6 前基线：`codex-rs/core/src` 约 293 个 Rust 文件、134123 行；`codex-app-server` 冷编译 timing 中 `codex-core` 单 unit 约 197.7s。
 
@@ -29,13 +30,14 @@
 
 - `rtk cargo test -p codex-config`：通过。
 - `rtk cargo test -p codex-command-runtime`：通过。
+- `rtk cargo test -p codex-core unified_exec::async_watcher -- --nocapture`：通过。
 - `rtk cargo check -p codex-core --lib`：通过，仅既有 warnings。
 - `rtk cargo build -p codex-app-server --bin codex-app-server`：通过，仅既有 warnings。
 - `rtk cargo tree -p codex-config --invert <heavy> --edges normal --depth 6`：未把 core、app-server protocol、code-mode、exec-server、state/sqlx 等 heavy runtime 拉回。
 - `rtk cargo tree -p codex-command-runtime --depth 2 --edges normal`：direct graph 仍仅为 decoding、rand、tokio/tokio-util。
 - workspace 反查 heavy crate 后检查 `codex-command-runtime` 是否出现在反向树：core、app-server protocol、code-mode、exec-server、state/sqlx 等均 PASS。
-- `rtk git diff --check`、touched Rust `unsafe` scan：通过；Cargo 依赖未变更，未重跑 Bazel lockfile。
-- 本轮尝试 `rtk cargo test -p codex-core unified_exec::async_watcher -- --nocapture`：被既有 Step 6A config test-support API 编译问题阻塞，先不作为 Step 6B output runtime 切片门禁；本轮相关测试已迁入 `codex-command-runtime` 并通过。
+- `rtk just bazel-lock-check`：通过，仅既有 rules_rs well-known crate annotation warnings。
+- `rtk git diff --check`、touched Rust `unsafe` scan：通过。
 
 ## Next Action
 

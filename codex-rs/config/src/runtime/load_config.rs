@@ -1,8 +1,8 @@
 use super::*;
 
 impl Config {
-    #[cfg(test)]
-    pub(crate) async fn load_from_base_config_with_overrides(
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn load_from_base_config_with_overrides(
         cfg: ConfigToml,
         overrides: ConfigOverrides,
         codex_home: AbsolutePathBuf,

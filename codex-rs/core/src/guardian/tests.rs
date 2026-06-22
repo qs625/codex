@@ -2093,7 +2093,7 @@ async fn guardian_review_session_config_disables_mcp_apps_and_plugins() {
 #[tokio::test]
 async fn guardian_review_session_config_allows_pinned_disabled_feature() {
     let mut parent_config = test_config().await;
-    parent_config.features = ManagedFeatures::from_configured(
+    parent_config.features = ManagedFeatures::from_configured_for_tests(
         parent_config.features.get().clone(),
         Some(Sourced {
             value: FeatureRequirementsToml {

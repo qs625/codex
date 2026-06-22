@@ -123,11 +123,19 @@ impl ManagedFeatures {
     pub fn disable(&mut self, feature: Feature) -> ConstraintResult<()> {
         self.set_enabled(feature, /*enabled*/ false)
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn from_configured_for_tests(
+        configured_features: Features,
+        feature_requirements: Option<Sourced<FeatureRequirementsToml>>,
+    ) -> std::io::Result<Self> {
+        Self::from_configured(configured_features, feature_requirements)
+    }
 }
 
 /// Only available for tests to ensure `ManagedFeatures` is constructed with
 /// any required constraints taken into account.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl From<Features> for ManagedFeatures {
     fn from(features: Features) -> Self {
         Self {
