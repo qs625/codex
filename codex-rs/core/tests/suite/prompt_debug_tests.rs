@@ -1,13 +1,31 @@
 use anyhow::Result;
+use codex_core::ThreadAuthRuntimes;
 use codex_core::build_prompt_input;
+use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
+use codex_core::config::ThreadStoreConfig;
+use codex_login::CodexAuth;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::user_input::UserInput;
+use codex_rollout::StateDbHandle;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
 use tempfile::TempDir;
+
+fn thread_store_from_config(
+    config: &Config,
+    state_db: Option<StateDbHandle>,
+) -> Arc<dyn codex_thread_store::ThreadStore> {
+    match &config.experimental_thread_store {
+        ThreadStoreConfig::Local => Arc::new(codex_thread_store::LocalThreadStore::new(
+            codex_thread_store::LocalThreadStoreConfig::from_config(config),
+            state_db,
+        )),
+        ThreadStoreConfig::InMemory { id } => codex_thread_store::InMemoryThreadStore::for_id(id),
+    }
+}
 
 #[tokio::test]
 async fn build_prompt_input_includes_context_and_user_message() -> Result<()> {
@@ -36,15 +54,28 @@ async fn build_prompt_input_includes_context_and_user_message() -> Result<()> {
         .await?,
     );
 
+    let state_db: Option<StateDbHandle> = None;
+    let thread_store = thread_store_from_config(&config, state_db.clone());
+    let auth_manager =
+        codex_core::test_support::auth_manager_from_auth(CodexAuth::from_api_key("test"));
+    let auth_runtimes = ThreadAuthRuntimes::from_auth_runtime(
+        auth_manager.clone(),
+        codex_login::model_provider_auth_manager(Some(auth_manager)),
+    );
     let input = build_prompt_input(
         config,
         vec![UserInput::Text {
             text: "hello from debug prompt".to_string(),
             text_elements: Vec::new(),
         }],
-        /*state_db*/ None,
+        state_db,
         environment_provider,
+        thread_store,
+        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
+        auth_runtimes,
         codex_core::test_support::model_provider_factory_for_tests(),
+        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     )
     .await?;
 

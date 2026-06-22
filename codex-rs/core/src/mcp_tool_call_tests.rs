@@ -1,11 +1,13 @@
 use super::*;
+use crate::client::X_CODEX_TURN_METADATA_HEADER;
+use crate::config::CONFIG_TOML_FILE;
 use crate::config::ConfigBuilder;
 use crate::config::ManagedFeatures;
 use crate::session::tests::make_session_and_context;
 use crate::session::tests::make_session_and_context_with_rx;
 use crate::state::ActiveTurn;
-use crate::test_support::create_model_provider_for_tests;
-use crate::test_support::models_manager_with_provider;
+use crate::test_support::create_model_provider_for_tests_with_provider_auth;
+use crate::test_support::models_manager_with_provider_auth;
 use crate::turn_metadata::McpTurnMetadataContext;
 use codex_config::config_toml::ConfigToml;
 use codex_config::types::AppConfig;
@@ -15,10 +17,10 @@ use codex_config::types::ApprovalsReviewer;
 use codex_config::types::AppsConfigToml;
 use codex_config::types::McpServerConfig;
 use codex_config::types::McpServerToolConfig;
-use codex_config_edit::CONFIG_TOML_FILE;
 use codex_features::Features;
 use codex_hooks::Hooks;
 use codex_hooks::HooksConfig;
+use codex_mcp_types::MCP_RESULT_TELEMETRY_TARGET_ID_MAX_CHARS;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
@@ -39,6 +41,7 @@ use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use pretty_assertions::assert_eq;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -254,24 +257,26 @@ print({hook_output:?})
         hook_list.hooks,
     );
 
-    session
+    *session
         .services
         .hooks
-        .store(Arc::new(Hooks::new(HooksConfig {
-            feature_enabled: true,
-            config_layer_stack: Some(
-                crate::config::hook_config_layer_stack_from_config_layer_stack(
-                    &trusted_config_layer_stack,
-                ),
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(Hooks::new(HooksConfig {
+        feature_enabled: true,
+        config_layer_stack: Some(
+            crate::config::hook_config_layer_stack_from_config_layer_stack(
+                &trusted_config_layer_stack,
             ),
-            shell_program: (!cfg!(windows)).then_some("/bin/sh".to_string()),
-            shell_args: if cfg!(windows) {
-                Vec::new()
-            } else {
-                vec!["-c".to_string()]
-            },
-            ..HooksConfig::default()
-        })));
+        ),
+        shell_program: (!cfg!(windows)).then_some("/bin/sh".to_string()),
+        shell_args: if cfg!(windows) {
+            Vec::new()
+        } else {
+            vec!["-c".to_string()]
+        },
+        ..HooksConfig::default()
+    }))
+        as Arc<dyn codex_hooks_api::HookRuntime>;
 
     log_path.to_path_buf()
 }
@@ -313,52 +318,6 @@ fn single_bundle_dir(root: &Path) -> anyhow::Result<PathBuf> {
     entries.sort();
     assert_eq!(entries.len(), 1);
     Ok(entries.remove(0))
-}
-
-#[test]
-fn mcp_app_resource_uri_reads_known_tool_meta_keys() {
-    let nested = serde_json::json!({
-        "ui": {
-            "resourceUri": "ui://widget/nested.html",
-        },
-    });
-    assert_eq!(
-        get_mcp_app_resource_uri(nested.as_object()),
-        Some("ui://widget/nested.html".to_string())
-    );
-
-    let flat = serde_json::json!({
-        "ui/resourceUri": "ui://widget/flat.html",
-    });
-    assert_eq!(
-        get_mcp_app_resource_uri(flat.as_object()),
-        Some("ui://widget/flat.html".to_string())
-    );
-
-    let output_template = serde_json::json!({
-        "openai/outputTemplate": "ui://widget/output-template.html",
-    });
-    assert_eq!(
-        get_mcp_app_resource_uri(output_template.as_object()),
-        Some("ui://widget/output-template.html".to_string())
-    );
-}
-
-#[test]
-fn openai_file_params_are_only_honored_for_codex_apps() {
-    let meta = serde_json::json!({
-        "openai/fileParams": ["file"],
-    });
-    let meta = meta.as_object();
-
-    assert_eq!(
-        openai_file_input_params_for_server(CODEX_APPS_MCP_SERVER_NAME, meta),
-        Some(vec!["file".to_string()])
-    );
-    assert_eq!(
-        openai_file_input_params_for_server("minimaltest", meta),
-        None
-    );
 }
 
 #[test]
@@ -597,19 +556,6 @@ async fn mcp_result_telemetry_truncates_long_target_id() {
     );
 }
 
-#[test]
-fn truncates_strings_on_char_boundaries() {
-    let prefix = "á".repeat(MCP_RESULT_TELEMETRY_TARGET_ID_MAX_CHARS);
-    let value = format!("{prefix}tail");
-    let truncated = truncate_str_to_char_boundary(&value, MCP_RESULT_TELEMETRY_TARGET_ID_MAX_CHARS);
-
-    assert_eq!(truncated, prefix);
-    assert_eq!(
-        truncate_str_to_char_boundary("short", MCP_RESULT_TELEMETRY_TARGET_ID_MAX_CHARS),
-        "short"
-    );
-}
-
 #[tokio::test]
 async fn approval_elicitation_request_uses_message_override_and_preserves_tool_params_keys() {
     let (session, turn_context) = make_session_and_context().await;
@@ -624,41 +570,40 @@ async fn approval_elicitation_request_uses_message_override_and_preserves_tool_p
         Some("Allow Calendar to create an event?"),
     );
 
-    let request = build_mcp_tool_approval_elicitation_request(
-        &session,
-        &turn_context,
-        McpToolApprovalElicitationRequest {
-            server: CODEX_APPS_MCP_SERVER_NAME,
-            metadata: Some(&approval_metadata(
-                Some("calendar"),
-                Some("Calendar"),
-                Some("Manage events and schedules."),
-                Some("Create Event"),
-                Some("Create a calendar event."),
-            )),
-            tool_params: Some(&serde_json::json!({
-                "calendar_id": "primary",
-                "title": "Roadmap review",
-            })),
-            tool_params_display: Some(&[
-                RenderedMcpToolApprovalParam {
-                    name: "calendar_id".to_string(),
-                    value: serde_json::json!("primary"),
-                    display_name: "Calendar".to_string(),
-                },
-                RenderedMcpToolApprovalParam {
-                    name: "title".to_string(),
-                    value: serde_json::json!("Roadmap review"),
-                    display_name: "Title".to_string(),
-                },
-            ]),
-            question,
-            message_override: Some("Allow Calendar to create an event?"),
-            prompt_options: prompt_options(
-                /*allow_session_remember*/ true, /*allow_persistent_approval*/ true,
-            ),
-        },
-    );
+    let thread_id = session.conversation_id.to_string();
+    let request = build_mcp_tool_approval_elicitation_request(McpToolApprovalElicitationRequest {
+        thread_id: &thread_id,
+        turn_id: Some(&turn_context.sub_id),
+        server: CODEX_APPS_MCP_SERVER_NAME,
+        metadata: Some(&approval_metadata(
+            Some("calendar"),
+            Some("Calendar"),
+            Some("Manage events and schedules."),
+            Some("Create Event"),
+            Some("Create a calendar event."),
+        )),
+        tool_params: Some(&serde_json::json!({
+            "calendar_id": "primary",
+            "title": "Roadmap review",
+        })),
+        tool_params_display: Some(&[
+            RenderedMcpToolApprovalParam {
+                name: "calendar_id".to_string(),
+                value: serde_json::json!("primary"),
+                display_name: "Calendar".to_string(),
+            },
+            RenderedMcpToolApprovalParam {
+                name: "title".to_string(),
+                value: serde_json::json!("Roadmap review"),
+                display_name: "Title".to_string(),
+            },
+        ]),
+        question,
+        message_override: Some("Allow Calendar to create an event?"),
+        prompt_options: prompt_options(
+            /*allow_session_remember*/ true, /*allow_persistent_approval*/ true,
+        ),
+    });
 
     assert_eq!(
         request,
@@ -913,131 +858,6 @@ fn codex_apps_connectors_support_persistent_approval() {
     );
 }
 
-#[test]
-fn sanitize_mcp_tool_result_for_model_rewrites_image_content() {
-    let result = Ok(CallToolResult {
-        content: vec![
-            serde_json::json!({
-                "type": "image",
-                "data": "Zm9v",
-                "mimeType": "image/png",
-            }),
-            serde_json::json!({
-                "type": "text",
-                "text": "hello",
-            }),
-        ],
-        structured_content: None,
-        is_error: Some(false),
-        meta: None,
-    });
-
-    let got = sanitize_mcp_tool_result_for_model(/*supports_image_input*/ false, result)
-        .expect("sanitized result");
-
-    assert_eq!(
-        got.content,
-        vec![
-            serde_json::json!({
-                "type": "text",
-                "text": "<image content omitted because you do not support image input>",
-            }),
-            serde_json::json!({
-                "type": "text",
-                "text": "hello",
-            }),
-        ]
-    );
-}
-
-#[test]
-fn sanitize_mcp_tool_result_for_model_preserves_image_when_supported() {
-    let original = CallToolResult {
-        content: vec![serde_json::json!({
-            "type": "image",
-            "data": "Zm9v",
-            "mimeType": "image/png",
-        })],
-        structured_content: Some(serde_json::json!({"x": 1})),
-        is_error: Some(false),
-        meta: Some(serde_json::json!({"k": "v"})),
-    };
-
-    let got = sanitize_mcp_tool_result_for_model(
-        /*supports_image_input*/ true,
-        Ok(original.clone()),
-    )
-    .expect("unsanitized result");
-
-    assert_eq!(got, original);
-}
-
-#[test]
-fn truncate_mcp_tool_result_for_event_preserves_small_result() {
-    let original = CallToolResult {
-        content: vec![serde_json::json!({
-            "type": "text",
-            "text": "hello",
-        })],
-        structured_content: Some(serde_json::json!({"x": 1})),
-        is_error: Some(false),
-        meta: Some(serde_json::json!({"k": "v"})),
-    };
-
-    let got = truncate_mcp_tool_result_for_event(&Ok(original.clone()))
-        .expect("small result should remain successful");
-
-    assert_eq!(got, original);
-}
-
-#[test]
-fn truncate_mcp_tool_result_for_event_bounds_large_result() {
-    let original = CallToolResult {
-        content: vec![serde_json::json!({
-            "type": "text",
-            "text": "long-message-with-newlines-\n".repeat(200_000),
-        })],
-        structured_content: Some(serde_json::json!({
-            "structured": "structured-value-".repeat(200_000),
-        })),
-        is_error: Some(false),
-        meta: Some(serde_json::json!({
-            "meta": "meta-value-".repeat(200_000),
-        })),
-    };
-
-    let got = truncate_mcp_tool_result_for_event(&Ok(original))
-        .expect("large result should remain successful");
-    let serialized = serde_json::to_string(&got).expect("truncated result should serialize");
-
-    // The truncated preview is embedded as a JSON string, so quotes and
-    // backslashes can be escaped again. That can roughly double the preview
-    // bytes in the worst case. The extra buffer covers the small result wrapper
-    // and marker.
-    assert!(serialized.len() < MCP_TOOL_CALL_EVENT_RESULT_MAX_BYTES * 2 + 1024);
-    assert_eq!(got.structured_content, None);
-    assert_eq!(got.meta, None);
-    assert_eq!(got.is_error, Some(false));
-    assert!(
-        got.content[0]
-            .get("text")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|text| text.contains("truncated")),
-        "large event result should contain a truncation marker: {got:?}"
-    );
-}
-
-#[test]
-fn truncate_mcp_tool_result_for_event_bounds_large_error() {
-    let got = truncate_mcp_tool_result_for_event(&Err("error-message-".repeat(200_000)))
-        .expect_err("large error should remain an error");
-
-    // `truncate_text` includes its own marker, so allow a small amount of
-    // overhead beyond the requested byte budget.
-    assert!(got.len() < MCP_TOOL_CALL_EVENT_RESULT_MAX_BYTES + 1024);
-    assert!(got.contains("truncated"));
-}
-
 #[tokio::test]
 async fn mcp_tool_call_request_meta_includes_turn_metadata_for_custom_server() {
     let (_, turn_context) = make_session_and_context().await;
@@ -1054,7 +874,7 @@ async fn mcp_tool_call_request_meta_includes_turn_metadata_for_custom_server() {
     )
     .expect("custom servers should receive turn metadata");
     let turn_metadata = meta
-        .get(crate::X_CODEX_TURN_METADATA_HEADER)
+        .get(X_CODEX_TURN_METADATA_HEADER)
         .expect("turn metadata should be present");
 
     assert_eq!(
@@ -1076,7 +896,7 @@ async fn mcp_tool_call_request_meta_includes_turn_metadata_for_custom_server() {
     assert_eq!(
         meta,
         serde_json::json!({
-            crate::X_CODEX_TURN_METADATA_HEADER: expected_turn_metadata,
+            (X_CODEX_TURN_METADATA_HEADER): expected_turn_metadata,
         })
     );
 }
@@ -1096,7 +916,7 @@ async fn mcp_tool_call_request_meta_includes_turn_started_at_unix_ms() {
     )
     .expect("custom servers should receive turn metadata");
     let turn_metadata = meta
-        .get(crate::X_CODEX_TURN_METADATA_HEADER)
+        .get(X_CODEX_TURN_METADATA_HEADER)
         .expect("turn metadata should be present");
 
     assert_eq!(
@@ -1143,7 +963,7 @@ async fn codex_apps_tool_call_request_meta_includes_turn_metadata_and_codex_apps
             Some(&metadata),
         ),
         Some(serde_json::json!({
-            crate::X_CODEX_TURN_METADATA_HEADER: expected_turn_metadata,
+            (X_CODEX_TURN_METADATA_HEADER): expected_turn_metadata,
             MCP_TOOL_CODEX_APPS_META_KEY: {
                 "call_id": "call_abc123xyz789",
                 "resource_uri": "connector://calendar/tools/calendar_create_event",
@@ -1170,7 +990,7 @@ async fn codex_apps_tool_call_request_meta_includes_call_id_without_existing_cod
             /*metadata*/ None,
         ),
         Some(serde_json::json!({
-            crate::X_CODEX_TURN_METADATA_HEADER: expected_turn_metadata,
+            (X_CODEX_TURN_METADATA_HEADER): expected_turn_metadata,
             MCP_TOOL_CODEX_APPS_META_KEY: {
                 "call_id": "call_abc123xyz789",
             },
@@ -1214,7 +1034,8 @@ fn codex_apps_auth_failure_metadata() -> McpToolApprovalMetadata {
 }
 
 async fn install_host_owned_codex_apps_manager(session: &Session, turn_context: &TurnContext) {
-    let auth = session.services.auth_manager.auth().await;
+    let auth_snapshot = session.services.auth_runtime.auth().await;
+    let auth_context = crate::mcp::codex_apps_auth_context(auth_snapshot.as_ref());
     let local_environment = session.services.environment_manager.local_environment();
     let environment = session
         .services
@@ -1234,15 +1055,15 @@ async fn install_host_owned_codex_apps_manager(session: &Session, turn_context: 
             turn_context.cwd.to_path_buf()
         }),
         turn_context.config.codex_home.to_path_buf(),
-        codex_mcp::codex_apps_tools_cache_key(auth.as_ref()),
+        codex_mcp_types::codex_apps_tools_cache_key(auth_context.as_ref()),
         /*host_owned_codex_apps_enabled*/ true,
-        rmcp::model::ElicitationCapability::default(),
-        codex_mcp::ToolPluginProvenance::default(),
-        auth.as_ref(),
+        codex_mcp_types::McpClientElicitationSupport::Disabled,
+        codex_mcp_types::ToolPluginProvenance::default(),
+        crate::mcp::codex_apps_auth_provider(auth_snapshot.as_ref()),
         /*elicitation_reviewer*/ None,
     )
     .await;
-    *session.services.mcp_connection_manager.write().await = manager;
+    *session.services.mcp_connection_manager.write().await = Box::new(manager);
 }
 
 #[tokio::test]
@@ -1406,7 +1227,7 @@ async fn codex_apps_auth_elicitation_feature_enabled_requests_elicitation() {
     session
         .resolve_elicitation(
             CODEX_APPS_MCP_SERVER_NAME.to_string(),
-            rmcp::model::RequestId::String("codex_apps_auth_call_123".into()),
+            codex_protocol::mcp::RequestId::String("codex_apps_auth_call_123".to_string()),
             ElicitationResponse {
                 action: ElicitationAction::Accept,
                 content: None,
@@ -1429,53 +1250,19 @@ async fn codex_apps_auth_elicitation_feature_enabled_requests_elicitation() {
 }
 
 #[test]
-fn mcp_tool_call_thread_id_meta_is_added_to_request_meta() {
-    assert_eq!(
-        with_mcp_tool_call_thread_id_meta(
-            Some(serde_json::json!({
-                "source": "test-client",
-                "threadId": "stale-thread",
-            })),
-            "thread-live",
-        ),
-        Some(serde_json::json!({
-            "source": "test-client",
-            "threadId": "thread-live",
-        }))
-    );
-
-    assert_eq!(
-        with_mcp_tool_call_thread_id_meta(/*meta*/ None, "thread-live"),
-        Some(serde_json::json!({
-            "threadId": "thread-live",
-        }))
-    );
-
-    assert_eq!(
-        with_mcp_tool_call_thread_id_meta(Some(serde_json::json!("invalid-meta")), "thread-live"),
-        Some(serde_json::json!("invalid-meta"))
-    );
-}
-
-#[test]
 fn accepted_elicitation_content_converts_to_request_user_input_response() {
-    let response = request_user_input_response_from_elicitation_content(Some(serde_json::json!(
-        {
+    let response = parse_mcp_tool_approval_elicitation_response(
+        Some(ElicitationResponse {
+            action: ElicitationAction::Accept,
+            content: Some(serde_json::json!({
             "approval": MCP_TOOL_APPROVAL_ACCEPT_AND_REMEMBER,
-        }
-    )));
-
-    assert_eq!(
-        response,
-        Some(RequestUserInputResponse {
-            answers: std::collections::HashMap::from([(
-                "approval".to_string(),
-                RequestUserInputAnswer {
-                    answers: vec![MCP_TOOL_APPROVAL_ACCEPT_AND_REMEMBER.to_string()],
-                },
-            )]),
-        })
+            })),
+            meta: None,
+        }),
+        "approval",
     );
+
+    assert_eq!(response, McpToolApprovalDecision::AcceptAndRemember);
 }
 
 #[test]
@@ -2344,16 +2131,16 @@ async fn guardian_mode_skips_auto_when_annotations_do_not_require_approval() {
     config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
     config.approvals_reviewer = ApprovalsReviewer::AutoReview;
     let config = Arc::new(config);
-    let models_manager = models_manager_with_provider(
+    let models_manager = models_manager_with_provider_auth(
         config.codex_home.to_path_buf(),
-        Arc::clone(&session.services.auth_manager),
+        turn_context.provider.auth_manager(),
         config.model_provider.clone(),
     );
     session.services.models_manager = models_manager;
     turn_context.config = Arc::clone(&config);
-    turn_context.provider = create_model_provider_for_tests(
+    turn_context.provider = create_model_provider_for_tests_with_provider_auth(
         config.model_provider.clone(),
-        turn_context.auth_manager.clone(),
+        turn_context.provider.auth_manager(),
     );
 
     let session = Arc::new(session);
@@ -2625,16 +2412,16 @@ async fn guardian_mode_mcp_denial_returns_rationale_message() {
     config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
     config.approvals_reviewer = ApprovalsReviewer::AutoReview;
     let config = Arc::new(config);
-    let models_manager = models_manager_with_provider(
+    let models_manager = models_manager_with_provider_auth(
         config.codex_home.to_path_buf(),
-        Arc::clone(&session.services.auth_manager),
+        turn_context.provider.auth_manager(),
         config.model_provider.clone(),
     );
     session.services.models_manager = models_manager;
     turn_context.config = Arc::clone(&config);
-    turn_context.provider = create_model_provider_for_tests(
+    turn_context.provider = create_model_provider_for_tests_with_provider_auth(
         config.model_provider.clone(),
-        turn_context.auth_manager.clone(),
+        turn_context.provider.auth_manager(),
     );
 
     let session = Arc::new(session);
@@ -2762,7 +2549,7 @@ async fn approve_mode_skips_arc_interrupt_for_model() {
         .await;
 
     let (session, mut turn_context) = make_session_and_context().await;
-    turn_context.auth_manager = Some(crate::test_support::auth_manager_from_auth(
+    turn_context.auth_runtime = Some(crate::test_support::auth_manager_from_auth(
         codex_login::CodexAuth::create_dummy_chatgpt_auth_for_testing(),
     ));
     let mut config = (*turn_context.config).clone();
@@ -2829,7 +2616,7 @@ async fn custom_approve_mode_skips_arc_interrupt_for_model() {
         .await;
 
     let (session, mut turn_context) = make_session_and_context().await;
-    turn_context.auth_manager = Some(crate::test_support::auth_manager_from_auth(
+    turn_context.auth_runtime = Some(crate::test_support::auth_manager_from_auth(
         codex_login::CodexAuth::create_dummy_chatgpt_auth_for_testing(),
     ));
     let mut config = (*turn_context.config).clone();
@@ -2896,7 +2683,7 @@ async fn approve_mode_skips_arc_interrupt_without_annotations() {
         .await;
 
     let (session, mut turn_context) = make_session_and_context().await;
-    turn_context.auth_manager = Some(crate::test_support::auth_manager_from_auth(
+    turn_context.auth_runtime = Some(crate::test_support::auth_manager_from_auth(
         codex_login::CodexAuth::create_dummy_chatgpt_auth_for_testing(),
     ));
     let mut config = (*turn_context.config).clone();
@@ -2963,7 +2750,7 @@ async fn full_access_mode_skips_arc_monitor_for_all_approval_modes() {
         .await;
 
     let (session, mut turn_context) = make_session_and_context().await;
-    turn_context.auth_manager = Some(crate::test_support::auth_manager_from_auth(
+    turn_context.auth_runtime = Some(crate::test_support::auth_manager_from_auth(
         codex_login::CodexAuth::create_dummy_chatgpt_auth_for_testing(),
     ));
     turn_context
@@ -3076,7 +2863,7 @@ async fn approve_mode_skips_arc_and_guardian_in_every_permission_mode() {
         AskForApproval::Never,
     ] {
         let (mut session, mut turn_context) = make_session_and_context().await;
-        turn_context.auth_manager = Some(crate::test_support::auth_manager_from_auth(
+        turn_context.auth_runtime = Some(crate::test_support::auth_manager_from_auth(
             codex_login::CodexAuth::create_dummy_chatgpt_auth_for_testing(),
         ));
         turn_context
@@ -3088,16 +2875,16 @@ async fn approve_mode_skips_arc_and_guardian_in_every_permission_mode() {
         config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
         config.approvals_reviewer = ApprovalsReviewer::User;
         let config = Arc::new(config);
-        let models_manager = models_manager_with_provider(
+        let models_manager = models_manager_with_provider_auth(
             config.codex_home.to_path_buf(),
-            Arc::clone(&session.services.auth_manager),
+            turn_context.provider.auth_manager(),
             config.model_provider.clone(),
         );
         session.services.models_manager = models_manager;
         turn_context.config = Arc::clone(&config);
-        turn_context.provider = create_model_provider_for_tests(
+        turn_context.provider = create_model_provider_for_tests_with_provider_auth(
             config.model_provider.clone(),
-            turn_context.auth_manager.clone(),
+            turn_context.provider.auth_manager(),
         );
 
         let session = Arc::new(session);

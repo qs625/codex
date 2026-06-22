@@ -193,7 +193,7 @@ mod tests {
     use tempfile::TempDir;
 
     async fn test_config(codex_home: &TempDir, cwd: &TempDir) -> Config {
-        ConfigBuilder::default()
+        crate::config_builder()
             .codex_home(codex_home.path().to_path_buf())
             .fallback_cwd(Some(cwd.path().to_path_buf()))
             .build()

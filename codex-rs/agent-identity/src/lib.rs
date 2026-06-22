@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -8,6 +7,9 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::SecondsFormat;
 use chrono::Utc;
+pub use codex_agent_identity_api::AgentIdentityKey;
+pub use codex_agent_identity_api::AgentTaskAuthorizationTarget;
+pub use codex_agent_identity_api::authorization_header_for_agent_task;
 use codex_protocol::auth::PlanType as AuthPlanType;
 use codex_protocol::protocol::SessionSource;
 use crypto_box::SecretKey as Curve25519SecretKey;
@@ -34,20 +36,6 @@ const AGENT_TASK_REGISTRATION_TIMEOUT: Duration = Duration::from_secs(30);
 const AGENT_IDENTITY_JWKS_TIMEOUT: Duration = Duration::from_secs(10);
 const AGENT_IDENTITY_JWT_AUDIENCE: &str = "codex-app-server";
 const AGENT_IDENTITY_JWT_ISSUER: &str = "https://chatgpt.com/codex-backend/agent-identity";
-
-/// Stored key material for a registered agent identity.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AgentIdentityKey<'a> {
-    pub agent_runtime_id: &'a str,
-    pub private_key_pkcs8_base64: &'a str,
-}
-
-/// Task binding to use when constructing a task-scoped AgentAssertion.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AgentTaskAuthorizationTarget<'a> {
-    pub agent_runtime_id: &'a str,
-    pub task_id: &'a str,
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentBillOfMaterials {
@@ -77,14 +65,6 @@ pub struct AgentIdentityJwtClaims {
     pub chatgpt_account_is_fedramp: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct AgentAssertionEnvelope {
-    agent_runtime_id: String,
-    task_id: String,
-    timestamp: String,
-    signature: String,
-}
-
 #[derive(Serialize)]
 struct RegisterTaskRequest {
     timestamp: String,
@@ -101,28 +81,6 @@ struct RegisterTaskResponse {
     encrypted_task_id: Option<String>,
     #[serde(default, rename = "encryptedTaskId")]
     encrypted_task_id_camel: Option<String>,
-}
-
-pub fn authorization_header_for_agent_task(
-    key: AgentIdentityKey<'_>,
-    target: AgentTaskAuthorizationTarget<'_>,
-) -> Result<String> {
-    anyhow::ensure!(
-        key.agent_runtime_id == target.agent_runtime_id,
-        "agent task runtime {} does not match stored agent identity {}",
-        target.agent_runtime_id,
-        key.agent_runtime_id
-    );
-
-    let timestamp = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
-    let envelope = AgentAssertionEnvelope {
-        agent_runtime_id: target.agent_runtime_id.to_string(),
-        task_id: target.task_id.to_string(),
-        timestamp: timestamp.clone(),
-        signature: sign_agent_assertion_payload(key, target.task_id, &timestamp)?,
-    };
-    let serialized_assertion = serialize_agent_assertion(&envelope)?;
-    Ok(format!("AgentAssertion {serialized_assertion}"))
 }
 
 pub async fn fetch_agent_identity_jwks(
@@ -355,27 +313,6 @@ pub fn encode_ssh_ed25519_public_key(verifying_key: &VerifyingKey) -> String {
     format!("ssh-ed25519 {}", BASE64_STANDARD.encode(blob))
 }
 
-fn sign_agent_assertion_payload(
-    key: AgentIdentityKey<'_>,
-    task_id: &str,
-    timestamp: &str,
-) -> Result<String> {
-    let signing_key = signing_key_from_private_key_pkcs8_base64(key.private_key_pkcs8_base64)?;
-    let payload = format!("{}:{task_id}:{timestamp}", key.agent_runtime_id);
-    Ok(BASE64_STANDARD.encode(signing_key.sign(payload.as_bytes()).to_bytes()))
-}
-
-fn serialize_agent_assertion(envelope: &AgentAssertionEnvelope) -> Result<String> {
-    let payload = serde_json::to_vec(&BTreeMap::from([
-        ("agent_runtime_id", envelope.agent_runtime_id.as_str()),
-        ("signature", envelope.signature.as_str()),
-        ("task_id", envelope.task_id.as_str()),
-        ("timestamp", envelope.timestamp.as_str()),
-    ]))
-    .context("failed to serialize agent assertion envelope")?;
-    Ok(URL_SAFE_NO_PAD.encode(payload))
-}
-
 fn curve25519_secret_key_from_signing_key(signing_key: &SigningKey) -> Curve25519SecretKey {
     let digest = Sha512::digest(signing_key.to_bytes());
     let mut secret_key = [0u8; 32];
@@ -402,8 +339,6 @@ fn signing_key_from_private_key_pkcs8_base64(private_key_pkcs8_base64: &str) -> 
 #[cfg(test)]
 mod tests {
     use base64::Engine as _;
-    use ed25519_dalek::Signature;
-    use ed25519_dalek::Verifier as _;
     use jsonwebtoken::EncodingKey;
     use jsonwebtoken::Header;
     use pretty_assertions::assert_eq;
@@ -411,83 +346,6 @@ mod tests {
     use codex_protocol::auth::KnownPlan;
 
     use super::*;
-
-    #[test]
-    fn authorization_header_for_agent_task_serializes_signed_agent_assertion() {
-        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
-        let private_key = signing_key
-            .to_pkcs8_der()
-            .expect("encode test key material");
-        let key = AgentIdentityKey {
-            agent_runtime_id: "agent-123",
-            private_key_pkcs8_base64: &BASE64_STANDARD.encode(private_key.as_bytes()),
-        };
-        let target = AgentTaskAuthorizationTarget {
-            agent_runtime_id: "agent-123",
-            task_id: "task-123",
-        };
-
-        let header =
-            authorization_header_for_agent_task(key, target).expect("build agent assertion header");
-        let token = header
-            .strip_prefix("AgentAssertion ")
-            .expect("agent assertion scheme");
-        let payload = URL_SAFE_NO_PAD
-            .decode(token)
-            .expect("valid base64url payload");
-        let envelope: AgentAssertionEnvelope =
-            serde_json::from_slice(&payload).expect("valid assertion envelope");
-
-        assert_eq!(
-            envelope,
-            AgentAssertionEnvelope {
-                agent_runtime_id: "agent-123".to_string(),
-                task_id: "task-123".to_string(),
-                timestamp: envelope.timestamp.clone(),
-                signature: envelope.signature.clone(),
-            }
-        );
-        let signature_bytes = BASE64_STANDARD
-            .decode(&envelope.signature)
-            .expect("valid base64 signature");
-        let signature = Signature::from_slice(&signature_bytes).expect("valid signature bytes");
-        signing_key
-            .verifying_key()
-            .verify(
-                format!(
-                    "{}:{}:{}",
-                    envelope.agent_runtime_id, envelope.task_id, envelope.timestamp
-                )
-                .as_bytes(),
-                &signature,
-            )
-            .expect("signature should verify");
-    }
-
-    #[test]
-    fn authorization_header_for_agent_task_rejects_mismatched_runtime() {
-        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
-        let private_key = signing_key
-            .to_pkcs8_der()
-            .expect("encode test key material");
-        let private_key_pkcs8_base64 = BASE64_STANDARD.encode(private_key.as_bytes());
-        let key = AgentIdentityKey {
-            agent_runtime_id: "agent-123",
-            private_key_pkcs8_base64: &private_key_pkcs8_base64,
-        };
-        let target = AgentTaskAuthorizationTarget {
-            agent_runtime_id: "agent-456",
-            task_id: "task-123",
-        };
-
-        let error = authorization_header_for_agent_task(key, target)
-            .expect_err("runtime mismatch should fail");
-
-        assert_eq!(
-            error.to_string(),
-            "agent task runtime agent-456 does not match stored agent identity agent-123"
-        );
-    }
 
     #[test]
     fn decode_agent_identity_jwt_reads_claims() {

@@ -14,10 +14,9 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-codex-agent-identity = { workspace = true }
+codex-api-auth = { workspace = true }
 codex-api-provider = { workspace = true }
 codex-auth-types = { workspace = true }
-codex-login = { workspace = true }
 codex-model-provider-info = { workspace = true }
 codex-models-manager-api = { workspace = true }
 codex-protocol = { workspace = true }

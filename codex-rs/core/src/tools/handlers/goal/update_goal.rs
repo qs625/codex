@@ -8,10 +8,10 @@ use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
 use codex_protocol::protocol::ThreadGoalStatus;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
-use codex_tools::UPDATE_GOAL_TOOL_NAME;
-use codex_tools::create_update_goal_tool;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::UPDATE_GOAL_TOOL_NAME;
+use codex_tool_planning::create_update_goal_tool;
 
 use super::CompletionBudgetReport;
 use super::UpdateGoalArgs;
@@ -20,7 +20,6 @@ use super::goal_response;
 
 pub struct UpdateGoalHandler;
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for UpdateGoalHandler {
     type Output = FunctionToolOutput;
 
@@ -32,48 +31,56 @@ impl ToolExecutor<ToolInvocation> for UpdateGoalHandler {
         Some(create_update_goal_tool())
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            payload,
-            ..
-        } = invocation;
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session,
+                turn,
+                payload,
+                ..
+            } = invocation;
 
-        let arguments = match payload {
-            ToolPayload::Function { arguments } => arguments,
-            _ => {
+            let arguments = match payload {
+                ToolPayload::Function { arguments } => arguments,
+                _ => {
+                    return Err(FunctionCallError::RespondToModel(
+                        "update_goal handler received unsupported payload".to_string(),
+                    ));
+                }
+            };
+
+            let args: UpdateGoalArgs = parse_arguments(&arguments)?;
+            if args.status != ThreadGoalStatus::Complete {
                 return Err(FunctionCallError::RespondToModel(
-                    "update_goal handler received unsupported payload".to_string(),
-                ));
+                            "update_goal can only mark the existing goal complete; pause, resume, and budget-limited status changes are controlled by the user or system"
+                                .to_string(),
+                        ));
             }
-        };
-
-        let args: UpdateGoalArgs = parse_arguments(&arguments)?;
-        if args.status != ThreadGoalStatus::Complete {
-            return Err(FunctionCallError::RespondToModel(
-                "update_goal can only mark the existing goal complete; pause, resume, and budget-limited status changes are controlled by the user or system"
-                    .to_string(),
-            ));
-        }
-        session
-            .goal_runtime_apply(GoalRuntimeEvent::ToolCompletedGoal {
-                turn_context: turn.as_ref(),
-            })
-            .await
-            .map_err(|err| FunctionCallError::RespondToModel(format_goal_error(err)))?;
-        let goal = session
-            .set_thread_goal(
-                turn.as_ref(),
-                SetGoalRequest {
-                    objective: None,
-                    status: Some(ThreadGoalStatus::Complete),
-                    token_budget: None,
-                },
-            )
-            .await
-            .map_err(|err| FunctionCallError::RespondToModel(format_goal_error(err)))?;
-        goal_response(Some(goal), CompletionBudgetReport::Include)
+            session
+                .goal_runtime_apply(GoalRuntimeEvent::ToolCompletedGoal {
+                    turn_context: turn.as_ref(),
+                })
+                .await
+                .map_err(|err| FunctionCallError::RespondToModel(format_goal_error(err)))?;
+            let goal = session
+                .set_thread_goal(
+                    turn.as_ref(),
+                    SetGoalRequest {
+                        objective: None,
+                        status: Some(ThreadGoalStatus::Complete),
+                        token_budget: None,
+                    },
+                )
+                .await
+                .map_err(|err| FunctionCallError::RespondToModel(format_goal_error(err)))?;
+            goal_response(Some(goal), CompletionBudgetReport::Include)
+        })
     }
 }
 

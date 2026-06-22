@@ -1005,7 +1005,9 @@ pub(crate) async fn load_remote_control_auth(
     }
 
     Ok(RemoteControlConnectionAuth {
-        auth_provider: codex_model_provider_api::auth_provider_from_auth(&auth),
+        auth_provider: codex_api_auth::auth_provider_from_auth_snapshot(
+            &auth.request_auth_snapshot(),
+        ),
         account_id: auth.get_account_id().ok_or_else(|| {
             io::Error::new(
                 ErrorKind::WouldBlock,

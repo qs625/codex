@@ -1,5 +1,7 @@
 pub mod auth;
 pub mod auth_env_telemetry;
+#[cfg(feature = "model-provider-auth")]
+pub mod model_provider_auth;
 pub mod token_data;
 
 mod device_code_auth;
@@ -47,4 +49,6 @@ pub use auth::read_openai_api_key_from_env;
 pub use auth::save_auth;
 pub use auth_env_telemetry::AuthEnvTelemetry;
 pub use auth_env_telemetry::collect_auth_env_telemetry;
+#[cfg(feature = "model-provider-auth")]
+pub use model_provider_auth::model_provider_auth_manager;
 pub use token_data::TokenData;

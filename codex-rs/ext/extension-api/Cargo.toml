@@ -15,4 +15,4 @@ workspace = true
 
 [dependencies]
 codex-protocol = { workspace = true }
-codex-tools = { workspace = true }
+codex-tool-types = { workspace = true }

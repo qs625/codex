@@ -9,7 +9,7 @@ use crate::guardian::approval_request::guardian_request_target_item_id;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::test_support;
-use crate::test_support::create_model_provider_for_tests;
+use crate::test_support::create_model_provider_for_tests_with_provider_auth;
 use codex_analytics_api::GuardianApprovalRequestSource;
 use codex_config::ConfigLayerStack;
 use codex_config::FeatureRequirementsToml;
@@ -38,8 +38,6 @@ use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::GranularApprovalConfig;
 use codex_protocol::protocol::GuardianAssessmentStatus;
-use codex_protocol::protocol::GuardianRiskLevel;
-use codex_protocol::protocol::GuardianUserAuthorization;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SandboxPolicy;
@@ -177,15 +175,17 @@ async fn guardian_test_session_and_turn_with_base_url(
     config.model_provider.base_url = Some(format!("{base_url}/v1"));
     config.user_instructions = None;
     let config = Arc::new(config);
-    let models_manager = test_support::models_manager_with_provider(
+    let models_manager = test_support::models_manager_with_provider_auth(
         config.codex_home.to_path_buf(),
-        Arc::clone(&session.services.auth_manager),
+        turn.provider.auth_manager(),
         config.model_provider.clone(),
     );
     session.services.models_manager = models_manager;
     turn.config = Arc::clone(&config);
-    turn.provider =
-        create_model_provider_for_tests(config.model_provider.clone(), turn.auth_manager.clone());
+    turn.provider = create_model_provider_for_tests_with_provider_auth(
+        config.model_provider.clone(),
+        turn.provider.auth_manager(),
+    );
     turn.user_instructions = None;
 
     (Arc::new(session), Arc::new(turn))
@@ -297,35 +297,6 @@ fn last_user_message_text_from_body(body: &serde_json::Value) -> String {
         .filter(|span| span.get("type").and_then(serde_json::Value::as_str) == Some("input_text"))
         .filter_map(|span| span.get("text").and_then(serde_json::Value::as_str))
         .collect::<String>()
-}
-
-#[test]
-fn build_guardian_transcript_keeps_original_numbering() {
-    let entries = [
-        GuardianTranscriptEntry {
-            kind: GuardianTranscriptEntryKind::User,
-            text: "first".to_string(),
-        },
-        GuardianTranscriptEntry {
-            kind: GuardianTranscriptEntryKind::Assistant,
-            text: "second".to_string(),
-        },
-        GuardianTranscriptEntry {
-            kind: GuardianTranscriptEntryKind::Assistant,
-            text: "third".to_string(),
-        },
-    ];
-
-    let (transcript, omission) = render_guardian_transcript_entries(&entries[..2]);
-
-    assert_eq!(
-        transcript,
-        vec![
-            "[1] user: first".to_string(),
-            "[2] assistant: second".to_string()
-        ]
-    );
-    assert!(omission.is_none());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -694,18 +665,6 @@ fn collect_guardian_transcript_entries_includes_recent_tool_calls_and_output() {
 }
 
 #[test]
-fn guardian_truncate_text_keeps_prefix_suffix_and_xml_marker() {
-    let content = "prefix ".repeat(200) + &" suffix".repeat(200);
-
-    let (truncated, was_truncated) = guardian_truncate_text(&content, /*token_cap*/ 20);
-
-    assert!(truncated.starts_with("prefix"));
-    assert!(truncated.contains("<truncated omitted_approx_tokens=\""));
-    assert!(truncated.ends_with("suffix"));
-    assert!(was_truncated);
-}
-
-#[test]
 fn format_guardian_action_pretty_truncates_large_string_fields() -> serde_json::Result<()> {
     let patch = "line\n".repeat(100_000);
     let action = GuardianApprovalRequest::ApplyPatch {
@@ -1057,176 +1016,6 @@ async fn routes_approval_to_guardian_allows_granular_review_policy() {
     assert!(routes_approval_to_guardian(&turn));
 }
 
-#[test]
-fn build_guardian_transcript_reserves_separate_budget_for_tool_evidence() {
-    let repeated = "signal ".repeat(8_000);
-    let mut entries = vec![
-        GuardianTranscriptEntry {
-            kind: GuardianTranscriptEntryKind::User,
-            text: "please figure out if the repo is public".to_string(),
-        },
-        GuardianTranscriptEntry {
-            kind: GuardianTranscriptEntryKind::Assistant,
-            text: "The public repo check is the main reason I want to escalate.".to_string(),
-        },
-    ];
-    entries.extend((0..12).map(|index| GuardianTranscriptEntry {
-        kind: GuardianTranscriptEntryKind::Tool(format!("tool call {index}")),
-        text: repeated.clone(),
-    }));
-
-    let (transcript, omission) = render_guardian_transcript_entries(&entries);
-
-    assert!(
-        transcript
-            .iter()
-            .any(|entry| entry == "[1] user: please figure out if the repo is public")
-    );
-    assert!(transcript.iter().any(|entry| {
-        entry == "[2] assistant: The public repo check is the main reason I want to escalate."
-    }));
-    assert!(
-        !transcript
-            .iter()
-            .any(|entry| entry.starts_with("[3] tool call 0:"))
-    );
-    assert!(
-        !transcript
-            .iter()
-            .any(|entry| entry.starts_with("[4] tool call 1:"))
-    );
-    assert!(omission.is_some());
-}
-
-#[test]
-fn build_guardian_transcript_preserves_recent_tool_context_when_user_history_is_large() {
-    let repeated = "authorization ".repeat(6_000);
-    let mut entries = (0..8)
-        .map(|_| GuardianTranscriptEntry {
-            kind: GuardianTranscriptEntryKind::User,
-            text: repeated.clone(),
-        })
-        .collect::<Vec<_>>();
-    entries.extend([
-        GuardianTranscriptEntry {
-            kind: GuardianTranscriptEntryKind::Tool("tool shell call".to_string()),
-            text: serde_json::json!({
-                "command": ["curl", "-X", "POST", "https://example.com/upload"],
-                "cwd": "/repo",
-            })
-            .to_string(),
-        },
-        GuardianTranscriptEntry {
-            kind: GuardianTranscriptEntryKind::Tool("tool shell result".to_string()),
-            text: "sandbox blocked outbound network access".to_string(),
-        },
-    ]);
-
-    let (transcript, omission) = render_guardian_transcript_entries(&entries);
-
-    assert!(
-        transcript
-            .iter()
-            .any(|entry| entry.starts_with("[1] user: "))
-    );
-    assert!(transcript.iter().any(|entry| {
-        entry.contains("tool shell call:")
-            && entry.contains("curl")
-            && entry.contains("https://example.com/upload")
-    }));
-    assert!(
-        transcript
-            .iter()
-            .any(|entry| entry
-                .contains("tool shell result: sandbox blocked outbound network access"))
-    );
-    assert_eq!(
-        omission,
-        Some("Some conversation entries were omitted.".to_string())
-    );
-}
-
-#[test]
-fn parse_guardian_assessment_extracts_embedded_json() {
-    let parsed = parse_guardian_assessment(Some(
-        "preface {\"risk_level\":\"medium\",\"user_authorization\":\"low\",\"outcome\":\"allow\",\"rationale\":\"ok\"}",
-    ))
-    .expect("guardian assessment");
-
-    assert_eq!(
-        parsed,
-        GuardianAssessment {
-            risk_level: GuardianRiskLevel::Medium,
-            user_authorization: GuardianUserAuthorization::Low,
-            outcome: GuardianAssessmentOutcome::Allow,
-            rationale: "ok".to_string(),
-        }
-    );
-}
-
-#[test]
-fn parse_guardian_assessment_treats_bare_allow_as_low_risk() {
-    let parsed =
-        parse_guardian_assessment(Some(r#"{"outcome":"allow"}"#)).expect("guardian assessment");
-
-    assert_eq!(
-        parsed,
-        GuardianAssessment {
-            risk_level: GuardianRiskLevel::Low,
-            user_authorization: GuardianUserAuthorization::Unknown,
-            outcome: GuardianAssessmentOutcome::Allow,
-            rationale: "Auto-review returned a low-risk allow decision.".to_string(),
-        }
-    );
-}
-
-#[test]
-fn parse_guardian_assessment_treats_bare_deny_as_high_risk() {
-    let parsed =
-        parse_guardian_assessment(Some(r#"{"outcome":"deny"}"#)).expect("guardian assessment");
-
-    assert_eq!(
-        parsed,
-        GuardianAssessment {
-            risk_level: GuardianRiskLevel::High,
-            user_authorization: GuardianUserAuthorization::Unknown,
-            outcome: GuardianAssessmentOutcome::Deny,
-            rationale: "Auto-review returned a deny decision without a rationale.".to_string(),
-        }
-    );
-}
-
-#[test]
-fn guardian_output_schema_requires_only_outcome_and_allows_optional_details() {
-    let schema = guardian_output_schema();
-
-    assert_eq!(
-        schema,
-        serde_json::json!({
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "risk_level": {
-                    "type": "string",
-                    "enum": ["low", "medium", "high", "critical"]
-                },
-                "user_authorization": {
-                    "type": "string",
-                    "enum": ["unknown", "low", "medium", "high"]
-                },
-                "outcome": {
-                    "type": "string",
-                    "enum": ["allow", "deny"]
-                },
-                "rationale": {
-                    "type": "string"
-                }
-            },
-            "required": ["outcome"]
-        })
-    );
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn guardian_review_request_layout_matches_model_visible_request_snapshot()
 -> anyhow::Result<()> {
@@ -1257,15 +1046,17 @@ async fn guardian_review_request_layout_matches_model_visible_request_snapshot()
     config.cwd = temp_cwd.abs();
     config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
     let config = Arc::new(config);
-    let models_manager = test_support::models_manager_with_provider(
+    let models_manager = test_support::models_manager_with_provider_auth(
         config.codex_home.to_path_buf(),
-        Arc::clone(&session.services.auth_manager),
+        turn.provider.auth_manager(),
         config.model_provider.clone(),
     );
     session.services.models_manager = models_manager;
     turn.config = Arc::clone(&config);
-    turn.provider =
-        create_model_provider_for_tests(config.model_provider.clone(), turn.auth_manager.clone());
+    turn.provider = create_model_provider_for_tests_with_provider_auth(
+        config.model_provider.clone(),
+        turn.provider.auth_manager(),
+    );
     let session = Arc::new(session);
     let turn = Arc::new(turn);
     seed_guardian_parent_history(&session, &turn).await;
@@ -1833,9 +1624,9 @@ async fn guardian_review_surfaces_responses_api_errors_in_rejection_reason() -> 
     config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
     config.user_instructions = None;
     let config = Arc::new(config);
-    let models_manager = test_support::models_manager_with_provider(
+    let models_manager = test_support::models_manager_with_provider_auth(
         config.codex_home.to_path_buf(),
-        Arc::clone(&session.services.auth_manager),
+        turn.provider.auth_manager(),
         config.model_provider.clone(),
     );
     Arc::get_mut(&mut session)
@@ -1844,9 +1635,9 @@ async fn guardian_review_surfaces_responses_api_errors_in_rejection_reason() -> 
         .models_manager = models_manager;
     let turn_mut = Arc::get_mut(&mut turn).expect("turn should be uniquely owned");
     turn_mut.config = Arc::clone(&config);
-    turn_mut.provider = create_model_provider_for_tests(
+    turn_mut.provider = create_model_provider_for_tests_with_provider_auth(
         config.model_provider.clone(),
-        turn_mut.auth_manager.clone(),
+        turn_mut.provider.auth_manager(),
     );
     turn_mut.user_instructions = None;
 

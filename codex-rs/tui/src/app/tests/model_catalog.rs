@@ -177,7 +177,7 @@ fn select_model_availability_nux_returns_none_when_all_models_are_exhausted() {
 #[tokio::test]
 async fn prepare_startup_tooltip_override_persists_model_availability_nux_count() {
     let codex_home = tempdir().expect("temp codex home");
-    let mut config = ConfigBuilder::default()
+    let mut config = crate::config_builder()
         .codex_home(codex_home.path().to_path_buf())
         .build()
         .await
@@ -203,7 +203,7 @@ async fn prepare_startup_tooltip_override_persists_model_availability_nux_count(
         HashMap::from([("gpt-5.4".to_string(), 1)])
     );
 
-    let reloaded = ConfigBuilder::default()
+    let reloaded = crate::config_builder()
         .codex_home(codex_home.path().to_path_buf())
         .build()
         .await
@@ -217,7 +217,7 @@ async fn prepare_startup_tooltip_override_persists_model_availability_nux_count(
 #[tokio::test]
 async fn accepted_model_migration_persists_target_default_reasoning_effort() {
     let codex_home = tempdir().expect("temp codex home");
-    let mut config = ConfigBuilder::default()
+    let mut config = crate::config_builder()
         .codex_home(codex_home.path().to_path_buf())
         .build()
         .await
@@ -334,7 +334,7 @@ async fn model_migration_prompt_skips_when_target_missing_or_hidden() {
 #[tokio::test]
 async fn model_migration_prompt_shows_for_hidden_model() {
     let codex_home = tempdir().expect("temp codex home");
-    let config = ConfigBuilder::default()
+    let config = crate::config_builder()
         .codex_home(codex_home.path().to_path_buf())
         .build()
         .await

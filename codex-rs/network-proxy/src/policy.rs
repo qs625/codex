@@ -12,7 +12,6 @@ use std::collections::HashSet;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
-use url::Host as UrlHost;
 
 /// A normalized host string for policy evaluation.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -205,73 +204,12 @@ impl DomainPattern {
         }
     }
 
-    /// Parse a policy pattern for constraint comparisons, validating domain parts with `url`.
-    pub(crate) fn parse_for_constraints(input: &str) -> Self {
-        let input = input.trim();
-        if input.is_empty() {
-            return Self::Exact(String::new());
-        }
-        if let Some(domain) = input.strip_prefix("**.") {
-            return Self::ApexAndSubdomains(parse_domain_for_constraints(domain));
-        }
-        if let Some(domain) = input.strip_prefix("*.") {
-            return Self::SubdomainsOnly(parse_domain_for_constraints(domain));
-        }
-        Self::Exact(parse_domain_for_constraints(input))
-    }
-
     fn parse_domain(domain: &str, build: impl FnOnce(String) -> Self) -> Self {
         let domain = domain.trim();
         if domain.is_empty() {
             return Self::Exact(String::new());
         }
         build(domain.to_string())
-    }
-
-    pub(crate) fn allows(&self, candidate: &DomainPattern) -> bool {
-        match self {
-            DomainPattern::Exact(domain) => match candidate {
-                DomainPattern::Exact(candidate) => domain_eq(candidate, domain),
-                _ => false,
-            },
-            DomainPattern::SubdomainsOnly(domain) => match candidate {
-                DomainPattern::Exact(candidate) => is_strict_subdomain(candidate, domain),
-                DomainPattern::SubdomainsOnly(candidate) => {
-                    is_subdomain_or_equal(candidate, domain)
-                }
-                DomainPattern::ApexAndSubdomains(candidate) => {
-                    is_strict_subdomain(candidate, domain)
-                }
-            },
-            DomainPattern::ApexAndSubdomains(domain) => match candidate {
-                DomainPattern::Exact(candidate) => is_subdomain_or_equal(candidate, domain),
-                DomainPattern::SubdomainsOnly(candidate) => {
-                    is_subdomain_or_equal(candidate, domain)
-                }
-                DomainPattern::ApexAndSubdomains(candidate) => {
-                    is_subdomain_or_equal(candidate, domain)
-                }
-            },
-        }
-    }
-}
-
-fn parse_domain_for_constraints(domain: &str) -> String {
-    let domain = domain.trim().trim_end_matches('.');
-    if domain.is_empty() {
-        return String::new();
-    }
-    let host = if domain.starts_with('[') && domain.ends_with(']') {
-        &domain[1..domain.len().saturating_sub(1)]
-    } else {
-        domain
-    };
-    if host.contains('*') || host.contains('?') || host.contains('%') {
-        return domain.to_string();
-    }
-    match UrlHost::parse(host) {
-        Ok(host) => host.to_string(),
-        Err(_) => String::new(),
     }
 }
 
@@ -285,29 +223,6 @@ fn expand_domain_pattern(pattern: &str) -> Vec<String> {
             vec![domain.clone(), format!("?*.{domain}")]
         }
     }
-}
-
-fn normalize_domain(domain: &str) -> String {
-    domain.trim_end_matches('.').to_ascii_lowercase()
-}
-
-fn domain_eq(left: &str, right: &str) -> bool {
-    normalize_domain(left) == normalize_domain(right)
-}
-
-fn is_subdomain_or_equal(child: &str, parent: &str) -> bool {
-    let child = normalize_domain(child);
-    let parent = normalize_domain(parent);
-    if child == parent {
-        return true;
-    }
-    child.ends_with(&format!(".{parent}"))
-}
-
-fn is_strict_subdomain(child: &str, parent: &str) -> bool {
-    let child = normalize_domain(child);
-    let parent = normalize_domain(parent);
-    child != parent && child.ends_with(&format!(".{parent}"))
 }
 
 #[cfg(test)]

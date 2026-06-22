@@ -1,19 +1,97 @@
+use base64::Engine;
+use codex_client_types::RequestTelemetry;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::config_types::Verbosity as VerbosityConfig;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::protocol::ModelVerification;
 use codex_protocol::protocol::RateLimitSnapshot;
+use codex_protocol::protocol::RealtimeAudioFrame;
+use codex_protocol::protocol::RealtimeEvent;
 use codex_protocol::protocol::RealtimeOutputModality;
 use codex_protocol::protocol::RealtimeVoice;
+use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::W3cTraceContext;
+use futures::Stream;
+use http::HeaderMap;
+use http::StatusCode;
+use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::OnceLock;
+use std::task::Context;
+use std::task::Poll;
+use std::time::Duration;
+
+mod api_bridge;
+mod error;
+pub mod rate_limits;
+mod response_debug_context;
+
+pub use api_bridge::map_api_error;
+pub use error::ApiError;
+pub use error::extract_response_debug_context_from_api_error;
+pub use error::telemetry_api_error_message;
+pub use rate_limits::RateLimitError;
+pub use rate_limits::parse_all_rate_limits;
+pub use rate_limits::parse_default_rate_limit;
+pub use rate_limits::parse_promo_message;
+pub use rate_limits::parse_rate_limit_event;
+pub use rate_limits::parse_rate_limit_for_limit;
+pub use response_debug_context::ResponseDebugContext;
+pub use response_debug_context::extract_response_debug_context;
+pub use response_debug_context::telemetry_transport_error_message;
 
 pub const WS_REQUEST_HEADER_TRACEPARENT_CLIENT_METADATA_KEY: &str = "ws_request_header_traceparent";
 pub const WS_REQUEST_HEADER_TRACESTATE_CLIENT_METADATA_KEY: &str = "ws_request_header_tracestate";
+pub const X_RESPONSESAPI_INCLUDE_TIMING_METRICS_HEADER: &str =
+    "x-responsesapi-include-timing-metrics";
+
+pub fn decoded_realtime_audio_samples_per_channel(frame: &RealtimeAudioFrame) -> Option<u32> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&frame.data)
+        .ok()?;
+    let channels = usize::from(frame.num_channels.max(1));
+    let samples = bytes.len().checked_div(2)?.checked_div(channels)?;
+    u32::try_from(samples).ok()
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Compression {
+    #[default]
+    None,
+    Zstd,
+}
+
+#[derive(Default)]
+pub struct ResponsesOptions {
+    pub session_id: Option<String>,
+    pub thread_id: Option<String>,
+    pub session_source: Option<SessionSource>,
+    pub extra_headers: HeaderMap,
+    pub compression: Compression,
+    pub turn_state: Option<Arc<OnceLock<String>>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ChatCompletionsPath {
+    AppendChatCompletions,
+    FullEndpoint,
+}
+
+impl ChatCompletionsPath {
+    pub fn as_path(self) -> &'static str {
+        match self {
+            Self::AppendChatCompletions => "chat/completions",
+            Self::FullEndpoint => "",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RealtimeEventParser {
@@ -36,6 +114,42 @@ pub struct RealtimeSessionConfig {
     pub session_mode: RealtimeSessionMode,
     pub output_modality: RealtimeOutputModality,
     pub voice: RealtimeVoice,
+}
+
+/// Answer from creating a WebRTC Realtime call.
+///
+/// `sdp` configures the peer connection. `call_id` is parsed from the response `Location` header
+/// and is later used by the server-side sideband WebSocket to join this exact call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RealtimeCallResponse {
+    pub sdp: String,
+    pub call_id: String,
+}
+
+/// Close frame information captured by a handshake probe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResponsesWebsocketClose {
+    /// WebSocket close code returned by the server.
+    pub code: String,
+    /// Human-readable close reason returned by the server.
+    pub reason: String,
+}
+
+/// Result of a handshake-only Responses WebSocket probe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResponsesWebsocketProbe {
+    /// Redacted by callers before displaying or serializing support reports.
+    pub url: String,
+    /// HTTP status returned by the successful WebSocket upgrade.
+    pub status: StatusCode,
+    /// Whether the server reported reasoning support in the upgrade response.
+    pub reasoning_included: bool,
+    /// Whether the server returned a model catalog ETag in the upgrade response.
+    pub models_etag_present: bool,
+    /// Whether the server returned a server-selected model in the upgrade response.
+    pub server_model_present: bool,
+    /// Close frame received immediately after upgrade, when one arrives quickly.
+    pub immediate_close: Option<ResponsesWebsocketClose>,
 }
 
 /// Transport-neutral summary of a single SSE poll used by telemetry sinks.
@@ -97,6 +211,226 @@ impl WebsocketEventTelemetry {
             payload,
         }
     }
+}
+
+/// Generic telemetry for Responses SSE transport.
+pub trait SseTelemetry: Send + Sync {
+    fn on_sse_poll(&self, event: Option<&SseEventTelemetry>, duration: Duration);
+}
+
+/// Telemetry for Responses WebSocket transport.
+pub trait WebsocketTelemetry: Send + Sync {
+    fn on_ws_request(&self, duration: Duration, error: Option<&ApiError>, connection_reused: bool);
+
+    fn on_ws_event(&self, event: Option<&WebsocketEventTelemetry>, duration: Duration);
+}
+
+pub type ApiRuntimeFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+pub type CompactionOutput = Vec<ResponseItem>;
+
+type ApiResponseStreamItem = Result<ResponseEvent, ApiError>;
+
+/// Stream of Responses API events plus the upstream request id captured from the transport.
+///
+/// Implementations construct this from their concrete transport stream. Consumers should not depend
+/// on the transport channel type.
+pub struct ResponseStream {
+    inner: Pin<Box<dyn Stream<Item = ApiResponseStreamItem> + Send>>,
+    upstream_request_id: Option<String>,
+}
+
+impl ResponseStream {
+    pub fn new<S>(stream: S, upstream_request_id: Option<String>) -> Self
+    where
+        S: Stream<Item = ApiResponseStreamItem> + Send + 'static,
+    {
+        Self {
+            inner: Box::pin(stream),
+            upstream_request_id,
+        }
+    }
+
+    pub fn upstream_request_id(&self) -> Option<&str> {
+        self.upstream_request_id.as_deref()
+    }
+}
+
+impl Stream for ResponseStream {
+    type Item = ApiResponseStreamItem;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.inner.as_mut().poll_next(cx)
+    }
+}
+
+impl Unpin for ResponseStream {}
+
+/// Runtime capability for an established Responses WebSocket connection.
+///
+/// Concrete implementations own transport details such as tungstenite streams, background pump
+/// tasks, and request serialization. Consumers use this trait to send Responses API frames and read
+/// the typed event stream without depending on the concrete websocket runtime crate.
+pub trait ResponsesWebsocketConnectionRuntime: Send + Sync {
+    fn is_closed(&self) -> ApiRuntimeFuture<'_, bool>;
+
+    fn send_response_processed(
+        &self,
+        response_id: String,
+    ) -> ApiRuntimeFuture<'_, Result<(), ApiError>>;
+
+    fn stream_request(
+        &self,
+        request: ResponsesWsRequest,
+        connection_reused: bool,
+    ) -> ApiRuntimeFuture<'_, Result<ResponseStream, ApiError>>;
+}
+
+/// Request for opening a Responses WebSocket connection through a configured runtime client.
+pub struct ResponsesWebsocketConnectRequest {
+    pub extra_headers: HeaderMap,
+    pub default_headers: HeaderMap,
+    pub turn_state: Option<Arc<OnceLock<String>>>,
+    pub telemetry: Option<Arc<dyn WebsocketTelemetry>>,
+}
+
+/// Runtime capability for opening a Responses WebSocket connection.
+///
+/// Implementations own URL construction, auth header application, TLS/custom-CA policy, and
+/// concrete WebSocket transport setup. Consumers should depend on this trait instead of the
+/// concrete WebSocket client method shape.
+pub trait ResponsesWebsocketConnectorRuntime: Send + Sync {
+    fn connect(
+        &self,
+        request: ResponsesWebsocketConnectRequest,
+    ) -> ApiRuntimeFuture<'_, Result<Box<dyn ResponsesWebsocketConnectionRuntime>, ApiError>>;
+}
+
+/// Request for opening a realtime WebSocket connection through a configured runtime client.
+pub struct RealtimeWebsocketConnectRuntimeRequest {
+    pub session_config: RealtimeSessionConfig,
+    pub extra_headers: HeaderMap,
+    pub default_headers: HeaderMap,
+}
+
+/// Request for joining an existing WebRTC realtime call through its sideband WebSocket.
+pub struct RealtimeWebrtcSidebandConnectRuntimeRequest {
+    pub session_config: RealtimeSessionConfig,
+    pub call_id: String,
+    pub extra_headers: HeaderMap,
+    pub default_headers: HeaderMap,
+}
+
+/// Runtime capability for opening realtime WebSocket connections.
+///
+/// Implementations own URL construction, custom CA/TLS setup, retries, and concrete WebSocket
+/// transport details. Consumers provide typed session configuration and headers, then use
+/// transport-neutral connection handles.
+pub trait RealtimeWebsocketClientRuntime: Send + Sync {
+    fn connect(
+        &self,
+        request: RealtimeWebsocketConnectRuntimeRequest,
+    ) -> ApiRuntimeFuture<'_, Result<Box<dyn RealtimeWebsocketConnectionRuntime>, ApiError>>;
+
+    fn connect_webrtc_sideband(
+        &self,
+        request: RealtimeWebrtcSidebandConnectRuntimeRequest,
+    ) -> ApiRuntimeFuture<'_, Result<Box<dyn RealtimeWebsocketConnectionRuntime>, ApiError>>;
+}
+
+/// Runtime capability for an established realtime WebSocket connection.
+///
+/// Implementations expose cheap cloneable writer/event handles while keeping concrete transport
+/// channels, pump tasks, and protocol framing inside the API runtime implementation crate.
+pub trait RealtimeWebsocketConnectionRuntime: Send + Sync {
+    fn writer(&self) -> Arc<dyn RealtimeWebsocketWriterRuntime>;
+
+    fn events(&self) -> Arc<dyn RealtimeWebsocketEventsRuntime>;
+}
+
+/// Runtime capability for sending realtime WebSocket messages.
+///
+/// Implementations encode version-specific payloads and own concrete WebSocket send behavior.
+pub trait RealtimeWebsocketWriterRuntime: Send + Sync {
+    fn send_audio_frame(
+        &self,
+        frame: RealtimeAudioFrame,
+    ) -> ApiRuntimeFuture<'_, Result<(), ApiError>>;
+
+    fn send_conversation_item_create(
+        &self,
+        text: String,
+    ) -> ApiRuntimeFuture<'_, Result<(), ApiError>>;
+
+    fn send_conversation_function_call_output(
+        &self,
+        call_id: String,
+        output_text: String,
+    ) -> ApiRuntimeFuture<'_, Result<(), ApiError>>;
+
+    fn send_response_create(&self) -> ApiRuntimeFuture<'_, Result<(), ApiError>>;
+
+    fn send_payload(&self, payload: String) -> ApiRuntimeFuture<'_, Result<(), ApiError>>;
+}
+
+/// Runtime capability for receiving typed realtime WebSocket events.
+///
+/// Implementations own parsing, transcript state, and transport close/error classification.
+pub trait RealtimeWebsocketEventsRuntime: Send + Sync {
+    fn next_event(&self) -> ApiRuntimeFuture<'_, Result<Option<RealtimeEvent>, ApiError>>;
+}
+
+/// Request for executing the compaction endpoint through a configured runtime client.
+pub struct CompactInputRuntimeRequest<'a> {
+    pub input: &'a CompactionInput<'a>,
+    pub extra_headers: HeaderMap,
+    pub request_telemetry: Option<Arc<dyn RequestTelemetry>>,
+}
+
+/// Request for executing the memory summarize endpoint through a configured runtime client.
+pub struct MemorySummarizeRuntimeRequest<'a> {
+    pub input: &'a MemorySummarizeInput,
+    pub extra_headers: HeaderMap,
+    pub request_telemetry: Option<Arc<dyn RequestTelemetry>>,
+}
+
+/// Request for executing a Chat Completions-compatible endpoint through a configured runtime
+/// client.
+pub struct ChatCompletionsRuntimeRequest {
+    pub request: ResponsesApiRequest,
+    pub extra_headers: HeaderMap,
+    pub path: ChatCompletionsPath,
+    pub request_telemetry: Option<Arc<dyn RequestTelemetry>>,
+}
+
+/// Request for creating a realtime WebRTC call through a configured runtime client.
+pub struct RealtimeCallRuntimeRequest {
+    pub sdp: String,
+    pub session_config: RealtimeSessionConfig,
+    pub extra_headers: HeaderMap,
+    pub request_telemetry: Option<Arc<dyn RequestTelemetry>>,
+}
+
+/// Request for streaming a Responses API request through a configured runtime client.
+pub struct ResponsesStreamRuntimeRequest {
+    pub request: ResponsesApiRequest,
+    pub options: ResponsesOptions,
+    pub request_telemetry: Option<Arc<dyn RequestTelemetry>>,
+    pub sse_telemetry: Option<Arc<dyn SseTelemetry>>,
+}
+
+/// Request for executing ARC monitor HTTP checks through a configured runtime client.
+pub struct ArcMonitorRuntimeRequest {
+    pub url: String,
+    pub body: Value,
+    pub bearer_token: Option<String>,
+    pub auth_headers: HeaderMap,
+    pub timeout: Duration,
+}
+
+/// Transport-neutral ARC monitor HTTP response.
+pub struct ArcMonitorRuntimeResponse {
+    pub status: StatusCode,
+    pub body_text: String,
 }
 
 #[derive(Debug)]
@@ -195,6 +529,54 @@ impl From<VerbosityConfig> for OpenAiVerbosity {
             VerbosityConfig::High => OpenAiVerbosity::High,
         }
     }
+}
+
+/// Canonical input payload for the compaction endpoint.
+#[derive(Debug, Clone, Serialize)]
+pub struct CompactionInput<'a> {
+    pub model: &'a str,
+    pub input: &'a [ResponseItem],
+    #[serde(skip_serializing_if = "str::is_empty")]
+    pub instructions: &'a str,
+    pub tools: Vec<Value>,
+    pub parallel_tool_calls: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<Reasoning>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<TextControls>,
+}
+
+/// Canonical input payload for the memory summarize endpoint.
+#[derive(Debug, Clone, Serialize)]
+pub struct MemorySummarizeInput {
+    pub model: String,
+    #[serde(rename = "traces")]
+    pub raw_memories: Vec<RawMemory>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<Reasoning>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RawMemory {
+    pub id: String,
+    pub metadata: RawMemoryMetadata,
+    pub items: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RawMemoryMetadata {
+    pub source_path: String,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct MemorySummarizeOutput {
+    #[serde(rename = "trace_summary", alias = "raw_memory")]
+    pub raw_memory: String,
+    pub memory_summary: String,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq)]

@@ -9,7 +9,9 @@ use self::layer_io::LoadedConfigLayers;
 use codex_config_diagnostics::ConfigError;
 use codex_config_diagnostics::config_error_from_toml;
 use codex_config_diagnostics::io_error_from_config_error;
-use codex_config_edit::CONFIG_TOML_FILE;
+use codex_config_loader::ConfigLayerLoadFuture;
+use codex_config_loader::ConfigLayerLoadRequest;
+use codex_config_loader::ConfigLayerLoader;
 use codex_config_loader::ConfigLoadOptions;
 use codex_config_loader::LoaderOverrides;
 use codex_config_loader::ProjectConfig;
@@ -31,9 +33,12 @@ use codex_config_state::ConfigLayerStack;
 use codex_config_state::first_layer_config_error_from_entries as typed_first_layer_config_error_from_entries;
 use codex_config_state::merge_toml_values;
 use codex_config_toml::config_toml::ConfigToml;
+pub use codex_config_toml::resolve_relative_paths_in_config_toml;
+use codex_config_types::CONFIG_TOML_FILE;
 use codex_config_types::ConfigLayerSource;
 use codex_file_system::ExecutorFileSystem;
-use codex_git_utils::resolve_root_git_project_for_trust;
+use codex_file_system::LOCAL_FS;
+use codex_git_info::resolve_root_git_project_for_trust;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::ProfileV2Name;
 use codex_protocol::config_types::SandboxMode;
@@ -47,6 +52,7 @@ use std::io;
 use std::path::Path;
 #[cfg(windows)]
 use std::path::PathBuf;
+use std::sync::Arc;
 use toml::Value as TomlValue;
 
 pub use host_name::host_name;
@@ -55,6 +61,48 @@ use strict_config::config_error_from_ignored_toml_value_fields;
 use strict_config::ignored_toml_value_field;
 use strict_config::unknown_feature_toml_value_field;
 use thread_config::load_thread_config_layers;
+
+#[derive(Clone)]
+pub struct LocalConfigLayerLoader {
+    fs: Arc<dyn ExecutorFileSystem>,
+}
+
+impl LocalConfigLayerLoader {
+    pub fn new(fs: Arc<dyn ExecutorFileSystem>) -> Self {
+        Self { fs }
+    }
+}
+
+impl Default for LocalConfigLayerLoader {
+    fn default() -> Self {
+        Self::new(Arc::clone(&LOCAL_FS))
+    }
+}
+
+impl std::fmt::Debug for LocalConfigLayerLoader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LocalConfigLayerLoader")
+            .finish_non_exhaustive()
+    }
+}
+
+impl ConfigLayerLoader for LocalConfigLayerLoader {
+    fn load(&self, request: ConfigLayerLoadRequest) -> ConfigLayerLoadFuture<'_> {
+        let fs = Arc::clone(&self.fs);
+        Box::pin(async move {
+            load_config_layers_state(
+                fs.as_ref(),
+                &request.codex_home,
+                request.cwd,
+                &request.cli_overrides,
+                request.options,
+                request.cloud_requirements,
+                request.thread_config_loader.as_ref(),
+            )
+            .await
+        })
+    }
+}
 
 #[cfg(unix)]
 const SYSTEM_CONFIG_TOML_FILE_UNIX: &str = "/etc/codex/config.toml";
@@ -946,67 +994,6 @@ async fn project_trust_context(
         projects_trust,
         user_config_file: user_config_file.clone(),
     })
-}
-
-/// Takes a `toml::Value` parsed from a config.toml file and walks through it,
-/// resolving any `AbsolutePathBuf` fields against `base_dir`, returning a new
-/// `toml::Value` with the same shape but with paths resolved.
-///
-/// This ensures that multiple config layers can be merged together correctly
-/// even if they were loaded from different directories.
-#[doc(hidden)]
-pub fn resolve_relative_paths_in_config_toml(
-    value_from_config_toml: TomlValue,
-    base_dir: &Path,
-) -> io::Result<TomlValue> {
-    // Use the serialize/deserialize round-trip to convert the
-    // `toml::Value` into a `ConfigToml` with `AbsolutePath
-    let _guard = AbsolutePathBufGuard::new(base_dir);
-    let Ok(resolved) = value_from_config_toml.clone().try_into::<ConfigToml>() else {
-        return Ok(value_from_config_toml);
-    };
-    drop(_guard);
-
-    let resolved_value = TomlValue::try_from(resolved).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Failed to serialize resolved config: {e}"),
-        )
-    })?;
-
-    Ok(copy_shape_from_original(
-        &value_from_config_toml,
-        &resolved_value,
-    ))
-}
-
-/// Ensure that every field in `original` is present in the returned
-/// `toml::Value`, taking the value from `resolved` where possible. This ensures
-/// the fields that we "removed" during the serialize/deserialize round-trip in
-/// `resolve_config_paths` are preserved, out of an abundance of caution.
-fn copy_shape_from_original(original: &TomlValue, resolved: &TomlValue) -> TomlValue {
-    match (original, resolved) {
-        (TomlValue::Table(original_table), TomlValue::Table(resolved_table)) => {
-            let mut table = toml::map::Map::new();
-            for (key, original_value) in original_table {
-                let resolved_value = resolved_table.get(key).unwrap_or(original_value);
-                table.insert(
-                    key.clone(),
-                    copy_shape_from_original(original_value, resolved_value),
-                );
-            }
-            TomlValue::Table(table)
-        }
-        (TomlValue::Array(original_array), TomlValue::Array(resolved_array)) => {
-            let mut items = Vec::new();
-            for (index, original_value) in original_array.iter().enumerate() {
-                let resolved_value = resolved_array.get(index).unwrap_or(original_value);
-                items.push(copy_shape_from_original(original_value, resolved_value));
-            }
-            TomlValue::Array(items)
-        }
-        (_, resolved_value) => resolved_value.clone(),
-    }
 }
 
 async fn find_project_root(

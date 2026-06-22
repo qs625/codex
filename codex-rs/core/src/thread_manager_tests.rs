@@ -1,10 +1,9 @@
 use super::*;
 use crate::config::test_config;
-use crate::init_state_db;
 use crate::installation_id::INSTALLATION_ID_FILENAME;
-use crate::rollout::RolloutRecorder;
 use crate::session::session::SessionSettingsUpdate;
 use crate::session::tests::make_session_and_context;
+use crate::state_db_bridge::init_state_db;
 use crate::tasks::InterruptedTurnHistoryMarker;
 use crate::tasks::interrupted_turn_history_marker;
 use codex_extension_api::empty_extension_registry;
@@ -23,6 +22,7 @@ use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::UserMessageEvent;
 use codex_protocol::user_input::UserInput;
+use codex_rollout::RolloutRecorder;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use core_test_support::responses::mount_models_once;
@@ -32,6 +32,23 @@ use tempfile::tempdir;
 use wiremock::MockServer;
 
 const TEST_INSTALLATION_ID: &str = "11111111-1111-4111-8111-111111111111";
+
+fn thread_store_from_config(
+    config: &Config,
+    state_db: Option<StateDbHandle>,
+) -> Arc<dyn ThreadStore> {
+    match &config.experimental_thread_store {
+        crate::config::ThreadStoreConfig::Local => {
+            Arc::new(codex_thread_store::LocalThreadStore::new(
+                codex_thread_store::LocalThreadStoreConfig::from_config(config),
+                state_db,
+            ))
+        }
+        crate::config::ThreadStoreConfig::InMemory { id } => {
+            codex_thread_store::InMemoryThreadStore::for_id(id)
+        }
+    }
+}
 
 fn user_msg(text: &str) -> ResponseItem {
     ResponseItem::Message {
@@ -495,19 +512,22 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-    let manager = ThreadManager::new(
+    let manager = ThreadManager::new_with_mcp_auth_runtime(
         &config,
-        auth_manager.clone(),
+        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager.clone()),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         empty_extension_registry(),
         /*analytics_events_client*/ None,
         thread_store_from_config(&config, /*state_db*/ None),
         /*state_db*/ None,
+        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
     let selected_cwd =
         AbsolutePathBuf::try_from(config.cwd.as_path().join("selected")).expect("absolute path");
@@ -551,7 +571,6 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
         .resume_thread_from_rollout(
             config.clone(),
             rollout_path.clone(),
-            auth_manager,
             /*parent_trace*/ None,
         )
         .await
@@ -615,19 +634,22 @@ async fn explicit_installation_id_skips_codex_home_file() {
     let installation_id = uuid::Uuid::new_v4().to_string();
     let state_db = init_state_db(&config).await;
     let thread_store = thread_store_from_config(&config, state_db.clone());
-    let manager = ThreadManager::new(
+    let manager = ThreadManager::new_with_mcp_auth_runtime(
         &config,
-        auth_manager,
+        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         empty_extension_registry(),
         /*analytics_events_client*/ None,
         thread_store,
         state_db.clone(),
+        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         installation_id.clone(),
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let thread = manager
@@ -656,19 +678,22 @@ async fn resume_active_thread_from_rollout_returns_running_thread() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-    let manager = ThreadManager::new(
+    let manager = ThreadManager::new_with_mcp_auth_runtime(
         &config,
-        auth_manager.clone(),
+        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager.clone()),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         empty_extension_registry(),
         /*analytics_events_client*/ None,
         thread_store_from_config(&config, /*state_db*/ None),
         /*state_db*/ None,
+        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let source = manager
@@ -687,12 +712,7 @@ async fn resume_active_thread_from_rollout_returns_running_thread() {
         .expect("source rollout path should exist");
 
     let resumed = manager
-        .resume_thread_from_rollout(
-            config,
-            rollout_path,
-            auth_manager,
-            /*parent_trace*/ None,
-        )
+        .resume_thread_from_rollout(config, rollout_path, /*parent_trace*/ None)
         .await
         .expect("resume active source thread");
     assert_eq!(resumed.thread_id, source.thread_id);
@@ -715,19 +735,22 @@ async fn resume_stopped_thread_from_rollout_spawns_new_thread() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-    let manager = ThreadManager::new(
+    let manager = ThreadManager::new_with_mcp_auth_runtime(
         &config,
-        auth_manager.clone(),
+        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager.clone()),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         empty_extension_registry(),
         /*analytics_events_client*/ None,
         thread_store_from_config(&config, /*state_db*/ None),
         /*state_db*/ None,
+        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let source = manager
@@ -751,12 +774,7 @@ async fn resume_stopped_thread_from_rollout_spawns_new_thread() {
         .expect("shutdown source thread");
 
     let resumed = manager
-        .resume_thread_from_rollout(
-            config,
-            rollout_path,
-            auth_manager,
-            /*parent_trace*/ None,
-        )
+        .resume_thread_from_rollout(config, rollout_path, /*parent_trace*/ None)
         .await
         .expect("resume stopped source thread");
     assert_eq!(resumed.thread_id, source.thread_id);
@@ -781,19 +799,22 @@ async fn resume_stopped_thread_from_rollout_preserves_thread_source() {
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
     let state_db = init_state_db(&config).await;
     let thread_store = thread_store_from_config(&config, state_db.clone());
-    let manager = ThreadManager::new(
+    let manager = ThreadManager::new_with_mcp_auth_runtime(
         &config,
-        auth_manager.clone(),
+        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager.clone()),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         empty_extension_registry(),
         /*analytics_events_client*/ None,
         thread_store,
         state_db.clone(),
+        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let source = manager
@@ -828,12 +849,7 @@ async fn resume_stopped_thread_from_rollout_preserves_thread_source() {
     let _ = manager.remove_thread(&source.thread_id).await;
 
     let resumed = manager
-        .resume_thread_from_rollout(
-            config,
-            rollout_path,
-            auth_manager,
-            /*parent_trace*/ None,
-        )
+        .resume_thread_from_rollout(config, rollout_path, /*parent_trace*/ None)
         .await
         .expect("resume source thread");
 
@@ -860,7 +876,7 @@ async fn rollout_path_resume_and_fork_read_history_through_thread_store() {
     let mut config = test_config().await;
     config.codex_home = temp_dir.path().join("codex-home").abs();
     config.cwd = config.codex_home.abs();
-    config.experimental_thread_store = ThreadStoreConfig::InMemory {
+    config.experimental_thread_store = crate::config::ThreadStoreConfig::InMemory {
         id: format!("thread-manager-{}", uuid::Uuid::new_v4()),
     };
     std::fs::create_dir_all(&config.codex_home).expect("create codex home");
@@ -871,21 +887,24 @@ async fn rollout_path_resume_and_fork_read_history_through_thread_store() {
     let thread_store = thread_store_from_config(&config, state_db.clone());
     let in_memory_store = thread_store
         .as_any()
-        .downcast_ref::<InMemoryThreadStore>()
+        .downcast_ref::<codex_thread_store::InMemoryThreadStore>()
         .expect("configured in-memory store");
-    let manager = ThreadManager::new(
+    let manager = ThreadManager::new_with_mcp_auth_runtime(
         &config,
-        auth_manager.clone(),
+        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager.clone()),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         empty_extension_registry(),
         /*analytics_events_client*/ None,
         thread_store.clone(),
         state_db,
+        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let source = manager
@@ -911,7 +930,6 @@ async fn rollout_path_resume_and_fork_read_history_through_thread_store() {
                 history: vec![RolloutItem::ResponseItem(user_msg("hello"))],
                 rollout_path: Some(rollout_path.clone()),
             }),
-            auth_manager.clone(),
             /*persist_extended_history*/ false,
             /*parent_trace*/ None,
         )
@@ -928,7 +946,6 @@ async fn rollout_path_resume_and_fork_read_history_through_thread_store() {
         .resume_thread_from_rollout(
             config.clone(),
             rollout_path.clone(),
-            auth_manager,
             /*parent_trace*/ None,
         )
         .await
@@ -978,19 +995,22 @@ async fn new_uses_active_provider_for_model_refresh() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-    let manager = ThreadManager::new(
+    let manager = ThreadManager::new_with_mcp_auth_runtime(
         &config,
-        auth_manager,
+        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         empty_extension_registry(),
         /*analytics_events_client*/ None,
         thread_store_from_config(&config, /*state_db*/ None),
         /*state_db*/ None,
+        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let _ = manager.list_models(RefreshStrategy::Online).await;
@@ -1198,19 +1218,22 @@ async fn interrupted_fork_snapshot_does_not_synthesize_turn_id_for_legacy_histor
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
     let state_db = init_state_db(&config).await;
-    let manager = ThreadManager::new(
+    let manager = ThreadManager::new_with_mcp_auth_runtime(
         &config,
-        auth_manager.clone(),
+        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager.clone()),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         empty_extension_registry(),
         /*analytics_events_client*/ None,
         thread_store_from_config(&config, state_db.clone()),
         state_db.clone(),
+        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let source = manager
@@ -1220,7 +1243,6 @@ async fn interrupted_fork_snapshot_does_not_synthesize_turn_id_for_legacy_histor
                 RolloutItem::ResponseItem(user_msg("hello")),
                 RolloutItem::ResponseItem(assistant_msg("partial")),
             ]),
-            auth_manager,
             /*persist_extended_history*/ false,
             /*parent_trace*/ None,
         )
@@ -1308,19 +1330,22 @@ async fn interrupted_fork_snapshot_preserves_explicit_turn_id() {
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
     let state_db = init_state_db(&config).await;
-    let manager = ThreadManager::new(
+    let manager = ThreadManager::new_with_mcp_auth_runtime(
         &config,
-        auth_manager.clone(),
+        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager.clone()),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         empty_extension_registry(),
         /*analytics_events_client*/ None,
         thread_store_from_config(&config, state_db.clone()),
         state_db.clone(),
+        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let source = manager
@@ -1336,7 +1361,6 @@ async fn interrupted_fork_snapshot_preserves_explicit_turn_id() {
                 RolloutItem::ResponseItem(user_msg("hello")),
                 RolloutItem::ResponseItem(assistant_msg("partial")),
             ]),
-            auth_manager,
             /*persist_extended_history*/ false,
             /*parent_trace*/ None,
         )
@@ -1407,19 +1431,22 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
     let state_db = init_state_db(&config).await;
-    let manager = ThreadManager::new(
+    let manager = ThreadManager::new_with_mcp_auth_runtime(
         &config,
-        auth_manager.clone(),
+        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager.clone()),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         empty_extension_registry(),
         /*analytics_events_client*/ None,
         thread_store_from_config(&config, state_db.clone()),
         state_db.clone(),
+        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let source = manager
@@ -1429,7 +1456,6 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
                 RolloutItem::ResponseItem(user_msg("hello")),
                 RolloutItem::ResponseItem(assistant_msg("partial")),
             ]),
-            auth_manager,
             /*persist_extended_history*/ false,
             /*parent_trace*/ None,
         )
@@ -1552,26 +1578,28 @@ async fn resumed_thread_keeps_paused_goal_paused() -> anyhow::Result<()> {
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
     let state_db = init_state_db(&config).await;
-    let manager = ThreadManager::new(
+    let manager = ThreadManager::new_with_mcp_auth_runtime(
         &config,
-        auth_manager.clone(),
+        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager.clone()),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         empty_extension_registry(),
         /*analytics_events_client*/ None,
         thread_store_from_config(&config, state_db.clone()),
         state_db.clone(),
+        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let source = manager
         .resume_thread_with_history(
             config.clone(),
             InitialHistory::Forked(vec![RolloutItem::ResponseItem(user_msg("keep working"))]),
-            auth_manager.clone(),
             /*persist_extended_history*/ false,
             /*parent_trace*/ None,
         )
@@ -1590,7 +1618,7 @@ async fn resumed_thread_keeps_paused_goal_paused() -> anyhow::Result<()> {
         .replace_thread_goal(
             source.thread_id,
             "Keep working until the task is done",
-            codex_state::ThreadGoalStatus::Paused,
+            codex_state_api::ThreadGoalStatus::Paused,
             /*token_budget*/ None,
         )
         .await?;
@@ -1598,19 +1626,14 @@ async fn resumed_thread_keeps_paused_goal_paused() -> anyhow::Result<()> {
     manager.remove_thread(&source.thread_id).await;
 
     let resumed = manager
-        .resume_thread_from_rollout(
-            config.clone(),
-            source_path,
-            auth_manager,
-            /*parent_trace*/ None,
-        )
+        .resume_thread_from_rollout(config.clone(), source_path, /*parent_trace*/ None)
         .await
         .expect("resume source thread");
     let goal = state_db
         .get_thread_goal(resumed.thread_id)
         .await?
         .expect("goal should still exist after resume");
-    assert_eq!(codex_state::ThreadGoalStatus::Paused, goal.status);
+    assert_eq!(codex_state_api::ThreadGoalStatus::Paused, goal.status);
     assert!(
         resumed
             .thread

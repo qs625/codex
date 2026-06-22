@@ -4,10 +4,10 @@ use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
-use codex_tools::GET_GOAL_TOOL_NAME;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
-use codex_tools::create_get_goal_tool;
+use codex_tool_planning::GET_GOAL_TOOL_NAME;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::create_get_goal_tool;
 
 use super::CompletionBudgetReport;
 use super::format_goal_error;
@@ -15,7 +15,6 @@ use super::goal_response;
 
 pub struct GetGoalHandler;
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for GetGoalHandler {
     type Output = FunctionToolOutput;
 
@@ -27,23 +26,31 @@ impl ToolExecutor<ToolInvocation> for GetGoalHandler {
         Some(create_get_goal_tool())
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session, payload, ..
-        } = invocation;
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session, payload, ..
+            } = invocation;
 
-        match payload {
-            ToolPayload::Function { .. } => {
-                let goal = session
-                    .get_thread_goal()
-                    .await
-                    .map_err(|err| FunctionCallError::RespondToModel(format_goal_error(err)))?;
-                goal_response(goal, CompletionBudgetReport::Omit)
+            match payload {
+                ToolPayload::Function { .. } => {
+                    let goal = session
+                        .get_thread_goal()
+                        .await
+                        .map_err(|err| FunctionCallError::RespondToModel(format_goal_error(err)))?;
+                    goal_response(goal, CompletionBudgetReport::Omit)
+                }
+                _ => Err(FunctionCallError::RespondToModel(
+                    "get_goal handler received unsupported payload".to_string(),
+                )),
             }
-            _ => Err(FunctionCallError::RespondToModel(
-                "get_goal handler received unsupported payload".to_string(),
-            )),
-        }
+        })
     }
 }
 

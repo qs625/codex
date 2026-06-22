@@ -18,8 +18,8 @@ chrono = { workspace = true }
 codex-backend-client = { workspace = true }
 codex-config-types = { workspace = true }
 codex-features = { workspace = true }
-codex-git-utils = { workspace = true }
-codex-login = { workspace = true }
+codex-git-baseline = { workspace = true }
+codex-login = { workspace = true, features = ["model-provider-auth"] }
 codex-otel = { workspace = true }
 codex-protocol = { workspace = true }
 codex-rollout = { workspace = true }
@@ -40,6 +40,7 @@ codex-api = { workspace = true }
 codex-core = { workspace = true }
 codex-models-manager = { workspace = true }
 codex-rollout-trace = { workspace = true }
+codex-session-telemetry-api = { workspace = true }
 core_test_support = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }

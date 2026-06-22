@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::app_event::ConnectorsSnapshot;
+use codex_login::AuthManager;
 
 #[derive(Debug, Clone, Default)]
 pub(super) enum ConnectorsCacheState {
@@ -49,11 +50,23 @@ impl ChatWidget {
         let environment_manager = Arc::clone(&self.environment_manager);
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
+            let auth_manager =
+                AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false).await;
+            let auth = auth_manager.auth().await;
+            let auth_snapshot = auth.as_ref().map(|auth| auth.request_auth_snapshot());
+            let mcp_auth_runtime = codex_mcp::DefaultMcpAuthRuntime;
+            let mcp_connection_runtime_factory = codex_mcp::DefaultMcpConnectionRuntimeFactory;
+            let plugin_runtime =
+                codex_core_plugins::PluginsManager::new(config.codex_home.to_path_buf());
             let accessible_result =
                 match crate::legacy_core::connectors::list_accessible_connectors_from_mcp_tools_with_environment_provider(
                     &config,
+                    auth_snapshot.as_ref(),
                     force_refetch,
+                    &plugin_runtime,
                     &environment_manager,
+                    &mcp_auth_runtime,
+                    &mcp_connection_runtime_factory,
                 )
                 .await
                 {

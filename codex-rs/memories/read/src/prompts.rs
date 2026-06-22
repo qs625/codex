@@ -1,5 +1,7 @@
 use crate::MEMORY_TOOL_DEVELOPER_INSTRUCTIONS_SUMMARY_TOKEN_LIMIT;
 use crate::memory_root;
+use codex_memories_read_api::MemoryReadFuture;
+use codex_memories_read_api::MemoryToolDeveloperInstructionsProvider;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::truncate_text;
@@ -49,6 +51,18 @@ pub async fn build_memory_tool_developer_instructions(
             ("memory_summary", memory_summary.as_str()),
         ])
         .ok()
+}
+
+#[derive(Debug, Default)]
+pub struct FsMemoryToolDeveloperInstructionsProvider;
+
+impl MemoryToolDeveloperInstructionsProvider for FsMemoryToolDeveloperInstructionsProvider {
+    fn build_memory_tool_developer_instructions<'a>(
+        &'a self,
+        codex_home: &'a AbsolutePathBuf,
+    ) -> MemoryReadFuture<'a, Option<String>> {
+        Box::pin(build_memory_tool_developer_instructions(codex_home))
+    }
 }
 
 #[cfg(test)]

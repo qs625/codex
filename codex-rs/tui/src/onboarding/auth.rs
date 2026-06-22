@@ -1046,7 +1046,7 @@ mod tests {
     async fn widget_forced_chatgpt() -> (AuthModeWidget, TempDir) {
         let codex_home = TempDir::new().unwrap();
         let codex_home_path = codex_home.path().to_path_buf();
-        let config = ConfigBuilder::default()
+        let config = crate::config_builder()
             .codex_home(codex_home_path.clone())
             .build()
             .await

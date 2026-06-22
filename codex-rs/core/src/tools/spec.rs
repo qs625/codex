@@ -6,10 +6,10 @@ use crate::tools::spec_plan_types::ToolRegistryBuildParams;
 use codex_extension_api::ExtensionToolExecutor;
 use codex_mcp_tool_types::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
-use codex_tools::DiscoverableTool;
-use codex_tools::ToolUserShellType;
-use codex_tools::ToolsConfig;
-use codex_tools::hosted_model_tool_specs;
+use codex_tool_config::ToolUserShellType;
+use codex_tool_config::ToolsConfig;
+use codex_tool_planning::DiscoverableTool;
+use codex_tool_planning::hosted_model_tool_specs;
 use std::sync::Arc;
 
 pub(crate) fn tool_user_shell_type(user_shell: &Shell) -> ToolUserShellType {
@@ -24,7 +24,7 @@ pub(crate) fn tool_user_shell_type(user_shell: &Shell) -> ToolUserShellType {
 
 pub(crate) struct ToolRouterParts {
     pub(crate) executors: Vec<Arc<dyn RegisteredTool>>,
-    pub(crate) hosted_specs: Vec<codex_tools::ToolSpec>,
+    pub(crate) hosted_specs: Vec<codex_tool_planning::ToolSpec>,
 }
 
 pub(crate) fn collect_tool_router_parts(

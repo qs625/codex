@@ -24,7 +24,7 @@ use crate::tools::runtimes::shell::ShellRuntimeBackend;
 use crate::tools::sandboxing::ToolCtx;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::ExecCommandSource;
-use codex_tools::ToolName;
+use codex_tool_planning::ToolName;
 
 mod shell_command;
 
@@ -213,7 +213,7 @@ async fn run_exec_like(args: RunExecLikeArgs) -> Result<FunctionToolOutput, Func
         justification: exec_params.justification.clone(),
         exec_approval_requirement,
     };
-    let mut orchestrator = ToolOrchestrator::new();
+    let mut orchestrator = ToolOrchestrator::new(Arc::clone(&session.services.sandbox_runtime));
     let mut runtime = ShellRuntime::for_shell_command(shell_runtime_backend);
     let tool_ctx = ToolCtx {
         session: session.clone(),

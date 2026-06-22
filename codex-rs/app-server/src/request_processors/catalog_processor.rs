@@ -5,6 +5,7 @@ use futures::StreamExt;
 pub(crate) struct CatalogRequestProcessor {
     pub(super) auth_manager: Arc<AuthManager>,
     pub(super) thread_manager: Arc<ThreadManager>,
+    pub(super) plugins_manager: Arc<PluginsManager>,
     pub(super) config: Arc<Config>,
     pub(super) config_manager: ConfigManager,
     pub(super) environment_manager: Arc<EnvironmentManager>,
@@ -98,6 +99,7 @@ impl CatalogRequestProcessor {
     pub(crate) fn new(
         auth_manager: Arc<AuthManager>,
         thread_manager: Arc<ThreadManager>,
+        plugins_manager: Arc<PluginsManager>,
         config: Arc<Config>,
         config_manager: ConfigManager,
         environment_manager: Arc<EnvironmentManager>,
@@ -106,6 +108,7 @@ impl CatalogRequestProcessor {
         Self {
             auth_manager,
             thread_manager,
+            plugins_manager,
             config,
             config_manager,
             environment_manager,
@@ -405,7 +408,7 @@ impl CatalogRequestProcessor {
             .workspace_codex_plugins_enabled(&config, auth.as_ref())
             .await;
         let skills_manager = self.thread_manager.skills_manager();
-        let plugins_manager = self.thread_manager.plugins_manager();
+        let plugins_manager = Arc::clone(&self.plugins_manager);
         let fs = Some(
             self.environment_manager
                 .default_environment()
@@ -495,7 +498,7 @@ impl CatalogRequestProcessor {
         };
 
         let auth = self.auth_manager.auth().await;
-        let plugins_manager = self.thread_manager.plugins_manager();
+        let plugins_manager = Arc::clone(&self.plugins_manager);
         let mut data = Vec::new();
         for cwd in cwds {
             let config = match self
@@ -595,7 +598,7 @@ impl CatalogRequestProcessor {
             .apply()
             .await
             .map(|()| {
-                self.thread_manager.plugins_manager().clear_cache();
+                self.plugins_manager.clear_cache();
                 self.thread_manager.skills_manager().clear_cache();
                 SkillsConfigWriteResponse {
                     effective_enabled: enabled,

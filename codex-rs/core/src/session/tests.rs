@@ -1,5 +1,6 @@
 use super::turn_context::TurnEnvironment;
 use super::*;
+use crate::config::CONFIG_TOML_FILE;
 use crate::config::ConfigBuilder;
 use crate::config::test_config;
 use crate::context::ContextualUserFragment;
@@ -20,14 +21,19 @@ use codex_config::RequirementSource;
 use codex_config::Sourced;
 use codex_config::loader::project_trust_key;
 use codex_config::types::ToolSuggestDisabledTool;
+use codex_core_plugins::PluginsManager;
+use codex_core_skills::SkillsManager;
 
 use codex_features::Feature;
+use codex_hooks::Hooks;
+use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_models_manager::bundled_models_response;
 use codex_models_manager::model_info;
 use codex_models_manager::test_support::construct_model_info_offline_for_tests;
 use codex_models_manager::test_support::get_model_offline_for_tests;
+use codex_otel::SessionTelemetry;
 use codex_protocol::AgentPath;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
@@ -35,6 +41,7 @@ use codex_protocol::account::PlanType as AccountPlanType;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::exec_output::ExecToolCallOutput;
+use codex_protocol::mcp::RequestId;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
 use codex_protocol::models::FileSystemPermissions;
@@ -52,14 +59,14 @@ use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::request_permissions::PermissionGrantScope;
 use codex_protocol::request_permissions::RequestPermissionProfile;
+use codex_state_api::ExternalGoalPreviousStatus;
+use codex_state_api::ExternalGoalSet;
+use codex_thread_store::LiveThread;
 use tracing::Span;
 
-use crate::goals::ExternalGoalPreviousStatus;
-use crate::goals::ExternalGoalSet;
 use crate::goals::GoalRuntimeEvent;
 use crate::goals::SetGoalRequest;
 use crate::pending_input::PendingInputItem;
-use crate::rollout::recorder::RolloutRecorder;
 use crate::state::ActiveTurn;
 use crate::state::TaskKind;
 use crate::tasks::SessionTask;
@@ -138,6 +145,7 @@ use codex_protocol::protocol::UserMessageEvent;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_protocol::request_user_input::RequestUserInputAnswer;
 use codex_protocol::request_user_input::RequestUserInputResponse;
+use codex_rollout::RolloutRecorder;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use core_test_support::context_snapshot;
@@ -412,6 +420,7 @@ fn test_model_client_session() -> crate::client::ModelClientSession {
         thread_id.into(),
         thread_id,
         /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
+        Arc::new(codex_api::DefaultApiRuntimeFactory),
         crate::test_support::model_provider_factory_for_tests(),
         ModelProviderInfo::create_openai_provider(/* base_url */ /*base_url*/ None),
         codex_protocol::protocol::SessionSource::Exec,
@@ -506,7 +515,7 @@ async fn write_project_trust_config(
     trusted_projects: &[(&Path, TrustLevel)],
 ) -> std::io::Result<()> {
     tokio::fs::write(
-        codex_home.join(codex_config_edit::CONFIG_TOML_FILE),
+        codex_home.join(CONFIG_TOML_FILE),
         toml::to_string(&ConfigToml {
             projects: Some(
                 trusted_projects
@@ -709,8 +718,10 @@ async fn start_managed_network_proxy_applies_execpolicy_network_rules() -> anyho
         /*justification*/ None,
     )?;
 
+    let network_proxy_runtime_factory = codex_network_proxy::DefaultNetworkProxyRuntimeFactory;
     let (started_proxy, _) = Session::start_managed_network_proxy(
         &spec,
+        &network_proxy_runtime_factory,
         &exec_policy,
         &permission_profile_for_sandbox_policy(&SandboxPolicy::new_workspace_write_policy()),
         /*network_policy_decider*/ None,
@@ -720,7 +731,7 @@ async fn start_managed_network_proxy_applies_execpolicy_network_rules() -> anyho
     )
     .await?;
 
-    let current_cfg = started_proxy.proxy().current_cfg().await?;
+    let current_cfg = started_proxy.proxy().current_config().await?;
     assert_eq!(
         current_cfg.network.allowed_domains(),
         Some(vec!["example.com".to_string()])
@@ -753,8 +764,10 @@ async fn start_managed_network_proxy_ignores_invalid_execpolicy_network_rules() 
         /*justification*/ None,
     )?;
 
+    let network_proxy_runtime_factory = codex_network_proxy::DefaultNetworkProxyRuntimeFactory;
     let (started_proxy, _) = Session::start_managed_network_proxy(
         &spec,
+        &network_proxy_runtime_factory,
         &exec_policy,
         &permission_profile_for_sandbox_policy(&SandboxPolicy::new_workspace_write_policy()),
         /*network_policy_decider*/ None,
@@ -764,7 +777,7 @@ async fn start_managed_network_proxy_ignores_invalid_execpolicy_network_rules() 
     )
     .await?;
 
-    let current_cfg = started_proxy.proxy().current_cfg().await?;
+    let current_cfg = started_proxy.proxy().current_config().await?;
     assert_eq!(
         current_cfg.network.allowed_domains(),
         Some(vec!["managed.example.com".to_string()])
@@ -792,8 +805,10 @@ async fn managed_network_proxy_decider_survives_full_access_start() -> anyhow::R
         }
     });
 
+    let network_proxy_runtime_factory = codex_network_proxy::DefaultNetworkProxyRuntimeFactory;
     let (started_proxy, _) = Session::start_managed_network_proxy(
         &spec,
+        &network_proxy_runtime_factory,
         &exec_policy,
         &permission_profile_for_sandbox_policy(&SandboxPolicy::DangerFullAccess),
         Some(network_policy_decider),
@@ -807,7 +822,7 @@ async fn managed_network_proxy_decider_survives_full_access_start() -> anyhow::R
         &SandboxPolicy::new_workspace_write_policy(),
     ))?;
     spec.apply_to_started_proxy(&started_proxy).await?;
-    let current_cfg = started_proxy.proxy().current_cfg().await?;
+    let current_cfg = started_proxy.proxy().current_config().await?;
     assert_eq!(current_cfg.network.allowed_domains(), None);
 
     use tokio::io::AsyncReadExt as _;
@@ -864,8 +879,10 @@ async fn new_turn_refreshes_managed_network_proxy_for_sandbox_change() -> anyhow
         Some(requirements),
         &permission_profile_for_sandbox_policy(&initial_policy),
     )?;
+    let network_proxy_runtime_factory = codex_network_proxy::DefaultNetworkProxyRuntimeFactory;
     let (started_proxy, _) = Session::start_managed_network_proxy(
         &spec,
+        &network_proxy_runtime_factory,
         &Policy::empty(),
         &permission_profile_for_sandbox_policy(&initial_policy),
         /*network_policy_decider*/ None,
@@ -877,7 +894,7 @@ async fn new_turn_refreshes_managed_network_proxy_for_sandbox_change() -> anyhow
     assert_eq!(
         started_proxy
             .proxy()
-            .current_cfg()
+            .current_config()
             .await?
             .network
             .allowed_domains(),
@@ -921,7 +938,7 @@ async fn new_turn_refreshes_managed_network_proxy_for_sandbox_change() -> anyhow
     assert_eq!(
         started_proxy
             .proxy()
-            .current_cfg()
+            .current_config()
             .await?
             .network
             .allowed_domains(),
@@ -981,8 +998,8 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
     }
 
     impl crate::tools::sandboxing::Sandboxable for ProbeToolRuntime {
-        fn sandbox_preference(&self) -> codex_sandboxing::SandboxablePreference {
-            codex_sandboxing::SandboxablePreference::Auto
+        fn sandbox_preference(&self) -> codex_sandboxing_api::SandboxablePreference {
+            codex_sandboxing_api::SandboxablePreference::Auto
         }
     }
 
@@ -1046,13 +1063,15 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
     let turn = session.new_default_turn().await;
     assert!(turn.network.is_none());
 
-    let mut orchestrator = crate::tools::orchestrator::ToolOrchestrator::new();
+    let mut orchestrator = crate::tools::orchestrator::ToolOrchestrator::new(Arc::new(
+        codex_sandboxing_api::DisabledSandboxRuntime,
+    ));
     let mut tool = ProbeToolRuntime::default();
     let tool_ctx = crate::tools::sandboxing::ToolCtx {
         session: Arc::clone(&session),
         turn: Arc::clone(&turn),
         call_id: "probe-call".to_string(),
-        tool_name: codex_tools::ToolName::plain("probe"),
+        tool_name: codex_tool_planning::ToolName::plain("probe"),
     };
 
     orchestrator
@@ -1953,7 +1972,11 @@ async fn recompute_token_usage_uses_session_base_instructions() {
         .estimate_token_count_with_base_instructions(&session_base_instructions)
         .expect("estimate with session base instructions");
     let model_estimated_tokens = history
-        .estimate_token_count(&turn_context)
+        .estimate_token_count_with_base_instructions(&BaseInstructions {
+            text: turn_context.model_info.get_model_instructions(
+                turn_context.personality.or(turn_context.config.personality),
+            ),
+        })
         .expect("estimate with model instructions");
     assert_ne!(expected_tokens, model_estimated_tokens);
 
@@ -3077,6 +3100,7 @@ async fn set_rate_limits_retains_previous_credits() {
         environments: Vec::new(),
         original_config_do_not_use: Arc::clone(&config),
         metrics_service_name: None,
+        terminal_type: "test-terminal".to_string(),
         app_server_client_name: None,
         app_server_client_version: None,
         session_source: SessionSource::Exec,
@@ -3181,6 +3205,7 @@ async fn set_rate_limits_updates_plan_type_when_present() {
         environments: Vec::new(),
         original_config_do_not_use: Arc::clone(&config),
         metrics_service_name: None,
+        terminal_type: "test-terminal".to_string(),
         app_server_client_name: None,
         app_server_client_version: None,
         session_source: SessionSource::Exec,
@@ -3450,7 +3475,7 @@ async fn attach_thread_persistence(session: &mut Session) -> PathBuf {
     )
     .await
     .expect("create thread persistence");
-    session.services.live_thread = Some(live_thread);
+    session.services.live_thread = Some(Arc::new(live_thread));
     session.ensure_rollout_materialized().await;
     session
         .flush_rollout()
@@ -3504,7 +3529,7 @@ fn get_service_tier_defaults_enterprise_accounts_to_fast() {
         get_service_tier(
             /*configured_service_tier*/ None,
             /*fast_default_opt_out*/ false,
-            Some(AccountPlanType::Enterprise),
+            is_enterprise_default_service_tier_plan(AccountPlanType::Enterprise),
             /*fast_mode_enabled*/ true,
         ),
         Some(ServiceTier::Fast.request_value().to_string())
@@ -3513,7 +3538,7 @@ fn get_service_tier_defaults_enterprise_accounts_to_fast() {
         get_service_tier(
             /*configured_service_tier*/ None,
             /*fast_default_opt_out*/ false,
-            Some(AccountPlanType::EnterpriseCbpUsageBased),
+            is_enterprise_default_service_tier_plan(AccountPlanType::EnterpriseCbpUsageBased),
             /*fast_mode_enabled*/ true,
         ),
         Some(ServiceTier::Fast.request_value().to_string())
@@ -3522,7 +3547,7 @@ fn get_service_tier_defaults_enterprise_accounts_to_fast() {
         get_service_tier(
             /*configured_service_tier*/ None,
             /*fast_default_opt_out*/ false,
-            Some(AccountPlanType::Business),
+            is_enterprise_default_service_tier_plan(AccountPlanType::Business),
             /*fast_mode_enabled*/ true,
         ),
         Some(ServiceTier::Fast.request_value().to_string())
@@ -3531,7 +3556,7 @@ fn get_service_tier_defaults_enterprise_accounts_to_fast() {
         get_service_tier(
             /*configured_service_tier*/ None,
             /*fast_default_opt_out*/ false,
-            Some(AccountPlanType::Team),
+            is_enterprise_default_service_tier_plan(AccountPlanType::Team),
             /*fast_mode_enabled*/ true,
         ),
         Some(ServiceTier::Fast.request_value().to_string())
@@ -3540,7 +3565,7 @@ fn get_service_tier_defaults_enterprise_accounts_to_fast() {
         get_service_tier(
             /*configured_service_tier*/ None,
             /*fast_default_opt_out*/ false,
-            Some(AccountPlanType::SelfServeBusinessUsageBased),
+            is_enterprise_default_service_tier_plan(AccountPlanType::SelfServeBusinessUsageBased),
             /*fast_mode_enabled*/ true,
         ),
         Some(ServiceTier::Fast.request_value().to_string())
@@ -3553,7 +3578,7 @@ fn get_service_tier_respects_fast_default_opt_out() {
         get_service_tier(
             /*configured_service_tier*/ None,
             /*fast_default_opt_out*/ true,
-            Some(AccountPlanType::Enterprise),
+            is_enterprise_default_service_tier_plan(AccountPlanType::Enterprise),
             /*fast_mode_enabled*/ true,
         ),
         None
@@ -3566,7 +3591,7 @@ fn get_service_tier_does_not_default_non_enterprise_or_disabled_fast_mode() {
         get_service_tier(
             /*configured_service_tier*/ None,
             /*fast_default_opt_out*/ false,
-            Some(AccountPlanType::Pro),
+            is_enterprise_default_service_tier_plan(AccountPlanType::Pro),
             /*fast_mode_enabled*/ true,
         ),
         None
@@ -3575,7 +3600,7 @@ fn get_service_tier_does_not_default_non_enterprise_or_disabled_fast_mode() {
         get_service_tier(
             /*configured_service_tier*/ None,
             /*fast_default_opt_out*/ false,
-            Some(AccountPlanType::Enterprise),
+            is_enterprise_default_service_tier_plan(AccountPlanType::Enterprise),
             /*fast_mode_enabled*/ false,
         ),
         None
@@ -3721,6 +3746,7 @@ pub(crate) async fn make_session_configuration_for_tests() -> SessionConfigurati
         environments: Vec::new(),
         original_config_do_not_use: Arc::clone(&config),
         metrics_service_name: None,
+        terminal_type: "test-terminal".to_string(),
         app_server_client_name: None,
         app_server_client_version: None,
         session_source: SessionSource::Exec,
@@ -4357,6 +4383,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         environments: Vec::new(),
         original_config_do_not_use: Arc::clone(&config),
         metrics_service_name: None,
+        terminal_type: "test-terminal".to_string(),
         app_server_client_name: None,
         app_server_client_version: None,
         session_source: SessionSource::Exec,
@@ -4370,19 +4397,24 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
     let (tx_event, _rx_event) = async_channel::unbounded();
     let (agent_status_tx, _agent_status_rx) = watch::channel(AgentStatus::PendingInit);
     let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
-    let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
+    let plugin_runtime: codex_core_plugins_api::SharedPluginRuntime = plugins_manager.clone();
+    let mcp_manager = Arc::new(McpManager::new(plugin_runtime));
     let skills_manager = Arc::new(SkillsManager::new(
         config.codex_home.clone(),
         /*bundled_skills_enabled*/ true,
     ));
+    let auth_runtime: codex_auth_types::SharedAuthRuntime = auth_manager.clone();
+    let provider_auth_manager = codex_login::model_provider_auth_manager(Some(auth_manager));
     let result = Session::new(
         session_configuration,
         Arc::clone(&config),
         "11111111-1111-4111-8111-111111111111".to_string(),
-        auth_manager,
+        auth_runtime,
+        provider_auth_manager,
         crate::test_support::model_provider_factory_for_tests(),
         models_manager,
         Arc::new(ExecPolicyManager::default()),
+        Arc::new(crate::EmptyExecPolicyLoader),
         tx_event,
         agent_status_tx,
         InitialHistory::New,
@@ -4390,6 +4422,14 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         skills_manager,
         plugins_manager,
         mcp_manager,
+        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
+        Arc::new(codex_api::DefaultApiRuntimeFactory),
+        Arc::new(codex_otel::OtelSessionTelemetryFactory),
+        Arc::new(codex_memories_read_api::DisabledMemoryToolDeveloperInstructionsProvider),
+        Arc::new(codex_hooks_api::DisabledHookRuntimeFactory),
+        Arc::new(codex_sandboxing_api::DisabledSandboxRuntime),
+        Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
         Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
         AgentControl::default(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
@@ -4398,6 +4438,8 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
             /*state_db*/ None,
         )),
+        /*state_db*/ None,
+        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         codex_rollout_trace::ThreadTraceContext::disabled(),
         /*attestation_provider*/ None,
         Arc::new(crate::ActiveEventSubscriptionTracker::default()),
@@ -4472,6 +4514,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         environments: default_environments,
         original_config_do_not_use: Arc::clone(&config),
         metrics_service_name: None,
+        terminal_type: "test-terminal".to_string(),
         app_server_client_name: None,
         app_server_client_version: None,
         session_source: SessionSource::Exec,
@@ -4487,16 +4530,17 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         session_configuration.collaboration_mode.model(),
         &per_turn_config.to_models_manager_config(),
     );
-    let session_telemetry = session_telemetry(
+    let session_telemetry = Arc::new(session_telemetry(
         thread_id,
         config.as_ref(),
         &model_info,
         session_configuration.session_source.clone(),
-    );
+    )) as codex_session_telemetry_api::SharedSessionTelemetry;
 
     let state = SessionState::new(session_configuration.clone());
     let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
-    let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
+    let plugin_runtime: codex_core_plugins_api::SharedPluginRuntime = plugins_manager.clone();
+    let mcp_manager = Arc::new(McpManager::new(plugin_runtime));
     let skills_manager = Arc::new(SkillsManager::new(
         config.codex_home.clone(),
         /*bundled_skills_enabled*/ true,
@@ -4508,12 +4552,17 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
     );
 
     let services = SessionServices {
-        mcp_connection_manager: Arc::new(RwLock::new(
-            McpConnectionManager::new_uninitialized_with_permission_profile(
+        mcp_connection_manager: Arc::new(RwLock::new(Box::new(
+            codex_mcp::McpConnectionManager::new_uninitialized_with_permission_profile(
                 &config.permissions.approval_policy,
                 config.permissions.permission_profile(),
             ),
-        )),
+        ))),
+        mcp_auth_runtime: Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        mcp_connection_runtime_factory: Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
+        network_proxy_runtime_factory: Arc::new(
+            codex_network_proxy::DefaultNetworkProxyRuntimeFactory,
+        ),
         mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
         unified_exec_manager: Arc::new(UnifiedExecProcessManager::new(
             config.background_terminal_max_timeout,
@@ -4521,17 +4570,25 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         shell_zsh_path: None,
         main_execve_wrapper_exe: config.main_execve_wrapper_exe.clone(),
         analytics_events_client: AnalyticsEventsClient::disabled(),
-        hooks: arc_swap::ArcSwap::from_pointee(Hooks::new(HooksConfig {
+        hooks: std::sync::RwLock::new(Arc::new(Hooks::new(HooksConfig {
             legacy_notify_argv: config.notify.clone(),
             ..HooksConfig::default()
-        })),
+        })) as Arc<dyn codex_hooks_api::HookRuntime>),
+        hook_runtime_factory: Arc::new(codex_hooks::HooksRuntimeFactory),
         rollout_thread_trace: codex_rollout_trace::ThreadTraceContext::disabled(),
         user_shell: Arc::new(default_user_shell()),
         shell_snapshot_tx: watch::channel(None).0,
         show_raw_agent_reasoning: config.show_raw_agent_reasoning,
         exec_policy,
-        auth_manager: auth_manager.clone(),
+        exec_policy_loader: Arc::new(crate::EmptyExecPolicyLoader),
+        auth_runtime: auth_manager.clone(),
         model_provider_factory: crate::test_support::model_provider_factory_for_tests(),
+        api_runtime_factory: Arc::new(codex_api::DefaultApiRuntimeFactory),
+        session_telemetry_factory: Arc::new(codex_otel::OtelSessionTelemetryFactory),
+        memory_tool_developer_instructions_provider: Arc::new(
+            codex_memories_read_api::DisabledMemoryToolDeveloperInstructionsProvider,
+        ),
+        sandbox_runtime: Arc::new(codex_sandboxing_api::DisabledSandboxRuntime),
         session_telemetry: session_telemetry.clone(),
         models_manager: Arc::clone(&models_manager),
         tool_approvals: Mutex::new(ApprovalStore::default()),
@@ -4555,13 +4612,15 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
             /*state_db*/ None,
         )),
+        live_thread_factory: Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         attestation_provider: None,
         active_event_subscriptions: Arc::new(crate::ActiveEventSubscriptionTracker::default()),
         model_client: ModelClient::new(
-            Some(auth_manager.clone()),
+            codex_login::model_provider_auth_manager(Some(auth_manager.clone())),
             thread_id.into(),
             thread_id,
             /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
+            Arc::new(codex_api::DefaultApiRuntimeFactory),
             crate::test_support::model_provider_factory_for_tests(),
             session_configuration.provider.clone(),
             session_configuration.session_source.clone(),
@@ -4602,10 +4661,12 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             .await,
     );
     let turn_environments = turn_environments_for_tests(&environment, &session_configuration.cwd);
+    let auth_runtime: codex_auth_types::SharedAuthRuntime = auth_manager.clone();
     let turn_context = Session::make_turn_context(
         thread_id,
         SessionId::from(thread_id),
-        Some(Arc::clone(&auth_manager)),
+        Some(auth_runtime),
+        codex_login::model_provider_auth_manager(Some(Arc::clone(&auth_manager))),
         services.model_provider_factory.as_ref(),
         &session_telemetry,
         session_configuration.provider.clone(),
@@ -4722,6 +4783,7 @@ async fn make_session_with_config_and_rx(
         environments: default_environments,
         original_config_do_not_use: Arc::clone(&config),
         metrics_service_name: None,
+        terminal_type: "test-terminal".to_string(),
         app_server_client_name: None,
         app_server_client_version: None,
         session_source: SessionSource::Exec,
@@ -4735,20 +4797,24 @@ async fn make_session_with_config_and_rx(
     let (tx_event, rx_event) = async_channel::unbounded();
     let (agent_status_tx, _agent_status_rx) = watch::channel(AgentStatus::PendingInit);
     let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
-    let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
+    let plugin_runtime: codex_core_plugins_api::SharedPluginRuntime = plugins_manager.clone();
+    let mcp_manager = Arc::new(McpManager::new(plugin_runtime));
     let skills_manager = Arc::new(SkillsManager::new(
         config.codex_home.clone(),
         /*bundled_skills_enabled*/ true,
     ));
-
+    let auth_runtime: codex_auth_types::SharedAuthRuntime = auth_manager.clone();
+    let provider_auth_manager = codex_login::model_provider_auth_manager(Some(auth_manager));
     let session = Session::new(
         session_configuration,
         Arc::clone(&config),
         "11111111-1111-4111-8111-111111111111".to_string(),
-        auth_manager,
+        auth_runtime,
+        provider_auth_manager,
         crate::test_support::model_provider_factory_for_tests(),
         models_manager,
         Arc::new(ExecPolicyManager::default()),
+        Arc::new(crate::EmptyExecPolicyLoader),
         tx_event,
         agent_status_tx,
         InitialHistory::New,
@@ -4756,6 +4822,14 @@ async fn make_session_with_config_and_rx(
         skills_manager,
         plugins_manager,
         mcp_manager,
+        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
+        Arc::new(codex_api::DefaultApiRuntimeFactory),
+        Arc::new(codex_otel::OtelSessionTelemetryFactory),
+        Arc::new(codex_memories_read_api::DisabledMemoryToolDeveloperInstructionsProvider),
+        Arc::new(codex_hooks_api::DisabledHookRuntimeFactory),
+        Arc::new(codex_sandboxing_api::DisabledSandboxRuntime),
+        Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
         Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
         AgentControl::default(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
@@ -4764,6 +4838,8 @@ async fn make_session_with_config_and_rx(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
             /*state_db*/ None,
         )),
+        /*state_db*/ None,
+        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         codex_rollout_trace::ThreadTraceContext::disabled(),
         /*attestation_provider*/ None,
         Arc::new(crate::ActiveEventSubscriptionTracker::default()),
@@ -4831,6 +4907,7 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         environments: default_environments,
         original_config_do_not_use: Arc::clone(&config),
         metrics_service_name: None,
+        terminal_type: "test-terminal".to_string(),
         app_server_client_name: None,
         app_server_client_version: None,
         session_source: session_source.clone(),
@@ -4844,20 +4921,31 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
     let (tx_event, rx_event) = async_channel::unbounded();
     let (agent_status_tx, _agent_status_rx) = watch::channel(AgentStatus::PendingInit);
     let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
-    let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
+    let plugin_runtime: codex_core_plugins_api::SharedPluginRuntime = plugins_manager.clone();
+    let mcp_manager = Arc::new(McpManager::new(plugin_runtime));
     let skills_manager = Arc::new(SkillsManager::new(
         config.codex_home.clone(),
         /*bundled_skills_enabled*/ true,
     ));
+    let state_db = codex_state::StateRuntime::init(
+        config.sqlite_home.clone(),
+        config.model_provider_id.clone(),
+    )
+    .await
+    .expect("state db should initialize");
 
+    let auth_runtime: codex_auth_types::SharedAuthRuntime = auth_manager.clone();
+    let provider_auth_manager = codex_login::model_provider_auth_manager(Some(auth_manager));
     let session = Session::new(
         session_configuration,
         Arc::clone(&config),
         "11111111-1111-4111-8111-111111111111".to_string(),
-        auth_manager,
+        auth_runtime,
+        provider_auth_manager,
         crate::test_support::model_provider_factory_for_tests(),
         models_manager,
         Arc::new(ExecPolicyManager::default()),
+        Arc::new(crate::EmptyExecPolicyLoader),
         tx_event,
         agent_status_tx,
         initial_history,
@@ -4865,21 +4953,24 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         skills_manager,
         plugins_manager,
         mcp_manager,
+        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
+        Arc::new(codex_api::DefaultApiRuntimeFactory),
+        Arc::new(codex_otel::OtelSessionTelemetryFactory),
+        Arc::new(codex_memories_read_api::DisabledMemoryToolDeveloperInstructionsProvider),
+        Arc::new(codex_hooks_api::DisabledHookRuntimeFactory),
+        Arc::new(codex_sandboxing_api::DisabledSandboxRuntime),
+        Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
         Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
         agent_control,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
         Arc::new(codex_thread_store::LocalThreadStore::new(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
-            Some(
-                codex_state::StateRuntime::init(
-                    config.sqlite_home.clone(),
-                    config.model_provider_id.clone(),
-                )
-                .await
-                .expect("state db should initialize"),
-            ),
+            Some(state_db.clone()),
         )),
+        Some(state_db),
+        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         codex_rollout_trace::ThreadTraceContext::disabled(),
         /*attestation_provider*/ None,
         Arc::new(crate::ActiveEventSubscriptionTracker::default()),
@@ -5876,7 +5967,7 @@ async fn spawn_task_turn_span_inherits_dispatch_trace_context() {
 async fn shutdown_complete_does_not_append_to_thread_store_after_shutdown() {
     let (mut session, _turn_context) = make_session_and_context().await;
     let store = Arc::new(codex_thread_store::InMemoryThreadStore::default());
-    let thread_store: Arc<dyn codex_thread_store::ThreadStore> = store.clone();
+    let thread_store: Arc<dyn codex_thread_store_api::ThreadStore> = store.clone();
     let config = session.get_config().await;
     let live_thread = LiveThread::create(
         Arc::clone(&thread_store),
@@ -5902,7 +5993,7 @@ async fn shutdown_complete_does_not_append_to_thread_store_after_shutdown() {
     .await
     .expect("create thread persistence");
     session.services.thread_store = thread_store;
-    session.services.live_thread = Some(live_thread);
+    session.services.live_thread = Some(Arc::new(live_thread));
     let session = Arc::new(session);
 
     assert!(handlers::shutdown(&session, "sub-1".to_string()).await);
@@ -6358,6 +6449,7 @@ where
         environments: default_environments,
         original_config_do_not_use: Arc::clone(&config),
         metrics_service_name: None,
+        terminal_type: "test-terminal".to_string(),
         app_server_client_name: None,
         app_server_client_version: None,
         session_source: SessionSource::Exec,
@@ -6373,16 +6465,17 @@ where
         session_configuration.collaboration_mode.model(),
         &per_turn_config.to_models_manager_config(),
     );
-    let session_telemetry = session_telemetry(
+    let session_telemetry = Arc::new(session_telemetry(
         thread_id,
         config.as_ref(),
         &model_info,
         session_configuration.session_source.clone(),
-    );
+    )) as codex_session_telemetry_api::SharedSessionTelemetry;
 
     let state = SessionState::new(session_configuration.clone());
     let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
-    let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
+    let plugin_runtime: codex_core_plugins_api::SharedPluginRuntime = plugins_manager.clone();
+    let mcp_manager = Arc::new(McpManager::new(plugin_runtime));
     let skills_manager = Arc::new(SkillsManager::new(
         config.codex_home.clone(),
         /*bundled_skills_enabled*/ true,
@@ -6394,12 +6487,17 @@ where
     );
 
     let services = SessionServices {
-        mcp_connection_manager: Arc::new(RwLock::new(
-            McpConnectionManager::new_uninitialized_with_permission_profile(
+        mcp_connection_manager: Arc::new(RwLock::new(Box::new(
+            codex_mcp::McpConnectionManager::new_uninitialized_with_permission_profile(
                 &config.permissions.approval_policy,
                 config.permissions.permission_profile(),
             ),
-        )),
+        ))),
+        mcp_auth_runtime: Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        mcp_connection_runtime_factory: Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
+        network_proxy_runtime_factory: Arc::new(
+            codex_network_proxy::DefaultNetworkProxyRuntimeFactory,
+        ),
         mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
         unified_exec_manager: Arc::new(UnifiedExecProcessManager::new(
             config.background_terminal_max_timeout,
@@ -6407,17 +6505,25 @@ where
         shell_zsh_path: None,
         main_execve_wrapper_exe: config.main_execve_wrapper_exe.clone(),
         analytics_events_client: AnalyticsEventsClient::disabled(),
-        hooks: arc_swap::ArcSwap::from_pointee(Hooks::new(HooksConfig {
+        hooks: std::sync::RwLock::new(Arc::new(Hooks::new(HooksConfig {
             legacy_notify_argv: config.notify.clone(),
             ..HooksConfig::default()
-        })),
+        })) as Arc<dyn codex_hooks_api::HookRuntime>),
+        hook_runtime_factory: Arc::new(codex_hooks::HooksRuntimeFactory),
         rollout_thread_trace: codex_rollout_trace::ThreadTraceContext::disabled(),
         user_shell: Arc::new(default_user_shell()),
         shell_snapshot_tx: watch::channel(None).0,
         show_raw_agent_reasoning: config.show_raw_agent_reasoning,
         exec_policy,
-        auth_manager: Arc::clone(&auth_manager),
+        exec_policy_loader: Arc::new(crate::EmptyExecPolicyLoader),
+        auth_runtime: auth_manager.clone(),
         model_provider_factory: crate::test_support::model_provider_factory_for_tests(),
+        api_runtime_factory: Arc::new(codex_api::DefaultApiRuntimeFactory),
+        session_telemetry_factory: Arc::new(codex_otel::OtelSessionTelemetryFactory),
+        memory_tool_developer_instructions_provider: Arc::new(
+            codex_memories_read_api::DisabledMemoryToolDeveloperInstructionsProvider,
+        ),
+        sandbox_runtime: Arc::new(codex_sandboxing_api::DisabledSandboxRuntime),
         session_telemetry: session_telemetry.clone(),
         models_manager: Arc::clone(&models_manager),
         tool_approvals: Mutex::new(ApprovalStore::default()),
@@ -6441,13 +6547,15 @@ where
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
             state_db,
         )),
+        live_thread_factory: Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         attestation_provider: None,
         active_event_subscriptions: Arc::new(crate::ActiveEventSubscriptionTracker::default()),
         model_client: ModelClient::new(
-            Some(Arc::clone(&auth_manager)),
+            codex_login::model_provider_auth_manager(Some(Arc::clone(&auth_manager))),
             thread_id.into(),
             thread_id,
             /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
+            Arc::new(codex_api::DefaultApiRuntimeFactory),
             crate::test_support::model_provider_factory_for_tests(),
             session_configuration.provider.clone(),
             session_configuration.session_source.clone(),
@@ -6488,10 +6596,12 @@ where
             .await,
     );
     let turn_environments = turn_environments_for_tests(&environment, &session_configuration.cwd);
+    let auth_runtime: codex_auth_types::SharedAuthRuntime = auth_manager.clone();
     let turn_context = Arc::new(Session::make_turn_context(
         thread_id,
         SessionId::from(thread_id),
-        Some(Arc::clone(&auth_manager)),
+        Some(auth_runtime),
+        codex_login::model_provider_auth_manager(Some(Arc::clone(&auth_manager))),
         services.model_provider_factory.as_ref(),
         &session_telemetry,
         session_configuration.provider.clone(),
@@ -9291,7 +9401,10 @@ async fn budget_limited_accounting_steers_active_turn_without_aborting() -> anyh
         .get_thread_goal(sess.conversation_id)
         .await?
         .expect("goal should remain persisted after accounting");
-    assert_eq!(codex_state::ThreadGoalStatus::BudgetLimited, goal.status);
+    assert_eq!(
+        codex_state_api::ThreadGoalStatus::BudgetLimited,
+        goal.status
+    );
     assert_eq!(25, goal.tokens_used);
 
     set_total_token_usage(
@@ -9314,7 +9427,10 @@ async fn budget_limited_accounting_steers_active_turn_without_aborting() -> anyh
         .get_thread_goal(sess.conversation_id)
         .await?
         .expect("goal should remain persisted after follow-up accounting");
-    assert_eq!(codex_state::ThreadGoalStatus::BudgetLimited, goal.status);
+    assert_eq!(
+        codex_state_api::ThreadGoalStatus::BudgetLimited,
+        goal.status
+    );
     assert_eq!(40, goal.tokens_used);
 
     sess.abort_all_tasks(TurnAbortReason::Interrupted).await;
@@ -9360,9 +9476,9 @@ async fn external_goal_mutation_accounts_active_turn_before_status_change() -> a
     let updated_goal = state_db
         .update_thread_goal(
             sess.conversation_id,
-            codex_state::ThreadGoalUpdate {
+            codex_state_api::ThreadGoalUpdate {
                 objective: None,
-                status: Some(codex_state::ThreadGoalStatus::Complete),
+                status: Some(codex_state_api::ThreadGoalStatus::Complete),
                 token_budget: None,
                 expected_goal_id: Some(goal_id),
             },
@@ -9382,7 +9498,7 @@ async fn external_goal_mutation_accounts_active_turn_before_status_change() -> a
         .get_thread_goal(sess.conversation_id)
         .await?
         .expect("goal should remain persisted");
-    assert_eq!(codex_state::ThreadGoalStatus::Complete, goal.status);
+    assert_eq!(codex_state_api::ThreadGoalStatus::Complete, goal.status);
     assert_eq!(70, goal.tokens_used);
 
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
@@ -9408,7 +9524,7 @@ async fn external_objective_change_steers_active_turn() -> anyhow::Result<()> {
         .replace_thread_goal(
             sess.conversation_id,
             "Keep improving the benchmark",
-            codex_state::ThreadGoalStatus::Active,
+            codex_state_api::ThreadGoalStatus::Active,
             /*token_budget*/ Some(10_000),
         )
         .await?;
@@ -9416,7 +9532,7 @@ async fn external_objective_change_steers_active_turn() -> anyhow::Result<()> {
         .replace_thread_goal(
             sess.conversation_id,
             "Write a concise benchmark summary",
-            codex_state::ThreadGoalStatus::Active,
+            codex_state_api::ThreadGoalStatus::Active,
             /*token_budget*/ Some(10_000),
         )
         .await?;
@@ -9473,7 +9589,7 @@ async fn external_active_goal_set_marks_current_turn_for_accounting() -> anyhow:
         .replace_thread_goal(
             sess.conversation_id,
             "Keep improving the benchmark",
-            codex_state::ThreadGoalStatus::Active,
+            codex_state_api::ThreadGoalStatus::Active,
             /*token_budget*/ None,
         )
         .await?;
@@ -9506,7 +9622,7 @@ async fn external_active_goal_set_marks_current_turn_for_accounting() -> anyhow:
         .get_thread_goal(sess.conversation_id)
         .await?
         .expect("goal should remain persisted");
-    assert_eq!(codex_state::ThreadGoalStatus::Active, goal.status);
+    assert_eq!(codex_state_api::ThreadGoalStatus::Active, goal.status);
     assert_eq!(25, goal.tokens_used);
 
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
@@ -9605,7 +9721,7 @@ async fn completed_goal_accounts_current_turn_tokens_before_tool_response() -> a
         .await?
         .expect("goal should be persisted");
     assert_eq!(
-        codex_state::ThreadGoalStatus::Complete,
+        codex_state_api::ThreadGoalStatus::Complete,
         persisted_goal.status
     );
     assert_eq!(580, persisted_goal.tokens_used);
@@ -10405,8 +10521,7 @@ async fn sample_rollout(
 
 #[tokio::test]
 async fn create_goal_tool_rejects_existing_goal() {
-    let (session, turn_context, mut rx, _codex_home) =
-        make_goal_session_and_context_with_rx().await;
+    let (session, turn_context, rx, _codex_home) = make_goal_session_and_context_with_rx().await;
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
     let handler = CreateGoalHandler;
 
@@ -10417,7 +10532,7 @@ async fn create_goal_tool_rejects_existing_goal() {
             cancellation_token: CancellationToken::new(),
             tracker: Arc::clone(&tracker),
             call_id: "create-goal-1".to_string(),
-            tool_name: codex_tools::ToolName::plain("create_goal"),
+            tool_name: codex_tool_planning::ToolName::plain("create_goal"),
             source: ToolCallSource::Direct,
             payload: ToolPayload::Function {
                 arguments: serde_json::json!({
@@ -10460,7 +10575,7 @@ async fn create_goal_tool_rejects_existing_goal() {
             cancellation_token: CancellationToken::new(),
             tracker,
             call_id: "create-goal-2".to_string(),
-            tool_name: codex_tools::ToolName::plain("create_goal"),
+            tool_name: codex_tool_planning::ToolName::plain("create_goal"),
             source: ToolCallSource::Direct,
             payload: ToolPayload::Function {
                 arguments: serde_json::json!({
@@ -10503,7 +10618,7 @@ async fn update_goal_tool_rejects_pausing_goal() {
             cancellation_token: CancellationToken::new(),
             tracker: Arc::clone(&tracker),
             call_id: "create-goal".to_string(),
-            tool_name: codex_tools::ToolName::plain("create_goal"),
+            tool_name: codex_tool_planning::ToolName::plain("create_goal"),
             source: ToolCallSource::Direct,
             payload: ToolPayload::Function {
                 arguments: serde_json::json!({
@@ -10523,7 +10638,7 @@ async fn update_goal_tool_rejects_pausing_goal() {
             cancellation_token: CancellationToken::new(),
             tracker,
             call_id: "pause-goal".to_string(),
-            tool_name: codex_tools::ToolName::plain("update_goal"),
+            tool_name: codex_tool_planning::ToolName::plain("update_goal"),
             source: ToolCallSource::Direct,
             payload: ToolPayload::Function {
                 arguments: serde_json::json!({
@@ -10552,8 +10667,7 @@ async fn update_goal_tool_rejects_pausing_goal() {
 
 #[tokio::test]
 async fn update_goal_tool_marks_goal_complete() {
-    let (session, turn_context, mut rx, _codex_home) =
-        make_goal_session_and_context_with_rx().await;
+    let (session, turn_context, rx, _codex_home) = make_goal_session_and_context_with_rx().await;
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
     let create_handler = CreateGoalHandler;
     let update_handler = UpdateGoalHandler;
@@ -10565,7 +10679,7 @@ async fn update_goal_tool_marks_goal_complete() {
             cancellation_token: CancellationToken::new(),
             tracker: Arc::clone(&tracker),
             call_id: "create-goal".to_string(),
-            tool_name: codex_tools::ToolName::plain("create_goal"),
+            tool_name: codex_tool_planning::ToolName::plain("create_goal"),
             source: ToolCallSource::Direct,
             payload: ToolPayload::Function {
                 arguments: serde_json::json!({
@@ -10585,7 +10699,7 @@ async fn update_goal_tool_marks_goal_complete() {
             cancellation_token: CancellationToken::new(),
             tracker,
             call_id: "complete-goal".to_string(),
-            tool_name: codex_tools::ToolName::plain("update_goal"),
+            tool_name: codex_tool_planning::ToolName::plain("update_goal"),
             source: ToolCallSource::Direct,
             payload: ToolPayload::Function {
                 arguments: serde_json::json!({
@@ -10662,7 +10776,7 @@ async fn spawn_agent_tool_rejects_depth_limit_at_call_time() {
             cancellation_token: CancellationToken::new(),
             tracker,
             call_id: "spawn-depth-limit".to_string(),
-            tool_name: codex_tools::ToolName::plain("spawn_agent"),
+            tool_name: codex_tool_planning::ToolName::plain("spawn_agent"),
             source: ToolCallSource::Direct,
             payload: ToolPayload::Function {
                 arguments: serde_json::json!({
@@ -10690,7 +10804,7 @@ async fn rejects_escalated_permissions_when_policy_not_on_request() {
     use crate::tools::sandboxing::ExecApprovalRequirement;
     use crate::turn_diff_tracker::TurnDiffTracker;
     use codex_protocol::protocol::AskForApproval;
-    use codex_tools::ShellCommandBackendConfig;
+    use codex_tool_planning::ShellCommandBackendConfig;
 
     let (session, mut turn_context_raw) = make_session_and_context().await;
     // Ensure policy is NOT OnRequest so the early rejection path triggers
@@ -10720,7 +10834,7 @@ async fn rejects_escalated_permissions_when_policy_not_on_request() {
             cancellation_token: CancellationToken::new(),
             tracker: Arc::clone(&turn_diff_tracker),
             call_id,
-            tool_name: codex_tools::ToolName::plain(tool_name),
+            tool_name: codex_tool_planning::ToolName::plain(tool_name),
             source: crate::tools::context::ToolCallSource::Direct,
             payload: ToolPayload::Function {
                 arguments: serde_json::json!({
@@ -10799,7 +10913,7 @@ async fn unified_exec_rejects_escalated_permissions_when_policy_not_on_request()
             cancellation_token: CancellationToken::new(),
             tracker: Arc::clone(&tracker),
             call_id: "exec-call".to_string(),
-            tool_name: codex_tools::ToolName::plain("exec_command"),
+            tool_name: codex_tool_planning::ToolName::plain("exec_command"),
             source: crate::tools::context::ToolCallSource::Direct,
             payload: ToolPayload::Function {
                 arguments: serde_json::json!({

@@ -21,6 +21,7 @@ codex-auth-types = { workspace = true }
 codex-config-types = { workspace = true }
 codex-metrics-api = { workspace = true }
 codex-protocol = { workspace = true }
+codex-session-telemetry-api = { workspace = true }
 codex-trace-context = { workspace = true }
 gethostname = { workspace = true }
 opentelemetry = { workspace = true, features = ["logs", "metrics", "trace"] }

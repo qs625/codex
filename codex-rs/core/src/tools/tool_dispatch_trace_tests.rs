@@ -27,19 +27,24 @@ use crate::tools::registry::ToolRegistry;
 use crate::turn_diff_tracker::TurnDiffTracker;
 
 struct TestHandler {
-    tool_name: codex_tools::ToolName,
+    tool_name: codex_tool_planning::ToolName,
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for TestHandler {
     type Output = FunctionToolOutput;
 
-    fn tool_name(&self) -> codex_tools::ToolName {
+    fn tool_name(&self) -> codex_tool_planning::ToolName {
         self.tool_name.clone()
     }
 
-    async fn handle(&self, _invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        Ok(FunctionToolOutput::from_text("ok".to_string(), Some(true)))
+    fn handle<'a>(
+        &'a self,
+        _invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move { Ok(FunctionToolOutput::from_text("ok".to_string(), Some(true))) })
     }
 }
 
@@ -58,7 +63,7 @@ async fn dispatch_lifecycle_trace_records_direct_and_code_mode_requesters() -> a
     );
 
     let registry = ToolRegistry::with_handler_for_test(Arc::new(TestHandler {
-        tool_name: codex_tools::ToolName::plain("test_tool"),
+        tool_name: codex_tool_planning::ToolName::plain("test_tool"),
     }));
     let session = Arc::new(session);
     let turn = Arc::new(turn);
@@ -169,7 +174,7 @@ async fn dispatch_lifecycle_trace_records_incompatible_payload_failures() -> any
     attach_test_trace(&mut session, &turn, temp.path())?;
 
     let registry = ToolRegistry::with_handler_for_test(Arc::new(TestHandler {
-        tool_name: codex_tools::ToolName::plain("test_tool"),
+        tool_name: codex_tool_planning::ToolName::plain("test_tool"),
     }));
     let session = Arc::new(session);
     let turn = Arc::new(turn);
@@ -179,7 +184,7 @@ async fn dispatch_lifecycle_trace_records_incompatible_payload_failures() -> any
             session,
             turn,
             "incompatible-call",
-            codex_tools::ToolName::plain("test_tool"),
+            codex_tool_planning::ToolName::plain("test_tool"),
             ToolCallSource::Direct,
             ToolPayload::Custom {
                 input: "{}".to_string(),
@@ -240,7 +245,7 @@ fn test_invocation(
         session,
         turn,
         call_id,
-        codex_tools::ToolName::plain(tool_name),
+        codex_tool_planning::ToolName::plain(tool_name),
         source,
         ToolPayload::Function {
             arguments: arguments.to_string(),
@@ -252,7 +257,7 @@ fn test_invocation_with_payload(
     session: Arc<Session>,
     turn: Arc<TurnContext>,
     call_id: &str,
-    tool_name: codex_tools::ToolName,
+    tool_name: codex_tool_planning::ToolName,
     source: ToolCallSource,
     payload: ToolPayload,
 ) -> ToolInvocation {

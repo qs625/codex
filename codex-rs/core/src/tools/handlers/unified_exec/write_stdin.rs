@@ -10,14 +10,14 @@ use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TerminalInteractionEvent;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
 use serde::Deserialize;
 use serde::Serialize;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-use codex_tools::create_write_stdin_tool;
+use codex_tool_planning::create_write_stdin_tool;
 
 #[derive(Debug, Deserialize)]
 struct WriteStdinArgs {
@@ -28,7 +28,6 @@ struct WriteStdinArgs {
 
 pub struct WriteStdinHandler;
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
     type Output = FunctionToolOutput;
 
@@ -40,81 +39,89 @@ impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
         Some(create_write_stdin_tool())
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            payload,
-            ..
-        } = invocation;
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session,
+                turn,
+                payload,
+                ..
+            } = invocation;
 
-        let arguments = match payload {
-            ToolPayload::Function { arguments } => arguments,
-            _ => {
+            let arguments = match payload {
+                ToolPayload::Function { arguments } => arguments,
+                _ => {
+                    return Err(FunctionCallError::RespondToModel(
+                        "command_write_stdin handler received unsupported payload".to_string(),
+                    ));
+                }
+            };
+
+            let args: WriteStdinArgs = parse_arguments(&arguments)?;
+            let Some(chars) = args.chars else {
                 return Err(FunctionCallError::RespondToModel(
-                    "command_write_stdin handler received unsupported payload".to_string(),
-                ));
+                            "command_write_stdin requires non-empty `chars`; use command_wait for command completion or output notifications instead of polling for output.".to_string(),
+                        ));
+            };
+            if chars.is_empty() {
+                return Err(FunctionCallError::RespondToModel(
+                            "command_write_stdin requires non-empty `chars`; use command_wait for command completion or output notifications instead of polling for output.".to_string(),
+                        ));
             }
-        };
+            let response = session
+                .services
+                .unified_exec_manager
+                .write_command_stdin(WriteStdinRequest {
+                    process_id: args.command_id,
+                    input: &chars,
+                })
+                .await
+                .map_err(|err| {
+                    FunctionCallError::RespondToModel(format!("command_write_stdin failed: {err}"))
+                })?;
 
-        let args: WriteStdinArgs = parse_arguments(&arguments)?;
-        let Some(chars) = args.chars else {
-            return Err(FunctionCallError::RespondToModel(
-                "command_write_stdin requires non-empty `chars`; use command_wait for command completion or output notifications instead of polling for output.".to_string(),
-            ));
-        };
-        if chars.is_empty() {
-            return Err(FunctionCallError::RespondToModel(
-                "command_write_stdin requires non-empty `chars`; use command_wait for command completion or output notifications instead of polling for output.".to_string(),
-            ));
-        }
-        let response = session
-            .services
-            .unified_exec_manager
-            .write_command_stdin(WriteStdinRequest {
-                process_id: args.command_id,
-                input: &chars,
+            let interaction = TerminalInteractionEvent {
+                call_id: response.call_id.clone(),
+                process_id: response.process_id.to_string(),
+                stdin: chars.clone(),
+            };
+            session
+                .send_event(turn.as_ref(), EventMsg::TerminalInteraction(interaction))
+                .await;
+
+            let response_item = ResponseItem::CommandWriteStdin {
+                id: None,
+                command_id: response.process_id.to_string(),
+                bytes_written: response.bytes_written,
+                contains_newline: chars.contains('\n'),
+                created_at_ms: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as i64,
+            };
+            session
+                .record_model_items_and_emit_display_events(
+                    turn.as_ref(),
+                    std::slice::from_ref(&response_item),
+                )
+                .await;
+
+            let text = serde_json::to_string(&CommandWriteStdinResponse {
+                command_id: response.process_id,
+                bytes_written: response.bytes_written,
             })
-            .await
-            .map_err(|err| {
-                FunctionCallError::RespondToModel(format!("command_write_stdin failed: {err}"))
-            })?;
-
-        let interaction = TerminalInteractionEvent {
-            call_id: response.call_id.clone(),
-            process_id: response.process_id.to_string(),
-            stdin: chars.clone(),
-        };
-        session
-            .send_event(turn.as_ref(), EventMsg::TerminalInteraction(interaction))
-            .await;
-
-        let response_item = ResponseItem::CommandWriteStdin {
-            id: None,
-            command_id: response.process_id.to_string(),
-            bytes_written: response.bytes_written,
-            contains_newline: chars.contains('\n'),
-            created_at_ms: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as i64,
-        };
-        session
-            .record_model_items_and_emit_display_events(
-                turn.as_ref(),
-                std::slice::from_ref(&response_item),
-            )
-            .await;
-
-        let text = serde_json::to_string(&CommandWriteStdinResponse {
-            command_id: response.process_id,
-            bytes_written: response.bytes_written,
-        })
-        .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
-        Ok(FunctionToolOutput {
-            body: vec![FunctionCallOutputContentItem::InputText { text }],
-            success: Some(true),
-            post_tool_use_response: None,
+            .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
+            Ok(FunctionToolOutput {
+                body: vec![FunctionCallOutputContentItem::InputText { text }],
+                success: Some(true),
+                post_tool_use_response: None,
+            })
         })
     }
 }

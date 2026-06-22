@@ -4,8 +4,8 @@ use codex_config_types::ConfigLayerSource;
 use codex_config_types::HookStateToml;
 use toml::Value as TomlValue;
 
-use crate::config_layers::HookConfigLayerStack;
-use crate::config_layers::HookConfigLayerStackOrdering;
+use codex_hooks_api::HookConfigLayerStack;
+use codex_hooks_api::HookConfigLayerStackOrdering;
 
 /// Build effective hook state from config layers that are allowed to override
 /// user preferences.

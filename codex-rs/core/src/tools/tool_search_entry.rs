@@ -1,8 +1,8 @@
-use codex_tools::LoadableToolSpec;
-use codex_tools::ResponsesApiNamespaceTool;
-use codex_tools::ToolSearchSourceInfo;
-use codex_tools::ToolSpec;
-use codex_tools::default_namespace_description;
+use codex_tool_planning::LoadableToolSpec;
+use codex_tool_planning::ResponsesApiNamespaceTool;
+use codex_tool_planning::ToolSearchSourceInfo;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::default_namespace_description;
 
 #[derive(Clone)]
 pub(crate) struct ToolSearchEntry {

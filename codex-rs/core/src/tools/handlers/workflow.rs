@@ -20,20 +20,20 @@ use crate::workflows::load_workflow_registry;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::models::WorkflowRunProgressEvent;
 use codex_protocol::models::WorkflowRunProgressKind;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
-use codex_tools::WORKFLOW_ABORT_TOOL_NAME;
-use codex_tools::WORKFLOW_DESCRIBE_TOOL_NAME;
-use codex_tools::WORKFLOW_LIST_TOOL_NAME;
-use codex_tools::WORKFLOW_RESUME_TOOL_NAME;
-use codex_tools::WORKFLOW_START_TOOL_NAME;
-use codex_tools::WORKFLOW_STATUS_TOOL_NAME;
-use codex_tools::create_workflow_abort_tool;
-use codex_tools::create_workflow_describe_tool;
-use codex_tools::create_workflow_list_tool;
-use codex_tools::create_workflow_resume_tool;
-use codex_tools::create_workflow_start_tool;
-use codex_tools::create_workflow_status_tool;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::WORKFLOW_ABORT_TOOL_NAME;
+use codex_tool_planning::WORKFLOW_DESCRIBE_TOOL_NAME;
+use codex_tool_planning::WORKFLOW_LIST_TOOL_NAME;
+use codex_tool_planning::WORKFLOW_RESUME_TOOL_NAME;
+use codex_tool_planning::WORKFLOW_START_TOOL_NAME;
+use codex_tool_planning::WORKFLOW_STATUS_TOOL_NAME;
+use codex_tool_planning::create_workflow_abort_tool;
+use codex_tool_planning::create_workflow_describe_tool;
+use codex_tool_planning::create_workflow_list_tool;
+use codex_tool_planning::create_workflow_resume_tool;
+use codex_tool_planning::create_workflow_start_tool;
+use codex_tool_planning::create_workflow_status_tool;
 use serde::Deserialize;
 use serde_json::Value;
 use std::future::Future;
@@ -308,7 +308,6 @@ fn runtime_error_from_tool_error(error: FunctionCallError) -> WorkflowRuntimeErr
     }
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for WorkflowListHandler {
     type Output = FunctionToolOutput;
 
@@ -324,23 +323,30 @@ impl ToolExecutor<ToolInvocation> for WorkflowListHandler {
         true
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation { turn, payload, .. } = invocation;
-        match payload {
-            ToolPayload::Function { .. } => {
-                let registry = load_workflow_registry(&turn.config);
-                json_output(&registry)
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation { turn, payload, .. } = invocation;
+            match payload {
+                ToolPayload::Function { .. } => {
+                    let registry = load_workflow_registry(&turn.config);
+                    json_output(&registry)
+                }
+                _ => Err(FunctionCallError::RespondToModel(
+                    "workflow_list handler received unsupported payload".to_string(),
+                )),
             }
-            _ => Err(FunctionCallError::RespondToModel(
-                "workflow_list handler received unsupported payload".to_string(),
-            )),
-        }
+        })
     }
 }
 
 impl ToolHandler for WorkflowListHandler {}
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for WorkflowDescribeHandler {
     type Output = FunctionToolOutput;
 
@@ -356,35 +362,42 @@ impl ToolExecutor<ToolInvocation> for WorkflowDescribeHandler {
         true
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation { turn, payload, .. } = invocation;
-        let arguments = match payload {
-            ToolPayload::Function { arguments } => arguments,
-            _ => {
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation { turn, payload, .. } = invocation;
+            let arguments = match payload {
+                ToolPayload::Function { arguments } => arguments,
+                _ => {
+                    return Err(FunctionCallError::RespondToModel(
+                        "workflow_describe handler received unsupported payload".to_string(),
+                    ));
+                }
+            };
+            let args: WorkflowDescribeArgs = parse_arguments(&arguments)?;
+            let workflow = args.workflow.trim();
+            if workflow.is_empty() {
                 return Err(FunctionCallError::RespondToModel(
-                    "workflow_describe handler received unsupported payload".to_string(),
+                    "workflow must not be empty".to_string(),
                 ));
             }
-        };
-        let args: WorkflowDescribeArgs = parse_arguments(&arguments)?;
-        let workflow = args.workflow.trim();
-        if workflow.is_empty() {
-            return Err(FunctionCallError::RespondToModel(
-                "workflow must not be empty".to_string(),
-            ));
-        }
 
-        let registry = load_workflow_registry(&turn.config);
-        let details = registry
-            .details(workflow)
-            .map_err(FunctionCallError::RespondToModel)?;
-        json_output(&details)
+            let registry = load_workflow_registry(&turn.config);
+            let details = registry
+                .details(workflow)
+                .map_err(FunctionCallError::RespondToModel)?;
+            json_output(&details)
+        })
     }
 }
 
 impl ToolHandler for WorkflowDescribeHandler {}
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for WorkflowStartHandler {
     type Output = FunctionToolOutput;
 
@@ -396,51 +409,58 @@ impl ToolExecutor<ToolInvocation> for WorkflowStartHandler {
         Some(create_workflow_start_tool())
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            cancellation_token,
-            tracker,
-            payload,
-            ..
-        } = invocation;
-        let arguments = function_arguments(payload, WORKFLOW_START_TOOL_NAME)?;
-        let args: WorkflowStartArgs = parse_arguments(&arguments)?;
-        let workflow = args.workflow.trim();
-        if workflow.is_empty() {
-            return Err(FunctionCallError::RespondToModel(
-                "workflow must not be empty".to_string(),
-            ));
-        }
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session,
+                turn,
+                cancellation_token,
+                tracker,
+                payload,
+                ..
+            } = invocation;
+            let arguments = function_arguments(payload, WORKFLOW_START_TOOL_NAME)?;
+            let args: WorkflowStartArgs = parse_arguments(&arguments)?;
+            let workflow = args.workflow.trim();
+            if workflow.is_empty() {
+                return Err(FunctionCallError::RespondToModel(
+                    "workflow must not be empty".to_string(),
+                ));
+            }
 
-        let registry = load_workflow_registry(&turn.config);
-        let updates = session.workflow_runs.subscribe();
-        let bridge: Arc<dyn WorkflowRuntimeBridge> = Arc::new(CodexWorkflowRuntimeBridge {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn),
-            cancellation_token: cancellation_token.clone(),
-            tracker: Arc::clone(&tracker),
-        });
-        let run = session
-            .workflow_runs
-            .start_with_bridge(
-                &registry,
-                workflow,
-                args.inputs.unwrap_or(Value::Null),
-                bridge,
-            )
-            .await
-            .map_err(FunctionCallError::RespondToModel)?;
-        record_workflow_progress(&session, &turn, &run, WorkflowRunProgressKind::Started).await;
-        record_terminal_workflow_progress(session, turn, updates, run.run_id.clone());
-        json_output(&run)
+            let registry = load_workflow_registry(&turn.config);
+            let updates = session.workflow_runs.subscribe();
+            let bridge: Arc<dyn WorkflowRuntimeBridge> = Arc::new(CodexWorkflowRuntimeBridge {
+                session: Arc::clone(&session),
+                turn: Arc::clone(&turn),
+                cancellation_token: cancellation_token.clone(),
+                tracker: Arc::clone(&tracker),
+            });
+            let run = session
+                .workflow_runs
+                .start_with_bridge(
+                    &registry,
+                    workflow,
+                    args.inputs.unwrap_or(Value::Null),
+                    bridge,
+                )
+                .await
+                .map_err(FunctionCallError::RespondToModel)?;
+            record_workflow_progress(&session, &turn, &run, WorkflowRunProgressKind::Started).await;
+            record_terminal_workflow_progress(session, turn, updates, run.run_id.clone());
+            json_output(&run)
+        })
     }
 }
 
 impl ToolHandler for WorkflowStartHandler {}
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for WorkflowStatusHandler {
     type Output = FunctionToolOutput;
 
@@ -456,31 +476,38 @@ impl ToolExecutor<ToolInvocation> for WorkflowStatusHandler {
         true
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session, payload, ..
-        } = invocation;
-        let arguments = function_arguments(payload, WORKFLOW_STATUS_TOOL_NAME)?;
-        let args: WorkflowStatusArgs = parse_arguments(&arguments)?;
-        let run_id = args.run_id.trim();
-        if run_id.is_empty() {
-            return Err(FunctionCallError::RespondToModel(
-                "run_id must not be empty".to_string(),
-            ));
-        }
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session, payload, ..
+            } = invocation;
+            let arguments = function_arguments(payload, WORKFLOW_STATUS_TOOL_NAME)?;
+            let args: WorkflowStatusArgs = parse_arguments(&arguments)?;
+            let run_id = args.run_id.trim();
+            if run_id.is_empty() {
+                return Err(FunctionCallError::RespondToModel(
+                    "run_id must not be empty".to_string(),
+                ));
+            }
 
-        let run = session
-            .workflow_runs
-            .status(run_id)
-            .await
-            .map_err(FunctionCallError::RespondToModel)?;
-        json_output(&run)
+            let run = session
+                .workflow_runs
+                .status(run_id)
+                .await
+                .map_err(FunctionCallError::RespondToModel)?;
+            json_output(&run)
+        })
     }
 }
 
 impl ToolHandler for WorkflowStatusHandler {}
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for WorkflowResumeHandler {
     type Output = FunctionToolOutput;
 
@@ -492,45 +519,52 @@ impl ToolExecutor<ToolInvocation> for WorkflowResumeHandler {
         Some(create_workflow_resume_tool())
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            cancellation_token,
-            tracker,
-            payload,
-            ..
-        } = invocation;
-        let arguments = function_arguments(payload, WORKFLOW_RESUME_TOOL_NAME)?;
-        let args: WorkflowResumeArgs = parse_arguments(&arguments)?;
-        let run_id = args.run_id.trim();
-        if run_id.is_empty() {
-            return Err(FunctionCallError::RespondToModel(
-                "run_id must not be empty".to_string(),
-            ));
-        }
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session,
+                turn,
+                cancellation_token,
+                tracker,
+                payload,
+                ..
+            } = invocation;
+            let arguments = function_arguments(payload, WORKFLOW_RESUME_TOOL_NAME)?;
+            let args: WorkflowResumeArgs = parse_arguments(&arguments)?;
+            let run_id = args.run_id.trim();
+            if run_id.is_empty() {
+                return Err(FunctionCallError::RespondToModel(
+                    "run_id must not be empty".to_string(),
+                ));
+            }
 
-        let updates = session.workflow_runs.subscribe();
-        let bridge: Arc<dyn WorkflowRuntimeBridge> = Arc::new(CodexWorkflowRuntimeBridge {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn),
-            cancellation_token: cancellation_token.clone(),
-            tracker: Arc::clone(&tracker),
-        });
-        let run = session
-            .workflow_runs
-            .resume_with_bridge(run_id, args.inputs, bridge)
-            .await
-            .map_err(FunctionCallError::RespondToModel)?;
-        record_workflow_progress(&session, &turn, &run, WorkflowRunProgressKind::Resumed).await;
-        record_terminal_workflow_progress(session, turn, updates, run.run_id.clone());
-        json_output(&run)
+            let updates = session.workflow_runs.subscribe();
+            let bridge: Arc<dyn WorkflowRuntimeBridge> = Arc::new(CodexWorkflowRuntimeBridge {
+                session: Arc::clone(&session),
+                turn: Arc::clone(&turn),
+                cancellation_token: cancellation_token.clone(),
+                tracker: Arc::clone(&tracker),
+            });
+            let run = session
+                .workflow_runs
+                .resume_with_bridge(run_id, args.inputs, bridge)
+                .await
+                .map_err(FunctionCallError::RespondToModel)?;
+            record_workflow_progress(&session, &turn, &run, WorkflowRunProgressKind::Resumed).await;
+            record_terminal_workflow_progress(session, turn, updates, run.run_id.clone());
+            json_output(&run)
+        })
     }
 }
 
 impl ToolHandler for WorkflowResumeHandler {}
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for WorkflowAbortHandler {
     type Output = FunctionToolOutput;
 
@@ -542,29 +576,37 @@ impl ToolExecutor<ToolInvocation> for WorkflowAbortHandler {
         Some(create_workflow_abort_tool())
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            payload,
-            ..
-        } = invocation;
-        let arguments = function_arguments(payload, WORKFLOW_ABORT_TOOL_NAME)?;
-        let args: WorkflowAbortArgs = parse_arguments(&arguments)?;
-        let run_id = args.run_id.trim();
-        if run_id.is_empty() {
-            return Err(FunctionCallError::RespondToModel(
-                "run_id must not be empty".to_string(),
-            ));
-        }
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session,
+                turn,
+                payload,
+                ..
+            } = invocation;
+            let arguments = function_arguments(payload, WORKFLOW_ABORT_TOOL_NAME)?;
+            let args: WorkflowAbortArgs = parse_arguments(&arguments)?;
+            let run_id = args.run_id.trim();
+            if run_id.is_empty() {
+                return Err(FunctionCallError::RespondToModel(
+                    "run_id must not be empty".to_string(),
+                ));
+            }
 
-        let run = session
-            .workflow_runs
-            .abort(run_id, args.reason)
-            .await
-            .map_err(FunctionCallError::RespondToModel)?;
-        record_workflow_progress(&session, &turn, &run, WorkflowRunProgressKind::Aborted).await;
-        json_output(&run)
+            let run = session
+                .workflow_runs
+                .abort(run_id, args.reason)
+                .await
+                .map_err(FunctionCallError::RespondToModel)?;
+            record_workflow_progress(&session, &turn, &run, WorkflowRunProgressKind::Aborted).await;
+            json_output(&run)
+        })
     }
 }
 

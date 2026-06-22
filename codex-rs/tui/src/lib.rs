@@ -7,7 +7,8 @@ use crate::legacy_core::check_execpolicy_for_warnings;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::config::ConfigBuilder;
 use crate::legacy_core::config::ConfigOverrides;
-use crate::legacy_core::config::load_config_as_toml_with_cli_and_load_options;
+use crate::legacy_core::config::ThreadStoreConfig;
+use crate::legacy_core::config::load_config_as_toml_with_cli_and_load_options_and_layer_loader;
 use crate::legacy_core::config::resolve_oss_provider;
 use crate::legacy_core::config::resolve_profile_v2_config_path;
 use crate::legacy_core::format_exec_policy_error_with_source;
@@ -41,6 +42,7 @@ use codex_config_diagnostics::ConfigLoadError;
 use codex_config_diagnostics::format_config_error_with_source;
 use codex_config_loader::ConfigLoadOptions;
 use codex_config_loader::LoaderOverrides;
+use codex_config_local_loader::LocalConfigLayerLoader;
 use codex_config_requirements::CloudRequirementsLoader;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimePaths;
@@ -78,6 +80,10 @@ use url::Url;
 use uuid::Uuid;
 
 pub(crate) use codex_app_server_client::legacy_core;
+
+pub(crate) fn config_builder() -> ConfigBuilder {
+    ConfigBuilder::default().config_layer_loader(Arc::new(LocalConfigLayerLoader::default()))
+}
 
 mod additional_dirs;
 mod app;
@@ -869,7 +875,7 @@ pub async fn run_main(
     }
 
     #[allow(clippy::print_stderr)]
-    let config_toml = match load_config_as_toml_with_cli_and_load_options(
+    let config_toml = match load_config_as_toml_with_cli_and_load_options_and_layer_loader(
         &codex_home,
         config_cwd.as_ref(),
         cli_kv_overrides.clone(),
@@ -877,6 +883,7 @@ pub async fn run_main(
             loader_overrides: loader_overrides.clone(),
             strict_config,
         },
+        Arc::new(LocalConfigLayerLoader::default()),
     )
     .await
     {
@@ -1016,10 +1023,22 @@ pub async fn run_main(
     let effective_toml = config.config_layer_stack.effective_config();
     match effective_toml.try_into() {
         Ok(config_toml) => {
+            let personality_migration_thread_store: Arc<dyn codex_thread_store::ThreadStore> =
+                match &config.experimental_thread_store {
+                    ThreadStoreConfig::Local => {
+                        Arc::new(codex_thread_store::LocalThreadStore::new(
+                            codex_thread_store::LocalThreadStoreConfig::from_config(&config),
+                            state_db.clone(),
+                        ))
+                    }
+                    ThreadStoreConfig::InMemory { id } => {
+                        codex_thread_store::InMemoryThreadStore::for_id(id)
+                    }
+                };
             match crate::legacy_core::personality_migration::maybe_migrate_personality(
                 &config.codex_home,
                 &config_toml,
-                state_db.clone(),
+                personality_migration_thread_store.as_ref(),
             )
             .await
             {
@@ -1777,7 +1796,7 @@ async fn load_config_or_exit_with_fallback_cwd(
     fallback_cwd: Option<PathBuf>,
 ) -> Config {
     #[allow(clippy::print_stderr)]
-    match ConfigBuilder::default()
+    match config_builder()
         .cli_overrides(cli_kv_overrides)
         .harness_overrides(overrides)
         .loader_overrides(loader_overrides)
@@ -1838,7 +1857,7 @@ mod tests {
     use tempfile::TempDir;
 
     async fn build_config(temp_dir: &TempDir) -> std::io::Result<Config> {
-        ConfigBuilder::default()
+        config_builder()
             .codex_home(temp_dir.path().to_path_buf())
             .build()
             .await
@@ -2169,7 +2188,7 @@ mod tests {
         std::fs::create_dir_all(&project_cwd)?;
         std::fs::create_dir_all(&other_cwd)?;
 
-        let config = ConfigBuilder::default()
+        let config = config_builder()
             .codex_home(temp_dir.path().to_path_buf())
             .harness_overrides(ConfigOverrides {
                 cwd: Some(project_cwd.clone()),
@@ -2537,7 +2556,7 @@ trust_level = "untrusted"
             cwd: Some(trusted.clone()),
             ..Default::default()
         };
-        let trusted_config = ConfigBuilder::default()
+        let trusted_config = config_builder()
             .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
             .codex_home(codex_home.clone())
             .harness_overrides(trusted_overrides.clone())
@@ -2552,7 +2571,7 @@ trust_level = "untrusted"
             cwd: Some(untrusted),
             ..trusted_overrides
         };
-        let untrusted_config = ConfigBuilder::default()
+        let untrusted_config = config_builder()
             .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
             .codex_home(codex_home)
             .harness_overrides(untrusted_overrides)

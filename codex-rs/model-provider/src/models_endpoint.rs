@@ -3,26 +3,26 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use codex_api::ModelsClient;
-use codex_api::RequestTelemetry;
 use codex_api::ReqwestTransport;
-use codex_api::TransportError;
-use codex_api::map_api_error;
 use codex_api_provider::auth_header_telemetry;
+use codex_api_types::extract_response_debug_context;
+use codex_api_types::map_api_error;
+use codex_api_types::telemetry_transport_error_message;
+use codex_auth_types::AuthEnvTelemetryInput;
 use codex_auth_types::AuthEnvTelemetryMetadata;
 use codex_auth_types::TelemetryAuthMode;
+use codex_auth_types::collect_auth_env_telemetry;
+use codex_client_types::RequestTelemetry;
+use codex_client_types::TransportError;
+use codex_default_client::build_reqwest_client;
 use codex_feedback_api::FeedbackRequestTags;
 use codex_feedback_api::emit_feedback_request_tags_with_auth_env;
-use codex_login::AuthManager;
-use codex_login::CodexAuth;
-use codex_login::collect_auth_env_telemetry;
-use codex_login::default_client::build_reqwest_client;
+use codex_model_provider_api::SharedModelProviderAuthManager;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_models_manager::manager::ModelsEndpointClient;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CoreResult;
 use codex_protocol::openai_models::ModelInfo;
-use codex_response_debug_context::extract_response_debug_context;
-use codex_response_debug_context::telemetry_transport_error_message;
 use http::HeaderMap;
 use tokio::time::timeout;
 
@@ -36,13 +36,13 @@ const MODELS_ENDPOINT: &str = "/models";
 #[derive(Debug)]
 pub(crate) struct OpenAiModelsEndpoint {
     provider_info: ModelProviderInfo,
-    auth_manager: Option<Arc<AuthManager>>,
+    auth_manager: Option<SharedModelProviderAuthManager>,
 }
 
 impl OpenAiModelsEndpoint {
     pub(crate) fn new(
         provider_info: ModelProviderInfo,
-        auth_manager: Option<Arc<AuthManager>>,
+        auth_manager: Option<SharedModelProviderAuthManager>,
     ) -> Self {
         Self {
             provider_info,
@@ -50,7 +50,7 @@ impl OpenAiModelsEndpoint {
         }
     }
 
-    async fn auth(&self) -> Option<CodexAuth> {
+    async fn auth(&self) -> Option<codex_auth_types::RequestAuthSnapshot> {
         match self.auth_manager.as_ref() {
             Some(auth_manager) => auth_manager.auth().await,
             None => None,
@@ -62,8 +62,11 @@ impl OpenAiModelsEndpoint {
             .auth_manager
             .as_ref()
             .is_some_and(|auth_manager| auth_manager.codex_api_key_env_enabled());
-        collect_auth_env_telemetry(&self.provider_info, codex_api_key_env_enabled)
-            .to_otel_metadata()
+        collect_auth_env_telemetry(AuthEnvTelemetryInput {
+            provider_env_key: self.provider_info.env_key.as_deref(),
+            codex_api_key_env_enabled,
+        })
+        .to_otel_metadata()
     }
 }
 
@@ -77,7 +80,7 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
         self.auth()
             .await
             .as_ref()
-            .is_some_and(CodexAuth::uses_codex_backend)
+            .is_some_and(codex_auth_types::RequestAuthSnapshot::uses_codex_backend)
     }
 
     async fn list_models(
@@ -87,7 +90,9 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
         let _timer =
             codex_otel::start_global_timer("codex.remote_models.fetch_update.duration_ms", &[]);
         let auth = self.auth().await;
-        let auth_mode = auth.as_ref().map(CodexAuth::auth_mode);
+        let auth_mode = auth
+            .as_ref()
+            .map(codex_auth_types::RequestAuthSnapshot::auth_mode);
         let api_provider = model_provider_info_to_api_provider(&self.provider_info, auth_mode)?;
         let api_auth = resolve_provider_auth(auth.as_ref(), &self.provider_info)?;
         let transport = ReqwestTransport::new(build_reqwest_client());

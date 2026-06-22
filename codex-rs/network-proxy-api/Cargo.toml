@@ -14,4 +14,5 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+anyhow = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

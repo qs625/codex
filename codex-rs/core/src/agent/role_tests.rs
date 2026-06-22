@@ -1,11 +1,11 @@
 use super::*;
-use crate::SkillsManager;
 use crate::config::AgentCapabilityAllowlist;
 use crate::config::CONFIG_TOML_FILE;
 use crate::config::ConfigBuilder;
 use crate::skills_load_input_from_config;
 use codex_config::ConfigLayerStackOrdering;
 use codex_core_plugins::PluginsManager;
+use codex_core_skills::SkillsManager;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::openai_models::ReasoningEffort;

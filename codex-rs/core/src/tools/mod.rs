@@ -19,7 +19,7 @@ pub(crate) mod tool_search_entry;
 use std::borrow::Cow;
 
 use codex_protocol::exec_output::ExecToolCallOutput;
-use codex_tools::ToolName;
+use codex_tool_planning::ToolName;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::formatted_truncate_text;
 use codex_utils_output_truncation::truncate_text;

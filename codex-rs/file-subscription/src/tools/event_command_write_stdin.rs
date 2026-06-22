@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use codex_extension_api::ExtensionToolOutput;
 use codex_extension_api::FunctionCallError;
 use codex_extension_api::JsonToolOutput;
@@ -41,7 +40,6 @@ pub(crate) struct EventCommandWriteStdinTool {
     pub(crate) registry: Arc<FsSubscriptionRegistry>,
 }
 
-#[async_trait]
 impl ToolExecutor<ToolCall> for EventCommandWriteStdinTool {
     type Output = ExtensionToolOutput;
 
@@ -59,26 +57,33 @@ impl ToolExecutor<ToolCall> for EventCommandWriteStdinTool {
         ))
     }
 
-    async fn handle(&self, call: ToolCall) -> Result<Self::Output, FunctionCallError> {
-        let args: EventCommandWriteStdinArgs = parse_args(&call)?;
-        if args.subscription_id.trim().is_empty() {
-            return Err(FunctionCallError::RespondToModel(
-                "subscription_id must not be empty".to_string(),
-            ));
-        }
-        if args.chars.is_empty() {
-            return Err(FunctionCallError::RespondToModel(
-                "chars must not be empty".to_string(),
-            ));
-        }
-        self.registry
-            .write_event_command_stdin(self.thread_id, &args.subscription_id, &args.chars)
-            .await
-            .map_err(FunctionCallError::RespondToModel)?;
-        Ok(JsonToolOutput::new(json!(EventCommandWriteStdinResult {
-            subscription_id: args.subscription_id,
-            bytes_written: args.chars.len(),
-        })))
+    fn handle<'a>(
+        &'a self, call: ToolCall,
+    ) -> codex_extension_api::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+                    let args: EventCommandWriteStdinArgs = parse_args(&call)?;
+                    if args.subscription_id.trim().is_empty() {
+                        return Err(FunctionCallError::RespondToModel(
+                            "subscription_id must not be empty".to_string(),
+                        ));
+                    }
+                    if args.chars.is_empty() {
+                        return Err(FunctionCallError::RespondToModel(
+                            "chars must not be empty".to_string(),
+                        ));
+                    }
+                    self.registry
+                        .write_event_command_stdin(self.thread_id, &args.subscription_id, &args.chars)
+                        .await
+                        .map_err(FunctionCallError::RespondToModel)?;
+                    Ok(JsonToolOutput::new(json!(EventCommandWriteStdinResult {
+                        subscription_id: args.subscription_id,
+                        bytes_written: args.chars.len(),
+                    })))
+            })
     }
 }
 

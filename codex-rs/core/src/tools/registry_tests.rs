@@ -1,26 +1,33 @@
 use super::*;
 use crate::tools::handlers::GetGoalHandler;
-use codex_tools::GET_GOAL_TOOL_NAME;
-use codex_tools::create_get_goal_tool;
+use codex_tool_planning::GET_GOAL_TOOL_NAME;
+use codex_tool_planning::create_get_goal_tool;
 use pretty_assertions::assert_eq;
 
 struct TestHandler {
-    tool_name: codex_tools::ToolName,
+    tool_name: codex_tool_planning::ToolName,
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for TestHandler {
     type Output = crate::tools::context::FunctionToolOutput;
 
-    fn tool_name(&self) -> codex_tools::ToolName {
+    fn tool_name(&self) -> codex_tool_planning::ToolName {
         self.tool_name.clone()
     }
 
-    async fn handle(&self, _invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        Ok(crate::tools::context::FunctionToolOutput::from_text(
-            "ok".to_string(),
-            Some(true),
-        ))
+    fn handle<'a>(
+        &'a self,
+        _invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            Ok(crate::tools::context::FunctionToolOutput::from_text(
+                "ok".to_string(),
+                Some(true),
+            ))
+        })
     }
 }
 
@@ -30,8 +37,8 @@ impl ToolHandler for TestHandler {}
 fn handler_looks_up_namespaced_aliases_explicitly() {
     let namespace = "mcp__codex_apps__gmail";
     let tool_name = "gmail_get_recent_emails";
-    let plain_name = codex_tools::ToolName::plain(tool_name);
-    let namespaced_name = codex_tools::ToolName::namespaced(namespace, tool_name);
+    let plain_name = codex_tool_planning::ToolName::plain(tool_name);
+    let namespaced_name = codex_tool_planning::ToolName::namespaced(namespace, tool_name);
     let plain_handler = Arc::new(TestHandler {
         tool_name: plain_name.clone(),
     }) as Arc<dyn RegisteredTool>;
@@ -45,7 +52,7 @@ fn handler_looks_up_namespaced_aliases_explicitly() {
 
     let plain = registry.handler(&plain_name);
     let namespaced = registry.handler(&namespaced_name);
-    let missing_namespaced = registry.handler(&codex_tools::ToolName::namespaced(
+    let missing_namespaced = registry.handler(&codex_tool_planning::ToolName::namespaced(
         "mcp__codex_apps__calendar",
         tool_name,
     ));
@@ -74,5 +81,5 @@ fn register_tool_adds_executor_and_spec() {
 
     assert_eq!(specs.len(), 1);
     assert_eq!(specs[0], create_get_goal_tool());
-    assert!(registry.has_handler(&codex_tools::ToolName::plain(GET_GOAL_TOOL_NAME)));
+    assert!(registry.has_handler(&codex_tool_planning::ToolName::plain(GET_GOAL_TOOL_NAME)));
 }

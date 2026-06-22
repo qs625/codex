@@ -6,7 +6,6 @@
 //! Higher-level aggregation and resource/tool APIs live in
 //! [`crate::connection_manager`].
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
@@ -27,26 +26,27 @@ use crate::codex_apps::normalize_codex_apps_tool_title;
 use crate::codex_apps::write_cached_codex_apps_tools_if_needed;
 use crate::elicitation::ElicitationRequestManager;
 use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
-use crate::mcp::ToolPluginProvenance;
-use crate::runtime::McpRuntimeEnvironment;
 use crate::runtime::emit_duration;
-use crate::server::EffectiveMcpServer;
-use crate::server::McpServerLaunch;
 use crate::tools::ToolFilter;
 use crate::tools::filter_tools;
 use anyhow::Result;
 use anyhow::anyhow;
 use async_channel::Sender;
-use codex_api_provider::SharedAuthProvider;
 use codex_async_utils::CancelErr;
 use codex_async_utils::OrCancelExt;
 use codex_config_types::McpServerConfig;
 use codex_config_types::McpServerTransportConfig;
 use codex_config_types::OAuthCredentialsStoreMode;
 use codex_exec_server_api::HttpClient;
+use codex_mcp_runtime_api::McpRuntimeEnvironment;
+use codex_mcp_runtime_api::SharedMcpAuthHeaderProvider;
+use codex_mcp_tool_types::McpTool;
+use codex_mcp_tool_types::ToolAnnotations;
 use codex_mcp_tool_types::ToolInfo;
 use codex_mcp_tool_types::tool_with_model_visible_input_schema;
+use codex_mcp_types::EffectiveMcpServer;
 pub use codex_mcp_types::MCP_SANDBOX_STATE_META_CAPABILITY;
+use codex_mcp_types::ToolPluginProvenance;
 use codex_protocol::protocol::Event;
 use codex_rmcp_client::ExecutorStdioServerLauncher;
 use codex_rmcp_client::LocalStdioServerLauncher;
@@ -61,6 +61,8 @@ use rmcp::model::Implementation;
 use rmcp::model::InitializeRequestParams;
 use rmcp::model::ProtocolVersion;
 use rmcp::model::Tool as RmcpTool;
+use serde::Serialize;
+use serde_json::Value as JsonValue;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
@@ -139,7 +141,7 @@ impl AsyncManagedClient {
         codex_apps_tools_cache_context: Option<CodexAppsToolsCacheContext>,
         tool_plugin_provenance: Arc<ToolPluginProvenance>,
         runtime_environment: McpRuntimeEnvironment,
-        runtime_auth_provider: Option<SharedAuthProvider>,
+        runtime_auth_provider: Option<SharedMcpAuthHeaderProvider>,
         client_elicitation_capability: ElicitationCapability,
     ) -> Self {
         let tool_filter = server
@@ -288,7 +290,7 @@ impl AsyncManagedClient {
                 } else {
                     format!("{description}. {plugin_source_note}")
                 };
-                tool.tool.description = Some(Cow::Owned(annotated_description));
+                tool.tool.description = Some(annotated_description);
             }
             tools
         };
@@ -376,7 +378,7 @@ pub(crate) async fn list_tools_for_client_uncached(
                 callable_name,
                 callable_namespace,
                 namespace_description,
-                tool: tool_def,
+                tool: mcp_tool_from_rmcp_tool(tool_def),
                 connector_id,
                 connector_name,
                 plugin_display_names: Vec::new(),
@@ -402,6 +404,60 @@ fn sanitize_tool_connector_metadata(
 
     strip_untrusted_connector_meta(tool);
     (None, None, None)
+}
+
+fn mcp_tool_from_rmcp_tool(tool: RmcpTool) -> McpTool {
+    let RmcpTool {
+        name,
+        title,
+        description,
+        input_schema,
+        output_schema,
+        annotations,
+        execution,
+        icons,
+        meta,
+    } = tool;
+    McpTool {
+        name: name.into_owned(),
+        title,
+        description: description.map(|description| description.into_owned()),
+        input_schema: JsonValue::Object(input_schema.as_ref().clone()),
+        output_schema: output_schema
+            .map(|output_schema| JsonValue::Object(output_schema.as_ref().clone())),
+        annotations: annotations.map(tool_annotations_from_rmcp),
+        execution: execution.and_then(serialize_to_json_value),
+        icons: icons.and_then(serialize_to_json_array),
+        meta: meta.map(|meta| meta.0),
+    }
+}
+
+fn tool_annotations_from_rmcp(annotations: rmcp::model::ToolAnnotations) -> ToolAnnotations {
+    let rmcp::model::ToolAnnotations {
+        title,
+        read_only_hint,
+        destructive_hint,
+        idempotent_hint,
+        open_world_hint,
+    } = annotations;
+    ToolAnnotations {
+        title,
+        read_only_hint,
+        destructive_hint,
+        idempotent_hint,
+        open_world_hint,
+    }
+}
+
+fn serialize_to_json_value<T: Serialize>(value: T) -> Option<JsonValue> {
+    serde_json::to_value(value).ok()
+}
+
+fn serialize_to_json_array<T: Serialize>(value: T) -> Option<Vec<JsonValue>> {
+    match serialize_to_json_value(value)? {
+        JsonValue::Array(values) => Some(values),
+        _ => None,
+    }
 }
 
 fn strip_untrusted_connector_meta(tool: &mut RmcpTool) {
@@ -557,11 +613,13 @@ async fn make_rmcp_client(
     server: EffectiveMcpServer,
     store_mode: OAuthCredentialsStoreMode,
     runtime_environment: McpRuntimeEnvironment,
-    runtime_auth_provider: Option<SharedAuthProvider>,
+    runtime_auth_provider: Option<SharedMcpAuthHeaderProvider>,
 ) -> Result<RmcpClient, StartupOutcomeError> {
-    let config = match server.launch() {
-        McpServerLaunch::Configured(config) => config.as_ref().clone(),
-    };
+    let config = server.configured_config().cloned().ok_or_else(|| {
+        StartupOutcomeError::from(anyhow!(
+            "MCP server `{server_name}` has no configured launch"
+        ))
+    })?;
     let McpServerConfig {
         transport,
         experimental_environment,

@@ -11,28 +11,27 @@ use crate::session::emit_subagent_session_started;
 use crate::shell_snapshot::ShellSnapshot;
 use crate::thread_manager::ResumeThreadWithHistoryOptions;
 use crate::thread_manager::ThreadManagerState;
-use crate::thread_rollout_truncation::truncate_rollout_to_last_n_fork_turns;
+use codex_agent_runtime::SpawnAgentForkMode;
+use codex_agent_runtime::select_forked_rollout_items;
 use codex_features::Feature;
 use codex_protocol::AgentPath;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::MessagePhase;
+#[cfg(test)]
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::ResumedHistory;
-use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::user_input::UserInput;
-use codex_state::DirectionalThreadSpawnEdgeStatus;
-use codex_thread_store::ReadThreadParams;
+use codex_state_api::DirectionalThreadSpawnEdgeStatus;
+use codex_thread_store_api::ReadThreadParams;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -43,12 +42,6 @@ use tracing::warn;
 
 const AGENT_NAMES: &str = include_str!("agent_names.txt");
 const ROOT_LAST_TASK_MESSAGE: &str = "Main thread";
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum SpawnAgentForkMode {
-    FullHistory,
-    LastNTurns(usize),
-}
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SpawnAgentOptions {
@@ -95,46 +88,6 @@ fn agent_nickname_candidates(
         .into_iter()
         .map(ToOwned::to_owned)
         .collect()
-}
-
-fn keep_forked_rollout_item(item: &RolloutItem) -> bool {
-    match item {
-        RolloutItem::ResponseItem(ResponseItem::Message { role, phase, .. }) => match role.as_str()
-        {
-            "system" | "developer" | "user" => true,
-            "assistant" => *phase == Some(MessagePhase::FinalAnswer),
-            _ => false,
-        },
-        RolloutItem::ResponseItem(
-            ResponseItem::CommandWait { .. }
-            | ResponseItem::CommandWriteStdin { .. }
-            | ResponseItem::WorkflowRunProgress { .. }
-            | ResponseItem::CommandExecutionNotification { .. }
-            | ResponseItem::EventCommandEvent { .. }
-            | ResponseItem::EventDrivenTool { .. }
-            | ResponseItem::ThreadGoalUpdate { .. }
-            | ResponseItem::InterAgentCommunication { .. },
-        ) => true,
-        RolloutItem::ResponseItem(
-            ResponseItem::Reasoning { .. }
-            | ResponseItem::LocalShellCall { .. }
-            | ResponseItem::FunctionCall { .. }
-            | ResponseItem::ToolSearchCall { .. }
-            | ResponseItem::FunctionCallOutput { .. }
-            | ResponseItem::CustomToolCall { .. }
-            | ResponseItem::CustomToolCallOutput { .. }
-            | ResponseItem::ToolSearchOutput { .. }
-            | ResponseItem::WebSearchCall { .. }
-            | ResponseItem::ImageGenerationCall { .. }
-            | ResponseItem::Compaction { .. }
-            | ResponseItem::ContextCompaction { .. }
-            | ResponseItem::Other,
-        ) => false,
-        // A forked child gets its own runtime config, including spawned-agent
-        // instructions, so it must establish a fresh context diff baseline.
-        RolloutItem::TurnContext(_) => false,
-        RolloutItem::Compacted(_) | RolloutItem::EventMsg(_) | RolloutItem::SessionMeta(_) => true,
-    }
 }
 
 /// Control-plane handle for multi-agent operations.
@@ -424,11 +377,6 @@ impl AgentControl {
                 ))
             })?;
 
-        let mut forked_rollout_items = parent_history.items;
-        if let SpawnAgentForkMode::LastNTurns(last_n_turns) = fork_mode {
-            forked_rollout_items =
-                truncate_rollout_to_last_n_fork_turns(&forked_rollout_items, *last_n_turns);
-        }
         // MultiAgentV2 root/subagent usage hints are injected as standalone developer
         // messages at thread start. When forking history, drop hints from the parent
         // so the child gets a fresh hint that matches its own session source/config.
@@ -448,19 +396,11 @@ impl AgentControl {
                 .flatten()
                 .collect()
             };
-        forked_rollout_items.retain(|item| {
-            if let RolloutItem::ResponseItem(ResponseItem::Message { role, content, .. }) = item
-                && role == "developer"
-                && let [ContentItem::InputText { text }] = content.as_slice()
-                && multi_agent_v2_usage_hint_texts_to_filter
-                    .iter()
-                    .any(|usage_hint_text| usage_hint_text == text)
-            {
-                return false;
-            }
-
-            keep_forked_rollout_item(item)
-        });
+        let forked_rollout_items = select_forked_rollout_items(
+            parent_history.items,
+            fork_mode,
+            &multi_agent_v2_usage_hint_texts_to_filter,
+        );
 
         state
             .fork_thread_with_source(

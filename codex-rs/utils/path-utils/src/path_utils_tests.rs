@@ -113,3 +113,30 @@ mod path_comparison {
         Ok(())
     }
 }
+
+mod atomic_write {
+    use super::super::write_atomically;
+
+    #[test]
+    fn creates_parent_directory_and_file() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("nested").join("config.toml");
+
+        write_atomically(&path, "one")?;
+
+        assert_eq!(std::fs::read_to_string(path)?, "one");
+        Ok(())
+    }
+
+    #[test]
+    fn replaces_existing_file() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "old")?;
+
+        write_atomically(&path, "new")?;
+
+        assert_eq!(std::fs::read_to_string(path)?, "new");
+        Ok(())
+    }
+}

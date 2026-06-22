@@ -15,12 +15,12 @@ workspace = true
 
 [dependencies]
 codex-config-diagnostics = { workspace = true }
-codex-config-edit = { workspace = true }
 codex-config-requirements = { workspace = true }
 codex-config-types = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 tokio = { workspace = true, features = ["fs"] }
 toml = { workspace = true }
 tracing = { workspace = true }

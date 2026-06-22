@@ -3222,7 +3222,7 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
         &mut chat,
         AppServerThreadItem::CommandExecution {
             id: "c1".into(),
-            command: codex_shell_command::parse_command::shlex_join(&command),
+            command: codex_shell_utils::shlex_join(&command),
             cwd: cwd.clone(),
             process_id: None,
             source: ExecCommandSource::Agent,
@@ -3239,7 +3239,7 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
         &mut chat,
         AppServerThreadItem::CommandExecution {
             id: "c1".into(),
-            command: codex_shell_command::parse_command::shlex_join(&command),
+            command: codex_shell_utils::shlex_join(&command),
             cwd,
             process_id: None,
             source: ExecCommandSource::Agent,

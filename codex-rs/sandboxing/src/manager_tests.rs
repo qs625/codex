@@ -1,9 +1,9 @@
-use super::SandboxCommand;
 use super::SandboxManager;
-use super::SandboxTransformRequest;
-use super::SandboxType;
-use super::SandboxablePreference;
-use super::get_platform_sandbox;
+use crate::SandboxCommand;
+use crate::SandboxTransformRequest;
+use crate::SandboxType;
+use crate::SandboxablePreference;
+use crate::get_platform_sandbox;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::FileSystemPermissions;

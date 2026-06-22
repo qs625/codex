@@ -13,21 +13,21 @@ use codex_config::types::AppConfig;
 use codex_config::types::AppToolConfig;
 use codex_config::types::AppToolsConfig;
 use codex_config::types::AppsDefaultConfig;
-use codex_connectors::merge::plugin_connector_to_app_info;
-use codex_connectors::metadata::connector_install_url;
-use codex_connectors::metadata::sanitize_name;
+use codex_connectors_api::merge::plugin_connector_to_app_info;
+use codex_connectors_api::metadata::connector_install_url;
+use codex_connectors_api::metadata::sanitize_name;
+use codex_core_plugins::PluginsManager;
 use codex_features::Feature;
 use codex_login::CodexAuth;
+use codex_mcp_tool_types::McpTool;
+use codex_mcp_tool_types::ToolAnnotations;
 use codex_mcp_tool_types::ToolInfo;
 use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
-use rmcp::model::JsonObject;
-use rmcp::model::Tool;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::sync::Arc;
 use tempfile::tempdir;
 
 fn annotations(destructive_hint: Option<bool>, open_world_hint: Option<bool>) -> ToolAnnotations {
@@ -62,12 +62,12 @@ fn plugin_names(names: &[&str]) -> Vec<String> {
     names.iter().map(ToString::to_string).collect()
 }
 
-fn test_tool_definition(tool_name: &str) -> Tool {
-    Tool {
-        name: tool_name.to_string().into(),
+fn test_tool_definition(tool_name: &str) -> McpTool {
+    McpTool {
+        name: tool_name.to_string(),
         title: None,
         description: None,
-        input_schema: Arc::new(JsonObject::default()),
+        input_schema: serde_json::Value::Object(serde_json::Map::new()),
         output_schema: None,
         annotations: None,
         execution: None,
@@ -243,11 +243,11 @@ fn accessible_connectors_from_mcp_tools_preserves_description() {
         callable_name: "calendar_create_event".to_string(),
         callable_namespace: "mcp__codex_apps__calendar".to_string(),
         namespace_description: Some("Plan events".to_string()),
-        tool: Tool {
-            name: "calendar_create_event".to_string().into(),
+        tool: McpTool {
+            name: "calendar_create_event".to_string(),
             title: None,
-            description: Some("Create a calendar event".into()),
-            input_schema: Arc::new(JsonObject::default()),
+            description: Some("Create a calendar event".to_string()),
+            input_schema: serde_json::Value::Object(serde_json::Map::new()),
             output_schema: None,
             annotations: None,
             execution: None,
@@ -1194,9 +1194,10 @@ discoverables = [
         .build()
         .await
         .expect("config should load");
+    let plugins_manager = PluginsManager::new(config.codex_home.to_path_buf());
 
     assert_eq!(
-        tool_suggest_connector_ids(&config).await,
+        tool_suggest_connector_ids(&config, &plugins_manager).await,
         HashSet::from(["connector_2128aebfecb84f64a069897515042a44".to_string()])
     );
 }
@@ -1223,9 +1224,10 @@ disabled_tools = [
         .build()
         .await
         .expect("config should load");
+    let plugins_manager = PluginsManager::new(config.codex_home.to_path_buf());
 
     assert_eq!(
-        tool_suggest_connector_ids(&config).await,
+        tool_suggest_connector_ids(&config, &plugins_manager).await,
         HashSet::from(["connector_gmail".to_string()])
     );
 }
@@ -1252,11 +1254,18 @@ discoverables = [
         .await
         .expect("config should load");
     let auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
+    let auth_snapshot = auth.request_auth_snapshot();
+    let auth_context = crate::mcp::codex_apps_auth_context(Some(&auth_snapshot));
 
-    let discoverable_tools =
-        list_tool_suggest_discoverable_tools_with_auth(&config, Some(&auth), &[])
-            .await
-            .expect("discoverable tools should load");
+    let plugins_manager = PluginsManager::new(config.codex_home.to_path_buf());
+    let discoverable_tools = list_tool_suggest_discoverable_tools_with_auth(
+        &config,
+        &plugins_manager,
+        auth_context.as_ref(),
+        &[],
+    )
+    .await
+    .expect("discoverable tools should load");
 
     assert_eq!(
         discoverable_tools,

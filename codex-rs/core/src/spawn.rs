@@ -1,4 +1,4 @@
-use codex_network_proxy::NetworkProxy;
+use codex_network_proxy_api::NetworkProxyRuntime;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -43,7 +43,7 @@ pub(crate) struct SpawnChildRequest<'a> {
     pub arg0: Option<&'a str>,
     pub cwd: AbsolutePathBuf,
     pub network_sandbox_policy: NetworkSandboxPolicy,
-    pub network: Option<&'a NetworkProxy>,
+    pub network: Option<&'a dyn NetworkProxyRuntime>,
     pub stdio_policy: StdioPolicy,
     pub env: HashMap<String, String>,
 }
@@ -87,7 +87,7 @@ pub(crate) async fn spawn_child_async(request: SpawnChildRequest<'_>) -> std::io
     unsafe {
         let detach_from_tty = matches!(stdio_policy, StdioPolicy::RedirectForShellTool);
         #[cfg(target_os = "linux")]
-        let parent_pid = libc::getpid();
+        let parent_pid = codex_utils_pty::process_group::current_pid_for_parent_death_signal();
         cmd.pre_exec(move || {
             if detach_from_tty {
                 codex_utils_pty::process_group::detach_from_tty()?;

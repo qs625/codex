@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use codex_api_provider::AuthProvider;
+use http::HeaderMap;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -25,6 +25,15 @@ pub type OpenAiFileUploadResult = Result<UploadedOpenAiFile, String>;
 pub type OpenAiFileUploadFuture<'a> =
     Pin<Box<dyn Future<Output = OpenAiFileUploadResult> + Send + 'a>>;
 
+/// Header-only auth used by OpenAI file upload runtimes.
+///
+/// File upload only needs request headers for the backend create/finalize calls. Keep this trait
+/// independent from the broader API provider request-signing contract so the upload API crate does
+/// not pull concrete HTTP client request types into lightweight consumers.
+pub trait OpenAiFileUploadAuth: Send + Sync {
+    fn add_auth_headers(&self, headers: &mut HeaderMap);
+}
+
 /// Uploads local files into OpenAI file storage for runtimes that need file-backed tool inputs.
 ///
 /// Implementations own transport, retry, and backend-specific behavior. Callers in core should
@@ -33,7 +42,7 @@ pub trait OpenAiFileUploader: Send + Sync {
     fn upload_local_file<'a>(
         &'a self,
         base_url: &'a str,
-        auth: &'a dyn AuthProvider,
+        auth: &'a dyn OpenAiFileUploadAuth,
         path: &'a Path,
     ) -> OpenAiFileUploadFuture<'a>;
 }
@@ -48,7 +57,7 @@ impl OpenAiFileUploader for DisabledOpenAiFileUploader {
     fn upload_local_file<'a>(
         &'a self,
         _base_url: &'a str,
-        _auth: &'a dyn AuthProvider,
+        _auth: &'a dyn OpenAiFileUploadAuth,
         _path: &'a Path,
     ) -> OpenAiFileUploadFuture<'a> {
         Box::pin(async { Err("OpenAI file uploads are not available in this runtime".to_string()) })

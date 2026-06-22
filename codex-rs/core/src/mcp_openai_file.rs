@@ -12,7 +12,9 @@
 
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use codex_login::CodexAuth;
+use codex_api_auth::auth_provider_from_auth_snapshot;
+use codex_auth_types::RequestAuthSnapshot;
+use codex_openai_files_api::OpenAiFileUploadAuth;
 use codex_openai_files_api::OpenAiFileUploader;
 use serde_json::Value as JsonValue;
 
@@ -32,7 +34,7 @@ pub(crate) async fn rewrite_mcp_tool_arguments_for_openai_files(
     let Some(arguments) = arguments_value.as_object() else {
         return Ok(Some(arguments_value));
     };
-    let auth = sess.services.auth_manager.auth().await;
+    let auth = sess.services.auth_runtime.auth().await;
     let mut rewritten_arguments = arguments.clone();
 
     for field_name in openai_file_input_params {
@@ -63,7 +65,7 @@ pub(crate) async fn rewrite_mcp_tool_arguments_for_openai_files(
 async fn rewrite_argument_value_for_openai_files(
     turn_context: &TurnContext,
     uploader: &dyn OpenAiFileUploader,
-    auth: Option<&CodexAuth>,
+    auth: Option<&RequestAuthSnapshot>,
     field_name: &str,
     value: &JsonValue,
 ) -> Result<Option<JsonValue>, String> {
@@ -106,7 +108,7 @@ async fn rewrite_argument_value_for_openai_files(
 async fn build_uploaded_local_argument_value(
     turn_context: &TurnContext,
     uploader: &dyn OpenAiFileUploader,
-    auth: Option<&CodexAuth>,
+    auth: Option<&RequestAuthSnapshot>,
     field_name: &str,
     index: Option<usize>,
     file_path: &str,
@@ -123,11 +125,14 @@ async fn build_uploaded_local_argument_value(
             "ChatGPT auth is required to upload local files for Codex Apps tools".to_string(),
         );
     }
-    let upload_auth = codex_model_provider_api::auth_provider_from_auth(auth);
+    let upload_auth = auth_provider_from_auth_snapshot(auth);
+    let upload_auth = ApiProviderOpenAiFileUploadAuth {
+        auth: upload_auth.as_ref(),
+    };
     let uploaded = uploader
         .upload_local_file(
             turn_context.config.chatgpt_base_url.trim_end_matches('/'),
-            upload_auth.as_ref(),
+            &upload_auth,
             &resolved_path,
         )
         .await
@@ -147,10 +152,21 @@ async fn build_uploaded_local_argument_value(
     }))
 }
 
+struct ApiProviderOpenAiFileUploadAuth<'a> {
+    auth: &'a dyn codex_api_provider::AuthProvider,
+}
+
+impl OpenAiFileUploadAuth for ApiProviderOpenAiFileUploadAuth<'_> {
+    fn add_auth_headers(&self, headers: &mut http::HeaderMap) {
+        self.auth.add_auth_headers(headers);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::session::tests::make_session_and_context;
+    use codex_login::CodexAuth;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
@@ -221,7 +237,7 @@ mod tests {
             .await;
 
         let (_, mut turn_context) = make_session_and_context().await;
-        let auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
+        let auth = CodexAuth::create_dummy_chatgpt_auth_for_testing().request_auth_snapshot();
         let dir = tempdir().expect("temp dir");
         let local_path = dir.path().join("file_report.csv");
         tokio::fs::write(&local_path, b"hello")
@@ -307,7 +323,7 @@ mod tests {
             .await;
 
         let (_, mut turn_context) = make_session_and_context().await;
-        let auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
+        let auth = CodexAuth::create_dummy_chatgpt_auth_for_testing().request_auth_snapshot();
         let dir = tempdir().expect("temp dir");
         let local_path = dir.path().join("file_report.csv");
         tokio::fs::write(&local_path, b"hello")
@@ -424,7 +440,7 @@ mod tests {
             .await;
 
         let (_, mut turn_context) = make_session_and_context().await;
-        let auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
+        let auth = CodexAuth::create_dummy_chatgpt_auth_for_testing().request_auth_snapshot();
         let dir = tempdir().expect("temp dir");
         tokio::fs::write(dir.path().join("one.csv"), b"one")
             .await
@@ -477,9 +493,10 @@ mod tests {
     #[tokio::test]
     async fn rewrite_mcp_tool_arguments_for_openai_files_surfaces_upload_failures() {
         let (mut session, turn_context) = make_session_and_context().await;
-        session.services.auth_manager = crate::test_support::auth_manager_from_auth(
+        let auth_runtime = crate::test_support::auth_manager_from_auth(
             CodexAuth::create_dummy_chatgpt_auth_for_testing(),
         );
+        session.services.auth_runtime = auth_runtime;
         session.services.openai_file_uploader =
             Arc::new(codex_openai_files::ReqwestOpenAiFileUploader);
         let error = rewrite_mcp_tool_arguments_for_openai_files(

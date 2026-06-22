@@ -2,8 +2,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use codex_api_provider::AuthProvider;
 use codex_client::build_reqwest_client_with_custom_ca;
+use codex_openai_files_api::OpenAiFileUploadAuth;
 use codex_openai_files_api::OpenAiFileUploadFuture;
 use codex_openai_files_api::OpenAiFileUploader;
 pub use codex_openai_files_api::UploadedOpenAiFile;
@@ -29,7 +29,7 @@ impl OpenAiFileUploader for ReqwestOpenAiFileUploader {
     fn upload_local_file<'a>(
         &'a self,
         base_url: &'a str,
-        auth: &'a dyn AuthProvider,
+        auth: &'a dyn OpenAiFileUploadAuth,
         path: &'a Path,
     ) -> OpenAiFileUploadFuture<'a> {
         Box::pin(async move {
@@ -106,7 +106,7 @@ pub fn openai_file_uri(file_id: &str) -> String {
 
 pub async fn upload_local_file(
     base_url: &str,
-    auth: &dyn AuthProvider,
+    auth: &dyn OpenAiFileUploadAuth,
     path: &Path,
 ) -> Result<UploadedOpenAiFile, OpenAiFileError> {
     let metadata = tokio::fs::metadata(path)
@@ -262,7 +262,7 @@ pub async fn upload_local_file(
 }
 
 fn authorized_request(
-    auth: &dyn AuthProvider,
+    auth: &dyn OpenAiFileUploadAuth,
     method: reqwest::Method,
     url: &str,
 ) -> reqwest::RequestBuilder {
@@ -304,7 +304,7 @@ mod tests {
     #[derive(Clone, Copy)]
     struct ChatGptTestAuth;
 
-    impl AuthProvider for ChatGptTestAuth {
+    impl OpenAiFileUploadAuth for ChatGptTestAuth {
         fn add_auth_headers(&self, headers: &mut http::HeaderMap) {
             headers.insert(
                 http::header::AUTHORIZATION,

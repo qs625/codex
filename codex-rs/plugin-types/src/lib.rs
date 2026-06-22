@@ -1,17 +1,35 @@
 //! Lightweight plugin metadata and policy types.
 
+mod load_outcome;
+
 use codex_config_types::HookEventsToml;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
+use std::fmt;
 use ts_rs::TS;
 
-#[derive(Debug, thiserror::Error)]
+pub use load_outcome::EffectiveSkillRoots;
+pub use load_outcome::LoadedPlugin;
+pub use load_outcome::PluginAgentDir;
+pub use load_outcome::PluginLoadOutcome;
+pub use load_outcome::prompt_safe_plugin_description;
+
+#[derive(Debug)]
 pub enum PluginIdError {
-    #[error("{0}")]
     Invalid(String),
 }
+
+impl fmt::Display for PluginIdError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Invalid(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for PluginIdError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginId {
@@ -72,6 +90,18 @@ pub fn validate_plugin_segment(segment: &str, kind: &str) -> Result<(), String> 
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AppConnectorId(pub String);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PluginSkillRoot {
+    pub path: AbsolutePathBuf,
+    pub plugin_id: String,
+}
+
+/// Default plaintext sigil for tools and skills.
+pub const TOOL_MENTION_SIGIL: char = '$';
+
+/// Plugins use `@` in linked plaintext outside TUI.
+pub const PLUGIN_TEXT_MENTION_SIGIL: char = '@';
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PluginCapabilitySummary {

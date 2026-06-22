@@ -15,9 +15,9 @@ use crate::session::turn::build_prompt;
 use crate::session::turn::built_tools;
 use codex_metrics_api::STARTUP_PREWARM_AGE_AT_FIRST_TURN_METRIC;
 use codex_metrics_api::STARTUP_PREWARM_DURATION_METRIC;
-use codex_otel::SessionTelemetry;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::models::BaseInstructions;
+use codex_session_telemetry_api::SharedSessionTelemetry;
 
 pub(crate) struct SessionStartupPrewarmHandle {
     task: JoinHandle<CodexResult<ModelClientSession>>,
@@ -49,7 +49,7 @@ impl SessionStartupPrewarmHandle {
 
     async fn resolve(
         self,
-        session_telemetry: &SessionTelemetry,
+        session_telemetry: &SharedSessionTelemetry,
         cancellation_token: &CancellationToken,
     ) -> SessionStartupPrewarmResolution {
         let resolve_started_at = Instant::now();

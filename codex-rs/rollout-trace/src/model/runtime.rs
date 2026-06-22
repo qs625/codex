@@ -4,9 +4,9 @@ use serde::Serialize;
 use crate::payload::RawPayloadId;
 use crate::raw_event::RawEventSeq;
 
-use super::AgentPath;
 use super::AgentThreadId;
 use super::CodeCellId;
+use super::CodeCellRuntimeStatus;
 use super::CodeModeRuntimeToolId;
 use super::CodexTurnId;
 use super::CompactionId;
@@ -18,6 +18,8 @@ use super::ModelVisibleCallId;
 use super::TerminalId;
 use super::TerminalOperationId;
 use super::ToolCallId;
+use super::ToolCallKind;
+use super::ToolCallSummary;
 use super::session::ExecutionWindow;
 
 /// Runtime/debug object for one model-authored `exec` cell.
@@ -48,24 +50,6 @@ pub struct CodeCell {
     pub source_js: String,
     pub nested_tool_call_ids: Vec<ToolCallId>,
     pub wait_tool_call_ids: Vec<ToolCallId>,
-}
-
-/// Code-mode runtime lifecycle.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CodeCellRuntimeStatus {
-    /// The `exec` request has been accepted but the runtime has not yet started user code.
-    Starting,
-    /// Runtime is executing JavaScript and has not yet yielded or terminated.
-    Running,
-    /// Initial `exec` returned while JavaScript kept running in the background.
-    Yielded,
-    /// Runtime reached a normal terminal result.
-    Completed,
-    /// Runtime reached an error terminal result.
-    Failed,
-    /// Runtime was explicitly terminated.
-    Terminated,
 }
 
 /// Installed conversation-history replacement boundary.
@@ -159,54 +143,6 @@ pub enum ToolCallRequester {
     /// Model-authored JavaScript requested the tool through code-mode.
     CodeCell {
         code_cell_id: CodeCellId,
-    },
-}
-
-/// Runtime tool category.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "type")]
-pub enum ToolCallKind {
-    ExecCommand,
-    WriteStdin,
-    ApplyPatch,
-    Mcp {
-        server: String,
-        tool: String,
-    },
-    Web,
-    ImageGeneration,
-    SpawnAgent,
-    AssignAgentTask,
-    SendMessage,
-    /// Multi-agent wait operation. Code-mode wait is modeled separately.
-    WaitAgent,
-    CloseAgent,
-    Other {
-        name: String,
-    },
-}
-
-/// Bounded card/list summary for a tool call.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "type")]
-pub enum ToolCallSummary {
-    /// Tool is summarized by its terminal operation.
-    Terminal { operation_id: TerminalOperationId },
-    Agent {
-        target_agent_path: AgentPath,
-        /// Task name/path segment when the operation creates or targets a task.
-        task_name: Option<String>,
-        message_preview: String,
-    },
-    WaitAgent {
-        /// Wait target, when narrower than "any child".
-        target_agent_path: Option<AgentPath>,
-        timeout_ms: Option<u64>,
-    },
-    Generic {
-        label: String,
-        input_preview: Option<String>,
-        output_preview: Option<String>,
     },
 }
 

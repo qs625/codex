@@ -119,7 +119,13 @@ async fn shell_command_handler_to_exec_params_uses_session_shell_and_turn_contex
     assert_eq!(exec_params.command, expected_command);
     assert_eq!(exec_params.cwd, expected_cwd);
     assert_eq!(exec_params.env, expected_env);
-    assert_eq!(exec_params.network, turn_context.network);
+    assert_eq!(
+        exec_params.network.is_some(),
+        turn_context.network.is_some()
+    );
+    if let (Some(actual), Some(expected)) = (&exec_params.network, &turn_context.network) {
+        assert!(Arc::ptr_eq(actual, expected));
+    }
     assert_eq!(exec_params.expiration.timeout_ms(), timeout_ms);
     assert_eq!(exec_params.sandbox_permissions, sandbox_permissions);
     assert_eq!(exec_params.justification, justification);
@@ -209,7 +215,8 @@ async fn shell_command_pre_tool_use_payload_uses_raw_command() {
         arguments: json!({ "command": "printf shell command" }).to_string(),
     };
     let (session, turn) = make_session_and_context().await;
-    let handler = ShellCommandHandler::from(codex_tools::ShellCommandBackendConfig::Classic);
+    let handler =
+        ShellCommandHandler::from(codex_tool_planning::ShellCommandBackendConfig::Classic);
 
     assert_eq!(
         handler.pre_tool_use_payload(&ToolInvocation {
@@ -218,7 +225,7 @@ async fn shell_command_pre_tool_use_payload_uses_raw_command() {
             cancellation_token: tokio_util::sync::CancellationToken::new(),
             tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
             call_id: "call-42".to_string(),
-            tool_name: codex_tools::ToolName::plain("shell_command"),
+            tool_name: codex_tool_planning::ToolName::plain("shell_command"),
             source: crate::tools::context::ToolCallSource::Direct,
             payload,
         }),
@@ -239,7 +246,8 @@ async fn build_post_tool_use_payload_uses_tool_output_wire_value() {
         success: Some(true),
         post_tool_use_response: Some(json!("shell output")),
     };
-    let handler = ShellCommandHandler::from(codex_tools::ShellCommandBackendConfig::Classic);
+    let handler =
+        ShellCommandHandler::from(codex_tool_planning::ShellCommandBackendConfig::Classic);
     let (session, turn) = make_session_and_context().await;
     let invocation = ToolInvocation {
         session: session.into(),
@@ -247,7 +255,7 @@ async fn build_post_tool_use_payload_uses_tool_output_wire_value() {
         cancellation_token: tokio_util::sync::CancellationToken::new(),
         tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
         call_id: "call-42".to_string(),
-        tool_name: codex_tools::ToolName::plain("shell_command"),
+        tool_name: codex_tool_planning::ToolName::plain("shell_command"),
         source: ToolCallSource::Direct,
         payload,
     };

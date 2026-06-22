@@ -1,13 +1,11 @@
-use std::path::PathBuf;
-
-use codex_protocol::ThreadId;
+pub use codex_hooks_api::UserPromptSubmitOutcome;
+pub use codex_hooks_api::UserPromptSubmitRequest;
 use codex_protocol::protocol::HookCompletedEvent;
 use codex_protocol::protocol::HookEventName;
 use codex_protocol::protocol::HookOutputEntry;
 use codex_protocol::protocol::HookOutputEntryKind;
 use codex_protocol::protocol::HookRunStatus;
 use codex_protocol::protocol::HookRunSummary;
-use codex_utils_absolute_path::AbsolutePathBuf;
 
 use super::common;
 use crate::engine::CommandShell;
@@ -17,25 +15,6 @@ use crate::engine::dispatcher;
 use crate::engine::output_parser;
 use crate::schema::NullableString;
 use crate::schema::UserPromptSubmitCommandInput;
-
-#[derive(Debug, Clone)]
-pub struct UserPromptSubmitRequest {
-    pub session_id: ThreadId,
-    pub turn_id: String,
-    pub cwd: AbsolutePathBuf,
-    pub transcript_path: Option<PathBuf>,
-    pub model: String,
-    pub permission_mode: String,
-    pub prompt: String,
-}
-
-#[derive(Debug)]
-pub struct UserPromptSubmitOutcome {
-    pub hook_events: Vec<HookCompletedEvent>,
-    pub should_stop: bool,
-    pub stop_reason: Option<String>,
-    pub additional_contexts: Vec<String>,
-}
 
 #[derive(Debug, PartialEq, Eq)]
 struct UserPromptSubmitHandlerData {

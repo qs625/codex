@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::Prompt;
-use crate::ResponseStream;
 use crate::client::ModelClientSession;
 use crate::client_common::ResponseEvent;
 use crate::compact::CompactionAnalyticsAttempt;
@@ -28,8 +27,9 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::CompactedItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TurnStartedEvent;
-use codex_rollout_trace::CompactionCheckpointTracePayload;
-use codex_rollout_trace::InferenceTraceContext;
+use codex_rollout_trace_api::CompactionCheckpointTracePayload;
+use codex_rollout_trace_api::InferenceTraceContext;
+use futures::Stream;
 use futures::StreamExt;
 use futures::TryFutureExt;
 use tokio_util::sync::CancellationToken;
@@ -279,9 +279,10 @@ async fn run_remote_compaction_request_v2(
     collect_context_compaction_output(stream).await
 }
 
-async fn collect_context_compaction_output(
-    mut stream: ResponseStream,
-) -> CodexResult<(ResponseItem, String)> {
+async fn collect_context_compaction_output<S>(mut stream: S) -> CodexResult<(ResponseItem, String)>
+where
+    S: Stream<Item = CodexResult<ResponseEvent>> + Unpin,
+{
     let mut output_item_count = 0usize;
     let mut context_compaction_count = 0usize;
     let mut context_compaction_output = None;
@@ -363,8 +364,6 @@ mod tests {
     use codex_protocol::models::ContentItem;
     use codex_protocol::models::MessagePhase;
     use pretty_assertions::assert_eq;
-    use tokio::sync::mpsc;
-    use tokio_util::sync::CancellationToken;
 
     fn message(role: &str, text: &str, phase: Option<MessagePhase>) -> ResponseItem {
         ResponseItem::Message {
@@ -374,20 +373,6 @@ mod tests {
                 text: text.to_string(),
             }],
             phase,
-        }
-    }
-
-    fn response_stream(events: Vec<CodexResult<ResponseEvent>>) -> ResponseStream {
-        let (tx_event, rx_event) = mpsc::channel(events.len().max(1));
-        for event in events {
-            tx_event
-                .try_send(event)
-                .expect("response stream test channel should have capacity");
-        }
-        drop(tx_event);
-        ResponseStream {
-            rx_event,
-            consumer_dropped: CancellationToken::new(),
         }
     }
 
@@ -432,7 +417,7 @@ mod tests {
         let context_compaction = ResponseItem::ContextCompaction {
             encrypted_content: Some("encrypted".to_string()),
         };
-        let stream = response_stream(vec![
+        let stream = futures::stream::iter(vec![
             Ok(ResponseEvent::OutputItemDone(message(
                 "assistant",
                 "IGNORED_COMPACT_REPLY",

@@ -4,16 +4,18 @@ use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
-use codex_tools::create_spawn_agents_on_csv_tool;
+use codex_state_api::AgentJobCreateParams;
+use codex_state_api::AgentJobItemCreateParams;
+use codex_state_api::AgentJobItemStatus;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::create_spawn_agents_on_csv_tool;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 use super::*;
 
 pub struct SpawnAgentsOnCsvHandler;
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for SpawnAgentsOnCsvHandler {
     type Output = FunctionToolOutput;
 
@@ -25,24 +27,32 @@ impl ToolExecutor<ToolInvocation> for SpawnAgentsOnCsvHandler {
         Some(create_spawn_agents_on_csv_tool())
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            payload,
-            ..
-        } = invocation;
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session,
+                turn,
+                payload,
+                ..
+            } = invocation;
 
-        let arguments = match payload {
-            ToolPayload::Function { arguments } => arguments,
-            _ => {
-                return Err(FunctionCallError::RespondToModel(
-                    "agent jobs handler received unsupported payload".to_string(),
-                ));
-            }
-        };
+            let arguments = match payload {
+                ToolPayload::Function { arguments } => arguments,
+                _ => {
+                    return Err(FunctionCallError::RespondToModel(
+                        "agent jobs handler received unsupported payload".to_string(),
+                    ));
+                }
+            };
 
-        handle(session, turn, arguments).await
+            handle(session, turn, arguments).await
+        })
     }
 }
 
@@ -133,7 +143,7 @@ pub async fn handle(
             .zip(row.iter())
             .map(|(header, value)| (header.clone(), Value::String(value.clone())))
             .collect::<serde_json::Map<_, _>>();
-        items.push(codex_state::AgentJobItemCreateParams {
+        items.push(AgentJobItemCreateParams {
             item_id,
             row_index: idx as i64,
             source_id,
@@ -154,7 +164,7 @@ pub async fn handle(
     )?;
     let _job = db
         .create_agent_job(
-            &codex_state::AgentJobCreateParams {
+            &AgentJobCreateParams {
                 id: job_id.clone(),
                 name: job_name,
                 instruction: args.instruction,
@@ -238,11 +248,7 @@ pub async fn handle(
     let mut job_error = job.last_error.clone().filter(|err| !err.trim().is_empty());
     let failed_item_errors = if progress.failed_items > 0 {
         let items = db
-            .list_agent_job_items(
-                job_id.as_str(),
-                Some(codex_state::AgentJobItemStatus::Failed),
-                Some(5),
-            )
+            .list_agent_job_items(job_id.as_str(), Some(AgentJobItemStatus::Failed), Some(5))
             .await
             .unwrap_or_default();
         let summaries: Vec<_> = items

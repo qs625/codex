@@ -134,6 +134,49 @@ pub struct ResourceTemplate {
     pub mime_type: Option<String>,
 }
 
+/// Pagination request used by MCP list endpoints.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PaginatedRequestParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cursor: Option<String>,
+}
+
+/// Result returned by MCP `resources/list`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ListResourcesResult {
+    pub resources: Vec<Resource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub next_cursor: Option<String>,
+}
+
+/// Result returned by MCP `resources/templates/list`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ListResourceTemplatesResult {
+    pub resource_templates: Vec<ResourceTemplate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub next_cursor: Option<String>,
+}
+
+/// Request used by MCP `resources/read`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadResourceRequestParams {
+    pub uri: String,
+}
+
+/// Result returned by MCP `resources/read`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadResourceResult {
+    pub contents: Vec<ResourceContent>,
+}
+
 /// The server's response to a tool call.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
@@ -319,6 +362,12 @@ impl Resource {
 impl ResourceTemplate {
     pub fn from_mcp_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
         Ok(serde_json::from_value::<ResourceTemplateSerde>(value)?.into())
+    }
+}
+
+impl ResourceContent {
+    pub fn from_mcp_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
+        serde_json::from_value(value)
     }
 }
 

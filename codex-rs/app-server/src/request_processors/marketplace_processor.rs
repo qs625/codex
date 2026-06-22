@@ -5,6 +5,7 @@ pub(crate) struct MarketplaceRequestProcessor {
     config: Arc<Config>,
     config_manager: ConfigManager,
     thread_manager: Arc<ThreadManager>,
+    plugins_manager: Arc<PluginsManager>,
 }
 
 impl MarketplaceRequestProcessor {
@@ -12,11 +13,13 @@ impl MarketplaceRequestProcessor {
         config: Arc<Config>,
         config_manager: ConfigManager,
         thread_manager: Arc<ThreadManager>,
+        plugins_manager: Arc<PluginsManager>,
     ) -> Self {
         Self {
             config,
             config_manager,
             thread_manager,
+            plugins_manager,
         }
     }
 
@@ -73,7 +76,7 @@ impl MarketplaceRequestProcessor {
         params: MarketplaceUpgradeParams,
     ) -> Result<MarketplaceUpgradeResponse, JSONRPCErrorError> {
         let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
-        let plugins_manager = self.thread_manager.plugins_manager();
+        let plugins_manager = Arc::clone(&self.plugins_manager);
         let MarketplaceUpgradeParams { marketplace_name } = params;
         let plugins_input = config.plugins_config_input();
 

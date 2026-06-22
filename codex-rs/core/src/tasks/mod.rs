@@ -35,13 +35,13 @@ use crate::state::ActiveTurn;
 use crate::state::RunningTask;
 use crate::state::TaskKind;
 use codex_analytics_api::TurnTokenUsageFact;
-use codex_login::AuthManager;
-use codex_metrics_api::MetricsSink;
+use codex_auth_types::SharedAuthRuntime;
 use codex_metrics_api::TURN_E2E_DURATION_METRIC;
 use codex_metrics_api::TURN_MEMORY_METRIC;
 use codex_metrics_api::TURN_NETWORK_PROXY_METRIC;
 use codex_metrics_api::TURN_TOKEN_USAGE_METRIC;
 use codex_metrics_api::TURN_TOOL_CALL_METRIC;
+use codex_model_provider_api::SharedModelProviderAuthManager;
 use codex_models_manager_api::SharedModelsManager;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
@@ -107,7 +107,7 @@ pub(crate) fn interrupted_turn_history_marker(
 }
 
 fn emit_turn_network_proxy_metric(
-    metrics: &dyn MetricsSink,
+    metrics: &dyn codex_session_telemetry_api::SessionTelemetry,
     network_proxy_active: bool,
     tmp_mem: (&str, &str),
 ) {
@@ -124,7 +124,7 @@ fn emit_turn_network_proxy_metric(
 }
 
 fn emit_turn_memory_metric(
-    metrics: &dyn MetricsSink,
+    metrics: &dyn codex_session_telemetry_api::SessionTelemetry,
     feature_enabled: bool,
     config_enabled: bool,
     has_citations: bool,
@@ -169,8 +169,12 @@ impl SessionTaskContext {
         Arc::clone(&self.turn_extension_data)
     }
 
-    pub(crate) fn auth_manager(&self) -> Arc<AuthManager> {
-        Arc::clone(&self.session.services.auth_manager)
+    pub(crate) fn auth_runtime(&self) -> SharedAuthRuntime {
+        Arc::clone(&self.session.services.auth_runtime)
+    }
+
+    pub(crate) fn provider_auth_manager(&self) -> Option<SharedModelProviderAuthManager> {
+        self.session.services.model_client.auth_manager()
     }
 
     pub(crate) fn models_manager(&self) -> SharedModelsManager {
@@ -431,9 +435,7 @@ impl Session {
         );
         let timer = turn_context
             .session_telemetry
-            .start_timer(TURN_E2E_DURATION_METRIC, &[])
-            .map(|timer| Box::new(timer) as Box<dyn Send + Sync>)
-            .ok();
+            .start_timer(TURN_E2E_DURATION_METRIC, &[]);
         let running_task = RunningTask {
             done,
             handle: AbortOnDropHandle::new(handle),
@@ -642,7 +644,7 @@ impl Session {
             );
             let network_proxy_active = match self.services.network_proxy.as_ref() {
                 Some(started_network_proxy) => {
-                    match started_network_proxy.proxy().current_cfg().await {
+                    match started_network_proxy.proxy().current_config().await {
                         Ok(config) => config.network.enabled,
                         Err(err) => {
                             warn!(
@@ -655,7 +657,7 @@ impl Session {
                 None => false,
             };
             emit_turn_network_proxy_metric(
-                &self.services.session_telemetry,
+                self.services.session_telemetry.as_ref(),
                 network_proxy_active,
                 tmp_mem,
             );
@@ -743,7 +745,7 @@ impl Session {
             );
         }
         emit_turn_memory_metric(
-            &self.services.session_telemetry,
+            self.services.session_telemetry.as_ref(),
             turn_context.features.enabled(Feature::MemoryTool),
             turn_context.config.memories.use_memories,
             turn_had_memory_citation,

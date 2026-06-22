@@ -5,9 +5,10 @@ use crate::endpoint::session::EndpointSession;
 use crate::error::ApiError;
 use crate::provider::Provider;
 use bytes::Bytes;
+use codex_api_types::RealtimeCallResponse;
 use codex_client::HttpTransport;
 use codex_client::RequestBody;
-use codex_client::RequestTelemetry;
+use codex_client_types::RequestTelemetry;
 use http::HeaderMap;
 use http::HeaderValue;
 use http::Method;
@@ -26,16 +27,6 @@ const MULTIPART_CONTENT_TYPE: &str = "multipart/form-data; boundary=codex-realti
 
 pub struct RealtimeCallClient<T: HttpTransport> {
     session: EndpointSession<T>,
-}
-
-/// Answer from creating a WebRTC Realtime call.
-///
-/// `sdp` configures the peer connection. `call_id` is parsed from the response `Location` header
-/// and is later used by the server-side sideband WebSocket to join this exact call.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RealtimeCallResponse {
-    pub sdp: String,
-    pub call_id: String,
 }
 
 #[derive(Serialize)]

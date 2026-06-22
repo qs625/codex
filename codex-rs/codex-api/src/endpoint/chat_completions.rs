@@ -2,11 +2,13 @@ use crate::auth::SharedAuthProvider;
 use crate::common::ResponseEvent;
 use crate::common::ResponseStream;
 use crate::common::ResponsesApiRequest;
+use crate::common::response_stream_from_receiver;
 use crate::endpoint::session::EndpointSession;
 use crate::error::ApiError;
 use crate::provider::Provider;
+use codex_api_types::ChatCompletionsPath;
 use codex_client::HttpTransport;
-use codex_client::RequestTelemetry;
+use codex_client_types::RequestTelemetry;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::TokenUsage;
@@ -24,21 +26,6 @@ const RESPONSE_STREAM_CHANNEL_CAPACITY: usize = 16;
 pub struct ChatCompletionsClient<T: HttpTransport> {
     session: EndpointSession<T>,
     path: ChatCompletionsPath,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum ChatCompletionsPath {
-    AppendChatCompletions,
-    FullEndpoint,
-}
-
-impl ChatCompletionsPath {
-    fn as_path(self) -> &'static str {
-        match self {
-            Self::AppendChatCompletions => "chat/completions",
-            Self::FullEndpoint => "",
-        }
-    }
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -428,10 +415,7 @@ async fn stream_from_chat_response(
             .await;
     });
 
-    ResponseStream {
-        rx_event,
-        upstream_request_id,
-    }
+    response_stream_from_receiver(rx_event, upstream_request_id)
 }
 
 fn output_items_from_choice(choice: ChatChoice) -> Vec<ResponseItem> {

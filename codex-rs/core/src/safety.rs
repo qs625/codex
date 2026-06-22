@@ -9,8 +9,8 @@ use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
-use codex_sandboxing::SandboxType;
-use codex_sandboxing::get_platform_sandbox;
+use codex_sandboxing_api::SandboxType;
+use codex_sandboxing_api::get_platform_sandbox;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 const PATCH_REJECTED_OUTSIDE_PROJECT_REASON: &str =

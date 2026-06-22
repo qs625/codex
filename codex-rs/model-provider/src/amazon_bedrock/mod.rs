@@ -7,13 +7,12 @@ use std::sync::Arc;
 
 use codex_api_provider::Provider;
 use codex_api_provider::SharedAuthProvider;
-use codex_login::AuthManager;
-use codex_login::CodexAuth;
 use codex_model_provider_api::ModelProvider;
 use codex_model_provider_api::ModelProviderFuture;
 use codex_model_provider_api::ProviderAccountResult;
 use codex_model_provider_api::ProviderAccountState;
 use codex_model_provider_api::ProviderCapabilities;
+use codex_model_provider_api::SharedModelProviderAuthManager;
 use codex_model_provider_info::AMAZON_BEDROCK_GPT_5_4_MODEL_ID;
 use codex_model_provider_info::ModelProviderAwsAuthInfo;
 use codex_model_provider_info::ModelProviderInfo;
@@ -68,11 +67,11 @@ impl ModelProvider for AmazonBedrockModelProvider {
         AMAZON_BEDROCK_GPT_5_4_MODEL_ID
     }
 
-    fn auth_manager(&self) -> Option<Arc<AuthManager>> {
+    fn auth_manager(&self) -> Option<SharedModelProviderAuthManager> {
         None
     }
 
-    fn auth(&self) -> ModelProviderFuture<'_, Option<CodexAuth>> {
+    fn auth(&self) -> ModelProviderFuture<'_, Option<codex_auth_types::RequestAuthSnapshot>> {
         Box::pin(async { None })
     }
 

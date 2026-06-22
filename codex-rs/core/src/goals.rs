@@ -12,8 +12,13 @@ use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::state::ActiveTurn;
 use crate::state::TurnState;
+use crate::state_db_bridge::insert_thread_metadata_if_absent;
 use crate::tasks::RegularTask;
 use anyhow::Context;
+use chrono::DateTime;
+use chrono::Utc;
+use codex_agent_runtime::ThreadIdleReason;
+use codex_agent_runtime::ThreadPostTurnState;
 use codex_features::Feature;
 use codex_metrics_api::GOAL_BUDGET_LIMITED_METRIC;
 use codex_metrics_api::GOAL_COMPLETED_METRIC;
@@ -23,11 +28,7 @@ use codex_metrics_api::GOAL_TOKEN_COUNT_METRIC;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::models::ThreadGoalUpdateEventAction;
 use codex_protocol::models::ThreadGoalUpdateEventSource;
-use codex_protocol::models::ThreadGoalUpdateGoal;
-use codex_protocol::models::ThreadGoalUpdateGoalStatus;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ThreadGoal;
@@ -36,15 +37,20 @@ use codex_protocol::protocol::ThreadGoalUpdatedEvent;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::validate_thread_goal_objective;
-use codex_rollout::state_db::reconcile_rollout;
-use codex_thread_store::LocalThreadStore;
-use codex_tools::UPDATE_GOAL_TOOL_NAME;
+use codex_state_api::ExternalGoalPreviousStatus;
+use codex_state_api::ExternalGoalSet;
+use codex_state_api::ThreadGoalAccountingSnapshot as GoalAccountingSnapshot;
+use codex_state_api::ThreadGoalTurnAccountingSnapshot as GoalTurnAccountingSnapshot;
+use codex_state_api::protocol_goal_from_state;
+use codex_state_api::state_goal_status_from_protocol;
+use codex_state_api::thread_goal_update_response_item;
+use codex_state_api::validate_thread_goal_budget;
+use codex_tool_planning::UPDATE_GOAL_TOOL_NAME;
 use codex_utils_template::Template;
 use futures::future::BoxFuture;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::LazyLock;
-use std::time::Duration;
-use std::time::Instant;
 use tokio::sync::Mutex;
 use tokio::sync::Semaphore;
 use tokio::sync::SemaphorePermit;
@@ -97,44 +103,6 @@ enum TerminalMetricEmission {
     Suppress,
 }
 
-/// Describes whether an external goal mutation created a new logical goal or
-/// updated an existing one.
-#[derive(Clone)]
-pub enum ExternalGoalPreviousStatus {
-    NewGoal,
-    Existing(ExternalGoalPreviousGoal),
-}
-
-#[derive(Clone)]
-pub struct ExternalGoalPreviousGoal {
-    goal_id: String,
-    status: codex_state::ThreadGoalStatus,
-    objective: String,
-}
-
-impl From<&codex_state::ThreadGoal> for ExternalGoalPreviousStatus {
-    fn from(goal: &codex_state::ThreadGoal) -> Self {
-        Self::Existing(ExternalGoalPreviousGoal::from(goal))
-    }
-}
-
-impl From<&codex_state::ThreadGoal> for ExternalGoalPreviousGoal {
-    fn from(goal: &codex_state::ThreadGoal) -> Self {
-        Self {
-            goal_id: goal.goal_id.clone(),
-            status: goal.status,
-            objective: goal.objective.clone(),
-        }
-    }
-}
-
-/// Runtime effects for an externally persisted goal mutation.
-#[derive(Clone)]
-pub struct ExternalGoalSet {
-    pub goal: codex_state::ThreadGoal,
-    pub previous_status: ExternalGoalPreviousStatus,
-}
-
 /// Runtime lifecycle events that can affect goal accounting, scheduling, or
 /// model-visible steering.
 ///
@@ -183,20 +151,6 @@ struct GoalContinuationCandidate {
     items: Vec<ResponseInputItem>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ThreadPostTurnState {
-    ThreadActive,
-    ThreadIdle(ThreadIdleReason),
-    GoContextContinuation { goal_id: String },
-    ThreadCompletion,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ThreadIdleReason {
-    WaitCommand,
-    WaitChild,
-}
-
 impl GoalRuntimeState {
     pub(crate) fn new() -> Self {
         Self {
@@ -210,136 +164,12 @@ impl GoalRuntimeState {
     }
 }
 
-#[derive(Debug)]
-struct GoalAccountingSnapshot {
-    turn: Option<GoalTurnAccountingSnapshot>,
-    wall_clock: GoalWallClockAccountingSnapshot,
-}
-
-#[derive(Debug)]
-struct GoalTurnAccountingSnapshot {
-    turn_id: String,
-    last_accounted_token_usage: TokenUsage,
-    active_goal_id: Option<String>,
-}
-
 impl GoalRuntimeState {
     async fn accounting_permit(&self) -> anyhow::Result<SemaphorePermit<'_>> {
         self.accounting_lock
             .acquire()
             .await
             .context("goal accounting semaphore closed")
-    }
-}
-
-impl GoalAccountingSnapshot {
-    fn new() -> Self {
-        Self {
-            turn: None,
-            wall_clock: GoalWallClockAccountingSnapshot::new(),
-        }
-    }
-}
-
-impl GoalTurnAccountingSnapshot {
-    fn new(turn_id: impl Into<String>, token_usage: TokenUsage) -> Self {
-        Self {
-            turn_id: turn_id.into(),
-            last_accounted_token_usage: token_usage,
-            active_goal_id: None,
-        }
-    }
-
-    fn mark_active_goal(&mut self, goal_id: impl Into<String>) {
-        self.active_goal_id = Some(goal_id.into());
-    }
-
-    fn active_this_turn(&self) -> bool {
-        self.active_goal_id.is_some()
-    }
-
-    fn active_goal_id(&self) -> Option<String> {
-        self.active_goal_id.clone()
-    }
-
-    fn clear_active_goal(&mut self) {
-        self.active_goal_id = None;
-    }
-
-    fn reset_baseline(&mut self, token_usage: TokenUsage) {
-        self.last_accounted_token_usage = token_usage;
-    }
-
-    fn token_delta_since_last_accounting(&self, current: &TokenUsage) -> i64 {
-        let last = &self.last_accounted_token_usage;
-        let delta = TokenUsage {
-            input_tokens: current.input_tokens.saturating_sub(last.input_tokens),
-            cached_input_tokens: current
-                .cached_input_tokens
-                .saturating_sub(last.cached_input_tokens),
-            output_tokens: current.output_tokens.saturating_sub(last.output_tokens),
-            reasoning_output_tokens: current
-                .reasoning_output_tokens
-                .saturating_sub(last.reasoning_output_tokens),
-            total_tokens: current.total_tokens.saturating_sub(last.total_tokens),
-        };
-        goal_token_delta_for_usage(&delta)
-    }
-
-    fn mark_accounted(&mut self, current: TokenUsage) {
-        self.last_accounted_token_usage = current;
-    }
-}
-
-#[derive(Debug)]
-struct GoalWallClockAccountingSnapshot {
-    last_accounted_at: Instant,
-    active_goal_id: Option<String>,
-}
-
-impl GoalWallClockAccountingSnapshot {
-    fn new() -> Self {
-        Self {
-            last_accounted_at: Instant::now(),
-            active_goal_id: None,
-        }
-    }
-
-    fn time_delta_since_last_accounting(&self) -> i64 {
-        let last = self.last_accounted_at;
-        i64::try_from(last.elapsed().as_secs()).unwrap_or(i64::MAX)
-    }
-
-    fn mark_accounted(&mut self, accounted_seconds: i64) {
-        if accounted_seconds <= 0 {
-            return;
-        }
-        let advance = Duration::from_secs(u64::try_from(accounted_seconds).unwrap_or(u64::MAX));
-        self.last_accounted_at = self
-            .last_accounted_at
-            .checked_add(advance)
-            .unwrap_or_else(Instant::now);
-    }
-
-    fn reset_baseline(&mut self) {
-        self.last_accounted_at = Instant::now();
-    }
-
-    fn mark_active_goal(&mut self, goal_id: impl Into<String>) {
-        let goal_id = goal_id.into();
-        if self.active_goal_id.as_deref() != Some(goal_id.as_str()) {
-            self.reset_baseline();
-            self.active_goal_id = Some(goal_id);
-        }
-    }
-
-    fn clear_active_goal(&mut self) {
-        self.active_goal_id = None;
-        self.reset_baseline();
-    }
-
-    fn active_goal_id(&self) -> Option<String> {
-        self.active_goal_id.clone()
     }
 }
 
@@ -461,7 +291,7 @@ impl Session {
             status,
             token_budget,
         } = request;
-        validate_goal_budget(token_budget.flatten())?;
+        validate_thread_goal_budget(token_budget.flatten())?;
         let state_db = self.require_state_db_for_thread_goals().await?;
         let objective = objective.map(|objective| objective.trim().to_string());
         if let Some(objective) = objective.as_deref()
@@ -472,7 +302,7 @@ impl Session {
 
         self.account_thread_goal_wall_clock_usage(
             &state_db,
-            codex_state::ThreadGoalAccountingMode::ActiveOnly,
+            codex_state_api::ThreadGoalAccountingMode::ActiveOnly,
             TerminalMetricEmission::Emit,
         )
         .await?;
@@ -485,7 +315,7 @@ impl Session {
                 state_db
                     .update_thread_goal(
                         self.conversation_id,
-                        codex_state::ThreadGoalUpdate {
+                        codex_state_api::ThreadGoalUpdate {
                             objective: Some(objective.to_string()),
                             status: status.map(state_goal_status_from_protocol),
                             token_budget,
@@ -507,7 +337,7 @@ impl Session {
                         objective,
                         status
                             .map(state_goal_status_from_protocol)
-                            .unwrap_or(codex_state::ThreadGoalStatus::Active),
+                            .unwrap_or(codex_state_api::ThreadGoalStatus::Active),
                         token_budget.flatten(),
                     )
                     .await?
@@ -520,7 +350,7 @@ impl Session {
             state_db
                 .update_thread_goal(
                     self.conversation_id,
-                    codex_state::ThreadGoalUpdate {
+                    codex_state_api::ThreadGoalUpdate {
                         objective: None,
                         status,
                         token_budget,
@@ -549,10 +379,10 @@ impl Session {
         self.emit_goal_terminal_metrics_if_status_changed(previous_status_for_goal, &goal);
         let goal = protocol_goal_from_state(goal);
         *self.goal_runtime.budget_limit_reported_goal_id.lock().await = None;
-        let newly_active_goal = goal_status == codex_state::ThreadGoalStatus::Active
+        let newly_active_goal = goal_status == codex_state_api::ThreadGoalStatus::Active
             && (replacing_goal
                 || previous_status
-                    .is_some_and(|status| status != codex_state::ThreadGoalStatus::Active));
+                    .is_some_and(|status| status != codex_state_api::ThreadGoalStatus::Active));
         if newly_active_goal {
             let current_token_usage = self.total_token_usage().await.unwrap_or_default();
             self.mark_active_goal_accounting(
@@ -561,7 +391,7 @@ impl Session {
                 current_token_usage,
             )
             .await;
-        } else if goal_status != codex_state::ThreadGoalStatus::Active {
+        } else if goal_status != codex_state_api::ThreadGoalStatus::Active {
             self.clear_active_goal_accounting(turn_context).await;
         }
         self.send_event(
@@ -575,7 +405,7 @@ impl Session {
         .await;
         self.record_thread_goal_update_item(turn_context, goal.clone(), previous_status_for_goal)
             .await;
-        if goal_status != codex_state::ThreadGoalStatus::Active {
+        if goal_status != codex_state_api::ThreadGoalStatus::Active {
             self.maybe_notify_parent_of_final_status_for_current_source()
                 .await;
         }
@@ -595,14 +425,14 @@ impl Session {
             objective,
             token_budget,
         } = request;
-        validate_goal_budget(token_budget)?;
+        validate_thread_goal_budget(token_budget)?;
         let objective = objective.trim();
         validate_thread_goal_objective(objective).map_err(anyhow::Error::msg)?;
 
         let state_db = self.require_state_db_for_thread_goals().await?;
         self.account_thread_goal_wall_clock_usage(
             &state_db,
-            codex_state::ThreadGoalAccountingMode::ActiveOnly,
+            codex_state_api::ThreadGoalAccountingMode::ActiveOnly,
             TerminalMetricEmission::Emit,
         )
         .await?;
@@ -610,7 +440,7 @@ impl Session {
             .insert_thread_goal(
                 self.conversation_id,
                 objective,
-                codex_state::ThreadGoalStatus::Active,
+                codex_state_api::ThreadGoalStatus::Active,
                 token_budget,
             )
             .await?
@@ -652,15 +482,13 @@ impl Session {
         &self,
         turn_context: &TurnContext,
         goal: ThreadGoal,
-        previous_status: Option<codex_state::ThreadGoalStatus>,
+        previous_status: Option<codex_state_api::ThreadGoalStatus>,
     ) {
-        let item = ResponseItem::ThreadGoalUpdate {
-            id: None,
-            action: thread_goal_update_action(&goal, previous_status),
-            source: ThreadGoalUpdateEventSource::ModelTool,
-            previous_status: previous_status.map(thread_goal_update_status_from_state),
-            goal: thread_goal_update_goal_from_protocol(goal),
-        };
+        let item = thread_goal_update_response_item(
+            goal,
+            previous_status,
+            ThreadGoalUpdateEventSource::ModelTool,
+        );
         self.record_model_items_and_emit_display_events(turn_context, std::slice::from_ref(&item))
             .await;
     }
@@ -691,7 +519,7 @@ impl Session {
         let goal_id = goal.goal_id;
         let status = goal.status;
         match status {
-            codex_state::ThreadGoalStatus::Active => {
+            codex_state_api::ThreadGoalStatus::Active => {
                 let turn_id = self
                     .active_turn_context()
                     .await
@@ -713,16 +541,17 @@ impl Session {
                 }
                 self.maybe_continue_goal_if_idle_runtime().await;
             }
-            codex_state::ThreadGoalStatus::BudgetLimited => {
+            codex_state_api::ThreadGoalStatus::BudgetLimited => {
                 if self.active_turn_context().await.is_none() {
                     self.clear_stopped_thread_goal_runtime_state().await;
                 }
             }
-            codex_state::ThreadGoalStatus::Paused | codex_state::ThreadGoalStatus::Complete => {
+            codex_state_api::ThreadGoalStatus::Paused
+            | codex_state_api::ThreadGoalStatus::Complete => {
                 self.clear_stopped_thread_goal_runtime_state().await;
             }
         }
-        if status != codex_state::ThreadGoalStatus::Active {
+        if status != codex_state_api::ThreadGoalStatus::Active {
             self.maybe_notify_parent_of_final_status_for_current_source()
                 .await;
         }
@@ -778,17 +607,18 @@ impl Session {
 
     fn emit_goal_terminal_metrics_if_status_changed(
         &self,
-        previous_status: Option<codex_state::ThreadGoalStatus>,
-        goal: &codex_state::ThreadGoal,
+        previous_status: Option<codex_state_api::ThreadGoalStatus>,
+        goal: &codex_state_api::ThreadGoal,
     ) {
         if previous_status == Some(goal.status) {
             return;
         }
 
         let counter = match goal.status {
-            codex_state::ThreadGoalStatus::BudgetLimited => GOAL_BUDGET_LIMITED_METRIC,
-            codex_state::ThreadGoalStatus::Complete => GOAL_COMPLETED_METRIC,
-            codex_state::ThreadGoalStatus::Active | codex_state::ThreadGoalStatus::Paused => {
+            codex_state_api::ThreadGoalStatus::BudgetLimited => GOAL_BUDGET_LIMITED_METRIC,
+            codex_state_api::ThreadGoalStatus::Complete => GOAL_COMPLETED_METRIC,
+            codex_state_api::ThreadGoalStatus::Active
+            | codex_state_api::ThreadGoalStatus::Paused => {
                 return;
             }
         };
@@ -812,7 +642,7 @@ impl Session {
         &self,
         state_db: &StateDbHandle,
         expected_goal_id: Option<&str>,
-    ) -> anyhow::Result<Option<codex_state::ThreadGoalStatus>> {
+    ) -> anyhow::Result<Option<codex_state_api::ThreadGoalStatus>> {
         let goal = state_db.get_thread_goal(self.conversation_id).await?;
         Ok(goal.and_then(|goal| {
             expected_goal_id
@@ -858,8 +688,8 @@ impl Session {
             Ok(Some(goal))
                 if matches!(
                     goal.status,
-                    codex_state::ThreadGoalStatus::Active
-                        | codex_state::ThreadGoalStatus::BudgetLimited
+                    codex_state_api::ThreadGoalStatus::Active
+                        | codex_state_api::ThreadGoalStatus::BudgetLimited
                 ) =>
             {
                 let mut accounting = self.goal_runtime.accounting.lock().await;
@@ -1020,7 +850,7 @@ impl Session {
                 self.conversation_id,
                 time_delta_seconds,
                 token_delta,
-                codex_state::ThreadGoalAccountingMode::ActiveOnly,
+                codex_state_api::ThreadGoalAccountingMode::ActiveOnly,
                 expected_goal_id.as_deref(),
             )
             .await?;
@@ -1031,14 +861,14 @@ impl Session {
                 .is_some_and(|goal_id| reported_goal_id.as_deref() == Some(goal_id))
         };
         let goal = match outcome {
-            codex_state::ThreadGoalAccountingOutcome::Updated(goal) => {
+            codex_state_api::ThreadGoalAccountingOutcome::Updated(goal) => {
                 let clear_active_goal = match goal.status {
-                    codex_state::ThreadGoalStatus::Active => false,
-                    codex_state::ThreadGoalStatus::BudgetLimited => {
+                    codex_state_api::ThreadGoalStatus::Active => false,
+                    codex_state_api::ThreadGoalStatus::BudgetLimited => {
                         matches!(budget_limit_steering, BudgetLimitSteering::Suppressed)
                     }
-                    codex_state::ThreadGoalStatus::Paused
-                    | codex_state::ThreadGoalStatus::Complete => true,
+                    codex_state_api::ThreadGoalStatus::Paused
+                    | codex_state_api::ThreadGoalStatus::Complete => true,
                 };
                 {
                     let mut accounting = self.goal_runtime.accounting.lock().await;
@@ -1062,15 +892,15 @@ impl Session {
                 }
                 goal
             }
-            codex_state::ThreadGoalAccountingOutcome::Unchanged(_) => return Ok(()),
+            codex_state_api::ThreadGoalAccountingOutcome::Unchanged(_) => return Ok(()),
         };
         let should_steer_budget_limit =
             matches!(budget_limit_steering, BudgetLimitSteering::Allowed)
-                && goal.status == codex_state::ThreadGoalStatus::BudgetLimited
+                && goal.status == codex_state_api::ThreadGoalStatus::BudgetLimited
                 && !budget_limit_was_already_reported;
         let goal_status = goal.status;
         let goal_id = goal.goal_id.clone();
-        if goal_status != codex_state::ThreadGoalStatus::BudgetLimited {
+        if goal_status != codex_state_api::ThreadGoalStatus::BudgetLimited {
             *self.goal_runtime.budget_limit_reported_goal_id.lock().await = None;
         }
         let goal = protocol_goal_from_state(goal);
@@ -1113,7 +943,7 @@ impl Session {
         };
         self.account_thread_goal_wall_clock_usage(
             &state_db,
-            codex_state::ThreadGoalAccountingMode::ActiveOnly,
+            codex_state_api::ThreadGoalAccountingMode::ActiveOnly,
             TerminalMetricEmission::Suppress,
         )
         .await?;
@@ -1123,7 +953,7 @@ impl Session {
     async fn account_thread_goal_wall_clock_usage(
         &self,
         state_db: &StateDbHandle,
-        mode: codex_state::ThreadGoalAccountingMode,
+        mode: codex_state_api::ThreadGoalAccountingMode,
         terminal_metric_emission: TerminalMetricEmission,
     ) -> anyhow::Result<Option<ThreadGoal>> {
         let _accounting_permit = self.goal_runtime.accounting_permit().await?;
@@ -1151,7 +981,7 @@ impl Session {
             )
             .await?
         {
-            codex_state::ThreadGoalAccountingOutcome::Updated(goal) => {
+            codex_state_api::ThreadGoalAccountingOutcome::Updated(goal) => {
                 if matches!(terminal_metric_emission, TerminalMetricEmission::Emit) {
                     self.emit_goal_terminal_metrics_if_status_changed(previous_status, &goal);
                 }
@@ -1164,7 +994,7 @@ impl Session {
                 let goal = protocol_goal_from_state(goal);
                 Ok(Some(goal))
             }
-            codex_state::ThreadGoalAccountingOutcome::Unchanged(goal) => {
+            codex_state_api::ThreadGoalAccountingOutcome::Unchanged(goal) => {
                 {
                     let mut accounting = self.goal_runtime.accounting.lock().await;
                     accounting.wall_clock.reset_baseline();
@@ -1199,7 +1029,7 @@ impl Session {
         };
         self.account_thread_goal_wall_clock_usage(
             &state_db,
-            codex_state::ThreadGoalAccountingMode::ActiveStatusOnly,
+            codex_state_api::ThreadGoalAccountingMode::ActiveStatusOnly,
             TerminalMetricEmission::Emit,
         )
         .await?;
@@ -1254,7 +1084,7 @@ impl Session {
             return Ok(());
         };
         match goal.status {
-            codex_state::ThreadGoalStatus::Active => {
+            codex_state_api::ThreadGoalStatus::Active => {
                 self.goal_runtime
                     .accounting
                     .lock()
@@ -1262,9 +1092,9 @@ impl Session {
                     .wall_clock
                     .mark_active_goal(goal.goal_id);
             }
-            codex_state::ThreadGoalStatus::Paused
-            | codex_state::ThreadGoalStatus::BudgetLimited
-            | codex_state::ThreadGoalStatus::Complete => {
+            codex_state_api::ThreadGoalStatus::Paused
+            | codex_state_api::ThreadGoalStatus::BudgetLimited
+            | codex_state_api::ThreadGoalStatus::Complete => {
                 self.clear_stopped_thread_goal_runtime_state().await;
             }
         }
@@ -1297,7 +1127,7 @@ impl Session {
             Ok(Some(state_db)) => match state_db.get_thread_goal(self.conversation_id).await {
                 Ok(Some(goal))
                     if goal.goal_id == candidate.goal_id
-                        && goal.status == codex_state::ThreadGoalStatus::Active =>
+                        && goal.status == codex_state_api::ThreadGoalStatus::Active =>
                 {
                     true
                 }
@@ -1385,7 +1215,7 @@ impl Session {
                 return None;
             }
         };
-        if goal.goal_id != goal_id || goal.status != codex_state::ThreadGoalStatus::Active {
+        if goal.goal_id != goal_id || goal.status != codex_state_api::ThreadGoalStatus::Active {
             tracing::debug!(status = ?goal.status, "skipping inactive thread goal");
             return None;
         }
@@ -1432,12 +1262,14 @@ impl Session {
             }
         };
         match goal.status {
-            codex_state::ThreadGoalStatus::Active => ThreadPostTurnState::GoContextContinuation {
-                goal_id: goal.goal_id,
-            },
-            codex_state::ThreadGoalStatus::Complete
-            | codex_state::ThreadGoalStatus::Paused
-            | codex_state::ThreadGoalStatus::BudgetLimited => {
+            codex_state_api::ThreadGoalStatus::Active => {
+                ThreadPostTurnState::GoContextContinuation {
+                    goal_id: goal.goal_id,
+                }
+            }
+            codex_state_api::ThreadGoalStatus::Complete
+            | codex_state_api::ThreadGoalStatus::Paused
+            | codex_state_api::ThreadGoalStatus::BudgetLimited => {
                 self.thread_idle_or_completion().await
             }
         }
@@ -1469,17 +1301,6 @@ impl Session {
             state_db
         } else if let Some(state_db) = self.goal_runtime.state_db.lock().await.clone() {
             state_db
-        } else if let Some(local_store) = self
-            .services
-            .thread_store
-            .as_any()
-            .downcast_ref::<LocalThreadStore>()
-        {
-            local_store.state_db().await.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "thread goals require a local persisted thread with a state database"
-                )
-            })?
         } else {
             anyhow::bail!("thread goals require a local persisted thread with a state database");
         };
@@ -1497,16 +1318,16 @@ impl Session {
                 .ok_or_else(|| {
                     anyhow::anyhow!("thread goals require materialized thread metadata")
                 })?;
-            reconcile_rollout(
-                Some(&state_db),
-                rollout_path.as_path(),
-                config.model_provider_id.as_str(),
-                /*builder*/ None,
-                &[],
-                /*archived_only*/ None,
-                /*new_thread_memory_mode*/ None,
+            let metadata = self
+                .thread_metadata_for_goal_state_db(rollout_path.as_path(), &config)
+                .await;
+            insert_thread_metadata_if_absent(
+                state_db.as_ref(),
+                metadata,
+                "thread_goals_metadata_bootstrap",
             )
-            .await;
+            .await
+            .context("failed to insert thread metadata before reconciling thread goals")?;
             let thread_metadata_present = state_db
                 .get_thread(self.conversation_id)
                 .await
@@ -1521,11 +1342,47 @@ impl Session {
         Ok(Some(state_db))
     }
 
+    async fn thread_metadata_for_goal_state_db(
+        &self,
+        rollout_path: &Path,
+        config: &crate::config::Config,
+    ) -> codex_state_api::ThreadMetadata {
+        let thread_config = self.thread_config_snapshot().await;
+        let updated_at = rollout_modified_at_utc(rollout_path)
+            .await
+            .unwrap_or_else(Utc::now);
+        let mut builder = codex_state_api::ThreadMetadataBuilder::new(
+            self.conversation_id,
+            rollout_path.to_path_buf(),
+            updated_at,
+            thread_config.session_source.clone(),
+        );
+        builder.updated_at = Some(updated_at);
+        builder.thread_source = thread_config.thread_source;
+        builder.model_provider = Some(config.model_provider_id.clone());
+        builder.cwd = thread_config.cwd.to_path_buf();
+        builder.sandbox_policy = thread_config.sandbox_policy();
+        builder.approval_mode = thread_config.approval_policy;
+
+        let mut metadata = builder.build(config.model_provider_id.as_str());
+        metadata.model = Some(thread_config.model);
+        metadata.reasoning_effort = thread_config.reasoning_effort;
+        metadata
+    }
+
     async fn require_state_db_for_thread_goals(&self) -> anyhow::Result<StateDbHandle> {
         self.state_db_for_thread_goals().await?.ok_or_else(|| {
             anyhow::anyhow!("thread goals require a persisted thread; this thread is ephemeral")
         })
     }
+}
+
+async fn rollout_modified_at_utc(path: &Path) -> Option<DateTime<Utc>> {
+    tokio::fs::metadata(path)
+        .await
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .map(DateTime::<Utc>::from)
 }
 
 fn should_ignore_goal_for_mode(mode: ModeKind) -> bool {
@@ -1624,114 +1481,12 @@ fn goal_context_input_item(prompt: String) -> ResponseInputItem {
     }
 }
 
-pub(crate) fn protocol_goal_from_state(goal: codex_state::ThreadGoal) -> ThreadGoal {
-    ThreadGoal {
-        thread_id: goal.thread_id,
-        objective: goal.objective,
-        status: protocol_goal_status_from_state(goal.status),
-        token_budget: goal.token_budget,
-        tokens_used: goal.tokens_used,
-        time_used_seconds: goal.time_used_seconds,
-        created_at: goal.created_at.timestamp(),
-        updated_at: goal.updated_at.timestamp(),
-    }
-}
-
-pub(crate) fn protocol_goal_status_from_state(
-    status: codex_state::ThreadGoalStatus,
-) -> ThreadGoalStatus {
-    match status {
-        codex_state::ThreadGoalStatus::Active => ThreadGoalStatus::Active,
-        codex_state::ThreadGoalStatus::Paused => ThreadGoalStatus::Paused,
-        codex_state::ThreadGoalStatus::BudgetLimited => ThreadGoalStatus::BudgetLimited,
-        codex_state::ThreadGoalStatus::Complete => ThreadGoalStatus::Complete,
-    }
-}
-
-fn thread_goal_update_goal_from_protocol(goal: ThreadGoal) -> ThreadGoalUpdateGoal {
-    ThreadGoalUpdateGoal {
-        thread_id: goal.thread_id,
-        objective: goal.objective,
-        status: thread_goal_update_status_from_protocol(goal.status),
-        token_budget: goal.token_budget,
-        tokens_used: goal.tokens_used,
-        time_used_seconds: goal.time_used_seconds,
-        created_at: goal.created_at,
-        updated_at: goal.updated_at,
-    }
-}
-
-fn thread_goal_update_status_from_protocol(status: ThreadGoalStatus) -> ThreadGoalUpdateGoalStatus {
-    match status {
-        ThreadGoalStatus::Active => ThreadGoalUpdateGoalStatus::Active,
-        ThreadGoalStatus::Paused => ThreadGoalUpdateGoalStatus::Paused,
-        ThreadGoalStatus::BudgetLimited => ThreadGoalUpdateGoalStatus::BudgetLimited,
-        ThreadGoalStatus::Complete => ThreadGoalUpdateGoalStatus::Complete,
-    }
-}
-
-fn thread_goal_update_status_from_state(
-    status: codex_state::ThreadGoalStatus,
-) -> ThreadGoalUpdateGoalStatus {
-    match status {
-        codex_state::ThreadGoalStatus::Active => ThreadGoalUpdateGoalStatus::Active,
-        codex_state::ThreadGoalStatus::Paused => ThreadGoalUpdateGoalStatus::Paused,
-        codex_state::ThreadGoalStatus::BudgetLimited => ThreadGoalUpdateGoalStatus::BudgetLimited,
-        codex_state::ThreadGoalStatus::Complete => ThreadGoalUpdateGoalStatus::Complete,
-    }
-}
-
-pub(crate) fn state_goal_status_from_protocol(
-    status: ThreadGoalStatus,
-) -> codex_state::ThreadGoalStatus {
-    match status {
-        ThreadGoalStatus::Active => codex_state::ThreadGoalStatus::Active,
-        ThreadGoalStatus::Paused => codex_state::ThreadGoalStatus::Paused,
-        ThreadGoalStatus::BudgetLimited => codex_state::ThreadGoalStatus::BudgetLimited,
-        ThreadGoalStatus::Complete => codex_state::ThreadGoalStatus::Complete,
-    }
-}
-
-fn thread_goal_update_action(
-    goal: &ThreadGoal,
-    previous_status: Option<codex_state::ThreadGoalStatus>,
-) -> ThreadGoalUpdateEventAction {
-    match (previous_status, goal.status) {
-        (None, _) => ThreadGoalUpdateEventAction::Created,
-        (_, ThreadGoalStatus::Paused) => ThreadGoalUpdateEventAction::Paused,
-        (_, ThreadGoalStatus::BudgetLimited) => ThreadGoalUpdateEventAction::BudgetLimited,
-        (_, ThreadGoalStatus::Complete) => ThreadGoalUpdateEventAction::Completed,
-        (Some(status), ThreadGoalStatus::Active)
-            if status != codex_state::ThreadGoalStatus::Active =>
-        {
-            ThreadGoalUpdateEventAction::Resumed
-        }
-        (Some(_), ThreadGoalStatus::Active) => ThreadGoalUpdateEventAction::Updated,
-    }
-}
-
-pub(crate) fn validate_goal_budget(value: Option<i64>) -> anyhow::Result<()> {
-    if let Some(value) = value
-        && value <= 0
-    {
-        anyhow::bail!("goal budgets must be positive when provided");
-    }
-    Ok(())
-}
-
-pub(crate) fn goal_token_delta_for_usage(usage: &TokenUsage) -> i64 {
-    usage
-        .non_cached_input()
-        .saturating_add(usage.output_tokens.max(0))
-}
-
 #[cfg(test)]
 mod tests {
     use super::budget_limit_prompt;
     use super::continuation_prompt;
     use super::escape_xml_text;
     use super::goal_context_input_item;
-    use super::goal_token_delta_for_usage;
     use super::objective_updated_prompt;
     use super::should_ignore_goal_for_mode;
     use codex_protocol::ThreadId;
@@ -1740,9 +1495,6 @@ mod tests {
     use codex_protocol::models::ResponseInputItem;
     use codex_protocol::protocol::ThreadGoal;
     use codex_protocol::protocol::ThreadGoalStatus;
-    use codex_protocol::protocol::TokenUsage;
-    use std::time::Duration;
-    use std::time::Instant;
 
     #[test]
     fn goal_continuation_is_ignored_only_in_plan_mode() {
@@ -1750,36 +1502,6 @@ mod tests {
         assert!(!should_ignore_goal_for_mode(ModeKind::Default));
         assert!(!should_ignore_goal_for_mode(ModeKind::PairProgramming));
         assert!(!should_ignore_goal_for_mode(ModeKind::Execute));
-    }
-
-    #[test]
-    fn goal_token_delta_excludes_cached_input_and_does_not_double_count_reasoning() {
-        let usage = TokenUsage {
-            input_tokens: 900,
-            cached_input_tokens: 400,
-            output_tokens: 80,
-            reasoning_output_tokens: 20,
-            total_tokens: 1_000,
-        };
-
-        assert_eq!(580, goal_token_delta_for_usage(&usage));
-    }
-
-    #[test]
-    fn wall_clock_accounting_advances_by_persisted_seconds() {
-        let mut snapshot = super::GoalWallClockAccountingSnapshot::new();
-        let original = Instant::now() - Duration::from_millis(1500);
-        snapshot.last_accounted_at = original;
-
-        snapshot.mark_accounted(/*accounted_seconds*/ 1);
-        assert_eq!(
-            original + Duration::from_secs(1),
-            snapshot.last_accounted_at
-        );
-
-        let token_only_original = snapshot.last_accounted_at;
-        snapshot.mark_accounted(/*accounted_seconds*/ 0);
-        assert_eq!(token_only_original, snapshot.last_accounted_at);
     }
 
     #[test]

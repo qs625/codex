@@ -380,12 +380,6 @@ pub async fn resolve_elicitation(
         content,
         meta,
     };
-    let request_id = match request_id {
-        ProtocolRequestId::String(value) => {
-            rmcp::model::NumberOrString::String(std::sync::Arc::from(value))
-        }
-        ProtocolRequestId::Integer(value) => rmcp::model::NumberOrString::Number(value),
-    };
     if let Err(err) = sess
         .resolve_elicitation(server_name, request_id, response)
         .await
@@ -634,11 +628,8 @@ async fn shutdown_session_runtime(sess: &Arc<Session>) {
         .unified_exec_manager
         .terminate_all_processes()
         .await;
-    let mcp_shutdown = {
-        let mut manager = sess.services.mcp_connection_manager.write().await;
-        manager.begin_shutdown()
-    };
-    mcp_shutdown.await;
+    let mut manager = sess.services.mcp_connection_manager.write().await;
+    manager.shutdown().await;
     sess.guardian_review_session.shutdown().await;
 }
 
@@ -694,7 +685,7 @@ pub async fn shutdown(sess: &Arc<Session>, sub_id: String) -> bool {
     sess.deliver_event_raw(event).await;
     sess.services
         .rollout_thread_trace
-        .record_ended(codex_rollout_trace::RolloutStatus::Completed);
+        .record_ended(codex_rollout_trace_api::RolloutStatus::Completed);
     true
 }
 

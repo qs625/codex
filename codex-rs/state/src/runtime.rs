@@ -56,6 +56,7 @@ use std::time::Instant;
 use tracing::warn;
 
 mod agent_jobs;
+mod api;
 mod backfill;
 mod goals;
 mod logs;
@@ -65,9 +66,9 @@ mod remote_control;
 mod test_support;
 mod threads;
 
-pub use goals::ThreadGoalAccountingMode;
-pub use goals::ThreadGoalAccountingOutcome;
-pub use goals::ThreadGoalUpdate;
+pub use codex_state_api::ThreadGoalAccountingMode;
+pub use codex_state_api::ThreadGoalAccountingOutcome;
+pub use codex_state_api::ThreadGoalUpdate;
 pub use remote_control::RemoteControlEnrollmentRecord;
 pub use threads::ThreadFilterOptions;
 

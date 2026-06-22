@@ -4,15 +4,14 @@ use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
-use codex_tools::create_report_agent_job_result_tool;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::create_report_agent_job_result_tool;
 
 use super::*;
 
 pub struct ReportAgentJobResultHandler;
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for ReportAgentJobResultHandler {
     type Output = FunctionToolOutput;
 
@@ -24,21 +23,29 @@ impl ToolExecutor<ToolInvocation> for ReportAgentJobResultHandler {
         Some(create_report_agent_job_result_tool())
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session, payload, ..
-        } = invocation;
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session, payload, ..
+            } = invocation;
 
-        let arguments = match payload {
-            ToolPayload::Function { arguments } => arguments,
-            _ => {
-                return Err(FunctionCallError::RespondToModel(
-                    "report_agent_job_result handler received unsupported payload".to_string(),
-                ));
-            }
-        };
+            let arguments = match payload {
+                ToolPayload::Function { arguments } => arguments,
+                _ => {
+                    return Err(FunctionCallError::RespondToModel(
+                        "report_agent_job_result handler received unsupported payload".to_string(),
+                    ));
+                }
+            };
 
-        handle(session, arguments).await
+            handle(session, arguments).await
+        })
     }
 }
 

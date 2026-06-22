@@ -2,6 +2,7 @@ use super::*;
 use assert_matches::assert_matches;
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputPayload;
+use futures::StreamExt;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
@@ -229,20 +230,14 @@ async fn chat_response_stream_uses_complete_items_without_text_delta() {
     .expect("decode");
 
     let mut stream = stream_from_chat_response(response, Some("req_1".to_string())).await;
-    assert_eq!(stream.upstream_request_id.as_deref(), Some("req_1"));
+    assert_eq!(stream.upstream_request_id(), Some("req_1"));
     assert_matches!(
-        stream
-            .rx_event
-            .recv()
-            .await
-            .expect("created")
-            .expect("event"),
+        stream.next().await.expect("created").expect("event"),
         ResponseEvent::Created
     );
     assert_matches!(
         stream
-            .rx_event
-            .recv()
+            .next()
             .await
             .expect("output item")
             .expect("event"),
@@ -251,14 +246,14 @@ async fn chat_response_stream_uses_complete_items_without_text_delta() {
                 && content == vec![ContentItem::OutputText { text: "done".to_string() }]
     );
     assert_matches!(
-        stream.rx_event.recv().await.expect("completed").expect("event"),
+        stream.next().await.expect("completed").expect("event"),
         ResponseEvent::Completed {
             response_id,
             token_usage: None,
             end_turn: Some(true),
         } if response_id == "chatcmpl_1"
     );
-    assert!(stream.rx_event.recv().await.is_none());
+    assert!(stream.next().await.is_none());
 }
 
 #[tokio::test]
@@ -271,19 +266,14 @@ async fn chat_response_stream_errors_on_empty_choices() {
 
     let mut stream = stream_from_chat_response(response, None).await;
     assert_matches!(
-        stream
-            .rx_event
-            .recv()
-            .await
-            .expect("created")
-            .expect("event"),
+        stream.next().await.expect("created").expect("event"),
         ResponseEvent::Created
     );
     assert_matches!(
-        stream.rx_event.recv().await.expect("error"),
+        stream.next().await.expect("error"),
         Err(ApiError::Stream(message)) if message.contains("choices")
     );
-    assert!(stream.rx_event.recv().await.is_none());
+    assert!(stream.next().await.is_none());
 }
 
 #[tokio::test]
@@ -302,17 +292,12 @@ async fn chat_response_stream_errors_on_truncated_finish_reason() {
 
     let mut stream = stream_from_chat_response(response, None).await;
     assert_matches!(
-        stream
-            .rx_event
-            .recv()
-            .await
-            .expect("created")
-            .expect("event"),
+        stream.next().await.expect("created").expect("event"),
         ResponseEvent::Created
     );
     assert_matches!(
-        stream.rx_event.recv().await.expect("error"),
+        stream.next().await.expect("error"),
         Err(ApiError::Stream(message)) if message.contains("length")
     );
-    assert!(stream.rx_event.recv().await.is_none());
+    assert!(stream.next().await.is_none());
 }

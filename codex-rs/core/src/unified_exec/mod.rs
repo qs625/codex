@@ -35,6 +35,7 @@ pub(crate) use codex_command_runtime::CommandWaitStatus;
 pub(crate) use codex_command_runtime::DEFAULT_COMMAND_OUTPUT_MAX_TOKENS as UNIFIED_EXEC_OUTPUT_MAX_TOKENS;
 pub(crate) use codex_command_runtime::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
 pub(crate) use codex_command_runtime::HeadTailBuffer;
+#[cfg(test)]
 pub(crate) use codex_command_runtime::MIN_YIELD_TIME_MS;
 pub(crate) use codex_command_runtime::WaitBackoffState;
 pub(crate) use codex_command_runtime::WriteStdinOutput;
@@ -43,7 +44,7 @@ pub(crate) use codex_command_runtime::clamp_yield_time;
 pub(crate) use codex_command_runtime::generate_chunk_id;
 pub(crate) use codex_command_runtime::resolve_max_tokens;
 use codex_exec_server_api::ExecEnvironment;
-use codex_network_proxy::NetworkProxy;
+use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use tokio::sync::Mutex;
@@ -100,7 +101,7 @@ pub(crate) struct ExecCommandRequest {
     pub cwd: AbsolutePathBuf,
     pub sandbox_cwd: AbsolutePathBuf,
     pub environment: Arc<dyn ExecEnvironment>,
-    pub network: Option<NetworkProxy>,
+    pub network: Option<SharedNetworkProxyRuntime>,
     pub tty: bool,
     pub sandbox_permissions: SandboxPermissions,
     pub additional_permissions: Option<AdditionalPermissionProfile>,

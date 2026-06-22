@@ -222,7 +222,7 @@ async fn build_test_config(codex_home: &Path, server_uri: &str) -> Result<Config
         "compact",
     )?;
 
-    Ok(ConfigBuilder::default()
+    Ok(crate::config_builder()
         .codex_home(codex_home.to_path_buf())
         .build()
         .await?)

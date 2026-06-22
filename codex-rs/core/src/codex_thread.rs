@@ -1,15 +1,13 @@
 use crate::agent::AgentStatus;
 use crate::config::ConstraintResult;
-use crate::goals::ExternalGoalSet;
 use crate::goals::GoalRuntimeEvent;
-use crate::goals::ThreadIdleReason;
-use crate::goals::ThreadPostTurnState;
 use crate::pending_input::PendingInputItem;
 use crate::session::Codex;
 use crate::session::SessionSettingsUpdate;
 use crate::session::SteerInputError;
+use codex_agent_runtime::ThreadIdleReason;
+use codex_agent_runtime::ThreadPostTurnState;
 use codex_features::Feature;
-use codex_otel::SessionTelemetry;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::Personality;
@@ -18,6 +16,7 @@ use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::mcp::CallToolResult;
+use codex_protocol::mcp::ReadResourceRequestParams;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::PermissionProfile;
@@ -38,20 +37,21 @@ use codex_protocol::protocol::TokenUsageInfo;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_protocol::user_input::UserInput;
-use codex_thread_store::StoredThread;
-use codex_thread_store::StoredThreadHistory;
-use codex_thread_store::ThreadMetadataPatch;
-use codex_thread_store::ThreadStoreError;
-use codex_thread_store::ThreadStoreResult;
+use codex_session_telemetry_api::SharedSessionTelemetry;
+use codex_state_api::ExternalGoalSet;
+use codex_thread_store_api::StoredThread;
+use codex_thread_store_api::StoredThreadHistory;
+use codex_thread_store_api::ThreadMetadataPatch;
+use codex_thread_store_api::ThreadStoreError;
+use codex_thread_store_api::ThreadStoreResult;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use rmcp::model::ReadResourceRequestParams;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::watch;
 
-use codex_rollout::state_db::StateDbHandle;
+use crate::StateDbHandle;
 
 #[derive(Clone, Debug)]
 pub struct ThreadConfigSnapshot {
@@ -75,7 +75,7 @@ pub struct ThreadConfigSnapshot {
 impl ThreadConfigSnapshot {
     pub fn sandbox_policy(&self) -> SandboxPolicy {
         let file_system_sandbox_policy = self.permission_profile.file_system_sandbox_policy();
-        codex_sandboxing::compatibility_sandbox_policy_for_permission_profile(
+        codex_sandboxing_api::compatibility_sandbox_policy_for_permission_profile(
             &self.permission_profile,
             &file_system_sandbox_policy,
             self.permission_profile.network_sandbox_policy(),
@@ -158,7 +158,7 @@ impl CodexThread {
     }
 
     /// Returns the session telemetry handle for thread-scoped production instrumentation.
-    pub fn session_telemetry(&self) -> SessionTelemetry {
+    pub fn session_telemetry(&self) -> SharedSessionTelemetry {
         self.codex.session.services.session_telemetry.clone()
     }
 
@@ -535,7 +535,6 @@ impl CodexThread {
             .read_resource(
                 server,
                 ReadResourceRequestParams {
-                    meta: None,
                     uri: uri.to_string(),
                 },
             )

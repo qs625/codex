@@ -814,7 +814,7 @@ pub(super) fn begin_exec_with_source(
         .collect();
     let item = AppServerThreadItem::CommandExecution {
         id: call_id.to_string(),
-        command: codex_shell_command::parse_command::shlex_join(&command),
+        command: codex_shell_utils::shlex_join(&command),
         cwd: chat.config.cwd.clone(),
         process_id: None,
         source,
@@ -839,7 +839,7 @@ pub(super) fn begin_unified_exec_startup(
     let command = vec!["bash".to_string(), "-lc".to_string(), raw_cmd.to_string()];
     let item = AppServerThreadItem::CommandExecution {
         id: call_id.to_string(),
-        command: codex_shell_command::parse_command::shlex_join(&command),
+        command: codex_shell_utils::shlex_join(&command),
         cwd: chat.config.cwd.clone(),
         process_id: Some(process_id.to_string()),
         source: ExecCommandSource::UnifiedExecStartup,

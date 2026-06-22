@@ -1,26 +1,6 @@
 use super::*;
 use uuid::Uuid;
 
-pub struct ThreadGoalUpdate {
-    pub objective: Option<String>,
-    pub status: Option<crate::ThreadGoalStatus>,
-    pub token_budget: Option<Option<i64>>,
-    pub expected_goal_id: Option<String>,
-}
-
-pub enum ThreadGoalAccountingOutcome {
-    Unchanged(Option<crate::ThreadGoal>),
-    Updated(crate::ThreadGoal),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ThreadGoalAccountingMode {
-    ActiveStatusOnly,
-    ActiveOnly,
-    ActiveOrComplete,
-    ActiveOrStopped,
-}
-
 impl StateRuntime {
     pub async fn get_thread_goal(
         &self,

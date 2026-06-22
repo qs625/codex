@@ -1,24 +1,24 @@
-use crate::config_layers::SkillConfigLayerStack;
-use crate::config_layers::SkillConfigLayerStackOrdering;
-use crate::model::SkillDependencies;
-use crate::model::SkillError;
-use crate::model::SkillFileSystemsByPath;
-use crate::model::SkillInterface;
-use crate::model::SkillLoadOutcome;
-use crate::model::SkillMetadata;
-use crate::model::SkillPolicy;
-use crate::model::SkillToolDependency;
 use crate::system::system_cache_root_dir;
 use codex_config_types::ConfigLayerSource;
+use codex_core_skills_api::SkillConfigLayerEntry;
+use codex_core_skills_api::SkillConfigLayerStack;
+use codex_core_skills_api::SkillConfigLayerStackOrdering;
+use codex_core_skills_api::model::SkillDependencies;
+use codex_core_skills_api::model::SkillError;
+use codex_core_skills_api::model::SkillInterface;
+use codex_core_skills_api::model::SkillLoadOutcome;
+use codex_core_skills_api::model::SkillMetadata;
+use codex_core_skills_api::model::SkillPolicy;
+use codex_core_skills_api::model::SkillToolDependency;
 use codex_file_system::ExecutorFileSystem;
 use codex_file_system::LOCAL_FS;
+use codex_plugin_manifest::plugin_namespace_for_skill_path;
+use codex_plugin_types::PluginSkillRoot;
 use codex_protocol::protocol::Product;
 use codex_protocol::protocol::SkillScope;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
-use codex_utils_plugins::PluginSkillRoot;
-use codex_utils_plugins::plugin_namespace_for_skill_path;
-use dirs::home_dir;
+use codex_utils_home_dir::home_dir;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -123,7 +123,7 @@ const MAX_SKILLS_DIRS_PER_ROOT: usize = 2000;
 enum SkillParseError {
     Read(std::io::Error),
     MissingFrontmatter,
-    InvalidYaml(serde_yaml::Error),
+    InvalidYaml(String),
     MissingField(&'static str),
     InvalidField { field: &'static str, reason: String },
 }
@@ -200,9 +200,7 @@ where
     let used_roots: HashSet<AbsolutePathBuf> = skill_root_by_path.values().cloned().collect();
     skill_roots.retain(|root| used_roots.contains(root));
     file_systems_by_skill_path.retain(|path, _| retained_skill_paths.contains(path));
-    outcome.skill_roots = skill_roots;
-    outcome.skill_root_by_path = Arc::new(skill_root_by_path);
-    outcome.file_systems_by_skill_path = SkillFileSystemsByPath::new(file_systems_by_skill_path);
+    outcome.set_load_context(skill_roots, skill_root_by_path, file_systems_by_skill_path);
 
     fn scope_rank(scope: SkillScope) -> u8 {
         // Higher-priority scopes first (matches root scan order for dedupe).
@@ -641,8 +639,7 @@ async fn parse_skill_file(
 
     let frontmatter = extract_frontmatter(&contents).ok_or(SkillParseError::MissingFrontmatter)?;
 
-    let parsed: SkillFrontmatter =
-        serde_yaml::from_str(&frontmatter).map_err(SkillParseError::InvalidYaml)?;
+    let parsed = parse_skill_frontmatter(&frontmatter).map_err(SkillParseError::InvalidYaml)?;
 
     let base_name = parsed
         .name
@@ -757,7 +754,7 @@ async fn load_skill_metadata(
 
     let parsed: SkillMetadataFile = {
         let _guard = AbsolutePathBufGuard::new(skill_dir.as_path());
-        match serde_yaml::from_str(&contents) {
+        match parse_skill_metadata_file(&contents) {
             Ok(parsed) => parsed,
             Err(error) => {
                 tracing::warn!(
@@ -986,6 +983,766 @@ fn resolve_color_str(value: Option<String>, field: &'static str) -> Option<Strin
     }
 }
 
+fn parse_skill_frontmatter(frontmatter: &str) -> Result<SkillFrontmatter, String> {
+    let lines: Vec<&str> = frontmatter.lines().collect();
+    let mut parsed = SkillFrontmatter {
+        name: None,
+        description: None,
+        metadata: SkillFrontmatterMetadata::default(),
+    };
+    let mut index = 0;
+    while index < lines.len() {
+        let Some(line) = skill_yaml_line(lines[index], index + 1)? else {
+            index += 1;
+            continue;
+        };
+        if line.indent != 0 {
+            return Err(format!("line {}: unexpected indented line", line.number));
+        }
+        let (key, value) = split_skill_yaml_key_value(line.content, line.number)?;
+        match key {
+            "name" => {
+                parsed.name = Some(parse_skill_yaml_value(value, &lines, &mut index, 0)?);
+                index += 1;
+            }
+            "description" => {
+                parsed.description = Some(parse_skill_yaml_value(value, &lines, &mut index, 0)?);
+                index += 1;
+            }
+            "metadata" => {
+                if value.trim() == "{}" {
+                    parsed.metadata = SkillFrontmatterMetadata::default();
+                    index += 1;
+                } else if value.trim().is_empty() {
+                    let (metadata, next_index) =
+                        parse_skill_frontmatter_metadata(&lines, index + 1)?;
+                    parsed.metadata = metadata;
+                    index = next_index;
+                } else {
+                    return Err(format!(
+                        "line {}: `metadata` must be a block map",
+                        line.number
+                    ));
+                }
+            }
+            _ => {
+                index = skip_skill_yaml_nested_block(&lines, index + 1, 0)?;
+            }
+        }
+    }
+    Ok(parsed)
+}
+
+fn parse_skill_frontmatter_metadata(
+    lines: &[&str],
+    mut index: usize,
+) -> Result<(SkillFrontmatterMetadata, usize), String> {
+    let mut metadata = SkillFrontmatterMetadata::default();
+    while index < lines.len() {
+        let Some(line) = skill_yaml_line(lines[index], index + 1)? else {
+            index += 1;
+            continue;
+        };
+        if line.indent == 0 {
+            break;
+        }
+        if line.indent != 2 {
+            return Err(format!(
+                "line {}: `metadata` fields must be indented by two spaces",
+                line.number
+            ));
+        }
+        let (key, value) = split_skill_yaml_key_value(line.content, line.number)?;
+        match key {
+            "short-description" => {
+                metadata.short_description =
+                    Some(parse_skill_yaml_value(value, lines, &mut index, 2)?);
+                index += 1;
+            }
+            _ => {
+                index = skip_skill_yaml_nested_block(lines, index + 1, 2)?;
+            }
+        }
+    }
+    Ok((metadata, index))
+}
+
+fn parse_skill_metadata_file(contents: &str) -> Result<SkillMetadataFile, String> {
+    if contents.trim_start().starts_with('{') {
+        return serde_json::from_str(contents).map_err(|err| err.to_string());
+    }
+
+    let lines: Vec<&str> = contents.lines().collect();
+    let mut parsed = SkillMetadataFile::default();
+    let mut index = 0;
+    while index < lines.len() {
+        let Some(line) = skill_yaml_line(lines[index], index + 1)? else {
+            index += 1;
+            continue;
+        };
+        if line.indent != 0 {
+            return Err(format!("line {}: unexpected indented line", line.number));
+        }
+        let (key, value) = split_skill_yaml_key_value(line.content, line.number)?;
+        match key {
+            "interface" => {
+                if value.trim() == "{}" {
+                    parsed.interface = Some(Interface::default());
+                    index += 1;
+                } else if value.trim().is_empty() {
+                    let (interface, next_index) = parse_skill_interface(&lines, index + 1)?;
+                    parsed.interface = Some(interface);
+                    index = next_index;
+                } else {
+                    return Err(format!(
+                        "line {}: `interface` must be a block map",
+                        line.number
+                    ));
+                }
+            }
+            "dependencies" => {
+                if value.trim() == "{}" {
+                    parsed.dependencies = Some(Dependencies::default());
+                    index += 1;
+                } else if value.trim().is_empty() {
+                    let (dependencies, next_index) = parse_skill_dependencies(&lines, index + 1)?;
+                    parsed.dependencies = Some(dependencies);
+                    index = next_index;
+                } else {
+                    return Err(format!(
+                        "line {}: `dependencies` must be a block map",
+                        line.number
+                    ));
+                }
+            }
+            "policy" => {
+                if value.trim() == "{}" {
+                    parsed.policy = Some(Policy {
+                        allow_implicit_invocation: None,
+                        products: Vec::new(),
+                    });
+                    index += 1;
+                } else if value.trim().is_empty() {
+                    let (policy, next_index) = parse_skill_policy(&lines, index + 1)?;
+                    parsed.policy = Some(policy);
+                    index = next_index;
+                } else {
+                    return Err(format!(
+                        "line {}: `policy` must be a block map",
+                        line.number
+                    ));
+                }
+            }
+            _ => {
+                index = skip_skill_yaml_nested_block(&lines, index + 1, 0)?;
+            }
+        }
+    }
+    Ok(parsed)
+}
+
+fn parse_skill_interface(lines: &[&str], mut index: usize) -> Result<(Interface, usize), String> {
+    let mut interface = Interface::default();
+    while index < lines.len() {
+        let Some(line) = skill_yaml_line(lines[index], index + 1)? else {
+            index += 1;
+            continue;
+        };
+        if line.indent == 0 {
+            break;
+        }
+        if line.indent != 2 {
+            return Err(format!(
+                "line {}: `interface` fields must be indented by two spaces",
+                line.number
+            ));
+        }
+        let (key, value) = split_skill_yaml_key_value(line.content, line.number)?;
+        match key {
+            "display_name" => {
+                interface.display_name = Some(parse_skill_yaml_value(value, lines, &mut index, 2)?);
+                index += 1;
+            }
+            "short_description" => {
+                interface.short_description =
+                    Some(parse_skill_yaml_value(value, lines, &mut index, 2)?);
+                index += 1;
+            }
+            "icon_small" => {
+                interface.icon_small = Some(PathBuf::from(parse_skill_yaml_value(
+                    value, lines, &mut index, 2,
+                )?));
+                index += 1;
+            }
+            "icon_large" => {
+                interface.icon_large = Some(PathBuf::from(parse_skill_yaml_value(
+                    value, lines, &mut index, 2,
+                )?));
+                index += 1;
+            }
+            "brand_color" => {
+                interface.brand_color = Some(parse_skill_yaml_value(value, lines, &mut index, 2)?);
+                index += 1;
+            }
+            "default_prompt" => {
+                interface.default_prompt =
+                    Some(parse_skill_yaml_value(value, lines, &mut index, 2)?);
+                index += 1;
+            }
+            _ => {
+                index = skip_skill_yaml_nested_block(lines, index + 1, 2)?;
+            }
+        }
+    }
+    Ok((interface, index))
+}
+
+fn parse_skill_dependencies(
+    lines: &[&str],
+    mut index: usize,
+) -> Result<(Dependencies, usize), String> {
+    let mut dependencies = Dependencies::default();
+    while index < lines.len() {
+        let Some(line) = skill_yaml_line(lines[index], index + 1)? else {
+            index += 1;
+            continue;
+        };
+        if line.indent == 0 {
+            break;
+        }
+        if line.indent != 2 {
+            return Err(format!(
+                "line {}: `dependencies` fields must be indented by two spaces",
+                line.number
+            ));
+        }
+        let (key, value) = split_skill_yaml_key_value(line.content, line.number)?;
+        match key {
+            "tools" => {
+                if value.trim() == "[]" {
+                    dependencies.tools = Vec::new();
+                    index += 1;
+                } else if value.trim().is_empty() {
+                    let (tools, next_index) = parse_skill_dependency_tools(lines, index + 1, 2)?;
+                    dependencies.tools = tools;
+                    index = next_index;
+                } else {
+                    return Err(format!(
+                        "line {}: `tools` must be a block list",
+                        line.number
+                    ));
+                }
+            }
+            _ => {
+                index = skip_skill_yaml_nested_block(lines, index + 1, 2)?;
+            }
+        }
+    }
+    Ok((dependencies, index))
+}
+
+fn parse_skill_dependency_tools(
+    lines: &[&str],
+    mut index: usize,
+    parent_indent: usize,
+) -> Result<(Vec<DependencyTool>, usize), String> {
+    let mut tools = Vec::new();
+    while index < lines.len() {
+        let Some(line) = skill_yaml_line(lines[index], index + 1)? else {
+            index += 1;
+            continue;
+        };
+        if line.indent <= parent_indent {
+            break;
+        }
+        let item_indent = parent_indent + 2;
+        if line.indent != item_indent {
+            return Err(format!(
+                "line {}: `tools` list items must be indented by two spaces",
+                line.number
+            ));
+        }
+        let Some(item) = line.content.strip_prefix('-') else {
+            return Err(format!(
+                "line {}: `tools` entries must use `- value` list items",
+                line.number
+            ));
+        };
+        let mut tool = DependencyTool::default();
+        let item = item.trim_start();
+        if !item.is_empty() {
+            parse_skill_dependency_tool_field(&mut tool, item, lines, &mut index, item_indent)?;
+        }
+        index += 1;
+        while index < lines.len() {
+            let Some(field_line) = skill_yaml_line(lines[index], index + 1)? else {
+                index += 1;
+                continue;
+            };
+            if field_line.indent <= item_indent {
+                break;
+            }
+            if field_line.indent != item_indent + 2 {
+                return Err(format!(
+                    "line {}: dependency tool fields must be indented by four spaces",
+                    field_line.number
+                ));
+            }
+            parse_skill_dependency_tool_field(
+                &mut tool,
+                field_line.content,
+                lines,
+                &mut index,
+                item_indent + 2,
+            )?;
+            index += 1;
+        }
+        tools.push(tool);
+    }
+    Ok((tools, index))
+}
+
+fn parse_skill_dependency_tool_field(
+    tool: &mut DependencyTool,
+    content: &str,
+    lines: &[&str],
+    index: &mut usize,
+    indent: usize,
+) -> Result<(), String> {
+    let line_number = *index + 1;
+    let (key, value) = split_skill_yaml_key_value(content, line_number)?;
+    let value = parse_skill_yaml_value(value, lines, index, indent)?;
+    match key {
+        "type" => tool.kind = Some(value),
+        "value" => tool.value = Some(value),
+        "description" => tool.description = Some(value),
+        "transport" => tool.transport = Some(value),
+        "command" => tool.command = Some(value),
+        "url" => tool.url = Some(value),
+        _ => {}
+    }
+    Ok(())
+}
+
+fn parse_skill_policy(lines: &[&str], mut index: usize) -> Result<(Policy, usize), String> {
+    let mut policy = Policy {
+        allow_implicit_invocation: None,
+        products: Vec::new(),
+    };
+    while index < lines.len() {
+        let Some(line) = skill_yaml_line(lines[index], index + 1)? else {
+            index += 1;
+            continue;
+        };
+        if line.indent == 0 {
+            break;
+        }
+        if line.indent != 2 {
+            return Err(format!(
+                "line {}: `policy` fields must be indented by two spaces",
+                line.number
+            ));
+        }
+        let (key, value) = split_skill_yaml_key_value(line.content, line.number)?;
+        match key {
+            "allow_implicit_invocation" => {
+                policy.allow_implicit_invocation = Some(parse_skill_yaml_bool(value, line.number)?);
+                index += 1;
+            }
+            "products" => {
+                let value = value.trim();
+                if value.starts_with('[') {
+                    policy.products = parse_skill_yaml_flow_list(value, line.number)?
+                        .into_iter()
+                        .map(|product| parse_skill_yaml_product(&product, line.number))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    index += 1;
+                } else if value.is_empty() {
+                    let (products, next_index) = parse_skill_yaml_product_list(lines, index + 1)?;
+                    policy.products = products;
+                    index = next_index;
+                } else {
+                    return Err(format!(
+                        "line {}: `products` must be a block or inline list",
+                        line.number
+                    ));
+                }
+            }
+            _ => {
+                index = skip_skill_yaml_nested_block(lines, index + 1, 2)?;
+            }
+        }
+    }
+    Ok((policy, index))
+}
+
+fn parse_skill_yaml_product_list(
+    lines: &[&str],
+    mut index: usize,
+) -> Result<(Vec<Product>, usize), String> {
+    let mut products = Vec::new();
+    while index < lines.len() {
+        let Some(line) = skill_yaml_line(lines[index], index + 1)? else {
+            index += 1;
+            continue;
+        };
+        if line.indent <= 2 {
+            break;
+        }
+        if line.indent != 4 {
+            return Err(format!(
+                "line {}: `products` list items must be indented by four spaces",
+                line.number
+            ));
+        }
+        let Some(item) = line.content.strip_prefix("- ") else {
+            return Err(format!(
+                "line {}: `products` entries must use `- value` list items",
+                line.number
+            ));
+        };
+        let product = parse_skill_yaml_scalar(item, line.number)?;
+        products.push(parse_skill_yaml_product(&product, line.number)?);
+        index += 1;
+    }
+    Ok((products, index))
+}
+
+#[derive(Clone, Copy)]
+struct SkillYamlLine<'a> {
+    indent: usize,
+    content: &'a str,
+    number: usize,
+}
+
+fn skill_yaml_line<'a>(
+    raw: &'a str,
+    line_number: usize,
+) -> Result<Option<SkillYamlLine<'a>>, String> {
+    let raw = raw.strip_suffix('\r').unwrap_or(raw);
+    let trimmed_start = raw.trim_start();
+    if trimmed_start.is_empty() || trimmed_start.starts_with('#') {
+        return Ok(None);
+    }
+    let mut indent = 0;
+    for byte in raw.bytes() {
+        match byte {
+            b' ' => indent += 1,
+            b'\t' => {
+                return Err(format!(
+                    "line {line_number}: tabs are not supported in skill metadata"
+                ));
+            }
+            _ => break,
+        }
+    }
+    Ok(Some(SkillYamlLine {
+        indent,
+        content: &raw[indent..],
+        number: line_number,
+    }))
+}
+
+fn split_skill_yaml_key_value<'a>(
+    line: &'a str,
+    line_number: usize,
+) -> Result<(&'a str, &'a str), String> {
+    let Some((key, value)) = line.split_once(':') else {
+        return Err(format!("line {line_number}: expected `key: value`"));
+    };
+    let key = key.trim();
+    if key.is_empty() {
+        return Err(format!("line {line_number}: key must not be empty"));
+    }
+    Ok((key, value.trim_start()))
+}
+
+fn parse_skill_yaml_value(
+    value: &str,
+    lines: &[&str],
+    index: &mut usize,
+    parent_indent: usize,
+) -> Result<String, String> {
+    let value = value.trim();
+    if matches!(value, "|" | "|-" | ">" | ">-") {
+        let folded = value.starts_with('>');
+        let (value, next_index) =
+            parse_skill_yaml_block_scalar(lines, *index + 1, parent_indent, folded)?;
+        *index = next_index.saturating_sub(1);
+        return Ok(value);
+    }
+    parse_skill_yaml_scalar(value, *index + 1)
+}
+
+fn parse_skill_yaml_block_scalar(
+    lines: &[&str],
+    mut index: usize,
+    parent_indent: usize,
+    folded: bool,
+) -> Result<(String, usize), String> {
+    let content_indent = parent_indent + 2;
+    let mut values = Vec::new();
+    while index < lines.len() {
+        let raw = lines[index].strip_suffix('\r').unwrap_or(lines[index]);
+        if raw.trim().is_empty() {
+            values.push(String::new());
+            index += 1;
+            continue;
+        }
+        let Some(line) = skill_yaml_line(raw, index + 1)? else {
+            index += 1;
+            continue;
+        };
+        if line.indent < content_indent {
+            break;
+        }
+        values.push(raw[content_indent.min(raw.len())..].to_string());
+        index += 1;
+    }
+    let separator = if folded { " " } else { "\n" };
+    Ok((values.join(separator), index))
+}
+
+fn parse_skill_yaml_scalar(value: &str, line_number: usize) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(format!(
+            "line {line_number}: scalar value must not be empty"
+        ));
+    }
+    if value.starts_with('"') {
+        let end = skill_yaml_double_quote_end(value, line_number)?;
+        validate_skill_yaml_trailing_comment(&value[end + 1..], line_number)?;
+        return serde_json::from_str::<String>(&value[..=end])
+            .map_err(|err| format!("line {line_number}: invalid double-quoted scalar: {err}"));
+    }
+    if value.starts_with('\'') {
+        let (parsed, trailing) = parse_skill_yaml_single_quoted_scalar(value, line_number)?;
+        validate_skill_yaml_trailing_comment(trailing, line_number)?;
+        return Ok(parsed);
+    }
+    if value.starts_with('[') || value.starts_with('{') {
+        return Err(format!(
+            "line {line_number}: inline collections are not supported for this field"
+        ));
+    }
+    let value = strip_skill_yaml_inline_comment(value).trim_end();
+    if value.is_empty() {
+        return Err(format!(
+            "line {line_number}: scalar value must not be empty"
+        ));
+    }
+    Ok(value.to_string())
+}
+
+fn parse_skill_yaml_bool(value: &str, line_number: usize) -> Result<bool, String> {
+    match parse_skill_yaml_scalar(value, line_number)?
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(format!("line {line_number}: expected boolean value")),
+    }
+}
+
+fn parse_skill_yaml_product(value: &str, line_number: usize) -> Result<Product, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "codex" => Ok(Product::Codex),
+        "chatgpt" => Ok(Product::Chatgpt),
+        "atlas" => Ok(Product::Atlas),
+        _ => Err(format!("line {line_number}: unknown product `{value}`")),
+    }
+}
+
+fn parse_skill_yaml_flow_list(value: &str, line_number: usize) -> Result<Vec<String>, String> {
+    let (inside, trailing) = skill_yaml_bracketed_list(value, line_number)?;
+    validate_skill_yaml_trailing_comment(trailing, line_number)?;
+    let mut items = Vec::new();
+    let mut rest = inside.trim();
+    while !rest.is_empty() {
+        let (item, next) = parse_skill_yaml_flow_list_item(rest, line_number)?;
+        items.push(item);
+        rest = next.trim_start();
+        if rest.is_empty() {
+            break;
+        }
+        let Some(after_comma) = rest.strip_prefix(',') else {
+            return Err(format!(
+                "line {line_number}: inline list items must be separated by commas"
+            ));
+        };
+        rest = after_comma.trim_start();
+        if rest.is_empty() {
+            return Err(format!(
+                "line {line_number}: inline list must not end with a trailing comma"
+            ));
+        }
+    }
+    Ok(items)
+}
+
+fn skill_yaml_bracketed_list(value: &str, line_number: usize) -> Result<(&str, &str), String> {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut iter = value.char_indices().skip(1).peekable();
+    while let Some((index, ch)) = iter.next() {
+        if let Some(active_quote) = quote {
+            if active_quote == '"' && escaped {
+                escaped = false;
+                continue;
+            }
+            if active_quote == '"' && ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if active_quote == '\'' && ch == '\'' && iter.peek().is_some_and(|(_, c)| *c == '\'') {
+                iter.next();
+                continue;
+            }
+            if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            ']' => return Ok((&value[1..index], &value[index + 1..])),
+            _ => {}
+        }
+    }
+    Err(format!("line {line_number}: invalid inline list"))
+}
+
+fn parse_skill_yaml_flow_list_item(
+    value: &str,
+    line_number: usize,
+) -> Result<(String, &str), String> {
+    if value.starts_with('"') {
+        let end = skill_yaml_double_quote_end(value, line_number)?;
+        validate_skill_yaml_scalar_separator(&value[end + 1..], line_number)?;
+        return serde_json::from_str::<String>(&value[..=end])
+            .map(|parsed| (parsed, &value[end + 1..]))
+            .map_err(|err| format!("line {line_number}: invalid double-quoted scalar: {err}"));
+    }
+    if value.starts_with('\'') {
+        let (parsed, trailing) = parse_skill_yaml_single_quoted_scalar(value, line_number)?;
+        validate_skill_yaml_scalar_separator(trailing, line_number)?;
+        return Ok((parsed, trailing));
+    }
+    let end = value
+        .char_indices()
+        .find_map(|(index, ch)| (ch == ',').then_some(index))
+        .unwrap_or(value.len());
+    let raw = value[..end].trim();
+    if raw.is_empty() {
+        return Err(format!(
+            "line {line_number}: inline list item must not be empty"
+        ));
+    }
+    if raw.starts_with('[') || raw.starts_with('{') {
+        return Err(format!(
+            "line {line_number}: nested inline collections are not supported"
+        ));
+    }
+    Ok((raw.to_string(), &value[end..]))
+}
+
+fn skill_yaml_double_quote_end(value: &str, line_number: usize) -> Result<usize, String> {
+    let mut escaped = false;
+    for (index, ch) in value.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '"' => return Ok(index),
+            _ => {}
+        }
+    }
+    Err(format!("line {line_number}: invalid double-quoted scalar"))
+}
+
+fn parse_skill_yaml_single_quoted_scalar<'a>(
+    value: &'a str,
+    line_number: usize,
+) -> Result<(String, &'a str), String> {
+    let mut parsed = String::new();
+    let mut index = 1;
+    while index < value.len() {
+        let ch = value[index..]
+            .chars()
+            .next()
+            .expect("index stays on char boundary");
+        if ch == '\'' {
+            let next_index = index + ch.len_utf8();
+            if value[next_index..].starts_with('\'') {
+                parsed.push('\'');
+                index = next_index + 1;
+                continue;
+            }
+            return Ok((parsed, &value[next_index..]));
+        }
+        parsed.push(ch);
+        index += ch.len_utf8();
+    }
+    Err(format!("line {line_number}: invalid single-quoted scalar"))
+}
+
+fn validate_skill_yaml_scalar_separator(trailing: &str, line_number: usize) -> Result<(), String> {
+    let trailing = trailing.trim_start();
+    if trailing.is_empty() || trailing.starts_with(',') {
+        return Ok(());
+    }
+    Err(format!(
+        "line {line_number}: inline list items must be separated by commas"
+    ))
+}
+
+fn validate_skill_yaml_trailing_comment(trailing: &str, line_number: usize) -> Result<(), String> {
+    let trailing = trailing.trim();
+    if trailing.is_empty() || trailing.starts_with('#') {
+        return Ok(());
+    }
+    Err(format!(
+        "line {line_number}: unexpected content after scalar value"
+    ))
+}
+
+fn strip_skill_yaml_inline_comment(value: &str) -> &str {
+    for (index, ch) in value.char_indices() {
+        let comment_starts = ch == '#'
+            && (index == 0
+                || value[..index]
+                    .chars()
+                    .next_back()
+                    .is_some_and(char::is_whitespace));
+        if comment_starts {
+            return &value[..index];
+        }
+    }
+    value
+}
+
+fn skip_skill_yaml_nested_block(
+    lines: &[&str],
+    mut index: usize,
+    parent_indent: usize,
+) -> Result<usize, String> {
+    while index < lines.len() {
+        let Some(line) = skill_yaml_line(lines[index], index + 1)? else {
+            index += 1;
+            continue;
+        };
+        if line.indent <= parent_indent {
+            break;
+        }
+        index += 1;
+    }
+    Ok(index)
+}
+
 fn extract_frontmatter(contents: &str) -> Option<String> {
     let mut lines = contents.lines();
     if !matches!(lines.next(), Some(line) if line.trim() == "---") {
@@ -1015,8 +1772,30 @@ pub(crate) async fn skill_roots_from_layer_stack(
     cwd: &AbsolutePathBuf,
     home_dir: Option<&AbsolutePathBuf>,
 ) -> Vec<SkillRoot> {
-    let config_layer_stack = SkillConfigLayerStack::from(config_layer_stack.clone());
+    let config_layer_stack = skill_config_layer_stack_from_config_layer_stack(config_layer_stack);
     skill_roots_with_home_dir(Some(fs), &config_layer_stack, cwd, home_dir, Vec::new()).await
+}
+
+#[cfg(test)]
+pub(crate) fn skill_config_layer_stack_from_config_layer_stack(
+    stack: &codex_config::ConfigLayerStack,
+) -> SkillConfigLayerStack {
+    let layers = stack
+        .get_layers(
+            codex_config::ConfigLayerStackOrdering::LowestPrecedenceFirst,
+            /*include_disabled*/ true,
+        )
+        .into_iter()
+        .map(|layer| {
+            SkillConfigLayerEntry::new_with_config_folder(
+                layer.name.clone(),
+                layer.config.clone(),
+                layer.config_folder(),
+                layer.is_disabled(),
+            )
+        })
+        .collect();
+    SkillConfigLayerStack::new(layers)
 }
 
 #[cfg(test)]

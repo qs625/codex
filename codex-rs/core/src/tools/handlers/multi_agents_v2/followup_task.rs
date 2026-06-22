@@ -2,12 +2,11 @@ use super::message_tool::FollowupTaskArgs;
 use super::message_tool::handle_message_string_tool;
 use super::*;
 use crate::tools::context::FunctionToolOutput;
-use codex_tools::ToolSpec;
-use codex_tools::create_followup_task_tool;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::create_followup_task_tool;
 
 pub(crate) struct Handler;
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for Handler {
     type Output = FunctionToolOutput;
 
@@ -19,10 +18,18 @@ impl ToolExecutor<ToolInvocation> for Handler {
         Some(create_followup_task_tool())
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let arguments = function_arguments(invocation.payload.clone())?;
-        let args: FollowupTaskArgs = parse_arguments(&arguments)?;
-        handle_message_string_tool(invocation, args.target, args.message).await
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let arguments = function_arguments(invocation.payload.clone())?;
+            let args: FollowupTaskArgs = parse_arguments(&arguments)?;
+            handle_message_string_tool(invocation, args.target, args.message).await
+        })
     }
 }
 

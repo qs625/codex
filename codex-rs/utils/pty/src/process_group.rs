@@ -20,6 +20,12 @@ use std::io;
 use tokio::process::Child;
 
 #[cfg(target_os = "linux")]
+/// Capture the current process ID for a later parent-death-signal check.
+pub fn current_pid_for_parent_death_signal() -> libc::pid_t {
+    unsafe { libc::getpid() }
+}
+
+#[cfg(target_os = "linux")]
 /// Ensure the child receives SIGTERM when the original parent dies.
 ///
 /// This should run in `pre_exec` and uses `parent_pid` captured before spawn to

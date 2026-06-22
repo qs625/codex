@@ -1,8 +1,8 @@
 use std::collections::HashSet;
-use std::sync::Arc;
 
 use codex_features::Feature;
 use codex_features::Features;
+use codex_mcp_tool_types::McpTool;
 use codex_mcp_tool_types::ToolInfo;
 use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
 use codex_models_manager::test_support::construct_model_info_offline_for_tests;
@@ -10,12 +10,10 @@ use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::SessionSource;
-use codex_tools::ToolName;
-use codex_tools::ToolsConfig;
-use codex_tools::ToolsConfigParams;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolsConfig;
+use codex_tool_planning::ToolsConfigParams;
 use pretty_assertions::assert_eq;
-use rmcp::model::JsonObject;
-use rmcp::model::Tool;
 
 use super::*;
 use crate::config::test_config;
@@ -54,17 +52,11 @@ fn make_mcp_tool(
         callable_name: callable_name.to_string(),
         callable_namespace: callable_namespace.to_string(),
         namespace_description: None,
-        tool: Tool {
-            name: tool_name.to_string().into(),
-            title: None,
-            description: Some(format!("Test tool: {tool_name}").into()),
-            input_schema: Arc::new(JsonObject::default()),
-            output_schema: None,
-            annotations: None,
-            execution: None,
-            icons: None,
-            meta: None,
-        },
+        tool: McpTool::new(
+            tool_name,
+            format!("Test tool: {tool_name}"),
+            serde_json::Value::Object(serde_json::Map::new()),
+        ),
         connector_id: connector_id.map(str::to_string),
         connector_name: connector_name.map(str::to_string),
         plugin_display_names: Vec::new(),

@@ -8,6 +8,8 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+iana-time-zone = { workspace = true }
+libc = { workspace = true }
 whoami = { workspace = true }
 
 [lib]

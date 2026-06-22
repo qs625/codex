@@ -1,17 +1,14 @@
 use super::*;
-use rmcp::model::BooleanSchema;
-use rmcp::model::ElicitationSchema;
-use rmcp::model::PrimitiveSchema;
 use serde_json::json;
 
-fn meta(value: Value) -> Option<Meta> {
+fn meta(value: Value) -> Option<Value> {
     let Value::Object(map) = value else {
         panic!("metadata must be an object");
     };
-    Some(Meta(map))
+    Some(Value::Object(map))
 }
 
-fn guardian_meta(tool_params: Option<Value>) -> Option<Meta> {
+fn guardian_meta(tool_params: Option<Value>) -> Option<Value> {
     let mut value = json!({
         "codex_approval_kind": "mcp_tool_call",
         "codex_request_type": "approval_request",
@@ -26,16 +23,21 @@ fn guardian_meta(tool_params: Option<Value>) -> Option<Meta> {
     meta(value)
 }
 
-fn form_request(meta: Option<Meta>) -> ElicitationReviewRequest {
+fn empty_form_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {},
+    })
+}
+
+fn form_request(meta: Option<Value>) -> ElicitationReviewRequest {
     ElicitationReviewRequest {
         server_name: "browser-use".to_string(),
-        request_id: rmcp::model::NumberOrString::Number(7),
-        elicitation: CreateElicitationRequestParams::FormElicitationParams {
+        request_id: codex_protocol::mcp::RequestId::Integer(7),
+        elicitation: codex_protocol::approvals::ElicitationRequest::Form {
             meta,
             message: "Allow origin?".to_string(),
-            requested_schema: ElicitationSchema::builder()
-                .build()
-                .expect("schema should build"),
+            requested_schema: empty_form_schema(),
         },
     }
 }
@@ -113,8 +115,8 @@ fn guardian_elicitation_review_request_requires_opt_in() {
 fn guardian_elicitation_review_request_declines_unsupported_opt_in_shapes() {
     let url_request = ElicitationReviewRequest {
         server_name: "browser-use".to_string(),
-        request_id: rmcp::model::NumberOrString::Number(8),
-        elicitation: CreateElicitationRequestParams::UrlElicitationParams {
+        request_id: codex_protocol::mcp::RequestId::Integer(8),
+        elicitation: codex_protocol::approvals::ElicitationRequest::Url {
             meta: guardian_meta(Some(json!({}))),
             message: "Open URL".to_string(),
             url: "https://example.com".to_string(),
@@ -128,14 +130,18 @@ fn guardian_elicitation_review_request_declines_unsupported_opt_in_shapes() {
 
     let non_empty_schema_request = ElicitationReviewRequest {
         server_name: "browser-use".to_string(),
-        request_id: rmcp::model::NumberOrString::Number(9),
-        elicitation: CreateElicitationRequestParams::FormElicitationParams {
+        request_id: codex_protocol::mcp::RequestId::Integer(9),
+        elicitation: codex_protocol::approvals::ElicitationRequest::Form {
             meta: guardian_meta(Some(json!({}))),
             message: "Allow origin?".to_string(),
-            requested_schema: ElicitationSchema::builder()
-                .required_property("confirmed", PrimitiveSchema::Boolean(BooleanSchema::new()))
-                .build()
-                .expect("schema should build"),
+            requested_schema: json!({
+                "type": "object",
+                "properties": {
+                    "confirmed": {
+                        "type": "boolean",
+                    },
+                },
+            }),
         },
     };
     assert!(matches!(

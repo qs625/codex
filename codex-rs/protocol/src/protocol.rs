@@ -62,7 +62,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
-use serde_with::serde_as;
 use strum_macros::Display;
 use tracing::error;
 use ts_rs::TS;
@@ -193,14 +192,16 @@ pub enum RealtimeOutputModality {
 }
 
 mod conversation_start_prompt_serde {
+    use serde::Deserialize;
     use serde::Deserializer;
+    use serde::Serialize;
     use serde::Serializer;
 
     pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        serde_with::rust::double_option::deserialize(deserializer)
+        Option::<String>::deserialize(deserializer).map(Some)
     }
 
     pub(crate) fn serialize<S>(
@@ -210,7 +211,10 @@ mod conversation_start_prompt_serde {
     where
         S: Serializer,
     {
-        serde_with::rust::double_option::serialize(value, serializer)
+        match value {
+            None => serializer.serialize_none(),
+            Some(prompt) => prompt.serialize(serializer),
+        }
     }
 }
 
@@ -3378,7 +3382,6 @@ pub enum ExecOutputStream {
     Stderr,
 }
 
-#[serde_as]
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
 pub struct ExecCommandOutputDeltaEvent {
     /// Identifier for the ExecCommandBegin that produced this chunk.
@@ -3396,13 +3399,12 @@ pub struct ExecCommandOutputDeltaEvent {
     /// Which stream produced this chunk.
     pub stream: ExecOutputStream,
     /// Raw bytes from the stream (may not be valid UTF-8).
-    #[serde_as(as = "serde_with::base64::Base64")]
+    #[serde(with = "base64_bytes_serde")]
     #[schemars(with = "String")]
     #[ts(type = "string")]
     pub chunk: Vec<u8>,
 }
 
-#[serde_as]
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
 pub struct TerminalInteractionEvent {
     /// Identifier for the ExecCommandBegin that produced this chunk.
@@ -3411,6 +3413,30 @@ pub struct TerminalInteractionEvent {
     pub process_id: String,
     /// Stdin sent to the running session.
     pub stdin: String,
+}
+
+mod base64_bytes_serde {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD;
+    use serde::Deserialize;
+    use serde::Deserializer;
+    use serde::Serializer;
+    use serde::de::Error as _;
+
+    pub(crate) fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&STANDARD.encode(bytes))
+    }
+
+    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let encoded = String::deserialize(deserializer)?;
+        STANDARD.decode(encoded).map_err(D::Error::custom)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]

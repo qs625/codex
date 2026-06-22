@@ -10,7 +10,7 @@ use std::time::UNIX_EPOCH;
 
 use super::TurnTimingState;
 use super::response_item_records_turn_ttft;
-use crate::ResponseEvent;
+use crate::client_common::ResponseEvent;
 
 #[tokio::test]
 async fn turn_timing_state_records_ttft_only_once_per_turn() {

@@ -13,14 +13,17 @@ doctest = false
 [lints]
 workspace = true
 
+[features]
+default = []
+body-compression = ["dep:tracing", "dep:zstd"]
+
 [dependencies]
 bytes = { workspace = true }
 http = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
-tracing = { workspace = true }
-zstd = { workspace = true }
+tracing = { workspace = true, optional = true }
+zstd = { workspace = true, optional = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

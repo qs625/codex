@@ -45,6 +45,7 @@ use codex_config_types::MatcherGroup as CoreMatcherGroup;
 use codex_config_types::ResidencyRequirement as CoreResidencyRequirement;
 use codex_core::ThreadManager;
 use codex_core::connectors as core_connectors;
+use codex_core_plugins::PluginsManager;
 use codex_exec_server::EnvironmentManager;
 use codex_features::canonical_feature_for_key;
 use codex_features::feature_for_key;
@@ -72,6 +73,7 @@ pub(crate) struct ConfigRequestProcessor {
     config_manager: ConfigManager,
     auth_manager: Arc<AuthManager>,
     thread_manager: Arc<ThreadManager>,
+    plugins_manager: Arc<PluginsManager>,
     environment_manager: Arc<EnvironmentManager>,
     analytics_events_client: AnalyticsEventsClient,
 }
@@ -82,6 +84,7 @@ impl ConfigRequestProcessor {
         config_manager: ConfigManager,
         auth_manager: Arc<AuthManager>,
         thread_manager: Arc<ThreadManager>,
+        plugins_manager: Arc<PluginsManager>,
         environment_manager: Arc<EnvironmentManager>,
         analytics_events_client: AnalyticsEventsClient,
     ) -> Self {
@@ -90,6 +93,7 @@ impl ConfigRequestProcessor {
             config_manager,
             auth_manager,
             thread_manager,
+            plugins_manager,
             environment_manager,
             analytics_events_client,
         }
@@ -191,7 +195,7 @@ impl ConfigRequestProcessor {
     }
 
     pub(crate) async fn handle_config_mutation(&self) {
-        self.thread_manager.plugins_manager().clear_cache();
+        self.plugins_manager.clear_cache();
         self.thread_manager.skills_manager().clear_cache();
     }
 
@@ -216,6 +220,9 @@ impl ConfigRequestProcessor {
             }
         };
         let auth = self.auth_manager.auth().await;
+        let auth_snapshot = auth
+            .as_ref()
+            .map(codex_login::CodexAuth::request_auth_snapshot);
         if !config.features.apps_enabled_for_auth(
             auth.as_ref()
                 .is_some_and(codex_login::CodexAuth::uses_codex_backend),
@@ -225,8 +232,11 @@ impl ConfigRequestProcessor {
 
         let outgoing = Arc::clone(&self.outgoing);
         let environment_manager = Arc::clone(&self.environment_manager);
+        let plugin_runtime = self.thread_manager.plugin_runtime();
         tokio::spawn(async move {
             let chatgpt_config = chatgpt_config_from_core(&config);
+            let mcp_auth_runtime = codex_mcp::DefaultMcpAuthRuntime;
+            let mcp_connection_runtime_factory = codex_mcp::DefaultMcpConnectionRuntimeFactory;
             let (all_connectors_result, accessible_connectors_result) = tokio::join!(
                 chatgpt_connectors::list_all_connectors_with_options(
                     &chatgpt_config,
@@ -234,8 +244,12 @@ impl ConfigRequestProcessor {
                 ),
                 core_connectors::list_accessible_connectors_from_mcp_tools_with_environment_provider(
                     &config,
+                    auth_snapshot.as_ref(),
                     /*force_refetch*/ true,
+                    plugin_runtime.as_ref(),
                     &environment_manager,
+                    &mcp_auth_runtime,
+                    &mcp_connection_runtime_factory,
                 ),
             );
             let all_connectors = match all_connectors_result {

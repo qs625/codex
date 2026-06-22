@@ -5,13 +5,12 @@ use crate::types::RateLimitReachedKind as BackendRateLimitReachedKind;
 use crate::types::RateLimitStatusPayload;
 use crate::types::TurnAttemptsSiblingTurnsResponse;
 use anyhow::Result;
+use codex_api_auth::auth_provider_from_auth_snapshot;
+use codex_api_auth::unauthenticated_auth_provider;
 use codex_api_provider::SharedAuthProvider;
+use codex_auth_types::RequestAuthSnapshot;
 use codex_client::build_reqwest_client_with_custom_ca;
 use codex_client::with_chatgpt_cloudflare_cookie_store;
-use codex_login::CodexAuth;
-use codex_login::default_client::get_codex_user_agent;
-use codex_model_provider_api::auth_provider_from_auth;
-use codex_model_provider_api::unauthenticated_auth_provider;
 use codex_protocol::account::PlanType as AccountPlanType;
 use codex_protocol::protocol::CreditsSnapshot;
 use codex_protocol::protocol::RateLimitReachedType;
@@ -171,10 +170,11 @@ impl Client {
         })
     }
 
-    pub fn from_auth(base_url: impl Into<String>, auth: &CodexAuth) -> Result<Self> {
-        Ok(Self::new(base_url)?
-            .with_user_agent(get_codex_user_agent())
-            .with_auth_provider(auth_provider_from_auth(auth)))
+    pub fn from_auth_snapshot(
+        base_url: impl Into<String>,
+        auth: &RequestAuthSnapshot,
+    ) -> Result<Self> {
+        Ok(Self::new(base_url)?.with_auth_provider(auth_provider_from_auth_snapshot(auth)))
     }
 
     pub fn with_auth_provider(mut self, auth: SharedAuthProvider) -> Self {

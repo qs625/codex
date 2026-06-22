@@ -16,9 +16,12 @@ workspace = true
 async-trait = { workspace = true }
 codex-api = { workspace = true }
 codex-api-provider = { workspace = true }
+codex-api-types = { workspace = true }
 codex-aws-auth = { workspace = true }
 codex-auth-types = { workspace = true }
 codex-client = { workspace = true }
+codex-client-types = { workspace = true }
+codex-default-client = { workspace = true }
 codex-feedback-api = { workspace = true }
 codex-login = { workspace = true }
 codex-model-provider-api = { workspace = true }
@@ -27,7 +30,6 @@ codex-models-manager-api = { workspace = true }
 codex-models-manager = { workspace = true }
 codex-otel = { workspace = true }
 codex-protocol = { workspace = true }
-codex-response-debug-context = { workspace = true }
 http = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 tracing = { workspace = true, features = ["log"] }

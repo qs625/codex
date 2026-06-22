@@ -1,12 +1,13 @@
 use crate::ActiveEventSubscriptionTracker;
-use crate::SkillsManager;
+use crate::StateDbHandle;
 use crate::agent::AgentControl;
 use crate::attestation::AttestationProvider;
 use crate::codex_thread::CodexThread;
 use crate::config::Config;
-use crate::config::ThreadStoreConfig;
 use crate::environment_selection::default_thread_environment_selections;
 use crate::environment_selection::resolve_environment_selections;
+use crate::exec_policy::EmptyExecPolicyLoader;
+use crate::exec_policy::ExecPolicyLoader;
 use crate::mcp::McpManager;
 use crate::rollout::truncation;
 use crate::session::Codex;
@@ -18,24 +19,45 @@ use crate::tasks::InterruptedTurnHistoryMarker;
 use crate::tasks::interrupted_turn_history_marker;
 use crate::workflow_runs::WorkflowRunController;
 use codex_analytics_api::AnalyticsEventsClient;
+use codex_api_runtime_api::DisabledApiRuntimeFactory;
+use codex_api_runtime_api::SharedApiRuntimeFactory;
+use codex_auth_types::AuthRuntime;
+use codex_auth_types::SharedAuthRuntime;
 use codex_code_mode_api::CodeModeRuntimeFactory;
-use codex_core_plugins::PluginsManager;
+use codex_core_plugins_api::DisabledPluginRuntime;
+use codex_core_plugins_api::SharedPluginRuntime;
+use codex_core_skills_api::DisabledSkillsRuntime;
+use codex_core_skills_api::SharedSkillsRuntime;
 #[cfg(any(test, feature = "test-support"))]
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server_api::ExecEnvironmentProvider;
 use codex_extension_api::ExtensionRegistry;
 #[cfg(any(test, feature = "test-support"))]
 use codex_extension_api::empty_extension_registry;
+use codex_hooks_api::DisabledHookRuntimeFactory;
+use codex_hooks_api::SharedHookRuntimeFactory;
+#[cfg(any(test, feature = "test-support"))]
 use codex_login::AuthManager;
 #[cfg(any(test, feature = "test-support"))]
 use codex_login::CodexAuth;
+#[cfg(any(test, feature = "test-support"))]
+use codex_login::model_provider_auth_manager;
+use codex_mcp_runtime_api::DisabledMcpAuthRuntime;
+use codex_mcp_runtime_api::DisabledMcpConnectionRuntimeFactory;
+use codex_mcp_runtime_api::McpAuthRuntime;
+use codex_mcp_runtime_api::McpConnectionRuntimeFactory;
+use codex_memories_read_api::DisabledMemoryToolDeveloperInstructionsProvider;
+use codex_memories_read_api::SharedMemoryToolDeveloperInstructionsProvider;
 use codex_model_provider_api::ModelProviderFactory;
+use codex_model_provider_api::SharedModelProviderAuthManager;
 use codex_model_provider_api::SharedModelProviderFactory;
 use codex_model_provider_info::ModelProviderInfo;
 #[cfg(any(test, feature = "test-support"))]
 use codex_model_provider_info::OPENAI_PROVIDER_ID;
 use codex_models_manager_api::RefreshStrategy;
 use codex_models_manager_api::SharedModelsManager;
+use codex_network_proxy_api::DisabledNetworkProxyRuntimeFactory;
+use codex_network_proxy_api::SharedNetworkProxyRuntimeFactory;
 use codex_openai_files_api::DisabledOpenAiFileUploader;
 use codex_openai_files_api::SharedOpenAiFileUploader;
 use codex_protocol::ThreadId;
@@ -60,18 +82,23 @@ use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::protocol::W3cTraceContext;
-use codex_rollout::state_db::StateDbHandle;
-use codex_state::DirectionalThreadSpawnEdgeStatus;
-use codex_thread_store::InMemoryThreadStore;
+use codex_sandboxing_api::DisabledSandboxRuntime;
+use codex_sandboxing_api::SharedSandboxRuntime;
+use codex_session_telemetry_api::DisabledSessionTelemetryFactory;
+use codex_session_telemetry_api::SharedSessionTelemetryFactory;
+use codex_state_api::DirectionalThreadSpawnEdgeStatus;
+#[cfg(any(test, feature = "test-support"))]
 use codex_thread_store::LocalThreadStore;
+#[cfg(any(test, feature = "test-support"))]
 use codex_thread_store::LocalThreadStoreConfig;
-use codex_thread_store::ReadThreadByRolloutPathParams;
-use codex_thread_store::ReadThreadParams;
-use codex_thread_store::StoredThread;
-use codex_thread_store::ThreadMetadataPatch;
-use codex_thread_store::ThreadStore;
-use codex_thread_store::ThreadStoreError;
-use codex_thread_store::UpdateThreadMetadataParams;
+use codex_thread_store_api::LiveThreadFactory;
+use codex_thread_store_api::ReadThreadByRolloutPathParams;
+use codex_thread_store_api::ReadThreadParams;
+use codex_thread_store_api::StoredThread;
+use codex_thread_store_api::ThreadMetadataPatch;
+use codex_thread_store_api::ThreadStore;
+use codex_thread_store_api::ThreadStoreError;
+use codex_thread_store_api::UpdateThreadMetadataParams;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
@@ -79,6 +106,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::RwLock as StdRwLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -87,6 +115,7 @@ use tokio::sync::broadcast;
 use tracing::warn;
 
 const THREAD_CREATED_CHANNEL_CAPACITY: usize = 1024;
+const DEFAULT_TERMINAL_TYPE: &str = "unknown";
 /// Test-only override for enabling thread-manager behaviors used by integration
 /// tests.
 ///
@@ -208,6 +237,40 @@ pub struct StartThreadOptions {
     pub environments: Vec<TurnEnvironmentSelection>,
 }
 
+/// Authentication runtime handles needed by thread/session construction.
+///
+/// The concrete login runtime owns token storage and refresh behavior. Thread
+/// management should only keep these projected traits so `codex-core` does not
+/// depend on the full login implementation in its normal dependency graph.
+#[derive(Clone)]
+pub struct ThreadAuthRuntimes {
+    pub auth_runtime: SharedAuthRuntime,
+    pub provider_auth_manager: Option<SharedModelProviderAuthManager>,
+}
+
+impl ThreadAuthRuntimes {
+    pub fn new(
+        auth_runtime: SharedAuthRuntime,
+        provider_auth_manager: Option<SharedModelProviderAuthManager>,
+    ) -> Self {
+        Self {
+            auth_runtime,
+            provider_auth_manager,
+        }
+    }
+
+    pub fn from_auth_runtime<T>(
+        auth_runtime: Arc<T>,
+        provider_auth_manager: Option<SharedModelProviderAuthManager>,
+    ) -> Self
+    where
+        T: AuthRuntime + 'static,
+    {
+        let auth_runtime: SharedAuthRuntime = auth_runtime;
+        Self::new(auth_runtime, provider_auth_manager)
+    }
+}
+
 pub(crate) struct ResumeThreadWithHistoryOptions {
     pub(crate) config: Config,
     pub(crate) initial_history: InitialHistory,
@@ -223,16 +286,27 @@ pub(crate) struct ResumeThreadWithHistoryOptions {
 pub(crate) struct ThreadManagerState {
     threads: Arc<RwLock<HashMap<ThreadId, Arc<CodexThread>>>>,
     thread_created_tx: broadcast::Sender<ThreadCreatedEvent>,
-    auth_manager: Arc<AuthManager>,
+    auth_runtime: SharedAuthRuntime,
+    provider_auth_manager: Option<SharedModelProviderAuthManager>,
     models_manager: SharedModelsManager,
     environment_manager: Arc<dyn ExecEnvironmentProvider>,
-    skills_manager: Arc<SkillsManager>,
-    plugins_manager: Arc<PluginsManager>,
+    skills_manager: SharedSkillsRuntime,
+    plugin_runtime: SharedPluginRuntime,
     mcp_manager: Arc<McpManager>,
+    mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
+    mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
+    api_runtime_factory: SharedApiRuntimeFactory,
+    network_proxy_runtime_factory: SharedNetworkProxyRuntimeFactory,
+    sandbox_runtime: SharedSandboxRuntime,
+    session_telemetry_factory: SharedSessionTelemetryFactory,
+    hook_runtime_factory: SharedHookRuntimeFactory,
+    memory_tool_developer_instructions_provider: SharedMemoryToolDeveloperInstructionsProvider,
     extensions: Arc<ExtensionRegistry<Config>>,
     thread_store: Arc<dyn ThreadStore>,
+    live_thread_factory: Arc<dyn LiveThreadFactory>,
     attestation_provider: Option<Arc<dyn AttestationProvider>>,
     session_source: SessionSource,
+    terminal_type: StdRwLock<String>,
     installation_id: String,
     analytics_events_client: Option<AnalyticsEventsClient>,
     state_db: Option<StateDbHandle>,
@@ -240,6 +314,7 @@ pub(crate) struct ThreadManagerState {
     model_provider_factory: SharedModelProviderFactory,
     code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
     openai_file_uploader: SharedOpenAiFileUploader,
+    exec_policy_loader: Arc<dyn ExecPolicyLoader>,
     workflow_runs: Arc<dyn WorkflowRunController>,
     // Captures submitted ops for testing purpose when test mode is enabled.
     ops_log: Option<SharedCapturedOps>,
@@ -247,59 +322,87 @@ pub(crate) struct ThreadManagerState {
 
 pub fn build_models_manager(
     config: &Config,
-    auth_manager: Arc<AuthManager>,
+    provider_auth_manager: Option<SharedModelProviderAuthManager>,
     model_provider_factory: &dyn ModelProviderFactory,
 ) -> SharedModelsManager {
     let provider = model_provider_factory
-        .create_model_provider(config.model_provider.clone(), Some(auth_manager));
+        .create_model_provider(config.model_provider.clone(), provider_auth_manager);
     provider.models_manager(
         config.codex_home.to_path_buf(),
         config.model_catalog.clone(),
     )
 }
 
-pub fn thread_store_from_config(
-    config: &Config,
-    state_db: Option<StateDbHandle>,
-) -> Arc<dyn ThreadStore> {
-    match &config.experimental_thread_store {
-        ThreadStoreConfig::Local => Arc::new(LocalThreadStore::new(
-            LocalThreadStoreConfig::from_config(config),
-            state_db,
-        )),
-        ThreadStoreConfig::InMemory { id } => InMemoryThreadStore::for_id(id),
-    }
-}
-
 impl ThreadManager {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: &Config,
-        auth_manager: Arc<AuthManager>,
+        auth_runtimes: ThreadAuthRuntimes,
         session_source: SessionSource,
         environment_manager: Arc<dyn ExecEnvironmentProvider>,
         extensions: Arc<ExtensionRegistry<Config>>,
         analytics_events_client: Option<AnalyticsEventsClient>,
         thread_store: Arc<dyn ThreadStore>,
         state_db: Option<StateDbHandle>,
+        live_thread_factory: Arc<dyn LiveThreadFactory>,
         installation_id: String,
         attestation_provider: Option<Arc<dyn AttestationProvider>>,
         model_provider_factory: SharedModelProviderFactory,
         code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
     ) -> Self {
-        Self::new_with_workflow_runs(
+        Self::new_with_mcp_auth_runtime(
             config,
-            auth_manager,
+            auth_runtimes,
             session_source,
             environment_manager,
             extensions,
             analytics_events_client,
             thread_store,
             state_db,
+            live_thread_factory,
             installation_id,
             attestation_provider,
             model_provider_factory,
             code_mode_runtime_factory,
+            Arc::new(DisabledMcpAuthRuntime),
+            Arc::new(DisabledMcpConnectionRuntimeFactory),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_mcp_auth_runtime(
+        config: &Config,
+        auth_runtimes: ThreadAuthRuntimes,
+        session_source: SessionSource,
+        environment_manager: Arc<dyn ExecEnvironmentProvider>,
+        extensions: Arc<ExtensionRegistry<Config>>,
+        analytics_events_client: Option<AnalyticsEventsClient>,
+        thread_store: Arc<dyn ThreadStore>,
+        state_db: Option<StateDbHandle>,
+        live_thread_factory: Arc<dyn LiveThreadFactory>,
+        installation_id: String,
+        attestation_provider: Option<Arc<dyn AttestationProvider>>,
+        model_provider_factory: SharedModelProviderFactory,
+        code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+        mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
+        mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
+    ) -> Self {
+        Self::new_with_workflow_runs(
+            config,
+            auth_runtimes,
+            session_source,
+            environment_manager,
+            extensions,
+            analytics_events_client,
+            thread_store,
+            state_db,
+            live_thread_factory,
+            installation_id,
+            attestation_provider,
+            model_provider_factory,
+            code_mode_runtime_factory,
+            mcp_auth_runtime,
+            mcp_connection_runtime_factory,
             Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
         )
     }
@@ -307,85 +410,116 @@ impl ThreadManager {
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_workflow_runs(
         config: &Config,
-        auth_manager: Arc<AuthManager>,
+        auth_runtimes: ThreadAuthRuntimes,
         session_source: SessionSource,
         environment_manager: Arc<dyn ExecEnvironmentProvider>,
         extensions: Arc<ExtensionRegistry<Config>>,
         analytics_events_client: Option<AnalyticsEventsClient>,
         thread_store: Arc<dyn ThreadStore>,
         state_db: Option<StateDbHandle>,
+        live_thread_factory: Arc<dyn LiveThreadFactory>,
         installation_id: String,
         attestation_provider: Option<Arc<dyn AttestationProvider>>,
         model_provider_factory: SharedModelProviderFactory,
         code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+        mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
+        mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
         workflow_runs: Arc<dyn WorkflowRunController>,
     ) -> Self {
         Self::new_with_workflow_runs_and_openai_file_uploader(
             config,
-            auth_manager,
+            auth_runtimes,
             session_source,
             environment_manager,
             extensions,
             analytics_events_client,
             thread_store,
             state_db,
+            live_thread_factory,
             installation_id,
             attestation_provider,
             model_provider_factory,
             code_mode_runtime_factory,
+            mcp_auth_runtime,
+            mcp_connection_runtime_factory,
             workflow_runs,
             Arc::new(DisabledOpenAiFileUploader),
+            Arc::new(EmptyExecPolicyLoader),
+            Arc::new(DisabledApiRuntimeFactory),
+            Arc::new(DisabledNetworkProxyRuntimeFactory),
+            Arc::new(DisabledSandboxRuntime),
+            Arc::new(DisabledSessionTelemetryFactory),
+            Arc::new(DisabledHookRuntimeFactory),
+            Arc::new(DisabledMemoryToolDeveloperInstructionsProvider),
+            Arc::new(DisabledSkillsRuntime),
+            Arc::new(DisabledPluginRuntime),
         )
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_workflow_runs_and_openai_file_uploader(
         config: &Config,
-        auth_manager: Arc<AuthManager>,
+        auth_runtimes: ThreadAuthRuntimes,
         session_source: SessionSource,
         environment_manager: Arc<dyn ExecEnvironmentProvider>,
         extensions: Arc<ExtensionRegistry<Config>>,
         analytics_events_client: Option<AnalyticsEventsClient>,
         thread_store: Arc<dyn ThreadStore>,
         state_db: Option<StateDbHandle>,
+        live_thread_factory: Arc<dyn LiveThreadFactory>,
         installation_id: String,
         attestation_provider: Option<Arc<dyn AttestationProvider>>,
         model_provider_factory: SharedModelProviderFactory,
         code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+        mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
+        mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
         workflow_runs: Arc<dyn WorkflowRunController>,
         openai_file_uploader: SharedOpenAiFileUploader,
+        exec_policy_loader: Arc<dyn ExecPolicyLoader>,
+        api_runtime_factory: SharedApiRuntimeFactory,
+        network_proxy_runtime_factory: SharedNetworkProxyRuntimeFactory,
+        sandbox_runtime: SharedSandboxRuntime,
+        session_telemetry_factory: SharedSessionTelemetryFactory,
+        hook_runtime_factory: SharedHookRuntimeFactory,
+        memory_tool_developer_instructions_provider: SharedMemoryToolDeveloperInstructionsProvider,
+        skills_runtime: SharedSkillsRuntime,
+        plugin_runtime: SharedPluginRuntime,
     ) -> Self {
-        let codex_home = config.codex_home.clone();
-        let restriction_product = session_source.restriction_product();
         let (thread_created_tx, _) = broadcast::channel(THREAD_CREATED_CHANNEL_CAPACITY);
-        let plugins_manager = Arc::new(PluginsManager::new_with_restriction_product(
-            codex_home.to_path_buf(),
-            restriction_product,
-        ));
-        let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
-        let skills_manager = Arc::new(SkillsManager::new_with_restriction_product(
-            codex_home,
-            config.bundled_skills_enabled(),
-            restriction_product,
-        ));
+        let mcp_manager = Arc::new(McpManager::new(plugin_runtime.clone()));
+        let ThreadAuthRuntimes {
+            auth_runtime,
+            provider_auth_manager,
+        } = auth_runtimes;
         Self {
             state: Arc::new(ThreadManagerState {
                 threads: Arc::new(RwLock::new(HashMap::new())),
                 thread_created_tx,
                 models_manager: build_models_manager(
                     config,
-                    auth_manager.clone(),
+                    provider_auth_manager.clone(),
                     model_provider_factory.as_ref(),
                 ),
+                provider_auth_manager,
                 environment_manager,
-                skills_manager,
-                plugins_manager,
+                skills_manager: skills_runtime,
+                plugin_runtime,
                 mcp_manager,
+                mcp_auth_runtime,
+                mcp_connection_runtime_factory,
+                api_runtime_factory,
+                network_proxy_runtime_factory,
+                sandbox_runtime,
+                session_telemetry_factory,
+                hook_runtime_factory,
+                memory_tool_developer_instructions_provider,
                 extensions,
                 thread_store,
+                live_thread_factory,
                 attestation_provider,
-                auth_manager,
+                auth_runtime,
                 session_source,
+                terminal_type: StdRwLock::new(DEFAULT_TERMINAL_TYPE.to_string()),
                 installation_id,
                 analytics_events_client,
                 state_db,
@@ -393,6 +527,7 @@ impl ThreadManager {
                 model_provider_factory,
                 code_mode_runtime_factory,
                 openai_file_uploader,
+                exec_policy_loader,
                 workflow_runs,
                 ops_log: should_use_test_thread_manager_behavior()
                     .then(|| Arc::new(std::sync::Mutex::new(Vec::new()))),
@@ -465,16 +600,15 @@ impl ThreadManager {
         };
         let (thread_created_tx, _) = broadcast::channel(THREAD_CREATED_CHANNEL_CAPACITY);
         let restriction_product = SessionSource::Exec.restriction_product();
-        let plugins_manager = Arc::new(PluginsManager::new_with_restriction_product(
-            codex_home.clone(),
-            restriction_product,
-        ));
-        let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
-        let skills_manager = Arc::new(SkillsManager::new_with_restriction_product(
-            skills_codex_home,
-            /*bundled_skills_enabled*/ true,
-            restriction_product,
-        ));
+        let plugin_runtime: SharedPluginRuntime = Arc::new(DisabledPluginRuntime);
+        let mcp_manager = Arc::new(McpManager::new(plugin_runtime.clone()));
+        let skills_manager: SharedSkillsRuntime = Arc::new(
+            codex_core_skills::SkillsManager::new_with_restriction_product(
+                skills_codex_home,
+                /*bundled_skills_enabled*/ true,
+                restriction_product,
+            ),
+        );
         // This test constructor has no Config input. Tests that need a non-local
         // process store should construct ThreadManager::new with an explicit store.
         let thread_store: Arc<dyn ThreadStore> = Arc::new(LocalThreadStore::new(
@@ -485,22 +619,41 @@ impl ThreadManager {
             },
             state_db.clone(),
         ));
+        let provider_auth_manager = model_provider_auth_manager(Some(Arc::clone(&auth_manager)));
+        let auth_runtime: SharedAuthRuntime = auth_manager;
         Self {
             state: Arc::new(ThreadManagerState {
                 threads: Arc::new(RwLock::new(HashMap::new())),
                 thread_created_tx,
                 models_manager: model_provider_factory
-                    .create_model_provider(provider, Some(auth_manager.clone()))
+                    .create_model_provider(provider, provider_auth_manager.clone())
                     .models_manager(codex_home, /*config_model_catalog*/ None),
+                provider_auth_manager,
                 environment_manager,
                 skills_manager,
-                plugins_manager,
+                plugin_runtime,
                 mcp_manager,
+                mcp_auth_runtime: Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+                mcp_connection_runtime_factory: Arc::new(
+                    codex_mcp::DefaultMcpConnectionRuntimeFactory,
+                ),
+                api_runtime_factory: Arc::new(DisabledApiRuntimeFactory),
+                network_proxy_runtime_factory: Arc::new(
+                    codex_network_proxy::DefaultNetworkProxyRuntimeFactory,
+                ),
+                sandbox_runtime: Arc::new(DisabledSandboxRuntime),
+                session_telemetry_factory: Arc::new(DisabledSessionTelemetryFactory),
+                hook_runtime_factory: Arc::new(DisabledHookRuntimeFactory),
+                memory_tool_developer_instructions_provider: Arc::new(
+                    DisabledMemoryToolDeveloperInstructionsProvider,
+                ),
                 extensions: empty_extension_registry(),
                 thread_store,
+                live_thread_factory: Arc::new(codex_thread_store::DefaultLiveThreadFactory),
                 attestation_provider: None,
-                auth_manager,
+                auth_runtime,
                 session_source: SessionSource::Exec,
+                terminal_type: StdRwLock::new(DEFAULT_TERMINAL_TYPE.to_string()),
                 installation_id,
                 analytics_events_client: None,
                 state_db,
@@ -510,6 +663,7 @@ impl ThreadManager {
                     codex_code_mode_api::DisabledCodeModeRuntimeFactory,
                 ),
                 openai_file_uploader: Arc::new(DisabledOpenAiFileUploader),
+                exec_policy_loader: Arc::new(EmptyExecPolicyLoader),
                 workflow_runs: Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
                 ops_log: should_use_test_thread_manager_behavior()
                     .then(|| Arc::new(std::sync::Mutex::new(Vec::new()))),
@@ -520,6 +674,11 @@ impl ThreadManager {
 
     pub fn session_source(&self) -> SessionSource {
         self.state.session_source.clone()
+    }
+
+    pub fn with_terminal_type(self, terminal_type: impl Into<String>) -> Self {
+        self.state.set_terminal_type(terminal_type.into());
+        self
     }
 
     pub fn active_event_subscriptions(&self) -> Arc<ActiveEventSubscriptionTracker> {
@@ -539,16 +698,16 @@ impl ThreadManager {
         .await;
     }
 
-    pub fn auth_manager(&self) -> Arc<AuthManager> {
-        self.state.auth_manager.clone()
+    pub fn auth_runtime(&self) -> SharedAuthRuntime {
+        self.state.auth_runtime.clone()
     }
 
-    pub fn skills_manager(&self) -> Arc<SkillsManager> {
+    pub fn skills_manager(&self) -> SharedSkillsRuntime {
         self.state.skills_manager.clone()
     }
 
-    pub fn plugins_manager(&self) -> Arc<PluginsManager> {
-        self.state.plugins_manager.clone()
+    pub fn plugin_runtime(&self) -> SharedPluginRuntime {
+        self.state.plugin_runtime.clone()
     }
 
     pub fn mcp_manager(&self) -> Arc<McpManager> {
@@ -597,7 +756,7 @@ impl ThreadManager {
         config.model_catalog = model_catalog;
         build_models_manager(
             &config,
-            self.state.auth_manager.clone(),
+            self.state.provider_auth_manager.clone(),
             self.state.model_provider_factory.as_ref(),
         )
         .list_models(refresh_strategy)
@@ -753,7 +912,6 @@ impl ThreadManager {
         Box::pin(self.state.spawn_thread_with_source(
             options.config,
             options.initial_history,
-            Arc::clone(&self.state.auth_manager),
             self.agent_control(),
             session_source,
             thread_source,
@@ -803,14 +961,12 @@ impl ThreadManager {
         &self,
         config: Config,
         rollout_path: PathBuf,
-        auth_manager: Arc<AuthManager>,
         parent_trace: Option<W3cTraceContext>,
     ) -> CodexResult<NewThread> {
         let initial_history = self.initial_history_from_rollout_path(rollout_path).await?;
         Box::pin(self.resume_thread_with_history(
             config,
             initial_history,
-            auth_manager,
             /*persist_extended_history*/ false,
             parent_trace,
         ))
@@ -821,7 +977,6 @@ impl ThreadManager {
         &self,
         config: Config,
         initial_history: InitialHistory,
-        auth_manager: Arc<AuthManager>,
         persist_extended_history: bool,
         parent_trace: Option<W3cTraceContext>,
     ) -> CodexResult<NewThread> {
@@ -833,7 +988,6 @@ impl ThreadManager {
         Box::pin(self.state.spawn_thread(
             config,
             initial_history,
-            auth_manager,
             self.agent_control(),
             thread_source,
             Vec::new(),
@@ -850,7 +1004,6 @@ impl ThreadManager {
         &self,
         config: Config,
         initial_history: InitialHistory,
-        auth_manager: Arc<AuthManager>,
         session_source: SessionSource,
         parent_trace: Option<W3cTraceContext>,
     ) -> CodexResult<NewThread> {
@@ -862,7 +1015,6 @@ impl ThreadManager {
         Box::pin(self.state.spawn_thread_with_source(
             config,
             initial_history,
-            auth_manager,
             self.agent_control(),
             session_source,
             thread_source,
@@ -890,7 +1042,6 @@ impl ThreadManager {
         Box::pin(self.state.spawn_thread(
             config,
             InitialHistory::New,
-            Arc::clone(&self.state.auth_manager),
             self.agent_control(),
             /*thread_source*/ None,
             Vec::new(),
@@ -907,7 +1058,6 @@ impl ThreadManager {
         &self,
         config: Config,
         rollout_path: PathBuf,
-        auth_manager: Arc<AuthManager>,
         user_shell_override: crate::shell::Shell,
     ) -> CodexResult<NewThread> {
         let initial_history = self.initial_history_from_rollout_path(rollout_path).await?;
@@ -919,7 +1069,6 @@ impl ThreadManager {
         Box::pin(self.state.spawn_thread(
             config,
             initial_history,
-            auth_manager,
             self.agent_control(),
             thread_source,
             Vec::new(),
@@ -1079,7 +1228,6 @@ impl ThreadManager {
         Box::pin(self.state.spawn_thread(
             config,
             history,
-            Arc::clone(&self.state.auth_manager),
             self.agent_control(),
             thread_source,
             Vec::new(),
@@ -1107,6 +1255,26 @@ impl ThreadManager {
 }
 
 impl ThreadManagerState {
+    fn terminal_type(&self) -> String {
+        self.terminal_type
+            .read()
+            .map(|terminal_type| terminal_type.clone())
+            .unwrap_or_else(|_| DEFAULT_TERMINAL_TYPE.to_string())
+    }
+
+    fn set_terminal_type(&self, terminal_type: String) {
+        let terminal_type = terminal_type.trim();
+        let terminal_type = if terminal_type.is_empty() {
+            DEFAULT_TERMINAL_TYPE
+        } else {
+            terminal_type
+        };
+        match self.terminal_type.write() {
+            Ok(mut stored) => *stored = terminal_type.to_string(),
+            Err(err) => warn!("failed to store terminal type: {err}"),
+        }
+    }
+
     pub(crate) fn state_db(&self) -> Option<StateDbHandle> {
         self.state_db.clone()
     }
@@ -1226,7 +1394,6 @@ impl ThreadManagerState {
         Box::pin(self.spawn_thread_with_source(
             config,
             InitialHistory::New,
-            Arc::clone(&self.auth_manager),
             agent_control,
             session_source,
             thread_source,
@@ -1260,7 +1427,6 @@ impl ThreadManagerState {
         Box::pin(self.spawn_thread_with_source(
             config,
             initial_history,
-            Arc::clone(&self.auth_manager),
             agent_control,
             session_source,
             thread_source,
@@ -1295,7 +1461,6 @@ impl ThreadManagerState {
         Box::pin(self.spawn_thread_with_source(
             config,
             initial_history,
-            Arc::clone(&self.auth_manager),
             agent_control,
             session_source,
             thread_source,
@@ -1317,7 +1482,6 @@ impl ThreadManagerState {
         &self,
         config: Config,
         initial_history: InitialHistory,
-        auth_manager: Arc<AuthManager>,
         agent_control: AgentControl,
         thread_source: Option<ThreadSource>,
         dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
@@ -1330,7 +1494,6 @@ impl ThreadManagerState {
         Box::pin(self.spawn_thread_with_source(
             config,
             initial_history,
-            auth_manager,
             agent_control,
             self.session_source.clone(),
             thread_source,
@@ -1351,7 +1514,6 @@ impl ThreadManagerState {
         &self,
         config: Config,
         initial_history: InitialHistory,
-        auth_manager: Arc<AuthManager>,
         agent_control: AgentControl,
         session_source: SessionSource,
         thread_source: Option<ThreadSource>,
@@ -1399,13 +1561,25 @@ impl ThreadManagerState {
         } = Codex::spawn(CodexSpawnArgs {
             config,
             installation_id: self.installation_id.clone(),
-            auth_manager,
+            terminal_type: self.terminal_type(),
+            auth_runtime: Arc::clone(&self.auth_runtime),
+            provider_auth_manager: self.provider_auth_manager.clone(),
             model_provider_factory: Arc::clone(&self.model_provider_factory),
+            api_runtime_factory: Arc::clone(&self.api_runtime_factory),
+            session_telemetry_factory: Arc::clone(&self.session_telemetry_factory),
+            memory_tool_developer_instructions_provider: Arc::clone(
+                &self.memory_tool_developer_instructions_provider,
+            ),
+            hook_runtime_factory: Arc::clone(&self.hook_runtime_factory),
             models_manager: Arc::clone(&self.models_manager),
             environment_manager,
             skills_manager: Arc::clone(&self.skills_manager),
-            plugins_manager: Arc::clone(&self.plugins_manager),
+            plugins_manager: self.plugin_runtime.clone(),
             mcp_manager: Arc::clone(&self.mcp_manager),
+            mcp_auth_runtime: Arc::clone(&self.mcp_auth_runtime),
+            mcp_connection_runtime_factory: Arc::clone(&self.mcp_connection_runtime_factory),
+            network_proxy_runtime_factory: Arc::clone(&self.network_proxy_runtime_factory),
+            sandbox_runtime: Arc::clone(&self.sandbox_runtime),
             extensions: Arc::clone(&self.extensions),
             conversation_history: initial_history,
             session_source,
@@ -1416,12 +1590,15 @@ impl ThreadManagerState {
             metrics_service_name,
             inherited_shell_snapshot,
             inherited_exec_policy,
+            exec_policy_loader: Arc::clone(&self.exec_policy_loader),
             parent_rollout_thread_trace,
             user_shell_override,
             parent_trace,
             environment_selections,
             analytics_events_client: self.analytics_events_client.clone(),
             thread_store: Arc::clone(&self.thread_store),
+            state_db: self.state_db.clone(),
+            live_thread_factory: Arc::clone(&self.live_thread_factory),
             attestation_provider: self.attestation_provider.clone(),
             active_event_subscriptions: Arc::clone(&self.active_event_subscriptions),
             openai_file_uploader: Arc::clone(&self.openai_file_uploader),
@@ -1501,7 +1678,7 @@ impl ThreadManagerState {
         &self,
         session_source: &SessionSource,
         initial_history: &InitialHistory,
-    ) -> codex_rollout_trace::ThreadTraceContext {
+    ) -> codex_rollout_trace_api::ThreadTraceContext {
         // A fresh v2 child belongs to the same rollout tree as its parent, so
         // session startup derives its child trace from the parent's thread
         // context. Resumed children already have a prior `ThreadStarted` event
@@ -1511,10 +1688,10 @@ impl ThreadManagerState {
             parent_thread_id, ..
         }) = session_source
         else {
-            return codex_rollout_trace::ThreadTraceContext::disabled();
+            return codex_rollout_trace_api::ThreadTraceContext::disabled();
         };
         if matches!(initial_history, InitialHistory::Resumed(_)) {
-            return codex_rollout_trace::ThreadTraceContext::disabled();
+            return codex_rollout_trace_api::ThreadTraceContext::disabled();
         }
         // Parent lookup can fail if the parent was closed or released between
         // spawn preparation and session construction. Tracing is diagnostic, so
@@ -1524,7 +1701,7 @@ impl ThreadManagerState {
             .await
             .ok()
             .map(|thread| thread.codex.session.services.rollout_thread_trace.clone())
-            .unwrap_or_else(codex_rollout_trace::ThreadTraceContext::disabled)
+            .unwrap_or_else(codex_rollout_trace_api::ThreadTraceContext::disabled)
     }
 }
 

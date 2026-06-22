@@ -4,7 +4,7 @@ use std::path::Path;
 use codex_config_types::OtelConfig;
 use codex_config_types::OtelExporterKind as Kind;
 use codex_config_types::OtelHttpProtocol as Protocol;
-use codex_default_client::originator;
+use codex_default_client_api::originator;
 use codex_otel::OtelExporter;
 use codex_otel::OtelHttpProtocol;
 use codex_otel::OtelProvider;

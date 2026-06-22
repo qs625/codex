@@ -831,18 +831,10 @@ async fn resume_conversation(
     config: &Config,
     path: std::path::PathBuf,
 ) -> Arc<CodexThread> {
-    let auth_manager = codex_core::test_support::auth_manager_from_auth(
-        codex_login::CodexAuth::from_api_key("dummy"),
-    );
-    Box::pin(manager.resume_thread_from_rollout(
-        config.clone(),
-        path,
-        auth_manager,
-        /*parent_trace*/ None,
-    ))
-    .await
-    .expect("resume conversation")
-    .thread
+    Box::pin(manager.resume_thread_from_rollout(config.clone(), path, /*parent_trace*/ None))
+        .await
+        .expect("resume conversation")
+        .thread
 }
 
 #[cfg(test)]

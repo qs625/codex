@@ -1,0 +1,31 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-hooks-api"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "codex_hooks_api"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[features]
+config-test-support = ["dep:codex-config"]
+
+[dependencies]
+chrono = { workspace = true, features = ["serde"] }
+codex-config = { workspace = true, optional = true }
+codex-config-types = { workspace = true }
+codex-plugin-types = { workspace = true }
+codex-protocol = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+toml = { workspace = true }
+
+[dev-dependencies]
+codex-config = { workspace = true }
+pretty_assertions = { workspace = true }

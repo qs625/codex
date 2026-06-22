@@ -1,5 +1,5 @@
-use codex_login::default_client::is_first_party_chat_originator;
-use codex_login::default_client::originator;
+use codex_default_client_api::is_first_party_chat_originator;
+use codex_default_client_api::originator;
 
 const DISALLOWED_CONNECTOR_IDS: &[&str] = &[
     "asdk_app_6938a94a61d881918ef32cb999ff937c",

@@ -18,6 +18,7 @@ use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::auth_env_telemetry::collect_auth_env_telemetry;
 use codex_login::default_client::originator;
+use codex_login::model_provider_auth_manager;
 use codex_memories_write::MemoryConsolidationAgent;
 use codex_memories_write::MemoryRuntimeFuture;
 use codex_memories_write::MemoryStartupRuntime;
@@ -52,6 +53,7 @@ pub(crate) struct CoreMemoryStartupRuntime {
     thread_id: ThreadId,
     thread: Arc<CodexThread>,
     config: Arc<Config>,
+    state_db: Option<Arc<StateRuntime>>,
     session_telemetry: SessionTelemetry,
 }
 
@@ -62,6 +64,7 @@ impl CoreMemoryStartupRuntime {
         thread_id: ThreadId,
         thread: Arc<CodexThread>,
         config: Arc<Config>,
+        state_db: Option<Arc<StateRuntime>>,
         source: SessionSource,
     ) -> Self {
         let auth = auth_manager.auth_cached();
@@ -94,6 +97,7 @@ impl CoreMemoryStartupRuntime {
             thread_id,
             thread,
             config,
+            state_db,
             session_telemetry,
         }
     }
@@ -101,7 +105,7 @@ impl CoreMemoryStartupRuntime {
 
 impl MemoryStartupRuntime for CoreMemoryStartupRuntime {
     fn state_db(&self) -> Option<Arc<StateRuntime>> {
-        self.thread.state_db()
+        self.state_db.clone()
     }
 
     fn counter(&self, name: &str, inc: i64, tags: &[(&str, &str)]) {
@@ -152,10 +156,11 @@ impl MemoryStartupRuntime for CoreMemoryStartupRuntime {
             let installation_id = resolve_installation_id(&self.config.codex_home).await?;
             let session_source = self.thread.config_snapshot().await.session_source;
             let model_client = ModelClient::new(
-                Some(Arc::clone(&self.auth_manager)),
+                model_provider_auth_manager(Some(Arc::clone(&self.auth_manager))),
                 SessionId::from(self.thread_id),
                 self.thread_id,
                 installation_id,
+                Arc::new(codex_api::DefaultApiRuntimeFactory),
                 Arc::new(codex_model_provider::DefaultModelProviderFactory),
                 self.config.model_provider.clone(),
                 session_source,
@@ -184,15 +189,16 @@ impl MemoryStartupRuntime for CoreMemoryStartupRuntime {
                 .unwrap_or(context.model_info.default_reasoning_summary);
             let turn_metadata_header =
                 codex_core::build_turn_metadata_header(&self.config.cwd, /*sandbox*/ None).await;
+            let session_telemetry = Arc::new(self.session_telemetry.clone().with_model(
+                context.model_info.slug.as_str(),
+                context.model_info.slug.as_str(),
+            )) as codex_otel::SharedSessionTelemetry;
             let mut client_session = model_client.new_session();
             let mut stream = client_session
                 .stream(
                     &prompt,
                     &context.model_info,
-                    &self.session_telemetry.clone().with_model(
-                        context.model_info.slug.as_str(),
-                        context.model_info.slug.as_str(),
-                    ),
+                    &session_telemetry,
                     context.reasoning_effort,
                     reasoning_summary,
                     context.service_tier.clone(),

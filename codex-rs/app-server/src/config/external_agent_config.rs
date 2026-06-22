@@ -498,7 +498,7 @@ impl ExternalAgentConfigService {
         }
 
         if let Some(settings) = settings.as_ref() {
-            match ConfigBuilder::default()
+            match crate::config_builder()
                 .codex_home(self.codex_home.clone())
                 .fallback_cwd(Some(self.codex_home.clone()))
                 .build()

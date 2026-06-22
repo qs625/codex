@@ -74,10 +74,10 @@ pub mod legacy_core {
     pub use codex_core::DEFAULT_AGENTS_MD_FILENAME;
     pub use codex_core::LOCAL_AGENTS_MD_FILENAME;
     pub use codex_core::McpManager;
-    pub use codex_core::check_execpolicy_for_warnings;
-    pub use codex_core::format_exec_policy_error_with_source;
     pub use codex_core::grant_read_root_non_elevated;
     pub use codex_core::web_search_detail;
+    pub use codex_execpolicy_loader::check_execpolicy_for_warnings;
+    pub use codex_execpolicy_loader::format_exec_policy_error_with_source;
 
     pub mod config {
         pub use codex_core::config::*;
@@ -107,7 +107,7 @@ pub mod legacy_core {
         pub use codex_core::review_prompts::*;
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub mod test_support {
         pub use codex_core::test_support::*;
     }
@@ -958,7 +958,7 @@ mod tests {
     use codex_app_server_protocol::ToolRequestUserInputParams;
     use codex_app_server_protocol::ToolRequestUserInputQuestion;
     use codex_core::config::ConfigBuilder;
-    use codex_core::init_state_db;
+    use codex_rollout::state_db::init as init_state_db;
     use codex_uds::UnixListener;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use futures::SinkExt;

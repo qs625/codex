@@ -35,9 +35,6 @@ async fn emits_warning_when_unstable_features_enabled_via_config() {
         CodexAuth::from_api_key("test"),
         config.model_provider.clone(),
     );
-    let auth_manager =
-        codex_core::test_support::auth_manager_from_auth(CodexAuth::from_api_key("test"));
-
     let NewThread {
         thread: conversation,
         ..
@@ -45,7 +42,6 @@ async fn emits_warning_when_unstable_features_enabled_via_config() {
         .resume_thread_with_history(
             config.clone(),
             InitialHistory::New,
-            auth_manager,
             /*persist_extended_history*/ false,
             /*parent_trace*/ None,
         )
@@ -82,9 +78,6 @@ async fn suppresses_warning_when_configured() {
         CodexAuth::from_api_key("test"),
         config.model_provider.clone(),
     );
-    let auth_manager =
-        codex_core::test_support::auth_manager_from_auth(CodexAuth::from_api_key("test"));
-
     let NewThread {
         thread: conversation,
         ..
@@ -92,7 +85,6 @@ async fn suppresses_warning_when_configured() {
         .resume_thread_with_history(
             config.clone(),
             InitialHistory::New,
-            auth_manager,
             /*persist_extended_history*/ false,
             /*parent_trace*/ None,
         )

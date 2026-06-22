@@ -16,7 +16,6 @@ workspace = true
 [dependencies]
 base64 = { workspace = true }
 codex-config-diagnostics = { workspace = true }
-codex-config-edit = { workspace = true }
 codex-config-loader = { workspace = true }
 codex-config-requirements = { workspace = true }
 codex-config-state = { workspace = true }
@@ -24,7 +23,7 @@ codex-config-toml = { workspace = true }
 codex-config-types = { workspace = true }
 codex-features = { workspace = true }
 codex-file-system = { workspace = true }
-codex-git-utils = { workspace = true }
+codex-git-info = { workspace = true }
 codex-model-provider-info = { workspace = true }
 codex-protocol = { workspace = true }
 codex-utils-absolute-path = { workspace = true }

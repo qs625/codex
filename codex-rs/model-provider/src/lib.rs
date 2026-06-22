@@ -3,6 +3,7 @@ mod auth;
 mod models_endpoint;
 mod provider;
 
+pub use auth::auth_provider_from_auth;
 pub use codex_model_provider_api::BearerAuthProvider;
 pub use codex_model_provider_api::BearerAuthProvider as CoreAuthProvider;
 pub use codex_model_provider_api::DEFAULT_APPROVAL_REVIEW_PREFERRED_MODEL;
@@ -14,8 +15,8 @@ pub use codex_model_provider_api::ProviderAccountResult;
 pub use codex_model_provider_api::ProviderAccountState;
 pub use codex_model_provider_api::ProviderCapabilities;
 pub use codex_model_provider_api::SharedModelProvider;
+pub use codex_model_provider_api::SharedModelProviderAuthManager;
 pub use codex_model_provider_api::SharedModelProviderFactory;
-pub use codex_model_provider_api::auth_provider_from_auth;
 pub use codex_model_provider_api::resolve_provider_auth;
 pub use codex_model_provider_api::unauthenticated_auth_provider;
 pub use codex_protocol::account::ProviderAccount;

@@ -33,7 +33,6 @@ pub(super) struct ReadTool<B> {
     pub(super) backend: B,
 }
 
-#[async_trait::async_trait]
 impl<B> ToolExecutor<ToolCall> for ReadTool<B>
 where
     B: MemoriesBackend,
@@ -51,21 +50,26 @@ where
         ))
     }
 
-    async fn handle(
-        &self,
+    fn handle<'a>(
+        &'a self,
         call: ToolCall,
-    ) -> Result<Self::Output, codex_extension_api::FunctionCallError> {
-        let backend = self.backend.clone();
-        let args: ReadArgs = parse_args(&call)?;
-        let response = backend
-            .read(ReadMemoryRequest {
-                path: args.path,
-                line_offset: args.line_offset.unwrap_or(1),
-                max_lines: args.max_lines,
-                max_tokens: DEFAULT_READ_MAX_TOKENS,
-            })
-            .await
-            .map_err(backend_error_to_function_call)?;
-        Ok(JsonToolOutput::new(json!(response)))
+    ) -> codex_extension_api::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let backend = self.backend.clone();
+            let args: ReadArgs = parse_args(&call)?;
+            let response = backend
+                .read(ReadMemoryRequest {
+                    path: args.path,
+                    line_offset: args.line_offset.unwrap_or(1),
+                    max_lines: args.max_lines,
+                    max_tokens: DEFAULT_READ_MAX_TOKENS,
+                })
+                .await
+                .map_err(backend_error_to_function_call)?;
+            Ok(JsonToolOutput::new(json!(response)))
+        })
     }
 }

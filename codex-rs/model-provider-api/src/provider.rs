@@ -6,8 +6,7 @@ use std::sync::Arc;
 
 use codex_api_provider::Provider;
 use codex_api_provider::SharedAuthProvider;
-use codex_login::AuthManager;
-use codex_login::CodexAuth;
+use codex_auth_types::RequestAuthSnapshot;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_models_manager_api::SharedModelsManager;
 use codex_protocol::account::ProviderAccount;
@@ -15,7 +14,8 @@ use codex_protocol::error::Result as CodexResult;
 use codex_protocol::openai_models::ModelsResponse;
 
 use crate::BearerAuthProvider;
-use crate::auth_provider_from_auth;
+use crate::SharedModelProviderAuthManager;
+use crate::auth_provider_from_auth_snapshot;
 use crate::model_provider_info_to_api_provider;
 use crate::unauthenticated_auth_provider;
 
@@ -105,10 +105,10 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
     }
 
     /// Returns the provider-scoped auth manager, when this provider uses one.
-    fn auth_manager(&self) -> Option<Arc<AuthManager>>;
+    fn auth_manager(&self) -> Option<SharedModelProviderAuthManager>;
 
     /// Returns the current provider-scoped auth value, if one is configured.
-    fn auth(&self) -> ModelProviderFuture<'_, Option<CodexAuth>>;
+    fn auth(&self) -> ModelProviderFuture<'_, Option<RequestAuthSnapshot>>;
 
     /// Returns the current app-visible account state for this provider.
     fn account_state(&self) -> ProviderAccountResult;
@@ -119,7 +119,7 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
             let auth = self.auth().await;
             Ok(model_provider_info_to_api_provider(
                 self.info(),
-                auth.as_ref().map(CodexAuth::auth_mode),
+                auth.as_ref().map(RequestAuthSnapshot::auth_mode),
             ))
         })
     }
@@ -158,7 +158,7 @@ pub trait ModelProviderFactory: fmt::Debug + Send + Sync {
     fn create_model_provider(
         &self,
         provider_info: ModelProviderInfo,
-        auth_manager: Option<Arc<AuthManager>>,
+        auth_manager: Option<SharedModelProviderAuthManager>,
     ) -> SharedModelProvider;
 }
 
@@ -167,7 +167,7 @@ pub type SharedModelProviderFactory = Arc<dyn ModelProviderFactory>;
 
 /// Resolves the auth provider used for runtime API requests.
 pub fn resolve_provider_auth(
-    auth: Option<&CodexAuth>,
+    auth: Option<&RequestAuthSnapshot>,
     provider: &ModelProviderInfo,
 ) -> CodexResult<SharedAuthProvider> {
     if let Some(auth) = bearer_auth_for_provider(provider)? {
@@ -175,7 +175,7 @@ pub fn resolve_provider_auth(
     }
 
     Ok(match auth {
-        Some(auth) => auth_provider_from_auth(auth),
+        Some(auth) => auth_provider_from_auth_snapshot(auth),
         None => unauthenticated_auth_provider(),
     })
 }

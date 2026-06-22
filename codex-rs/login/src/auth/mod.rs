@@ -8,6 +8,7 @@ mod external_bearer;
 mod manager;
 mod revoke;
 
+pub use codex_auth_types::AuthManagerConfig;
 pub use error::RefreshTokenFailedError;
 pub use error::RefreshTokenFailedReason;
 pub use manager::*;

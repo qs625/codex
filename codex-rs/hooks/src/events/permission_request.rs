@@ -13,8 +13,6 @@
 //!    decision.
 //! 4. Fold the decisions conservatively: any deny wins, otherwise the last
 //!    allow wins, otherwise there is no hook verdict.
-use std::path::PathBuf;
-
 use super::common;
 use crate::engine::CommandShell;
 use crate::engine::ConfiguredHandler;
@@ -22,40 +20,15 @@ use crate::engine::command_runner::CommandRunResult;
 use crate::engine::dispatcher;
 use crate::engine::output_parser;
 use crate::schema::PermissionRequestCommandInput;
-use codex_protocol::ThreadId;
+pub use codex_hooks_api::PermissionRequestDecision;
+pub use codex_hooks_api::PermissionRequestOutcome;
+pub use codex_hooks_api::PermissionRequestRequest;
 use codex_protocol::protocol::HookCompletedEvent;
 use codex_protocol::protocol::HookEventName;
 use codex_protocol::protocol::HookOutputEntry;
 use codex_protocol::protocol::HookOutputEntryKind;
 use codex_protocol::protocol::HookRunStatus;
 use codex_protocol::protocol::HookRunSummary;
-use serde_json::Value;
-
-#[derive(Debug, Clone)]
-pub struct PermissionRequestRequest {
-    pub session_id: ThreadId,
-    pub turn_id: String,
-    pub cwd: PathBuf,
-    pub transcript_path: Option<PathBuf>,
-    pub model: String,
-    pub permission_mode: String,
-    pub tool_name: String,
-    pub matcher_aliases: Vec<String>,
-    pub run_id_suffix: String,
-    pub tool_input: Value,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PermissionRequestDecision {
-    Allow,
-    Deny { message: String },
-}
-
-#[derive(Debug)]
-pub struct PermissionRequestOutcome {
-    pub hook_events: Vec<HookCompletedEvent>,
-    pub decision: Option<PermissionRequestDecision>,
-}
 
 #[derive(Debug, Default, PartialEq, Eq)]
 struct PermissionRequestHandlerData {

@@ -1,33 +1,22 @@
 use crate::error::ApiError;
 use codex_api_types::SseEventTelemetry;
+pub use codex_api_types::SseTelemetry;
 use codex_api_types::WebsocketEventTelemetry;
+pub use codex_api_types::WebsocketTelemetry;
 use codex_client::Request;
-use codex_client::RequestTelemetry;
 use codex_client::Response;
 use codex_client::RetryPolicy;
 use codex_client::StreamResponse;
 use codex_client::TransportError;
 use codex_client::run_with_retry;
+use codex_client_types::RequestTelemetry;
 use codex_protocol::models::ResponseItem;
 use http::StatusCode;
 use std::future::Future;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::Error;
 use tokio_tungstenite::tungstenite::Message;
-
-/// Generic telemetry.
-pub trait SseTelemetry: Send + Sync {
-    fn on_sse_poll(&self, event: Option<&SseEventTelemetry>, duration: Duration);
-}
-
-/// Telemetry for Responses WebSocket transport.
-pub trait WebsocketTelemetry: Send + Sync {
-    fn on_ws_request(&self, duration: Duration, error: Option<&ApiError>, connection_reused: bool);
-
-    fn on_ws_event(&self, event: Option<&WebsocketEventTelemetry>, duration: Duration);
-}
 
 pub(crate) fn summarize_sse_poll(
     result: &Result<

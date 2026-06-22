@@ -13,15 +13,14 @@ use codex_protocol::protocol::CollabWaitingBeginEvent;
 use codex_protocol::protocol::CollabWaitingEndEvent;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::InterAgentOperation;
-use codex_tools::ToolSpec;
-use codex_tools::create_wait_agent_tool_v2;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::create_wait_agent_tool_v2;
 use std::collections::HashMap;
 use std::time::Duration;
 use std::time::Instant;
 
 pub(crate) struct Handler;
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for Handler {
     type Output = WaitAgentResult;
 
@@ -33,8 +32,14 @@ impl ToolExecutor<ToolInvocation> for Handler {
         Some(create_wait_agent_tool_v2())
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        handle_wait_agent(invocation).await
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move { handle_wait_agent(invocation).await })
     }
 }
 

@@ -1,12 +1,12 @@
 use std::io::ErrorKind;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
 
 use crate::StateDbHandle;
-use crate::rollout::list::find_thread_path_by_id_str;
 use crate::shell::Shell;
 use crate::shell::ShellType;
 use crate::shell::get_shell;
@@ -14,8 +14,9 @@ use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
 use anyhow::bail;
-use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
+use codex_rollout_api::SESSIONS_SUBDIR;
+use codex_session_telemetry_api::SharedSessionTelemetry;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use tokio::fs;
 use tokio::process::Command;
@@ -41,7 +42,7 @@ impl ShellSnapshot {
         session_id: ThreadId,
         session_cwd: AbsolutePathBuf,
         shell: &mut Shell,
-        session_telemetry: SessionTelemetry,
+        session_telemetry: SharedSessionTelemetry,
         state_db: Option<StateDbHandle>,
     ) -> watch::Sender<Option<Arc<ShellSnapshot>>> {
         let (shell_snapshot_tx, shell_snapshot_rx) = watch::channel(None);
@@ -66,7 +67,7 @@ impl ShellSnapshot {
         session_cwd: AbsolutePathBuf,
         shell: Shell,
         shell_snapshot_tx: watch::Sender<Option<Arc<ShellSnapshot>>>,
-        session_telemetry: SessionTelemetry,
+        session_telemetry: SharedSessionTelemetry,
         state_db: Option<StateDbHandle>,
     ) {
         Self::spawn_snapshot_task(
@@ -86,7 +87,7 @@ impl ShellSnapshot {
         session_cwd: AbsolutePathBuf,
         snapshot_shell: Shell,
         shell_snapshot_tx: watch::Sender<Option<Arc<ShellSnapshot>>>,
-        session_telemetry: SessionTelemetry,
+        session_telemetry: SharedSessionTelemetry,
         state_db: Option<StateDbHandle>,
     ) {
         let snapshot_span = info_span!("shell_snapshot", thread_id = %session_id);
@@ -531,7 +532,8 @@ pub async fn cleanup_stale_snapshots(
         }
 
         let rollout_path =
-            find_thread_path_by_id_str(codex_home, session_id, state_db.as_deref()).await?;
+            find_active_rollout_path_for_snapshot(codex_home, session_id, state_db.as_deref())
+                .await?;
         let Some(rollout_path) = rollout_path else {
             remove_snapshot_file(&path).await;
             continue;
@@ -558,6 +560,74 @@ pub async fn cleanup_stale_snapshots(
     }
 
     Ok(())
+}
+
+async fn find_active_rollout_path_for_snapshot<T>(
+    codex_home: &AbsolutePathBuf,
+    session_id: &str,
+    state_db: Option<&T>,
+) -> Result<Option<PathBuf>>
+where
+    T: codex_state_api::StateDbRuntime + ?Sized,
+{
+    if let Some(state_db) = state_db
+        && let Ok(thread_id) = ThreadId::from_string(session_id)
+    {
+        match state_db
+            .find_rollout_path_by_id(thread_id, Some(false))
+            .await
+        {
+            Ok(Some(path)) => {
+                if fs::try_exists(&path).await.unwrap_or(false) {
+                    return Ok(Some(path));
+                }
+                tracing::warn!(
+                    "state db returned stale rollout path while cleaning shell snapshot: {}",
+                    path.display()
+                );
+            }
+            Ok(None) => {}
+            Err(err) => {
+                tracing::warn!(
+                    "state db find_rollout_path_by_id failed while cleaning shell snapshot: {err}"
+                );
+            }
+        }
+    }
+
+    find_rollout_path_by_file_name(codex_home.join(SESSIONS_SUBDIR).to_path_buf(), session_id).await
+}
+
+async fn find_rollout_path_by_file_name(
+    root: PathBuf,
+    session_id: &str,
+) -> Result<Option<PathBuf>> {
+    let mut pending = vec![root];
+    while let Some(dir) = pending.pop() {
+        let mut entries = match fs::read_dir(&dir).await {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == ErrorKind::NotFound => continue,
+            Err(err) => return Err(err.into()),
+        };
+
+        while let Some(entry) = entries.next_entry().await? {
+            let file_type = entry.file_type().await?;
+            if file_type.is_dir() {
+                pending.push(entry.path());
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+
+            let file_name = entry.file_name();
+            if file_name.to_string_lossy().contains(session_id) {
+                return Ok(Some(entry.path()));
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 async fn remove_snapshot_file(path: &Path) {

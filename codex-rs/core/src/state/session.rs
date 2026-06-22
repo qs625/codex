@@ -2,7 +2,7 @@
 
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::ResponseItem;
-use codex_sandboxing::policy_transforms::merge_permission_profiles;
+use codex_sandboxing_api::policy_transforms::merge_permission_profiles;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -33,7 +33,7 @@ pub(crate) struct SessionState {
     pub(crate) startup_prewarm: Option<SessionStartupPrewarmHandle>,
     pub(crate) active_connector_selection: HashSet<String>,
     pub(crate) thread_skills: Vec<ThreadSkill>,
-    pub(crate) pending_session_start_source: Option<codex_hooks::SessionStartSource>,
+    pub(crate) pending_session_start_source: Option<codex_hooks_api::SessionStartSource>,
     granted_permissions: Option<AdditionalPermissionProfile>,
     next_turn_is_first: bool,
 }
@@ -218,14 +218,14 @@ impl SessionState {
 
     pub(crate) fn set_pending_session_start_source(
         &mut self,
-        value: Option<codex_hooks::SessionStartSource>,
+        value: Option<codex_hooks_api::SessionStartSource>,
     ) {
         self.pending_session_start_source = value;
     }
 
     pub(crate) fn take_pending_session_start_source(
         &mut self,
-    ) -> Option<codex_hooks::SessionStartSource> {
+    ) -> Option<codex_hooks_api::SessionStartSource> {
         self.pending_session_start_source.take()
     }
 

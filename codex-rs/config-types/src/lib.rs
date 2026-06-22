@@ -22,6 +22,8 @@ mod thread_store;
 mod tui_keymap;
 mod ui;
 
+pub const CONFIG_TOML_FILE: &str = "config.toml";
+
 pub use agents::AgentRoleToml;
 pub use agents::AgentsToml;
 pub use apps::AppConfig;

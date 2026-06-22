@@ -40,8 +40,12 @@ use crate::context_usage::build_thread_context_usage;
 use crate::context_usage::build_thread_context_usage_from_history;
 use crate::default_skill_metadata_budget;
 use crate::environment_selection::ResolvedTurnEnvironments;
+use crate::event_mapping::completed_display_event_from_model_item;
+use crate::event_mapping::injected_context_item_from_response_items;
+use crate::event_mapping::is_structured_display_response_item;
+use crate::event_mapping::started_display_event_from_model_item;
+use crate::exec_policy::ExecPolicyLoader;
 use crate::exec_policy::ExecPolicyManager;
-use crate::goals::ThreadPostTurnState;
 use crate::parse_turn_item;
 use crate::path_utils::normalize_for_native_workdir;
 use crate::pending_input::PendingInputItem;
@@ -56,12 +60,18 @@ use async_channel::Receiver;
 use async_channel::Sender;
 use chrono::Local;
 use chrono::Utc;
+use codex_agent_runtime::ThreadPostTurnState;
 use codex_analytics_api::AnalyticsEventsClient;
 use codex_analytics_api::SubAgentThreadStartedInput;
+use codex_api_runtime_api::SharedApiRuntimeFactory;
+use codex_auth_types::AuthEnvTelemetryInput;
+use codex_auth_types::AuthRuntime;
+use codex_auth_types::SharedAuthRuntime;
+use codex_auth_types::collect_auth_env_telemetry;
+use codex_client_identity::originator;
 use codex_code_mode_api::CodeModeRuntimeFactory;
 use codex_code_mode_api::CodeModeRuntimeService;
 use codex_config_types::OAuthCredentialsStoreMode;
-use codex_default_client::originator;
 use codex_exec_server_api::ExecEnvironmentProvider;
 use codex_extension_api::PromptSlot;
 use codex_features::FEATURES;
@@ -69,23 +79,27 @@ use codex_features::Feature;
 use codex_features::unstable_features_warning_event;
 use codex_file_system::FileSystemSandboxContext;
 use codex_file_system::LOCAL_FS;
-use codex_hooks::Hooks;
-use codex_hooks::HooksConfig;
-use codex_login::AuthManager;
-use codex_login::CodexAuth;
-use codex_login::auth_env_telemetry::collect_auth_env_telemetry;
-use codex_mcp::McpConnectionManager;
-use codex_mcp::codex_apps_tools_cache_key;
+use codex_hooks_api::HooksConfig;
+use codex_hooks_api::SharedHookRuntime;
+use codex_hooks_api::SharedHookRuntimeFactory;
+use codex_mcp_runtime_api::McpAuthRuntime;
+use codex_mcp_runtime_api::McpConnectionRuntimeFactory;
+use codex_mcp_runtime_api::McpConnectionRuntimeStartRequest;
 use codex_mcp_types::ElicitationResponse;
+use codex_mcp_types::McpClientElicitationSupport;
 use codex_mcp_types::McpServerElicitationRequest;
 use codex_mcp_types::McpServerElicitationRequestParams;
+use codex_mcp_types::codex_apps_tools_cache_key;
+use codex_model_provider_api::SharedModelProviderAuthManager;
 use codex_model_provider_api::SharedModelProviderFactory;
 use codex_models_manager_api::RefreshStrategy;
 use codex_models_manager_api::SharedModelsManager;
-use codex_network_proxy::NetworkProxy;
 use codex_network_proxy_api::BlockedRequestObserver;
 use codex_network_proxy_api::NetworkPolicyDecider;
 use codex_network_proxy_api::NetworkProxyAuditMetadata;
+use codex_network_proxy_api::NetworkProxyRuntimeFactory;
+use codex_network_proxy_api::SharedNetworkProxyRuntime;
+use codex_network_proxy_api::SharedNetworkProxyRuntimeFactory;
 use codex_network_proxy_api::normalize_host;
 use codex_openai_files_api::SharedOpenAiFileUploader;
 use codex_protocol::ThreadId;
@@ -100,11 +114,14 @@ use codex_protocol::config_types::Settings;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::dynamic_tools::DynamicToolResponse;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
-use codex_protocol::items::InjectedContextItem;
-use codex_protocol::items::InjectedContextSection;
 use codex_protocol::items::TurnItem;
 use codex_protocol::items::UserMessageItem;
 use codex_protocol::mcp::CallToolResult;
+use codex_protocol::mcp::ListResourceTemplatesResult;
+use codex_protocol::mcp::ListResourcesResult;
+use codex_protocol::mcp::PaginatedRequestParams;
+use codex_protocol::mcp::ReadResourceRequestParams;
+use codex_protocol::mcp::ReadResourceResult;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::BaseInstructions;
@@ -114,15 +131,9 @@ use codex_protocol::models::format_allow_prefixes;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_protocol::protocol::CommandExecutionNotificationDisplayEvent;
-use codex_protocol::protocol::CommandWaitDisplayEvent;
-use codex_protocol::protocol::CommandWriteStdinDisplayEvent;
-use codex_protocol::protocol::EventCommandDisplayEvent;
-use codex_protocol::protocol::EventDrivenToolDisplayEvent;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::HasLegacyEvent;
 use codex_protocol::protocol::InterAgentCommunication;
-use codex_protocol::protocol::InterAgentCommunicationDisplayEvent;
 use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ItemStartedEvent;
@@ -134,14 +145,12 @@ use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::ThreadContextUsage;
 use codex_protocol::protocol::ThreadContextUsageUpdatedEvent;
-use codex_protocol::protocol::ThreadGoalUpdateDisplayEvent;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnContextItem;
 use codex_protocol::protocol::TurnContextNetworkItem;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::protocol::W3cTraceContext;
-use codex_protocol::protocol::WorkflowRunProgressDisplayEvent;
 use codex_protocol::request_permissions::PermissionGrantScope;
 use codex_protocol::request_permissions::RequestPermissionProfile;
 use codex_protocol::request_permissions::RequestPermissionsArgs;
@@ -149,35 +158,24 @@ use codex_protocol::request_permissions::RequestPermissionsEvent;
 use codex_protocol::request_permissions::RequestPermissionsResponse;
 use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_protocol::request_user_input::RequestUserInputResponse;
-use codex_rollout::state_db;
-use codex_rollout_trace::AgentResultTracePayload;
-use codex_rollout_trace::ThreadStartedTraceMetadata;
-use codex_rollout_trace::ThreadTraceContext;
-use codex_sandboxing::policy_transforms::intersect_permission_profiles;
+use codex_rollout_trace_api::AgentResultTracePayload;
+use codex_rollout_trace_api::ThreadStartedTraceMetadata;
+use codex_rollout_trace_api::ThreadTraceContext;
+use codex_sandboxing_api::policy_transforms::intersect_permission_profiles;
 use codex_shell_command::parse_command::parse_command;
-use codex_terminal_detection::user_agent;
-use codex_thread_store::CreateThreadParams;
-use codex_thread_store::LiveThread;
-use codex_thread_store::LiveThreadInitGuard;
-use codex_thread_store::LocalThreadStore;
-use codex_thread_store::ReadThreadParams;
-use codex_thread_store::ResumeThreadParams;
-use codex_thread_store::ThreadEventPersistenceMode;
-use codex_thread_store::ThreadPersistenceMetadata;
-use codex_thread_store::ThreadStore;
+use codex_thread_store_api::CreateThreadParams;
+use codex_thread_store_api::LiveThreadFactory;
+use codex_thread_store_api::LiveThreadHandle;
+use codex_thread_store_api::ReadThreadParams;
+use codex_thread_store_api::ResumeThreadParams;
+use codex_thread_store_api::SharedLiveThread;
+use codex_thread_store_api::ThreadEventPersistenceMode;
+use codex_thread_store_api::ThreadPersistenceMetadata;
+use codex_thread_store_api::ThreadStore;
 use codex_utils_output_truncation::TruncationPolicy;
 use futures::future::BoxFuture;
 use futures::future::Shared;
 use futures::prelude::*;
-use rmcp::model::ElicitationCapability;
-use rmcp::model::FormElicitationCapability;
-use rmcp::model::ListResourceTemplatesResult;
-use rmcp::model::ListResourcesResult;
-use rmcp::model::PaginatedRequestParams;
-use rmcp::model::ReadResourceRequestParams;
-use rmcp::model::ReadResourceResult;
-use rmcp::model::RequestId;
-use rmcp::model::UrlElicitationCapability;
 use serde_json::Value;
 use tokio::sync::Mutex;
 use tokio::sync::RwLock;
@@ -198,6 +196,7 @@ use uuid::Uuid;
 use crate::client::ModelClient;
 use crate::codex_thread::ThreadConfigSnapshot;
 use crate::compact::collect_user_messages;
+use crate::config::CONFIG_TOML_FILE;
 use crate::config::Config;
 use crate::config::Constrained;
 use crate::config::ConstraintResult;
@@ -206,8 +205,6 @@ use crate::config::StartedNetworkProxy;
 use crate::config::resolve_web_search_mode_for_turn;
 use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
-use crate::thread_rollout_truncation::initial_history_has_prior_user_turns;
-use codex_config_edit::CONFIG_TOML_FILE;
 use codex_config_state::ConfigLayerStackOrdering;
 use codex_config_types::ConfigLayerSource;
 use codex_config_types::McpServerConfig;
@@ -217,6 +214,7 @@ use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 #[cfg(test)]
 use codex_protocol::exec_output::StreamOutput;
+use codex_rollout_api::initial_history_has_prior_user_turns;
 
 mod config_lock;
 mod handlers;
@@ -305,7 +303,6 @@ pub(crate) struct PreviousTurnSettings {
 use crate::SkillLoadOutcome;
 #[cfg(test)]
 use crate::SkillMetadata;
-use crate::SkillsManager;
 use crate::agents_md::AgentsMdManager;
 use crate::context::UserInstructions;
 use crate::exec_policy::ExecPolicyUpdateError;
@@ -321,6 +318,8 @@ use crate::state::MailboxDeliveryPhase;
 use crate::state::PendingRequestPermissions;
 use crate::state::SessionServices;
 use crate::state::SessionState;
+use crate::state_db_bridge as state_db;
+use crate::state_db_bridge::StateDbHandle;
 #[cfg(test)]
 use crate::stream_events_utils::HandleOutputCtx;
 #[cfg(test)]
@@ -337,14 +336,15 @@ use crate::turn_timing::record_turn_ttfm_metric;
 use crate::unified_exec::UnifiedExecProcessManager;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
 use codex_auth_types::TelemetryAuthMode;
-use codex_core_plugins::PluginLoadOutcome;
-use codex_core_plugins::PluginsManager;
-use codex_git_utils::get_git_repo_root;
-use codex_mcp::compute_auth_statuses;
-use codex_mcp::effective_mcp_servers_from_configured;
-use codex_mcp::host_owned_codex_apps_enabled;
+use codex_core_plugins_api::PluginLoadOutcome;
+use codex_core_plugins_api::PluginRuntime;
+use codex_core_plugins_api::SharedPluginRuntime;
+use codex_core_skills_api::SharedSkillsRuntime;
+use codex_git_info::get_git_repo_root;
+use codex_mcp_types::effective_mcp_servers_from_configured;
+use codex_mcp_types::host_owned_codex_apps_enabled;
+use codex_memories_read_api::SharedMemoryToolDeveloperInstructionsProvider;
 use codex_metrics_api::THREAD_STARTED_METRIC;
-use codex_otel::SessionTelemetry;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
@@ -386,9 +386,12 @@ use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::TokenUsageInfo;
 use codex_protocol::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
-use codex_tools::ToolEnvironmentMode;
-use codex_tools::ToolsConfig;
-use codex_tools::ToolsConfigParams;
+use codex_sandboxing_api::SharedSandboxRuntime;
+use codex_session_telemetry_api::SharedSessionTelemetry;
+use codex_session_telemetry_api::SharedSessionTelemetryFactory;
+use codex_tool_config::ToolEnvironmentMode;
+use codex_tool_config::ToolsConfig;
+use codex_tool_config::ToolsConfigParams;
 use codex_trace_context::context_from_w3c_trace_context;
 use codex_trace_context::current_span_trace_id;
 use codex_trace_context::current_span_w3c_trace_context;
@@ -422,13 +425,24 @@ pub struct CodexSpawnOk {
 pub(crate) struct CodexSpawnArgs {
     pub(crate) config: Config,
     pub(crate) installation_id: String,
-    pub(crate) auth_manager: Arc<AuthManager>,
+    pub(crate) terminal_type: String,
+    pub(crate) auth_runtime: SharedAuthRuntime,
+    pub(crate) provider_auth_manager: Option<SharedModelProviderAuthManager>,
     pub(crate) model_provider_factory: SharedModelProviderFactory,
+    pub(crate) api_runtime_factory: SharedApiRuntimeFactory,
+    pub(crate) session_telemetry_factory: SharedSessionTelemetryFactory,
+    pub(crate) memory_tool_developer_instructions_provider:
+        SharedMemoryToolDeveloperInstructionsProvider,
+    pub(crate) hook_runtime_factory: SharedHookRuntimeFactory,
+    pub(crate) sandbox_runtime: SharedSandboxRuntime,
     pub(crate) models_manager: SharedModelsManager,
     pub(crate) environment_manager: Arc<dyn ExecEnvironmentProvider>,
-    pub(crate) skills_manager: Arc<SkillsManager>,
-    pub(crate) plugins_manager: Arc<PluginsManager>,
+    pub(crate) skills_manager: SharedSkillsRuntime,
+    pub(crate) plugins_manager: SharedPluginRuntime,
     pub(crate) mcp_manager: Arc<McpManager>,
+    pub(crate) mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
+    pub(crate) mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
+    pub(crate) network_proxy_runtime_factory: SharedNetworkProxyRuntimeFactory,
     pub(crate) extensions: Arc<codex_extension_api::ExtensionRegistry<crate::config::Config>>,
     pub(crate) conversation_history: InitialHistory,
     pub(crate) session_source: SessionSource,
@@ -439,6 +453,7 @@ pub(crate) struct CodexSpawnArgs {
     pub(crate) metrics_service_name: Option<String>,
     pub(crate) inherited_shell_snapshot: Option<Arc<ShellSnapshot>>,
     pub(crate) inherited_exec_policy: Option<Arc<ExecPolicyManager>>,
+    pub(crate) exec_policy_loader: Arc<dyn ExecPolicyLoader>,
     /// Parent rollout trace used only to derive fresh spawned child traces.
     ///
     /// Root sessions and non-thread-spawn subagents pass a disabled context;
@@ -449,6 +464,8 @@ pub(crate) struct CodexSpawnArgs {
     pub(crate) environment_selections: ResolvedTurnEnvironments,
     pub(crate) analytics_events_client: Option<AnalyticsEventsClient>,
     pub(crate) thread_store: Arc<dyn ThreadStore>,
+    pub(crate) state_db: Option<StateDbHandle>,
+    pub(crate) live_thread_factory: Arc<dyn LiveThreadFactory>,
     pub(crate) attestation_provider: Option<Arc<dyn AttestationProvider>>,
     pub(crate) active_event_subscriptions: Arc<crate::ActiveEventSubscriptionTracker>,
     pub(crate) openai_file_uploader: SharedOpenAiFileUploader,
@@ -464,6 +481,51 @@ const CYBER_SAFETY_URL: &str = "https://developers.openai.com/codex/concepts/cyb
 
 fn duration_from_config_ms(ms: i64) -> Duration {
     Duration::from_millis(ms.max(0) as u64)
+}
+
+/// Owns a live thread while session initialization is still fallible.
+struct LiveThreadInitGuard {
+    live_thread: Option<SharedLiveThread>,
+}
+
+impl LiveThreadInitGuard {
+    fn new(live_thread: Option<SharedLiveThread>) -> Self {
+        Self { live_thread }
+    }
+
+    fn as_ref(&self) -> Option<&SharedLiveThread> {
+        self.live_thread.as_ref()
+    }
+
+    fn commit(&mut self) {
+        self.live_thread = None;
+    }
+
+    async fn discard(&mut self) {
+        let Some(live_thread) = self.live_thread.take() else {
+            return;
+        };
+        if let Err(err) = live_thread.discard().await {
+            warn!("failed to discard thread persistence for failed session init: {err}");
+        }
+    }
+}
+
+impl Drop for LiveThreadInitGuard {
+    fn drop(&mut self) {
+        let Some(live_thread) = self.live_thread.take() else {
+            return;
+        };
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            warn!("failed to discard thread persistence for failed session init: no Tokio runtime");
+            return;
+        };
+        handle.spawn(async move {
+            if let Err(err) = live_thread.discard().await {
+                warn!("failed to discard thread persistence for failed session init: {err}");
+            }
+        });
+    }
 }
 
 impl Codex {
@@ -496,13 +558,22 @@ impl Codex {
         let CodexSpawnArgs {
             mut config,
             installation_id,
-            auth_manager,
+            terminal_type,
+            auth_runtime,
+            provider_auth_manager,
             model_provider_factory,
+            api_runtime_factory,
+            session_telemetry_factory,
             models_manager,
             environment_manager,
+            sandbox_runtime,
             skills_manager,
             plugins_manager,
             mcp_manager,
+            mcp_auth_runtime,
+            mcp_connection_runtime_factory,
+            network_proxy_runtime_factory,
+            hook_runtime_factory,
             extensions,
             conversation_history,
             session_source,
@@ -514,16 +585,20 @@ impl Codex {
             inherited_shell_snapshot,
             user_shell_override,
             inherited_exec_policy,
+            exec_policy_loader,
             parent_rollout_thread_trace,
             parent_trace: _,
             environment_selections,
             analytics_events_client,
             thread_store,
+            state_db,
+            live_thread_factory,
             attestation_provider,
             active_event_subscriptions,
             openai_file_uploader,
             code_mode_service,
             code_mode_runtime_factory,
+            memory_tool_developer_instructions_provider,
             workflow_runs,
         } = args;
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
@@ -558,7 +633,7 @@ impl Codex {
             Arc::clone(exec_policy)
         } else {
             Arc::new(
-                ExecPolicyManager::load(&config.config_layer_stack)
+                ExecPolicyManager::load(&config.config_layer_stack, exec_policy_loader.as_ref())
                     .await
                     .map_err(|err| CodexErr::Fatal(format!("failed to load rules: {err}")))?,
             )
@@ -602,12 +677,8 @@ impl Codex {
                 Some(thread_id) => {
                     let state_db_ctx = if config.ephemeral {
                         None
-                    } else if let Some(local_store) =
-                        thread_store.as_any().downcast_ref::<LocalThreadStore>()
-                    {
-                        local_store.state_db().await
                     } else {
-                        None
+                        state_db.clone()
                     };
                     state_db::get_dynamic_tools(state_db_ctx.as_deref(), thread_id, "codex_spawn")
                         .await
@@ -634,13 +705,14 @@ impl Codex {
                 developer_instructions: None,
             },
         };
-        let account_plan_type = auth_manager
-            .auth_cached()
-            .and_then(|auth| auth.account_plan_type());
+        let auth_runtime_ref: &dyn AuthRuntime = auth_runtime.as_ref();
+        let uses_enterprise_default_service_tier = auth_runtime_ref
+            .telemetry_snapshot()
+            .uses_enterprise_default_service_tier;
         let service_tier = get_service_tier(
             config.service_tier.clone(),
             config.notices.fast_default_opt_out.unwrap_or(false),
-            account_plan_type,
+            uses_enterprise_default_service_tier,
             config.features.enabled(Feature::FastMode),
         );
         let session_configuration = SessionConfiguration {
@@ -664,6 +736,7 @@ impl Codex {
             environments: environment_selections.to_selections(),
             original_config_do_not_use: Arc::clone(&config),
             metrics_service_name,
+            terminal_type,
             app_server_client_name: None,
             app_server_client_version: None,
             session_source,
@@ -682,10 +755,12 @@ impl Codex {
             session_configuration,
             config.clone(),
             installation_id,
-            auth_manager.clone(),
+            auth_runtime,
+            provider_auth_manager,
             model_provider_factory,
             models_manager.clone(),
             exec_policy,
+            exec_policy_loader,
             tx_event.clone(),
             agent_status_tx.clone(),
             conversation_history,
@@ -693,11 +768,21 @@ impl Codex {
             skills_manager,
             plugins_manager,
             mcp_manager.clone(),
+            mcp_auth_runtime,
+            mcp_connection_runtime_factory,
+            api_runtime_factory,
+            session_telemetry_factory,
+            memory_tool_developer_instructions_provider,
+            hook_runtime_factory,
+            sandbox_runtime,
+            network_proxy_runtime_factory,
             extensions,
             agent_control,
             environment_manager,
             analytics_events_client,
             thread_store,
+            state_db,
+            live_thread_factory,
             parent_rollout_thread_trace,
             attestation_provider,
             active_event_subscriptions,
@@ -874,16 +959,14 @@ async fn merge_plugin_agent_roles(config: &mut Config, plugin_outcome: &PluginLo
 fn get_service_tier(
     configured_service_tier: Option<String>,
     fast_default_opt_out: bool,
-    account_plan_type: Option<AccountPlanType>,
+    uses_enterprise_default_service_tier: bool,
     fast_mode_enabled: bool,
 ) -> Option<String> {
     if configured_service_tier.is_some() || fast_default_opt_out || !fast_mode_enabled {
         return configured_service_tier;
     }
 
-    account_plan_type
-        .is_some_and(is_enterprise_default_service_tier_plan)
-        .then_some(ServiceTier::Fast.request_value().to_string())
+    uses_enterprise_default_service_tier.then_some(ServiceTier::Fast.request_value().to_string())
 }
 
 fn session_permission_profile_state_from_config(
@@ -914,7 +997,7 @@ pub(crate) fn session_loop_termination_from_handle(
 }
 
 async fn thread_title_from_thread_store(
-    live_thread: Option<&LiveThread>,
+    live_thread: Option<&dyn LiveThreadHandle>,
     thread_store: &Arc<dyn ThreadStore>,
     conversation_id: ThreadId,
 ) -> Option<String> {
@@ -943,6 +1026,16 @@ async fn thread_title_from_thread_store(
 }
 
 impl Session {
+    pub(crate) async fn thread_config_snapshot(&self) -> ThreadConfigSnapshot {
+        let state = self.state.lock().await;
+        state.session_configuration.thread_config_snapshot()
+    }
+
+    pub(crate) async fn terminal_type(&self) -> String {
+        let state = self.state.lock().await;
+        state.session_configuration.terminal_type.clone()
+    }
+
     pub(crate) async fn app_server_client_metadata(&self) -> AppServerClientMetadata {
         let state = self.state.lock().await;
         AppServerClientMetadata {
@@ -1001,6 +1094,7 @@ impl Session {
 
     async fn start_managed_network_proxy(
         spec: &crate::config::NetworkProxySpec,
+        factory: &dyn NetworkProxyRuntimeFactory,
         exec_policy: &codex_execpolicy_api::Policy,
         permission_profile: &PermissionProfile,
         network_policy_decider: Option<Arc<dyn NetworkPolicyDecider>>,
@@ -1019,6 +1113,7 @@ impl Session {
             .unwrap_or_else(|_| spec.clone());
         let network_proxy = spec
             .start_proxy(
+                factory,
                 permission_profile,
                 network_policy_decider,
                 blocked_request_observer,
@@ -1107,13 +1202,13 @@ impl Session {
     pub(crate) fn live_thread_for_persistence(
         &self,
         operation: &str,
-    ) -> anyhow::Result<&LiveThread> {
+    ) -> anyhow::Result<&dyn LiveThreadHandle> {
         self.live_thread()
             .ok_or_else(|| anyhow::anyhow!("Session persistence is disabled; cannot {operation}."))
     }
 
-    pub(crate) fn live_thread(&self) -> Option<&LiveThread> {
-        self.services.live_thread.as_ref()
+    pub(crate) fn live_thread(&self) -> Option<&dyn LiveThreadHandle> {
+        self.services.live_thread.as_deref()
     }
 
     /// Flush rollout writes and return the final durability-barrier result.
@@ -1204,7 +1299,7 @@ impl Session {
         turn_context: &TurnContext,
     ) -> Option<i64> {
         let state = self.state.lock().await;
-        state.history.estimate_token_count(turn_context)
+        estimate_history_token_count(&state.history, turn_context)
     }
 
     pub(crate) async fn get_base_instructions(&self) -> BaseInstructions {
@@ -1520,6 +1615,7 @@ impl Session {
             config.as_ref(),
             self.services.plugins_manager.as_ref(),
             self.services.user_shell.as_ref(),
+            self.services.hook_runtime_factory.as_ref(),
         )
         .await;
 
@@ -1530,7 +1626,11 @@ impl Session {
             &state.session_configuration.original_config_do_not_use,
             &config,
         ) {
-            self.services.hooks.store(Arc::new(hooks));
+            *self
+                .services
+                .hooks
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = hooks;
         }
     }
 
@@ -3034,8 +3134,11 @@ impl Session {
         // Add developer instructions for memories.
         if turn_context.features.enabled(Feature::MemoryTool)
             && turn_context.config.memories.use_memories
-            && let Some(memory_prompt) =
-                build_memory_tool_developer_instructions(&turn_context.config.codex_home).await
+            && let Some(memory_prompt) = self
+                .services
+                .memory_tool_developer_instructions_provider
+                .build_memory_tool_developer_instructions(&turn_context.config.codex_home)
+                .await
         {
             developer_sections.push(memory_prompt);
         }
@@ -3074,7 +3177,7 @@ impl Session {
             let mcp_connection_manager = self.services.mcp_connection_manager.read().await;
             let accessible_and_enabled_connectors =
                 connectors::list_accessible_and_enabled_connectors_from_manager(
-                    &mcp_connection_manager,
+                    mcp_connection_manager.as_ref(),
                     &turn_context.config,
                 )
                 .await;
@@ -3089,7 +3192,7 @@ impl Session {
                 &turn_context.turn_skills.outcome,
                 default_skill_metadata_budget(turn_context.model_info.context_window),
                 SkillRenderSideEffects::ThreadStart {
-                    session_telemetry: &self.services.session_telemetry,
+                    session_telemetry: self.services.session_telemetry.as_ref(),
                 },
             );
             if let Some(available_skills) = available_skills {
@@ -3820,8 +3923,13 @@ impl Session {
         }
     }
 
-    pub(crate) fn hooks(&self) -> Arc<Hooks> {
-        self.services.hooks.load_full()
+    pub(crate) fn hooks(&self) -> SharedHookRuntime {
+        let hooks = self
+            .services
+            .hooks
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Arc::clone(&*hooks)
     }
 
     pub(crate) fn user_shell(&self) -> Arc<shell::Shell> {
@@ -3848,7 +3956,7 @@ impl Session {
 
     pub(crate) async fn take_pending_session_start_source(
         &self,
-    ) -> Option<codex_hooks::SessionStartSource> {
+    ) -> Option<codex_hooks_api::SessionStartSource> {
         let mut state = self.state.lock().await;
         state.take_pending_session_start_source()
     }
@@ -3858,258 +3966,15 @@ impl Session {
     }
 }
 
-fn is_structured_display_response_item(item: &ResponseItem) -> bool {
-    matches!(
-        item,
-        ResponseItem::CommandWait { .. }
-            | ResponseItem::CommandWriteStdin { .. }
-            | ResponseItem::CommandExecutionNotification { .. }
-            | ResponseItem::WorkflowRunProgress { .. }
-            | ResponseItem::EventCommandEvent { .. }
-            | ResponseItem::EventDrivenTool { .. }
-            | ResponseItem::ThreadGoalUpdate { .. }
-            | ResponseItem::InterAgentCommunication {
-                communication: InterAgentCommunication {
-                    operation: InterAgentOperation::SpawnAgent
-                        | InterAgentOperation::SendMessage
-                        | InterAgentOperation::FollowupTask
-                        | InterAgentOperation::ChildCompletion,
-                    ..
-                },
-                ..
-            }
-    )
-}
-
-fn injected_context_item_from_response_items(items: &[ResponseItem]) -> Option<TurnItem> {
-    let sections: Vec<InjectedContextSection> = items
-        .iter()
-        .filter_map(|item| match item {
-            ResponseItem::Message { role, content, .. }
-                if role == "developer" || role == "user" =>
-            {
-                Some((role.as_str(), content))
-            }
-            _ => None,
-        })
-        .flat_map(|(role, content)| {
-            content.iter().filter_map(move |item| match item {
-                ContentItem::InputText { text } if !text.trim().is_empty() => {
-                    Some(InjectedContextSection {
-                        label: injected_context_section_label(role, text).to_string(),
-                        text: text.clone(),
-                    })
-                }
-                _ => None,
-            })
-        })
-        .collect();
-
-    if sections.is_empty() {
-        return None;
-    }
-
-    let mut preview_labels = Vec::new();
-    for section in &sections {
-        if !preview_labels.contains(&section.label) {
-            preview_labels.push(section.label.clone());
-        }
-        if preview_labels.len() == 3 {
-            break;
-        }
-    }
-
-    Some(TurnItem::InjectedContext(InjectedContextItem {
-        id: uuid::Uuid::new_v4().to_string(),
-        title: "Init Context".to_string(),
-        preview: preview_labels.join(" • "),
-        sections,
-    }))
-}
-
-fn injected_context_section_label(role: &str, text: &str) -> &'static str {
-    if text.contains("# AGENTS.md instructions") {
-        return "AGENTS.md";
-    }
-    if text.contains("<environment_context>") {
-        return "Environment";
-    }
-    if role == "developer" {
-        return "Developer";
-    }
-    "Context"
-}
-
-fn started_display_event_from_model_item(
-    thread_id: codex_protocol::ThreadId,
-    turn_id: String,
-    item: &ResponseItem,
-    started_at_ms: i64,
-) -> Option<EventMsg> {
-    match item {
-        ResponseItem::CommandWait {
-            id: Some(id),
-            command_id,
-            status,
-            notification,
-            exit_code,
-            wall_time_seconds,
-            wait_timeout_ms,
-            created_at_ms,
-        } => Some(EventMsg::CommandWaitStarted(CommandWaitDisplayEvent {
-            thread_id,
-            turn_id,
-            id: id.clone(),
-            command_id: command_id.clone(),
-            status: *status,
-            notification: *notification,
-            exit_code: *exit_code,
-            wall_time_seconds: *wall_time_seconds,
-            wait_timeout_ms: *wait_timeout_ms,
-            created_at_ms: *created_at_ms,
-            lifecycle_at_ms: started_at_ms,
-        })),
-        _ => None,
-    }
-}
-
-fn completed_display_event_from_model_item(
-    thread_id: codex_protocol::ThreadId,
-    turn_id: String,
-    item: &ResponseItem,
-    completed_at_ms: i64,
-) -> Option<EventMsg> {
-    match item {
-        ResponseItem::CommandWait {
-            id: Some(id),
-            command_id,
-            status,
-            notification,
-            exit_code,
-            wall_time_seconds,
-            wait_timeout_ms,
-            created_at_ms,
-        } => Some(EventMsg::CommandWaitCompleted(CommandWaitDisplayEvent {
-            thread_id,
-            turn_id,
-            id: id.clone(),
-            command_id: command_id.clone(),
-            status: *status,
-            notification: *notification,
-            exit_code: *exit_code,
-            wall_time_seconds: *wall_time_seconds,
-            wait_timeout_ms: *wait_timeout_ms,
-            created_at_ms: *created_at_ms,
-            lifecycle_at_ms: completed_at_ms,
-        })),
-        ResponseItem::CommandWriteStdin {
-            id: Some(id),
-            command_id,
-            bytes_written,
-            contains_newline,
-            created_at_ms,
-        } => Some(EventMsg::CommandWriteStdinCompleted(
-            CommandWriteStdinDisplayEvent {
-                thread_id,
-                turn_id,
-                id: id.clone(),
-                command_id: command_id.clone(),
-                bytes_written: *bytes_written,
-                contains_newline: *contains_newline,
-                created_at_ms: *created_at_ms,
-                completed_at_ms,
-            },
-        )),
-        ResponseItem::CommandExecutionNotification {
-            id: Some(id),
-            command_item_id,
-            kind,
-            message,
-            output,
-            exit_code,
-            created_at_ms,
-        } => Some(EventMsg::CommandExecutionNotificationCompleted(
-            CommandExecutionNotificationDisplayEvent {
-                thread_id,
-                turn_id,
-                id: id.clone(),
-                command_item_id: command_item_id.clone(),
-                kind: *kind,
-                message: message.clone(),
-                output: output.clone(),
-                exit_code: *exit_code,
-                created_at_ms: *created_at_ms,
-                completed_at_ms,
-            },
-        )),
-        ResponseItem::WorkflowRunProgress {
-            id: Some(id),
-            event,
-        } => Some(EventMsg::WorkflowRunProgressCompleted(
-            WorkflowRunProgressDisplayEvent {
-                thread_id,
-                turn_id,
-                id: id.clone(),
-                event: event.clone(),
-                completed_at_ms,
-            },
-        )),
-        ResponseItem::EventCommandEvent {
-            id: Some(id),
-            event,
-        } => Some(EventMsg::EventCommandEventCompleted(
-            EventCommandDisplayEvent {
-                thread_id,
-                turn_id,
-                id: id.clone(),
-                event: event.clone(),
-                completed_at_ms,
-            },
-        )),
-        ResponseItem::EventDrivenTool {
-            id: Some(id),
-            trigger,
-        } => Some(EventMsg::EventDrivenToolCompleted(
-            EventDrivenToolDisplayEvent {
-                thread_id,
-                turn_id,
-                id: id.clone(),
-                trigger: trigger.clone(),
-                completed_at_ms,
-            },
-        )),
-        ResponseItem::ThreadGoalUpdate {
-            id: Some(id),
-            goal,
-            action,
-            source,
-            previous_status,
-        } => Some(EventMsg::ThreadGoalUpdateCompleted(
-            ThreadGoalUpdateDisplayEvent {
-                thread_id,
-                turn_id,
-                id: id.clone(),
-                goal: goal.clone(),
-                action: *action,
-                source: *source,
-                previous_status: *previous_status,
-                completed_at_ms,
-            },
-        )),
-        ResponseItem::InterAgentCommunication {
-            id: Some(id),
-            communication,
-        } => Some(EventMsg::InterAgentCommunicationCompleted(
-            InterAgentCommunicationDisplayEvent {
-                thread_id,
-                turn_id,
-                id: id.clone(),
-                communication: communication.clone(),
-                completed_at_ms,
-            },
-        )),
-        _ => None,
-    }
+fn estimate_history_token_count(
+    history: &ContextManager,
+    turn_context: &TurnContext,
+) -> Option<i64> {
+    let personality = turn_context.personality.or(turn_context.config.personality);
+    let base_instructions = BaseInstructions {
+        text: turn_context.model_info.get_model_instructions(personality),
+    };
+    history.estimate_token_count_with_base_instructions(&base_instructions)
 }
 
 pub(crate) fn emit_subagent_session_started(
@@ -4145,14 +4010,13 @@ pub(crate) fn emit_subagent_session_started(
     });
 }
 
-use codex_memories_read::build_memory_tool_developer_instructions;
-
 /// Builds the hook engine for one config snapshot, including any enabled plugin hooks.
 async fn build_hooks_for_config(
     config: &Config,
-    plugins_manager: &PluginsManager,
+    plugins_manager: &dyn PluginRuntime,
     user_shell: &crate::shell::Shell,
-) -> Hooks {
+    hook_runtime_factory: &dyn codex_hooks_api::HookRuntimeFactory,
+) -> SharedHookRuntime {
     let mut hook_shell_argv = user_shell.derive_exec_args("", /*use_login_shell*/ false);
     let hook_shell_program = hook_shell_argv.remove(0);
     let _ = hook_shell_argv.pop();
@@ -4167,7 +4031,7 @@ async fn build_hooks_for_config(
     } else {
         (Vec::new(), Vec::new())
     };
-    Hooks::new(HooksConfig {
+    hook_runtime_factory.create(HooksConfig {
         legacy_notify_argv: config.notify.clone(),
         feature_enabled: config.features.enabled(Feature::CodexHooks),
         bypass_hook_trust: config.bypass_hook_trust,

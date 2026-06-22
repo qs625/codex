@@ -18,5 +18,4 @@ codex-config-types = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-thiserror = { workspace = true }
 ts-rs = { workspace = true }

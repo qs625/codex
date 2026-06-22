@@ -13,8 +13,8 @@ use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::function_call_output_content_items_to_text;
-use codex_tools::LoadableToolSpec;
-use codex_tools::ToolName;
+use codex_tool_planning::LoadableToolSpec;
+use codex_tool_planning::ToolName;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::formatted_truncate_text;
 use codex_utils_string::take_bytes_at_char_boundary;
@@ -25,8 +25,8 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-pub use codex_tools::ToolOutput;
-pub use codex_tools::ToolPayload;
+pub use codex_tool_planning::ToolOutput;
+pub use codex_tool_planning::ToolPayload;
 
 pub type SharedTurnDiffTracker = Arc<Mutex<TurnDiffTracker>>;
 

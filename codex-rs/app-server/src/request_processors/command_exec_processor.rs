@@ -6,6 +6,7 @@ pub(crate) struct CommandExecRequestProcessor {
     config: Arc<Config>,
     outgoing: Arc<OutgoingMessageSender>,
     command_exec_manager: CommandExecManager,
+    sandbox_runtime: codex_sandboxing_api::SharedSandboxRuntime,
 }
 
 impl CommandExecRequestProcessor {
@@ -13,12 +14,14 @@ impl CommandExecRequestProcessor {
         arg0_paths: Arg0DispatchPaths,
         config: Arc<Config>,
         outgoing: Arc<OutgoingMessageSender>,
+        sandbox_runtime: codex_sandboxing_api::SharedSandboxRuntime,
     ) -> Self {
         Self {
             arg0_paths,
             config,
             outgoing,
             command_exec_manager: CommandExecManager::default(),
+            sandbox_runtime,
         }
     }
 
@@ -161,9 +164,11 @@ impl CommandExecRequestProcessor {
         };
         let managed_network_requirements_enabled =
             self.config.managed_network_requirements_enabled();
+        let network_proxy_runtime_factory = codex_network_proxy::DefaultNetworkProxyRuntimeFactory;
         let started_network_proxy = match self.config.permissions.network.as_ref() {
             Some(spec) => match spec
                 .start_proxy(
+                    &network_proxy_runtime_factory,
                     self.config.permissions.permission_profile(),
                     /*policy_decider*/ None,
                     /*blocked_request_observer*/ None,
@@ -213,7 +218,7 @@ impl CommandExecRequestProcessor {
             env,
             network: started_network_proxy
                 .as_ref()
-                .map(codex_core::config::StartedNetworkProxy::proxy),
+                .map(|started_proxy| started_proxy.proxy()),
             sandbox_permissions: SandboxPermissions::UseDefault,
             windows_sandbox_level,
             windows_sandbox_private_desktop: self
@@ -287,6 +292,7 @@ impl CommandExecRequestProcessor {
             &sandbox_cwd,
             &codex_linux_sandbox_exe,
             use_legacy_landlock,
+            self.sandbox_runtime.as_ref(),
         )
         .map_err(|err| internal_error(format!("exec failed: {err}")))?;
         self.command_exec_manager

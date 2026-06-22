@@ -48,7 +48,8 @@ use crate::session::SUBMISSION_CHANNEL_CAPACITY;
 use crate::session::emit_subagent_session_started;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use codex_login::AuthManager;
+use codex_auth_types::SharedAuthRuntime;
+use codex_model_provider_api::SharedModelProviderAuthManager;
 use codex_models_manager_api::SharedModelsManager;
 use codex_protocol::error::CodexErr;
 use codex_protocol::protocol::InitialHistory;
@@ -64,7 +65,8 @@ use crate::session::completed_session_loop_termination;
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_codex_thread_interactive(
     config: Config,
-    auth_manager: Arc<AuthManager>,
+    auth_runtime: SharedAuthRuntime,
+    provider_auth_manager: Option<SharedModelProviderAuthManager>,
     models_manager: SharedModelsManager,
     parent_session: Arc<Session>,
     parent_ctx: Arc<TurnContext>,
@@ -74,16 +76,35 @@ pub(crate) async fn run_codex_thread_interactive(
 ) -> Result<Codex, CodexErr> {
     let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
     let (tx_ops, rx_ops) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
+    let terminal_type = parent_session.terminal_type().await;
     let CodexSpawnOk { codex, .. } = Box::pin(Codex::spawn(CodexSpawnArgs {
         config,
         installation_id: parent_session.installation_id.clone(),
-        auth_manager,
+        terminal_type,
+        auth_runtime,
+        provider_auth_manager,
         model_provider_factory: Arc::clone(&parent_session.services.model_provider_factory),
+        api_runtime_factory: Arc::clone(&parent_session.services.api_runtime_factory),
+        session_telemetry_factory: Arc::clone(&parent_session.services.session_telemetry_factory),
+        memory_tool_developer_instructions_provider: Arc::clone(
+            &parent_session
+                .services
+                .memory_tool_developer_instructions_provider,
+        ),
+        hook_runtime_factory: Arc::clone(&parent_session.services.hook_runtime_factory),
+        sandbox_runtime: Arc::clone(&parent_session.services.sandbox_runtime),
         models_manager,
         environment_manager: Arc::clone(&parent_session.services.environment_manager),
         skills_manager: Arc::clone(&parent_session.services.skills_manager),
         plugins_manager: Arc::clone(&parent_session.services.plugins_manager),
         mcp_manager: Arc::clone(&parent_session.services.mcp_manager),
+        mcp_auth_runtime: Arc::clone(&parent_session.services.mcp_auth_runtime),
+        mcp_connection_runtime_factory: Arc::clone(
+            &parent_session.services.mcp_connection_runtime_factory,
+        ),
+        network_proxy_runtime_factory: Arc::clone(
+            &parent_session.services.network_proxy_runtime_factory,
+        ),
         extensions: Arc::clone(&parent_session.services.extensions),
         conversation_history: initial_history.unwrap_or(InitialHistory::New),
         session_source: SessionSource::SubAgent(subagent_source.clone()),
@@ -95,11 +116,14 @@ pub(crate) async fn run_codex_thread_interactive(
         inherited_shell_snapshot: None,
         user_shell_override: None,
         inherited_exec_policy: Some(Arc::clone(&parent_session.services.exec_policy)),
-        parent_rollout_thread_trace: codex_rollout_trace::ThreadTraceContext::disabled(),
+        exec_policy_loader: Arc::clone(&parent_session.services.exec_policy_loader),
+        parent_rollout_thread_trace: codex_rollout_trace_api::ThreadTraceContext::disabled(),
         parent_trace: None,
         environment_selections: parent_ctx.environments.clone(),
         analytics_events_client: Some(parent_session.services.analytics_events_client.clone()),
         thread_store: Arc::clone(&parent_session.services.thread_store),
+        state_db: parent_session.services.state_db.clone(),
+        live_thread_factory: Arc::clone(&parent_session.services.live_thread_factory),
         attestation_provider: parent_session.services.attestation_provider.clone(),
         active_event_subscriptions: Arc::clone(&parent_session.services.active_event_subscriptions),
         openai_file_uploader: Arc::clone(&parent_session.services.openai_file_uploader),
@@ -171,7 +195,8 @@ pub(crate) async fn run_codex_thread_interactive(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_codex_thread_one_shot(
     config: Config,
-    auth_manager: Arc<AuthManager>,
+    auth_runtime: SharedAuthRuntime,
+    provider_auth_manager: Option<SharedModelProviderAuthManager>,
     models_manager: SharedModelsManager,
     input: Vec<UserInput>,
     parent_session: Arc<Session>,
@@ -186,7 +211,8 @@ pub(crate) async fn run_codex_thread_one_shot(
     let child_cancel = cancel_token.child_token();
     let io = Box::pin(run_codex_thread_interactive(
         config,
-        auth_manager,
+        auth_runtime,
+        provider_auth_manager,
         models_manager,
         parent_session,
         parent_ctx,

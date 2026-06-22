@@ -248,7 +248,7 @@ async fn backfill_sessions_preserves_existing_git_branch_and_fills_missing_git_f
         "2026-01-27T12:34:56Z",
         thread_uuid,
         Some(GitInfo {
-            commit_hash: Some(codex_git_utils::GitSha::new("rollout-sha")),
+            commit_hash: Some(codex_git_info::GitSha::new("rollout-sha")),
             branch: Some("rollout-branch".to_string()),
             repository_url: Some("git@example.com:openai/codex.git".to_string()),
         }),

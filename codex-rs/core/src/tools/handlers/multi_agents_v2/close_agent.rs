@@ -1,11 +1,10 @@
 use super::*;
 use crate::turn_timing::now_unix_timestamp_ms;
-use codex_tools::ToolSpec;
-use codex_tools::create_close_agent_tool_v2;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::create_close_agent_tool_v2;
 
 pub(crate) struct Handler;
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for Handler {
     type Output = CloseAgentResult;
 
@@ -17,8 +16,14 @@ impl ToolExecutor<ToolInvocation> for Handler {
         Some(create_close_agent_tool_v2())
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        handle_close_agent(invocation).await
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move { handle_close_agent(invocation).await })
     }
 }
 

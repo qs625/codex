@@ -1,9 +1,12 @@
 use super::*;
-use codex_mcp::ElicitationReviewRequest;
-use codex_mcp::ElicitationReviewer;
-use codex_mcp::ElicitationReviewerHandle;
+use codex_mcp_runtime_api::McpToolRuntime;
 use codex_mcp_types::ElicitationAction;
+use codex_mcp_types::ElicitationReviewFuture;
+use codex_mcp_types::ElicitationReviewRequest;
+use codex_mcp_types::ElicitationReviewer;
+use codex_mcp_types::ElicitationReviewerHandle;
 use codex_protocol::config_types::ApprovalsReviewer;
+use codex_protocol::mcp::RequestId;
 use codex_protocol::mcp_approval_meta::APPROVAL_KIND_KEY as MCP_ELICITATION_APPROVAL_KIND_KEY;
 use codex_protocol::mcp_approval_meta::APPROVAL_KIND_MCP_TOOL_CALL as MCP_ELICITATION_APPROVAL_KIND_MCP_TOOL_CALL;
 use codex_protocol::mcp_approval_meta::APPROVALS_REVIEWER_KEY as MCP_ELICITATION_APPROVALS_REVIEWER_KEY;
@@ -16,8 +19,6 @@ use codex_protocol::mcp_approval_meta::TOOL_DESCRIPTION_KEY as MCP_ELICITATION_T
 use codex_protocol::mcp_approval_meta::TOOL_NAME_KEY as MCP_ELICITATION_TOOL_NAME_KEY;
 use codex_protocol::mcp_approval_meta::TOOL_PARAMS_KEY as MCP_ELICITATION_TOOL_PARAMS_KEY;
 use codex_protocol::mcp_approval_meta::TOOL_TITLE_KEY as MCP_ELICITATION_TOOL_TITLE_KEY;
-use rmcp::model::CreateElicitationRequestParams;
-use rmcp::model::Meta;
 use serde_json::Map;
 
 const MCP_ELICITATION_DECLINE_MESSAGE_KEY: &str = "message";
@@ -42,10 +43,7 @@ impl GuardianMcpElicitationReviewer {
 }
 
 impl ElicitationReviewer for GuardianMcpElicitationReviewer {
-    fn review(
-        &self,
-        request: ElicitationReviewRequest,
-    ) -> BoxFuture<'static, anyhow::Result<Option<ElicitationResponse>>> {
+    fn review(&self, request: ElicitationReviewRequest) -> ElicitationReviewFuture {
         let session = self.session.clone();
         Box::pin(async move {
             let Some(session) = session.upgrade() else {
@@ -140,18 +138,10 @@ impl Session {
                 "Overwriting existing pending elicitation for server_name: {server_name}, request_id: {request_id}"
             );
         }
-        let id = match request_id {
-            rmcp::model::NumberOrString::String(value) => {
-                codex_protocol::mcp::RequestId::String(value.to_string())
-            }
-            rmcp::model::NumberOrString::Number(value) => {
-                codex_protocol::mcp::RequestId::Integer(value)
-            }
-        };
         let event = EventMsg::ElicitationRequest(ElicitationRequestEvent {
             turn_id: params.turn_id,
             server_name,
-            id,
+            id: request_id,
             request,
         });
         turn_context
@@ -258,12 +248,8 @@ impl Session {
         arguments: Option<serde_json::Value>,
         meta: Option<serde_json::Value>,
     ) -> anyhow::Result<CallToolResult> {
-        self.services
-            .mcp_connection_manager
-            .read()
-            .await
-            .call_tool(server, tool, arguments, meta)
-            .await
+        let manager = self.services.mcp_connection_manager.read().await;
+        McpToolRuntime::call_tool(manager.as_ref(), server, tool, arguments, meta).await
     }
 
     async fn refresh_mcp_servers_inner(
@@ -273,7 +259,10 @@ impl Session {
         store_mode: OAuthCredentialsStoreMode,
         elicitation_reviewer: Option<ElicitationReviewerHandle>,
     ) {
-        let auth = self.services.auth_manager.auth().await;
+        let auth_snapshot = match turn_context.auth_runtime.as_ref() {
+            Some(auth_runtime) => auth_runtime.auth().await,
+            None => None,
+        };
         let config = self.get_config().await;
         let mcp_config = config
             .to_mcp_config(self.services.plugins_manager.as_ref())
@@ -283,12 +272,23 @@ impl Session {
             .mcp_manager
             .tool_plugin_provenance(config.as_ref())
             .await;
+        let auth_context = crate::mcp::codex_apps_auth_context(auth_snapshot.as_ref());
         let mcp_servers =
-            effective_mcp_servers_from_configured(mcp_servers, &mcp_config, auth.as_ref());
+            effective_mcp_servers_from_configured(mcp_servers, &mcp_config, auth_context.as_ref());
         let host_owned_codex_apps_enabled =
-            host_owned_codex_apps_enabled(&mcp_config, auth.as_ref());
-        let auth_statuses =
-            compute_auth_statuses(mcp_servers.iter(), store_mode, auth.as_ref()).await;
+            host_owned_codex_apps_enabled(&mcp_config, auth_context.as_ref());
+        let auth_statuses = self
+            .services
+            .mcp_auth_runtime
+            .compute_auth_statuses(
+                mcp_servers
+                    .iter()
+                    .map(|(name, server)| (name.clone(), server.clone()))
+                    .collect(),
+                store_mode,
+                host_owned_codex_apps_enabled,
+            )
+            .await;
         let local_environment = self.services.environment_manager.local_environment();
         let mcp_runtime_environment = match turn_context.environments.primary() {
             Some(turn_environment) => crate::mcp::mcp_runtime_environment(
@@ -315,24 +315,31 @@ impl Session {
             guard.cancel();
             *guard = CancellationToken::new();
         }
-        let (refreshed_manager, cancel_token) = McpConnectionManager::new(
-            &mcp_servers,
-            store_mode,
-            auth_statuses,
-            &turn_context.approval_policy,
-            turn_context.sub_id.clone(),
-            self.get_tx_event(),
-            turn_context.permission_profile(),
-            mcp_runtime_environment,
-            config.codex_home.to_path_buf(),
-            codex_apps_tools_cache_key(auth.as_ref()),
-            host_owned_codex_apps_enabled,
-            mcp_config.client_elicitation_capability,
-            tool_plugin_provenance,
-            auth.as_ref(),
-            elicitation_reviewer,
-        )
-        .await;
+        let refreshed_runtime = self
+            .services
+            .mcp_connection_runtime_factory
+            .start(McpConnectionRuntimeStartRequest {
+                mcp_servers,
+                store_mode,
+                auth_entries: auth_statuses,
+                approval_policy: turn_context.approval_policy.clone(),
+                submit_id: turn_context.sub_id.clone(),
+                tx_event: self.get_tx_event(),
+                initial_permission_profile: turn_context.permission_profile().clone(),
+                runtime_environment: mcp_runtime_environment,
+                codex_home: config.codex_home.to_path_buf(),
+                codex_apps_tools_cache_key: codex_apps_tools_cache_key(auth_context.as_ref()),
+                host_owned_codex_apps_enabled,
+                client_elicitation_support: mcp_config.client_elicitation_support,
+                tool_plugin_provenance,
+                codex_apps_auth_provider: crate::mcp::codex_apps_auth_provider(
+                    auth_snapshot.as_ref(),
+                ),
+                elicitation_reviewer,
+            })
+            .await;
+        let refreshed_manager = refreshed_runtime.runtime;
+        let cancel_token = refreshed_runtime.startup_cancellation_token;
         {
             let current_manager = self.services.mcp_connection_manager.read().await;
             refreshed_manager.set_elicitations_auto_deny(current_manager.elicitations_auto_deny());
@@ -465,12 +472,12 @@ fn guardian_elicitation_review_request(
     request: &ElicitationReviewRequest,
 ) -> GuardianElicitationReview {
     let (meta, requested_schema) = match &request.elicitation {
-        CreateElicitationRequestParams::FormElicitationParams {
+        codex_protocol::approvals::ElicitationRequest::Form {
             meta,
             requested_schema,
             ..
         } => (meta, Some(requested_schema)),
-        CreateElicitationRequestParams::UrlElicitationParams { meta, .. } => {
+        codex_protocol::approvals::ElicitationRequest::Url { meta, .. } => {
             return if meta_requests_approval_request(meta) {
                 GuardianElicitationReview::Decline(
                     "guardian MCP elicitation review only supports form elicitations",
@@ -481,7 +488,7 @@ fn guardian_elicitation_review_request(
         }
     };
 
-    let Some(meta) = meta.as_ref().map(|meta| &meta.0) else {
+    let Some(meta) = meta.as_ref().and_then(Value::as_object) else {
         return GuardianElicitationReview::NotRequested;
     };
     if metadata_str(meta, MCP_ELICITATION_REQUEST_TYPE_KEY)
@@ -496,7 +503,7 @@ fn guardian_elicitation_review_request(
             "guardian MCP elicitation metadata must declare mcp_tool_call approval kind",
         );
     }
-    if requested_schema.is_some_and(|schema| !schema.properties.is_empty()) {
+    if requested_schema.is_some_and(requested_schema_has_properties) {
         return GuardianElicitationReview::Decline(
             "guardian MCP elicitation review only supports empty form schemas",
         );
@@ -540,10 +547,18 @@ fn guardian_elicitation_review_request(
     ))
 }
 
-fn meta_requests_approval_request(meta: &Option<Meta>) -> bool {
+fn meta_requests_approval_request(meta: &Option<Value>) -> bool {
     meta.as_ref()
-        .and_then(|meta| metadata_str(&meta.0, MCP_ELICITATION_REQUEST_TYPE_KEY))
+        .and_then(Value::as_object)
+        .and_then(|meta| metadata_str(meta, MCP_ELICITATION_REQUEST_TYPE_KEY))
         == Some(MCP_ELICITATION_REQUEST_TYPE_APPROVAL_REQUEST)
+}
+
+fn requested_schema_has_properties(schema: &Value) -> bool {
+    schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .is_some_and(|properties| !properties.is_empty())
 }
 
 fn metadata_str<'a>(meta: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
@@ -557,10 +572,10 @@ fn metadata_owned_string(meta: &Map<String, Value>, key: &str) -> Option<String>
         .map(ToOwned::to_owned)
 }
 
-fn mcp_elicitation_request_id(id: &RequestId) -> String {
+fn mcp_elicitation_request_id(id: &codex_protocol::mcp::RequestId) -> String {
     match id {
-        rmcp::model::NumberOrString::String(value) => value.to_string(),
-        rmcp::model::NumberOrString::Number(value) => value.to_string(),
+        codex_protocol::mcp::RequestId::String(value) => value.to_string(),
+        codex_protocol::mcp::RequestId::Integer(value) => value.to_string(),
     }
 }
 

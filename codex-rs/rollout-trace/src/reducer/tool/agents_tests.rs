@@ -230,7 +230,9 @@ fn send_message_runtime_payload_targets_delivered_child_message() -> anyhow::Res
         &json!({
             "call_id": "call-send",
             "sender_thread_id": "019d0000-0000-7000-8000-000000000001",
+            "sender_agent_path": "/root",
             "receiver_thread_id": "019d0000-0000-7000-8000-000000000002",
+            "receiver_agent_path": "/root/child",
             "prompt": "hello",
             "status": "running"
         }),
@@ -247,7 +249,9 @@ fn send_message_runtime_payload_targets_delivered_child_message() -> anyhow::Res
         &json!({
             "call_id": "call-send",
             "sender_thread_id": "019d0000-0000-7000-8000-000000000001",
+            "sender_agent_path": "/root",
             "receiver_thread_id": "019d0000-0000-7000-8000-000000000002",
+            "receiver_agent_path": "/root/child",
             "prompt": "hello",
             "status": "running"
         }),
@@ -341,7 +345,9 @@ fn close_agent_runtime_payload_targets_thread() -> anyhow::Result<()> {
         &json!({
             "call_id": "call-close",
             "sender_thread_id": "019d0000-0000-7000-8000-000000000001",
-            "receiver_thread_id": "019d0000-0000-7000-8000-000000000002"
+            "sender_agent_path": "/root",
+            "receiver_thread_id": "019d0000-0000-7000-8000-000000000002",
+            "receiver_agent_path": "/root/child"
         }),
     )?;
     writer.append_with_context(
@@ -356,7 +362,9 @@ fn close_agent_runtime_payload_targets_thread() -> anyhow::Result<()> {
         &json!({
             "call_id": "call-close",
             "sender_thread_id": "019d0000-0000-7000-8000-000000000001",
+            "sender_agent_path": "/root",
             "receiver_thread_id": "019d0000-0000-7000-8000-000000000002",
+            "receiver_agent_path": "/root/child",
             "receiver_agent_nickname": "Scout",
             "receiver_agent_role": "explorer",
             "status": "running"
@@ -638,7 +646,10 @@ fn append_spawn_agent_tool_lifecycle(
         &json!({
             "call_id": "call-spawn",
             "sender_thread_id": "019d0000-0000-7000-8000-000000000001",
-            "prompt": "count"
+            "sender_agent_path": "/root",
+            "prompt": "count",
+            "model": "gpt-test",
+            "reasoning_effort": "medium"
         }),
     )?;
     writer.append_with_context(
@@ -654,7 +665,9 @@ fn append_spawn_agent_tool_lifecycle(
         &json!({
             "call_id": "call-spawn",
             "sender_thread_id": "019d0000-0000-7000-8000-000000000001",
+            "sender_agent_path": "/root",
             "new_thread_id": "019d0000-0000-7000-8000-000000000002",
+            "new_agent_path": "/root/repo_file_counter",
             "prompt": "count",
             "model": "gpt-test",
             "reasoning_effort": "medium",

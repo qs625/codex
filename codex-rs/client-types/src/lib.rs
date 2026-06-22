@@ -5,35 +5,64 @@ use http::Method;
 use http::StatusCode;
 use serde::Serialize;
 use serde_json::Value;
+use std::fmt;
 use std::time::Duration;
-use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum TransportError {
-    #[error("http {status}: {body:?}")]
     Http {
         status: StatusCode,
         url: Option<String>,
         headers: Option<HeaderMap>,
         body: Option<String>,
     },
-    #[error("retry limit reached")]
     RetryLimit,
-    #[error("timeout")]
     Timeout,
-    #[error("network error: {0}")]
     Network(String),
-    #[error("request build error: {0}")]
     Build(String),
 }
 
-#[derive(Debug, Error)]
+impl fmt::Display for TransportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Http { status, body, .. } => write!(f, "http {status}: {body:?}"),
+            Self::RetryLimit => f.write_str("retry limit reached"),
+            Self::Timeout => f.write_str("timeout"),
+            Self::Network(message) => write!(f, "network error: {message}"),
+            Self::Build(message) => write!(f, "request build error: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for TransportError {}
+
+/// API request telemetry callback used by higher-level clients.
+pub trait RequestTelemetry: Send + Sync {
+    fn on_request(
+        &self,
+        attempt: u64,
+        status: Option<StatusCode>,
+        error: Option<&TransportError>,
+        duration: Duration,
+    );
+}
+
+#[derive(Debug)]
 pub enum StreamError {
-    #[error("stream failed: {0}")]
     Stream(String),
-    #[error("timeout")]
     Timeout,
 }
+
+impl fmt::Display for StreamError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Stream(message) => write!(f, "stream failed: {message}"),
+            Self::Timeout => f.write_str("timeout"),
+        }
+    }
+}
+
+impl std::error::Error for StreamError {}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RequestCompression {
@@ -133,28 +162,9 @@ impl Request {
                         );
                     }
 
-                    let pre_compression_bytes = json.len();
-                    let compression_start = std::time::Instant::now();
-                    let (compressed, content_encoding) = match self.compression {
-                        RequestCompression::None => unreachable!("guarded by compression != None"),
-                        RequestCompression::Zstd => (
-                            zstd::stream::encode_all(std::io::Cursor::new(json), 3)
-                                .map_err(|err| err.to_string())?,
-                            HeaderValue::from_static("zstd"),
-                        ),
-                    };
-                    let post_compression_bytes = compressed.len();
-                    let compression_duration = compression_start.elapsed();
-
+                    let (compressed, content_encoding) =
+                        compress_json_body(json, self.compression)?;
                     headers.insert(http::header::CONTENT_ENCODING, content_encoding);
-
-                    tracing::debug!(
-                        pre_compression_bytes,
-                        post_compression_bytes,
-                        compression_duration_ms = compression_duration.as_millis(),
-                        "Compressed request body with zstd"
-                    );
-
                     compressed
                 } else {
                     json
@@ -178,6 +188,40 @@ impl Request {
             }),
         }
     }
+}
+
+fn compress_json_body(
+    json: Vec<u8>,
+    compression: RequestCompression,
+) -> Result<(Vec<u8>, HeaderValue), String> {
+    match compression {
+        RequestCompression::None => unreachable!("guarded by compression != None"),
+        RequestCompression::Zstd => compress_json_body_zstd(json),
+    }
+}
+
+#[cfg(feature = "body-compression")]
+fn compress_json_body_zstd(json: Vec<u8>) -> Result<(Vec<u8>, HeaderValue), String> {
+    let pre_compression_bytes = json.len();
+    let compression_start = std::time::Instant::now();
+    let compressed =
+        zstd::stream::encode_all(std::io::Cursor::new(json), 3).map_err(|err| err.to_string())?;
+    let post_compression_bytes = compressed.len();
+    let compression_duration = compression_start.elapsed();
+
+    tracing::debug!(
+        pre_compression_bytes,
+        post_compression_bytes,
+        compression_duration_ms = compression_duration.as_millis(),
+        "Compressed request body with zstd"
+    );
+
+    Ok((compressed, HeaderValue::from_static("zstd")))
+}
+
+#[cfg(not(feature = "body-compression"))]
+fn compress_json_body_zstd(_json: Vec<u8>) -> Result<(Vec<u8>, HeaderValue), String> {
+    Err("request compression support is not enabled".to_string())
 }
 
 #[derive(Debug, Clone)]

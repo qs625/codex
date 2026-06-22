@@ -56,20 +56,19 @@ use codex_config_diagnostics::ConfigLoadError;
 use codex_config_diagnostics::format_config_error_with_source;
 use codex_config_loader::ConfigLoadOptions;
 use codex_config_loader::LoaderOverrides;
-use codex_core::StateDbHandle;
-use codex_core::check_execpolicy_for_warnings;
+use codex_config_local_loader::LocalConfigLayerLoader;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::find_codex_home;
-use codex_core::config::load_config_as_toml_with_cli_and_load_options;
+use codex_core::config::load_config_as_toml_with_cli_and_load_options_and_layer_loader;
 use codex_core::config::resolve_oss_provider;
 use codex_core::config::resolve_profile_v2_config_path;
-use codex_core::find_thread_meta_by_name_str;
-use codex_core::format_exec_policy_error_with_source;
 use codex_core::path_utils;
+use codex_execpolicy_loader::check_execpolicy_for_warnings;
+use codex_execpolicy_loader::format_exec_policy_error_with_source;
 use codex_feedback::CodexFeedback;
-use codex_git_utils::get_git_repo_root;
+use codex_git_info::get_git_repo_root;
 use codex_login::AuthConfig;
 use codex_login::default_client::set_default_client_residency_requirement;
 use codex_login::default_client::set_default_originator;
@@ -91,6 +90,8 @@ use codex_protocol::protocol::RolloutLine;
 use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::user_input::UserInput;
+use codex_rollout::StateDbHandle;
+use codex_rollout::find_thread_meta_by_name_str;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::canonicalize_existing_preserving_symlinks;
 use codex_utils_cli::SharedCliOptions;
@@ -139,6 +140,7 @@ use std::io::IsTerminal;
 use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use supports_color::Stream;
 use tokio::sync::mpsc;
 use tracing::Instrument;
@@ -153,6 +155,10 @@ use uuid::Uuid;
 
 use crate::cli::Command as ExecCommand;
 use crate::event_processor::EventProcessor;
+
+fn config_builder() -> ConfigBuilder {
+    ConfigBuilder::default().config_layer_loader(Arc::new(LocalConfigLayerLoader::default()))
+}
 
 const DEFAULT_ANALYTICS_ENABLED: bool = true;
 const EXEC_DEFAULT_LOG_FILTER: &str = "error,opentelemetry_sdk=off,opentelemetry_otlp=off";
@@ -330,7 +336,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         ..Default::default()
     };
 
-    let config_toml = match load_config_as_toml_with_cli_and_load_options(
+    let config_toml = match load_config_as_toml_with_cli_and_load_options_and_layer_loader(
         &codex_home,
         Some(&config_cwd),
         cli_kv_overrides.clone(),
@@ -338,6 +344,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
             loader_overrides: loader_overrides.clone(),
             strict_config,
         },
+        Arc::new(LocalConfigLayerLoader::default()),
     )
     .await
     {
@@ -435,7 +442,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         additional_writable_roots: add_dir,
     };
 
-    let config = ConfigBuilder::default()
+    let config = config_builder()
         .cli_overrides(cli_kv_overrides)
         .harness_overrides(overrides)
         .loader_overrides(loader_overrides)
@@ -527,7 +534,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         arg0_paths.codex_self_exe.clone(),
         arg0_paths.codex_linux_sandbox_exe.clone(),
     )?;
-    let state_db = codex_core::init_state_db(&config).await;
+    let state_db = codex_rollout::state_db::init(&config).await;
     let environment_manager = if run_loader_overrides.ignore_user_config {
         EnvironmentManager::from_env(local_runtime_paths).await?
     } else {
@@ -770,7 +777,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
     event_processor.print_config_summary(&config, &prompt_summary, &session_configured);
     if !json_mode
         && let Some(message) =
-            codex_core::config::system_bwrap_warning(config.permissions.permission_profile())
+            codex_sandboxing::system_bwrap_warning(config.permissions.permission_profile())
     {
         event_processor.process_warning(message);
     }

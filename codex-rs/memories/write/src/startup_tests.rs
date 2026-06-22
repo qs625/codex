@@ -13,9 +13,10 @@ use codex_core::ThreadManager;
 use codex_core::config::Config;
 use codex_core::resolve_installation_id;
 use codex_features::Feature;
-use codex_git_utils::diff_since_latest_init;
-use codex_git_utils::reset_git_repository;
+use codex_git_baseline::diff_since_latest_init;
+use codex_git_baseline::reset_git_repository;
 use codex_login::AuthManager;
+use codex_login::model_provider_auth_manager;
 use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ServiceTier;
@@ -30,6 +31,7 @@ use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::user_input::UserInput;
 use codex_rollout_trace::InferenceTraceContext;
+use codex_session_telemetry_api::SessionTelemetry as SessionTelemetryTrait;
 use core_test_support::responses::ResponseMock;
 use core_test_support::responses::ResponsesRequest;
 use core_test_support::responses::ev_assistant_message;
@@ -383,7 +385,7 @@ async fn trigger_memories_startup(test: &TestCodex) {
     let settings = memory_startup_settings_for_test(&config, config_snapshot.session_source);
     start_memories_startup_task(
         memory_runtime_for_config(test, Arc::new(config), settings.session_source.clone()),
-        test.thread_manager.auth_manager(),
+        Arc::clone(&test.auth_manager),
         test.session_configured.thread_id,
         settings,
     );
@@ -403,7 +405,7 @@ fn memory_runtime_for_config(
 ) -> Arc<dyn MemoryStartupRuntime> {
     Arc::new(TestMemoryStartupRuntime::new(
         Arc::clone(&test.thread_manager),
-        test.thread_manager.auth_manager(),
+        Arc::clone(&test.auth_manager),
         test.session_configured.thread_id,
         Arc::clone(&test.codex),
         config,
@@ -521,10 +523,12 @@ impl MemoryStartupRuntime for TestMemoryStartupRuntime {
             let installation_id = resolve_installation_id(&self.config.codex_home).await?;
             let session_source = self.thread.config_snapshot().await.session_source;
             let model_client = ModelClient::new(
-                Some(Arc::clone(&self.auth_manager)),
+                model_provider_auth_manager(Some(Arc::clone(&self.auth_manager))),
                 codex_protocol::SessionId::from(self.thread_id),
                 self.thread_id,
                 installation_id,
+                Arc::new(codex_api::DefaultApiRuntimeFactory),
+                codex_core::test_support::model_provider_factory_for_tests(),
                 self.config.model_provider.clone(),
                 session_source,
                 self.config.model_verbosity,
@@ -552,14 +556,16 @@ impl MemoryStartupRuntime for TestMemoryStartupRuntime {
             let turn_metadata_header =
                 codex_core::build_turn_metadata_header(&self.config.cwd, /*sandbox*/ None).await;
             let mut client_session = model_client.new_session();
+            let telemetry = SessionTelemetryTrait::with_model(
+                &self.session_telemetry,
+                context.model_info.slug.as_str(),
+                context.model_info.slug.as_str(),
+            );
             let mut stream = client_session
                 .stream(
                     &prompt,
                     &context.model_info,
-                    &self.session_telemetry.clone().with_model(
-                        context.model_info.slug.as_str(),
-                        context.model_info.slug.as_str(),
-                    ),
+                    &telemetry,
                     context.reasoning_effort,
                     reasoning_summary,
                     context.service_tier.clone(),
@@ -718,10 +724,12 @@ async fn stream_consolidation_prompt(
     let installation_id = resolve_installation_id(&config.codex_home).await?;
     let session_source = thread.config_snapshot().await.session_source;
     let model_client = ModelClient::new(
-        Some(auth_manager),
+        model_provider_auth_manager(Some(auth_manager)),
         codex_protocol::SessionId::from(thread_id),
         thread_id,
         installation_id,
+        Arc::new(codex_api::DefaultApiRuntimeFactory),
+        codex_core::test_support::model_provider_factory_for_tests(),
         config.model_provider.clone(),
         session_source,
         config.model_verbosity,
@@ -746,11 +754,16 @@ async fn stream_consolidation_prompt(
     let turn_metadata_header =
         codex_core::build_turn_metadata_header(&config.cwd, /*sandbox*/ None).await;
     let mut client_session = model_client.new_session();
+    let telemetry = SessionTelemetryTrait::with_model(
+        &session_telemetry,
+        model_info.slug.as_str(),
+        model_info.slug.as_str(),
+    );
     let mut stream = client_session
         .stream(
             &prompt,
             &model_info,
-            &session_telemetry.with_model(model_info.slug.as_str(), model_info.slug.as_str()),
+            &telemetry,
             Some(reasoning_effort),
             reasoning_summary,
             thread.config_snapshot().await.service_tier,

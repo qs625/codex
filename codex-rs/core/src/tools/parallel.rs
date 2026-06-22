@@ -50,7 +50,7 @@ impl ToolCallRuntime {
 
     pub(crate) fn create_diff_consumer(
         &self,
-        tool_name: &codex_tools::ToolName,
+        tool_name: &codex_tool_planning::ToolName,
     ) -> Option<Box<dyn ToolArgumentDiffConsumer>> {
         self.router.create_diff_consumer(tool_name)
     }

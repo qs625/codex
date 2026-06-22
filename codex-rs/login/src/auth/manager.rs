@@ -18,8 +18,15 @@ use tokio::sync::Semaphore;
 
 use codex_agent_identity::decode_agent_identity_jwt;
 use codex_agent_identity::fetch_agent_identity_jwks;
+use codex_auth_types::AgentIdentityRequestAuthSnapshot;
+use codex_auth_types::AuthManagerConfig;
 use codex_auth_types::AuthMode;
 use codex_auth_types::AuthMode as ApiAuthMode;
+use codex_auth_types::AuthRuntime;
+use codex_auth_types::AuthRuntimeFuture;
+use codex_auth_types::AuthTelemetrySnapshot;
+use codex_auth_types::BearerRequestAuthSnapshot;
+use codex_auth_types::RequestAuthSnapshot;
 use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::ModelProviderAuthInfo;
 
@@ -392,6 +399,35 @@ impl CodexAuth {
             .is_some_and(AccountPlanType::is_workspace_account)
     }
 
+    /// Returns request-auth data for crates that need to attach model/API auth
+    /// headers without depending on the login runtime types.
+    pub fn request_auth_snapshot(&self) -> RequestAuthSnapshot {
+        match self {
+            Self::AgentIdentity(auth) => {
+                let record = auth.record();
+                RequestAuthSnapshot::AgentIdentity(AgentIdentityRequestAuthSnapshot {
+                    agent_runtime_id: record.agent_runtime_id.clone(),
+                    private_key_pkcs8_base64: record.agent_private_key.clone(),
+                    task_id: auth.process_task_id().to_string(),
+                    account_id: auth.account_id().to_string(),
+                    chatgpt_user_id: auth.chatgpt_user_id().to_string(),
+                    is_workspace_account: auth.plan_type().is_workspace_account(),
+                    is_fedramp_account: auth.is_fedramp_account(),
+                })
+            }
+            Self::ApiKey(_) | Self::Chatgpt(_) | Self::ChatgptAuthTokens(_) => {
+                RequestAuthSnapshot::Bearer(BearerRequestAuthSnapshot {
+                    auth_mode: self.auth_mode(),
+                    token: self.get_token().ok(),
+                    account_id: self.get_account_id(),
+                    chatgpt_user_id: self.get_chatgpt_user_id(),
+                    is_workspace_account: self.is_workspace_account(),
+                    is_fedramp_account: self.is_fedramp_account(),
+                })
+            }
+        }
+    }
+
     /// Returns `None` if token-backed ChatGPT auth is unavailable.
     fn get_current_auth_json(&self) -> Option<AuthDotJson> {
         let state = match self {
@@ -467,10 +503,7 @@ pub const CODEX_API_KEY_ENV_VAR: &str = "CODEX_API_KEY";
 pub const CODEX_ACCESS_TOKEN_ENV_VAR: &str = "CODEX_ACCESS_TOKEN";
 
 pub fn read_openai_api_key_from_env() -> Option<String> {
-    env::var(OPENAI_API_KEY_ENV_VAR)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+    codex_auth_types::read_openai_api_key_from_env()
 }
 
 pub fn read_codex_api_key_from_env() -> Option<String> {
@@ -1260,26 +1293,6 @@ pub struct AuthManager {
     external_auth: RwLock<Option<Arc<dyn ExternalAuth>>>,
 }
 
-/// Configuration view required to construct a shared [`AuthManager`].
-///
-/// Implementations should return the auth-related config values for the
-/// already-resolved runtime configuration. The primary implementation is
-/// `codex_core::config::Config`, but this trait keeps `codex-login` independent
-/// from `codex-core`.
-pub trait AuthManagerConfig {
-    /// Returns the Codex home directory used for auth storage.
-    fn codex_home(&self) -> PathBuf;
-
-    /// Returns the CLI auth credential storage mode for auth loading.
-    fn cli_auth_credentials_store_mode(&self) -> AuthCredentialsStoreMode;
-
-    /// Returns the workspace IDs that ChatGPT auth should be restricted to, if any.
-    fn forced_chatgpt_workspace_id(&self) -> Option<Vec<String>>;
-
-    /// Returns the ChatGPT backend base URL used for first-party backend authorization.
-    fn chatgpt_base_url(&self) -> String;
-}
-
 impl Debug for AuthManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AuthManager")
@@ -1885,6 +1898,50 @@ impl AuthManager {
 
         Ok(())
     }
+}
+
+impl AuthRuntime for AuthManager {
+    fn auth(&self) -> AuthRuntimeFuture<'_, Option<RequestAuthSnapshot>> {
+        Box::pin(async move {
+            AuthManager::auth(self)
+                .await
+                .as_ref()
+                .map(CodexAuth::request_auth_snapshot)
+        })
+    }
+
+    fn auth_cached(&self) -> Option<RequestAuthSnapshot> {
+        AuthManager::auth_cached(self)
+            .as_ref()
+            .map(CodexAuth::request_auth_snapshot)
+    }
+
+    fn telemetry_snapshot(&self) -> AuthTelemetrySnapshot {
+        let auth = AuthManager::auth_cached(self);
+        AuthTelemetrySnapshot {
+            auth_mode: AuthManager::auth_mode(self),
+            account_id: auth.as_ref().and_then(CodexAuth::get_account_id),
+            account_email: auth.as_ref().and_then(CodexAuth::get_account_email),
+            uses_enterprise_default_service_tier: auth
+                .as_ref()
+                .and_then(CodexAuth::account_plan_type)
+                .is_some_and(is_enterprise_default_service_tier_plan),
+        }
+    }
+
+    fn codex_api_key_env_enabled(&self) -> bool {
+        AuthManager::codex_api_key_env_enabled(self)
+    }
+
+    fn current_auth_uses_codex_backend(&self) -> bool {
+        AuthManager::current_auth_uses_codex_backend(self)
+    }
+}
+
+fn is_enterprise_default_service_tier_plan(plan_type: AccountPlanType) -> bool {
+    plan_type == AccountPlanType::Enterprise
+        || plan_type.is_business_like()
+        || plan_type.is_team_like()
 }
 
 #[cfg(test)]

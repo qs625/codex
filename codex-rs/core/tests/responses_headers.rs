@@ -1,10 +1,10 @@
 use std::process::Command;
 use std::sync::Arc;
 
+use codex_api_types::ResponseEvent;
 use codex_auth_types::TelemetryAuthMode;
 use codex_core::ModelClient;
 use codex_core::Prompt;
-use codex_core::ResponseEvent;
 use codex_login::CodexAuth;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::WireApi;
@@ -85,7 +85,7 @@ async fn responses_stream_includes_subagent_header_on_review() {
     let session_source = SessionSource::SubAgent(SubAgentSource::Review);
     let model_info =
         codex_core::test_support::construct_model_info_offline(model.as_str(), &config);
-    let session_telemetry = SessionTelemetry::new(
+    let session_telemetry = Arc::new(SessionTelemetry::new(
         thread_id,
         model.as_str(),
         model_info.slug.as_str(),
@@ -96,13 +96,14 @@ async fn responses_stream_includes_subagent_header_on_review() {
         /*log_user_prompts*/ false,
         "test".to_string(),
         session_source.clone(),
-    );
+    )) as codex_session_telemetry_api::SharedSessionTelemetry;
 
     let client = ModelClient::new(
         /*auth_manager*/ None,
         thread_id.into(),
         thread_id,
         /*installation_id*/ TEST_INSTALLATION_ID.to_string(),
+        Arc::new(codex_api::DefaultApiRuntimeFactory),
         codex_core::test_support::model_provider_factory_for_tests(),
         provider.clone(),
         session_source,
@@ -224,7 +225,7 @@ async fn responses_stream_includes_subagent_header_on_other() {
     let model_info =
         codex_core::test_support::construct_model_info_offline(model.as_str(), &config);
 
-    let session_telemetry = SessionTelemetry::new(
+    let session_telemetry = Arc::new(SessionTelemetry::new(
         thread_id,
         model.as_str(),
         model_info.slug.as_str(),
@@ -235,13 +236,14 @@ async fn responses_stream_includes_subagent_header_on_other() {
         /*log_user_prompts*/ false,
         "test".to_string(),
         session_source.clone(),
-    );
+    )) as codex_session_telemetry_api::SharedSessionTelemetry;
 
     let client = ModelClient::new(
         /*auth_manager*/ None,
         thread_id.into(),
         thread_id,
         /*installation_id*/ TEST_INSTALLATION_ID.to_string(),
+        Arc::new(codex_api::DefaultApiRuntimeFactory),
         codex_core::test_support::model_provider_factory_for_tests(),
         provider.clone(),
         session_source,
@@ -352,7 +354,7 @@ async fn responses_respects_model_info_overrides_from_config() {
         SessionSource::SubAgent(SubAgentSource::Other("override-check".to_string()));
     let model_info =
         codex_core::test_support::construct_model_info_offline(model.as_str(), &config);
-    let session_telemetry = SessionTelemetry::new(
+    let session_telemetry = Arc::new(SessionTelemetry::new(
         thread_id,
         model.as_str(),
         model_info.slug.as_str(),
@@ -363,13 +365,14 @@ async fn responses_respects_model_info_overrides_from_config() {
         /*log_user_prompts*/ false,
         "test".to_string(),
         session_source.clone(),
-    );
+    )) as codex_session_telemetry_api::SharedSessionTelemetry;
 
     let client = ModelClient::new(
         /*auth_manager*/ None,
         thread_id.into(),
         thread_id,
         /*installation_id*/ TEST_INSTALLATION_ID.to_string(),
+        Arc::new(codex_api::DefaultApiRuntimeFactory),
         codex_core::test_support::model_provider_factory_for_tests(),
         provider.clone(),
         session_source,

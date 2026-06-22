@@ -1,9 +1,9 @@
 use crate::config::Config;
 use crate::config::edit::ConfigEditsBuilder;
+use codex_client_identity::originator;
 use codex_config_toml::config_toml::ConfigToml;
 use codex_config_toml::profile_toml::ConfigProfile;
 use codex_config_types::WindowsSandboxModeToml;
-use codex_default_client::originator;
 use codex_features::Feature;
 use codex_features::Features;
 use codex_features::FeaturesToml;

@@ -1,32 +1,30 @@
 use super::*;
 use pretty_assertions::assert_eq;
-use rmcp::model::AnnotateAble;
 use serde_json::json;
 
 fn resource(uri: &str, name: &str) -> Resource {
-    rmcp::model::RawResource {
+    Resource {
+        annotations: None,
+        description: None,
+        mime_type: None,
         uri: uri.to_string(),
         name: name.to_string(),
         title: None,
-        description: None,
-        mime_type: None,
         size: None,
         icons: None,
         meta: None,
     }
-    .no_annotation()
 }
 
 fn template(uri_template: &str, name: &str) -> ResourceTemplate {
-    rmcp::model::RawResourceTemplate {
+    ResourceTemplate {
+        annotations: None,
         uri_template: uri_template.to_string(),
         name: name.to_string(),
         title: None,
         description: None,
         mime_type: None,
-        icons: None,
     }
-    .no_annotation()
 }
 
 #[test]
@@ -42,7 +40,6 @@ fn resource_with_server_serializes_server_field() {
 #[test]
 fn list_resources_payload_from_single_server_copies_next_cursor() {
     let result = ListResourcesResult {
-        meta: None,
         next_cursor: Some("cursor-1".to_string()),
         resources: vec![resource("memo://id", "memo")],
     };

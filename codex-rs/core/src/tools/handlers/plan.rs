@@ -9,9 +9,9 @@ use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::plan_tool::UpdatePlanArgs;
 use codex_protocol::protocol::EventMsg;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
-use codex_tools::create_update_plan_tool;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::create_update_plan_tool;
 use serde_json::Value as JsonValue;
 
 pub struct PlanHandler;
@@ -44,7 +44,6 @@ impl ToolOutput for PlanToolOutput {
     }
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for PlanHandler {
     type Output = PlanToolOutput;
 
@@ -56,36 +55,45 @@ impl ToolExecutor<ToolInvocation> for PlanHandler {
         Some(create_update_plan_tool())
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            call_id: _,
-            payload,
-            ..
-        } = invocation;
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session,
+                turn,
+                call_id: _,
+                payload,
+                ..
+            } = invocation;
 
-        let arguments = match payload {
-            ToolPayload::Function { arguments } => arguments,
-            _ => {
+            let arguments = match payload {
+                ToolPayload::Function { arguments } => arguments,
+                _ => {
+                    return Err(FunctionCallError::RespondToModel(
+                        "update_plan handler received unsupported payload".to_string(),
+                    ));
+                }
+            };
+
+            if turn.collaboration_mode.mode == ModeKind::Plan {
                 return Err(FunctionCallError::RespondToModel(
-                    "update_plan handler received unsupported payload".to_string(),
+                    "update_plan is a TODO/checklist tool and is not allowed in Plan mode"
+                        .to_string(),
                 ));
             }
-        };
 
-        if turn.collaboration_mode.mode == ModeKind::Plan {
-            return Err(FunctionCallError::RespondToModel(
-                "update_plan is a TODO/checklist tool and is not allowed in Plan mode".to_string(),
-            ));
-        }
+            let args = parse_update_plan_arguments(&arguments)?;
+            session
+                .send_event(turn.as_ref(), EventMsg::PlanUpdate(args))
+                .await;
 
-        let args = parse_update_plan_arguments(&arguments)?;
-        session
-            .send_event(turn.as_ref(), EventMsg::PlanUpdate(args))
-            .await;
-
-        Ok(PlanToolOutput)
+            Ok(PlanToolOutput)
+        })
     }
 }
 

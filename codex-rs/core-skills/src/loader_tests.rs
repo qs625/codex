@@ -1867,7 +1867,8 @@ async fn loads_skills_from_system_cache_when_present() {
 async fn skill_roots_include_admin_with_lowest_priority() {
     let codex_home = tempfile::tempdir().expect("tempdir");
     let cfg = make_config(&codex_home).await;
-    let config_layer_stack = crate::SkillConfigLayerStack::from(cfg.config_layer_stack.clone());
+    let config_layer_stack =
+        super::skill_config_layer_stack_from_config_layer_stack(&cfg.config_layer_stack);
 
     let scopes: Vec<SkillScope> = super::skill_roots(
         Some(Arc::clone(&LOCAL_FS)),

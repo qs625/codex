@@ -32,7 +32,7 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::CompactedItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TurnStartedEvent;
-use codex_rollout_trace::CompactionCheckpointTracePayload;
+use codex_rollout_trace_api::CompactionCheckpointTracePayload;
 use futures::TryFutureExt;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -198,7 +198,9 @@ async fn run_remote_compact_task_inner_impl(
             CompactConversationRequestSettings {
                 effort: turn_context.reasoning_effort,
                 summary: turn_context.reasoning_summary,
-                service_tier: if sess.services.auth_manager.auth_mode() == Some(AuthMode::ApiKey) {
+                service_tier: if sess.services.auth_runtime.telemetry_snapshot().auth_mode
+                    == Some(AuthMode::ApiKey)
+                {
                     None
                 } else {
                     turn_context.config.service_tier.clone()

@@ -7,7 +7,7 @@ use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use codex_file_system::LOCAL_FS;
-use codex_git_utils::resolve_root_git_project_for_trust;
+use codex_git_info::resolve_root_git_project_for_trust;
 use codex_models_manager_api::RefreshStrategy;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;

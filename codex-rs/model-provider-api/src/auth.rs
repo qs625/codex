@@ -1,77 +1,85 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
-use codex_agent_identity::AgentIdentityKey;
-use codex_agent_identity::AgentTaskAuthorizationTarget;
-use codex_agent_identity::authorization_header_for_agent_task;
-use codex_api_provider::AuthProvider;
-use codex_api_provider::SharedAuthProvider;
-use codex_login::CodexAuth;
-use http::HeaderMap;
-use http::HeaderValue;
+use crate::ProviderAccountError;
+use codex_auth_types::RequestAuthSnapshot;
+use codex_protocol::account::ProviderAccount;
+use codex_protocol::auth::RefreshTokenFailedError;
 
-use crate::BearerAuthProvider;
+/// Boxed future returned by object-safe model-provider auth APIs.
+pub type ModelProviderAuthFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-#[derive(Clone, Debug)]
-struct AgentIdentityAuthProvider {
-    auth: codex_login::auth::AgentIdentityAuth,
+/// Provider-facing auth manager boundary used by model-provider orchestration.
+///
+/// Implementations adapt concrete login or host auth systems into lightweight
+/// request snapshots, account visibility, and 401 recovery without exposing the
+/// concrete auth runtime to API consumers.
+pub trait ModelProviderAuthManager: std::fmt::Debug + Send + Sync {
+    /// Returns the current provider-scoped auth snapshot, refreshing if needed.
+    fn auth(&self) -> ModelProviderAuthFuture<'_, Option<RequestAuthSnapshot>>;
+
+    /// Returns the cached auth snapshot without attempting refresh.
+    fn auth_cached(&self) -> Option<RequestAuthSnapshot>;
+
+    /// Returns the cached auth mode without attempting refresh.
+    fn auth_mode(&self) -> Option<codex_auth_types::AuthMode> {
+        self.auth_cached()
+            .as_ref()
+            .map(RequestAuthSnapshot::auth_mode)
+    }
+
+    /// Returns account information suitable for app-visible provider state.
+    fn account(&self) -> Result<Option<ProviderAccount>, ProviderAccountError>;
+
+    /// Returns whether CODEX_API_KEY environment auth is enabled for telemetry.
+    fn codex_api_key_env_enabled(&self) -> bool;
+
+    /// Returns whether the cached auth can access Codex backend-only model data.
+    fn current_auth_uses_codex_backend(&self) -> bool {
+        self.auth_cached()
+            .as_ref()
+            .is_some_and(RequestAuthSnapshot::uses_codex_backend)
+    }
+
+    /// Creates a fresh 401 recovery state machine when this auth source supports it.
+    fn unauthorized_recovery(&self) -> Option<Box<dyn ModelProviderUnauthorizedRecovery>>;
 }
 
-impl AuthProvider for AgentIdentityAuthProvider {
-    fn add_auth_headers(&self, headers: &mut HeaderMap) {
-        let record = self.auth.record();
-        let header_value = authorization_header_for_agent_task(
-            AgentIdentityKey {
-                agent_runtime_id: &record.agent_runtime_id,
-                private_key_pkcs8_base64: &record.agent_private_key,
-            },
-            AgentTaskAuthorizationTarget {
-                agent_runtime_id: &record.agent_runtime_id,
-                task_id: self.auth.process_task_id(),
-            },
-        )
-        .map_err(std::io::Error::other);
+/// Shared provider auth manager handle.
+pub type SharedModelProviderAuthManager = Arc<dyn ModelProviderAuthManager>;
 
-        if let Ok(header_value) = header_value
-            && let Ok(header) = HeaderValue::from_str(&header_value)
-        {
-            let _ = headers.insert(http::header::AUTHORIZATION, header);
-        }
+/// Object-safe state machine for provider auth recovery after HTTP 401.
+pub trait ModelProviderUnauthorizedRecovery: Send {
+    fn has_next(&self) -> bool;
+    fn unavailable_reason(&self) -> &'static str;
+    fn mode_name(&self) -> &'static str;
+    fn step_name(&self) -> &'static str;
+    fn next(
+        &mut self,
+    ) -> ModelProviderAuthFuture<
+        '_,
+        Result<ModelProviderUnauthorizedRecoveryStepResult, ModelProviderAuthRecoveryError>,
+    >;
+}
 
-        if let Ok(header) = HeaderValue::from_str(self.auth.account_id()) {
-            let _ = headers.insert("ChatGPT-Account-ID", header);
-        }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModelProviderUnauthorizedRecoveryStepResult {
+    auth_state_changed: Option<bool>,
+}
 
-        if self.auth.is_fedramp_account() {
-            let _ = headers.insert("X-OpenAI-Fedramp", HeaderValue::from_static("true"));
-        }
+impl ModelProviderUnauthorizedRecoveryStepResult {
+    pub fn new(auth_state_changed: Option<bool>) -> Self {
+        Self { auth_state_changed }
+    }
+
+    pub fn auth_state_changed(&self) -> Option<bool> {
+        self.auth_state_changed
     }
 }
 
-// Some providers are meant to send no auth headers. Examples include local OSS
-// providers and custom test providers with `requires_openai_auth = false`.
-#[derive(Clone, Debug)]
-struct UnauthenticatedAuthProvider;
-
-impl AuthProvider for UnauthenticatedAuthProvider {
-    fn add_auth_headers(&self, _headers: &mut HeaderMap) {}
-}
-
-pub fn unauthenticated_auth_provider() -> SharedAuthProvider {
-    Arc::new(UnauthenticatedAuthProvider)
-}
-
-/// Builds request-header auth for a first-party Codex auth snapshot.
-pub fn auth_provider_from_auth(auth: &CodexAuth) -> SharedAuthProvider {
-    match auth {
-        CodexAuth::AgentIdentity(auth) => {
-            Arc::new(AgentIdentityAuthProvider { auth: auth.clone() })
-        }
-        CodexAuth::ApiKey(_) | CodexAuth::Chatgpt(_) | CodexAuth::ChatgptAuthTokens(_) => {
-            Arc::new(BearerAuthProvider {
-                token: auth.get_token().ok(),
-                account_id: auth.get_account_id(),
-                is_fedramp_account: auth.is_fedramp_account(),
-            })
-        }
-    }
+#[derive(Debug)]
+pub enum ModelProviderAuthRecoveryError {
+    Permanent(RefreshTokenFailedError),
+    Transient(std::io::Error),
 }

@@ -1,7 +1,6 @@
 //! Turn-scoped state and active turn metadata scaffolding.
 
-use codex_sandboxing::policy_transforms::merge_permission_profiles;
-use indexmap::IndexMap;
+use codex_sandboxing_api::policy_transforms::merge_permission_profiles;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -12,11 +11,11 @@ use tokio_util::task::AbortOnDropHandle;
 use codex_extension_api::ExtensionData;
 use codex_mcp_types::ElicitationResponse;
 use codex_protocol::dynamic_tools::DynamicToolResponse;
+use codex_protocol::mcp::RequestId;
 use codex_protocol::request_permissions::RequestPermissionProfile;
 use codex_protocol::request_permissions::RequestPermissionsResponse;
 use codex_protocol::request_user_input::RequestUserInputResponse;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use rmcp::model::RequestId;
 use tokio::sync::oneshot;
 
 use crate::pending_input::PendingInputItem;
@@ -28,7 +27,7 @@ use codex_protocol::protocol::TokenUsage;
 
 /// Metadata about the currently running turn.
 pub(crate) struct ActiveTurn {
-    pub(crate) tasks: IndexMap<String, RunningTask>,
+    pub(crate) tasks: ActiveTasks,
     pub(crate) turn_state: Arc<Mutex<TurnState>>,
 }
 
@@ -56,7 +55,7 @@ pub(crate) enum MailboxDeliveryPhase {
 impl Default for ActiveTurn {
     fn default() -> Self {
         Self {
-            tasks: IndexMap::new(),
+            tasks: ActiveTasks::default(),
             turn_state: Arc::new(Mutex::new(TurnState::default())),
         }
     }
@@ -79,12 +78,68 @@ pub(crate) struct RunningTask {
     pub(crate) turn_extension_data: Arc<ExtensionData>,
     // Timer recorded when the task drops to capture the full turn duration.
     // Boxed so turn state does not expose the concrete telemetry timer type.
-    pub(crate) _timer: Option<Box<dyn Send + Sync>>,
+    pub(crate) _timer: Option<codex_session_telemetry_api::SessionTelemetryTimer>,
 }
 
 pub(crate) struct RemovedTask {
     pub(crate) records_turn_token_usage_on_span: bool,
     pub(crate) active_turn_is_empty: bool,
+}
+
+#[derive(Default)]
+pub(crate) struct ActiveTasks {
+    order: Vec<String>,
+    tasks: HashMap<String, RunningTask>,
+}
+
+impl ActiveTasks {
+    pub(crate) fn insert(&mut self, sub_id: String, task: RunningTask) {
+        if !self.tasks.contains_key(&sub_id) {
+            self.order.push(sub_id.clone());
+        }
+        self.tasks.insert(sub_id, task);
+    }
+
+    pub(crate) fn swap_remove(&mut self, sub_id: &str) -> Option<RunningTask> {
+        let task = self.tasks.remove(sub_id)?;
+        if let Some(index) = self.order.iter().position(|id| id == sub_id) {
+            self.order.swap_remove(index);
+        }
+        Some(task)
+    }
+
+    pub(crate) fn drain(&mut self) -> Vec<RunningTask> {
+        let order = std::mem::take(&mut self.order);
+        let mut tasks = std::mem::take(&mut self.tasks);
+        order
+            .into_iter()
+            .filter_map(|sub_id| tasks.remove(&sub_id))
+            .collect()
+    }
+
+    pub(crate) fn get(&self, sub_id: &str) -> Option<&RunningTask> {
+        self.tasks.get(sub_id)
+    }
+
+    pub(crate) fn first(&self) -> Option<(&String, &RunningTask)> {
+        let sub_id = self.order.first()?;
+        let task = self.tasks.get(sub_id)?;
+        Some((sub_id, task))
+    }
+
+    pub(crate) fn values(&self) -> impl Iterator<Item = &RunningTask> {
+        self.order
+            .iter()
+            .filter_map(|sub_id| self.tasks.get(sub_id))
+    }
+
+    pub(crate) fn contains_key(&self, sub_id: &str) -> bool {
+        self.tasks.contains_key(sub_id)
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.tasks.is_empty()
+    }
 }
 
 impl ActiveTurn {
@@ -104,7 +159,7 @@ impl ActiveTurn {
     }
 
     pub(crate) fn drain_tasks(&mut self) -> Vec<RunningTask> {
-        self.tasks.drain(..).map(|(_, task)| task).collect()
+        self.tasks.drain()
     }
 }
 

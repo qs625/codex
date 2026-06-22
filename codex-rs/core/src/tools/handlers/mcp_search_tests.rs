@@ -1,6 +1,6 @@
 use super::*;
-use codex_tools::LoadableToolSpec;
-use codex_tools::ToolSearchSourceInfo;
+use codex_tool_planning::LoadableToolSpec;
+use codex_tool_planning::ToolSearchSourceInfo;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
@@ -50,18 +50,18 @@ fn tool_info() -> ToolInfo {
         callable_name: "_create_event".to_string(),
         callable_namespace: "mcp__calendar__".to_string(),
         namespace_description: Some("Plan events.".to_string()),
-        tool: rmcp::model::Tool {
-            name: "createEvent".to_string().into(),
+        tool: codex_mcp_tool_types::McpTool {
+            name: "createEvent".to_string(),
             title: Some("Create event".to_string()),
-            description: Some("Create a calendar event.".to_string().into()),
-            input_schema: Arc::new(rmcp::model::object(json!({
+            description: Some("Create a calendar event.".to_string()),
+            input_schema: json!({
                 "type": "object",
                 "properties": {
                     "start_time": { "type": "string" },
                     "attendees": { "type": "string" }
                 },
                 "additionalProperties": false
-            }))),
+            }),
             output_schema: None,
             annotations: None,
             execution: None,

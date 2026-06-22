@@ -1,10 +1,10 @@
 use super::*;
 
-use crate::sandbox_tags::sandbox_tag;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::ThreadSource;
+use codex_sandboxing_api::sandbox_tag;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use pretty_assertions::assert_eq;

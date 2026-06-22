@@ -97,7 +97,7 @@ write-config-schema:
 
 # Regenerate vendored app-server protocol schema artifacts.
 write-app-server-schema *args:
-    cargo run -p codex-app-server-protocol --bin write_schema_fixtures -- "$@"
+    cargo run -p codex-app-server-protocol --features cli --bin write_schema_fixtures -- "$@"
 
 [no-cd]
 write-hooks-schema:

@@ -15,7 +15,4 @@ workspace = true
 
 [dependencies]
 codex-client-types = { workspace = true }
-codex-protocol = { workspace = true }
 http = { workspace = true }
-thiserror = { workspace = true }
-url = { workspace = true }

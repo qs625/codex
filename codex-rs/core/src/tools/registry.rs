@@ -10,8 +10,6 @@ use crate::hook_runtime::record_additional_contexts;
 use crate::hook_runtime::run_post_tool_use_hooks;
 use crate::hook_runtime::run_pre_tool_use_hooks;
 use crate::memory_usage::emit_metric_for_tool_read;
-use crate::sandbox_tags::permission_profile_policy_tag;
-use crate::sandbox_tags::permission_profile_sandbox_tag;
 use crate::session::turn_context::TurnContext;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
@@ -24,16 +22,19 @@ use crate::tools::tool_search_entry::ToolSearchInfo;
 use crate::util::error_or_panic;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::protocol::EventMsg;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
+use codex_sandboxing_api::permission_profile_policy_tag;
+use codex_sandboxing_api::permission_profile_sandbox_tag;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
 use futures::future::BoxFuture;
 use serde_json::Value;
 use tracing::warn;
 
 pub(crate) type ToolTelemetryTags = Vec<(&'static str, String)>;
 
-pub use codex_tools::ToolExecutor;
-pub use codex_tools::ToolExposure;
+pub use codex_tool_planning::ToolExecutor;
+pub use codex_tool_planning::ToolExecutorFuture;
+pub use codex_tool_planning::ToolExposure;
 
 pub trait ToolHandler: ToolExecutor<ToolInvocation> {
     fn search_info(&self) -> Option<ToolSearchInfo> {
@@ -503,31 +504,31 @@ impl ToolRegistry {
         let invocation_for_tool = invocation.clone();
         let log_payload = invocation.payload.log_payload();
 
-        let result = otel
-            .log_tool_result_with_tags(
-                tool_name_flat.as_ref(),
-                &call_id_owned,
-                log_payload.as_ref(),
-                &tool_result_tags,
-                &extra_trace_fields,
-                || {
-                    let handler = handler.clone();
-                    let response_cell = &response_cell;
-                    async move {
-                        match handler.handle_any(invocation_for_tool).await {
-                            Ok(result) => {
-                                let preview = result.result.log_preview();
-                                let success = result.result.success_for_logging();
-                                let mut guard = response_cell.lock().await;
-                                *guard = Some(result);
-                                Ok((preview, success))
-                            }
-                            Err(err) => Err(err),
+        let result = codex_session_telemetry_api::log_tool_result_with_tags(
+            otel.as_ref(),
+            tool_name_flat.as_ref(),
+            &call_id_owned,
+            log_payload.as_ref(),
+            &tool_result_tags,
+            &extra_trace_fields,
+            || {
+                let handler = handler.clone();
+                let response_cell = &response_cell;
+                async move {
+                    match handler.handle_any(invocation_for_tool).await {
+                        Ok(result) => {
+                            let preview = result.result.log_preview();
+                            let success = result.result.success_for_logging();
+                            let mut guard = response_cell.lock().await;
+                            *guard = Some(result);
+                            Ok((preview, success))
                         }
+                        Err(err) => Err(err),
                     }
-                },
-            )
-            .await;
+                }
+            },
+        )
+        .await;
         let success = match &result {
             Ok((_, success)) => *success,
             Err(_) => false,

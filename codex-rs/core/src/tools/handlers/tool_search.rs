@@ -6,23 +6,21 @@ use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
 use crate::tools::tool_search_entry::ToolSearchEntry;
 use crate::tools::tool_search_entry::ToolSearchInfo;
-use bm25::Document;
-use bm25::Language;
-use bm25::SearchEngine;
-use bm25::SearchEngineBuilder;
-use codex_tools::LoadableToolSpec;
-use codex_tools::TOOL_SEARCH_DEFAULT_LIMIT;
-use codex_tools::TOOL_SEARCH_TOOL_NAME;
-use codex_tools::ToolName;
-use codex_tools::ToolSearchSourceInfo;
-use codex_tools::ToolSpec;
-use codex_tools::coalesce_loadable_tool_specs;
-use codex_tools::create_tool_search_tool;
+use codex_tool_planning::LoadableToolSpec;
+use codex_tool_planning::TOOL_SEARCH_DEFAULT_LIMIT;
+use codex_tool_planning::TOOL_SEARCH_TOOL_NAME;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSearchSourceInfo;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::coalesce_loadable_tool_specs;
+use codex_tool_planning::create_tool_search_tool;
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 pub struct ToolSearchHandler {
     entries: Vec<ToolSearchEntry>,
     search_source_infos: Vec<ToolSearchSourceInfo>,
-    search_engine: SearchEngine<usize>,
+    search_index: ToolSearchIndex,
 }
 
 impl ToolSearchHandler {
@@ -35,24 +33,17 @@ impl ToolSearchHandler {
                 search_source_infos.push(source_info);
             }
         }
-        let documents: Vec<Document<usize>> = entries
-            .iter()
-            .map(|entry| entry.search_text.clone())
-            .enumerate()
-            .map(|(idx, search_text)| Document::new(idx, search_text))
-            .collect();
-        let search_engine =
-            SearchEngineBuilder::<usize>::with_documents(Language::English, documents).build();
+        let search_index =
+            ToolSearchIndex::new(entries.iter().map(|entry| entry.search_text.as_str()));
 
         Self {
             entries,
             search_source_infos,
-            search_engine,
+            search_index,
         }
     }
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for ToolSearchHandler {
     type Output = ToolSearchOutput;
 
@@ -71,42 +62,47 @@ impl ToolExecutor<ToolInvocation> for ToolSearchHandler {
         true
     }
 
-    async fn handle(
-        &self,
+    fn handle<'a>(
+        &'a self,
         invocation: ToolInvocation,
-    ) -> Result<ToolSearchOutput, FunctionCallError> {
-        let ToolInvocation { payload, .. } = invocation;
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation { payload, .. } = invocation;
 
-        let args = match payload {
-            ToolPayload::ToolSearch { arguments } => arguments,
-            _ => {
-                return Err(FunctionCallError::Fatal(format!(
-                    "{TOOL_SEARCH_TOOL_NAME} handler received unsupported payload"
-                )));
+            let args = match payload {
+                ToolPayload::ToolSearch { arguments } => arguments,
+                _ => {
+                    return Err(FunctionCallError::Fatal(format!(
+                        "{TOOL_SEARCH_TOOL_NAME} handler received unsupported payload"
+                    )));
+                }
+            };
+
+            let query = args.query.trim();
+            if query.is_empty() {
+                return Err(FunctionCallError::RespondToModel(
+                    "query must not be empty".to_string(),
+                ));
             }
-        };
+            let limit = args.limit.unwrap_or(TOOL_SEARCH_DEFAULT_LIMIT);
 
-        let query = args.query.trim();
-        if query.is_empty() {
-            return Err(FunctionCallError::RespondToModel(
-                "query must not be empty".to_string(),
-            ));
-        }
-        let limit = args.limit.unwrap_or(TOOL_SEARCH_DEFAULT_LIMIT);
+            if limit == 0 {
+                return Err(FunctionCallError::RespondToModel(
+                    "limit must be greater than zero".to_string(),
+                ));
+            }
 
-        if limit == 0 {
-            return Err(FunctionCallError::RespondToModel(
-                "limit must be greater than zero".to_string(),
-            ));
-        }
+            if self.entries.is_empty() {
+                return Ok(ToolSearchOutput { tools: Vec::new() });
+            }
 
-        if self.entries.is_empty() {
-            return Ok(ToolSearchOutput { tools: Vec::new() });
-        }
+            let tools = self.search(query, limit)?;
 
-        let tools = self.search(query, limit)?;
-
-        Ok(ToolSearchOutput { tools })
+            Ok(ToolSearchOutput { tools })
+        })
     }
 }
 
@@ -119,10 +115,9 @@ impl ToolSearchHandler {
         limit: usize,
     ) -> Result<Vec<LoadableToolSpec>, FunctionCallError> {
         let results = self
-            .search_engine
+            .search_index
             .search(query, limit)
             .into_iter()
-            .map(|result| result.document.id)
             .filter_map(|id| self.entries.get(id));
         self.search_output_tools(results)
     }
@@ -137,6 +132,158 @@ impl ToolSearchHandler {
     }
 }
 
+#[derive(Debug)]
+struct ToolSearchIndex {
+    documents: Vec<IndexedToolSearchDocument>,
+    document_frequencies: HashMap<String, usize>,
+    average_document_len: f64,
+}
+
+#[derive(Debug)]
+struct IndexedToolSearchDocument {
+    id: usize,
+    term_frequencies: HashMap<String, usize>,
+    len: usize,
+}
+
+impl ToolSearchIndex {
+    fn new<'a>(documents: impl IntoIterator<Item = &'a str>) -> Self {
+        let documents: Vec<IndexedToolSearchDocument> = documents
+            .into_iter()
+            .enumerate()
+            .map(|(id, text)| {
+                let tokens = tokenize_search_text(text);
+                let mut term_frequencies = HashMap::new();
+                for token in tokens {
+                    *term_frequencies.entry(token).or_insert(0) += 1;
+                }
+                let len = term_frequencies.values().sum();
+                IndexedToolSearchDocument {
+                    id,
+                    term_frequencies,
+                    len,
+                }
+            })
+            .collect();
+
+        let mut document_frequencies = HashMap::new();
+        for document in &documents {
+            for term in document.term_frequencies.keys() {
+                *document_frequencies.entry(term.clone()).or_insert(0) += 1;
+            }
+        }
+
+        let total_document_len = documents.iter().map(|document| document.len).sum::<usize>();
+        let average_document_len = if documents.is_empty() {
+            0.0
+        } else {
+            total_document_len as f64 / documents.len() as f64
+        };
+
+        Self {
+            documents,
+            document_frequencies,
+            average_document_len,
+        }
+    }
+
+    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
+        let query_terms = unique_search_terms(query);
+        if query_terms.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+
+        let mut scored: Vec<(usize, f64)> = self
+            .documents
+            .iter()
+            .filter_map(|document| {
+                let score = self.score_document(document, &query_terms);
+                (score > 0.0).then_some((document.id, score))
+            })
+            .collect();
+        scored.sort_by(|(left_id, left_score), (right_id, right_score)| {
+            right_score
+                .total_cmp(left_score)
+                .then_with(|| left_id.cmp(right_id))
+        });
+        scored
+            .into_iter()
+            .take(limit)
+            .map(|(document_id, _)| document_id)
+            .collect()
+    }
+
+    fn score_document(&self, document: &IndexedToolSearchDocument, query_terms: &[String]) -> f64 {
+        if self.documents.is_empty() || self.average_document_len == 0.0 {
+            return 0.0;
+        }
+
+        const K1: f64 = 1.5;
+        const B: f64 = 0.75;
+        let document_count = self.documents.len() as f64;
+        let len_normalizer = 1.0 - B + B * (document.len as f64 / self.average_document_len);
+
+        query_terms
+            .iter()
+            .filter_map(|term| {
+                let term_frequency = *document.term_frequencies.get(term)? as f64;
+                let document_frequency = *self.document_frequencies.get(term)? as f64;
+                let inverse_document_frequency = ((document_count - document_frequency + 0.5)
+                    / (document_frequency + 0.5)
+                    + 1.0)
+                    .ln();
+                let term_weight =
+                    term_frequency * (K1 + 1.0) / (term_frequency + K1 * len_normalizer);
+                Some(inverse_document_frequency * term_weight)
+            })
+            .sum()
+    }
+}
+
+fn unique_search_terms(text: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    tokenize_search_text(text)
+        .into_iter()
+        .filter(|token| seen.insert(token.clone()))
+        .collect()
+}
+
+fn tokenize_search_text(text: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    for ch in text.chars() {
+        if ch.is_ascii_alphanumeric() {
+            current.push(ch.to_ascii_lowercase());
+        } else {
+            push_search_token(&mut tokens, &mut current);
+        }
+    }
+    push_search_token(&mut tokens, &mut current);
+    tokens
+}
+
+fn push_search_token(tokens: &mut Vec<String>, current: &mut String) {
+    if current.is_empty() {
+        return;
+    }
+
+    tokens.push(current.clone());
+    if let Some(singular) = singularize_ascii_token(current)
+        && singular != *current
+    {
+        tokens.push(singular);
+    }
+    current.clear();
+}
+
+fn singularize_ascii_token(token: &str) -> Option<String> {
+    if token.len() > 3 && token.ends_with('s') && !token.ends_with("ss") {
+        Some(token[..token.len() - 1].to_string())
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,12 +291,33 @@ mod tests {
     use crate::tools::handlers::McpHandler;
     use codex_mcp_tool_types::ToolInfo;
     use codex_protocol::dynamic_tools::DynamicToolSpec;
-    use codex_tools::ResponsesApiNamespace;
-    use codex_tools::ResponsesApiNamespaceTool;
-    use codex_tools::ResponsesApiTool;
+    use codex_tool_planning::ResponsesApiNamespace;
+    use codex_tool_planning::ResponsesApiNamespaceTool;
+    use codex_tool_planning::ResponsesApiTool;
     use pretty_assertions::assert_eq;
-    use rmcp::model::Tool;
-    use std::sync::Arc;
+
+    #[test]
+    fn search_index_matches_underscore_terms_with_space_query() {
+        let index = ToolSearchIndex::new([
+            "name quasar_ping_beacon namespace orbit_ops",
+            "name calendar_timezone_option_99 namespace calendar",
+        ]);
+
+        assert_eq!(index.search("quasar ping beacon", 1), vec![0]);
+        assert_eq!(index.search("calendar_timezone_option_99", 1), vec![1]);
+    }
+
+    #[test]
+    fn search_index_matches_description_and_schema_terms() {
+        let index = ToolSearchIndex::new([
+            "description Extract text from uploaded documents",
+            "schema starts_at title",
+            "description Delete archived records",
+        ]);
+
+        assert_eq!(index.search("uploaded document", 1), vec![0]);
+        assert_eq!(index.search("starts_at", 1), vec![1]);
+    }
 
     #[test]
     fn mixed_search_results_coalesce_mcp_namespaces() {
@@ -208,7 +376,7 @@ mod tests {
                             description: "Create events desktop tool".to_string(),
                             strict: false,
                             defer_loading: Some(true),
-                            parameters: codex_tools::JsonSchema::object(
+                            parameters: codex_tool_planning::JsonSchema::object(
                                 Default::default(),
                                 /*required*/ None,
                                 Some(false.into()),
@@ -220,7 +388,7 @@ mod tests {
                             description: "List events desktop tool".to_string(),
                             strict: false,
                             defer_loading: Some(true),
-                            parameters: codex_tools::JsonSchema::object(
+                            parameters: codex_tool_planning::JsonSchema::object(
                                 Default::default(),
                                 /*required*/ None,
                                 Some(false.into()),
@@ -238,10 +406,10 @@ mod tests {
                             .to_string(),
                         strict: false,
                         defer_loading: Some(true),
-                        parameters: codex_tools::JsonSchema::object(
+                        parameters: codex_tool_planning::JsonSchema::object(
                             std::collections::BTreeMap::from([(
                                 "mode".to_string(),
-                                codex_tools::JsonSchema::string(/*description*/ None),
+                                codex_tool_planning::JsonSchema::string(/*description*/ None),
                             )]),
                             Some(vec!["mode".to_string()]),
                             Some(false.into()),
@@ -261,15 +429,15 @@ mod tests {
             callable_name: tool_name.to_string(),
             callable_namespace: format!("mcp__{server_name}__"),
             namespace_description: None,
-            tool: Tool {
-                name: tool_name.to_string().into(),
+            tool: codex_mcp_tool_types::McpTool {
+                name: tool_name.to_string(),
                 title: None,
-                description: Some(format!("{description_prefix} desktop tool").into()),
-                input_schema: Arc::new(rmcp::model::object(serde_json::json!({
+                description: Some(format!("{description_prefix} desktop tool")),
+                input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {},
                     "additionalProperties": false,
-                }))),
+                }),
                 output_schema: None,
                 annotations: None,
                 execution: None,

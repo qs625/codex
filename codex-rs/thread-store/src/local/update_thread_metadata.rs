@@ -7,12 +7,12 @@ use codex_protocol::protocol::GitInfo;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::ThreadMemoryMode;
-use codex_rollout::ARCHIVED_SESSIONS_SUBDIR;
 use codex_rollout::append_rollout_item_to_path;
 use codex_rollout::append_thread_name;
 use codex_rollout::find_archived_thread_path_by_id_str;
 use codex_rollout::find_thread_path_by_id_str;
 use codex_rollout::read_session_meta_line;
+use codex_rollout_api::ARCHIVED_SESSIONS_SUBDIR;
 use codex_state::ThreadMetadataBuilder;
 
 use super::LocalThreadStore;
@@ -468,7 +468,7 @@ async fn apply_thread_git_info_to_rollout(
     }
 
     session_meta.git = Some(GitInfo {
-        commit_hash: sha.as_deref().map(codex_git_utils::GitSha::new),
+        commit_hash: sha.as_deref().map(codex_git_info::GitSha::new),
         branch: branch.clone(),
         repository_url: origin_url.clone(),
     });

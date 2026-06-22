@@ -29,6 +29,7 @@ use codex_arg0::Arg0DispatchPaths;
 use codex_core::StartThreadOptions;
 use codex_core::ThreadManager;
 use codex_core::config::ConfigOverrides;
+use codex_core_plugins::PluginsManager;
 use codex_external_agent_sessions::ExternalAgentSessionMigration as CoreSessionMigration;
 use codex_external_agent_sessions::ImportedExternalAgentSession;
 use codex_external_agent_sessions::PendingSessionImport;
@@ -50,6 +51,7 @@ pub(crate) struct ExternalAgentConfigRequestProcessor {
     migration_service: ExternalAgentConfigService,
     session_import_permits: Arc<Semaphore>,
     thread_manager: Arc<ThreadManager>,
+    plugins_manager: Arc<PluginsManager>,
     config_manager: ConfigManager,
     config_processor: ConfigRequestProcessor,
     arg0_paths: Arg0DispatchPaths,
@@ -59,6 +61,7 @@ impl ExternalAgentConfigRequestProcessor {
     pub(crate) fn new(
         outgoing: Arc<OutgoingMessageSender>,
         thread_manager: Arc<ThreadManager>,
+        plugins_manager: Arc<PluginsManager>,
         config_manager: ConfigManager,
         config_processor: ConfigRequestProcessor,
         arg0_paths: Arg0DispatchPaths,
@@ -70,6 +73,7 @@ impl ExternalAgentConfigRequestProcessor {
             codex_home,
             session_import_permits: Arc::new(Semaphore::new(1)),
             thread_manager,
+            plugins_manager,
             config_manager,
             config_processor,
             arg0_paths,
@@ -212,6 +216,7 @@ impl ExternalAgentConfigRequestProcessor {
         let plugin_processor = self.clone();
         let outgoing = Arc::clone(&self.outgoing);
         let thread_manager = Arc::clone(&self.thread_manager);
+        let plugins_manager = Arc::clone(&self.plugins_manager);
         tokio::spawn(async move {
             let session_imports = async move {
                 if !pending_session_imports.is_empty() {
@@ -261,7 +266,7 @@ impl ExternalAgentConfigRequestProcessor {
             };
             tokio::join!(session_imports, plugin_imports);
             if has_plugin_imports {
-                thread_manager.plugins_manager().clear_cache();
+                plugins_manager.clear_cache();
                 thread_manager.skills_manager().clear_cache();
             }
             outgoing

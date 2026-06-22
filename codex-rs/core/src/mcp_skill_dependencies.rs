@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use codex_client_identity::is_first_party_originator;
+use codex_client_identity::originator;
 use codex_config_edit::ConfigEditsBuilder;
 use codex_config_edit::load_global_mcp_servers;
 use codex_config_types::McpServerConfig;
 use codex_config_types::McpServerTransportConfig;
-use codex_default_client::is_first_party_originator;
-use codex_default_client::originator;
+use codex_mcp_runtime_api::McpOAuthLoginRequest;
 use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_protocol::request_user_input::RequestUserInputQuestion;
 use codex_protocol::request_user_input::RequestUserInputQuestionOption;
@@ -18,14 +19,11 @@ use crate::SkillMetadata;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::skills::model::SkillToolDependency;
-use codex_mcp::ElicitationReviewerHandle;
-use codex_mcp::McpOAuthLoginSupport;
-use codex_mcp::McpPermissionPromptAutoApproveContext;
-use codex_mcp::mcp_permission_prompt_is_auto_approved;
-use codex_mcp::oauth_login_support;
-use codex_mcp::perform_oauth_login;
-use codex_mcp::resolve_oauth_scopes;
-use codex_mcp::should_retry_without_scopes;
+use codex_mcp_types::ElicitationReviewerHandle;
+use codex_mcp_types::McpOAuthLoginSupport;
+use codex_mcp_types::McpPermissionPromptAutoApproveContext;
+use codex_mcp_types::mcp_permission_prompt_is_auto_approved;
+use codex_mcp_types::resolve_oauth_scopes;
 
 const SKILL_MCP_DEPENDENCY_PROMPT_ID: &str = "skill_mcp_dependency_install";
 const MCP_DEPENDENCY_OPTION_INSTALL: &str = "Install";
@@ -137,7 +135,12 @@ pub(crate) async fn maybe_install_mcp_dependencies(
     }
 
     for (name, server_config) in added {
-        let oauth_config = match oauth_login_support(&server_config.transport).await {
+        let oauth_config = match sess
+            .services
+            .mcp_auth_runtime
+            .oauth_login_support(&server_config.transport)
+            .await
+        {
             McpOAuthLoginSupport::Supported(config) => config,
             McpOAuthLoginSupport::Unsupported => continue,
             McpOAuthLoginSupport::Unknown(err) => {
@@ -151,36 +154,48 @@ pub(crate) async fn maybe_install_mcp_dependencies(
             server_config.scopes.clone(),
             oauth_config.discovered_scopes.clone(),
         );
-        let oauth_client_id = server_config.oauth_client_id();
-        let first_attempt = perform_oauth_login(
-            &name,
-            &oauth_config.url,
-            config.mcp_oauth_credentials_store_mode,
-            oauth_config.http_headers.clone(),
-            oauth_config.env_http_headers.clone(),
-            &resolved_scopes.scopes,
-            oauth_client_id,
-            server_config.oauth_resource.as_deref(),
-            config.mcp_oauth_callback_port,
-            config.mcp_oauth_callback_url.as_deref(),
-        )
-        .await;
+        let oauth_client_id = server_config.oauth_client_id().map(str::to_string);
+        let oauth_resource = server_config.oauth_resource.clone();
+        let callback_url = config.mcp_oauth_callback_url.clone();
+        let first_attempt = sess
+            .services
+            .mcp_auth_runtime
+            .perform_oauth_login(McpOAuthLoginRequest {
+                server_name: name.clone(),
+                server_url: oauth_config.url.clone(),
+                store_mode: config.mcp_oauth_credentials_store_mode,
+                http_headers: oauth_config.http_headers.clone(),
+                env_http_headers: oauth_config.env_http_headers.clone(),
+                scopes: resolved_scopes.scopes.clone(),
+                oauth_client_id: oauth_client_id.clone(),
+                oauth_resource: oauth_resource.clone(),
+                callback_port: config.mcp_oauth_callback_port,
+                callback_url: callback_url.clone(),
+            })
+            .await;
 
         if let Err(err) = first_attempt {
-            if should_retry_without_scopes(&resolved_scopes, &err) {
-                if let Err(err) = perform_oauth_login(
-                    &name,
-                    &oauth_config.url,
-                    config.mcp_oauth_credentials_store_mode,
-                    oauth_config.http_headers,
-                    oauth_config.env_http_headers,
-                    &[],
-                    oauth_client_id,
-                    server_config.oauth_resource.as_deref(),
-                    config.mcp_oauth_callback_port,
-                    config.mcp_oauth_callback_url.as_deref(),
-                )
-                .await
+            if sess
+                .services
+                .mcp_auth_runtime
+                .should_retry_without_scopes(&resolved_scopes, &err)
+            {
+                if let Err(err) = sess
+                    .services
+                    .mcp_auth_runtime
+                    .perform_oauth_login(McpOAuthLoginRequest {
+                        server_name: name.clone(),
+                        server_url: oauth_config.url,
+                        store_mode: config.mcp_oauth_credentials_store_mode,
+                        http_headers: oauth_config.http_headers,
+                        env_http_headers: oauth_config.env_http_headers,
+                        scopes: Vec::new(),
+                        oauth_client_id,
+                        oauth_resource,
+                        callback_port: config.mcp_oauth_callback_port,
+                        callback_url,
+                    })
+                    .await
                 {
                     warn!("failed to login to MCP dependency {name}: {err}");
                 }

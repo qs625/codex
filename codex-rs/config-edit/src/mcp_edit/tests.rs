@@ -1,6 +1,9 @@
 use super::*;
+use crate::ConfigEditsBuilder;
+use codex_config_types::AppToolApproval;
 use codex_config_types::McpServerOAuthConfig;
 use codex_config_types::McpServerToolConfig;
+use codex_config_types::McpServerTransportConfig;
 use pretty_assertions::assert_eq;
 use std::collections::HashMap;
 use std::time::SystemTime;
@@ -67,8 +70,6 @@ async fn replace_mcp_servers_serializes_per_tool_approval_overrides()
 command = "docs-server"
 supports_parallel_tool_calls = true
 default_tools_approval_mode = "auto"
-
-[mcp_servers.docs.tools]
 
 [mcp_servers.docs.tools.read]
 approval_mode = "prompt"

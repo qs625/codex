@@ -63,11 +63,15 @@ use crate::plugin_cmd::PluginSubcommand;
 use doctor::DoctorCommand;
 use state_db_recovery as local_state_db;
 
-use codex_config_edit::CONFIG_TOML_FILE;
 use codex_config_loader::LoaderOverrides;
+use codex_config_local_loader::LocalConfigLayerLoader;
+use codex_config_types::CONFIG_TOML_FILE;
+use codex_core::ThreadAuthRuntimes;
 use codex_core::build_models_manager;
+use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
+use codex_core::config::ThreadStoreConfig;
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::find_codex_home;
 use codex_core::config::resolve_profile_v2_config_path;
@@ -82,7 +86,13 @@ use codex_models_manager::bundled_models_response;
 use codex_models_manager_api::RefreshStrategy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::user_input::UserInput;
+use codex_rollout::StateDbHandle;
+use codex_state_api::SharedStateDbRuntime;
 use codex_terminal_detection::TerminalName;
+
+pub(crate) fn config_builder() -> ConfigBuilder {
+    ConfigBuilder::default().config_layer_loader(Arc::new(LocalConfigLayerLoader::default()))
+}
 
 /// Codex CLI
 ///
@@ -1420,7 +1430,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     ..Default::default()
                 };
 
-                let config = ConfigBuilder::default()
+                let config = config_builder()
                     .cli_overrides(cli_kv_overrides)
                     .harness_overrides(overrides)
                     .build()
@@ -1637,7 +1647,7 @@ async fn run_debug_prompt_input_command(
         additional_writable_roots: shared.add_dir,
         ..Default::default()
     };
-    let config = ConfigBuilder::default()
+    let config = config_builder()
         .cli_overrides(cli_kv_overrides)
         .harness_overrides(overrides)
         .loader_overrides(loader_overrides)
@@ -1665,17 +1675,46 @@ async fn run_debug_prompt_input_command(
         EnvironmentManager::from_codex_home(config.codex_home.clone(), local_runtime_paths).await?,
     );
 
+    let state_db: Option<StateDbHandle> = None;
+    let thread_store = thread_store_from_config(&config, state_db.clone());
+    let prompt_state_db: Option<SharedStateDbRuntime> = state_db
+        .clone()
+        .map(|state_db| -> SharedStateDbRuntime { state_db });
+    let auth_manager =
+        AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false).await;
+    let auth_runtimes = ThreadAuthRuntimes::from_auth_runtime(
+        auth_manager.clone(),
+        codex_login::model_provider_auth_manager(Some(auth_manager)),
+    );
     let prompt_input = codex_core::build_prompt_input(
         config,
         input,
-        /*state_db*/ None,
+        prompt_state_db,
         environment_provider,
+        thread_store,
+        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
+        auth_runtimes,
         Arc::new(codex_model_provider::DefaultModelProviderFactory),
+        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     )
     .await?;
     println!("{}", serde_json::to_string_pretty(&prompt_input)?);
 
     Ok(())
+}
+
+fn thread_store_from_config(
+    config: &Config,
+    state_db: Option<StateDbHandle>,
+) -> Arc<dyn codex_thread_store::ThreadStore> {
+    match &config.experimental_thread_store {
+        ThreadStoreConfig::Local => Arc::new(codex_thread_store::LocalThreadStore::new(
+            codex_thread_store::LocalThreadStoreConfig::from_config(config),
+            state_db,
+        )),
+        ThreadStoreConfig::InMemory { id } => codex_thread_store::InMemoryThreadStore::for_id(id),
+    }
 }
 
 async fn run_debug_models_command(
@@ -1688,7 +1727,7 @@ async fn run_debug_models_command(
         let cli_overrides = root_config_overrides
             .parse_overrides()
             .map_err(anyhow::Error::msg)?;
-        let config = ConfigBuilder::default()
+        let config = config_builder()
             .cli_overrides(cli_overrides)
             .build()
             .await?;
@@ -1696,7 +1735,7 @@ async fn run_debug_models_command(
             AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ true).await;
         let models_manager = build_models_manager(
             &config,
-            auth_manager,
+            codex_login::model_provider_auth_manager(Some(auth_manager)),
             &codex_model_provider::DefaultModelProviderFactory,
         );
         models_manager
@@ -1720,7 +1759,7 @@ async fn run_debug_clear_memories_command(
         config_profile: interactive.config_profile.clone(),
         ..Default::default()
     };
-    let config = ConfigBuilder::default()
+    let config = config_builder()
         .cli_overrides(cli_kv_overrides)
         .harness_overrides(overrides)
         .build()

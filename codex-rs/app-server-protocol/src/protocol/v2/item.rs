@@ -38,7 +38,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
-use serde_with::serde_as;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use ts_rs::TS;
@@ -1501,7 +1500,6 @@ pub struct TerminalInteractionNotification {
     pub stdin: String,
 }
 
-#[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]

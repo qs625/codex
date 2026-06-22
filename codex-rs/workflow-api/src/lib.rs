@@ -332,7 +332,7 @@ fn load_workflow_markdown(dir: &Path) -> Result<WorkflowMarkdown, String> {
     let text = fs::read_to_string(&instructions_path)
         .map_err(|err| format!("failed to read {WORKFLOW_INSTRUCTIONS_FILE}: {err}"))?;
     let (frontmatter, body) = extract_workflow_instructions_frontmatter(&text, &instructions_path)?;
-    let manifest: WorkflowManifest = serde_yaml::from_str(frontmatter).map_err(|err| {
+    let manifest = parse_workflow_manifest_frontmatter(frontmatter).map_err(|err| {
         format!("failed to parse {WORKFLOW_INSTRUCTIONS_FILE} frontmatter: {err}")
     })?;
     validate_workflow_manifest(&manifest)?;
@@ -340,6 +340,438 @@ fn load_workflow_markdown(dir: &Path) -> Result<WorkflowMarkdown, String> {
         manifest,
         body: truncate_instructions(body.trim_start().to_string()),
     })
+}
+
+#[derive(Debug, Default)]
+struct WorkflowManifestDraft {
+    id: Option<String>,
+    name: Option<String>,
+    description: Option<String>,
+    entry: Option<String>,
+    version: Option<Option<String>>,
+    when_to_use: Option<Vec<String>>,
+    inputs: Option<BTreeMap<String, WorkflowInputSpecDraft>>,
+}
+
+#[derive(Debug, Default)]
+struct WorkflowInputSpecDraft {
+    input_type: Option<String>,
+    description: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkflowManifestBlock {
+    None,
+    WhenToUse,
+    Inputs,
+    Input,
+    Unknown,
+}
+
+fn parse_workflow_manifest_frontmatter(frontmatter: &str) -> Result<WorkflowManifest, String> {
+    let mut draft = WorkflowManifestDraft::default();
+    let mut block = WorkflowManifestBlock::None;
+    let mut current_input: Option<String> = None;
+
+    for (line_index, raw_line) in frontmatter.lines().enumerate() {
+        let line_number = line_index + 1;
+        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+        let trimmed_start = line.trim_start();
+        if trimmed_start.is_empty() || trimmed_start.starts_with('#') {
+            continue;
+        }
+
+        let indent = workflow_manifest_indent(line, line_number)?;
+        let trimmed = &line[indent..];
+        if indent == 0 {
+            current_input = None;
+            let (key, value) = split_workflow_manifest_key_value(trimmed, line_number)?;
+            match key {
+                "id" => {
+                    set_workflow_manifest_string(&mut draft.id, key, value, line_number)?;
+                    block = WorkflowManifestBlock::None;
+                }
+                "name" => {
+                    set_workflow_manifest_string(&mut draft.name, key, value, line_number)?;
+                    block = WorkflowManifestBlock::None;
+                }
+                "description" => {
+                    set_workflow_manifest_string(&mut draft.description, key, value, line_number)?;
+                    block = WorkflowManifestBlock::None;
+                }
+                "entry" => {
+                    set_workflow_manifest_string(&mut draft.entry, key, value, line_number)?;
+                    block = WorkflowManifestBlock::None;
+                }
+                "version" => {
+                    set_optional_workflow_manifest_string(
+                        &mut draft.version,
+                        key,
+                        value,
+                        line_number,
+                    )?;
+                    block = WorkflowManifestBlock::None;
+                }
+                "when_to_use" | "whenToUse" => {
+                    set_workflow_manifest_list(&mut draft.when_to_use, key, value, line_number)?;
+                    block = if value.trim().is_empty() {
+                        WorkflowManifestBlock::WhenToUse
+                    } else {
+                        WorkflowManifestBlock::None
+                    };
+                }
+                "inputs" => {
+                    set_workflow_manifest_inputs(&mut draft.inputs, key, value, line_number)?;
+                    block = if value.trim().is_empty() {
+                        WorkflowManifestBlock::Inputs
+                    } else {
+                        WorkflowManifestBlock::None
+                    };
+                }
+                _ => {
+                    block = if value.trim().is_empty() {
+                        WorkflowManifestBlock::Unknown
+                    } else {
+                        WorkflowManifestBlock::None
+                    };
+                }
+            }
+            continue;
+        }
+
+        match block {
+            WorkflowManifestBlock::WhenToUse => {
+                if indent != 2 {
+                    return Err(format!(
+                        "line {line_number}: `when_to_use` items must be indented by two spaces"
+                    ));
+                }
+                let Some(item) = trimmed.strip_prefix("- ") else {
+                    return Err(format!(
+                        "line {line_number}: `when_to_use` entries must use `- value` list items"
+                    ));
+                };
+                let entries = draft.when_to_use.get_or_insert_with(Vec::new);
+                entries.push(parse_workflow_manifest_scalar(item, line_number)?);
+            }
+            WorkflowManifestBlock::Inputs | WorkflowManifestBlock::Input => {
+                parse_workflow_manifest_input_line(
+                    &mut draft.inputs,
+                    &mut block,
+                    &mut current_input,
+                    indent,
+                    trimmed,
+                    line_number,
+                )?;
+            }
+            WorkflowManifestBlock::Unknown => {}
+            WorkflowManifestBlock::None => {
+                return Err(format!(
+                    "line {line_number}: unexpected indented manifest line"
+                ));
+            }
+        }
+    }
+
+    let inputs = draft
+        .inputs
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(name, input)| {
+            let input_type = input.input_type.ok_or_else(|| {
+                format!("input `{name}` field `type` is required in workflow manifest")
+            })?;
+            Ok((
+                name,
+                WorkflowInputSpec {
+                    input_type,
+                    description: input.description,
+                },
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>, String>>()?;
+
+    Ok(WorkflowManifest {
+        id: required_workflow_manifest_string(draft.id, "id")?,
+        name: required_workflow_manifest_string(draft.name, "name")?,
+        description: required_workflow_manifest_string(draft.description, "description")?,
+        entry: required_workflow_manifest_string(draft.entry, "entry")?,
+        version: draft.version.unwrap_or(None),
+        when_to_use: draft.when_to_use.unwrap_or_default(),
+        inputs,
+    })
+}
+
+fn parse_workflow_manifest_input_line(
+    inputs: &mut Option<BTreeMap<String, WorkflowInputSpecDraft>>,
+    block: &mut WorkflowManifestBlock,
+    current_input: &mut Option<String>,
+    indent: usize,
+    trimmed: &str,
+    line_number: usize,
+) -> Result<(), String> {
+    match indent {
+        2 => {
+            let (input_name, value) = split_workflow_manifest_key_value(trimmed, line_number)?;
+            if !value.trim().is_empty() {
+                return Err(format!(
+                    "line {line_number}: workflow input `{input_name}` must use nested fields"
+                ));
+            }
+            let input_specs = inputs.get_or_insert_with(BTreeMap::new);
+            if input_specs
+                .insert(input_name.to_string(), WorkflowInputSpecDraft::default())
+                .is_some()
+            {
+                return Err(format!(
+                    "line {line_number}: duplicate input `{input_name}`"
+                ));
+            }
+            *current_input = Some(input_name.to_string());
+            *block = WorkflowManifestBlock::Input;
+            Ok(())
+        }
+        4 => {
+            let Some(input_name) = current_input.as_deref() else {
+                return Err(format!(
+                    "line {line_number}: workflow input field appears before an input name"
+                ));
+            };
+            let (field, value) = split_workflow_manifest_key_value(trimmed, line_number)?;
+            let input_specs = inputs.get_or_insert_with(BTreeMap::new);
+            let input = input_specs.get_mut(input_name).ok_or_else(|| {
+                format!("line {line_number}: workflow input `{input_name}` was not initialized")
+            })?;
+            match field {
+                "type" => {
+                    set_workflow_manifest_string(&mut input.input_type, field, value, line_number)
+                }
+                "description" => {
+                    set_workflow_manifest_string(&mut input.description, field, value, line_number)
+                }
+                _ => Ok(()),
+            }
+        }
+        _ => Err(format!(
+            "line {line_number}: workflow inputs must use two-space indentation"
+        )),
+    }
+}
+
+fn workflow_manifest_indent(line: &str, line_number: usize) -> Result<usize, String> {
+    let mut indent = 0;
+    for byte in line.bytes() {
+        match byte {
+            b' ' => indent += 1,
+            b'\t' => {
+                return Err(format!(
+                    "line {line_number}: tabs are not supported in workflow manifest indentation"
+                ));
+            }
+            _ => break,
+        }
+    }
+    Ok(indent)
+}
+
+fn split_workflow_manifest_key_value<'a>(
+    line: &'a str,
+    line_number: usize,
+) -> Result<(&'a str, &'a str), String> {
+    let Some((key, value)) = line.split_once(':') else {
+        return Err(format!("line {line_number}: expected `key: value`"));
+    };
+    let key = key.trim();
+    if key.is_empty() {
+        return Err(format!(
+            "line {line_number}: manifest key must not be empty"
+        ));
+    }
+    Ok((key, value.trim_start()))
+}
+
+fn set_workflow_manifest_string(
+    target: &mut Option<String>,
+    field: &str,
+    value: &str,
+    line_number: usize,
+) -> Result<(), String> {
+    if target.is_some() {
+        return Err(format!("line {line_number}: duplicate field `{field}`"));
+    }
+    *target = Some(parse_workflow_manifest_scalar(value, line_number)?);
+    Ok(())
+}
+
+fn set_optional_workflow_manifest_string(
+    target: &mut Option<Option<String>>,
+    field: &str,
+    value: &str,
+    line_number: usize,
+) -> Result<(), String> {
+    if target.is_some() {
+        return Err(format!("line {line_number}: duplicate field `{field}`"));
+    }
+    *target = if value.trim().is_empty() {
+        Some(None)
+    } else {
+        Some(Some(parse_workflow_manifest_scalar(value, line_number)?))
+    };
+    Ok(())
+}
+
+fn set_workflow_manifest_list(
+    target: &mut Option<Vec<String>>,
+    field: &str,
+    value: &str,
+    line_number: usize,
+) -> Result<(), String> {
+    if target.is_some() {
+        return Err(format!("line {line_number}: duplicate field `{field}`"));
+    }
+    match value.trim() {
+        "" => {
+            *target = Some(Vec::new());
+            Ok(())
+        }
+        "[]" => {
+            *target = Some(Vec::new());
+            Ok(())
+        }
+        _ => Err(format!(
+            "line {line_number}: field `{field}` must be a block list"
+        )),
+    }
+}
+
+fn set_workflow_manifest_inputs(
+    target: &mut Option<BTreeMap<String, WorkflowInputSpecDraft>>,
+    field: &str,
+    value: &str,
+    line_number: usize,
+) -> Result<(), String> {
+    if target.is_some() {
+        return Err(format!("line {line_number}: duplicate field `{field}`"));
+    }
+    match value.trim() {
+        "" => {
+            *target = Some(BTreeMap::new());
+            Ok(())
+        }
+        "{}" => {
+            *target = Some(BTreeMap::new());
+            Ok(())
+        }
+        _ => Err(format!(
+            "line {line_number}: field `{field}` must be a block map"
+        )),
+    }
+}
+
+fn parse_workflow_manifest_scalar(value: &str, line_number: usize) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(format!(
+            "line {line_number}: scalar value must not be empty"
+        ));
+    }
+    if value.starts_with('"') {
+        let end = workflow_manifest_double_quote_end(value, line_number)?;
+        validate_workflow_manifest_trailing_comment(&value[end + 1..], line_number)?;
+        return serde_json::from_str::<String>(&value[..=end])
+            .map_err(|err| format!("line {line_number}: invalid double-quoted scalar: {err}"));
+    }
+    if value.starts_with('\'') {
+        let (parsed, trailing) = parse_workflow_manifest_single_quoted_scalar(value, line_number)?;
+        validate_workflow_manifest_trailing_comment(trailing, line_number)?;
+        return Ok(parsed);
+    }
+    if value.starts_with('[') || value.starts_with('{') {
+        return Err(format!(
+            "line {line_number}: inline YAML collections are not supported in workflow manifests"
+        ));
+    }
+    let value = strip_workflow_manifest_inline_comment(value).trim_end();
+    if value.is_empty() {
+        return Err(format!(
+            "line {line_number}: scalar value must not be empty"
+        ));
+    }
+    Ok(value.to_string())
+}
+
+fn workflow_manifest_double_quote_end(value: &str, line_number: usize) -> Result<usize, String> {
+    let mut escaped = false;
+    for (index, ch) in value.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '"' => return Ok(index),
+            _ => {}
+        }
+    }
+    Err(format!("line {line_number}: invalid double-quoted scalar"))
+}
+
+fn parse_workflow_manifest_single_quoted_scalar<'a>(
+    value: &'a str,
+    line_number: usize,
+) -> Result<(String, &'a str), String> {
+    let mut parsed = String::new();
+    let mut index = 1;
+    while index < value.len() {
+        let ch = value[index..]
+            .chars()
+            .next()
+            .expect("index stays on char boundary");
+        if ch == '\'' {
+            let next_index = index + ch.len_utf8();
+            if value[next_index..].starts_with('\'') {
+                parsed.push('\'');
+                index = next_index + 1;
+                continue;
+            }
+            return Ok((parsed, &value[next_index..]));
+        }
+        parsed.push(ch);
+        index += ch.len_utf8();
+    }
+    Err(format!("line {line_number}: invalid single-quoted scalar"))
+}
+
+fn validate_workflow_manifest_trailing_comment(
+    trailing: &str,
+    line_number: usize,
+) -> Result<(), String> {
+    let trailing = trailing.trim();
+    if trailing.is_empty() || trailing.starts_with('#') {
+        return Ok(());
+    }
+    Err(format!(
+        "line {line_number}: unexpected content after quoted scalar"
+    ))
+}
+
+fn strip_workflow_manifest_inline_comment(value: &str) -> &str {
+    for (index, ch) in value.char_indices() {
+        let comment_starts = ch == '#'
+            && (index == 0
+                || value[..index]
+                    .chars()
+                    .next_back()
+                    .is_some_and(char::is_whitespace));
+        if comment_starts {
+            return &value[..index];
+        }
+    }
+    value
+}
+
+fn required_workflow_manifest_string(value: Option<String>, field: &str) -> Result<String, String> {
+    value.ok_or_else(|| format!("field `{field}` is required in workflow manifest"))
 }
 
 fn validate_workflow_manifest(manifest: &WorkflowManifest) -> Result<(), String> {
@@ -560,6 +992,116 @@ Workflow instructions for {id}.
             ),
         )
         .expect("write workflow markdown");
+    }
+
+    #[test]
+    fn workflow_manifest_parser_supports_current_frontmatter_shape() {
+        let manifest = parse_workflow_manifest_frontmatter(
+            r#"id: feature-dev
+name: "Feature Development"
+description: 按调研、实现、review/fix、验证流程开发功能。
+entry: workflow.ts
+version: "0.1.0"
+when_to_use:
+  - 用户要求开发新功能
+  - "需要多 agent 协作、review 和验证"
+inputs:
+  objective:
+    type: string
+    description: 要完成的开发目标
+  cwd:
+    type: string
+    description: 执行 workflow 的 checkout 路径
+"#,
+        )
+        .expect("parse workflow manifest");
+
+        assert_eq!(
+            manifest,
+            WorkflowManifest {
+                id: "feature-dev".to_string(),
+                name: "Feature Development".to_string(),
+                description: "按调研、实现、review/fix、验证流程开发功能。".to_string(),
+                entry: "workflow.ts".to_string(),
+                version: Some("0.1.0".to_string()),
+                when_to_use: vec![
+                    "用户要求开发新功能".to_string(),
+                    "需要多 agent 协作、review 和验证".to_string(),
+                ],
+                inputs: BTreeMap::from([
+                    (
+                        "cwd".to_string(),
+                        WorkflowInputSpec {
+                            input_type: "string".to_string(),
+                            description: Some("执行 workflow 的 checkout 路径".to_string()),
+                        },
+                    ),
+                    (
+                        "objective".to_string(),
+                        WorkflowInputSpec {
+                            input_type: "string".to_string(),
+                            description: Some("要完成的开发目标".to_string()),
+                        },
+                    ),
+                ]),
+            }
+        );
+    }
+
+    #[test]
+    fn workflow_manifest_parser_supports_camel_case_alias_and_quoted_scalars() {
+        let manifest = parse_workflow_manifest_frontmatter(
+            r#"id: 'feature-dev' # workflow id
+name: 'Feature ''Dev'''
+description: "Build \"things\"" # quoted description
+entry: workflow.ts
+whenToUse:
+  - 'quoted item' # list comment
+inputs: {}
+"#,
+        )
+        .expect("parse workflow manifest");
+
+        assert_eq!(manifest.id, "feature-dev");
+        assert_eq!(manifest.name, "Feature 'Dev'");
+        assert_eq!(manifest.description, "Build \"things\"");
+        assert_eq!(manifest.when_to_use, vec!["quoted item"]);
+        assert!(manifest.inputs.is_empty());
+    }
+
+    #[test]
+    fn workflow_manifest_parser_rejects_missing_input_type() {
+        let err = parse_workflow_manifest_frontmatter(
+            r#"id: feature-dev
+name: Feature Dev
+description: project description
+entry: workflow.ts
+inputs:
+  objective:
+    description: goal
+"#,
+        )
+        .expect_err("manifest must reject input without type");
+
+        assert_eq!(
+            err,
+            "input `objective` field `type` is required in workflow manifest"
+        );
+    }
+
+    #[test]
+    fn workflow_manifest_parser_rejects_inline_collections() {
+        let err = parse_workflow_manifest_frontmatter(
+            r#"id: feature-dev
+name: Feature Dev
+description: project description
+entry: workflow.ts
+when_to_use: [feature work]
+"#,
+        )
+        .expect_err("manifest must reject inline list");
+
+        assert!(err.contains("field `when_to_use` must be a block list"));
     }
 
     #[test]

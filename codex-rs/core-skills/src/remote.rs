@@ -6,8 +6,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use codex_login::CodexAuth;
-use codex_login::default_client::build_reqwest_client;
+use codex_auth_types::RequestAuthSnapshot;
+use codex_default_client::build_reqwest_client;
 
 const REMOTE_SKILLS_API_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -48,7 +48,7 @@ fn as_query_product_surface(product_surface: RemoteSkillProductSurface) -> &'sta
     }
 }
 
-fn ensure_codex_backend_auth(auth: Option<&CodexAuth>) -> Result<&CodexAuth> {
+fn ensure_codex_backend_auth(auth: Option<&RequestAuthSnapshot>) -> Result<&RequestAuthSnapshot> {
     let Some(auth) = auth else {
         anyhow::bail!("chatgpt authentication required for remote skill scopes");
     };
@@ -88,7 +88,7 @@ struct RemoteSkill {
 
 pub async fn list_remote_skills(
     chatgpt_base_url: String,
-    auth: Option<&CodexAuth>,
+    auth: Option<&RequestAuthSnapshot>,
     scope: RemoteSkillScope,
     product_surface: RemoteSkillProductSurface,
     enabled: Option<bool>,
@@ -112,7 +112,7 @@ pub async fn list_remote_skills(
         .get(&url)
         .timeout(REMOTE_SKILLS_API_TIMEOUT)
         .query(&query_params)
-        .headers(codex_model_provider_api::auth_provider_from_auth(auth).to_auth_headers());
+        .headers(codex_api_auth::auth_provider_from_auth_snapshot(auth).to_auth_headers());
     let response = request
         .send()
         .await
@@ -141,7 +141,7 @@ pub async fn list_remote_skills(
 pub async fn export_remote_skill(
     chatgpt_base_url: String,
     codex_home: PathBuf,
-    auth: Option<&CodexAuth>,
+    auth: Option<&RequestAuthSnapshot>,
     skill_id: &str,
 ) -> Result<RemoteSkillDownloadResult> {
     let auth = ensure_codex_backend_auth(auth)?;
@@ -152,7 +152,7 @@ pub async fn export_remote_skill(
     let request = client
         .get(&url)
         .timeout(REMOTE_SKILLS_API_TIMEOUT)
-        .headers(codex_model_provider_api::auth_provider_from_auth(auth).to_auth_headers());
+        .headers(codex_api_auth::auth_provider_from_auth_snapshot(auth).to_auth_headers());
 
     let response = request
         .send()

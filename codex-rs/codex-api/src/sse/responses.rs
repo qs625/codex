@@ -1,5 +1,6 @@
 use crate::common::ResponseEvent;
 use crate::common::ResponseStream;
+use crate::common::response_stream_from_receiver;
 use crate::error::ApiError;
 use crate::rate_limits::parse_all_rate_limits;
 use crate::telemetry::SseTelemetry;
@@ -80,10 +81,7 @@ pub fn spawn_response_stream(
         process_sse(stream_response.bytes, tx_event, idle_timeout, telemetry).await;
     });
 
-    ResponseStream {
-        rx_event,
-        upstream_request_id,
-    }
+    response_stream_from_receiver(rx_event, upstream_request_id)
 }
 
 #[derive(Debug, Deserialize)]
@@ -1061,10 +1059,9 @@ mod tests {
             /*telemetry*/ None,
             /*turn_state*/ None,
         );
-        assert_eq!(stream.upstream_request_id.as_deref(), Some("req-1"));
+        assert_eq!(stream.upstream_request_id(), Some("req-1"));
         let event = stream
-            .rx_event
-            .recv()
+            .next()
             .await
             .expect("expected server model event")
             .expect("expected ok event");
@@ -1102,7 +1099,7 @@ mod tests {
             /*turn_state*/ None,
         );
         let mut events = Vec::new();
-        while let Some(event) = stream.rx_event.recv().await {
+        while let Some(event) = stream.next().await {
             events.push(event.expect("expected ok event"));
         }
 

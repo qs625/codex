@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use codex_extension_api::ExtensionToolOutput;
 use codex_extension_api::FunctionCallError;
 use codex_extension_api::JsonToolOutput;
@@ -108,7 +107,6 @@ pub(crate) struct EventCommandSubscribeTool {
     pub(crate) registry: Arc<FsSubscriptionRegistry>,
 }
 
-#[async_trait]
 impl ToolExecutor<ToolCall> for EventCommandSubscribeTool {
     type Output = ExtensionToolOutput;
 
@@ -123,29 +121,36 @@ impl ToolExecutor<ToolCall> for EventCommandSubscribeTool {
         ))
     }
 
-    async fn handle(&self, call: ToolCall) -> Result<Self::Output, FunctionCallError> {
-        let args: EventCommandSubscribeArgs = parse_args(&call)?;
-        if args.command.trim().is_empty() {
-            return Err(FunctionCallError::RespondToModel(
-                "command must not be empty".to_string(),
-            ));
-        }
-        let subscription_id = Uuid::now_v7().to_string();
-        self.registry
-            .subscribe_event_command(
-                self.thread_id,
-                args.command.clone(),
-                args.cwd.clone(),
-                args.label.clone(),
-                subscription_id.clone(),
-            )
-            .await;
-        Ok(JsonToolOutput::new(json!(EventCommandSubscribeResult {
-            subscription_id,
-            command: args.command,
-            cwd: args.cwd,
-            label: args.label,
-        })))
+    fn handle<'a>(
+        &'a self, call: ToolCall,
+    ) -> codex_extension_api::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+                    let args: EventCommandSubscribeArgs = parse_args(&call)?;
+                    if args.command.trim().is_empty() {
+                        return Err(FunctionCallError::RespondToModel(
+                            "command must not be empty".to_string(),
+                        ));
+                    }
+                    let subscription_id = Uuid::now_v7().to_string();
+                    self.registry
+                        .subscribe_event_command(
+                            self.thread_id,
+                            args.command.clone(),
+                            args.cwd.clone(),
+                            args.label.clone(),
+                            subscription_id.clone(),
+                        )
+                        .await;
+                    Ok(JsonToolOutput::new(json!(EventCommandSubscribeResult {
+                        subscription_id,
+                        command: args.command,
+                        cwd: args.cwd,
+                        label: args.label,
+                    })))
+            })
     }
 }
 

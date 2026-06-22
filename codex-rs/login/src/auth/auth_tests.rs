@@ -252,6 +252,85 @@ async fn pro_account_with_no_api_key_uses_chatgpt_auth() {
 
 #[tokio::test]
 #[serial(codex_auth_env)]
+async fn request_auth_snapshot_includes_chatgpt_codex_apps_metadata() {
+    let codex_home = tempdir().unwrap();
+    let _access_token_guard = remove_access_token_env_var();
+    write_auth_file(
+        AuthFileParams {
+            openai_api_key: None,
+            chatgpt_plan_type: Some("team".to_string()),
+            chatgpt_account_id: Some(WORKSPACE_ID_ALLOWED.to_string()),
+        },
+        codex_home.path(),
+    )
+    .expect("failed to write auth file");
+
+    let auth = super::load_auth(
+        codex_home.path(),
+        /*enable_codex_api_key_env*/ false,
+        AuthCredentialsStoreMode::File,
+        /*chatgpt_base_url*/ None,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let snapshot = auth.request_auth_snapshot();
+
+    assert_eq!(snapshot.auth_mode(), AuthMode::Chatgpt);
+    assert_eq!(snapshot.account_id(), Option::<&str>::None);
+    assert_eq!(snapshot.chatgpt_user_id(), Some("user-12345"));
+    assert!(snapshot.is_workspace_account());
+    let codex_auth_types::RequestAuthSnapshot::Bearer(snapshot) = snapshot else {
+        panic!("expected bearer auth snapshot");
+    };
+    assert_eq!(snapshot.chatgpt_user_id.as_deref(), Some("user-12345"));
+    assert!(snapshot.is_workspace_account);
+}
+
+#[tokio::test]
+#[serial(codex_auth_env)]
+async fn request_auth_snapshot_includes_agent_identity_codex_apps_metadata() {
+    let mut record = agent_identity_record(WORKSPACE_ID_ALLOWED);
+    record.plan_type = AccountPlanType::Team;
+    let jwt = signed_agent_identity_jwt(&record, json!(record.plan_type))
+        .expect("signed agent identity jwt");
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/backend-api/wham/agent-identities/jwks"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(test_jwks_body()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/backend-api/v1/agent/agent-runtime-id/task/register"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "task_id": "task-123",
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let chatgpt_base_url = format!("{}/backend-api", server.uri());
+    let _authapi_guard =
+        EnvVarGuard::set("CODEX_AGENT_IDENTITY_AUTHAPI_BASE_URL", &chatgpt_base_url);
+    let auth = CodexAuth::from_agent_identity_jwt(&jwt, Some(&chatgpt_base_url))
+        .await
+        .expect("agent identity auth should load");
+    let snapshot = auth.request_auth_snapshot();
+
+    assert_eq!(snapshot.auth_mode(), AuthMode::AgentIdentity);
+    assert_eq!(snapshot.account_id(), Some(WORKSPACE_ID_ALLOWED));
+    assert_eq!(snapshot.chatgpt_user_id(), Some("user-id"));
+    assert!(snapshot.is_workspace_account());
+    let codex_auth_types::RequestAuthSnapshot::AgentIdentity(snapshot) = snapshot else {
+        panic!("expected agent identity auth snapshot");
+    };
+    assert_eq!(snapshot.account_id, WORKSPACE_ID_ALLOWED);
+    assert_eq!(snapshot.chatgpt_user_id, "user-id");
+    assert!(snapshot.is_workspace_account);
+}
+
+#[tokio::test]
+#[serial(codex_auth_env)]
 async fn loads_api_key_from_auth_json() {
     let dir = tempdir().unwrap();
     let _access_token_guard = remove_access_token_env_var();
@@ -275,6 +354,34 @@ async fn loads_api_key_from_auth_json() {
     assert_eq!(auth.api_key(), Some("sk-test-key"));
 
     assert!(auth.get_token_data().is_err());
+}
+
+#[tokio::test]
+#[serial(codex_auth_env)]
+async fn auth_runtime_returns_request_and_telemetry_snapshots() {
+    let dir = tempdir().unwrap();
+    let _access_token_guard = remove_access_token_env_var();
+    super::login_with_api_key(dir.path(), "sk-runtime", AuthCredentialsStoreMode::File)
+        .expect("login_with_api_key should succeed");
+    let manager = AuthManager::shared(
+        dir.path().to_path_buf(),
+        /*enable_codex_api_key_env*/ false,
+        AuthCredentialsStoreMode::File,
+        /*chatgpt_base_url*/ None,
+    )
+    .await;
+    let runtime: &dyn codex_auth_types::AuthRuntime = manager.as_ref();
+
+    let snapshot = runtime.auth().await.expect("auth snapshot should load");
+    assert_eq!(snapshot.auth_mode(), AuthMode::ApiKey);
+    assert!(!snapshot.uses_codex_backend());
+    assert_eq!(runtime.auth_cached(), Some(snapshot));
+
+    let telemetry = runtime.telemetry_snapshot();
+    assert_eq!(telemetry.auth_mode, Some(AuthMode::ApiKey));
+    assert_eq!(telemetry.account_id, None);
+    assert_eq!(telemetry.account_email, None);
+    assert!(!telemetry.uses_enterprise_default_service_tier);
 }
 
 #[test]

@@ -1,0 +1,23 @@
+[package]
+name = "codex-api-auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Lightweight Codex API request auth providers."
+
+[lib]
+name = "codex_api_auth"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-agent-identity-api = { workspace = true }
+codex-api-provider = { workspace = true }
+codex-auth-types = { workspace = true }
+http = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

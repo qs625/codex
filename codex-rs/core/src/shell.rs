@@ -1,6 +1,6 @@
 use crate::shell_detect::detect_shell_type;
 use crate::shell_snapshot::ShellSnapshot;
-use codex_shell_command::resolve_executable_in_path;
+use codex_shell_utils::resolve_executable_in_path;
 use serde::Deserialize;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -89,72 +89,6 @@ impl PartialEq for Shell {
 
 impl Eq for Shell {}
 
-#[cfg(unix)]
-fn get_user_shell_path() -> Option<PathBuf> {
-    let uid = unsafe { libc::getuid() };
-    use std::ffi::CStr;
-    use std::mem::MaybeUninit;
-    use std::ptr;
-
-    let mut passwd = MaybeUninit::<libc::passwd>::uninit();
-
-    // We cannot use getpwuid here: it returns pointers into libc-managed
-    // storage, which is not safe to read concurrently on all targets (the musl
-    // static build used by the CLI can segfault when parallel callers race on
-    // that buffer). getpwuid_r keeps the passwd data in caller-owned memory.
-    let suggested_buffer_len = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
-    let buffer_len = usize::try_from(suggested_buffer_len)
-        .ok()
-        .filter(|len| *len > 0)
-        .unwrap_or(1024);
-    let mut buffer = vec![0; buffer_len];
-
-    loop {
-        let mut result = ptr::null_mut();
-        let status = unsafe {
-            libc::getpwuid_r(
-                uid,
-                passwd.as_mut_ptr(),
-                buffer.as_mut_ptr().cast(),
-                buffer.len(),
-                &mut result,
-            )
-        };
-
-        if status == 0 {
-            if result.is_null() {
-                return None;
-            }
-
-            let passwd = unsafe { passwd.assume_init_ref() };
-            if passwd.pw_shell.is_null() {
-                return None;
-            }
-
-            let shell_path = unsafe { CStr::from_ptr(passwd.pw_shell) }
-                .to_string_lossy()
-                .into_owned();
-            return Some(PathBuf::from(shell_path));
-        }
-
-        if status != libc::ERANGE {
-            return None;
-        }
-
-        // Retry with a larger buffer until libc can materialize the passwd entry.
-        let new_len = buffer.len().checked_mul(2)?;
-        if new_len > 1024 * 1024 {
-            return None;
-        }
-        buffer.resize(new_len, 0);
-    }
-}
-
-#[cfg(not(unix))]
-fn get_user_shell_path() -> Option<PathBuf> {
-    None
-}
-
 fn file_exists(path: &PathBuf) -> Option<PathBuf> {
     if std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) {
         Some(PathBuf::from(path))
@@ -176,7 +110,7 @@ fn get_shell_path(
 
     // Check if the shell we are trying to load is user's default shell
     // if just use it
-    let default_shell_path = get_user_shell_path();
+    let default_shell_path = codex_user_info::current_user_shell_path();
     if let Some(default_shell_path) = default_shell_path
         && detect_shell_type(&default_shell_path) == Some(shell_type)
         && file_exists(&default_shell_path).is_some()
@@ -311,7 +245,7 @@ pub fn get_shell(shell_type: ShellType, path: Option<&PathBuf>) -> Option<Shell>
 }
 
 pub fn default_user_shell() -> Shell {
-    default_user_shell_from_path(get_user_shell_path())
+    default_user_shell_from_path(codex_user_info::current_user_shell_path())
 }
 
 fn default_user_shell_from_path(user_shell_path: Option<PathBuf>) -> Shell {

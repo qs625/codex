@@ -121,7 +121,8 @@ async fn start_review_conversation(
     sub_agent_config.model = Some(model);
     (run_codex_thread_one_shot(
         sub_agent_config,
-        session.auth_manager(),
+        session.auth_runtime(),
+        session.provider_auth_manager(),
         session.models_manager(),
         input,
         session.clone_session(),

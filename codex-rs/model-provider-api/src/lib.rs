@@ -1,11 +1,16 @@
 mod auth;
-mod bearer_auth_provider;
 mod provider;
 mod provider_config;
 
-pub use auth::auth_provider_from_auth;
-pub use auth::unauthenticated_auth_provider;
-pub use bearer_auth_provider::BearerAuthProvider;
+pub use auth::ModelProviderAuthFuture;
+pub use auth::ModelProviderAuthManager;
+pub use auth::ModelProviderAuthRecoveryError;
+pub use auth::ModelProviderUnauthorizedRecovery;
+pub use auth::ModelProviderUnauthorizedRecoveryStepResult;
+pub use auth::SharedModelProviderAuthManager;
+pub use codex_api_auth::BearerAuthProvider;
+pub use codex_api_auth::auth_provider_from_auth_snapshot;
+pub use codex_api_auth::unauthenticated_auth_provider;
 pub use provider::DEFAULT_APPROVAL_REVIEW_PREFERRED_MODEL;
 pub use provider::ModelProvider;
 pub use provider::ModelProviderFactory;

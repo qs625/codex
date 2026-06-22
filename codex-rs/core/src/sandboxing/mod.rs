@@ -15,7 +15,7 @@ use crate::exec::execute_exec_request;
 #[cfg(target_os = "macos")]
 use crate::spawn::CODEX_SANDBOX_ENV_VAR;
 use crate::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
-use codex_network_proxy::NetworkProxy;
+use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::models::PermissionProfile;
@@ -23,9 +23,9 @@ pub use codex_protocol::models::SandboxPermissions;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::SandboxPolicy;
-use codex_sandboxing::SandboxExecRequest;
-use codex_sandboxing::SandboxType;
-use codex_sandboxing::compatibility_sandbox_policy_for_permission_profile;
+use codex_sandboxing_api::SandboxExecRequest;
+use codex_sandboxing_api::SandboxType;
+use codex_sandboxing_api::compatibility_sandbox_policy_for_permission_profile;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
 
@@ -47,7 +47,7 @@ pub struct ExecRequest {
     pub cwd: AbsolutePathBuf,
     pub env: HashMap<String, String>,
     pub(crate) exec_server_env_config: Option<ExecServerEnvConfig>,
-    pub network: Option<NetworkProxy>,
+    pub network: Option<SharedNetworkProxyRuntime>,
     pub expiration: ExecExpiration,
     pub capture_policy: ExecCapturePolicy,
     pub sandbox: SandboxType,
@@ -67,7 +67,7 @@ impl ExecRequest {
         command: Vec<String>,
         cwd: AbsolutePathBuf,
         env: HashMap<String, String>,
-        network: Option<NetworkProxy>,
+        network: Option<SharedNetworkProxyRuntime>,
         expiration: ExecExpiration,
         capture_policy: ExecCapturePolicy,
         sandbox: SandboxType,
@@ -112,7 +112,7 @@ impl ExecRequest {
         request: SandboxExecRequest,
         options: ExecOptions,
         windows_sandbox_policy_cwd: AbsolutePathBuf,
-        network: Option<NetworkProxy>,
+        network: Option<SharedNetworkProxyRuntime>,
     ) -> Self {
         let SandboxExecRequest {
             command,

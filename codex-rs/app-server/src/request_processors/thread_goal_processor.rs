@@ -1,5 +1,8 @@
 use super::*;
 use codex_protocol::protocol::validate_thread_goal_objective;
+use codex_state_api::protocol_goal_from_state;
+use codex_state_api::state_goal_status_from_protocol;
+use codex_state_api::validate_thread_goal_budget;
 
 #[derive(Clone)]
 pub(crate) struct ThreadGoalRequestProcessor {
@@ -74,15 +77,11 @@ impl ThreadGoalRequestProcessor {
 
     pub(crate) async fn pending_resume_goal_state(
         &self,
-        thread: &CodexThread,
+        _thread: &CodexThread,
     ) -> (bool, Option<StateDbHandle>) {
         let emit_thread_goal_update = self.config.features.enabled(Feature::Goals);
         let thread_goal_state_db = if emit_thread_goal_update {
-            if let Some(state_db) = thread.state_db() {
-                Some(state_db)
-            } else {
-                self.state_db.clone()
-            }
+            self.state_db.clone()
         } else {
             None
         };
@@ -134,14 +133,17 @@ impl ThreadGoalRequestProcessor {
             let thread_state = thread_state.lock().await;
             thread_state.listener_command_tx()
         };
-        let status = params.status.map(thread_goal_status_to_state);
+        let status = params
+            .status
+            .map(|status| state_goal_status_from_protocol(status.to_core()));
         let objective = params.objective.as_deref().map(str::trim);
 
         if let Some(objective) = objective {
             validate_thread_goal_objective(objective).map_err(invalid_request)?;
         }
         if objective.is_some() || params.token_budget.is_some() {
-            validate_goal_budget(params.token_budget.flatten()).map_err(invalid_request)?;
+            validate_thread_goal_budget(params.token_budget.flatten())
+                .map_err(|err| invalid_request(err.to_string()))?;
         }
 
         if let Some(thread) = running_thread.as_ref() {
@@ -331,9 +333,6 @@ impl ThreadGoalRequestProcessor {
                     "ephemeral thread does not support goals: {thread_id}"
                 )));
             }
-            if let Some(state_db) = thread.state_db() {
-                return Ok(state_db);
-            }
         } else {
             codex_rollout::find_thread_path_by_id_str(
                 &self.config.codex_home,
@@ -434,44 +433,8 @@ impl ThreadGoalRequestProcessor {
     }
 }
 
-fn validate_goal_budget(value: Option<i64>) -> Result<(), String> {
-    if let Some(value) = value
-        && value <= 0
-    {
-        return Err("goal budgets must be positive when provided".to_string());
-    }
-    Ok(())
-}
-
-fn thread_goal_status_to_state(status: ThreadGoalStatus) -> codex_state::ThreadGoalStatus {
-    match status {
-        ThreadGoalStatus::Active => codex_state::ThreadGoalStatus::Active,
-        ThreadGoalStatus::Paused => codex_state::ThreadGoalStatus::Paused,
-        ThreadGoalStatus::BudgetLimited => codex_state::ThreadGoalStatus::BudgetLimited,
-        ThreadGoalStatus::Complete => codex_state::ThreadGoalStatus::Complete,
-    }
-}
-
-fn thread_goal_status_from_state(status: codex_state::ThreadGoalStatus) -> ThreadGoalStatus {
-    match status {
-        codex_state::ThreadGoalStatus::Active => ThreadGoalStatus::Active,
-        codex_state::ThreadGoalStatus::Paused => ThreadGoalStatus::Paused,
-        codex_state::ThreadGoalStatus::BudgetLimited => ThreadGoalStatus::BudgetLimited,
-        codex_state::ThreadGoalStatus::Complete => ThreadGoalStatus::Complete,
-    }
-}
-
 pub(super) fn api_thread_goal_from_state(goal: codex_state::ThreadGoal) -> ThreadGoal {
-    ThreadGoal {
-        thread_id: goal.thread_id.to_string(),
-        objective: goal.objective,
-        status: thread_goal_status_from_state(goal.status),
-        token_budget: goal.token_budget,
-        tokens_used: goal.tokens_used,
-        time_used_seconds: goal.time_used_seconds,
-        created_at: goal.created_at.timestamp(),
-        updated_at: goal.updated_at.timestamp(),
-    }
+    protocol_goal_from_state(goal).into()
 }
 
 fn parse_thread_id_for_request(thread_id: &str) -> Result<ThreadId, JSONRPCErrorError> {

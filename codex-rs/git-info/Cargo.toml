@@ -1,0 +1,33 @@
+[package]
+name = "codex-git-info"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Git repository discovery, metadata, and branch helpers for Codex."
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-file-system = { workspace = true }
+codex-protocol = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+futures = { workspace = true, features = ["alloc"] }
+once_cell = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+sha1 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "process", "rt", "time"] }
+ts-rs = { workspace = true, features = [
+    "uuid-impl",
+    "serde-json-impl",
+    "no-serde-warnings",
+] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+
+[lib]
+doctest = false

@@ -47,19 +47,19 @@ use codex_code_mode_api::PUBLIC_TOOL_NAME as CODE_MODE_PUBLIC_TOOL_NAME;
 use codex_code_mode_api::WAIT_TOOL_NAME as CODE_MODE_WAIT_TOOL_NAME;
 use codex_extension_api::ExtensionToolExecutor;
 use codex_protocol::openai_models::ConfigShellToolType;
-use codex_tools::CodeModeExecPlan;
-use codex_tools::SpawnAgentToolOptions;
-use codex_tools::TOOL_SEARCH_TOOL_NAME;
-use codex_tools::ToolEnvironmentMode;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
-use codex_tools::ToolsConfig;
-use codex_tools::ViewImageToolOptions;
-use codex_tools::code_mode_exec_plan_for_specs;
-use codex_tools::create_code_mode_tool;
-use codex_tools::filter_tool_specs_for_agent;
-use codex_tools::merge_tool_specs_into_namespaces;
-use codex_tools::tool_name_matches_patterns;
+use codex_tool_config::ToolEnvironmentMode;
+use codex_tool_config::ToolsConfig;
+use codex_tool_planning::CodeModeExecPlan;
+use codex_tool_planning::SpawnAgentToolOptions;
+use codex_tool_planning::TOOL_SEARCH_TOOL_NAME;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::ViewImageToolOptions;
+use codex_tool_planning::code_mode_exec_plan_for_specs;
+use codex_tool_planning::create_code_mode_tool;
+use codex_tool_planning::filter_tool_specs_for_agent;
+use codex_tool_planning::merge_tool_specs_into_namespaces;
+use codex_tool_planning::tool_name_matches_patterns;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::warn;
@@ -111,7 +111,7 @@ pub(crate) fn build_tool_registry_builder_from_executors(
         .into_iter()
         .map(|(spec, exposure)| {
             if config.code_mode_enabled && exposure != ToolExposure::DirectModelOnly {
-                codex_tools::augment_tool_spec_for_code_mode(spec)
+                codex_tool_planning::augment_tool_spec_for_code_mode(spec)
             } else {
                 spec
             }

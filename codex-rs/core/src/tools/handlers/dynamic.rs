@@ -16,13 +16,13 @@ use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::protocol::DynamicToolCallResponseEvent;
 use codex_protocol::protocol::EventMsg;
-use codex_tools::ResponsesApiNamespace;
-use codex_tools::ResponsesApiNamespaceTool;
-use codex_tools::ToolName;
-use codex_tools::ToolSearchSourceInfo;
-use codex_tools::ToolSpec;
-use codex_tools::default_namespace_description;
-use codex_tools::dynamic_tool_to_responses_api_tool;
+use codex_tool_planning::ResponsesApiNamespace;
+use codex_tool_planning::ResponsesApiNamespaceTool;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSearchSourceInfo;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::default_namespace_description;
+use codex_tool_planning::dynamic_tool_to_responses_api_tool;
 use serde_json::Value;
 use std::time::Instant;
 use tokio::sync::oneshot;
@@ -60,7 +60,6 @@ impl DynamicToolHandler {
     }
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for DynamicToolHandler {
     type Output = FunctionToolOutput;
 
@@ -76,48 +75,56 @@ impl ToolExecutor<ToolInvocation> for DynamicToolHandler {
         self.exposure
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            call_id,
-            payload,
-            ..
-        } = invocation;
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session,
+                turn,
+                call_id,
+                payload,
+                ..
+            } = invocation;
 
-        let arguments = match payload {
-            ToolPayload::Function { arguments } => arguments,
-            _ => {
-                return Err(FunctionCallError::RespondToModel(
-                    "dynamic tool handler received unsupported payload".to_string(),
-                ));
-            }
-        };
+            let arguments = match payload {
+                ToolPayload::Function { arguments } => arguments,
+                _ => {
+                    return Err(FunctionCallError::RespondToModel(
+                        "dynamic tool handler received unsupported payload".to_string(),
+                    ));
+                }
+            };
 
-        let args: Value = parse_arguments(&arguments)?;
-        let response = request_dynamic_tool(
-            &session,
-            turn.as_ref(),
-            call_id,
-            self.tool_name.clone(),
-            args,
-        )
-        .await
-        .ok_or_else(|| {
-            FunctionCallError::RespondToModel(
-                "dynamic tool call was cancelled before receiving a response".to_string(),
+            let args: Value = parse_arguments(&arguments)?;
+            let response = request_dynamic_tool(
+                &session,
+                turn.as_ref(),
+                call_id,
+                self.tool_name.clone(),
+                args,
             )
-        })?;
+            .await
+            .ok_or_else(|| {
+                FunctionCallError::RespondToModel(
+                    "dynamic tool call was cancelled before receiving a response".to_string(),
+                )
+            })?;
 
-        let DynamicToolResponse {
-            content_items,
-            success,
-        } = response;
-        let body = content_items
-            .into_iter()
-            .map(FunctionCallOutputContentItem::from)
-            .collect::<Vec<_>>();
-        Ok(FunctionToolOutput::from_content(body, Some(success)))
+            let DynamicToolResponse {
+                content_items,
+                success,
+            } = response;
+            let body = content_items
+                .into_iter()
+                .map(FunctionCallOutputContentItem::from)
+                .collect::<Vec<_>>();
+            Ok(FunctionToolOutput::from_content(body, Some(success)))
+        })
     }
 }
 

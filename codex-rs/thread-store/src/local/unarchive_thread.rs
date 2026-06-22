@@ -35,7 +35,7 @@ pub(super) async fn unarchive_thread(
         store
             .config
             .codex_home
-            .join(codex_rollout::ARCHIVED_SESSIONS_SUBDIR),
+            .join(codex_rollout_api::ARCHIVED_SESSIONS_SUBDIR),
         archived_path.as_path(),
         "archived",
     )?;
@@ -56,7 +56,7 @@ pub(super) async fn unarchive_thread(
     let dest_dir = store
         .config
         .codex_home
-        .join(codex_rollout::SESSIONS_SUBDIR)
+        .join(codex_rollout_api::SESSIONS_SUBDIR)
         .join(year)
         .join(month)
         .join(day);

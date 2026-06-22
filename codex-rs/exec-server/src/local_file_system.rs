@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::path::Path;
 use std::path::PathBuf;
@@ -13,6 +12,7 @@ use crate::CreateDirectoryOptions;
 use crate::ExecServerRuntimePaths;
 use crate::ExecutorFileSystem;
 use crate::FileMetadata;
+use crate::FileSystemFuture;
 use crate::FileSystemResult;
 use crate::FileSystemSandboxContext;
 use crate::ReadDirectoryEntry;
@@ -77,323 +77,362 @@ impl LocalFileSystem {
     }
 }
 
-#[async_trait]
 impl ExecutorFileSystem for LocalFileSystem {
-    async fn read_file(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<Vec<u8>> {
-        let (file_system, sandbox) = self.file_system_for(sandbox)?;
-        file_system.read_file(path, sandbox).await
-    }
-
-    async fn write_file(
-        &self,
-        path: &AbsolutePathBuf,
-        contents: Vec<u8>,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        let (file_system, sandbox) = self.file_system_for(sandbox)?;
-        file_system.write_file(path, contents, sandbox).await
-    }
-
-    async fn create_directory(
-        &self,
-        path: &AbsolutePathBuf,
-        options: CreateDirectoryOptions,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        let (file_system, sandbox) = self.file_system_for(sandbox)?;
-        file_system.create_directory(path, options, sandbox).await
-    }
-
-    async fn get_metadata(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<FileMetadata> {
-        let (file_system, sandbox) = self.file_system_for(sandbox)?;
-        file_system.get_metadata(path, sandbox).await
-    }
-
-    async fn read_directory(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<Vec<ReadDirectoryEntry>> {
-        let (file_system, sandbox) = self.file_system_for(sandbox)?;
-        file_system.read_directory(path, sandbox).await
-    }
-
-    async fn remove(
-        &self,
-        path: &AbsolutePathBuf,
-        options: RemoveOptions,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        let (file_system, sandbox) = self.file_system_for(sandbox)?;
-        file_system.remove(path, options, sandbox).await
-    }
-
-    async fn copy(
-        &self,
-        source_path: &AbsolutePathBuf,
-        destination_path: &AbsolutePathBuf,
-        options: CopyOptions,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        let (file_system, sandbox) = self.file_system_for(sandbox)?;
-        file_system
-            .copy(source_path, destination_path, options, sandbox)
-            .await
-    }
-}
-
-#[async_trait]
-impl ExecutorFileSystem for UnsandboxedFileSystem {
-    async fn read_file(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<Vec<u8>> {
-        reject_platform_sandbox_context(sandbox)?;
-        self.file_system.read_file(path, /*sandbox*/ None).await
-    }
-
-    async fn write_file(
-        &self,
-        path: &AbsolutePathBuf,
-        contents: Vec<u8>,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        reject_platform_sandbox_context(sandbox)?;
-        self.file_system
-            .write_file(path, contents, /*sandbox*/ None)
-            .await
-    }
-
-    async fn create_directory(
-        &self,
-        path: &AbsolutePathBuf,
-        options: CreateDirectoryOptions,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        reject_platform_sandbox_context(sandbox)?;
-        self.file_system
-            .create_directory(path, options, /*sandbox*/ None)
-            .await
-    }
-
-    async fn get_metadata(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<FileMetadata> {
-        reject_platform_sandbox_context(sandbox)?;
-        self.file_system.get_metadata(path, /*sandbox*/ None).await
-    }
-
-    async fn read_directory(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<Vec<ReadDirectoryEntry>> {
-        reject_platform_sandbox_context(sandbox)?;
-        self.file_system
-            .read_directory(path, /*sandbox*/ None)
-            .await
-    }
-
-    async fn remove(
-        &self,
-        path: &AbsolutePathBuf,
-        options: RemoveOptions,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        reject_platform_sandbox_context(sandbox)?;
-        self.file_system
-            .remove(path, options, /*sandbox*/ None)
-            .await
-    }
-
-    async fn copy(
-        &self,
-        source_path: &AbsolutePathBuf,
-        destination_path: &AbsolutePathBuf,
-        options: CopyOptions,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        reject_platform_sandbox_context(sandbox)?;
-        self.file_system
-            .copy(
-                source_path,
-                destination_path,
-                options,
-                /*sandbox*/ None,
-            )
-            .await
-    }
-}
-
-#[async_trait]
-impl ExecutorFileSystem for DirectFileSystem {
-    async fn read_file(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<Vec<u8>> {
-        reject_sandbox_context(sandbox)?;
-        let metadata = tokio::fs::metadata(path.as_path()).await?;
-        if metadata.len() > MAX_READ_FILE_BYTES {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("file is too large to read: limit is {MAX_READ_FILE_BYTES} bytes"),
-            ));
-        }
-        tokio::fs::read(path.as_path()).await
-    }
-
-    async fn write_file(
-        &self,
-        path: &AbsolutePathBuf,
-        contents: Vec<u8>,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        reject_sandbox_context(sandbox)?;
-        tokio::fs::write(path.as_path(), contents).await
-    }
-
-    async fn create_directory(
-        &self,
-        path: &AbsolutePathBuf,
-        options: CreateDirectoryOptions,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        reject_sandbox_context(sandbox)?;
-        if options.recursive {
-            tokio::fs::create_dir_all(path.as_path()).await?;
-        } else {
-            tokio::fs::create_dir(path.as_path()).await?;
-        }
-        Ok(())
-    }
-
-    async fn get_metadata(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<FileMetadata> {
-        reject_sandbox_context(sandbox)?;
-        let metadata = tokio::fs::metadata(path.as_path()).await?;
-        let symlink_metadata = tokio::fs::symlink_metadata(path.as_path()).await?;
-        Ok(FileMetadata {
-            is_directory: metadata.is_dir(),
-            is_file: metadata.is_file(),
-            is_symlink: symlink_metadata.file_type().is_symlink(),
-            created_at_ms: metadata.created().ok().map_or(0, system_time_to_unix_ms),
-            modified_at_ms: metadata.modified().ok().map_or(0, system_time_to_unix_ms),
+    fn read_file<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, Vec<u8>> {
+        Box::pin(async move {
+            let (file_system, sandbox) = self.file_system_for(sandbox)?;
+            file_system.read_file(path, sandbox).await
         })
     }
 
-    async fn read_directory(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<Vec<ReadDirectoryEntry>> {
-        reject_sandbox_context(sandbox)?;
-        let mut entries = Vec::new();
-        let mut read_dir = tokio::fs::read_dir(path.as_path()).await?;
-        while let Some(entry) = read_dir.next_entry().await? {
-            let Ok(metadata) = tokio::fs::metadata(entry.path()).await else {
-                continue;
-            };
-            entries.push(ReadDirectoryEntry {
-                file_name: entry.file_name().to_string_lossy().into_owned(),
+    fn write_file<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        contents: Vec<u8>,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()> {
+        Box::pin(async move {
+            let (file_system, sandbox) = self.file_system_for(sandbox)?;
+            file_system.write_file(path, contents, sandbox).await
+        })
+    }
+
+    fn create_directory<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        options: CreateDirectoryOptions,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()> {
+        Box::pin(async move {
+            let (file_system, sandbox) = self.file_system_for(sandbox)?;
+            file_system.create_directory(path, options, sandbox).await
+        })
+    }
+
+    fn get_metadata<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, FileMetadata> {
+        Box::pin(async move {
+            let (file_system, sandbox) = self.file_system_for(sandbox)?;
+            file_system.get_metadata(path, sandbox).await
+        })
+    }
+
+    fn read_directory<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, Vec<ReadDirectoryEntry>> {
+        Box::pin(async move {
+            let (file_system, sandbox) = self.file_system_for(sandbox)?;
+            file_system.read_directory(path, sandbox).await
+        })
+    }
+
+    fn remove<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        options: RemoveOptions,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()> {
+        Box::pin(async move {
+            let (file_system, sandbox) = self.file_system_for(sandbox)?;
+            file_system.remove(path, options, sandbox).await
+        })
+    }
+
+    fn copy<'a>(
+        &'a self,
+        source_path: &'a AbsolutePathBuf,
+        destination_path: &'a AbsolutePathBuf,
+        options: CopyOptions,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()> {
+        Box::pin(async move {
+            let (file_system, sandbox) = self.file_system_for(sandbox)?;
+            file_system
+                .copy(source_path, destination_path, options, sandbox)
+                .await
+        })
+    }
+}
+
+impl ExecutorFileSystem for UnsandboxedFileSystem {
+    fn read_file<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, Vec<u8>> {
+        Box::pin(async move {
+            reject_platform_sandbox_context(sandbox)?;
+            self.file_system.read_file(path, /*sandbox*/ None).await
+        })
+    }
+
+    fn write_file<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        contents: Vec<u8>,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()> {
+        Box::pin(async move {
+            reject_platform_sandbox_context(sandbox)?;
+            self.file_system
+                .write_file(path, contents, /*sandbox*/ None)
+                .await
+        })
+    }
+
+    fn create_directory<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        options: CreateDirectoryOptions,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()> {
+        Box::pin(async move {
+            reject_platform_sandbox_context(sandbox)?;
+            self.file_system
+                .create_directory(path, options, /*sandbox*/ None)
+                .await
+        })
+    }
+
+    fn get_metadata<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, FileMetadata> {
+        Box::pin(async move {
+            reject_platform_sandbox_context(sandbox)?;
+            self.file_system.get_metadata(path, /*sandbox*/ None).await
+        })
+    }
+
+    fn read_directory<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, Vec<ReadDirectoryEntry>> {
+        Box::pin(async move {
+            reject_platform_sandbox_context(sandbox)?;
+            self.file_system
+                .read_directory(path, /*sandbox*/ None)
+                .await
+        })
+    }
+
+    fn remove<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        options: RemoveOptions,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()> {
+        Box::pin(async move {
+            reject_platform_sandbox_context(sandbox)?;
+            self.file_system
+                .remove(path, options, /*sandbox*/ None)
+                .await
+        })
+    }
+
+    fn copy<'a>(
+        &'a self,
+        source_path: &'a AbsolutePathBuf,
+        destination_path: &'a AbsolutePathBuf,
+        options: CopyOptions,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()> {
+        Box::pin(async move {
+            reject_platform_sandbox_context(sandbox)?;
+            self.file_system
+                .copy(
+                    source_path,
+                    destination_path,
+                    options,
+                    /*sandbox*/ None,
+                )
+                .await
+        })
+    }
+}
+
+impl ExecutorFileSystem for DirectFileSystem {
+    fn read_file<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, Vec<u8>> {
+        Box::pin(async move {
+            reject_sandbox_context(sandbox)?;
+            let metadata = tokio::fs::metadata(path.as_path()).await?;
+            if metadata.len() > MAX_READ_FILE_BYTES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("file is too large to read: limit is {MAX_READ_FILE_BYTES} bytes"),
+                ));
+            }
+            tokio::fs::read(path.as_path()).await
+        })
+    }
+
+    fn write_file<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        contents: Vec<u8>,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()> {
+        Box::pin(async move {
+            reject_sandbox_context(sandbox)?;
+            tokio::fs::write(path.as_path(), contents).await
+        })
+    }
+
+    fn create_directory<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        options: CreateDirectoryOptions,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()> {
+        Box::pin(async move {
+            reject_sandbox_context(sandbox)?;
+            if options.recursive {
+                tokio::fs::create_dir_all(path.as_path()).await?;
+            } else {
+                tokio::fs::create_dir(path.as_path()).await?;
+            }
+            Ok(())
+        })
+    }
+
+    fn get_metadata<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, FileMetadata> {
+        Box::pin(async move {
+            reject_sandbox_context(sandbox)?;
+            let metadata = tokio::fs::metadata(path.as_path()).await?;
+            let symlink_metadata = tokio::fs::symlink_metadata(path.as_path()).await?;
+            Ok(FileMetadata {
                 is_directory: metadata.is_dir(),
                 is_file: metadata.is_file(),
-            });
-        }
-        Ok(entries)
-    }
-
-    async fn remove(
-        &self,
-        path: &AbsolutePathBuf,
-        options: RemoveOptions,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        reject_sandbox_context(sandbox)?;
-        match tokio::fs::symlink_metadata(path.as_path()).await {
-            Ok(metadata) => {
-                let file_type = metadata.file_type();
-                if file_type.is_dir() {
-                    if options.recursive {
-                        tokio::fs::remove_dir_all(path.as_path()).await?;
-                    } else {
-                        tokio::fs::remove_dir(path.as_path()).await?;
-                    }
-                } else {
-                    tokio::fs::remove_file(path.as_path()).await?;
-                }
-                Ok(())
-            }
-            Err(err) if err.kind() == io::ErrorKind::NotFound && options.force => Ok(()),
-            Err(err) => Err(err),
-        }
-    }
-
-    async fn copy(
-        &self,
-        source_path: &AbsolutePathBuf,
-        destination_path: &AbsolutePathBuf,
-        options: CopyOptions,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        reject_sandbox_context(sandbox)?;
-        let source_path = source_path.to_path_buf();
-        let destination_path = destination_path.to_path_buf();
-        tokio::task::spawn_blocking(move || -> FileSystemResult<()> {
-            let metadata = std::fs::symlink_metadata(source_path.as_path())?;
-            let file_type = metadata.file_type();
-
-            if file_type.is_dir() {
-                if !options.recursive {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "fs/copy requires recursive: true when sourcePath is a directory",
-                    ));
-                }
-                if destination_is_same_or_descendant_of_source(
-                    source_path.as_path(),
-                    destination_path.as_path(),
-                )? {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "fs/copy cannot copy a directory to itself or one of its descendants",
-                    ));
-                }
-                copy_dir_recursive(source_path.as_path(), destination_path.as_path())?;
-                return Ok(());
-            }
-
-            if file_type.is_symlink() {
-                copy_symlink(source_path.as_path(), destination_path.as_path())?;
-                return Ok(());
-            }
-
-            if file_type.is_file() {
-                std::fs::copy(source_path.as_path(), destination_path.as_path())?;
-                return Ok(());
-            }
-
-            Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "fs/copy only supports regular files, directories, and symlinks",
-            ))
+                is_symlink: symlink_metadata.file_type().is_symlink(),
+                created_at_ms: metadata.created().ok().map_or(0, system_time_to_unix_ms),
+                modified_at_ms: metadata.modified().ok().map_or(0, system_time_to_unix_ms),
+            })
         })
-        .await
-        .map_err(|err| io::Error::other(format!("filesystem task failed: {err}")))?
+    }
+
+    fn read_directory<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, Vec<ReadDirectoryEntry>> {
+        Box::pin(async move {
+            reject_sandbox_context(sandbox)?;
+            let mut entries = Vec::new();
+            let mut read_dir = tokio::fs::read_dir(path.as_path()).await?;
+            while let Some(entry) = read_dir.next_entry().await? {
+                let Ok(metadata) = tokio::fs::metadata(entry.path()).await else {
+                    continue;
+                };
+                entries.push(ReadDirectoryEntry {
+                    file_name: entry.file_name().to_string_lossy().into_owned(),
+                    is_directory: metadata.is_dir(),
+                    is_file: metadata.is_file(),
+                });
+            }
+            Ok(entries)
+        })
+    }
+
+    fn remove<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        options: RemoveOptions,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()> {
+        Box::pin(async move {
+            reject_sandbox_context(sandbox)?;
+            match tokio::fs::symlink_metadata(path.as_path()).await {
+                Ok(metadata) => {
+                    let file_type = metadata.file_type();
+                    if file_type.is_dir() {
+                        if options.recursive {
+                            tokio::fs::remove_dir_all(path.as_path()).await?;
+                        } else {
+                            tokio::fs::remove_dir(path.as_path()).await?;
+                        }
+                    } else {
+                        tokio::fs::remove_file(path.as_path()).await?;
+                    }
+                    Ok(())
+                }
+                Err(err) if err.kind() == io::ErrorKind::NotFound && options.force => Ok(()),
+                Err(err) => Err(err),
+            }
+        })
+    }
+
+    fn copy<'a>(
+        &'a self,
+        source_path: &'a AbsolutePathBuf,
+        destination_path: &'a AbsolutePathBuf,
+        options: CopyOptions,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()> {
+        Box::pin(async move {
+            reject_sandbox_context(sandbox)?;
+            let source_path = source_path.to_path_buf();
+            let destination_path = destination_path.to_path_buf();
+            tokio::task::spawn_blocking(move || -> FileSystemResult<()> {
+                let metadata = std::fs::symlink_metadata(source_path.as_path())?;
+                let file_type = metadata.file_type();
+
+                if file_type.is_dir() {
+                    if !options.recursive {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "fs/copy requires recursive: true when sourcePath is a directory",
+                        ));
+                    }
+                    if destination_is_same_or_descendant_of_source(
+                        source_path.as_path(),
+                        destination_path.as_path(),
+                    )? {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "fs/copy cannot copy a directory to itself or one of its descendants",
+                        ));
+                    }
+                    copy_dir_recursive(source_path.as_path(), destination_path.as_path())?;
+                    return Ok(());
+                }
+
+                if file_type.is_symlink() {
+                    copy_symlink(source_path.as_path(), destination_path.as_path())?;
+                    return Ok(());
+                }
+
+                if file_type.is_file() {
+                    std::fs::copy(source_path.as_path(), destination_path.as_path())?;
+                    return Ok(());
+                }
+
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "fs/copy only supports regular files, directories, and symlinks",
+                ))
+            })
+            .await
+            .map_err(|err| io::Error::other(format!("filesystem task failed: {err}")))?
+        })
     }
 }
 

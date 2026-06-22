@@ -13,6 +13,7 @@ pub(crate) struct TurnRequestProcessor {
     thread_state_manager: ThreadStateManager,
     thread_watch_manager: ThreadWatchManager,
     thread_list_state_permit: Arc<Semaphore>,
+    state_db: Option<StateDbHandle>,
     skills_watcher: Arc<SkillsWatcher>,
 }
 
@@ -44,6 +45,7 @@ impl TurnRequestProcessor {
         thread_state_manager: ThreadStateManager,
         thread_watch_manager: ThreadWatchManager,
         thread_list_state_permit: Arc<Semaphore>,
+        state_db: Option<StateDbHandle>,
         skills_watcher: Arc<SkillsWatcher>,
     ) -> Self {
         Self {
@@ -58,6 +60,7 @@ impl TurnRequestProcessor {
             thread_state_manager,
             thread_watch_manager,
             thread_list_state_permit,
+            state_db,
             skills_watcher,
         }
     }
@@ -556,6 +559,7 @@ impl TurnRequestProcessor {
                 thread_id,
                 Arc::clone(&thread),
                 Arc::clone(&thread_config),
+                self.state_db.clone(),
                 config_snapshot.session_source.clone(),
             ));
             let settings = crate::memories_runtime::memory_startup_settings(

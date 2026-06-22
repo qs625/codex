@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use codex_connectors::metadata::connector_display_label;
+use codex_connectors_api::metadata::connector_display_label;
 use codex_protocol::models::ResponseItem;
 
 use crate::connectors;

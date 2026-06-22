@@ -1,6 +1,6 @@
 use crate::manifest::PluginManifestInterface;
 use crate::manifest::load_plugin_manifest;
-use codex_git_utils::get_git_repo_root;
+use codex_git_info::get_git_repo_root;
 use codex_plugin::PluginId;
 use codex_plugin::PluginIdError;
 use codex_plugin_types::PluginAuthPolicy;
@@ -224,7 +224,8 @@ pub fn list_marketplaces(
     list_marketplaces_with_home(additional_roots, home_dir().as_deref())
 }
 
-pub(crate) fn home_dir() -> Option<PathBuf> {
+/// Returns the user home directory used for personal marketplace resolution.
+pub fn home_dir() -> Option<PathBuf> {
     ["HOME", "USERPROFILE"]
         .into_iter()
         .filter_map(std::env::var_os)

@@ -18,12 +18,12 @@ use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolTelemetryTags;
 use crate::tools::tool_search_entry::ToolSearchInfo;
 use codex_mcp_tool_types::ToolInfo;
-use codex_tools::ResponsesApiNamespace;
-use codex_tools::ResponsesApiNamespaceTool;
-use codex_tools::ToolName;
-use codex_tools::ToolSearchSourceInfo;
-use codex_tools::ToolSpec;
-use codex_tools::mcp_tool_to_responses_api_tool;
+use codex_tool_planning::ResponsesApiNamespace;
+use codex_tool_planning::ResponsesApiNamespaceTool;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSearchSourceInfo;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::mcp_tool_to_responses_api_tool;
 use serde_json::Map;
 use serde_json::Value;
 
@@ -45,7 +45,6 @@ impl McpHandler {
     }
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for McpHandler {
     type Output = McpToolOutput;
 
@@ -89,42 +88,52 @@ impl ToolExecutor<ToolInvocation> for McpHandler {
         self.tool_info.supports_parallel_tool_calls
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            call_id,
-            payload,
-            ..
-        } = invocation;
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session,
+                turn,
+                call_id,
+                payload,
+                ..
+            } = invocation;
 
-        let payload = match payload {
-            ToolPayload::Function { arguments } => arguments,
-            _ => {
-                return Err(FunctionCallError::RespondToModel(
-                    "mcp handler received unsupported payload".to_string(),
-                ));
-            }
-        };
+            let payload = match payload {
+                ToolPayload::Function { arguments } => arguments,
+                _ => {
+                    return Err(FunctionCallError::RespondToModel(
+                        "mcp handler received unsupported payload".to_string(),
+                    ));
+                }
+            };
 
-        let started = Instant::now();
-        let result = handle_mcp_tool_call(
-            Arc::clone(&session),
-            &turn,
-            call_id.clone(),
-            self.tool_info.server_name.clone(),
-            self.tool_info.tool.name.to_string(),
-            self.tool_name().to_string(),
-            payload,
-        )
-        .await;
+            let started = Instant::now();
+            let result = handle_mcp_tool_call(
+                Arc::clone(&session),
+                &turn,
+                call_id.clone(),
+                self.tool_info.server_name.clone(),
+                self.tool_info.tool.name.to_string(),
+                self.tool_name().to_string(),
+                payload,
+            )
+            .await;
 
-        Ok(McpToolOutput {
-            result: result.result,
-            tool_input: result.tool_input,
-            wall_time: started.elapsed(),
-            original_image_detail_supported: can_request_original_image_detail(&turn.model_info),
-            truncation_policy: turn.truncation_policy,
+            Ok(McpToolOutput {
+                result: result.result,
+                tool_input: result.tool_input,
+                wall_time: started.elapsed(),
+                original_image_detail_supported: can_request_original_image_detail(
+                    &turn.model_info,
+                ),
+                truncation_policy: turn.truncation_policy,
+            })
         })
     }
 }
@@ -308,7 +317,10 @@ mod tests {
                 cancellation_token: tokio_util::sync::CancellationToken::new(),
                 tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
                 call_id: "call-mcp-pre".to_string(),
-                tool_name: codex_tools::ToolName::namespaced("mcp__memory__", "create_entities"),
+                tool_name: codex_tool_planning::ToolName::namespaced(
+                    "mcp__memory__",
+                    "create_entities"
+                ),
                 source: ToolCallSource::Direct,
                 payload,
             }),
@@ -339,7 +351,7 @@ mod tests {
                 cancellation_token: tokio_util::sync::CancellationToken::new(),
                 tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
                 call_id: "call-mcp-pre-builtin-like".to_string(),
-                tool_name: codex_tools::ToolName::namespaced("mcp__foo__", "exec_command"),
+                tool_name: codex_tool_planning::ToolName::namespaced("mcp__foo__", "exec_command"),
                 source: ToolCallSource::Direct,
                 payload,
             }),
@@ -366,7 +378,10 @@ mod tests {
                     cancellation_token: tokio_util::sync::CancellationToken::new(),
                     tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
                     call_id: "call-mcp-rewrite-builtin-like".to_string(),
-                    tool_name: codex_tools::ToolName::namespaced("mcp__foo__", "exec_command"),
+                    tool_name: codex_tool_planning::ToolName::namespaced(
+                        "mcp__foo__",
+                        "exec_command",
+                    ),
                     source: ToolCallSource::Direct,
                     payload,
                 },
@@ -412,7 +427,7 @@ mod tests {
             cancellation_token: tokio_util::sync::CancellationToken::new(),
             tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
             call_id: "call-mcp-post".to_string(),
-            tool_name: codex_tools::ToolName::namespaced("mcp__filesystem__", "read_file"),
+            tool_name: codex_tool_planning::ToolName::namespaced("mcp__filesystem__", "read_file"),
             source: ToolCallSource::Direct,
             payload,
         };
@@ -450,19 +465,13 @@ mod tests {
             callable_name: tool_name.to_string(),
             callable_namespace: callable_namespace.to_string(),
             namespace_description: None,
-            tool: rmcp::model::Tool {
-                name: tool_name.to_string().into(),
-                title: None,
-                description: None,
-                input_schema: Arc::new(rmcp::model::object(serde_json::json!({
+            tool: codex_mcp_tool_types::McpTool::new(
+                tool_name,
+                "",
+                serde_json::json!({
                     "type": "object",
-                }))),
-                output_schema: None,
-                annotations: None,
-                execution: None,
-                icons: None,
-                meta: None,
-            },
+                }),
+            ),
             connector_id: None,
             connector_name: None,
             plugin_display_names: Vec::new(),

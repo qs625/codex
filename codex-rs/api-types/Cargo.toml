@@ -14,7 +14,12 @@ doctest = false
 workspace = true
 
 [dependencies]
+base64 = { workspace = true }
+chrono = { workspace = true }
+codex-client-types = { workspace = true }
 codex-protocol = { workspace = true }
+futures = { workspace = true }
+http = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 

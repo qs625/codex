@@ -3,29 +3,37 @@ use codex_client_types::RequestCompression;
 use codex_client_types::RetryOn;
 use codex_client_types::RetryPolicy;
 use codex_client_types::TransportError;
-use codex_protocol::protocol::SessionSource;
 use http::HeaderMap;
 use http::HeaderValue;
 use http::Method;
 use http::header::HeaderMap as ApiHeaderMap;
 use std::collections::HashMap;
+use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
-use url::Url;
 
 /// Boxed future returned by API auth providers.
 pub type AuthProviderFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Error returned while applying authentication to an outbound request.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum AuthError {
-    #[error("request auth build error: {0}")]
     Build(String),
-    #[error("transient auth error: {0}")]
     Transient(String),
 }
+
+impl fmt::Display for AuthError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Build(message) => write!(f, "request auth build error: {message}"),
+            Self::Transient(message) => write!(f, "transient auth error: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for AuthError {}
 
 impl From<AuthError> for TransportError {
     fn from(error: AuthError) -> Self {
@@ -166,19 +174,6 @@ impl Provider {
     pub fn is_azure_responses_endpoint(&self) -> bool {
         is_azure_responses_provider(&self.name, Some(&self.base_url))
     }
-
-    pub fn websocket_url_for_path(&self, path: &str) -> Result<Url, url::ParseError> {
-        let mut url = Url::parse(&self.url_for_path(path))?;
-
-        let scheme = match url.scheme() {
-            "http" => "ws",
-            "https" => "wss",
-            "ws" | "wss" => return Ok(url),
-            _ => return Ok(url),
-        };
-        let _ = url.set_scheme(scheme);
-        Ok(url)
-    }
 }
 
 pub fn is_azure_responses_provider(name: &str, base_url: Option<&str>) -> bool {
@@ -213,23 +208,6 @@ pub fn build_session_headers(session_id: Option<String>, thread_id: Option<Strin
         insert_header(&mut headers, "thread-id", &id);
     }
     headers
-}
-
-pub fn subagent_header(source: &Option<SessionSource>) -> Option<String> {
-    let SessionSource::SubAgent(sub) = source.as_ref()? else {
-        return None;
-    };
-    match sub {
-        codex_protocol::protocol::SubAgentSource::Review => Some("review".to_string()),
-        codex_protocol::protocol::SubAgentSource::Compact => Some("compact".to_string()),
-        codex_protocol::protocol::SubAgentSource::MemoryConsolidation => {
-            Some("memory_consolidation".to_string())
-        }
-        codex_protocol::protocol::SubAgentSource::ThreadSpawn { .. } => {
-            Some("collab_spawn".to_string())
-        }
-        codex_protocol::protocol::SubAgentSource::Other(label) => Some(label.clone()),
-    }
 }
 
 pub fn insert_header(headers: &mut HeaderMap, name: &str, value: &str) {

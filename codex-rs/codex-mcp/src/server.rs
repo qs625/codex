@@ -1,47 +1,5 @@
-use codex_config_types::McpServerConfig;
 use codex_config_types::McpServerTransportConfig;
-
-/// The runtime launch strategy for an effective MCP server.
-#[derive(Debug, Clone)]
-pub(crate) enum McpServerLaunch {
-    Configured(Box<McpServerConfig>),
-}
-
-/// MCP server after runtime additions have been applied.
-#[derive(Debug, Clone)]
-pub struct EffectiveMcpServer {
-    launch: McpServerLaunch,
-}
-
-impl EffectiveMcpServer {
-    pub fn configured(config: McpServerConfig) -> Self {
-        Self {
-            launch: McpServerLaunch::Configured(Box::new(config)),
-        }
-    }
-
-    pub(crate) fn launch(&self) -> &McpServerLaunch {
-        &self.launch
-    }
-
-    pub fn configured_config(&self) -> Option<&McpServerConfig> {
-        match &self.launch {
-            McpServerLaunch::Configured(config) => Some(config.as_ref()),
-        }
-    }
-
-    pub fn enabled(&self) -> bool {
-        match &self.launch {
-            McpServerLaunch::Configured(config) => config.enabled,
-        }
-    }
-
-    pub fn required(&self) -> bool {
-        match &self.launch {
-            McpServerLaunch::Configured(config) => config.required,
-        }
-    }
-}
+use codex_mcp_types::EffectiveMcpServer;
 
 /// Transport origin retained for metrics and diagnostics after server launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,11 +37,16 @@ pub(crate) struct McpServerMetadata {
 
 impl From<&EffectiveMcpServer> for McpServerMetadata {
     fn from(server: &EffectiveMcpServer) -> Self {
-        match server.launch() {
-            McpServerLaunch::Configured(config) => Self {
+        match server.configured_config() {
+            Some(config) => Self {
                 pollutes_memory: true,
                 origin: McpServerOrigin::from_transport(&config.transport),
                 supports_parallel_tool_calls: config.supports_parallel_tool_calls,
+            },
+            None => Self {
+                pollutes_memory: true,
+                origin: None,
+                supports_parallel_tool_calls: true,
             },
         }
     }

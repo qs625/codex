@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::SandboxEnforcement;
@@ -9,9 +8,11 @@ use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use std::future::Future;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::SystemTime;
@@ -138,67 +139,69 @@ fn file_system_policy_has_cwd_dependent_entries(
 }
 
 pub type FileSystemResult<T> = io::Result<T>;
+pub type FileSystemFuture<'a, T> = Pin<Box<dyn Future<Output = FileSystemResult<T>> + Send + 'a>>;
 
 /// Abstract filesystem access used by components that may operate locally or via
 /// a remote executor.
-#[async_trait]
 pub trait ExecutorFileSystem: Send + Sync {
-    async fn read_file(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<Vec<u8>>;
+    fn read_file<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, Vec<u8>>;
 
     /// Reads a file and decodes it as UTF-8 text.
-    async fn read_file_text(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<String> {
-        let bytes = self.read_file(path, sandbox).await?;
-        String::from_utf8(bytes).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+    fn read_file_text<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, String> {
+        Box::pin(async move {
+            let bytes = self.read_file(path, sandbox).await?;
+            String::from_utf8(bytes).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+        })
     }
 
-    async fn write_file(
-        &self,
-        path: &AbsolutePathBuf,
+    fn write_file<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
         contents: Vec<u8>,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()>;
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()>;
 
-    async fn create_directory(
-        &self,
-        path: &AbsolutePathBuf,
+    fn create_directory<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
         create_directory_options: CreateDirectoryOptions,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()>;
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()>;
 
-    async fn get_metadata(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<FileMetadata>;
+    fn get_metadata<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, FileMetadata>;
 
-    async fn read_directory(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<Vec<ReadDirectoryEntry>>;
+    fn read_directory<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, Vec<ReadDirectoryEntry>>;
 
-    async fn remove(
-        &self,
-        path: &AbsolutePathBuf,
+    fn remove<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
         remove_options: RemoveOptions,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()>;
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()>;
 
-    async fn copy(
-        &self,
-        source_path: &AbsolutePathBuf,
-        destination_path: &AbsolutePathBuf,
+    fn copy<'a>(
+        &'a self,
+        source_path: &'a AbsolutePathBuf,
+        destination_path: &'a AbsolutePathBuf,
         copy_options: CopyOptions,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()>;
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()>;
 }
 
 /// Unsandboxed local filesystem implementation for loaders and other local-only
@@ -206,158 +209,171 @@ pub trait ExecutorFileSystem: Send + Sync {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LocalFileSystem;
 
-#[async_trait]
 impl ExecutorFileSystem for LocalFileSystem {
-    async fn read_file(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<Vec<u8>> {
-        reject_sandbox_context(sandbox)?;
-        let metadata = std::fs::metadata(path.as_path())?;
-        if metadata.len() > MAX_READ_FILE_BYTES {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("file is too large to read: limit is {MAX_READ_FILE_BYTES} bytes"),
-            ));
-        }
-        std::fs::read(path.as_path())
-    }
-
-    async fn write_file(
-        &self,
-        path: &AbsolutePathBuf,
-        contents: Vec<u8>,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        reject_sandbox_context(sandbox)?;
-        std::fs::write(path.as_path(), contents)
-    }
-
-    async fn create_directory(
-        &self,
-        path: &AbsolutePathBuf,
-        options: CreateDirectoryOptions,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        reject_sandbox_context(sandbox)?;
-        if options.recursive {
-            std::fs::create_dir_all(path.as_path())?;
-        } else {
-            std::fs::create_dir(path.as_path())?;
-        }
-        Ok(())
-    }
-
-    async fn get_metadata(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<FileMetadata> {
-        reject_sandbox_context(sandbox)?;
-        let metadata = std::fs::metadata(path.as_path())?;
-        let symlink_metadata = std::fs::symlink_metadata(path.as_path())?;
-        Ok(FileMetadata {
-            is_directory: metadata.is_dir(),
-            is_file: metadata.is_file(),
-            is_symlink: symlink_metadata.file_type().is_symlink(),
-            created_at_ms: metadata.created().ok().map_or(0, system_time_to_unix_ms),
-            modified_at_ms: metadata.modified().ok().map_or(0, system_time_to_unix_ms),
+    fn read_file<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, Vec<u8>> {
+        Box::pin(async move {
+            reject_sandbox_context(sandbox)?;
+            let metadata = std::fs::metadata(path.as_path())?;
+            if metadata.len() > MAX_READ_FILE_BYTES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("file is too large to read: limit is {MAX_READ_FILE_BYTES} bytes"),
+                ));
+            }
+            std::fs::read(path.as_path())
         })
     }
 
-    async fn read_directory(
-        &self,
-        path: &AbsolutePathBuf,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<Vec<ReadDirectoryEntry>> {
-        reject_sandbox_context(sandbox)?;
-        let mut entries = Vec::new();
-        for entry in std::fs::read_dir(path.as_path())? {
-            let entry = entry?;
-            let Ok(metadata) = std::fs::metadata(entry.path()) else {
-                continue;
-            };
-            entries.push(ReadDirectoryEntry {
-                file_name: entry.file_name().to_string_lossy().into_owned(),
+    fn write_file<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        contents: Vec<u8>,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()> {
+        Box::pin(async move {
+            reject_sandbox_context(sandbox)?;
+            std::fs::write(path.as_path(), contents)
+        })
+    }
+
+    fn create_directory<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        options: CreateDirectoryOptions,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()> {
+        Box::pin(async move {
+            reject_sandbox_context(sandbox)?;
+            if options.recursive {
+                std::fs::create_dir_all(path.as_path())?;
+            } else {
+                std::fs::create_dir(path.as_path())?;
+            }
+            Ok(())
+        })
+    }
+
+    fn get_metadata<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, FileMetadata> {
+        Box::pin(async move {
+            reject_sandbox_context(sandbox)?;
+            let metadata = std::fs::metadata(path.as_path())?;
+            let symlink_metadata = std::fs::symlink_metadata(path.as_path())?;
+            Ok(FileMetadata {
                 is_directory: metadata.is_dir(),
                 is_file: metadata.is_file(),
-            });
-        }
-        Ok(entries)
+                is_symlink: symlink_metadata.file_type().is_symlink(),
+                created_at_ms: metadata.created().ok().map_or(0, system_time_to_unix_ms),
+                modified_at_ms: metadata.modified().ok().map_or(0, system_time_to_unix_ms),
+            })
+        })
     }
 
-    async fn remove(
-        &self,
-        path: &AbsolutePathBuf,
+    fn read_directory<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, Vec<ReadDirectoryEntry>> {
+        Box::pin(async move {
+            reject_sandbox_context(sandbox)?;
+            let mut entries = Vec::new();
+            for entry in std::fs::read_dir(path.as_path())? {
+                let entry = entry?;
+                let Ok(metadata) = std::fs::metadata(entry.path()) else {
+                    continue;
+                };
+                entries.push(ReadDirectoryEntry {
+                    file_name: entry.file_name().to_string_lossy().into_owned(),
+                    is_directory: metadata.is_dir(),
+                    is_file: metadata.is_file(),
+                });
+            }
+            Ok(entries)
+        })
+    }
+
+    fn remove<'a>(
+        &'a self,
+        path: &'a AbsolutePathBuf,
         options: RemoveOptions,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        reject_sandbox_context(sandbox)?;
-        match std::fs::symlink_metadata(path.as_path()) {
-            Ok(metadata) => {
-                let file_type = metadata.file_type();
-                if file_type.is_dir() {
-                    if options.recursive {
-                        std::fs::remove_dir_all(path.as_path())?;
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()> {
+        Box::pin(async move {
+            reject_sandbox_context(sandbox)?;
+            match std::fs::symlink_metadata(path.as_path()) {
+                Ok(metadata) => {
+                    let file_type = metadata.file_type();
+                    if file_type.is_dir() {
+                        if options.recursive {
+                            std::fs::remove_dir_all(path.as_path())?;
+                        } else {
+                            std::fs::remove_dir(path.as_path())?;
+                        }
                     } else {
-                        std::fs::remove_dir(path.as_path())?;
+                        std::fs::remove_file(path.as_path())?;
                     }
-                } else {
-                    std::fs::remove_file(path.as_path())?;
+                    Ok(())
                 }
-                Ok(())
+                Err(err) if err.kind() == io::ErrorKind::NotFound && options.force => Ok(()),
+                Err(err) => Err(err),
             }
-            Err(err) if err.kind() == io::ErrorKind::NotFound && options.force => Ok(()),
-            Err(err) => Err(err),
-        }
+        })
     }
 
-    async fn copy(
-        &self,
-        source_path: &AbsolutePathBuf,
-        destination_path: &AbsolutePathBuf,
+    fn copy<'a>(
+        &'a self,
+        source_path: &'a AbsolutePathBuf,
+        destination_path: &'a AbsolutePathBuf,
         options: CopyOptions,
-        sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        reject_sandbox_context(sandbox)?;
-        let metadata = std::fs::symlink_metadata(source_path.as_path())?;
-        let file_type = metadata.file_type();
+        sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> FileSystemFuture<'a, ()> {
+        Box::pin(async move {
+            reject_sandbox_context(sandbox)?;
+            let metadata = std::fs::symlink_metadata(source_path.as_path())?;
+            let file_type = metadata.file_type();
 
-        if file_type.is_dir() {
-            if !options.recursive {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "fs/copy requires recursive: true when sourcePath is a directory",
-                ));
+            if file_type.is_dir() {
+                if !options.recursive {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "fs/copy requires recursive: true when sourcePath is a directory",
+                    ));
+                }
+                if destination_is_same_or_descendant_of_source(
+                    source_path.as_path(),
+                    destination_path.as_path(),
+                )? {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "fs/copy cannot copy a directory to itself or one of its descendants",
+                    ));
+                }
+                copy_dir_recursive(source_path.as_path(), destination_path.as_path())?;
+                return Ok(());
             }
-            if destination_is_same_or_descendant_of_source(
-                source_path.as_path(),
-                destination_path.as_path(),
-            )? {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "fs/copy cannot copy a directory to itself or one of its descendants",
-                ));
+
+            if file_type.is_symlink() {
+                copy_symlink(source_path.as_path(), destination_path.as_path())?;
+                return Ok(());
             }
-            copy_dir_recursive(source_path.as_path(), destination_path.as_path())?;
-            return Ok(());
-        }
 
-        if file_type.is_symlink() {
-            copy_symlink(source_path.as_path(), destination_path.as_path())?;
-            return Ok(());
-        }
+            if file_type.is_file() {
+                std::fs::copy(source_path.as_path(), destination_path.as_path())?;
+                return Ok(());
+            }
 
-        if file_type.is_file() {
-            std::fs::copy(source_path.as_path(), destination_path.as_path())?;
-            return Ok(());
-        }
-
-        Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "fs/copy only supports regular files, directories, and symlinks",
-        ))
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "fs/copy only supports regular files, directories, and symlinks",
+            ))
+        })
     }
 }
 

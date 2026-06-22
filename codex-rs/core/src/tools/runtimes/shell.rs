@@ -34,11 +34,11 @@ use crate::tools::sandboxing::ToolError;
 use crate::tools::sandboxing::ToolRuntime;
 use crate::tools::sandboxing::managed_network_for_sandbox_permissions;
 use crate::tools::sandboxing::with_cached_approval;
-use codex_network_proxy::NetworkProxy;
+use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::ReviewDecision;
-use codex_sandboxing::SandboxablePreference;
+use codex_sandboxing_api::SandboxablePreference;
 use codex_shell_command::canonicalize_command_for_approval;
 use codex_shell_command::powershell::prefix_powershell_script_with_utf8;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -54,7 +54,7 @@ pub struct ShellRequest {
     pub timeout_ms: Option<u64>,
     pub env: HashMap<String, String>,
     pub explicit_env_overrides: HashMap<String, String>,
-    pub network: Option<NetworkProxy>,
+    pub network: Option<SharedNetworkProxyRuntime>,
     pub sandbox_permissions: SandboxPermissions,
     pub additional_permissions: Option<AdditionalPermissionProfile>,
     #[cfg(unix)]
@@ -203,10 +203,9 @@ impl ToolRuntime<ShellRequest, ExecToolCallOutput> for ShellRuntime {
         req: &ShellRequest,
         ctx: &ToolCtx,
     ) -> Option<NetworkApprovalSpec> {
-        let network =
-            managed_network_for_sandbox_permissions(req.network.as_ref(), req.sandbox_permissions)?;
+        managed_network_for_sandbox_permissions(req.network.as_ref(), req.sandbox_permissions)?;
         Some(NetworkApprovalSpec {
-            network: Some(network.clone()),
+            network: req.network.clone(),
             mode: NetworkApprovalMode::Immediate,
             trigger: GuardianNetworkAccessTrigger {
                 call_id: ctx.call_id.clone(),

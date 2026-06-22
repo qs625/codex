@@ -9,6 +9,7 @@ use crate::tools::spec_plan::build_tool_registry_builder_from_executors;
 use codex_connectors_types::AppInfo;
 use codex_features::Feature;
 use codex_features::Features;
+use codex_mcp_tool_types::McpTool;
 use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
 use codex_models_manager::bundled_models_response;
 use codex_models_manager::model_info::with_config_overrides;
@@ -18,21 +19,21 @@ use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::protocol::SessionSource;
-use codex_tools::DiscoverableTool;
-use codex_tools::JsonSchema;
-use codex_tools::REQUEST_PLUGIN_INSTALL_TOOL_NAME;
-use codex_tools::ResponsesApiNamespaceTool;
-use codex_tools::ResponsesApiTool;
-use codex_tools::ShellCommandBackendConfig;
-use codex_tools::TOOL_SEARCH_TOOL_NAME;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
-use codex_tools::ToolsConfig;
-use codex_tools::ToolsConfigParams;
-use codex_tools::UnifiedExecShellMode;
-use codex_tools::ZshForkConfig;
-use codex_tools::mcp_call_tool_result_output_schema;
-use codex_tools::mcp_tool_to_deferred_responses_api_tool;
+use codex_tool_planning::DiscoverableTool;
+use codex_tool_planning::JsonSchema;
+use codex_tool_planning::REQUEST_PLUGIN_INSTALL_TOOL_NAME;
+use codex_tool_planning::ResponsesApiNamespaceTool;
+use codex_tool_planning::ResponsesApiTool;
+use codex_tool_planning::ShellCommandBackendConfig;
+use codex_tool_planning::TOOL_SEARCH_TOOL_NAME;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::ToolsConfig;
+use codex_tool_planning::ToolsConfigParams;
+use codex_tool_planning::UnifiedExecShellMode;
+use codex_tool_planning::ZshForkConfig;
+use codex_tool_planning::mcp_call_tool_result_output_schema;
+use codex_tool_planning::mcp_tool_to_deferred_responses_api_tool;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::assert_regex_match;
 use pretty_assertions::assert_eq;
@@ -42,26 +43,16 @@ use std::sync::Arc;
 
 use super::*;
 
-fn mcp_tool(name: &str, description: &str, input_schema: serde_json::Value) -> rmcp::model::Tool {
-    rmcp::model::Tool {
-        name: name.to_string().into(),
-        title: None,
-        description: Some(description.to_string().into()),
-        input_schema: std::sync::Arc::new(rmcp::model::object(input_schema)),
-        output_schema: None,
-        annotations: None,
-        execution: None,
-        icons: None,
-        meta: None,
-    }
+fn mcp_tool(name: &str, description: &str, input_schema: serde_json::Value) -> McpTool {
+    McpTool::new(name, description, input_schema)
 }
 
-fn mcp_tool_info(tool: rmcp::model::Tool) -> ToolInfo {
+fn mcp_tool_info(tool: McpTool) -> ToolInfo {
     ToolInfo {
         server_name: "test_server".to_string(),
         supports_parallel_tool_calls: false,
         server_origin: None,
-        callable_name: tool.name.to_string(),
+        callable_name: tool.name.clone(),
         callable_namespace: "mcp__test_server__".to_string(),
         namespace_description: None,
         tool,
@@ -71,7 +62,7 @@ fn mcp_tool_info(tool: rmcp::model::Tool) -> ToolInfo {
     }
 }
 
-fn mcp_tool_info_with_display_name(display_name: &str, tool: rmcp::model::Tool) -> ToolInfo {
+fn mcp_tool_info_with_display_name(display_name: &str, tool: McpTool) -> ToolInfo {
     let (callable_namespace, callable_name) = display_name
         .rsplit_once('/')
         .map(|(namespace, callable_name)| (format!("{namespace}/"), callable_name.to_string()))

@@ -11,8 +11,8 @@ use std::time::Instant;
 use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
 use crate::runtime::emit_duration;
 use crate::tools::MCP_TOOLS_CACHE_WRITE_DURATION_METRIC;
-use codex_login::CodexAuth;
 use codex_mcp_tool_types::ToolInfo;
+use codex_mcp_types::CodexAppsToolsCacheKey;
 use codex_utils_plugins::mcp_connector::is_connector_id_allowed;
 use codex_utils_plugins::mcp_connector::sanitize_name;
 use serde::Deserialize;
@@ -21,21 +21,6 @@ use sha1::Digest;
 use sha1::Sha1;
 
 pub(crate) const CODEX_APPS_TOOLS_CACHE_SCHEMA_VERSION: u8 = 2;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodexAppsToolsCacheKey {
-    pub(crate) account_id: Option<String>,
-    pub(crate) chatgpt_user_id: Option<String>,
-    pub(crate) is_workspace_account: bool,
-}
-
-pub fn codex_apps_tools_cache_key(auth: Option<&CodexAuth>) -> CodexAppsToolsCacheKey {
-    CodexAppsToolsCacheKey {
-        account_id: auth.and_then(CodexAuth::get_account_id),
-        chatgpt_user_id: auth.and_then(CodexAuth::get_chatgpt_user_id),
-        is_workspace_account: auth.is_some_and(CodexAuth::is_workspace_account),
-    }
-}
 
 #[derive(Clone)]
 pub(crate) struct CodexAppsToolsCacheContext {

@@ -10,7 +10,7 @@ use crate::tools::context::ExecCommandToolOutput;
 use crate::unified_exec::WriteStdinRequest;
 use crate::unified_exec::process::OutputHandles;
 use codex_command_runtime::DEFAULT_COMMAND_OUTPUT_MAX_BYTES;
-use codex_sandboxing::SandboxType;
+use codex_sandboxing_api::SandboxType;
 use codex_utils_output_truncation::approx_token_count;
 use core_test_support::get_remote_test_env;
 use core_test_support::skip_if_sandbox;

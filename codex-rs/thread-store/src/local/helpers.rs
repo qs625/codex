@@ -7,14 +7,14 @@ use std::time::SystemTime;
 
 use chrono::DateTime;
 use chrono::Utc;
-use codex_git_utils::GitSha;
+use codex_git_info::GitSha;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::GitInfo;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
-use codex_rollout::ARCHIVED_SESSIONS_SUBDIR;
 use codex_rollout::ThreadItem;
+use codex_rollout_api::ARCHIVED_SESSIONS_SUBDIR;
 use codex_state::ThreadMetadata;
 
 use crate::StoredThread;

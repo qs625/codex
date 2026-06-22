@@ -4,7 +4,6 @@ pub(crate) mod dispatcher;
 pub(crate) mod output_parser;
 pub(crate) mod schema_loader;
 
-use crate::config_layers::HookConfigLayerStack;
 use crate::events::compact::PostCompactRequest;
 use crate::events::compact::PreCompactOutcome;
 use crate::events::compact::PreCompactRequest;
@@ -22,13 +21,11 @@ use crate::events::stop::StopRequest;
 use crate::events::user_prompt_submit::UserPromptSubmitOutcome;
 use crate::events::user_prompt_submit::UserPromptSubmitRequest;
 use crate::output_spill::HookOutputSpiller;
+use codex_hooks_api::HookConfigLayerStack;
 use codex_plugin_types::PluginHookSource;
 use codex_protocol::ThreadId;
-use codex_protocol::protocol::HookEventName;
-use codex_protocol::protocol::HookHandlerType;
 use codex_protocol::protocol::HookRunSummary;
 use codex_protocol::protocol::HookSource;
-use codex_protocol::protocol::HookTrustStatus;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
 
@@ -73,25 +70,6 @@ impl ConfiguredHandler {
             codex_protocol::protocol::HookEventName::Stop => "stop",
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HookListEntry {
-    pub key: String,
-    pub event_name: HookEventName,
-    pub handler_type: HookHandlerType,
-    pub matcher: Option<String>,
-    pub command: Option<String>,
-    pub timeout_sec: u64,
-    pub status_message: Option<String>,
-    pub source_path: AbsolutePathBuf,
-    pub source: HookSource,
-    pub plugin_id: Option<String>,
-    pub display_order: i64,
-    pub enabled: bool,
-    pub is_managed: bool,
-    pub current_hash: String,
-    pub trust_status: HookTrustStatus,
 }
 
 #[derive(Clone)]

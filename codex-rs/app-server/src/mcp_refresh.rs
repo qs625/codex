@@ -110,8 +110,6 @@ mod tests {
     use codex_config_loader::ThreadConfigSource;
     use codex_config_requirements::CloudRequirementsLoader;
     use codex_core::config::ConfigOverrides;
-    use codex_core::init_state_db;
-    use codex_core::thread_store_from_config;
     use codex_exec_server::EnvironmentManager;
     use codex_file_watcher::FileWatcher;
     use codex_login::AuthManager;
@@ -179,15 +177,23 @@ mod tests {
             .await?;
 
         let auth_manager = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("dummy"));
-        let state_db = init_state_db(&good_config)
+        let state_db = codex_rollout::state_db::init(&good_config)
             .await
             .expect("refresh tests require state db");
-        let thread_store = thread_store_from_config(&good_config, Some(state_db.clone()));
+        let thread_store = crate::thread_store_factory::thread_store_from_config(
+            &good_config,
+            Some(state_db.clone()),
+        );
         let thread_watch_manager = crate::thread_status::ThreadWatchManager::new();
         let thread_manager = Arc::new_cyclic(|thread_manager| {
+            let core_state_db: Arc<dyn codex_state_api::StateDbRuntime> = state_db.clone();
+            let auth_runtimes = codex_core::ThreadAuthRuntimes::from_auth_runtime(
+                auth_manager.clone(),
+                codex_login::model_provider_auth_manager(Some(auth_manager.clone())),
+            );
             ThreadManager::new_with_workflow_runs_and_openai_file_uploader(
                 &good_config,
-                auth_manager,
+                auth_runtimes,
                 SessionSource::Exec,
                 Arc::new(EnvironmentManager::default_for_tests()),
                 thread_extensions(
@@ -198,15 +204,38 @@ mod tests {
                 ),
                 /*analytics_events_client*/ None,
                 thread_store,
-                Some(state_db.clone()),
+                Some(core_state_db),
+                Arc::new(codex_thread_store::DefaultLiveThreadFactory),
                 "11111111-1111-4111-8111-111111111111".to_string(),
                 /*attestation_provider*/ None,
                 Arc::new(codex_model_provider::DefaultModelProviderFactory),
                 Arc::new(codex_code_mode::V8CodeModeRuntimeFactory),
+                Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+                Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
                 Arc::new(codex_workflow::WorkflowRunManager::new(
                     good_config.codex_home.clone(),
                 )),
                 Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
+                Arc::new(codex_execpolicy_loader::StarlarkExecPolicyLoader),
+                Arc::new(codex_api::DefaultApiRuntimeFactory),
+                Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
+                Arc::new(codex_sandboxing::SandboxManager::new()),
+                Arc::new(codex_otel::OtelSessionTelemetryFactory),
+                Arc::new(codex_hooks::HooksRuntimeFactory),
+                Arc::new(codex_memories_read::FsMemoryToolDeveloperInstructionsProvider),
+                Arc::new(
+                    codex_core_skills::SkillsManager::new_with_restriction_product(
+                        good_config.codex_home.clone(),
+                        good_config.bundled_skills_enabled(),
+                        SessionSource::Exec.restriction_product(),
+                    ),
+                ),
+                Arc::new(
+                    codex_core_plugins::PluginsManager::new_with_restriction_product(
+                        good_config.codex_home.to_path_buf(),
+                        SessionSource::Exec.restriction_product(),
+                    ),
+                ),
             )
         });
         thread_manager.start_thread(good_config).await?;

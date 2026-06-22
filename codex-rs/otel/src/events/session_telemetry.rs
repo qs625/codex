@@ -27,7 +27,7 @@ use crate::metrics::WEBSOCKET_EVENT_COUNT_METRIC;
 use crate::metrics::WEBSOCKET_EVENT_DURATION_METRIC;
 use crate::metrics::WEBSOCKET_REQUEST_COUNT_METRIC;
 use crate::metrics::WEBSOCKET_REQUEST_DURATION_METRIC;
-use crate::metrics::runtime_metrics::RuntimeMetricsSummary;
+use crate::metrics::runtime_metrics::runtime_metrics_summary_from_snapshot;
 use crate::metrics::timer::Timer;
 use crate::provider::OtelProvider;
 use crate::sanitize_metric_tag_value;
@@ -35,6 +35,7 @@ use codex_api_types::ResponseEvent;
 use codex_api_types::SseEventTelemetry;
 use codex_api_types::WebsocketEventTelemetry;
 use codex_auth_types::AuthEnvTelemetryMetadata;
+use codex_metrics_api::RuntimeMetricsSummary;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::models::ResponseItem;
@@ -256,7 +257,7 @@ impl SessionTelemetry {
                 return None;
             }
         };
-        let summary = RuntimeMetricsSummary::from_snapshot(&snapshot);
+        let summary = runtime_metrics_summary_from_snapshot(&snapshot);
         if summary.is_empty() {
             None
         } else {

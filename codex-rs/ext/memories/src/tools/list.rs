@@ -34,7 +34,6 @@ pub(super) struct ListTool<B> {
     pub(super) backend: B,
 }
 
-#[async_trait::async_trait]
 impl<B> ToolExecutor<ToolCall> for ListTool<B>
 where
     B: MemoriesBackend,
@@ -52,24 +51,29 @@ where
         ))
     }
 
-    async fn handle(
-        &self,
+    fn handle<'a>(
+        &'a self,
         call: ToolCall,
-    ) -> Result<Self::Output, codex_extension_api::FunctionCallError> {
-        let backend = self.backend.clone();
-        let args: ListArgs = parse_args(&call)?;
-        let response = backend
-            .list(ListMemoriesRequest {
-                path: args.path,
-                cursor: args.cursor,
-                max_results: clamp_max_results(
-                    args.max_results,
-                    DEFAULT_LIST_MAX_RESULTS,
-                    MAX_LIST_RESULTS,
-                ),
-            })
-            .await
-            .map_err(backend_error_to_function_call)?;
-        Ok(JsonToolOutput::new(json!(response)))
+    ) -> codex_extension_api::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let backend = self.backend.clone();
+            let args: ListArgs = parse_args(&call)?;
+            let response = backend
+                .list(ListMemoriesRequest {
+                    path: args.path,
+                    cursor: args.cursor,
+                    max_results: clamp_max_results(
+                        args.max_results,
+                        DEFAULT_LIST_MAX_RESULTS,
+                        MAX_LIST_RESULTS,
+                    ),
+                })
+                .await
+                .map_err(backend_error_to_function_call)?;
+            Ok(JsonToolOutput::new(json!(response)))
+        })
     }
 }

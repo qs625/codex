@@ -19,14 +19,13 @@ mod review_session;
 use std::time::Duration;
 
 use codex_protocol::protocol::GuardianAssessmentDecisionSource;
-use codex_protocol::protocol::GuardianAssessmentOutcome;
-use serde::Deserialize;
-use serde::Serialize;
+pub(crate) use codex_protocol::protocol::GuardianAssessmentOutcome;
 
 pub(crate) use approval_request::GuardianApprovalRequest;
 pub(crate) use approval_request::GuardianMcpAnnotations;
 pub(crate) use approval_request::GuardianNetworkAccessTrigger;
 pub(crate) use approval_request::guardian_approval_request_to_json;
+pub(crate) use codex_guardian::GuardianAssessment;
 pub(crate) use review::guardian_rejection_message;
 pub(crate) use review::guardian_timeout_message;
 pub(crate) use review::is_guardian_reviewer_source;
@@ -47,22 +46,6 @@ pub(crate) const MAX_RECENT_AUTO_REVIEW_DENIALS_PER_TURN: u32 = 10;
 pub(crate) const AUTO_REVIEW_DENIAL_WINDOW_SIZE: usize = 50;
 pub(crate) const AUTO_REVIEW_DENIED_ACTION_APPROVAL_DEVELOPER_PREFIX: &str =
     "The user has manually approved a specific action that was previously `Rejected`.";
-const GUARDIAN_MAX_MESSAGE_TRANSCRIPT_TOKENS: usize = 10_000;
-const GUARDIAN_MAX_TOOL_TRANSCRIPT_TOKENS: usize = 10_000;
-const GUARDIAN_MAX_MESSAGE_ENTRY_TOKENS: usize = 2_000;
-const GUARDIAN_MAX_TOOL_ENTRY_TOKENS: usize = 1_000;
-const GUARDIAN_MAX_ACTION_STRING_TOKENS: usize = 16_000;
-const GUARDIAN_RECENT_ENTRY_LIMIT: usize = 40;
-const TRUNCATION_TAG: &str = "truncated";
-
-/// Structured output contract that the guardian reviewer must satisfy.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-pub(crate) struct GuardianAssessment {
-    pub(crate) risk_level: codex_protocol::protocol::GuardianRiskLevel,
-    pub(crate) user_authorization: codex_protocol::protocol::GuardianUserAuthorization,
-    pub(crate) outcome: GuardianAssessmentOutcome,
-    pub(crate) rationale: String,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GuardianRejection {
@@ -153,12 +136,6 @@ use prompt::guardian_output_schema;
 pub(crate) use prompt::guardian_policy_prompt;
 #[cfg(test)]
 pub(crate) use prompt::guardian_policy_prompt_with_config;
-#[cfg(test)]
-use prompt::guardian_truncate_text;
-#[cfg(test)]
-use prompt::parse_guardian_assessment;
-#[cfg(test)]
-use prompt::render_guardian_transcript_entries;
 #[cfg(test)]
 use review::GuardianReviewOutcome;
 #[cfg(test)]

@@ -12,8 +12,8 @@ use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::McpAuthStatus;
 use codex_config_types::McpServerConfig;
 use codex_config_types::McpServerDisabledReason;
-use codex_otel::RuntimeMetricTotals;
-use codex_otel::RuntimeMetricsSummary;
+use codex_metrics_api::RuntimeMetricTotals;
+use codex_metrics_api::RuntimeMetricsSummary;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
 use codex_protocol::parse_command::ParsedCommand;
@@ -33,7 +33,7 @@ use rmcp::model::Content;
 const SMALL_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
 async fn test_config() -> Config {
     let codex_home = std::env::temp_dir();
-    ConfigBuilder::default()
+    crate::config_builder()
         .codex_home(codex_home.clone())
         .build()
         .await

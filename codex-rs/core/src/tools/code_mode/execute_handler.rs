@@ -7,8 +7,8 @@ use crate::tools::registry::ToolHandler;
 use codex_code_mode_api::ExecuteRequest;
 use codex_code_mode_api::RuntimeResponse;
 use codex_code_mode_api::parse_exec_source;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
 
 use super::ExecContext;
 use super::PUBLIC_TOOL_NAME;
@@ -38,7 +38,7 @@ impl CodeModeExecuteHandler {
         let args = parse_exec_source(&code).map_err(FunctionCallError::RespondToModel)?;
         let exec = ExecContext { session, turn };
         let enabled_tools =
-            codex_tools::collect_code_mode_tool_definitions(&self.nested_tool_specs);
+            codex_tool_planning::collect_code_mode_tool_definitions(&self.nested_tool_specs);
         let stored_values = exec
             .session
             .services
@@ -89,7 +89,6 @@ impl CodeModeExecuteHandler {
     }
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for CodeModeExecuteHandler {
     type Output = FunctionToolOutput;
 
@@ -101,24 +100,32 @@ impl ToolExecutor<ToolInvocation> for CodeModeExecuteHandler {
         Some(self.spec.clone())
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            call_id,
-            tool_name,
-            payload,
-            ..
-        } = invocation;
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session,
+                turn,
+                call_id,
+                tool_name,
+                payload,
+                ..
+            } = invocation;
 
-        match payload {
-            ToolPayload::Custom { input } if is_exec_tool_name(&tool_name) => {
-                self.execute(session, turn, call_id, input).await
+            match payload {
+                ToolPayload::Custom { input } if is_exec_tool_name(&tool_name) => {
+                    self.execute(session, turn, call_id, input).await
+                }
+                _ => Err(FunctionCallError::RespondToModel(format!(
+                    "{PUBLIC_TOOL_NAME} expects raw JavaScript source text"
+                ))),
             }
-            _ => Err(FunctionCallError::RespondToModel(format!(
-                "{PUBLIC_TOOL_NAME} expects raw JavaScript source text"
-            ))),
-        }
+        })
     }
 }
 

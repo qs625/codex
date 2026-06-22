@@ -225,11 +225,13 @@ async fn run_command_under_sandbox(
     let _ = log_denials;
 
     let managed_network_requirements_enabled = config.managed_network_requirements_enabled();
+    let network_proxy_runtime_factory = codex_network_proxy::DefaultNetworkProxyRuntimeFactory;
 
     // This proxy should only live for the lifetime of the child process.
     let network_proxy = match config.permissions.network.as_ref() {
         Some(spec) => Some(
             spec.start_proxy(
+                &network_proxy_runtime_factory,
                 config.permissions.permission_profile(),
                 /*policy_decider*/ None,
                 /*blocked_request_observer*/ None,
@@ -243,7 +245,7 @@ async fn run_command_under_sandbox(
     };
     let network = network_proxy
         .as_ref()
-        .map(codex_core::config::StartedNetworkProxy::proxy);
+        .map(|started_proxy| started_proxy.proxy());
     let network_snapshot = network.as_ref().map(|network| network.runtime_snapshot());
 
     let mut child = match sandbox_type {
@@ -716,7 +718,7 @@ async fn build_debug_sandbox_config(
     managed_requirements_mode: ManagedRequirementsMode,
     strict_config: bool,
 ) -> std::io::Result<Config> {
-    let mut builder = ConfigBuilder::default()
+    let mut builder = crate::config_builder()
         .cli_overrides(cli_overrides)
         .harness_overrides(harness_overrides)
         .strict_config(strict_config);

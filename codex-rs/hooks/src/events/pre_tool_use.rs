@@ -1,13 +1,11 @@
-use std::path::PathBuf;
-
-use codex_protocol::ThreadId;
+pub use codex_hooks_api::PreToolUseOutcome;
+pub use codex_hooks_api::PreToolUseRequest;
 use codex_protocol::protocol::HookCompletedEvent;
 use codex_protocol::protocol::HookEventName;
 use codex_protocol::protocol::HookOutputEntry;
 use codex_protocol::protocol::HookOutputEntryKind;
 use codex_protocol::protocol::HookRunStatus;
 use codex_protocol::protocol::HookRunSummary;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use serde_json::Value;
 
 use super::common;
@@ -17,29 +15,6 @@ use crate::engine::command_runner::CommandRunResult;
 use crate::engine::dispatcher;
 use crate::engine::output_parser;
 use crate::schema::PreToolUseCommandInput;
-
-#[derive(Debug, Clone)]
-pub struct PreToolUseRequest {
-    pub session_id: ThreadId,
-    pub turn_id: String,
-    pub cwd: AbsolutePathBuf,
-    pub transcript_path: Option<PathBuf>,
-    pub model: String,
-    pub permission_mode: String,
-    pub tool_name: String,
-    pub matcher_aliases: Vec<String>,
-    pub tool_use_id: String,
-    pub tool_input: Value,
-}
-
-#[derive(Debug)]
-pub struct PreToolUseOutcome {
-    pub hook_events: Vec<HookCompletedEvent>,
-    pub should_block: bool,
-    pub block_reason: Option<String>,
-    pub additional_contexts: Vec<String>,
-    pub updated_input: Option<Value>,
-}
 
 #[derive(Debug, Default, PartialEq, Eq)]
 struct PreToolUseHandlerData {

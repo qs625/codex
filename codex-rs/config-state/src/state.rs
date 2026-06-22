@@ -1,7 +1,7 @@
 use crate::key_aliases::normalized_with_key_aliases;
 use crate::merge::merge_toml_values;
 use crate::origins::record_origins;
-use codex_config_edit::version_for_toml;
+use crate::version_for_toml;
 use codex_config_requirements::ConfigRequirements;
 use codex_config_requirements::ConfigRequirementsToml;
 use codex_config_types::ConfigLayer;

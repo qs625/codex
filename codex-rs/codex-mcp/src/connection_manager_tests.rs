@@ -16,22 +16,24 @@ use crate::tools::filter_tools;
 use crate::tools::normalize_tools_for_model;
 use codex_config_types::Constrained;
 use codex_config_types::McpServerConfig;
+use codex_mcp_tool_types::McpTool;
 use codex_mcp_tool_types::ToolInfo;
 use codex_mcp_tool_types::tool_with_model_visible_input_schema;
+use codex_mcp_types::CodexAppsAuthContext;
 use codex_mcp_types::ElicitationAction;
 use codex_mcp_types::ElicitationResponse;
+use codex_mcp_types::codex_apps_tools_cache_key;
 use codex_protocol::ToolName;
+use codex_protocol::mcp::RequestId;
 use codex_protocol::models::PermissionProfile;
+use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::GranularApprovalConfig;
 use codex_protocol::protocol::McpAuthStatus;
 use futures::FutureExt;
 use pretty_assertions::assert_eq;
 use rmcp::model::CreateElicitationRequestParams;
 use rmcp::model::ElicitationCapability;
-use rmcp::model::JsonObject;
-use rmcp::model::Meta;
 use rmcp::model::NumberOrString;
-use rmcp::model::Tool;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tempfile::tempdir;
@@ -45,17 +47,11 @@ fn create_test_tool(server_name: &str, tool_name: &str) -> ToolInfo {
         callable_name: tool_name.to_string(),
         callable_namespace: tool_namespace,
         namespace_description: None,
-        tool: Tool {
-            name: tool_name.to_string().into(),
-            title: None,
-            description: Some(format!("Test tool: {tool_name}").into()),
-            input_schema: Arc::new(JsonObject::default()),
-            output_schema: None,
-            annotations: None,
-            execution: None,
-            icons: None,
-            meta: None,
-        },
+        tool: McpTool::new(
+            tool_name,
+            format!("Test tool: {tool_name}"),
+            serde_json::Value::Object(serde_json::Map::new()),
+        ),
         connector_id: None,
         connector_name: None,
         plugin_display_names: Vec::new(),
@@ -79,13 +75,15 @@ fn create_codex_apps_tools_cache_context(
     account_id: Option<&str>,
     chatgpt_user_id: Option<&str>,
 ) -> CodexAppsToolsCacheContext {
+    let auth_context = CodexAppsAuthContext {
+        uses_codex_backend: true,
+        account_id: account_id.map(ToOwned::to_owned),
+        chatgpt_user_id: chatgpt_user_id.map(ToOwned::to_owned),
+        is_workspace_account: false,
+    };
     CodexAppsToolsCacheContext {
         codex_home,
-        user_key: CodexAppsToolsCacheKey {
-            account_id: account_id.map(ToOwned::to_owned),
-            chatgpt_user_id: chatgpt_user_id.map(ToOwned::to_owned),
-            is_workspace_account: false,
-        },
+        user_key: codex_apps_tools_cache_key(Some(&auth_context)),
     }
 }
 
@@ -128,54 +126,46 @@ fn declared_openai_file_fields_treat_names_literally() {
 #[test]
 fn tool_with_model_visible_input_schema_masks_file_params() {
     let mut tool = create_test_tool(CODEX_APPS_MCP_SERVER_NAME, "upload").tool;
-    tool.input_schema = Arc::new(
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "file": {
-                    "type": "object",
-                    "description": "Original file payload."
-                },
-                "files": {
-                    "type": "array",
-                    "items": {"type": "object"}
-                }
+    tool.input_schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "file": {
+                "type": "object",
+                "description": "Original file payload."
+            },
+            "files": {
+                "type": "array",
+                "items": {"type": "object"}
             }
-        })
-        .as_object()
-        .expect("object")
-        .clone(),
-    );
-    tool.meta = Some(Meta(
+        }
+    });
+    tool.meta = Some(
         serde_json::json!({
             "openai/fileParams": ["file", "files"]
         })
         .as_object()
         .expect("object")
         .clone(),
-    ));
+    );
 
     let tool = tool_with_model_visible_input_schema(&tool);
 
     assert_eq!(
-        *tool.input_schema,
+        tool.input_schema,
         serde_json::json!({
-            "type": "object",
-            "properties": {
-                "file": {
-                    "type": "string",
-                    "description": "Original file payload. This parameter expects an absolute local file path. If you want to upload a file, provide the absolute path to that file here."
-                },
-                "files": {
-                    "type": "array",
-                    "items": {"type": "string"},
+        "type": "object",
+        "properties": {
+            "file": {
+                "type": "string",
+                "description": "Original file payload. This parameter expects an absolute local file path. If you want to upload a file, provide the absolute path to that file here."
+            },
+            "files": {
+                "type": "array",
+                "items": {"type": "string"},
                     "description": "This parameter expects an absolute local file path. If you want to upload a file, provide the absolute path to that file here."
                 }
             }
         })
-        .as_object()
-        .expect("object")
-        .clone()
     );
 }
 
@@ -291,6 +281,68 @@ async fn disabled_permissions_do_not_auto_accept_elicitation_with_requested_fiel
             content: None,
             meta: None,
         }
+    );
+}
+
+#[tokio::test]
+async fn elicitation_resolves_waiting_request_by_protocol_request_id() {
+    let manager = ElicitationRequestManager::new(
+        AskForApproval::OnRequest,
+        PermissionProfile::default(),
+        /*reviewer*/ None,
+    );
+    let (tx_event, rx_event) = async_channel::bounded(1);
+    let sender = manager.make_sender("server".to_string(), tx_event);
+
+    let pending = tokio::spawn(async move {
+        sender(
+            NumberOrString::String("request-1".into()),
+            CreateElicitationRequestParams::FormElicitationParams {
+                meta: None,
+                message: "What should I say?".to_string(),
+                requested_schema: rmcp::model::ElicitationSchema::builder()
+                    .required_property(
+                        "message",
+                        rmcp::model::PrimitiveSchema::String(rmcp::model::StringSchema::new()),
+                    )
+                    .build()
+                    .expect("schema should build"),
+            },
+        )
+        .await
+        .expect("elicitation response should resolve")
+    });
+
+    let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx_event.recv())
+        .await
+        .expect("elicitation event timed out")
+        .expect("expected elicitation event");
+    let EventMsg::ElicitationRequest(request) = event.msg else {
+        panic!("expected elicitation request event");
+    };
+    assert_eq!(request.server_name, "server");
+    assert_eq!(request.id, RequestId::String("request-1".to_string()));
+
+    let expected_response = ElicitationResponse {
+        action: ElicitationAction::Accept,
+        content: Some(serde_json::json!({"message": "ok"})),
+        meta: None,
+    };
+    manager
+        .resolve(
+            "server".to_string(),
+            RequestId::String("request-1".to_string()),
+            expected_response.clone(),
+        )
+        .await
+        .expect("protocol request id should resolve pending elicitation");
+
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(1), pending)
+            .await
+            .expect("pending elicitation task timed out")
+            .expect("pending elicitation task panicked"),
+        expected_response
     );
 }
 

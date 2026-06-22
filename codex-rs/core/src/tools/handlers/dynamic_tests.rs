@@ -1,5 +1,5 @@
 use super::*;
-use codex_tools::ToolSearchSourceInfo;
+use codex_tool_planning::ToolSearchSourceInfo;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 

@@ -1,0 +1,9 @@
+load("//:defs.bzl", "codex_rust_crate")
+
+codex_rust_crate(
+    name = "tool-planning",
+    compile_data = [
+        "src/tool_specs/apply_patch.lark",
+    ],
+    crate_name = "codex_tool_planning",
+)

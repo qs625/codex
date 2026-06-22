@@ -1,6 +1,7 @@
 use crate::auth::SharedAuthProvider;
 use crate::common::ResponseStream;
 use crate::common::ResponsesApiRequest;
+use crate::common::ResponsesOptions;
 use crate::endpoint::session::EndpointSession;
 use crate::error::ApiError;
 use crate::provider::Provider;
@@ -13,8 +14,7 @@ use crate::sse::spawn_response_stream;
 use crate::telemetry::SseTelemetry;
 use codex_client::HttpTransport;
 use codex_client::RequestCompression;
-use codex_client::RequestTelemetry;
-use codex_protocol::protocol::SessionSource;
+use codex_client_types::RequestTelemetry;
 use http::HeaderMap;
 use http::HeaderValue;
 use http::Method;
@@ -26,16 +26,6 @@ use tracing::instrument;
 pub struct ResponsesClient<T: HttpTransport> {
     session: EndpointSession<T>,
     sse_telemetry: Option<Arc<dyn SseTelemetry>>,
-}
-
-#[derive(Default)]
-pub struct ResponsesOptions {
-    pub session_id: Option<String>,
-    pub thread_id: Option<String>,
-    pub session_source: Option<SessionSource>,
-    pub extra_headers: HeaderMap,
-    pub compression: Compression,
-    pub turn_state: Option<Arc<OnceLock<String>>>,
 }
 
 impl<T: HttpTransport> ResponsesClient<T> {

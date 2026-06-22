@@ -105,6 +105,7 @@ async fn windows_restricted_token_rejects_exact_and_glob_deny_read_policy() -> a
         NetworkSandboxPolicy::Restricted,
     );
 
+    let sandbox_runtime = codex_sandboxing::SandboxManager::new();
     let err = process_exec_tool_call(
         ExecParams {
             command: vec![
@@ -129,6 +130,7 @@ async fn windows_restricted_token_rejects_exact_and_glob_deny_read_policy() -> a
         &cwd,
         &None,
         /*use_legacy_landlock*/ false,
+        &sandbox_runtime,
         /*stdout_stream*/ None,
     )
     .await
@@ -185,6 +187,7 @@ async fn windows_elevated_enforces_exact_and_glob_deny_read_policy() -> anyhow::
         NetworkSandboxPolicy::Restricted,
     );
 
+    let sandbox_runtime = codex_sandboxing::SandboxManager::new();
     let ExecToolCallOutput {
         exit_code,
         stdout,
@@ -213,6 +216,7 @@ async fn windows_elevated_enforces_exact_and_glob_deny_read_policy() -> anyhow::
         &cwd,
         &None,
         /*use_legacy_landlock*/ false,
+        &sandbox_runtime,
         /*stdout_stream*/ None,
     )
     .await?;

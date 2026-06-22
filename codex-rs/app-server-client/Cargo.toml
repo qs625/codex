@@ -24,6 +24,7 @@ codex-config-loader = { workspace = true }
 codex-config-loader-remote = { workspace = true }
 codex-config-requirements = { workspace = true }
 codex-core = { workspace = true }
+codex-execpolicy-loader = { workspace = true }
 codex-exec-server = { workspace = true }
 codex-feedback = { workspace = true }
 codex-otel-init = { workspace = true }
@@ -41,6 +42,7 @@ tracing = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+codex-rollout = { workspace = true }
 pretty_assertions = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

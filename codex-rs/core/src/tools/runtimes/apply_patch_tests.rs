@@ -9,9 +9,9 @@ use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::GranularApprovalConfig;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_sandboxing::SandboxManager;
-use codex_sandboxing::SandboxType;
-use codex_sandboxing::policy_transforms::effective_file_system_sandbox_policy;
-use codex_sandboxing::policy_transforms::effective_network_sandbox_policy;
+use codex_sandboxing_api::SandboxType;
+use codex_sandboxing_api::policy_transforms::effective_file_system_sandbox_policy;
+use codex_sandboxing_api::policy_transforms::effective_network_sandbox_policy;
 use core_test_support::PathBufExt;
 use pretty_assertions::assert_eq;
 use std::collections::HashMap;
@@ -212,7 +212,7 @@ async fn file_system_sandbox_context_uses_active_attempt() {
         sandbox: SandboxType::MacosSeatbelt,
         permissions: &permissions,
         enforce_managed_network: false,
-        manager: &manager,
+        sandbox_runtime: &manager,
         sandbox_cwd: &path,
         codex_linux_sandbox_exe: None,
         use_legacy_landlock: true,
@@ -265,7 +265,7 @@ async fn no_sandbox_attempt_has_no_file_system_context() {
         sandbox: SandboxType::None,
         permissions: &permissions,
         enforce_managed_network: false,
-        manager: &manager,
+        sandbox_runtime: &manager,
         sandbox_cwd: &path,
         codex_linux_sandbox_exe: None,
         use_legacy_landlock: false,

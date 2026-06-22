@@ -2,8 +2,8 @@ use crate::events::CodexAcceptedLineFingerprintsEventParams;
 use crate::events::CodexAcceptedLineFingerprintsEventRequest;
 use crate::events::TrackEventRequest;
 use crate::facts::AcceptedLineFingerprint;
-use codex_git_utils::canonicalize_git_remote_url;
-use codex_git_utils::get_git_remote_urls_assume_git_repo;
+use codex_git_info::canonicalize_git_remote_url;
+use codex_git_info::get_git_remote_urls_assume_git_repo;
 use sha1::Digest;
 use std::path::Path;
 

@@ -1,10 +1,17 @@
-use codex_plugin_types::PluginHookSource;
+use std::sync::Arc;
+
+use codex_hooks_api::HookFuture;
+use codex_hooks_api::HookListOutcome;
+use codex_hooks_api::HookPayload;
+use codex_hooks_api::HookResponse;
+use codex_hooks_api::HookRuntime;
+use codex_hooks_api::HookRuntimeFactory;
+use codex_hooks_api::HooksConfig;
+use codex_hooks_api::SharedHookRuntime;
 use tokio::process::Command;
 
-use crate::config_layers::HookConfigLayerStack;
 use crate::engine::ClaudeHooksEngine;
 use crate::engine::CommandShell;
-use crate::engine::HookListEntry;
 use crate::events::compact::PostCompactRequest;
 use crate::events::compact::PreCompactOutcome;
 use crate::events::compact::PreCompactRequest;
@@ -21,28 +28,8 @@ use crate::events::stop::StopOutcome;
 use crate::events::stop::StopRequest;
 use crate::events::user_prompt_submit::UserPromptSubmitOutcome;
 use crate::events::user_prompt_submit::UserPromptSubmitRequest;
-use crate::types::Hook;
-use crate::types::HookEvent;
-use crate::types::HookPayload;
-use crate::types::HookResponse;
-
-#[derive(Default, Clone)]
-pub struct HooksConfig {
-    pub legacy_notify_argv: Option<Vec<String>>,
-    pub feature_enabled: bool,
-    pub bypass_hook_trust: bool,
-    pub config_layer_stack: Option<HookConfigLayerStack>,
-    pub plugin_hook_sources: Vec<PluginHookSource>,
-    pub plugin_hook_load_warnings: Vec<String>,
-    pub shell_program: Option<String>,
-    pub shell_args: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct HookListOutcome {
-    pub hooks: Vec<HookListEntry>,
-    pub warnings: Vec<String>,
-}
+use codex_hooks_api::Hook;
+use codex_hooks_api::HookEvent;
 
 #[derive(Clone)]
 pub struct Hooks {
@@ -202,6 +189,122 @@ impl Hooks {
 
     pub async fn run_stop(&self, request: StopRequest) -> StopOutcome {
         self.engine.run_stop(request).await
+    }
+}
+
+impl HookRuntime for Hooks {
+    fn startup_warnings(&self) -> &[String] {
+        Hooks::startup_warnings(self)
+    }
+
+    fn dispatch(&self, hook_payload: HookPayload) -> HookFuture<'_, Vec<HookResponse>> {
+        Box::pin(Hooks::dispatch(self, hook_payload))
+    }
+
+    fn preview_session_start(
+        &self,
+        request: &SessionStartRequest,
+    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+        Hooks::preview_session_start(self, request)
+    }
+
+    fn preview_pre_tool_use(
+        &self,
+        request: &PreToolUseRequest,
+    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+        Hooks::preview_pre_tool_use(self, request)
+    }
+
+    fn preview_permission_request(
+        &self,
+        request: &PermissionRequestRequest,
+    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+        Hooks::preview_permission_request(self, request)
+    }
+
+    fn preview_post_tool_use(
+        &self,
+        request: &PostToolUseRequest,
+    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+        Hooks::preview_post_tool_use(self, request)
+    }
+
+    fn preview_pre_compact(
+        &self,
+        request: &PreCompactRequest,
+    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+        Hooks::preview_pre_compact(self, request)
+    }
+
+    fn preview_post_compact(
+        &self,
+        request: &PostCompactRequest,
+    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+        Hooks::preview_post_compact(self, request)
+    }
+
+    fn preview_user_prompt_submit(
+        &self,
+        request: &UserPromptSubmitRequest,
+    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+        Hooks::preview_user_prompt_submit(self, request)
+    }
+
+    fn preview_stop(&self, request: &StopRequest) -> Vec<codex_protocol::protocol::HookRunSummary> {
+        Hooks::preview_stop(self, request)
+    }
+
+    fn run_session_start(
+        &self,
+        request: SessionStartRequest,
+        turn_id: Option<String>,
+    ) -> HookFuture<'_, SessionStartOutcome> {
+        Box::pin(Hooks::run_session_start(self, request, turn_id))
+    }
+
+    fn run_pre_tool_use(&self, request: PreToolUseRequest) -> HookFuture<'_, PreToolUseOutcome> {
+        Box::pin(Hooks::run_pre_tool_use(self, request))
+    }
+
+    fn run_permission_request(
+        &self,
+        request: PermissionRequestRequest,
+    ) -> HookFuture<'_, PermissionRequestOutcome> {
+        Box::pin(Hooks::run_permission_request(self, request))
+    }
+
+    fn run_post_tool_use(&self, request: PostToolUseRequest) -> HookFuture<'_, PostToolUseOutcome> {
+        Box::pin(Hooks::run_post_tool_use(self, request))
+    }
+
+    fn run_pre_compact(&self, request: PreCompactRequest) -> HookFuture<'_, PreCompactOutcome> {
+        Box::pin(Hooks::run_pre_compact(self, request))
+    }
+
+    fn run_post_compact(
+        &self,
+        request: PostCompactRequest,
+    ) -> HookFuture<'_, StatelessHookOutcome> {
+        Box::pin(Hooks::run_post_compact(self, request))
+    }
+
+    fn run_user_prompt_submit(
+        &self,
+        request: UserPromptSubmitRequest,
+    ) -> HookFuture<'_, UserPromptSubmitOutcome> {
+        Box::pin(Hooks::run_user_prompt_submit(self, request))
+    }
+
+    fn run_stop(&self, request: StopRequest) -> HookFuture<'_, StopOutcome> {
+        Box::pin(Hooks::run_stop(self, request))
+    }
+}
+
+pub struct HooksRuntimeFactory;
+
+impl HookRuntimeFactory for HooksRuntimeFactory {
+    fn create(&self, config: HooksConfig) -> SharedHookRuntime {
+        Arc::new(Hooks::new(config))
     }
 }
 

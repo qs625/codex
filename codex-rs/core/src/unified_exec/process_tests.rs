@@ -8,7 +8,7 @@ use codex_exec_server_protocol::ProcessId;
 use codex_exec_server_protocol::ReadResponse;
 use codex_exec_server_protocol::WriteResponse;
 use codex_exec_server_protocol::WriteStatus;
-use codex_sandboxing::SandboxType;
+use codex_sandboxing_api::SandboxType;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use pretty_assertions::assert_eq;

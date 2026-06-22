@@ -14,42 +14,30 @@ mod conversation;
 mod runtime;
 mod session;
 
+pub use codex_rollout_trace_api::model::AgentPath;
+pub use codex_rollout_trace_api::model::AgentThreadId;
+pub use codex_rollout_trace_api::model::CodeCellId;
+pub use codex_rollout_trace_api::model::CodeCellRuntimeStatus;
+pub use codex_rollout_trace_api::model::CodeModeRuntimeToolId;
+pub use codex_rollout_trace_api::model::CodexTurnId;
+pub use codex_rollout_trace_api::model::CompactionId;
+pub use codex_rollout_trace_api::model::CompactionRequestId;
+pub use codex_rollout_trace_api::model::ConversationItemId;
+pub use codex_rollout_trace_api::model::CorrelationId;
+pub use codex_rollout_trace_api::model::EdgeId;
+pub use codex_rollout_trace_api::model::ExecutionStatus;
+pub use codex_rollout_trace_api::model::InferenceCallId;
+pub use codex_rollout_trace_api::model::McpCallId;
+pub use codex_rollout_trace_api::model::ModelVisibleCallId;
+pub use codex_rollout_trace_api::model::RolloutStatus;
+pub use codex_rollout_trace_api::model::TerminalId;
+pub use codex_rollout_trace_api::model::TerminalOperationId;
+pub use codex_rollout_trace_api::model::ToolCallId;
+pub use codex_rollout_trace_api::model::ToolCallKind;
+pub use codex_rollout_trace_api::model::ToolCallSummary;
 pub use conversation::*;
 pub use runtime::*;
 pub use session::*;
-
-/// Codex conversation/session UUID.
-pub type AgentThreadId = String;
-/// Stable multi-agent routing path such as `/root` or `/root/search_docs`.
-pub type AgentPath = String;
-/// Runtime submission/activation UUID. This is not a chat turn.
-pub type CodexTurnId = String;
-/// Reduced transcript item ID assigned by the trace reducer.
-pub type ConversationItemId = String;
-/// Local ID for one outbound upstream inference request.
-pub type InferenceCallId = String;
-/// Globally unique ID for one concrete MCP backend request.
-pub type McpCallId = String;
-/// Reducer-owned ID for one runtime tool-call object.
-pub type ToolCallId = String;
-/// Responses `call_id` / custom-tool call ID visible in inference payloads.
-pub type ModelVisibleCallId = String;
-/// Tool invocation ID assigned inside the code-mode JavaScript runtime.
-pub type CodeModeRuntimeToolId = String;
-/// Reducer-owned ID for one model-authored `exec` JavaScript cell.
-pub type CodeCellId = String;
-/// Process/session ID returned by Codex's terminal runtime.
-pub type TerminalId = String;
-/// Reducer-owned ID for one command/write/poll operation against a terminal.
-pub type TerminalOperationId = String;
-/// Reducer-owned ID for one installed conversation-history checkpoint.
-pub type CompactionId = String;
-/// Reducer-owned ID for one upstream request that computes a compaction.
-pub type CompactionRequestId = String;
-/// Reducer-owned ID for one information-flow edge.
-pub type EdgeId = String;
-/// Reducer-owned ID for request/log correlation metadata.
-pub type CorrelationId = String;
 
 /// Canonical reduced graph for one Codex rollout.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

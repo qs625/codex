@@ -2,6 +2,7 @@ use crate::agents_md::DEFAULT_AGENTS_MD_FILENAME;
 use crate::agents_md::LOCAL_AGENTS_MD_FILENAME;
 use crate::config::AgentCapabilityAllowlist;
 use crate::config::AgentRoleSource;
+use crate::config::CONFIG_TOML_FILE;
 use crate::config::ThreadStoreConfig;
 use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
@@ -20,7 +21,6 @@ use codex_config::config_toml::RealtimeTransport;
 use codex_config::config_toml::RealtimeWsMode;
 use codex_config::config_toml::RealtimeWsVersion;
 use codex_config::config_toml::ToolsToml;
-use codex_config::loader::project_trust_key;
 use codex_config::permissions_toml::FilesystemPermissionToml;
 use codex_config::permissions_toml::FilesystemPermissionsToml;
 use codex_config::permissions_toml::NetworkDomainPermissionToml;
@@ -30,10 +30,12 @@ use codex_config::permissions_toml::PermissionProfileToml;
 use codex_config::permissions_toml::PermissionsToml;
 use codex_config::permissions_toml::WorkspaceRootsToml;
 use codex_config::profile_toml::ConfigProfile;
+use codex_config::types::AltScreenMode;
 use codex_config::types::AppToolApproval;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::BundledSkillsConfig;
 use codex_config::types::FeedbackConfigToml;
+use codex_config::types::History;
 use codex_config::types::HistoryPersistence;
 use codex_config::types::McpServerEnvVar;
 use codex_config::types::McpServerOAuthConfig;
@@ -60,18 +62,23 @@ use codex_config::types::TuiNotificationSettings;
 use codex_config::types::TuiPetAnchor;
 use codex_config::types::WindowsSandboxModeToml;
 use codex_config::types::WindowsToml;
-use codex_config_edit::CONFIG_TOML_FILE;
+use codex_config_edit::load_global_mcp_servers;
 use codex_config_loader::ProjectConfig;
+use codex_config_local_loader::load_config_layers_state;
 use codex_config_types::RealtimeAudioConfig;
 use codex_core_plugins::PluginsManager;
 use codex_features::Feature;
 use codex_features::FeaturesToml;
 use codex_file_system::LOCAL_FS;
 use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
+use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use codex_model_provider_info::WireApi;
 use codex_models_manager::bundled_models_response;
+use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::ServiceTier;
+use codex_protocol::config_types::ShellEnvironmentPolicy;
+use codex_protocol::config_types::Verbosity;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
@@ -98,9 +105,6 @@ use core_test_support::PathExt;
 use core_test_support::TempDirExt;
 use core_test_support::test_absolute_path;
 use pretty_assertions::assert_eq;
-use rmcp::model::ElicitationCapability;
-use rmcp::model::FormElicitationCapability;
-use rmcp::model::UrlElicitationCapability;
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -4911,18 +4915,15 @@ async fn to_mcp_config_preserves_auth_elicitation_feature_from_config() -> std::
 
     let mcp_config = config.to_mcp_config(&plugins_manager).await;
     assert_eq!(
-        mcp_config.client_elicitation_capability,
-        ElicitationCapability::default()
+        mcp_config.client_elicitation_support,
+        codex_mcp_types::McpClientElicitationSupport::Disabled
     );
 
     let _ = config.features.enable(Feature::AuthElicitation);
     let mcp_config = config.to_mcp_config(&plugins_manager).await;
     assert_eq!(
-        mcp_config.client_elicitation_capability,
-        ElicitationCapability {
-            form: Some(FormElicitationCapability::default()),
-            url: Some(UrlElicitationCapability::default()),
-        }
+        mcp_config.client_elicitation_support,
+        codex_mcp_types::McpClientElicitationSupport::AuthElicitation
     );
 
     Ok(())
@@ -7066,6 +7067,22 @@ skills: "*"
 Review the code carefully.
 "#,
     )?;
+    std::fs::write(
+        repo_root
+            .path()
+            .join(".codex")
+            .join("agents")
+            .join("limited.agent.md"),
+        r#"---
+name: "limited-reviewer" # quoted scalar with trailing comment
+description: 'Reviews with limited tools.'
+tools: [exec_command, web]
+skills: [code-review, "code-review-*"]
+---
+
+Review with a restricted capability set.
+"#,
+    )?;
     std::fs::create_dir_all(
         repo_root
             .path()
@@ -7122,6 +7139,25 @@ Nested markdown should load.
             .get("nested")
             .and_then(|role| role.description.as_deref()),
         Some("Nested markdown should be discovered.")
+    );
+    let limited = config
+        .agent_roles
+        .get("limited-reviewer")
+        .expect("quoted frontmatter name should define agent_type");
+    assert_eq!(
+        limited.description.as_deref(),
+        Some("Reviews with limited tools.")
+    );
+    assert_eq!(
+        limited.tool_allowlist,
+        AgentCapabilityAllowlist::Patterns(vec!["exec_command".to_string(), "web".to_string()])
+    );
+    assert_eq!(
+        limited.skill_allowlist,
+        AgentCapabilityAllowlist::Patterns(vec![
+            "code-review".to_string(),
+            "code-review-*".to_string()
+        ])
     );
 
     Ok(())
@@ -8971,9 +9007,13 @@ async fn test_requirements_web_search_mode_allowlist_does_not_warn_when_unset() 
 #[test]
 fn test_set_project_trusted_writes_explicit_tables() -> anyhow::Result<()> {
     let project_dir = Path::new("/some/path");
-    let mut doc = DocumentMut::new();
+    let mut doc = toml_edit::DocumentMut::new();
 
-    set_project_trust_level_inner(&mut doc, project_dir, TrustLevel::Trusted)?;
+    codex_config_edit::set_project_trust_level_in_document(
+        &mut doc,
+        project_dir,
+        TrustLevel::Trusted,
+    )?;
 
     let contents = doc.to_string();
 
@@ -9010,10 +9050,14 @@ fn test_set_project_trusted_converts_inline_to_explicit() -> anyhow::Result<()> 
 {path_str} = {{ trust_level = "untrusted" }}
 "#
     );
-    let mut doc = initial.parse::<DocumentMut>()?;
+    let mut doc = initial.parse::<toml_edit::DocumentMut>()?;
 
     // Run the function; it should convert to explicit tables and set trusted
-    set_project_trust_level_inner(&mut doc, project_dir, TrustLevel::Trusted)?;
+    codex_config_edit::set_project_trust_level_in_document(
+        &mut doc,
+        project_dir,
+        TrustLevel::Trusted,
+    )?;
 
     let contents = doc.to_string();
 
@@ -9036,17 +9080,21 @@ fn test_set_project_trusted_migrates_top_level_inline_projects_preserving_entrie
     let initial = r#"toplevel = "baz"
 projects = { "/Users/mbolin/code/codex4" = { trust_level = "trusted", foo = "bar" } , "/Users/mbolin/code/codex3" = { trust_level = "trusted" } }
 model = "foo""#;
-    let mut doc = initial.parse::<DocumentMut>()?;
+    let mut doc = initial.parse::<toml_edit::DocumentMut>()?;
 
     // Approve a new directory
     let new_project = Path::new("/Users/mbolin/code/codex2");
-    set_project_trust_level_inner(&mut doc, new_project, TrustLevel::Trusted)?;
+    codex_config_edit::set_project_trust_level_in_document(
+        &mut doc,
+        new_project,
+        TrustLevel::Trusted,
+    )?;
 
     let contents = doc.to_string();
 
     // Since we created the [projects] table as part of migration, it is kept implicit.
     // Expect explicit per-project tables, preserving prior entries and appending the new one.
-    let new_project_key = project_trust_key(new_project);
+    let new_project_key = codex_config_loader::project_trust_key(new_project);
     let expected = format!(
         r#"toplevel = "baz"
 model = "foo"
@@ -10067,7 +10115,7 @@ codex_version = "older-version"
 
 [config]
 "#,
-            crate::config_lock::CONFIG_LOCK_VERSION
+            codex_config_toml::CONFIG_LOCK_VERSION
         ),
     )?;
     std::fs::write(

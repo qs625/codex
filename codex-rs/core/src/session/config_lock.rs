@@ -1,5 +1,10 @@
 use anyhow::Context;
+use codex_config_toml::ConfigLockReplayOptions;
+use codex_config_toml::clear_config_lock_debug_controls;
+use codex_config_toml::config_lockfile;
 use codex_config_toml::config_toml::ConfigToml;
+use codex_config_toml::toml_round_trip;
+use codex_config_toml::validate_config_lock_replay;
 use codex_config_types::ConfigLockfileToml;
 use codex_config_types::MemoriesToml;
 use codex_features::AppsMcpPathOverrideConfigToml;
@@ -10,11 +15,6 @@ use codex_features::MultiAgentV2ConfigToml;
 use codex_protocol::ThreadId;
 
 use crate::config::Config;
-use crate::config_lock::ConfigLockReplayOptions;
-use crate::config_lock::clear_config_lock_debug_controls;
-use crate::config_lock::config_lockfile;
-use crate::config_lock::toml_round_trip;
-use crate::config_lock::validate_config_lock_replay;
 
 use super::SessionConfiguration;
 
@@ -203,6 +203,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_config_toml::CONFIG_LOCK_VERSION;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
 
@@ -265,7 +266,7 @@ mod tests {
             })
         ));
 
-        assert_eq!(lockfile.version, crate::config_lock::CONFIG_LOCK_VERSION);
+        assert_eq!(lockfile.version, CONFIG_LOCK_VERSION);
     }
 
     #[tokio::test]

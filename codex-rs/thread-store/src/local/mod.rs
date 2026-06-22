@@ -10,7 +10,6 @@ mod update_thread_metadata;
 #[cfg(test)]
 mod test_support;
 
-use async_trait::async_trait;
 use codex_protocol::ThreadId;
 use codex_rollout::RolloutRecorder;
 use codex_rollout::StateDbHandle;
@@ -33,6 +32,7 @@ use crate::StoredThreadHistory;
 use crate::ThreadPage;
 use crate::ThreadStore;
 use crate::ThreadStoreError;
+use crate::ThreadStoreFuture;
 use crate::ThreadStoreResult;
 use crate::UpdateThreadMetadataParams;
 
@@ -69,7 +69,7 @@ pub struct LocalThreadStoreConfig {
 }
 
 impl LocalThreadStoreConfig {
-    pub fn from_config(config: &impl codex_rollout::RolloutConfigView) -> Self {
+    pub fn from_config(config: &impl codex_rollout_api::RolloutConfigView) -> Self {
         Self {
             codex_home: config.codex_home().to_path_buf(),
             sqlite_home: config.sqlite_home().to_path_buf(),
@@ -163,120 +163,141 @@ impl LocalThreadStore {
     }
 }
 
-#[async_trait]
 impl ThreadStore for LocalThreadStore {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
 
-    async fn create_thread(&self, params: CreateThreadParams) -> ThreadStoreResult<()> {
-        live_writer::create_thread(self, params).await
+    fn create_thread(
+        &self,
+        params: CreateThreadParams,
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<()>> {
+        Box::pin(async move { live_writer::create_thread(self, params).await })
     }
 
-    async fn resume_thread(&self, params: ResumeThreadParams) -> ThreadStoreResult<()> {
-        live_writer::resume_thread(self, params).await
+    fn resume_thread(
+        &self,
+        params: ResumeThreadParams,
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<()>> {
+        Box::pin(async move { live_writer::resume_thread(self, params).await })
     }
 
-    async fn append_items(&self, params: AppendThreadItemsParams) -> ThreadStoreResult<()> {
-        live_writer::append_items(self, params).await
+    fn append_items(
+        &self,
+        params: AppendThreadItemsParams,
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<()>> {
+        Box::pin(async move { live_writer::append_items(self, params).await })
     }
 
-    async fn persist_thread(&self, thread_id: ThreadId) -> ThreadStoreResult<()> {
-        live_writer::persist_thread(self, thread_id).await
+    fn persist_thread(&self, thread_id: ThreadId) -> ThreadStoreFuture<'_, ThreadStoreResult<()>> {
+        Box::pin(async move { live_writer::persist_thread(self, thread_id).await })
     }
 
-    async fn flush_thread(&self, thread_id: ThreadId) -> ThreadStoreResult<()> {
-        live_writer::flush_thread(self, thread_id).await
+    fn flush_thread(&self, thread_id: ThreadId) -> ThreadStoreFuture<'_, ThreadStoreResult<()>> {
+        Box::pin(async move { live_writer::flush_thread(self, thread_id).await })
     }
 
-    async fn shutdown_thread(&self, thread_id: ThreadId) -> ThreadStoreResult<()> {
-        live_writer::shutdown_thread(self, thread_id).await
+    fn shutdown_thread(&self, thread_id: ThreadId) -> ThreadStoreFuture<'_, ThreadStoreResult<()>> {
+        Box::pin(async move { live_writer::shutdown_thread(self, thread_id).await })
     }
 
-    async fn discard_thread(&self, thread_id: ThreadId) -> ThreadStoreResult<()> {
-        live_writer::discard_thread(self, thread_id).await
+    fn discard_thread(&self, thread_id: ThreadId) -> ThreadStoreFuture<'_, ThreadStoreResult<()>> {
+        Box::pin(async move { live_writer::discard_thread(self, thread_id).await })
     }
 
-    async fn load_history(
+    fn load_history(
         &self,
         params: LoadThreadHistoryParams,
-    ) -> ThreadStoreResult<StoredThreadHistory> {
-        if let Ok(rollout_path) = live_writer::rollout_path(self, params.thread_id).await {
-            if !params.include_archived
-                && helpers::rollout_path_is_archived(
-                    self.config.codex_home.as_path(),
-                    rollout_path.as_path(),
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<StoredThreadHistory>> {
+        Box::pin(async move {
+            if let Ok(rollout_path) = live_writer::rollout_path(self, params.thread_id).await {
+                if !params.include_archived
+                    && helpers::rollout_path_is_archived(
+                        self.config.codex_home.as_path(),
+                        rollout_path.as_path(),
+                    )
+                {
+                    return Err(ThreadStoreError::InvalidRequest {
+                        message: format!("thread {} is archived", params.thread_id),
+                    });
+                }
+                return read_thread::read_thread_by_rollout_path(
+                    self,
+                    rollout_path,
+                    /*include_archived*/ true,
+                    /*include_history*/ true,
                 )
-            {
-                return Err(ThreadStoreError::InvalidRequest {
-                    message: format!("thread {} is archived", params.thread_id),
+                .await?
+                .history
+                .ok_or_else(|| ThreadStoreError::Internal {
+                    message: format!("failed to load history for thread {}", params.thread_id),
                 });
             }
-            return read_thread::read_thread_by_rollout_path(
+
+            read_thread::read_thread(
                 self,
-                rollout_path,
-                /*include_archived*/ true,
-                /*include_history*/ true,
+                ReadThreadParams {
+                    thread_id: params.thread_id,
+                    include_archived: params.include_archived,
+                    include_history: true,
+                },
             )
             .await?
             .history
             .ok_or_else(|| ThreadStoreError::Internal {
                 message: format!("failed to load history for thread {}", params.thread_id),
-            });
-        }
-
-        read_thread::read_thread(
-            self,
-            ReadThreadParams {
-                thread_id: params.thread_id,
-                include_archived: params.include_archived,
-                include_history: true,
-            },
-        )
-        .await?
-        .history
-        .ok_or_else(|| ThreadStoreError::Internal {
-            message: format!("failed to load history for thread {}", params.thread_id),
+            })
         })
     }
 
-    async fn read_thread(&self, params: ReadThreadParams) -> ThreadStoreResult<StoredThread> {
-        read_thread::read_thread(self, params).await
+    fn read_thread(
+        &self,
+        params: ReadThreadParams,
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<StoredThread>> {
+        Box::pin(async move { read_thread::read_thread(self, params).await })
     }
 
-    async fn read_thread_by_rollout_path(
+    fn read_thread_by_rollout_path(
         &self,
         params: ReadThreadByRolloutPathParams,
-    ) -> ThreadStoreResult<StoredThread> {
-        read_thread::read_thread_by_rollout_path(
-            self,
-            params.rollout_path,
-            params.include_archived,
-            params.include_history,
-        )
-        .await
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<StoredThread>> {
+        Box::pin(async move {
+            read_thread::read_thread_by_rollout_path(
+                self,
+                params.rollout_path,
+                params.include_archived,
+                params.include_history,
+            )
+            .await
+        })
     }
 
-    async fn list_threads(&self, params: ListThreadsParams) -> ThreadStoreResult<ThreadPage> {
-        list_threads::list_threads(self, params).await
+    fn list_threads(
+        &self,
+        params: ListThreadsParams,
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<ThreadPage>> {
+        Box::pin(async move { list_threads::list_threads(self, params).await })
     }
 
-    async fn update_thread_metadata(
+    fn update_thread_metadata(
         &self,
         params: UpdateThreadMetadataParams,
-    ) -> ThreadStoreResult<StoredThread> {
-        update_thread_metadata::update_thread_metadata(self, params).await
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<StoredThread>> {
+        Box::pin(async move { update_thread_metadata::update_thread_metadata(self, params).await })
     }
 
-    async fn archive_thread(&self, params: ArchiveThreadParams) -> ThreadStoreResult<()> {
-        archive_thread::archive_thread(self, params).await
-    }
-
-    async fn unarchive_thread(
+    fn archive_thread(
         &self,
         params: ArchiveThreadParams,
-    ) -> ThreadStoreResult<StoredThread> {
-        unarchive_thread::unarchive_thread(self, params).await
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<()>> {
+        Box::pin(async move { archive_thread::archive_thread(self, params).await })
+    }
+
+    fn unarchive_thread(
+        &self,
+        params: ArchiveThreadParams,
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<StoredThread>> {
+        Box::pin(async move { unarchive_thread::unarchive_thread(self, params).await })
     }
 }
 

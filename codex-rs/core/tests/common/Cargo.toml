@@ -16,12 +16,16 @@ anyhow = { workspace = true }
 assert_cmd = { workspace = true }
 base64 = { workspace = true }
 codex-arg0 = { workspace = true }
+codex-api = { workspace = true }
+codex-auth-types = { workspace = true }
 codex-code-mode-api = { workspace = true }
 codex-config-edit = { workspace = true }
 codex-config-loader = { workspace = true }
 codex-config-requirements = { workspace = true }
 codex-config-state = { workspace = true }
 codex-core = { workspace = true, features = ["test-support"] }
+codex-core-plugins-api = { workspace = true }
+codex-core-skills-api = { workspace = true }
 codex-extension-api = { workspace = true }
 codex-exec-server-api = { workspace = true }
 codex-exec-server = { workspace = true }
@@ -29,10 +33,17 @@ codex-features = { workspace = true }
 codex-file-system = { workspace = true }
 codex-hooks = { workspace = true }
 codex-login = { workspace = true }
+codex-memories-read-api = { workspace = true }
+codex-mcp = { workspace = true }
 codex-model-provider-info = { workspace = true }
 codex-models-manager = { workspace = true }
+codex-network-proxy = { workspace = true }
 codex-openai-files = { workspace = true }
+codex-otel = { workspace = true }
 codex-protocol = { workspace = true }
+codex-rollout = { workspace = true }
+codex-sandboxing = { workspace = true }
+codex-thread-store = { workspace = true }
 codex-workflow = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }

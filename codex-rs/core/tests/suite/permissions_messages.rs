@@ -4,7 +4,7 @@ use codex_core::ForkSnapshot;
 use codex_core::config::Constrained;
 use codex_core::context::ContextualUserFragment;
 use codex_core::context::PermissionsInstructions;
-use codex_core::load_exec_policy;
+use codex_execpolicy_api::Policy;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
@@ -578,7 +578,7 @@ async fn permissions_message_includes_writable_roots() -> Result<()> {
 
     let permissions = permissions_texts(&req.single_request());
     let normalize_line_endings = |s: &str| s.replace("\r\n", "\n");
-    let exec_policy = load_exec_policy(&test.config.config_layer_stack).await?;
+    let exec_policy = Policy::empty();
     let permission_profile = test.config.permissions.effective_permission_profile();
     let expected = PermissionsInstructions::from_permission_profile(
         &permission_profile,

@@ -6,6 +6,7 @@ use codex_extension_api::ToolCall as ExtensionToolCall;
 use codex_extension_api::ToolExecutor;
 use codex_features::Feature;
 use codex_features::Features;
+use codex_mcp_tool_types::McpTool;
 use codex_mcp_tool_types::ToolInfo;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::WebSearchConfig;
@@ -19,53 +20,53 @@ use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::WebSearchToolType;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
-use codex_tools::AdditionalProperties;
-use codex_tools::CommandToolOptions;
-use codex_tools::DiscoverablePluginInfo;
-use codex_tools::DiscoverableTool;
-use codex_tools::FreeformTool;
-use codex_tools::JsonSchema;
-use codex_tools::JsonSchemaPrimitiveType;
-use codex_tools::JsonSchemaType;
-use codex_tools::REQUEST_PLUGIN_INSTALL_TOOL_NAME;
-use codex_tools::REQUEST_USER_INPUT_TOOL_NAME;
-use codex_tools::ResponsesApiNamespaceTool;
-use codex_tools::ResponsesApiTool;
-use codex_tools::ResponsesApiWebSearchFilters;
-use codex_tools::ResponsesApiWebSearchUserLocation;
-use codex_tools::TOOL_SEARCH_TOOL_NAME;
-use codex_tools::ToolEnvironmentMode;
-use codex_tools::ToolName;
-use codex_tools::ToolsConfigParams;
-use codex_tools::ViewImageToolOptions;
-use codex_tools::create_apply_patch_freeform_tool;
-use codex_tools::create_close_agent_tool_v2;
-use codex_tools::create_command_wait_tool;
-use codex_tools::create_create_goal_tool;
-use codex_tools::create_exec_command_tool;
-use codex_tools::create_followup_task_tool;
-use codex_tools::create_get_goal_tool;
-use codex_tools::create_image_generation_tool;
-use codex_tools::create_list_agents_tool;
-use codex_tools::create_request_permissions_tool;
-use codex_tools::create_request_user_input_tool;
-use codex_tools::create_spawn_agent_tool_v2;
-use codex_tools::create_update_goal_tool;
-use codex_tools::create_update_plan_tool;
-use codex_tools::create_view_image_tool;
-use codex_tools::create_wait_agent_tool_v2;
-use codex_tools::create_workflow_abort_tool;
-use codex_tools::create_workflow_describe_tool;
-use codex_tools::create_workflow_list_tool;
-use codex_tools::create_workflow_resume_tool;
-use codex_tools::create_workflow_start_tool;
-use codex_tools::create_workflow_status_tool;
-use codex_tools::create_write_stdin_tool;
-use codex_tools::hosted_model_tool_specs;
-use codex_tools::mcp_call_tool_result_output_schema;
-use codex_tools::request_permissions_tool_description;
-use codex_tools::request_user_input_available_modes;
-use codex_tools::request_user_input_tool_description;
+use codex_tool_planning::AdditionalProperties;
+use codex_tool_planning::CommandToolOptions;
+use codex_tool_planning::DiscoverablePluginInfo;
+use codex_tool_planning::DiscoverableTool;
+use codex_tool_planning::FreeformTool;
+use codex_tool_planning::JsonSchema;
+use codex_tool_planning::JsonSchemaPrimitiveType;
+use codex_tool_planning::JsonSchemaType;
+use codex_tool_planning::REQUEST_PLUGIN_INSTALL_TOOL_NAME;
+use codex_tool_planning::REQUEST_USER_INPUT_TOOL_NAME;
+use codex_tool_planning::ResponsesApiNamespaceTool;
+use codex_tool_planning::ResponsesApiTool;
+use codex_tool_planning::ResponsesApiWebSearchFilters;
+use codex_tool_planning::ResponsesApiWebSearchUserLocation;
+use codex_tool_planning::TOOL_SEARCH_TOOL_NAME;
+use codex_tool_planning::ToolEnvironmentMode;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolsConfigParams;
+use codex_tool_planning::ViewImageToolOptions;
+use codex_tool_planning::create_apply_patch_freeform_tool;
+use codex_tool_planning::create_close_agent_tool_v2;
+use codex_tool_planning::create_command_wait_tool;
+use codex_tool_planning::create_create_goal_tool;
+use codex_tool_planning::create_exec_command_tool;
+use codex_tool_planning::create_followup_task_tool;
+use codex_tool_planning::create_get_goal_tool;
+use codex_tool_planning::create_image_generation_tool;
+use codex_tool_planning::create_list_agents_tool;
+use codex_tool_planning::create_request_permissions_tool;
+use codex_tool_planning::create_request_user_input_tool;
+use codex_tool_planning::create_spawn_agent_tool_v2;
+use codex_tool_planning::create_update_goal_tool;
+use codex_tool_planning::create_update_plan_tool;
+use codex_tool_planning::create_view_image_tool;
+use codex_tool_planning::create_wait_agent_tool_v2;
+use codex_tool_planning::create_workflow_abort_tool;
+use codex_tool_planning::create_workflow_describe_tool;
+use codex_tool_planning::create_workflow_list_tool;
+use codex_tool_planning::create_workflow_resume_tool;
+use codex_tool_planning::create_workflow_start_tool;
+use codex_tool_planning::create_workflow_status_tool;
+use codex_tool_planning::create_write_stdin_tool;
+use codex_tool_planning::hosted_model_tool_specs;
+use codex_tool_planning::mcp_call_tool_result_output_schema;
+use codex_tool_planning::request_permissions_tool_description;
+use codex_tool_planning::request_user_input_available_modes;
+use codex_tool_planning::request_user_input_tool_description;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -80,9 +81,8 @@ fn extension_tool_executor(name: &str, description: &str) -> Arc<dyn ExtensionTo
         description: String,
     }
 
-    #[async_trait::async_trait]
     impl ToolExecutor<ExtensionToolCall> for SpecOnlyExtensionExecutor {
-        type Output = codex_tools::JsonToolOutput;
+        type Output = codex_tool_planning::JsonToolOutput;
 
         fn tool_name(&self) -> ToolName {
             ToolName::plain(self.name.as_str())
@@ -106,11 +106,14 @@ fn extension_tool_executor(name: &str, description: &str) -> Arc<dyn ExtensionTo
             }))
         }
 
-        async fn handle(
-            &self,
+        fn handle<'a>(
+            &'a self,
             _call: ExtensionToolCall,
-        ) -> Result<Self::Output, codex_tools::FunctionCallError> {
-            panic!("spec planning should not execute extension tools")
+        ) -> codex_extension_api::ToolExecutorFuture<'a, Self::Output>
+        where
+            Self: 'a,
+        {
+            Box::pin(async move { panic!("spec planning should not execute extension tools") })
         }
     }
 
@@ -2457,7 +2460,7 @@ fn search_capable_model_info() -> ModelInfo {
 
 fn build_specs(
     config: &ToolsConfig,
-    mcp_tools: Option<HashMap<ToolName, rmcp::model::Tool>>,
+    mcp_tools: Option<HashMap<ToolName, McpTool>>,
     deferred_mcp_tools: Option<Vec<ToolInfo>>,
     dynamic_tools: &[DynamicToolSpec],
 ) -> (Vec<ToolSpec>, ToolRegistry) {
@@ -2473,7 +2476,7 @@ fn build_specs(
 
 fn build_specs_with_inputs_for_test(
     config: &ToolsConfig,
-    mcp_tools: Option<HashMap<ToolName, rmcp::model::Tool>>,
+    mcp_tools: Option<HashMap<ToolName, McpTool>>,
     deferred_mcp_tools: Option<Vec<ToolInfo>>,
     discoverable_tools: Option<Vec<DiscoverableTool>>,
     extension_tool_executors: &[Arc<dyn ExtensionToolExecutor>],
@@ -2502,21 +2505,11 @@ fn build_specs_with_inputs_for_test(
     builder.build()
 }
 
-fn mcp_tool(name: &str, description: &str, input_schema: serde_json::Value) -> rmcp::model::Tool {
-    rmcp::model::Tool {
-        name: name.to_string().into(),
-        title: None,
-        description: Some(description.to_string().into()),
-        input_schema: std::sync::Arc::new(rmcp::model::object(input_schema)),
-        output_schema: None,
-        annotations: None,
-        execution: None,
-        icons: None,
-        meta: None,
-    }
+fn mcp_tool(name: &str, description: &str, input_schema: serde_json::Value) -> McpTool {
+    McpTool::new(name, description, input_schema)
 }
 
-fn tool_info_from_parts(name: &ToolName, tool: rmcp::model::Tool) -> ToolInfo {
+fn tool_info_from_parts(name: &ToolName, tool: McpTool) -> ToolInfo {
     ToolInfo {
         server_name: server_name_from_tool_name(name),
         supports_parallel_tool_calls: false,
@@ -2574,22 +2567,20 @@ fn code_mode_augments_mcp_tool_descriptions_with_structured_output_sample() {
             "additionalProperties": false
         }),
     );
-    tool.output_schema = Some(std::sync::Arc::new(rmcp::model::object(
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "echo": {"type": "string"},
-                "env": {
-                    "anyOf": [
-                        {"type": "string"},
-                        {"type": "null"}
-                    ]
-                }
-            },
-            "required": ["echo", "env"],
-            "additionalProperties": false
-        }),
-    )));
+    tool.output_schema = Some(serde_json::json!({
+        "type": "object",
+        "properties": {
+            "echo": {"type": "string"},
+            "env": {
+                "anyOf": [
+                    {"type": "string"},
+                    {"type": "null"}
+                ]
+            }
+        },
+        "required": ["echo", "env"],
+        "additionalProperties": false
+    }));
 
     let (tools, _) = build_specs(
         &tools_config,

@@ -2,12 +2,19 @@ use crate::config;
 use crate::http_proxy;
 use crate::network_policy::NetworkPolicyDecider;
 use crate::runtime::BlockedRequestObserver;
+use crate::runtime::ConfigReloader;
 use crate::runtime::ConfigState;
 use crate::runtime::unix_socket_permissions_supported;
 use crate::socks5;
 use crate::state::NetworkProxyState;
+use crate::state::build_config_state;
 use anyhow::Context;
 use anyhow::Result;
+use codex_network_proxy_api::NetworkProxyAuditMetadata;
+use codex_network_proxy_api::NetworkProxyConstraints;
+use codex_network_proxy_api::NetworkProxyStartRequest;
+use codex_network_proxy_api::SharedNetworkProxyRuntime;
+use codex_network_proxy_api::SharedStartedNetworkProxyRuntime;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::net::TcpListener as StdTcpListener;
@@ -569,6 +576,145 @@ impl Drop for NetworkProxyHandle {
     }
 }
 
+impl codex_network_proxy_api::NetworkProxyRuntime for NetworkProxy {
+    fn runtime_snapshot(&self) -> codex_network_proxy_api::NetworkProxyRuntimeSnapshot {
+        NetworkProxy::runtime_snapshot(self)
+    }
+
+    fn current_config(
+        &self,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = anyhow::Result<config::NetworkProxyConfig>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async move { self.current_cfg().await })
+    }
+
+    fn add_allowed_domain<'a>(
+        &'a self,
+        host: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + 'a>> {
+        Box::pin(async move { self.add_allowed_domain(host).await })
+    }
+
+    fn add_denied_domain<'a>(
+        &'a self,
+        host: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + 'a>> {
+        Box::pin(async move { self.add_denied_domain(host).await })
+    }
+}
+
+#[derive(Clone)]
+struct StaticNetworkProxyReloader {
+    state: ConfigState,
+}
+
+impl StaticNetworkProxyReloader {
+    fn new(state: ConfigState) -> Self {
+        Self { state }
+    }
+}
+
+#[async_trait::async_trait]
+impl ConfigReloader for StaticNetworkProxyReloader {
+    fn source_label(&self) -> String {
+        "StaticNetworkProxyReloader".to_string()
+    }
+
+    async fn maybe_reload(&self) -> Result<Option<ConfigState>> {
+        Ok(None)
+    }
+
+    async fn reload_now(&self) -> Result<ConfigState> {
+        Ok(self.state.clone())
+    }
+}
+
+pub struct StartedNetworkProxy {
+    proxy: NetworkProxy,
+    _handle: NetworkProxyHandle,
+}
+
+impl StartedNetworkProxy {
+    fn new(proxy: NetworkProxy, handle: NetworkProxyHandle) -> Self {
+        Self {
+            proxy,
+            _handle: handle,
+        }
+    }
+}
+
+impl codex_network_proxy_api::StartedNetworkProxyRuntime for StartedNetworkProxy {
+    fn proxy(&self) -> SharedNetworkProxyRuntime {
+        Arc::new(self.proxy.clone())
+    }
+
+    fn update_config(
+        &self,
+        config: config::NetworkProxyConfig,
+        constraints: NetworkProxyConstraints,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            let state = build_config_state(config, constraints)?;
+            self.proxy.replace_config_state(state).await
+        })
+    }
+}
+
+pub struct DefaultNetworkProxyRuntimeFactory;
+
+impl DefaultNetworkProxyRuntimeFactory {
+    fn build_state(
+        config: config::NetworkProxyConfig,
+        constraints: NetworkProxyConstraints,
+        audit_metadata: NetworkProxyAuditMetadata,
+    ) -> Result<NetworkProxyState> {
+        let state = build_config_state(config, constraints)?;
+        let reloader = Arc::new(StaticNetworkProxyReloader::new(state.clone()));
+        Ok(NetworkProxyState::with_reloader_and_audit_metadata(
+            state,
+            reloader,
+            audit_metadata,
+        ))
+    }
+}
+
+impl codex_network_proxy_api::NetworkProxyRuntimeFactory for DefaultNetworkProxyRuntimeFactory {
+    fn start(
+        &self,
+        request: NetworkProxyStartRequest,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<SharedStartedNetworkProxyRuntime>> + Send + '_>,
+    > {
+        Box::pin(async move {
+            let NetworkProxyStartRequest {
+                config,
+                constraints,
+                policy_decider,
+                blocked_request_observer,
+                audit_metadata,
+            } = request;
+            let state = Self::build_state(config, constraints, audit_metadata)?;
+            let mut builder = NetworkProxy::builder().state(Arc::new(state));
+            if let Some(policy_decider) = policy_decider {
+                builder = builder.policy_decider_arc(policy_decider);
+            }
+            if let Some(blocked_request_observer) = blocked_request_observer {
+                builder = builder.blocked_request_observer_arc(blocked_request_observer);
+            }
+            let proxy = builder.build().await?;
+            let handle = proxy.run().await?;
+            let started_proxy: SharedStartedNetworkProxyRuntime =
+                Arc::new(StartedNetworkProxy::new(proxy, handle));
+            Ok(started_proxy)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -586,6 +732,25 @@ mod tests {
     use std::net::Ipv4Addr;
 
     const GIT_SSH_COMMAND_ENV_KEY: &str = "GIT_SSH_COMMAND";
+
+    #[test]
+    fn default_factory_threads_audit_metadata_to_state() {
+        let metadata = NetworkProxyAuditMetadata {
+            conversation_id: Some("conversation-1".to_string()),
+            app_version: Some("1.2.3".to_string()),
+            user_account_id: Some("acct-1".to_string()),
+            ..NetworkProxyAuditMetadata::default()
+        };
+
+        let state = DefaultNetworkProxyRuntimeFactory::build_state(
+            config::NetworkProxyConfig::default(),
+            NetworkProxyConstraints::default(),
+            metadata.clone(),
+        )
+        .expect("state should build");
+
+        assert_eq!(state.audit_metadata(), &metadata);
+    }
 
     fn codex_proxy_git_ssh_command(socks_addr: SocketAddr) -> String {
         format!("CODEX_PROXY_GIT_SSH_COMMAND=1 ssh -o ProxyCommand='nc -X 5 -x {socks_addr} %h %p'")

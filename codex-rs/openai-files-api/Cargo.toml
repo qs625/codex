@@ -6,7 +6,7 @@ license.workspace = true
 description = "OpenAI file upload API traits for Codex."
 
 [dependencies]
-codex-api-provider = { workspace = true }
+http = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 
 [lints]

@@ -16,17 +16,23 @@ pub use unix::EscalationPermissions;
 #[cfg(unix)]
 pub use unix::EscalationPolicy;
 #[cfg(unix)]
+pub use unix::EscalationPolicyFuture;
+#[cfg(unix)]
 pub use unix::EscalationSession;
 #[cfg(unix)]
 pub use unix::ExecParams;
 #[cfg(unix)]
 pub use unix::ExecResult;
 #[cfg(unix)]
+pub use unix::PrepareEscalatedExecFuture;
+#[cfg(unix)]
 pub use unix::PreparedExec;
 #[cfg(unix)]
 pub use unix::ResolvedPermissionProfile;
 #[cfg(unix)]
 pub use unix::ShellCommandExecutor;
+#[cfg(unix)]
+pub use unix::ShellCommandRunFuture;
 #[cfg(unix)]
 pub use unix::Stopwatch;
 #[cfg(unix)]

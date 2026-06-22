@@ -48,8 +48,6 @@ mod winutil;
 #[cfg(target_os = "windows")]
 mod workspace_acl;
 
-mod deny_read_resolver;
-
 #[cfg(target_os = "windows")]
 mod conpty;
 
@@ -115,6 +113,7 @@ pub use cap::workspace_write_cap_sid_for_root;
 pub use cap::workspace_write_root_contains_path;
 #[cfg(target_os = "windows")]
 pub use cap::workspace_write_root_overlaps_path;
+pub use codex_sandboxing_api::resolve_windows_deny_read_paths;
 #[cfg(target_os = "windows")]
 pub use conpty::ConptyInstance;
 #[cfg(target_os = "windows")]
@@ -123,7 +122,6 @@ pub use conpty::spawn_conpty_process_as_user;
 pub use deny_read_acl::apply_deny_read_acls;
 #[cfg(target_os = "windows")]
 pub use deny_read_acl::plan_deny_read_acl_paths;
-pub use deny_read_resolver::resolve_windows_deny_read_paths;
 #[cfg(target_os = "windows")]
 pub use deny_read_state::sync_persistent_deny_read_acls;
 #[cfg(target_os = "windows")]

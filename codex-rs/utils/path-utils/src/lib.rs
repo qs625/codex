@@ -5,10 +5,15 @@ pub use env::is_wsl;
 
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashSet;
+use std::fs;
+use std::fs::File;
+use std::fs::OpenOptions;
 use std::io;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
-use tempfile::NamedTempFile;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 pub fn normalize_for_path_comparison(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
     let canonical = path.as_ref().canonicalize()?;
@@ -125,11 +130,70 @@ pub fn write_atomically(write_path: &Path, contents: &str) -> io::Result<()> {
             format!("path {} has no parent directory", write_path.display()),
         )
     })?;
-    std::fs::create_dir_all(parent)?;
-    let tmp = NamedTempFile::new_in(parent)?;
-    std::fs::write(tmp.path(), contents)?;
-    tmp.persist(write_path)?;
+    fs::create_dir_all(parent)?;
+
+    let (tmp_path, mut tmp_file) = create_temp_file(parent)?;
+    if let Err(err) = tmp_file.write_all(contents.as_bytes()) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(err);
+    }
+    if let Err(err) = tmp_file.sync_all() {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(err);
+    }
+    drop(tmp_file);
+
+    if let Err(err) = replace_with_temp(&tmp_path, write_path) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(err);
+    }
     Ok(())
+}
+
+fn create_temp_file(parent: &Path) -> io::Result<(PathBuf, File)> {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let pid = std::process::id();
+
+    for attempt in 0..1024 {
+        let tmp_path = parent.join(format!(".codex-write-{pid}-{nanos}-{attempt}.tmp"));
+        match OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&tmp_path)
+        {
+            Ok(file) => return Ok((tmp_path, file)),
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(err) => return Err(err),
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        format!(
+            "failed to create unique temp file in {} after repeated attempts",
+            parent.display()
+        ),
+    ))
+}
+
+fn replace_with_temp(tmp_path: &Path, write_path: &Path) -> io::Result<()> {
+    match fs::rename(tmp_path, write_path) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            #[cfg(windows)]
+            {
+                if write_path.exists() {
+                    fs::remove_file(write_path)?;
+                    return fs::rename(tmp_path, write_path);
+                }
+            }
+
+            Err(err)
+        }
+    }
 }
 
 fn normalize_for_wsl(path: PathBuf) -> PathBuf {

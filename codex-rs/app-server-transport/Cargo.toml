@@ -22,11 +22,11 @@ axum = { workspace = true, default-features = false, features = [
 ] }
 base64 = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
+codex-api-auth = { workspace = true }
 codex-api-provider = { workspace = true }
 codex-app-server-protocol = { workspace = true }
 codex-auth-types = { workspace = true }
 codex-login = { workspace = true }
-codex-model-provider-api = { workspace = true }
 codex-state = { workspace = true }
 codex-uds = { workspace = true }
 codex-utils-absolute-path = { workspace = true }

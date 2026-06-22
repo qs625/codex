@@ -5,16 +5,16 @@ use std::time::Duration;
 use codex_analytics_api::CompactionTrigger;
 use codex_analytics_api::HookRunFact;
 use codex_analytics_api::build_track_events_context;
-use codex_hooks::PermissionRequestDecision;
-use codex_hooks::PermissionRequestOutcome;
-use codex_hooks::PermissionRequestRequest;
-use codex_hooks::PostToolUseOutcome;
-use codex_hooks::PostToolUseRequest;
-use codex_hooks::PreToolUseOutcome;
-use codex_hooks::PreToolUseRequest;
-use codex_hooks::SessionStartOutcome;
-use codex_hooks::UserPromptSubmitOutcome;
-use codex_hooks::UserPromptSubmitRequest;
+use codex_hooks_api::PermissionRequestDecision;
+use codex_hooks_api::PermissionRequestOutcome;
+use codex_hooks_api::PermissionRequestRequest;
+use codex_hooks_api::PostToolUseOutcome;
+use codex_hooks_api::PostToolUseRequest;
+use codex_hooks_api::PreToolUseOutcome;
+use codex_hooks_api::PreToolUseRequest;
+use codex_hooks_api::SessionStartOutcome;
+use codex_hooks_api::UserPromptSubmitOutcome;
+use codex_hooks_api::UserPromptSubmitRequest;
 use codex_metrics_api::HOOK_RUN_DURATION_METRIC;
 use codex_metrics_api::HOOK_RUN_METRIC;
 use codex_protocol::items::TurnItem;
@@ -117,7 +117,7 @@ pub(crate) async fn run_pending_session_start_hooks(
         return false;
     };
 
-    let request = codex_hooks::SessionStartRequest {
+    let request = codex_hooks_api::SessionStartRequest {
         session_id: sess.session_id().into(),
         #[allow(deprecated)]
         cwd: turn_context.cwd.clone(),
@@ -280,7 +280,7 @@ pub(crate) async fn run_pre_compact_hooks(
     turn_context: &Arc<TurnContext>,
     trigger: CompactionTrigger,
 ) -> PreCompactHookOutcome {
-    let request = codex_hooks::PreCompactRequest {
+    let request = codex_hooks_api::PreCompactRequest {
         session_id: sess.session_id().into(),
         turn_id: turn_context.sub_id.clone(),
         #[allow(deprecated)]
@@ -318,7 +318,7 @@ pub(crate) async fn run_post_compact_hooks(
     turn_context: &Arc<TurnContext>,
     trigger: CompactionTrigger,
 ) -> PostCompactHookOutcome {
-    let request = codex_hooks::PostCompactRequest {
+    let request = codex_hooks_api::PostCompactRequest {
         session_id: sess.session_id().into(),
         turn_id: turn_context.sub_id.clone(),
         #[allow(deprecated)]

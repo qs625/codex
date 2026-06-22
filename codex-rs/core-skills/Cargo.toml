@@ -12,30 +12,41 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
+[features]
+default = []
+remote-http = [
+    "codex-api-auth",
+    "codex-auth-types",
+    "codex-default-client",
+    "zip",
+]
+
 [dependencies]
 anyhow = { workspace = true }
+codex-api-auth = { workspace = true, optional = true }
+codex-auth-types = { workspace = true, optional = true }
+codex-core-skills-api = { workspace = true }
 codex-config-types = { workspace = true }
+codex-default-client = { workspace = true, optional = true }
 codex-file-system = { workspace = true }
-codex-login = { workspace = true }
 codex-metrics-api = { workspace = true }
-codex-model-provider-api = { workspace = true }
+codex-plugin-manifest = { workspace = true }
+codex-plugin-types = { workspace = true }
 codex-protocol = { workspace = true }
 codex-skills = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
+codex-utils-home-dir = { workspace = true }
 codex-utils-output-truncation = { workspace = true }
-codex-utils-plugins = { workspace = true }
-dirs = { workspace = true }
-dunce = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-serde_yaml = { workspace = true }
 shlex = { workspace = true }
 tokio = { workspace = true, features = ["fs", "macros", "rt"] }
 toml = { workspace = true }
 tracing = { workspace = true }
-zip = { workspace = true }
+zip = { workspace = true, optional = true }
 
 [dev-dependencies]
 codex-config = { workspace = true }
+dunce = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }

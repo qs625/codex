@@ -9,14 +9,17 @@ workspace = true
 
 [dependencies]
 base64 = { workspace = true }
+codex-utils-string = { workspace = true }
 image = { workspace = true, features = ["jpeg", "png", "gif", "webp"] }
-codex-utils-cache = { workspace = true }
+lru = { workspace = true }
 mime_guess = { workspace = true }
+sha1 = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["fs", "rt", "rt-multi-thread", "macros"] }
+tracing = { workspace = true }
 
 [dev-dependencies]
 image = { workspace = true, features = ["jpeg", "png", "gif", "webp"] }
+tokio = { workspace = true, features = ["fs", "rt", "rt-multi-thread", "macros"] }
 
 [lib]
 doctest = false

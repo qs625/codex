@@ -3,33 +3,35 @@ use std::collections::HashSet;
 
 use codex_config_types::ToolSuggestDisabledTool;
 use codex_connectors_types::AppInfo;
+use codex_core_plugins_api::PluginRuntime;
 use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
+use codex_mcp_types::CodexAppsAuthContext;
 use codex_mcp_types::ElicitationAction;
 use codex_mcp_types::ElicitationResponse;
 use codex_mcp_types::McpElicitationObjectType;
 use codex_mcp_types::McpElicitationSchema;
 use codex_mcp_types::McpServerElicitationRequest;
 use codex_mcp_types::McpServerElicitationRequestParams;
-use codex_tools::DiscoverableTool;
-use codex_tools::DiscoverableToolAction;
-use codex_tools::DiscoverableToolType;
-use codex_tools::REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE;
-use codex_tools::REQUEST_PLUGIN_INSTALL_PERSIST_KEY;
-use codex_tools::REQUEST_PLUGIN_INSTALL_TOOL_NAME;
-use codex_tools::RequestPluginInstallArgs;
-use codex_tools::RequestPluginInstallElicitationRequest;
-use codex_tools::RequestPluginInstallElicitationSchema;
-use codex_tools::RequestPluginInstallEntry;
-use codex_tools::RequestPluginInstallResult;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
-use codex_tools::all_requested_connectors_picked_up;
-use codex_tools::build_request_plugin_install_elicitation_request;
-use codex_tools::collect_request_plugin_install_entries;
-use codex_tools::create_request_plugin_install_tool;
-use codex_tools::filter_request_plugin_install_discoverable_tools_for_client;
-use codex_tools::verified_connector_install_completed;
-use rmcp::model::RequestId;
+use codex_protocol::mcp::RequestId;
+use codex_tool_planning::DiscoverableTool;
+use codex_tool_planning::DiscoverableToolAction;
+use codex_tool_planning::DiscoverableToolType;
+use codex_tool_planning::REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE;
+use codex_tool_planning::REQUEST_PLUGIN_INSTALL_PERSIST_KEY;
+use codex_tool_planning::REQUEST_PLUGIN_INSTALL_TOOL_NAME;
+use codex_tool_planning::RequestPluginInstallArgs;
+use codex_tool_planning::RequestPluginInstallElicitationRequest;
+use codex_tool_planning::RequestPluginInstallElicitationSchema;
+use codex_tool_planning::RequestPluginInstallEntry;
+use codex_tool_planning::RequestPluginInstallResult;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::all_requested_connectors_picked_up;
+use codex_tool_planning::build_request_plugin_install_elicitation_request;
+use codex_tool_planning::collect_request_plugin_install_entries;
+use codex_tool_planning::create_request_plugin_install_tool;
+use codex_tool_planning::filter_request_plugin_install_discoverable_tools_for_client;
+use codex_tool_planning::verified_connector_install_completed;
 use serde_json::Value;
 use serde_json::json;
 use tracing::warn;
@@ -58,7 +60,6 @@ impl RequestPluginInstallHandler {
     }
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for RequestPluginInstallHandler {
     type Output = FunctionToolOutput;
 
@@ -78,128 +79,148 @@ impl ToolExecutor<ToolInvocation> for RequestPluginInstallHandler {
         clippy::await_holding_invalid_type,
         reason = "plugin install discovery reads through the session-owned manager guard"
     )]
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            payload,
-            session,
-            turn,
-            call_id,
-            ..
-        } = invocation;
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                payload,
+                session,
+                turn,
+                call_id,
+                ..
+            } = invocation;
 
-        let arguments = match payload {
-            ToolPayload::Function { arguments } => arguments,
-            _ => {
-                return Err(FunctionCallError::Fatal(format!(
-                    "{REQUEST_PLUGIN_INSTALL_TOOL_NAME} handler received unsupported payload"
-                )));
+            let arguments = match payload {
+                ToolPayload::Function { arguments } => arguments,
+                _ => {
+                    return Err(FunctionCallError::Fatal(format!(
+                        "{REQUEST_PLUGIN_INSTALL_TOOL_NAME} handler received unsupported payload"
+                    )));
+                }
+            };
+
+            let args: RequestPluginInstallArgs = parse_arguments(&arguments)?;
+            let suggest_reason = args.suggest_reason.trim();
+            if suggest_reason.is_empty() {
+                return Err(FunctionCallError::RespondToModel(
+                    "suggest_reason must not be empty".to_string(),
+                ));
             }
-        };
+            if args.action_type != DiscoverableToolAction::Install {
+                return Err(FunctionCallError::RespondToModel(
+                    "plugin install requests currently support only action_type=\"install\""
+                        .to_string(),
+                ));
+            }
+            if args.tool_type == DiscoverableToolType::Plugin
+                && turn.app_server_client_name.as_deref() == Some("codex-tui")
+            {
+                return Err(FunctionCallError::RespondToModel(
+                    "plugin install requests are not available in codex-tui yet".to_string(),
+                ));
+            }
 
-        let args: RequestPluginInstallArgs = parse_arguments(&arguments)?;
-        let suggest_reason = args.suggest_reason.trim();
-        if suggest_reason.is_empty() {
-            return Err(FunctionCallError::RespondToModel(
-                "suggest_reason must not be empty".to_string(),
-            ));
-        }
-        if args.action_type != DiscoverableToolAction::Install {
-            return Err(FunctionCallError::RespondToModel(
-                "plugin install requests currently support only action_type=\"install\""
-                    .to_string(),
-            ));
-        }
-        if args.tool_type == DiscoverableToolType::Plugin
-            && turn.app_server_client_name.as_deref() == Some("codex-tui")
-        {
-            return Err(FunctionCallError::RespondToModel(
-                "plugin install requests are not available in codex-tui yet".to_string(),
-            ));
-        }
-
-        let auth = session.services.auth_manager.auth().await;
-        let manager = session.services.mcp_connection_manager.read().await;
-        let mcp_tools = manager.list_all_tools().await;
-        drop(manager);
-        let accessible_connectors = connectors::with_app_enabled_state(
-            connectors::accessible_connectors_from_mcp_tools(&mcp_tools),
-            &turn.config,
-        );
-        let discoverable_tools = connectors::list_tool_suggest_discoverable_tools_with_auth(
-            &turn.config,
-            auth.as_ref(),
-            &accessible_connectors,
-        )
-        .await
-        .map(|discoverable_tools| {
-            filter_request_plugin_install_discoverable_tools_for_client(
-                discoverable_tools,
-                turn.app_server_client_name.as_deref(),
+            let auth_snapshot = match turn.auth_runtime.as_ref() {
+                Some(auth_runtime) => auth_runtime.auth().await,
+                None => None,
+            };
+            let connector_auth_context =
+                crate::mcp::codex_apps_auth_context(auth_snapshot.as_ref());
+            let manager = session.services.mcp_connection_manager.read().await;
+            let mcp_tools = manager.list_all_tools().await;
+            drop(manager);
+            let accessible_connectors = connectors::with_app_enabled_state(
+                connectors::accessible_connectors_from_mcp_tools(&mcp_tools),
+                &turn.config,
+            );
+            let discoverable_tools = connectors::list_tool_suggest_discoverable_tools_with_auth(
+                &turn.config,
+                session.services.plugins_manager.as_ref(),
+                connector_auth_context.as_ref(),
+                &accessible_connectors,
             )
-        })
-        .map_err(|err| {
-            FunctionCallError::RespondToModel(format!(
-                "plugin install requests are unavailable right now: {err}"
-            ))
-        })?;
-
-        let tool = discoverable_tools
-            .into_iter()
-            .find(|tool| tool.tool_type() == args.tool_type && tool.id() == args.tool_id)
-            .ok_or_else(|| {
+            .await
+            .map(|discoverable_tools| {
+                filter_request_plugin_install_discoverable_tools_for_client(
+                    discoverable_tools,
+                    turn.app_server_client_name.as_deref(),
+                )
+            })
+            .map_err(|err| {
                 FunctionCallError::RespondToModel(format!(
-                    "tool_id must match one of the discoverable tools exposed by {REQUEST_PLUGIN_INSTALL_TOOL_NAME}"
+                    "plugin install requests are unavailable right now: {err}"
                 ))
             })?;
 
-        let request_id = RequestId::String(format!("request_plugin_install_{call_id}").into());
-        let request = build_request_plugin_install_elicitation_request(
-            CODEX_APPS_MCP_SERVER_NAME,
-            session.conversation_id.to_string(),
-            turn.sub_id.clone(),
-            &args,
-            suggest_reason,
-            &tool,
-        );
-        let params = request_plugin_install_elicitation_request_to_mcp_params(request);
-        let response = session
-            .request_mcp_server_elicitation(turn.as_ref(), request_id, params)
-            .await;
-        if let Some(response) = response.as_ref() {
-            maybe_persist_disabled_install_request(&session, &turn, &tool, response).await;
-        }
-        let user_confirmed = response
-            .as_ref()
-            .is_some_and(|response| response.action == ElicitationAction::Accept);
+            let tool = discoverable_tools
+                        .into_iter()
+                        .find(|tool| tool.tool_type() == args.tool_type && tool.id() == args.tool_id)
+                        .ok_or_else(|| {
+                            FunctionCallError::RespondToModel(format!(
+                                "tool_id must match one of the discoverable tools exposed by {REQUEST_PLUGIN_INSTALL_TOOL_NAME}"
+                            ))
+                        })?;
 
-        let completed = if user_confirmed {
-            verify_request_plugin_install_completed(&session, &turn, &tool, auth.as_ref()).await
-        } else {
-            false
-        };
-
-        if completed && let DiscoverableTool::Connector(connector) = &tool {
-            session
-                .merge_connector_selection(HashSet::from([connector.id.clone()]))
+            let request_id = RequestId::String(format!("request_plugin_install_{call_id}"));
+            let request = build_request_plugin_install_elicitation_request(
+                CODEX_APPS_MCP_SERVER_NAME,
+                session.conversation_id.to_string(),
+                turn.sub_id.clone(),
+                &args,
+                suggest_reason,
+                &tool,
+            );
+            let params = request_plugin_install_elicitation_request_to_mcp_params(request);
+            let response = session
+                .request_mcp_server_elicitation(turn.as_ref(), request_id, params)
                 .await;
-        }
+            if let Some(response) = response.as_ref() {
+                maybe_persist_disabled_install_request(&session, &turn, &tool, response).await;
+            }
+            let user_confirmed = response
+                .as_ref()
+                .is_some_and(|response| response.action == ElicitationAction::Accept);
 
-        let content = serde_json::to_string(&RequestPluginInstallResult {
-            completed,
-            user_confirmed,
-            tool_type: args.tool_type,
-            action_type: args.action_type,
-            tool_id: tool.id().to_string(),
-            tool_name: tool.name().to_string(),
-            suggest_reason: suggest_reason.to_string(),
+            let completed = if user_confirmed {
+                verify_request_plugin_install_completed(
+                    &session,
+                    &turn,
+                    &tool,
+                    connector_auth_context.as_ref(),
+                )
+                .await
+            } else {
+                false
+            };
+
+            if completed && let DiscoverableTool::Connector(connector) = &tool {
+                session
+                    .merge_connector_selection(HashSet::from([connector.id.clone()]))
+                    .await;
+            }
+
+            let content = serde_json::to_string(&RequestPluginInstallResult {
+                completed,
+                user_confirmed,
+                tool_type: args.tool_type,
+                action_type: args.action_type,
+                tool_id: tool.id().to_string(),
+                tool_name: tool.name().to_string(),
+                suggest_reason: suggest_reason.to_string(),
+            })
+            .map_err(|err| {
+                FunctionCallError::Fatal(format!(
+                    "failed to serialize {REQUEST_PLUGIN_INSTALL_TOOL_NAME} response: {err}"
+                ))
+            })?;
+
+            Ok(FunctionToolOutput::from_text(content, Some(true)))
         })
-        .map_err(|err| {
-            FunctionCallError::Fatal(format!(
-                "failed to serialize {REQUEST_PLUGIN_INSTALL_TOOL_NAME} response: {err}"
-            ))
-        })?;
-
-        Ok(FunctionToolOutput::from_text(content, Some(true)))
     }
 }
 
@@ -292,13 +313,13 @@ async fn verify_request_plugin_install_completed(
     session: &crate::session::session::Session,
     turn: &crate::session::turn_context::TurnContext,
     tool: &DiscoverableTool,
-    auth: Option<&codex_login::CodexAuth>,
+    connector_auth_context: Option<&CodexAppsAuthContext>,
 ) -> bool {
     match tool {
         DiscoverableTool::Connector(connector) => refresh_missing_requested_connectors(
             session,
             turn,
-            auth,
+            connector_auth_context,
             std::slice::from_ref(&connector.id),
             connector.id.as_str(),
         )
@@ -317,7 +338,7 @@ async fn verify_request_plugin_install_completed(
             let _ = refresh_missing_requested_connectors(
                 session,
                 turn,
-                auth,
+                connector_auth_context,
                 &plugin.app_connector_ids,
                 plugin.id.as_str(),
             )
@@ -334,7 +355,7 @@ async fn verify_request_plugin_install_completed(
 async fn refresh_missing_requested_connectors(
     session: &crate::session::session::Session,
     turn: &crate::session::turn_context::TurnContext,
-    auth: Option<&codex_login::CodexAuth>,
+    connector_auth_context: Option<&CodexAppsAuthContext>,
     expected_connector_ids: &[String],
     tool_id: &str,
 ) -> Option<Vec<AppInfo>> {
@@ -360,7 +381,7 @@ async fn refresh_missing_requested_connectors(
             );
             connectors::refresh_accessible_connectors_cache_from_mcp_tools(
                 &turn.config,
-                auth,
+                connector_auth_context,
                 &mcp_tools,
             );
             Some(accessible_connectors)
@@ -377,16 +398,10 @@ async fn refresh_missing_requested_connectors(
 fn verified_plugin_install_completed(
     tool_id: &str,
     config: &crate::config::Config,
-    plugins_manager: &codex_core_plugins::PluginsManager,
+    plugins_manager: &dyn PluginRuntime,
 ) -> bool {
     let plugins_input = config.plugins_config_input();
-    plugins_manager
-        .list_marketplaces_for_config(&plugins_input, &[])
-        .ok()
-        .into_iter()
-        .flat_map(|outcome| outcome.marketplaces)
-        .flat_map(|marketplace| marketplace.plugins.into_iter())
-        .any(|plugin| plugin.id == tool_id && plugin.installed)
+    plugins_manager.is_configured_plugin_installed(&plugins_input, tool_id)
 }
 
 #[cfg(test)]

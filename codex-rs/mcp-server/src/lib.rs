@@ -99,7 +99,7 @@ pub async fn run_main(
     })?;
     codex_otel_init::record_process_start(otel.as_ref(), OTEL_SERVICE_NAME);
     codex_otel_init::install_sqlite_telemetry(otel.as_ref(), OTEL_SERVICE_NAME);
-    let state_db = codex_core::init_state_db(&config).await;
+    let state_db = codex_rollout::state_db::init(&config).await;
     let environment_manager = Arc::new(
         EnvironmentManager::from_codex_home(
             config.codex_home.clone(),

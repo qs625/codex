@@ -6,7 +6,7 @@ use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
 use crate::unified_exec::SpawnLifecycleHandle;
 use codex_protocol::exec_output::ExecToolCallOutput;
-use codex_tools::ZshForkConfig;
+use codex_tool_config::ZshForkConfig;
 
 pub(crate) struct PreparedUnifiedExecSpawn {
     pub(crate) exec_request: ExecRequest,

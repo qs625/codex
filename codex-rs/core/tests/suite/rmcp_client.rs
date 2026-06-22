@@ -25,7 +25,7 @@ use codex_exec_server::Environment;
 use codex_exec_server_protocol::HttpRequestParams;
 use codex_file_system::CreateDirectoryOptions;
 use codex_login::CodexAuth;
-use codex_mcp::MCP_SANDBOX_STATE_META_CAPABILITY;
+use codex_mcp_types::MCP_SANDBOX_STATE_META_CAPABILITY;
 use codex_models_manager::manager::RefreshStrategy;
 
 use codex_protocol::config_types::ReasoningSummary;

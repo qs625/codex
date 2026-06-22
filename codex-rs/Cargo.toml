@@ -5,7 +5,9 @@ members = [
     "analytics-api",
     "agent-graph-store",
     "agent-identity",
+    "agent-identity-api",
     "agent-runtime",
+    "agent-roles",
     "backend-client",
     "bwrap",
     "ansi-escape",
@@ -17,6 +19,8 @@ members = [
     "app-server-protocol",
     "app-server-test-client",
     "api-provider",
+    "api-auth",
+    "api-runtime-api",
     "api-types",
     "debug-client",
     "apply-patch",
@@ -28,6 +32,7 @@ members = [
     "install-context",
     "jsonrpc-types",
     "codex-backend-openapi-models",
+    "client-identity",
     "client-types",
     "code-mode",
     "code-mode-api",
@@ -37,8 +42,10 @@ members = [
     "cloud-tasks-mock-client",
     "cli",
     "collaboration-mode-templates",
+    "command-display",
     "command-runtime",
     "connectors",
+    "connectors-api",
     "connectors-types",
     "config",
     "config-diagnostics",
@@ -52,16 +59,25 @@ members = [
     "config-state",
     "config-toml",
     "config-types",
+    "context-manager",
+    "context-usage",
     "default-client",
+    "default-client-api",
+    "shell-utils",
     "shell-command",
     "shell-escalation",
     "shell-escalation-cli",
     "skills",
     "state-cli",
+    "state-api",
     "core",
     "core-api",
     "core-plugins",
+    "core-plugins-api",
+    "core-plugins-remote",
+    "core-skills-api",
     "core-skills",
+    "hooks-api",
     "hooks",
     "secrets",
     "exec",
@@ -73,6 +89,7 @@ members = [
     "execpolicy-api",
     "execpolicy-cli",
     "execpolicy-legacy",
+    "execpolicy-loader",
     "ext/extension-api",
     "ext/guardian",
     "ext/memories",
@@ -86,14 +103,18 @@ members = [
     "linux-sandbox",
     "lmstudio",
     "login",
+    "git-info",
     "codex-mcp",
     "mcp-server",
+    "mcp-runtime-api",
     "mcp-tool-types",
     "mcp-types",
     "metrics-api",
     "memories/mcp",
+    "memories/read-api",
     "memories/read",
     "memories/write",
+    "model-client",
     "model-input",
     "model-provider-api",
     "model-provider-info",
@@ -105,27 +126,36 @@ members = [
     "openai-files-api",
     "openai-files",
     "permissions-runtime",
+    "plugin-manifest",
     "plugin-types",
     "process-hardening",
     "protocol",
+    "realtime",
     "realtime-webrtc",
     "rollout",
+    "rollout-api",
+    "rollout-trace-api",
     "rollout-trace",
     "rmcp-client",
     "responses-api-proxy",
     "response-debug-context",
+    "sandboxing-api",
     "sandboxing",
+    "session-telemetry-api",
     "stdio-to-uds",
     "otel",
     "otel-init",
     "tui",
+    "tool-config",
+    "tool-planning",
+    "tool-types",
     "tools",
     "v8-poc",
     "utils/absolute-path",
     "utils/backoff",
     "utils/cargo-bin",
+    "git-baseline",
     "git-utils",
-    "utils/cache",
     "utils/image",
     "utils/json-to-toml",
     "utils/home-dir",
@@ -152,6 +182,7 @@ members = [
     "trace-context",
     "test-binary-support",
     "thread-manager-sample",
+    "thread-store-api",
     "thread-store",
     "uds",
     "user-info",
@@ -179,10 +210,14 @@ codex-analytics = { path = "analytics" }
 codex-analytics-api = { path = "analytics-api" }
 codex-agent-graph-store = { path = "agent-graph-store" }
 codex-agent-identity = { path = "agent-identity" }
+codex-agent-identity-api = { path = "agent-identity-api" }
 codex-agent-runtime = { path = "agent-runtime" }
+codex-agent-roles = { path = "agent-roles" }
 codex-ansi-escape = { path = "ansi-escape" }
 codex-api = { path = "codex-api" }
+codex-api-auth = { path = "api-auth" }
 codex-api-provider = { path = "api-provider" }
+codex-api-runtime-api = { path = "api-runtime-api" }
 codex-aws-auth = { path = "aws-auth" }
 codex-app-server = { path = "app-server" }
 codex-app-server-transport = { path = "app-server-transport" }
@@ -206,6 +241,8 @@ codex-cloud-tasks-client = { path = "cloud-tasks-client" }
 codex-cloud-tasks-mock-client = { path = "cloud-tasks-mock-client" }
 codex-code-mode = { path = "code-mode" }
 codex-code-mode-api = { path = "code-mode-api" }
+codex-client-identity = { path = "client-identity" }
+codex-command-display = { path = "command-display" }
 codex-command-runtime = { path = "command-runtime" }
 codex-config = { path = "config" }
 codex-config-diagnostics = { path = "config-diagnostics" }
@@ -219,12 +256,19 @@ codex-config-schema = { path = "config-schema" }
 codex-config-state = { path = "config-state" }
 codex-config-toml = { path = "config-toml" }
 codex-config-types = { path = "config-types" }
+codex-context-manager = { path = "context-manager" }
+codex-context-usage = { path = "context-usage" }
 codex-default-client = { path = "default-client" }
+codex-default-client-api = { path = "default-client-api" }
 codex-connectors = { path = "connectors" }
+codex-connectors-api = { path = "connectors-api" }
 codex-connectors-types = { path = "connectors-types" }
 codex-core = { path = "core" }
 codex-core-api = { path = "core-api" }
 codex-core-plugins = { path = "core-plugins" }
+codex-core-plugins-api = { path = "core-plugins-api" }
+codex-core-plugins-remote = { path = "core-plugins-remote" }
+codex-core-skills-api = { path = "core-skills-api" }
 codex-core-skills = { path = "core-skills" }
 codex-exec = { path = "exec" }
 codex-file-system = { path = "file-system" }
@@ -234,6 +278,7 @@ codex-exec-server = { path = "exec-server" }
 codex-execpolicy = { path = "execpolicy" }
 codex-execpolicy-api = { path = "execpolicy-api" }
 codex-execpolicy-cli = { path = "execpolicy-cli" }
+codex-execpolicy-loader = { path = "execpolicy-loader" }
 codex-extension-api = { path = "ext/extension-api" }
 codex-guardian = { path = "ext/guardian" }
 codex-external-agent-migration = { path = "external-agent-migration" }
@@ -248,7 +293,10 @@ codex-file-search = { path = "file-search" }
 codex-file-search-cli = { path = "file-search-cli" }
 codex-file-subscription = { path = "file-subscription" }
 codex-file-watcher = { path = "file-watcher" }
+codex-git-baseline = { path = "git-baseline" }
+codex-git-info = { path = "git-info" }
 codex-git-utils = { path = "git-utils" }
+codex-hooks-api = { path = "hooks-api" }
 codex-hooks = { path = "hooks" }
 codex-keyring-store = { path = "keyring-store" }
 codex-linux-sandbox = { path = "linux-sandbox" }
@@ -256,14 +304,17 @@ codex-lmstudio = { path = "lmstudio" }
 codex-login = { path = "login" }
 codex-message-history = { path = "message-history" }
 codex-memories-extension = { path = "ext/memories" }
+codex-memories-read-api = { path = "memories/read-api" }
 codex-memories-read = { path = "memories/read" }
 codex-memories-write = { path = "memories/write" }
 codex-mcp = { path = "codex-mcp" }
 codex-mcp-server = { path = "mcp-server" }
+codex-mcp-runtime-api = { path = "mcp-runtime-api" }
 codex-mcp-tool-types = { path = "mcp-tool-types" }
 codex-mcp-types = { path = "mcp-types" }
 codex-metrics-api = { path = "metrics-api" }
 codex-model-input = { path = "model-input" }
+codex-model-client = { path = "model-client" }
 codex-model-provider-api = { path = "model-provider-api" }
 codex-model-provider-info = { path = "model-provider-info" }
 codex-models-manager-api = { path = "models-manager-api" }
@@ -277,21 +328,29 @@ codex-otel = { path = "otel" }
 codex-otel-init = { path = "otel-init" }
 codex-permissions-runtime = { path = "permissions-runtime" }
 codex-plugin = { path = "plugin" }
+codex-plugin-manifest = { path = "plugin-manifest" }
 codex-plugin-types = { path = "plugin-types" }
 codex-model-provider = { path = "model-provider" }
 codex-process-hardening = { path = "process-hardening" }
 codex-protocol = { path = "protocol" }
+codex-realtime = { path = "realtime" }
 codex-realtime-webrtc = { path = "realtime-webrtc" }
 codex-responses-api-proxy = { path = "responses-api-proxy" }
 codex-response-debug-context = { path = "response-debug-context" }
 codex-rmcp-client = { path = "rmcp-client" }
 codex-rollout = { path = "rollout" }
+codex-rollout-api = { path = "rollout-api" }
+codex-rollout-trace-api = { path = "rollout-trace-api" }
 codex-rollout-trace = { path = "rollout-trace" }
+codex-sandboxing-api = { path = "sandboxing-api" }
 codex-sandboxing = { path = "sandboxing" }
 codex-secrets = { path = "secrets" }
+codex-shell-utils = { path = "shell-utils" }
 codex-shell-command = { path = "shell-command" }
+codex-state-api = { path = "state-api" }
 codex-shell-escalation = { path = "shell-escalation" }
 codex-shell-escalation-cli = { path = "shell-escalation-cli" }
+codex-session-telemetry-api = { path = "session-telemetry-api" }
 codex-skills = { path = "skills" }
 codex-state = { path = "state" }
 codex-state-cli = { path = "state-cli" }
@@ -299,7 +358,11 @@ codex-stdio-to-uds = { path = "stdio-to-uds" }
 codex-terminal-detection = { path = "terminal-detection" }
 codex-trace-context = { path = "trace-context" }
 codex-test-binary-support = { path = "test-binary-support" }
+codex-thread-store-api = { path = "thread-store-api" }
 codex-thread-store = { path = "thread-store" }
+codex-tool-config = { path = "tool-config" }
+codex-tool-planning = { path = "tool-planning" }
+codex-tool-types = { path = "tool-types" }
 codex-tools = { path = "tools" }
 codex-tui = { path = "tui" }
 codex-uds = { path = "uds" }
@@ -308,7 +371,6 @@ codex-workflow-api = { path = "workflow-api" }
 codex-utils-absolute-path = { path = "utils/absolute-path" }
 codex-utils-approval-presets = { path = "utils/approval-presets" }
 codex-utils-backoff = { path = "utils/backoff" }
-codex-utils-cache = { path = "utils/cache" }
 codex-utils-cargo-bin = { path = "utils/cargo-bin" }
 codex-utils-cli = { path = "utils/cli" }
 codex-utils-elapsed = { path = "utils/elapsed" }
@@ -363,7 +425,6 @@ constant_time_eq = "0.3.1"
 crossbeam-channel = "0.5.15"
 crypto_box = { version = "0.9.1", features = ["seal"] }
 crossterm = "0.28.1"
-csv = "1.3.1"
 ctor = "0.6.3"
 deno_core_icudata = "0.77.0"
 derive_more = "2"

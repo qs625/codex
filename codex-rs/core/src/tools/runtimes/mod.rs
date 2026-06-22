@@ -18,8 +18,8 @@ use codex_network_proxy_api::PROXY_ENV_KEYS;
 use codex_network_proxy_api::PROXY_GIT_SSH_COMMAND_ENV_KEY;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::AdditionalPermissionProfile;
-use codex_sandboxing::SandboxCommand;
-use codex_sandboxing::SandboxType;
+use codex_sandboxing_api::SandboxCommand;
+use codex_sandboxing_api::SandboxType;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
 

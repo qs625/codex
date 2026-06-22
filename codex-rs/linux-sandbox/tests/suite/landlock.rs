@@ -185,6 +185,7 @@ async fn run_cmd_result_with_permission_profile_for_cwd(
         arg0: None,
     };
     let codex_linux_sandbox_exe = Some(codex_linux_sandbox_exe());
+    let sandbox_runtime = codex_sandboxing::SandboxManager::new();
 
     process_exec_tool_call(
         params,
@@ -192,6 +193,7 @@ async fn run_cmd_result_with_permission_profile_for_cwd(
         &sandbox_cwd,
         &codex_linux_sandbox_exe,
         use_legacy_landlock,
+        &sandbox_runtime,
         /*stdout_stream*/ None,
     )
     .await
@@ -444,12 +446,14 @@ async fn assert_network_blocked(cmd: &[&str]) {
 
     let codex_linux_sandbox_exe: Option<PathBuf> = Some(codex_linux_sandbox_exe());
     let permission_profile = PermissionProfile::read_only();
+    let sandbox_runtime = codex_sandboxing::SandboxManager::new();
     let result = process_exec_tool_call(
         params,
         &permission_profile,
         &sandbox_cwd,
         &codex_linux_sandbox_exe,
         /*use_legacy_landlock*/ false,
+        &sandbox_runtime,
         /*stdout_stream*/ None,
     )
     .await;

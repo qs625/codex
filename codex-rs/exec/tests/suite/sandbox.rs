@@ -28,6 +28,7 @@ async fn spawn_command_under_sandbox(
     use std::process::Stdio;
 
     let codex_linux_sandbox_exe = None;
+    let sandbox_runtime = codex_sandboxing::SandboxManager::new();
     let exec_request = build_exec_request(
         ExecParams {
             command,
@@ -46,6 +47,7 @@ async fn spawn_command_under_sandbox(
         sandbox_cwd,
         &codex_linux_sandbox_exe,
         /*use_legacy_landlock*/ false,
+        &sandbox_runtime,
     )
     .map_err(|err| io::Error::other(err.to_string()))?;
 
@@ -88,24 +90,54 @@ async fn spawn_command_under_sandbox(
     stdio_policy: StdioPolicy,
     env: HashMap<String, String>,
 ) -> std::io::Result<Child> {
-    use codex_core::spawn_command_under_linux_sandbox;
     use codex_protocol::models::PermissionProfile;
+    use codex_sandboxing::landlock::CODEX_LINUX_SANDBOX_ARG0;
+    use codex_sandboxing::landlock::allow_network_for_proxy;
+    use codex_sandboxing::landlock::create_linux_sandbox_command_args_for_permission_profile;
+    use std::process::Stdio;
 
     let codex_linux_sandbox_exe = core_test_support::find_codex_linux_sandbox_exe()
         .map_err(|err| io::Error::new(io::ErrorKind::NotFound, err))?;
     let permission_profile = PermissionProfile::from_legacy_sandbox_policy(sandbox_policy);
-    spawn_command_under_linux_sandbox(
-        codex_linux_sandbox_exe,
+    let args = create_linux_sandbox_command_args_for_permission_profile(
         command,
-        command_cwd,
+        command_cwd.as_path(),
         &permission_profile,
         sandbox_cwd,
         /*use_legacy_landlock*/ false,
-        stdio_policy,
-        /*network*/ None,
-        env,
-    )
-    .await
+        allow_network_for_proxy(/*enforce_managed_network*/ false),
+    );
+    let arg0 = if codex_linux_sandbox_exe
+        .file_name()
+        .and_then(|name| name.to_str())
+        == Some(CODEX_LINUX_SANDBOX_ARG0)
+    {
+        codex_linux_sandbox_exe.to_string_lossy().into_owned()
+    } else {
+        CODEX_LINUX_SANDBOX_ARG0.to_string()
+    };
+
+    let mut child = tokio::process::Command::new(codex_linux_sandbox_exe);
+    child.arg0(arg0);
+    child.args(args);
+    child.current_dir(command_cwd.as_path());
+    child.env_clear();
+    child.envs(env);
+
+    match stdio_policy {
+        StdioPolicy::RedirectForShellTool => {
+            child.stdin(Stdio::null());
+            child.stdout(Stdio::piped()).stderr(Stdio::piped());
+        }
+        StdioPolicy::Inherit => {
+            child
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit());
+        }
+    }
+
+    child.kill_on_drop(true).spawn()
 }
 
 #[cfg(target_os = "linux")]

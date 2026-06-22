@@ -14,7 +14,7 @@ workspace = true
 
 [dependencies]
 codex-config-types = { workspace = true }
-codex-default-client = { workspace = true }
+codex-default-client-api = { workspace = true }
 codex-otel = { workspace = true }
 codex-rollout = { workspace = true }
 codex-state = { workspace = true }

@@ -55,6 +55,7 @@ impl AppsRequestProcessor {
         }
 
         let auth = self.auth_manager.auth().await;
+        let auth_snapshot = auth.as_ref().map(CodexAuth::request_auth_snapshot);
         if !config
             .features
             .apps_enabled_for_auth(auth.as_ref().is_some_and(CodexAuth::uses_codex_backend))
@@ -78,8 +79,18 @@ impl AppsRequestProcessor {
         let request = request_id.clone();
         let outgoing = Arc::clone(&self.outgoing);
         let environment_manager = Arc::clone(&self.environment_manager);
+        let plugin_runtime = self.thread_manager.plugin_runtime();
         tokio::spawn(async move {
-            Self::apps_list_task(outgoing, request, params, config, environment_manager).await;
+            Self::apps_list_task(
+                outgoing,
+                request,
+                params,
+                config,
+                auth_snapshot,
+                plugin_runtime,
+                environment_manager,
+            )
+            .await;
         });
         Ok(None)
     }
@@ -89,9 +100,19 @@ impl AppsRequestProcessor {
         request_id: ConnectionRequestId,
         params: AppsListParams,
         config: Config,
+        auth_snapshot: Option<RequestAuthSnapshot>,
+        plugin_runtime: codex_core_plugins_api::SharedPluginRuntime,
         environment_manager: Arc<EnvironmentManager>,
     ) {
-        let result = Self::apps_list_response(&outgoing, params, config, environment_manager).await;
+        let result = Self::apps_list_response(
+            &outgoing,
+            params,
+            config,
+            auth_snapshot,
+            plugin_runtime,
+            environment_manager,
+        )
+        .await;
         outgoing.send_result(request_id, result).await;
     }
 
@@ -99,6 +120,8 @@ impl AppsRequestProcessor {
         outgoing: &Arc<OutgoingMessageSender>,
         params: AppsListParams,
         config: Config,
+        auth_snapshot: Option<RequestAuthSnapshot>,
+        plugin_runtime: codex_core_plugins_api::SharedPluginRuntime,
         environment_manager: Arc<EnvironmentManager>,
     ) -> Result<AppsListResponse, JSONRPCErrorError> {
         let AppsListParams {
@@ -117,7 +140,10 @@ impl AppsRequestProcessor {
 
         let chatgpt_config = chatgpt_config_from_core(&config);
         let (mut accessible_connectors, mut all_connectors) = tokio::join!(
-            core_connectors::list_cached_accessible_connectors_from_mcp_tools(&config),
+            core_connectors::list_cached_accessible_connectors_from_mcp_tools(
+                &config,
+                auth_snapshot.as_ref()
+            ),
             chatgpt_connectors::list_cached_all_connectors(&chatgpt_config)
         );
         let cached_all_connectors = all_connectors.clone();
@@ -127,10 +153,16 @@ impl AppsRequestProcessor {
         let accessible_config = config.clone();
         let accessible_tx = tx.clone();
         tokio::spawn(async move {
+            let mcp_auth_runtime = codex_mcp::DefaultMcpAuthRuntime;
+            let mcp_connection_runtime_factory = codex_mcp::DefaultMcpConnectionRuntimeFactory;
             let result = core_connectors::list_accessible_connectors_from_mcp_tools_with_environment_provider(
                 &accessible_config,
+                auth_snapshot.as_ref(),
                 force_refetch,
+                plugin_runtime.as_ref(),
                 &environment_manager,
+                &mcp_auth_runtime,
+                &mcp_connection_runtime_factory,
             )
             .await
             .map(|status| status.connectors)

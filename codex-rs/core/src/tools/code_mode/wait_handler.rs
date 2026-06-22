@@ -9,14 +9,14 @@ use crate::tools::registry::ToolHandler;
 use codex_code_mode_api::RuntimeResponse;
 use codex_code_mode_api::WaitOutcome;
 use codex_code_mode_api::WaitRequest;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
 
 use super::DEFAULT_WAIT_YIELD_TIME_MS;
 use super::ExecContext;
 use super::WAIT_TOOL_NAME;
 use super::handle_runtime_response;
-use codex_tools::create_code_mode_wait_tool;
+use codex_tool_planning::create_code_mode_wait_tool;
 
 pub struct CodeModeWaitHandler;
 
@@ -44,7 +44,6 @@ where
     })
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for CodeModeWaitHandler {
     type Output = FunctionToolOutput;
 
@@ -56,58 +55,72 @@ impl ToolExecutor<ToolInvocation> for CodeModeWaitHandler {
         Some(create_code_mode_wait_tool())
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            tool_name,
-            payload,
-            ..
-        } = invocation;
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session,
+                turn,
+                tool_name,
+                payload,
+                ..
+            } = invocation;
 
-        match payload {
-            ToolPayload::Function { arguments }
-                if tool_name.namespace.is_none() && tool_name.name.as_str() == WAIT_TOOL_NAME =>
-            {
-                let args: ExecWaitArgs = parse_arguments(&arguments)?;
-                let exec = ExecContext { session, turn };
-                let started_at = std::time::Instant::now();
-                let wait_response = exec
-                    .session
-                    .services
-                    .code_mode_service
-                    .wait(WaitRequest {
-                        cell_id: args.cell_id,
-                        yield_time_ms: args.yield_time_ms,
-                        terminate: args.terminate,
-                    })
-                    .await
-                    .map_err(FunctionCallError::RespondToModel)?;
-                if let WaitOutcome::LiveCell(response) = &wait_response
-                    && !matches!(response, RuntimeResponse::Yielded { .. })
+            match payload {
+                ToolPayload::Function { arguments }
+                    if tool_name.namespace.is_none()
+                        && tool_name.name.as_str() == WAIT_TOOL_NAME =>
                 {
-                    // Only a live-cell wait can close a CodeCell. A missing
-                    // cell is still an ordinary `wait` tool result, but there
-                    // is no runtime object for the reducer to complete.
-                    let runtime_cell_id = match response {
-                        RuntimeResponse::Yielded { cell_id, .. }
-                        | RuntimeResponse::Terminated { cell_id, .. }
-                        | RuntimeResponse::Result { cell_id, .. } => cell_id,
-                    };
-                    exec.session
+                    let args: ExecWaitArgs = parse_arguments(&arguments)?;
+                    let exec = ExecContext { session, turn };
+                    let started_at = std::time::Instant::now();
+                    let wait_response = exec
+                        .session
                         .services
-                        .rollout_thread_trace
-                        .code_cell_trace_context(exec.turn.sub_id.as_str(), runtime_cell_id)
-                        .record_ended(response);
-                }
-                handle_runtime_response(&exec, wait_response.into(), args.max_tokens, started_at)
+                        .code_mode_service
+                        .wait(WaitRequest {
+                            cell_id: args.cell_id,
+                            yield_time_ms: args.yield_time_ms,
+                            terminate: args.terminate,
+                        })
+                        .await
+                        .map_err(FunctionCallError::RespondToModel)?;
+                    if let WaitOutcome::LiveCell(response) = &wait_response
+                        && !matches!(response, RuntimeResponse::Yielded { .. })
+                    {
+                        // Only a live-cell wait can close a CodeCell. A missing
+                        // cell is still an ordinary `wait` tool result, but there
+                        // is no runtime object for the reducer to complete.
+                        let runtime_cell_id = match response {
+                            RuntimeResponse::Yielded { cell_id, .. }
+                            | RuntimeResponse::Terminated { cell_id, .. }
+                            | RuntimeResponse::Result { cell_id, .. } => cell_id,
+                        };
+                        exec.session
+                            .services
+                            .rollout_thread_trace
+                            .code_cell_trace_context(exec.turn.sub_id.as_str(), runtime_cell_id)
+                            .record_ended(response);
+                    }
+                    handle_runtime_response(
+                        &exec,
+                        wait_response.into(),
+                        args.max_tokens,
+                        started_at,
+                    )
                     .await
                     .map_err(FunctionCallError::RespondToModel)
+                }
+                _ => Err(FunctionCallError::RespondToModel(format!(
+                    "{WAIT_TOOL_NAME} expects JSON arguments"
+                ))),
             }
-            _ => Err(FunctionCallError::RespondToModel(format!(
-                "{WAIT_TOOL_NAME} expects JSON arguments"
-            ))),
-        }
+        })
     }
 }
 

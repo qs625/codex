@@ -1,12 +1,11 @@
 use super::*;
 use crate::agent::control::ListedAgent;
 use crate::turn_timing::now_unix_timestamp_ms;
-use codex_tools::ToolSpec;
-use codex_tools::create_list_agents_tool;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::create_list_agents_tool;
 
 pub(crate) struct Handler;
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for Handler {
     type Output = ListAgentsResult;
 
@@ -18,80 +17,88 @@ impl ToolExecutor<ToolInvocation> for Handler {
         Some(create_list_agents_tool())
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            payload,
-            call_id,
-            ..
-        } = invocation;
-        let arguments = function_arguments(payload)?;
-        let args: ListAgentsArgs = parse_arguments(&arguments)?;
-        let sender_agent_path = turn
-            .session_source
-            .get_agent_path()
-            .unwrap_or_else(AgentPath::root)
-            .to_string();
-        session
-            .send_event(
-                &turn,
-                CollabListAgentsBeginEvent {
-                    call_id: call_id.clone(),
-                    started_at_ms: now_unix_timestamp_ms(),
-                    sender_thread_id: session.conversation_id,
-                    sender_agent_path: sender_agent_path.clone(),
-                    path_prefix: args.path_prefix.clone(),
-                }
-                .into(),
-            )
-            .await;
-        session
-            .services
-            .agent_control
-            .register_session_root(session.conversation_id, &turn.session_source);
-        let agents = session
-            .services
-            .agent_control
-            .list_agents(
-                session.conversation_id,
-                &turn.session_source,
-                args.path_prefix.as_deref(),
-            )
-            .await
-            .map_err(collab_spawn_error);
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session,
+                turn,
+                payload,
+                call_id,
+                ..
+            } = invocation;
+            let arguments = function_arguments(payload)?;
+            let args: ListAgentsArgs = parse_arguments(&arguments)?;
+            let sender_agent_path = turn
+                .session_source
+                .get_agent_path()
+                .unwrap_or_else(AgentPath::root)
+                .to_string();
+            session
+                .send_event(
+                    &turn,
+                    CollabListAgentsBeginEvent {
+                        call_id: call_id.clone(),
+                        started_at_ms: now_unix_timestamp_ms(),
+                        sender_thread_id: session.conversation_id,
+                        sender_agent_path: sender_agent_path.clone(),
+                        path_prefix: args.path_prefix.clone(),
+                    }
+                    .into(),
+                )
+                .await;
+            session
+                .services
+                .agent_control
+                .register_session_root(session.conversation_id, &turn.session_source);
+            let agents = session
+                .services
+                .agent_control
+                .list_agents(
+                    session.conversation_id,
+                    &turn.session_source,
+                    args.path_prefix.as_deref(),
+                )
+                .await
+                .map_err(collab_spawn_error);
 
-        let listed_agents = agents.as_ref().map_or_else(
-            |_| Vec::new(),
-            |agents| {
-                agents
-                    .iter()
-                    .map(|agent| CollabListedAgent {
-                        agent_path: agent.agent_name.clone(),
-                        status: agent.agent_status.clone(),
-                        last_task_message: agent.last_task_message.clone(),
-                    })
-                    .collect()
-            },
-        );
+            let listed_agents = agents.as_ref().map_or_else(
+                |_| Vec::new(),
+                |agents| {
+                    agents
+                        .iter()
+                        .map(|agent| CollabListedAgent {
+                            agent_path: agent.agent_name.clone(),
+                            status: agent.agent_status.clone(),
+                            last_task_message: agent.last_task_message.clone(),
+                        })
+                        .collect()
+                },
+            );
 
-        session
-            .send_event(
-                &turn,
-                CollabListAgentsEndEvent {
-                    call_id,
-                    completed_at_ms: now_unix_timestamp_ms(),
-                    sender_thread_id: session.conversation_id,
-                    sender_agent_path,
-                    path_prefix: args.path_prefix,
-                    success: agents.is_ok(),
-                    agents: listed_agents,
-                }
-                .into(),
-            )
-            .await;
+            session
+                .send_event(
+                    &turn,
+                    CollabListAgentsEndEvent {
+                        call_id,
+                        completed_at_ms: now_unix_timestamp_ms(),
+                        sender_thread_id: session.conversation_id,
+                        sender_agent_path,
+                        path_prefix: args.path_prefix,
+                        success: agents.is_ok(),
+                        agents: listed_agents,
+                    }
+                    .into(),
+                )
+                .await;
 
-        Ok(ListAgentsResult { agents: agents? })
+            Ok(ListAgentsResult { agents: agents? })
+        })
     }
 }
 

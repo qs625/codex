@@ -11,23 +11,21 @@ use crate::session::turn_context::TurnContext;
 use crate::state::SessionServices;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::network_approval::NetworkApprovalSpec;
-use codex_network_proxy::NetworkProxy;
-use codex_protocol::approvals::ExecPolicyAmendment;
+use codex_network_proxy_api::SharedNetworkProxyRuntime;
+pub(crate) use codex_permissions_runtime::ExecApprovalRequirement;
+pub(crate) use codex_permissions_runtime::default_exec_approval_requirement;
 use codex_protocol::approvals::NetworkApprovalContext;
 use codex_protocol::error::CodexErr;
-use codex_protocol::permissions::FileSystemSandboxKind;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::ReviewDecision;
-#[cfg(test)]
-use codex_protocol::protocol::SandboxPolicy;
-use codex_sandboxing::SandboxCommand;
-use codex_sandboxing::SandboxManager;
-use codex_sandboxing::SandboxTransformError;
-use codex_sandboxing::SandboxTransformRequest;
-use codex_sandboxing::SandboxType;
-use codex_sandboxing::SandboxablePreference;
-use codex_tools::ToolName;
+use codex_sandboxing_api::SandboxCommand;
+use codex_sandboxing_api::SandboxRuntime;
+use codex_sandboxing_api::SandboxTransformError;
+use codex_sandboxing_api::SandboxTransformRequest;
+use codex_sandboxing_api::SandboxType;
+use codex_sandboxing_api::SandboxablePreference;
+use codex_tool_planning::ToolName;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::Future;
 use futures::future::BoxFuture;
@@ -157,88 +155,6 @@ impl PermissionRequestPayload {
     }
 }
 
-// Specifies what tool orchestrator should do with a given tool call.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ExecApprovalRequirement {
-    /// No approval required for this tool call.
-    Skip {
-        /// The first attempt should skip sandboxing (e.g., when explicitly
-        /// greenlit by policy).
-        bypass_sandbox: bool,
-        /// Proposed execpolicy amendment to skip future approvals for similar commands
-        /// Only applies if the command fails to run in sandbox and codex prompts the user to run outside the sandbox.
-        proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
-    },
-    /// Approval required for this tool call.
-    NeedsApproval {
-        reason: Option<String>,
-        /// Proposed execpolicy amendment to skip future approvals for similar commands
-        /// See core/src/exec_policy.rs for more details on how proposed_execpolicy_amendment is determined.
-        proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
-    },
-    /// Execution forbidden for this tool call.
-    Forbidden { reason: String },
-}
-
-impl ExecApprovalRequirement {
-    pub fn proposed_execpolicy_amendment(&self) -> Option<&ExecPolicyAmendment> {
-        match self {
-            Self::NeedsApproval {
-                proposed_execpolicy_amendment: Some(prefix),
-                ..
-            } => Some(prefix),
-            Self::Skip {
-                proposed_execpolicy_amendment: Some(prefix),
-                ..
-            } => Some(prefix),
-            _ => None,
-        }
-    }
-}
-
-/// - Never, OnFailure: do not ask
-/// - OnRequest: ask unless filesystem access is unrestricted
-/// - Granular: ask unless filesystem access is unrestricted, but auto-reject
-///   when granular sandbox approval is disabled.
-/// - UnlessTrusted: always ask
-pub(crate) fn default_exec_approval_requirement(
-    policy: AskForApproval,
-    file_system_sandbox_policy: &FileSystemSandboxPolicy,
-) -> ExecApprovalRequirement {
-    let needs_approval = match policy {
-        AskForApproval::Never | AskForApproval::OnFailure => false,
-        AskForApproval::OnRequest | AskForApproval::Granular(_) => {
-            matches!(
-                file_system_sandbox_policy.kind,
-                FileSystemSandboxKind::Restricted
-            )
-        }
-        AskForApproval::UnlessTrusted => true,
-    };
-
-    if needs_approval
-        && matches!(
-            policy,
-            AskForApproval::Granular(granular_config)
-                if !granular_config.allows_sandbox_approval()
-        )
-    {
-        ExecApprovalRequirement::Forbidden {
-            reason: "approval policy disallowed sandbox approval prompt".to_string(),
-        }
-    } else if needs_approval {
-        ExecApprovalRequirement::NeedsApproval {
-            reason: None,
-            proposed_execpolicy_amendment: None,
-        }
-    } else {
-        ExecApprovalRequirement::Skip {
-            bypass_sandbox: false,
-            proposed_execpolicy_amendment: None,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SandboxOverride {
     NoOverride,
@@ -276,13 +192,13 @@ pub(crate) fn sandbox_override_for_first_attempt(
 }
 
 pub(crate) fn managed_network_for_sandbox_permissions(
-    network: Option<&NetworkProxy>,
+    network: Option<&SharedNetworkProxyRuntime>,
     sandbox_permissions: SandboxPermissions,
-) -> Option<&NetworkProxy> {
+) -> Option<SharedNetworkProxyRuntime> {
     if sandbox_permissions.requires_escalated_permissions() {
         None
     } else {
-        network
+        network.cloned()
     }
 }
 
@@ -383,7 +299,7 @@ pub(crate) struct SandboxAttempt<'a> {
     pub sandbox: SandboxType,
     pub permissions: &'a codex_protocol::models::PermissionProfile,
     pub enforce_managed_network: bool,
-    pub(crate) manager: &'a SandboxManager,
+    pub(crate) sandbox_runtime: &'a dyn SandboxRuntime,
     pub(crate) sandbox_cwd: &'a AbsolutePathBuf,
     pub codex_linux_sandbox_exe: Option<&'a std::path::PathBuf>,
     pub use_legacy_landlock: bool,
@@ -397,10 +313,10 @@ impl<'a> SandboxAttempt<'a> {
         &self,
         command: SandboxCommand,
         options: ExecOptions,
-        network: Option<&NetworkProxy>,
+        network: Option<SharedNetworkProxyRuntime>,
     ) -> Result<crate::sandboxing::ExecRequest, SandboxTransformError> {
-        let network_snapshot = network.map(NetworkProxy::runtime_snapshot);
-        self.manager
+        let network_snapshot = network.as_ref().map(|network| network.runtime_snapshot());
+        self.sandbox_runtime
             .transform(SandboxTransformRequest {
                 command,
                 permissions: self.permissions,
@@ -425,7 +341,7 @@ impl<'a> SandboxAttempt<'a> {
                     request,
                     options,
                     windows_sandbox_policy_cwd,
-                    network.cloned(),
+                    network,
                 )
             })
     }

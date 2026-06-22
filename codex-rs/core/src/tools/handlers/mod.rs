@@ -18,9 +18,9 @@ pub(crate) mod unified_exec;
 mod view_image;
 mod workflow;
 
-use codex_sandboxing::policy_transforms::intersect_permission_profiles;
-use codex_sandboxing::policy_transforms::merge_permission_profiles;
-use codex_sandboxing::policy_transforms::normalize_additional_permissions;
+use codex_sandboxing_api::policy_transforms::intersect_permission_profiles;
+use codex_sandboxing_api::policy_transforms::merge_permission_profiles;
+use codex_sandboxing_api::policy_transforms::normalize_additional_permissions;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
 use serde::Deserialize;
@@ -316,8 +316,8 @@ mod tests {
     use codex_protocol::permissions::FileSystemSpecialPath;
     use codex_protocol::protocol::AskForApproval;
     use codex_protocol::protocol::GranularApprovalConfig;
-    use codex_sandboxing::policy_transforms::intersect_permission_profiles;
-    use codex_sandboxing::policy_transforms::merge_permission_profiles;
+    use codex_sandboxing_api::policy_transforms::intersect_permission_profiles;
+    use codex_sandboxing_api::policy_transforms::merge_permission_profiles;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;

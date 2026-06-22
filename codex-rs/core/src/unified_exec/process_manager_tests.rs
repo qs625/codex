@@ -105,7 +105,7 @@ fn exec_server_params_use_env_policy_overlay_contract() {
         network: None,
         expiration: crate::exec::ExecExpiration::DefaultTimeout,
         capture_policy: crate::exec::ExecCapturePolicy::ShellTool,
-        sandbox: codex_sandboxing::SandboxType::None,
+        sandbox: codex_sandboxing_api::SandboxType::None,
         windows_sandbox_policy_cwd: cwd,
         windows_sandbox_level: codex_protocol::config_types::WindowsSandboxLevel::Disabled,
         windows_sandbox_private_desktop: false,

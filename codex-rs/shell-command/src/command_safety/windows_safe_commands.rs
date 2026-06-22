@@ -1,6 +1,5 @@
 use crate::command_safety::is_safe_command::is_safe_git_command;
-use crate::command_safety::powershell_parser::PowershellParseOutcome;
-use crate::command_safety::powershell_parser::parse_with_powershell_ast;
+use codex_command_display::powershell::parse_powershell_script_into_plain_commands;
 use std::path::Path;
 
 /// On Windows, we conservatively allow only clearly read-only PowerShell invocations
@@ -94,13 +93,7 @@ fn parse_powershell_invocation(executable: &str, args: &[String]) -> Option<Vec<
 /// Tokenizes an inline PowerShell script and delegates to the command splitter.
 /// Examples of when this is called: pwsh.exe -Command '<script>' or pwsh.exe -Command:<script>
 fn parse_powershell_script(executable: &str, script: &str) -> Option<Vec<Vec<String>>> {
-    if let PowershellParseOutcome::Commands(commands) =
-        parse_with_powershell_ast(executable, script)
-    {
-        Some(commands)
-    } else {
-        None
-    }
+    parse_powershell_script_into_plain_commands(executable, script)
 }
 
 /// Returns true when the executable name is one of the supported PowerShell binaries.

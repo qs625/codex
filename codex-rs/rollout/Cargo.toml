@@ -16,11 +16,12 @@ workspace = true
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
+codex-default-client-api = { workspace = true }
 codex-file-search = { workspace = true }
-codex-git-utils = { workspace = true }
-codex-login = { workspace = true }
+codex-git-info = { workspace = true }
 codex-metrics-api = { workspace = true }
 codex-protocol = { workspace = true }
+codex-rollout-api = { workspace = true }
 codex-state = { workspace = true }
 codex-utils-path = { workspace = true }
 codex-utils-string = { workspace = true }

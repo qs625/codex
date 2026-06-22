@@ -1613,7 +1613,7 @@ mod tests {
                 memory_mode: None,
             },
             git: Some(GitInfo {
-                commit_hash: Some(codex_git_utils::GitSha::new("rollout-sha")),
+                commit_hash: Some(codex_git_info::GitSha::new("rollout-sha")),
                 branch: Some("rollout-branch".to_string()),
                 repository_url: Some("git@example.com:openai/codex.git".to_string()),
             }),
@@ -2225,10 +2225,10 @@ INSERT INTO thread_spawn_edges (
         let runtime = StateRuntime::init(codex_home, "test-provider".to_string())
             .await
             .expect("state db should initialize");
-        let parent_thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000920")
-            .expect("valid thread id");
-        let child_thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000921")
-            .expect("valid thread id");
+        let parent_thread_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000920").expect("valid thread id");
+        let child_thread_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000921").expect("valid thread id");
 
         runtime
             .upsert_thread_spawn_edge(

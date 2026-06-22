@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::CONFIG_TOML_FILE;
 use crate::config::Config;
 use crate::config::ConfigBuilder;
 use codex_config::ConfigLayerEntry;
@@ -11,9 +12,9 @@ use codex_config::RequirementSource;
 use codex_config::RequirementsExecPolicy;
 use codex_config::Sourced;
 use codex_config::config_toml::ConfigToml;
-use codex_config_edit::CONFIG_TOML_FILE;
 use codex_config_loader::ProjectConfig;
 use codex_config_types::ConfigLayerSource;
+use codex_execpolicy::PolicyParser;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::FileSystemAccessMode;
@@ -241,7 +242,7 @@ async fn returns_empty_policy_when_no_policy_files_exist() {
     let temp_dir = tempdir().expect("create temp dir");
     let config_stack = config_stack_for_dot_codex_folder(temp_dir.path());
 
-    let manager = ExecPolicyManager::load(&config_stack)
+    let manager = ExecPolicyManager::load(&config_stack, &TestExecPolicyLoader)
         .await
         .expect("manager result");
     let policy = manager.current();

@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use codex_features::Feature;
 use codex_mcp_tool_types::ToolInfo as McpToolInfo;
 use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
-use codex_tools::ToolsConfig;
+use codex_tool_config::ToolsConfig;
 
 use crate::config::Config;
 use crate::connectors;

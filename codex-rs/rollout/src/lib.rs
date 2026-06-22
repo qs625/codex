@@ -14,13 +14,13 @@ mod sqlite_metrics;
 pub mod state_db;
 
 pub(crate) mod default_client {
-    pub use codex_login::default_client::*;
+    pub use codex_default_client_api::*;
 }
 
 pub(crate) use codex_protocol::protocol;
 
-pub const SESSIONS_SUBDIR: &str = "sessions";
-pub const ARCHIVED_SESSIONS_SUBDIR: &str = "archived_sessions";
+pub use codex_rollout_api::ARCHIVED_SESSIONS_SUBDIR;
+pub use codex_rollout_api::SESSIONS_SUBDIR;
 pub static INTERACTIVE_SESSION_SOURCES: LazyLock<Vec<SessionSource>> = LazyLock::new(|| {
     vec![
         SessionSource::Cli,

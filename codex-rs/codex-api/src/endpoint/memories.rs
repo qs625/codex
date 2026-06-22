@@ -5,7 +5,7 @@ use crate::endpoint::session::EndpointSession;
 use crate::error::ApiError;
 use crate::provider::Provider;
 use codex_client::HttpTransport;
-use codex_client::RequestTelemetry;
+use codex_client_types::RequestTelemetry;
 use http::HeaderMap;
 use http::Method;
 use serde::Deserialize;

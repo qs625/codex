@@ -1,7 +1,7 @@
 use super::*;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::PermissionProfile;
-use codex_sandboxing::SandboxType;
+use codex_sandboxing_api::SandboxType;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use pretty_assertions::assert_eq;
@@ -349,6 +349,7 @@ async fn process_exec_tool_call_preserves_full_buffer_capture_policy() -> Result
     let cwd = codex_utils_absolute_path::AbsolutePathBuf::current_dir()?;
     let sandbox_policy = SandboxPolicy::DangerFullAccess;
     let permission_profile = PermissionProfile::from_legacy_sandbox_policy(&sandbox_policy);
+    let sandbox_runtime = codex_sandboxing::SandboxManager::new();
     let output = process_exec_tool_call(
         ExecParams {
             command,
@@ -367,6 +368,7 @@ async fn process_exec_tool_call_preserves_full_buffer_capture_policy() -> Result
         &cwd,
         &None,
         /*use_legacy_landlock*/ false,
+        &sandbox_runtime,
         /*stdout_stream*/ None,
     )
     .await?;
@@ -996,11 +998,13 @@ fn windows_elevated_rejects_reopened_writable_descendants() {
 
 #[test]
 fn process_exec_tool_call_uses_platform_sandbox_for_network_only_restrictions() {
-    let expected = codex_sandboxing::get_platform_sandbox(/*windows_sandbox_enabled*/ false)
-        .unwrap_or(SandboxType::None);
+    let expected =
+        codex_sandboxing_api::get_platform_sandbox(/*windows_sandbox_enabled*/ false)
+            .unwrap_or(SandboxType::None);
 
     assert_eq!(
         select_process_exec_tool_sandbox_type(
+            &codex_sandboxing::SandboxManager::new(),
             &FileSystemSandboxPolicy::unrestricted(),
             NetworkSandboxPolicy::Restricted,
             codex_protocol::config_types::WindowsSandboxLevel::Disabled,
@@ -1010,10 +1014,9 @@ fn process_exec_tool_call_uses_platform_sandbox_for_network_only_restrictions() 
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn sandbox_detection_flags_sigsys_exit_code() {
-    let exit_code = EXIT_CODE_SIGNAL_BASE + libc::SIGSYS;
+    let exit_code = EXIT_CODE_SIGNAL_BASE + LINUX_SIGSYS_CODE;
     let output = make_exec_output(exit_code, "", "", "");
     assert!(is_likely_sandbox_denied(SandboxType::LinuxSeccomp, &output));
 }
@@ -1109,6 +1112,7 @@ async fn process_exec_tool_call_respects_cancellation_token() -> Result<()> {
         tokio::time::sleep(Duration::from_millis(1_000)).await;
         cancel_tx.cancel();
     });
+    let sandbox_runtime = codex_sandboxing::SandboxManager::new();
     let result = timeout(
         Duration::from_secs(5),
         process_exec_tool_call(
@@ -1117,6 +1121,7 @@ async fn process_exec_tool_call_respects_cancellation_token() -> Result<()> {
             &cwd,
             &None,
             /*use_legacy_landlock*/ false,
+            &sandbox_runtime,
             /*stdout_stream*/ None,
         ),
     )

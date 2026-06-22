@@ -34,9 +34,9 @@ pub(super) async fn spawn_review_thread(
             .list_models(RefreshStrategy::OnlineIfUncached)
             .await,
         features: &review_features,
-        image_generation_tool_auth_allowed: image_generation_tool_auth_allowed(Some(
-            sess.services.auth_manager.as_ref(),
-        )),
+        image_generation_tool_auth_allowed: image_generation_tool_auth_allowed(
+            parent_turn_context.auth_runtime.as_deref(),
+        ),
         web_search_mode: Some(review_web_search_mode),
         session_source: parent_turn_context.session_source.clone(),
         permission_profile: &parent_turn_context.permission_profile,
@@ -66,7 +66,6 @@ pub(super) async fn spawn_review_thread(
 
     let review_prompt = resolved.prompt.clone();
     let provider = parent_turn_context.provider.clone();
-    let auth_manager = parent_turn_context.auth_manager.clone();
     let model_info = review_model_info.clone();
 
     // Build per‑turn client with the requested model/family.
@@ -87,7 +86,6 @@ pub(super) async fn spawn_review_thread(
         .session_telemetry
         .clone()
         .with_model(model.as_str(), review_model_info.slug.as_str());
-    let auth_manager_for_context = auth_manager.clone();
     let provider_for_context = provider.clone();
     let session_telemetry_for_context = session_telemetry.clone();
     let reasoning_effort = per_turn_config.model_reasoning_effort;
@@ -115,7 +113,7 @@ pub(super) async fn spawn_review_thread(
         trace_id: current_span_trace_id(),
         realtime_active: parent_turn_context.realtime_active,
         config: per_turn_config,
-        auth_manager: auth_manager_for_context,
+        auth_runtime: parent_turn_context.auth_runtime.clone(),
         model_info: model_info.clone(),
         session_telemetry: session_telemetry_for_context,
         provider: provider_for_context,

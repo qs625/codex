@@ -9,6 +9,11 @@ use codex_login::ExternalAuth;
 use codex_login::ExternalAuthRefreshContext;
 use codex_login::ExternalAuthTokens;
 use codex_login::TokenData;
+use codex_model_provider_api::ModelProviderAuthFuture;
+use codex_model_provider_api::ModelProviderAuthManager;
+use codex_model_provider_api::ModelProviderUnauthorizedRecovery;
+use codex_model_provider_api::ProviderAccountError;
+use codex_model_provider_api::SharedModelProviderAuthManager;
 use codex_protocol::openai_models::ModelsResponse;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -22,6 +27,56 @@ use tempfile::tempdir;
 
 #[path = "model_info_overrides_tests.rs"]
 mod model_info_overrides_tests;
+
+fn model_provider_auth_manager(
+    auth_manager: Option<Arc<AuthManager>>,
+) -> Option<SharedModelProviderAuthManager> {
+    auth_manager.map(|auth_manager| {
+        Arc::new(TestModelProviderAuthManager { auth_manager }) as SharedModelProviderAuthManager
+    })
+}
+
+#[derive(Debug)]
+struct TestModelProviderAuthManager {
+    auth_manager: Arc<AuthManager>,
+}
+
+impl ModelProviderAuthManager for TestModelProviderAuthManager {
+    fn auth(&self) -> ModelProviderAuthFuture<'_, Option<codex_auth_types::RequestAuthSnapshot>> {
+        Box::pin(async move {
+            self.auth_manager
+                .auth()
+                .await
+                .as_ref()
+                .map(CodexAuth::request_auth_snapshot)
+        })
+    }
+
+    fn auth_cached(&self) -> Option<codex_auth_types::RequestAuthSnapshot> {
+        self.auth_manager
+            .auth_cached()
+            .as_ref()
+            .map(CodexAuth::request_auth_snapshot)
+    }
+
+    fn account(
+        &self,
+    ) -> Result<Option<codex_protocol::account::ProviderAccount>, ProviderAccountError> {
+        Ok(None)
+    }
+
+    fn codex_api_key_env_enabled(&self) -> bool {
+        self.auth_manager.codex_api_key_env_enabled()
+    }
+
+    fn current_auth_uses_codex_backend(&self) -> bool {
+        self.auth_manager.current_auth_uses_codex_backend()
+    }
+
+    fn unauthorized_recovery(&self) -> Option<Box<dyn ModelProviderUnauthorizedRecovery>> {
+        None
+    }
+}
 
 fn remote_model(slug: &str, display: &str, priority: i32) -> ModelInfo {
     remote_model_with_visibility(slug, display, priority, "list")
@@ -187,7 +242,11 @@ fn openai_manager_for_tests_with_auth(
     endpoint_client: Arc<dyn ModelsEndpointClient>,
     auth_manager: Option<Arc<AuthManager>>,
 ) -> OpenAiModelsManager {
-    OpenAiModelsManager::new(codex_home, endpoint_client, auth_manager)
+    OpenAiModelsManager::new(
+        codex_home,
+        endpoint_client,
+        model_provider_auth_manager(auth_manager),
+    )
 }
 
 fn static_manager_for_tests(model_catalog: ModelsResponse) -> StaticModelsManager {
@@ -891,7 +950,7 @@ async fn static_manager_reads_latest_auth_mode() {
     };
     let api_model = remote_model("api-model", "API Model", /*priority*/ 1);
     let manager = StaticModelsManager::new(
-        Some(Arc::clone(&auth_manager)),
+        model_provider_auth_manager(Some(Arc::clone(&auth_manager))),
         ModelsResponse {
             models: vec![chatgpt_only_model, api_model],
         },

@@ -11,12 +11,12 @@ use std::io;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use codex_api_provider::SharedAuthProvider;
 use codex_exec_server_api::ExecRuntimeError;
 use codex_exec_server_api::HttpClient;
 use codex_exec_server_api::HttpResponseBodyStream;
 use codex_exec_server_protocol::HttpHeader;
 use codex_exec_server_protocol::HttpRequestParams;
+use codex_mcp_runtime_api::SharedMcpAuthHeaderProvider;
 use futures::StreamExt;
 use futures::stream;
 use futures::stream::BoxStream;
@@ -44,7 +44,7 @@ const NON_JSON_RESPONSE_BODY_PREVIEW_BYTES: usize = 8_192;
 pub(crate) struct StreamableHttpClientAdapter {
     http_client: Arc<dyn HttpClient>,
     default_headers: HeaderMap,
-    auth_provider: Option<SharedAuthProvider>,
+    auth_provider: Option<SharedMcpAuthHeaderProvider>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -61,7 +61,7 @@ impl StreamableHttpClientAdapter {
     pub(crate) fn new(
         http_client: Arc<dyn HttpClient>,
         default_headers: HeaderMap,
-        auth_provider: Option<SharedAuthProvider>,
+        auth_provider: Option<SharedMcpAuthHeaderProvider>,
     ) -> Self {
         Self {
             http_client,

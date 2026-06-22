@@ -1,15 +1,7 @@
-use async_trait::async_trait;
 use codex_config_requirements::NetworkConstraints;
 use codex_config_requirements::NetworkDomainPermissionsToml;
 use codex_config_requirements::NetworkUnixSocketPermissionsToml;
 use codex_execpolicy_api::Policy;
-use codex_network_proxy::ConfigReloader;
-use codex_network_proxy::ConfigState;
-use codex_network_proxy::NetworkProxy;
-use codex_network_proxy::NetworkProxyHandle;
-use codex_network_proxy::NetworkProxyState;
-use codex_network_proxy::build_config_state;
-use codex_network_proxy::validate_policy_against_constraints;
 use codex_network_proxy_api::BlockedRequestObserver;
 use codex_network_proxy_api::NetworkDecision;
 use codex_network_proxy_api::NetworkDomainPermission;
@@ -17,8 +9,12 @@ use codex_network_proxy_api::NetworkPolicyDecider;
 use codex_network_proxy_api::NetworkProxyAuditMetadata;
 use codex_network_proxy_api::NetworkProxyConfig;
 use codex_network_proxy_api::NetworkProxyConstraints;
+use codex_network_proxy_api::NetworkProxyRuntimeFactory;
+use codex_network_proxy_api::NetworkProxyStartRequest;
+use codex_network_proxy_api::SharedStartedNetworkProxyRuntime;
 use codex_network_proxy_api::host_and_port_from_network_addr;
 use codex_network_proxy_api::normalize_host;
+use codex_network_proxy_api::validate_policy_against_constraints;
 use codex_protocol::models::PermissionProfile;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -32,49 +28,7 @@ pub struct NetworkProxySpec {
     hard_deny_allowlist_misses: bool,
 }
 
-pub struct StartedNetworkProxy {
-    proxy: NetworkProxy,
-    _handle: NetworkProxyHandle,
-}
-
-impl StartedNetworkProxy {
-    fn new(proxy: NetworkProxy, handle: NetworkProxyHandle) -> Self {
-        Self {
-            proxy,
-            _handle: handle,
-        }
-    }
-
-    pub fn proxy(&self) -> NetworkProxy {
-        self.proxy.clone()
-    }
-}
-
-#[derive(Clone)]
-struct StaticNetworkProxyReloader {
-    state: ConfigState,
-}
-
-impl StaticNetworkProxyReloader {
-    fn new(state: ConfigState) -> Self {
-        Self { state }
-    }
-}
-
-#[async_trait]
-impl ConfigReloader for StaticNetworkProxyReloader {
-    async fn maybe_reload(&self) -> anyhow::Result<Option<ConfigState>> {
-        Ok(None)
-    }
-
-    async fn reload_now(&self) -> anyhow::Result<ConfigState> {
-        Ok(self.state.clone())
-    }
-
-    fn source_label(&self) -> String {
-        "StaticNetworkProxyReloader".to_string()
-    }
-}
+pub type StartedNetworkProxy = SharedStartedNetworkProxyRuntime;
 
 impl NetworkProxySpec {
     pub(crate) fn enabled(&self) -> bool {
@@ -125,33 +79,37 @@ impl NetworkProxySpec {
 
     pub async fn start_proxy(
         &self,
+        factory: &dyn NetworkProxyRuntimeFactory,
         permission_profile: &PermissionProfile,
         policy_decider: Option<Arc<dyn NetworkPolicyDecider>>,
         blocked_request_observer: Option<Arc<dyn BlockedRequestObserver>>,
         enable_network_approval_flow: bool,
         audit_metadata: NetworkProxyAuditMetadata,
     ) -> std::io::Result<StartedNetworkProxy> {
-        let state = self.build_state_with_audit_metadata(audit_metadata)?;
-        let mut builder = NetworkProxy::builder().state(Arc::new(state));
-        if enable_network_approval_flow && !self.hard_deny_allowlist_misses {
+        let policy_decider = if enable_network_approval_flow && !self.hard_deny_allowlist_misses {
             if let Some(policy_decider) = policy_decider {
-                builder = builder.policy_decider_arc(policy_decider);
+                Some(policy_decider)
             } else if Self::managed_sandbox_active(permission_profile) {
-                builder = builder
-                    .policy_decider(|_request| async { NetworkDecision::ask("not_allowed") });
+                Some(
+                    Arc::new(|_request| async { NetworkDecision::ask("not_allowed") })
+                        as Arc<dyn NetworkPolicyDecider>,
+                )
+            } else {
+                None
             }
-        }
-        if let Some(blocked_request_observer) = blocked_request_observer {
-            builder = builder.blocked_request_observer_arc(blocked_request_observer);
-        }
-        let proxy = builder.build().await.map_err(|err| {
-            std::io::Error::other(format!("failed to build network proxy: {err}"))
-        })?;
-        let handle = proxy
-            .run()
+        } else {
+            None
+        };
+        factory
+            .start(NetworkProxyStartRequest {
+                config: self.config.clone(),
+                constraints: self.constraints.clone(),
+                policy_decider,
+                blocked_request_observer,
+                audit_metadata,
+            })
             .await
-            .map_err(|err| std::io::Error::other(format!("failed to run network proxy: {err}")))?;
-        Ok(StartedNetworkProxy::new(proxy, handle))
+            .map_err(|err| std::io::Error::other(format!("failed to start network proxy: {err}")))
     }
 
     pub(crate) fn recompute_for_permission_profile(
@@ -184,33 +142,12 @@ impl NetworkProxySpec {
         &self,
         started_proxy: &StartedNetworkProxy,
     ) -> std::io::Result<()> {
-        let state = self.build_config_state_for_spec()?;
         started_proxy
-            .proxy()
-            .replace_config_state(state)
+            .update_config(self.config.clone(), self.constraints.clone())
             .await
             .map_err(|err| {
                 std::io::Error::other(format!("failed to update network proxy state: {err}"))
             })
-    }
-
-    fn build_state_with_audit_metadata(
-        &self,
-        audit_metadata: NetworkProxyAuditMetadata,
-    ) -> std::io::Result<NetworkProxyState> {
-        let state = self.build_config_state_for_spec()?;
-        let reloader = Arc::new(StaticNetworkProxyReloader::new(state.clone()));
-        Ok(NetworkProxyState::with_reloader_and_audit_metadata(
-            state,
-            reloader,
-            audit_metadata,
-        ))
-    }
-
-    fn build_config_state_for_spec(&self) -> std::io::Result<ConfigState> {
-        build_config_state(self.config.clone(), self.constraints.clone()).map_err(|err| {
-            std::io::Error::other(format!("failed to build network proxy state: {err}"))
-        })
     }
 
     fn apply_requirements(

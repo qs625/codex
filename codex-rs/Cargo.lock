@@ -1373,20 +1373,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bm25"
-version = "2.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1cbd8ffdfb7b4c2ff038726178a780a94f90525ed0ad264c0afaa75dd8c18a64"
-dependencies = [
- "cached",
- "deunicode",
- "fxhash",
- "rust-stemmers",
- "stop-words",
- "unicode-segmentation",
-]
-
-[[package]]
 name = "borsh"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1483,39 +1469,6 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[package]]
-name = "cached"
-version = "0.56.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "801927ee168e17809ab8901d9f01f700cd7d8d6a6527997fee44e4b0327a253c"
-dependencies = [
- "ahash",
- "cached_proc_macro",
- "cached_proc_macro_types",
- "hashbrown 0.15.5",
- "once_cell",
- "thiserror 2.0.18",
- "web-time",
-]
-
-[[package]]
-name = "cached_proc_macro"
-version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9225bdcf4e4a9a4c08bf16607908eb2fbf746828d5e0b5e019726dbf6571f201"
-dependencies = [
- "darling 0.20.11",
- "proc-macro2",
- "quote",
- "syn 2.0.114",
-]
-
-[[package]]
-name = "cached_proc_macro_types"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ade8366b8bd5ba243f0a58f036cc0ca8a2f069cff1a2351ef1cac6b083e16fc0"
 
 [[package]]
 name = "calendrical_calculations"
@@ -1809,6 +1762,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "chrono",
+ "codex-agent-identity-api",
  "codex-protocol",
  "crypto_box",
  "ed25519-dalek",
@@ -1822,11 +1776,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-agent-identity-api"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "ed25519-dalek",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "codex-agent-roles"
+version = "0.0.0"
+dependencies = [
+ "codex-config-state",
+ "codex-config-toml",
+ "codex-config-types",
+ "codex-file-system",
+ "codex-utils-absolute-path",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "toml 0.9.11+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
 name = "codex-agent-runtime"
 version = "0.0.0"
 dependencies = [
  "codex-metrics-api",
  "codex-protocol",
+ "codex-rollout-api",
  "pretty_assertions",
  "rand 0.9.3",
  "serde",
@@ -1838,7 +1822,7 @@ version = "0.0.0"
 dependencies = [
  "codex-analytics-api",
  "codex-app-server-protocol",
- "codex-git-utils",
+ "codex-git-info",
  "codex-login",
  "codex-model-provider",
  "codex-plugin-types",
@@ -1883,10 +1867,12 @@ dependencies = [
  "bytes",
  "chrono",
  "codex-api-provider",
+ "codex-api-runtime-api",
  "codex-api-types",
  "codex-client",
+ "codex-client-types",
+ "codex-default-client",
  "codex-protocol",
- "codex-response-debug-context",
  "codex-utils-rustls-provider",
  "eventsource-stream",
  "futures",
@@ -1909,21 +1895,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-api-auth"
+version = "0.0.0"
+dependencies = [
+ "codex-agent-identity-api",
+ "codex-api-provider",
+ "codex-auth-types",
+ "http 1.4.0",
+ "pretty_assertions",
+]
+
+[[package]]
 name = "codex-api-provider"
 version = "0.0.0"
 dependencies = [
  "codex-client-types",
- "codex-protocol",
  "http 1.4.0",
- "thiserror 2.0.18",
- "url",
+]
+
+[[package]]
+name = "codex-api-runtime-api"
+version = "0.0.0"
+dependencies = [
+ "codex-api-provider",
+ "codex-api-types",
 ]
 
 [[package]]
 name = "codex-api-types"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "codex-client-types",
  "codex-protocol",
+ "futures",
+ "http 1.4.0",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -1963,8 +1970,13 @@ dependencies = [
  "codex-config-types",
  "codex-core",
  "codex-core-plugins",
+ "codex-core-plugins-api",
+ "codex-core-plugins-remote",
+ "codex-core-skills",
+ "codex-core-skills-api",
  "codex-exec-server",
  "codex-exec-server-api",
+ "codex-execpolicy-loader",
  "codex-extension-api",
  "codex-external-agent-migration",
  "codex-external-agent-sessions",
@@ -1973,17 +1985,21 @@ dependencies = [
  "codex-file-search",
  "codex-file-subscription",
  "codex-file-watcher",
- "codex-git-utils",
+ "codex-git-info",
  "codex-guardian",
  "codex-hooks",
  "codex-login",
  "codex-mcp",
+ "codex-mcp-runtime-api",
+ "codex-mcp-types",
+ "codex-memories-read",
  "codex-memories-write",
  "codex-model-provider",
  "codex-model-provider-api",
  "codex-model-provider-info",
  "codex-models-manager",
  "codex-models-manager-api",
+ "codex-network-proxy",
  "codex-openai-files",
  "codex-otel",
  "codex-otel-init",
@@ -1993,8 +2009,10 @@ dependencies = [
  "codex-rollout",
  "codex-rollout-trace",
  "codex-sandboxing",
- "codex-shell-command",
+ "codex-sandboxing-api",
+ "codex-shell-utils",
  "codex-state",
+ "codex-state-api",
  "codex-terminal-detection",
  "codex-thread-store",
  "codex-tools",
@@ -2048,9 +2066,11 @@ dependencies = [
  "codex-config-requirements",
  "codex-core",
  "codex-exec-server",
+ "codex-execpolicy-loader",
  "codex-feedback",
  "codex-otel-init",
  "codex-protocol",
+ "codex-rollout",
  "codex-uds",
  "codex-utils-absolute-path",
  "codex-utils-rustls-provider",
@@ -2094,6 +2114,7 @@ dependencies = [
  "anyhow",
  "clap",
  "codex-auth-types",
+ "codex-command-display",
  "codex-config-types",
  "codex-connectors-types",
  "codex-experimental-api-macros",
@@ -2101,7 +2122,7 @@ dependencies = [
  "codex-mcp-types",
  "codex-plugin-types",
  "codex-protocol",
- "codex-shell-command",
+ "codex-shell-utils",
  "codex-utils-absolute-path",
  "codex-utils-cargo-bin",
  "inventory",
@@ -2110,11 +2131,9 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
- "serde_with",
  "similar",
  "strum_macros 0.28.0",
  "tempfile",
- "thiserror 2.0.18",
  "tracing",
  "ts-rs",
  "uuid",
@@ -2152,13 +2171,13 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap",
+ "codex-api-auth",
  "codex-api-provider",
  "codex-app-server-protocol",
  "codex-auth-types",
  "codex-config-types",
  "codex-core",
  "codex-login",
- "codex-model-provider-api",
  "codex-state",
  "codex-uds",
  "codex-utils-absolute-path",
@@ -2225,7 +2244,6 @@ dependencies = [
 name = "codex-async-utils"
 version = "0.0.0"
 dependencies = [
- "async-trait",
  "pretty_assertions",
  "tokio",
  "tokio-util",
@@ -2235,6 +2253,8 @@ dependencies = [
 name = "codex-auth-types"
 version = "0.0.0"
 dependencies = [
+ "codex-config-types",
+ "pretty_assertions",
  "schemars 0.8.22",
  "serde",
  "strum_macros 0.28.0",
@@ -2261,11 +2281,11 @@ name = "codex-backend-client"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "codex-api-auth",
  "codex-api-provider",
+ "codex-auth-types",
  "codex-backend-openapi-models",
  "codex-client",
- "codex-login",
- "codex-model-provider-api",
  "codex-protocol",
  "pretty_assertions",
  "reqwest",
@@ -2297,10 +2317,13 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
+ "codex-auth-types",
+ "codex-config-types",
  "codex-connectors",
  "codex-connectors-types",
  "codex-core",
  "codex-core-plugins",
+ "codex-core-plugins-api",
  "codex-git-utils",
  "codex-login",
  "codex-model-provider",
@@ -2334,6 +2357,7 @@ dependencies = [
  "codex-cloud-tasks",
  "codex-config-edit",
  "codex-config-loader",
+ "codex-config-local-loader",
  "codex-config-types",
  "codex-core",
  "codex-core-plugins",
@@ -2347,19 +2371,24 @@ dependencies = [
  "codex-login",
  "codex-mcp",
  "codex-mcp-server",
+ "codex-mcp-types",
  "codex-memories-write",
  "codex-model-provider",
  "codex-models-manager",
  "codex-models-manager-api",
+ "codex-network-proxy",
  "codex-plugin",
  "codex-protocol",
  "codex-responses-api-proxy",
  "codex-rmcp-client",
+ "codex-rollout",
  "codex-rollout-trace",
  "codex-sandboxing",
  "codex-state",
+ "codex-state-api",
  "codex-stdio-to-uds",
  "codex-terminal-detection",
+ "codex-thread-store",
  "codex-tui",
  "codex-utils-absolute-path",
  "codex-utils-cargo-bin",
@@ -2383,6 +2412,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
@@ -2418,6 +2448,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-client-identity"
+version = "0.0.0"
+dependencies = [
+ "codex-config-types",
+ "http 1.4.0",
+ "pretty_assertions",
+ "tracing",
+]
+
+[[package]]
 name = "codex-client-types"
 version = "0.0.0"
 dependencies = [
@@ -2426,7 +2466,6 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
  "tracing",
  "zstd 0.13.3",
 ]
@@ -2469,7 +2508,7 @@ dependencies = [
  "codex-cloud-tasks-client",
  "codex-cloud-tasks-mock-client",
  "codex-core",
- "codex-git-utils",
+ "codex-git-info",
  "codex-login",
  "codex-model-provider",
  "codex-tui",
@@ -2546,6 +2585,23 @@ name = "codex-collaboration-mode-templates"
 version = "0.0.0"
 
 [[package]]
+name = "codex-command-display"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "codex-protocol",
+ "codex-shell-utils",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "shlex",
+ "tree-sitter",
+ "tree-sitter-bash",
+ "which 8.0.0",
+]
+
+[[package]]
 name = "codex-command-runtime"
 version = "0.0.0"
 dependencies = [
@@ -2591,11 +2647,13 @@ dependencies = [
 name = "codex-config-edit"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
  "codex-config-types",
+ "codex-utils-absolute-path",
  "codex-utils-path",
+ "dunce",
  "pretty_assertions",
  "serde_json",
- "sha2",
  "tempfile",
  "tokio",
  "toml 0.9.11+spec-1.1.0",
@@ -2606,6 +2664,8 @@ dependencies = [
 name = "codex-config-loader"
 version = "0.0.0"
 dependencies = [
+ "codex-config-requirements",
+ "codex-config-state",
  "codex-model-provider-info",
  "codex-protocol",
  "codex-utils-absolute-path",
@@ -2642,7 +2702,6 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "codex-config-diagnostics",
- "codex-config-edit",
  "codex-config-loader",
  "codex-config-requirements",
  "codex-config-state",
@@ -2650,7 +2709,7 @@ dependencies = [
  "codex-config-types",
  "codex-features",
  "codex-file-system",
- "codex-git-utils",
+ "codex-git-info",
  "codex-model-provider-info",
  "codex-protocol",
  "codex-utils-absolute-path",
@@ -2714,13 +2773,13 @@ name = "codex-config-state"
 version = "0.0.0"
 dependencies = [
  "codex-config-diagnostics",
- "codex-config-edit",
  "codex-config-requirements",
  "codex-config-types",
  "codex-utils-absolute-path",
  "pretty_assertions",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "toml 0.9.11+spec-1.1.0",
@@ -2745,6 +2804,7 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "tokio",
  "toml 0.9.11+spec-1.1.0",
  "tracing",
 ]
@@ -2768,15 +2828,28 @@ name = "codex-connectors"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "codex-connectors-api",
+ "codex-connectors-types",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "urlencoding",
+]
+
+[[package]]
+name = "codex-connectors-api"
+version = "0.0.0"
+dependencies = [
  "codex-connectors-types",
  "pretty_assertions",
  "serde",
  "serde_json",
  "sha1",
  "tempfile",
- "tokio",
  "tracing",
- "urlencoding",
 ]
 
 [[package]]
@@ -2789,26 +2862,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-context-manager"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "codex-protocol",
+ "codex-utils-image",
+ "codex-utils-output-truncation",
+ "image",
+ "pretty_assertions",
+ "regex-lite",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "codex-context-usage"
+version = "0.0.0"
+dependencies = [
+ "codex-context-manager",
+ "codex-core-skills-api",
+ "codex-protocol",
+ "codex-utils-absolute-path",
+ "pretty_assertions",
+ "serde_json",
+]
+
+[[package]]
 name = "codex-core"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "arc-swap",
  "assert_cmd",
  "assert_matches",
  "async-channel",
  "async-trait",
  "base64 0.22.1",
- "bm25",
  "chrono",
+ "codex-agent-roles",
  "codex-agent-runtime",
  "codex-analytics-api",
  "codex-api",
+ "codex-api-auth",
  "codex-api-provider",
+ "codex-api-runtime-api",
  "codex-api-types",
  "codex-apply-patch",
  "codex-async-utils",
  "codex-auth-types",
+ "codex-client-identity",
+ "codex-client-types",
  "codex-code-mode-api",
  "codex-command-runtime",
  "codex-config",
@@ -2821,10 +2924,14 @@ dependencies = [
  "codex-config-state",
  "codex-config-toml",
  "codex-config-types",
- "codex-connectors",
+ "codex-connectors-api",
  "codex-connectors-types",
+ "codex-context-manager",
+ "codex-context-usage",
  "codex-core-plugins",
+ "codex-core-plugins-api",
  "codex-core-skills",
+ "codex-core-skills-api",
  "codex-default-client",
  "codex-exec-server",
  "codex-exec-server-api",
@@ -2835,14 +2942,18 @@ dependencies = [
  "codex-features",
  "codex-feedback-api",
  "codex-file-system",
- "codex-git-utils",
+ "codex-git-info",
+ "codex-guardian",
  "codex-hooks",
+ "codex-hooks-api",
  "codex-login",
  "codex-mcp",
+ "codex-mcp-runtime-api",
  "codex-mcp-tool-types",
  "codex-mcp-types",
- "codex-memories-read",
+ "codex-memories-read-api",
  "codex-metrics-api",
+ "codex-model-client",
  "codex-model-input",
  "codex-model-provider-api",
  "codex-model-provider-info",
@@ -2853,31 +2964,37 @@ dependencies = [
  "codex-openai-files",
  "codex-openai-files-api",
  "codex-otel",
+ "codex-permissions-runtime",
  "codex-plugin",
  "codex-plugin-types",
  "codex-protocol",
- "codex-response-debug-context",
+ "codex-realtime",
  "codex-rollout",
+ "codex-rollout-api",
  "codex-rollout-trace",
+ "codex-rollout-trace-api",
  "codex-sandboxing",
+ "codex-sandboxing-api",
+ "codex-session-telemetry-api",
  "codex-shell-command",
  "codex-shell-escalation",
+ "codex-shell-utils",
  "codex-state",
- "codex-terminal-detection",
+ "codex-state-api",
  "codex-test-binary-support",
  "codex-thread-store",
- "codex-tools",
+ "codex-thread-store-api",
+ "codex-tool-config",
+ "codex-tool-planning",
  "codex-trace-context",
  "codex-user-info",
  "codex-utils-absolute-path",
  "codex-utils-backoff",
- "codex-utils-cache",
  "codex-utils-cargo-bin",
  "codex-utils-home-dir",
  "codex-utils-image",
  "codex-utils-output-truncation",
  "codex-utils-path",
- "codex-utils-plugins",
  "codex-utils-pty",
  "codex-utils-stream-parser",
  "codex-utils-string",
@@ -2886,39 +3003,30 @@ dependencies = [
  "codex-workflow",
  "codex-workflow-api",
  "core_test_support",
- "csv",
  "ctor 0.6.3",
  "dirs",
  "dunce",
  "futures",
  "http 1.4.0",
- "iana-time-zone",
  "image",
- "indexmap 2.13.0",
  "insta",
  "libc",
  "maplit",
- "once_cell",
  "openssl-sys",
  "opentelemetry",
  "opentelemetry_sdk",
  "predicates",
  "pretty_assertions",
- "rand 0.9.3",
  "regex-lite",
  "reqwest",
- "rmcp",
  "serde",
  "serde_json",
- "serde_yaml",
  "serial_test",
- "sha1",
  "shlex",
  "similar",
  "tempfile",
  "test-case",
  "test-log",
- "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
@@ -2928,7 +3036,6 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "tracing-test",
- "url",
  "uuid",
  "walkdir",
  "which 8.0.0",
@@ -2943,15 +3050,20 @@ dependencies = [
  "codex-analytics-api",
  "codex-app-server-protocol",
  "codex-arg0",
+ "codex-code-mode-api",
  "codex-config-types",
  "codex-core",
  "codex-exec-server",
  "codex-extension-api",
  "codex-features",
  "codex-login",
+ "codex-model-provider",
  "codex-model-provider-info",
  "codex-models-manager-api",
  "codex-protocol",
+ "codex-rollout",
+ "codex-state-api",
+ "codex-thread-store",
  "codex-utils-absolute-path",
 ]
 
@@ -2964,20 +3076,61 @@ dependencies = [
  "codex-config",
  "codex-config-edit",
  "codex-config-local-loader",
+ "codex-config-state",
  "codex-config-types",
+ "codex-core-plugins-api",
  "codex-core-skills",
  "codex-file-system",
- "codex-git-utils",
- "codex-hooks",
+ "codex-git-info",
+ "codex-hooks-api",
  "codex-login",
- "codex-metrics-api",
- "codex-model-provider-api",
  "codex-plugin",
  "codex-plugin-types",
  "codex-protocol",
  "codex-utils-absolute-path",
  "codex-utils-plugins",
  "dirs",
+ "libc",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 0.9.11+spec-1.1.0",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "codex-core-plugins-api"
+version = "0.0.0"
+dependencies = [
+ "codex-config",
+ "codex-config-types",
+ "codex-plugin-types",
+ "codex-utils-absolute-path",
+ "toml 0.9.11+spec-1.1.0",
+]
+
+[[package]]
+name = "codex-core-plugins-remote"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "codex-api-auth",
+ "codex-auth-types",
+ "codex-config-edit",
+ "codex-config-types",
+ "codex-core-plugins",
+ "codex-default-client",
+ "codex-login",
+ "codex-metrics-api",
+ "codex-plugin",
+ "codex-plugin-types",
+ "codex-protocol",
+ "codex-utils-absolute-path",
+ "codex-utils-plugins",
  "flate2",
  "libc",
  "pretty_assertions",
@@ -3000,29 +3153,51 @@ name = "codex-core-skills"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "codex-api-auth",
+ "codex-auth-types",
  "codex-config",
  "codex-config-types",
+ "codex-core-skills-api",
+ "codex-default-client",
  "codex-file-system",
- "codex-login",
  "codex-metrics-api",
- "codex-model-provider-api",
+ "codex-plugin-manifest",
+ "codex-plugin-types",
  "codex-protocol",
  "codex-skills",
  "codex-utils-absolute-path",
+ "codex-utils-home-dir",
  "codex-utils-output-truncation",
- "codex-utils-plugins",
- "dirs",
  "dunce",
  "pretty_assertions",
  "serde",
  "serde_json",
- "serde_yaml",
  "shlex",
  "tempfile",
  "tokio",
  "toml 0.9.11+spec-1.1.0",
  "tracing",
  "zip 2.4.2",
+]
+
+[[package]]
+name = "codex-core-skills-api"
+version = "0.0.0"
+dependencies = [
+ "codex-config-types",
+ "codex-file-system",
+ "codex-metrics-api",
+ "codex-plugin-types",
+ "codex-protocol",
+ "codex-utils-absolute-path",
+ "codex-utils-output-truncation",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "shlex",
+ "tempfile",
+ "toml 0.9.11+spec-1.1.0",
+ "tracing",
 ]
 
 [[package]]
@@ -3042,15 +3217,25 @@ name = "codex-default-client"
 version = "0.0.0"
 dependencies = [
  "codex-client",
- "codex-config-types",
- "codex-terminal-detection",
- "os_info",
+ "codex-default-client-api",
  "pretty_assertions",
- "regex-lite",
  "reqwest",
  "tokio",
  "tracing",
  "wiremock",
+]
+
+[[package]]
+name = "codex-default-client-api"
+version = "0.0.0"
+dependencies = [
+ "codex-client-identity",
+ "codex-terminal-detection",
+ "http 1.4.0",
+ "os_info",
+ "pretty_assertions",
+ "regex-lite",
+ "tracing",
 ]
 
 [[package]]
@@ -3067,15 +3252,19 @@ dependencies = [
  "codex-cloud-requirements",
  "codex-config-diagnostics",
  "codex-config-loader",
+ "codex-config-local-loader",
  "codex-core",
+ "codex-execpolicy-loader",
  "codex-features",
  "codex-feedback",
- "codex-git-utils",
+ "codex-git-info",
  "codex-login",
  "codex-model-provider-info",
  "codex-otel",
  "codex-otel-init",
  "codex-protocol",
+ "codex-rollout",
+ "codex-sandboxing",
  "codex-utils-absolute-path",
  "codex-utils-cargo-bin",
  "codex-utils-cli",
@@ -3119,6 +3308,7 @@ dependencies = [
  "codex-jsonrpc-types",
  "codex-protocol",
  "codex-sandboxing",
+ "codex-sandboxing-api",
  "codex-test-binary-support",
  "codex-utils-absolute-path",
  "codex-utils-pty",
@@ -3231,6 +3421,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-execpolicy-loader"
+version = "0.0.0"
+dependencies = [
+ "codex-config-state",
+ "codex-config-types",
+ "codex-core",
+ "codex-execpolicy",
+ "codex-execpolicy-api",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "codex-experimental-api-macros"
 version = "0.0.0"
 dependencies = [
@@ -3244,7 +3448,7 @@ name = "codex-extension-api"
 version = "0.0.0"
 dependencies = [
  "codex-protocol",
- "codex-tools",
+ "codex-tool-types",
 ]
 
 [[package]]
@@ -3335,7 +3539,6 @@ dependencies = [
 name = "codex-file-subscription"
 version = "0.0.0"
 dependencies = [
- "async-trait",
  "chrono",
  "chrono-tz",
  "codex-extension-api",
@@ -3357,7 +3560,6 @@ dependencies = [
 name = "codex-file-system"
 version = "0.0.0"
 dependencies = [
- "async-trait",
  "codex-protocol",
  "codex-utils-absolute-path",
  "serde",
@@ -3375,35 +3577,61 @@ dependencies = [
 ]
 
 [[package]]
-name = "codex-git-utils"
+name = "codex-git-baseline"
 version = "0.0.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "gix",
+ "pretty_assertions",
+ "similar",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "codex-git-info"
+version = "0.0.0"
+dependencies = [
  "codex-file-system",
  "codex-protocol",
  "codex-utils-absolute-path",
  "futures",
- "gix",
  "once_cell",
  "pretty_assertions",
- "regex",
  "schemars 0.8.22",
  "serde",
- "similar",
+ "sha1",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "ts-rs",
- "walkdir",
+]
+
+[[package]]
+name = "codex-git-utils"
+version = "0.0.0"
+dependencies = [
+ "codex-git-info",
+ "once_cell",
+ "pretty_assertions",
+ "regex",
+ "tempfile",
 ]
 
 [[package]]
 name = "codex-guardian"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
+ "codex-analytics-api",
  "codex-extension-api",
  "codex-protocol",
+ "codex-shell-utils",
+ "codex-utils-absolute-path",
+ "codex-utils-output-truncation",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3414,6 +3642,7 @@ dependencies = [
  "chrono",
  "codex-config",
  "codex-config-types",
+ "codex-hooks-api",
  "codex-plugin-types",
  "codex-protocol",
  "codex-utils-absolute-path",
@@ -3430,6 +3659,22 @@ dependencies = [
  "toml 0.9.11+spec-1.1.0",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "codex-hooks-api"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "codex-config",
+ "codex-config-types",
+ "codex-plugin-types",
+ "codex-protocol",
+ "codex-utils-absolute-path",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "toml 0.9.11+spec-1.1.0",
 ]
 
 [[package]]
@@ -3511,6 +3756,7 @@ dependencies = [
  "codex-config-types",
  "codex-default-client",
  "codex-keyring-store",
+ "codex-model-provider-api",
  "codex-model-provider-info",
  "codex-protocol",
  "codex-utils-template",
@@ -3542,15 +3788,13 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "async-channel",
- "codex-api-provider",
  "codex-async-utils",
  "codex-config-types",
  "codex-exec-server-api",
- "codex-login",
+ "codex-mcp-runtime-api",
  "codex-mcp-tool-types",
  "codex-mcp-types",
  "codex-metrics-api",
- "codex-model-provider-api",
  "codex-plugin-types",
  "codex-protocol",
  "codex-rmcp-client",
@@ -3571,23 +3815,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-mcp-runtime-api"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "codex-config-types",
+ "codex-exec-server-api",
+ "codex-mcp-tool-types",
+ "codex-mcp-types",
+ "codex-protocol",
+ "http 1.4.0",
+ "serde_json",
+ "tokio-util",
+]
+
+[[package]]
 name = "codex-mcp-server"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "codex-api",
  "codex-arg0",
  "codex-code-mode",
  "codex-config-types",
  "codex-core",
+ "codex-core-plugins",
+ "codex-core-skills",
  "codex-exec-server",
+ "codex-execpolicy-loader",
  "codex-extension-api",
  "codex-features",
+ "codex-hooks",
  "codex-login",
+ "codex-mcp",
+ "codex-memories-read",
  "codex-model-provider",
+ "codex-network-proxy",
  "codex-openai-files",
+ "codex-otel",
  "codex-otel-init",
  "codex-protocol",
+ "codex-rollout",
+ "codex-sandboxing",
  "codex-shell-command",
+ "codex-state-api",
+ "codex-terminal-detection",
+ "codex-thread-store",
  "codex-utils-absolute-path",
  "codex-utils-cli",
  "codex-utils-json-to-toml",
@@ -3613,7 +3887,7 @@ name = "codex-mcp-tool-types"
 version = "0.0.0"
 dependencies = [
  "codex-protocol",
- "rmcp",
+ "codex-utils-output-truncation",
  "serde",
  "serde_json",
 ]
@@ -3622,10 +3896,17 @@ dependencies = [
 name = "codex-mcp-types"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
+ "codex-config-types",
+ "codex-mcp-tool-types",
+ "codex-plugin-types",
  "codex-protocol",
+ "http 1.4.0",
+ "pretty_assertions",
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "tracing",
  "ts-rs",
 ]
 
@@ -3633,7 +3914,6 @@ dependencies = [
 name = "codex-memories-extension"
 version = "0.0.0"
 dependencies = [
- "async-trait",
  "codex-core",
  "codex-extension-api",
  "codex-features",
@@ -3671,14 +3951,22 @@ dependencies = [
 name = "codex-memories-read"
 version = "0.0.0"
 dependencies = [
- "codex-protocol",
- "codex-shell-command",
+ "codex-memories-read-api",
  "codex-utils-absolute-path",
  "codex-utils-output-truncation",
  "codex-utils-template",
  "pretty_assertions",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "codex-memories-read-api"
+version = "0.0.0"
+dependencies = [
+ "codex-protocol",
+ "codex-utils-absolute-path",
+ "pretty_assertions",
 ]
 
 [[package]]
@@ -3692,7 +3980,7 @@ dependencies = [
  "codex-config-types",
  "codex-core",
  "codex-features",
- "codex-git-utils",
+ "codex-git-baseline",
  "codex-login",
  "codex-models-manager",
  "codex-otel",
@@ -3700,6 +3988,7 @@ dependencies = [
  "codex-rollout",
  "codex-rollout-trace",
  "codex-secrets",
+ "codex-session-telemetry-api",
  "codex-state",
  "codex-utils-absolute-path",
  "codex-utils-output-truncation",
@@ -3738,6 +4027,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-model-client"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "codex-api",
+ "codex-api-provider",
+ "codex-api-runtime-api",
+ "codex-api-types",
+ "codex-auth-types",
+ "codex-client-identity",
+ "codex-client-types",
+ "codex-feedback-api",
+ "codex-login",
+ "codex-model-provider-api",
+ "codex-model-provider-info",
+ "codex-models-manager-api",
+ "codex-otel",
+ "codex-protocol",
+ "codex-rollout-trace",
+ "codex-rollout-trace-api",
+ "codex-session-telemetry-api",
+ "codex-tool-planning",
+ "codex-trace-context",
+ "futures",
+ "http 1.4.0",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "codex-model-input"
 version = "0.0.0"
 dependencies = [
@@ -3755,9 +4080,12 @@ dependencies = [
  "async-trait",
  "codex-api",
  "codex-api-provider",
+ "codex-api-types",
  "codex-auth-types",
  "codex-aws-auth",
  "codex-client",
+ "codex-client-types",
+ "codex-default-client",
  "codex-feedback-api",
  "codex-login",
  "codex-model-provider-api",
@@ -3766,7 +4094,6 @@ dependencies = [
  "codex-models-manager-api",
  "codex-otel",
  "codex-protocol",
- "codex-response-debug-context",
  "http 1.4.0",
  "pretty_assertions",
  "serde_json",
@@ -3779,10 +4106,9 @@ dependencies = [
 name = "codex-model-provider-api"
 version = "0.0.0"
 dependencies = [
- "codex-agent-identity",
+ "codex-api-auth",
  "codex-api-provider",
  "codex-auth-types",
- "codex-login",
  "codex-model-provider-info",
  "codex-models-manager-api",
  "codex-protocol",
@@ -3814,6 +4140,7 @@ dependencies = [
  "codex-auth-types",
  "codex-collaboration-mode-templates",
  "codex-login",
+ "codex-model-provider-api",
  "codex-models-manager-api",
  "codex-otel",
  "codex-protocol",
@@ -3869,6 +4196,7 @@ dependencies = [
 name = "codex-network-proxy-api"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
  "serde",
 ]
 
@@ -3915,7 +4243,7 @@ dependencies = [
 name = "codex-openai-files-api"
 version = "0.0.0"
 dependencies = [
- "codex-api-provider",
+ "http 1.4.0",
  "serde",
 ]
 
@@ -3929,6 +4257,7 @@ dependencies = [
  "codex-config-types",
  "codex-metrics-api",
  "codex-protocol",
+ "codex-session-telemetry-api",
  "codex-trace-context",
  "codex-utils-absolute-path",
  "codex-utils-string",
@@ -3956,7 +4285,7 @@ name = "codex-otel-init"
 version = "0.0.0"
 dependencies = [
  "codex-config-types",
- "codex-default-client",
+ "codex-default-client-api",
  "codex-otel",
  "codex-rollout",
  "codex-state",
@@ -3967,7 +4296,10 @@ dependencies = [
 name = "codex-permissions-runtime"
 version = "0.0.0"
 dependencies = [
+ "codex-execpolicy-api",
  "codex-protocol",
+ "codex-shell-command",
+ "codex-shell-utils",
  "codex-utils-absolute-path",
  "globset",
  "pretty_assertions",
@@ -3978,10 +4310,19 @@ dependencies = [
 name = "codex-plugin"
 version = "0.0.0"
 dependencies = [
- "codex-config-types",
  "codex-plugin-types",
+]
+
+[[package]]
+name = "codex-plugin-manifest"
+version = "0.0.0"
+dependencies = [
+ "codex-file-system",
  "codex-utils-absolute-path",
- "codex-utils-plugins",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -3992,7 +4333,6 @@ dependencies = [
  "codex-utils-absolute-path",
  "schemars 0.8.22",
  "serde",
- "thiserror 2.0.18",
  "ts-rs",
 ]
 
@@ -4009,6 +4349,7 @@ name = "codex-protocol"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "codex-execpolicy",
  "codex-network-proxy-api",
@@ -4021,7 +4362,6 @@ dependencies = [
  "seccompiler",
  "serde",
  "serde_json",
- "serde_with",
  "strum 0.27.2",
  "strum_macros 0.28.0",
  "tempfile",
@@ -4029,6 +4369,30 @@ dependencies = [
  "tracing",
  "ts-rs",
  "uuid",
+]
+
+[[package]]
+name = "codex-realtime"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "codex-api-provider",
+ "codex-api-types",
+ "codex-auth-types",
+ "codex-client-identity",
+ "codex-login",
+ "codex-model-client",
+ "codex-model-provider-api",
+ "codex-model-provider-info",
+ "codex-protocol",
+ "codex-user-info",
+ "http 1.4.0",
+ "pretty_assertions",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -4044,11 +4408,7 @@ dependencies = [
 name = "codex-response-debug-context"
 version = "0.0.0"
 dependencies = [
- "base64 0.22.1",
- "codex-client-types",
- "http 1.4.0",
- "pretty_assertions",
- "serde_json",
+ "codex-api-types",
 ]
 
 [[package]]
@@ -4076,12 +4436,12 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
- "codex-api-provider",
  "codex-client",
  "codex-config-types",
  "codex-exec-server-api",
  "codex-exec-server-protocol",
  "codex-keyring-store",
+ "codex-mcp-runtime-api",
  "codex-mcp-types",
  "codex-protocol",
  "codex-utils-cargo-bin",
@@ -4115,11 +4475,12 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "codex-default-client-api",
  "codex-file-search",
- "codex-git-utils",
- "codex-login",
+ "codex-git-info",
  "codex-metrics-api",
  "codex-protocol",
+ "codex-rollout-api",
  "codex-state",
  "codex-utils-path",
  "codex-utils-string",
@@ -4134,7 +4495,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-rollout-api"
+version = "0.0.0"
+dependencies = [
+ "codex-context-manager",
+ "codex-protocol",
+ "pretty_assertions",
+ "serde_json",
+]
+
+[[package]]
 name = "codex-rollout-trace"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "codex-code-mode-api",
+ "codex-protocol",
+ "codex-rollout-trace-api",
+ "http 1.4.0",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "codex-rollout-trace-api"
 version = "0.0.0"
 dependencies = [
  "anyhow",
@@ -4157,8 +4545,8 @@ dependencies = [
  "async-trait",
  "codex-network-proxy",
  "codex-network-proxy-api",
- "codex-permissions-runtime",
  "codex-protocol",
+ "codex-sandboxing-api",
  "codex-utils-absolute-path",
  "dunce",
  "libc",
@@ -4173,13 +4561,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-sandboxing-api"
+version = "0.0.0"
+dependencies = [
+ "codex-network-proxy-api",
+ "codex-permissions-runtime",
+ "codex-protocol",
+ "codex-utils-absolute-path",
+ "dunce",
+ "pretty_assertions",
+ "tempfile",
+]
+
+[[package]]
 name = "codex-secrets"
 version = "0.0.0"
 dependencies = [
  "age",
  "anyhow",
  "base64 0.22.1",
- "codex-git-utils",
+ "codex-git-info",
  "codex-keyring-store",
  "keyring",
  "pretty_assertions",
@@ -4194,23 +4595,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-session-telemetry-api"
+version = "0.0.0"
+dependencies = [
+ "codex-api-types",
+ "codex-auth-types",
+ "codex-metrics-api",
+ "codex-protocol",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "codex-shell-command"
 version = "0.0.0"
 dependencies = [
- "anyhow",
- "base64 0.22.1",
- "codex-protocol",
+ "codex-command-display",
+ "codex-shell-utils",
  "codex-utils-absolute-path",
  "once_cell",
  "pretty_assertions",
  "regex",
- "serde",
- "serde_json",
  "shlex",
- "tree-sitter",
- "tree-sitter-bash",
  "url",
- "which 8.0.0",
 ]
 
 [[package]]
@@ -4218,7 +4625,6 @@ name = "codex-shell-escalation"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "codex-protocol",
  "codex-utils-absolute-path",
  "libc",
@@ -4244,6 +4650,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-shell-utils"
+version = "0.0.0"
+dependencies = [
+ "pretty_assertions",
+ "shlex",
+ "which 8.0.0",
+]
+
+[[package]]
 name = "codex-skills"
 version = "0.0.0"
 dependencies = [
@@ -4258,18 +4673,30 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "chrono",
- "codex-git-utils",
+ "codex-git-info",
  "codex-protocol",
+ "codex-state-api",
  "log",
  "pretty_assertions",
  "serde",
  "serde_json",
  "sqlx",
- "strum 0.27.2",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "codex-state-api"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "codex-protocol",
+ "serde",
+ "serde_json",
+ "strum 0.27.2",
 ]
 
 [[package]]
@@ -4329,12 +4756,13 @@ dependencies = [
 name = "codex-thread-store"
 version = "0.0.0"
 dependencies = [
- "async-trait",
  "chrono",
- "codex-git-utils",
+ "codex-git-info",
  "codex-protocol",
  "codex-rollout",
+ "codex-rollout-api",
  "codex-state",
+ "codex-thread-store-api",
  "codex-utils-path",
  "pretty_assertions",
  "serde",
@@ -4347,23 +4775,62 @@ dependencies = [
 ]
 
 [[package]]
-name = "codex-tools"
+name = "codex-thread-store-api"
 version = "0.0.0"
 dependencies = [
- "async-trait",
- "codex-code-mode-api",
- "codex-connectors-types",
+ "chrono",
+ "codex-protocol",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "codex-tool-config"
+version = "0.0.0"
+dependencies = [
  "codex-features",
  "codex-protocol",
  "codex-utils-absolute-path",
  "codex-utils-pty",
+ "tracing",
+]
+
+[[package]]
+name = "codex-tool-planning"
+version = "0.0.0"
+dependencies = [
+ "codex-code-mode-api",
+ "codex-connectors-types",
+ "codex-features",
+ "codex-mcp-tool-types",
+ "codex-protocol",
+ "codex-tool-config",
+ "codex-tool-types",
+ "codex-utils-absolute-path",
+ "codex-utils-pty",
  "codex-utils-string",
  "pretty_assertions",
- "rmcp",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "codex-tool-types"
+version = "0.0.0"
+dependencies = [
+ "codex-protocol",
+ "codex-utils-string",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "codex-tools"
+version = "0.0.0"
+dependencies = [
+ "codex-tool-planning",
 ]
 
 [[package]]
@@ -4399,6 +4866,7 @@ dependencies = [
  "codex-config-diagnostics",
  "codex-config-edit",
  "codex-config-loader",
+ "codex-config-local-loader",
  "codex-config-requirements",
  "codex-config-state",
  "codex-config-types",
@@ -4409,11 +4877,12 @@ dependencies = [
  "codex-features",
  "codex-feedback",
  "codex-file-search",
- "codex-git-utils",
+ "codex-git-info",
  "codex-install-context",
  "codex-login",
  "codex-mcp",
  "codex-message-history",
+ "codex-metrics-api",
  "codex-model-provider",
  "codex-model-provider-info",
  "codex-models-manager",
@@ -4425,8 +4894,10 @@ dependencies = [
  "codex-rollout",
  "codex-sandboxing",
  "codex-shell-command",
+ "codex-shell-utils",
  "codex-state",
  "codex-terminal-detection",
+ "codex-thread-store",
  "codex-utils-absolute-path",
  "codex-utils-approval-presets",
  "codex-utils-cargo-bin",
@@ -4512,6 +4983,8 @@ dependencies = [
 name = "codex-user-info"
 version = "0.0.0"
 dependencies = [
+ "iana-time-zone",
+ "libc",
  "whoami",
 ]
 
@@ -4544,15 +5017,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "codex-utils-cache"
-version = "0.0.0"
-dependencies = [
- "lru 0.16.3",
- "sha1",
- "tokio",
-]
-
-[[package]]
 name = "codex-utils-cargo-bin"
 version = "0.0.0"
 dependencies = [
@@ -4567,7 +5031,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "codex-protocol",
- "codex-shell-command",
+ "codex-shell-utils",
  "pretty_assertions",
  "serde",
  "toml 0.9.11+spec-1.1.0",
@@ -4596,11 +5060,14 @@ name = "codex-utils-image"
 version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
- "codex-utils-cache",
+ "codex-utils-string",
  "image",
+ "lru 0.16.3",
  "mime_guess",
+ "sha1",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -4644,8 +5111,10 @@ dependencies = [
 name = "codex-utils-plugins"
 version = "0.0.0"
 dependencies = [
+ "codex-default-client-api",
  "codex-file-system",
- "codex-login",
+ "codex-plugin-manifest",
+ "codex-plugin-types",
  "codex-utils-absolute-path",
  "serde",
  "serde_json",
@@ -4718,7 +5187,6 @@ name = "codex-utils-string"
 version = "0.0.0"
 dependencies = [
  "pretty_assertions",
- "regex-lite",
  "serde",
  "serde_json",
 ]
@@ -4747,8 +5215,8 @@ dependencies = [
  "chrono",
  "codex-metrics-api",
  "codex-otel",
- "codex-permissions-runtime",
  "codex-protocol",
+ "codex-sandboxing-api",
  "codex-utils-absolute-path",
  "codex-utils-pty",
  "codex-utils-string",
@@ -4786,7 +5254,6 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "serde_json",
- "serde_yaml",
  "tempfile",
 ]
 
@@ -5022,13 +5489,17 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "base64 0.22.1",
+ "codex-api",
  "codex-arg0",
+ "codex-auth-types",
  "codex-code-mode-api",
  "codex-config-edit",
  "codex-config-loader",
  "codex-config-requirements",
  "codex-config-state",
  "codex-core",
+ "codex-core-plugins-api",
+ "codex-core-skills-api",
  "codex-exec-server",
  "codex-exec-server-api",
  "codex-extension-api",
@@ -5036,10 +5507,17 @@ dependencies = [
  "codex-file-system",
  "codex-hooks",
  "codex-login",
+ "codex-mcp",
+ "codex-memories-read-api",
  "codex-model-provider-info",
  "codex-models-manager",
+ "codex-network-proxy",
  "codex-openai-files",
+ "codex-otel",
  "codex-protocol",
+ "codex-rollout",
+ "codex-sandboxing",
+ "codex-thread-store",
  "codex-utils-absolute-path",
  "codex-utils-cargo-bin",
  "codex-workflow",
@@ -5413,16 +5891,6 @@ dependencies = [
 
 [[package]]
 name = "darling"
-version = "0.20.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc7f46116c46ff9ab3eb1597a45688b6715c6e628b5c133e288e709a29bcb4ee"
-dependencies = [
- "darling_core 0.20.11",
- "darling_macro 0.20.11",
-]
-
-[[package]]
-name = "darling"
 version = "0.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9cdf337090841a411e2a7f3deb9187445851f91b309c0c0a29e05f74a00a48c0"
@@ -5439,20 +5907,6 @@ checksum = "25ae13da2f202d56bd7f91c25fba009e7717a1e4a1cc98a76d844b65ae912e9d"
 dependencies = [
  "darling_core 0.23.0",
  "darling_macro 0.23.0",
-]
-
-[[package]]
-name = "darling_core"
-version = "0.20.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d00b9596d185e565c2207a0b01f8bd1a135483d02d9b7b0a54b11da8d53412e"
-dependencies = [
- "fnv",
- "ident_case",
- "proc-macro2",
- "quote",
- "strsim 0.11.1",
- "syn 2.0.114",
 ]
 
 [[package]]
@@ -5479,17 +5933,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "strsim 0.11.1",
- "syn 2.0.114",
-]
-
-[[package]]
-name = "darling_macro"
-version = "0.20.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc34b93ccb385b40dc71c6fceac4b2ad23662c7eeb248cf10d529b7e055b6ead"
-dependencies = [
- "darling_core 0.20.11",
- "quote",
  "syn 2.0.114",
 ]
 
@@ -5722,12 +6165,6 @@ dependencies = [
  "syn 2.0.114",
  "unicode-xid",
 ]
-
-[[package]]
-name = "deunicode"
-version = "1.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 
 [[package]]
 name = "diff"
@@ -11699,16 +12136,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust-stemmers"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e46a2036019fdb888131db7a4c847a1063a7493f971ed94ea82c67eada63ca54"
-dependencies = [
- "serde",
- "serde_derive",
-]
-
-[[package]]
 name = "rustc-demangle"
 version = "0.1.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12992,15 +13419,6 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
-
-[[package]]
-name = "stop-words"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "645a3d441ccf4bf47f2e4b7681461986681a6eeea9937d4c3bc9febd61d17c71"
-dependencies = [
- "serde_json",
-]
 
 [[package]]
 name = "strck"

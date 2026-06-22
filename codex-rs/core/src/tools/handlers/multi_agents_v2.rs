@@ -23,7 +23,7 @@ use codex_protocol::protocol::CollabListAgentsBeginEvent;
 use codex_protocol::protocol::CollabListAgentsEndEvent;
 use codex_protocol::protocol::CollabListedAgent;
 use codex_protocol::user_input::UserInput;
-use codex_tools::ToolName;
+use codex_tool_planning::ToolName;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;

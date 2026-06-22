@@ -1,6 +1,10 @@
 use codex_utils_absolute_path::AbsolutePathBuf;
-use dirs::home_dir;
+use dirs::home_dir as dirs_home_dir;
 use std::path::PathBuf;
+
+pub fn home_dir() -> Option<PathBuf> {
+    dirs_home_dir()
+}
 
 /// Returns the path to the Codex configuration directory, which can be
 /// specified by the `CODEX_HOME` environment variable. If not set, defaults to
@@ -65,8 +69,8 @@ fn find_codex_home_from_env(codex_home_env: Option<&str>) -> std::io::Result<Abs
 #[cfg(test)]
 mod tests {
     use super::find_codex_home_from_env;
+    use super::home_dir;
     use codex_utils_absolute_path::AbsolutePathBuf;
-    use dirs::home_dir;
     use pretty_assertions::assert_eq;
     use std::fs;
     use std::io::ErrorKind;

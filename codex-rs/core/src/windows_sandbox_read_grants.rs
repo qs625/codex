@@ -1,6 +1,7 @@
 use crate::windows_sandbox::run_setup_refresh_with_extra_read_roots;
 use anyhow::Result;
 use codex_protocol::protocol::SandboxPolicy;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
@@ -23,7 +24,9 @@ pub fn grant_read_root_non_elevated(
         anyhow::bail!("path must be a directory: {}", read_root.display());
     }
 
-    let canonical_root = dunce::canonicalize(read_root)?;
+    let canonical_root = AbsolutePathBuf::from_absolute_path(read_root)?
+        .canonicalize()?
+        .into_path_buf();
     run_setup_refresh_with_extra_read_roots(
         policy,
         policy_cwd,

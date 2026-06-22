@@ -8,27 +8,7 @@ version.workspace = true
 workspace = true
 
 [dependencies]
-async-trait = { workspace = true }
-codex-code-mode-api = { workspace = true }
-codex-connectors-types = { workspace = true }
-codex-features = { workspace = true }
-codex-protocol = { workspace = true }
-codex-utils-absolute-path = { workspace = true }
-codex-utils-pty = { workspace = true }
-codex-utils-string = { workspace = true }
-rmcp = { workspace = true, default-features = false, features = [
-    "base64",
-    "macros",
-    "schemars",
-    "server",
-] }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-thiserror = { workspace = true }
-tracing = { workspace = true }
-
-[dev-dependencies]
-pretty_assertions = { workspace = true }
+codex-tool-planning = { workspace = true }
 
 [lib]
 doctest = false

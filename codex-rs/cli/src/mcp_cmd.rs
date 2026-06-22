@@ -6,23 +6,23 @@ use anyhow::Result;
 use anyhow::anyhow;
 use anyhow::bail;
 use clap::ArgGroup;
+use codex_config_edit::ConfigEditsBuilder;
+use codex_config_edit::load_global_mcp_servers;
 use codex_config_types::AppToolApproval;
 use codex_config_types::McpServerConfig;
 use codex_config_types::McpServerTransportConfig;
 use codex_config_types::OAuthCredentialsStoreMode;
 use codex_core::McpManager;
 use codex_core::config::Config;
-use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::find_codex_home;
-use codex_core::config::load_global_mcp_servers;
 use codex_core_plugins::PluginsManager;
-use codex_mcp::McpOAuthLoginSupport;
-use codex_mcp::ResolvedMcpOAuthScopes;
 use codex_mcp::compute_auth_statuses;
 use codex_mcp::discover_supported_scopes;
 use codex_mcp::oauth_login_support;
-use codex_mcp::resolve_oauth_scopes;
 use codex_mcp::should_retry_without_scopes;
+use codex_mcp_types::McpOAuthLoginSupport;
+use codex_mcp_types::ResolvedMcpOAuthScopes;
+use codex_mcp_types::resolve_oauth_scopes;
 use codex_protocol::protocol::McpAuthStatus;
 use codex_rmcp_client::delete_oauth_tokens;
 use codex_rmcp_client::perform_oauth_login;
@@ -497,7 +497,7 @@ async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) ->
     let auth_statuses = compute_auth_statuses(
         effective_mcp_servers.iter(),
         config.mcp_oauth_credentials_store_mode,
-        /*auth*/ None,
+        /*host_owned_codex_apps_enabled*/ false,
     )
     .await;
 

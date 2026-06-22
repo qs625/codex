@@ -9,7 +9,8 @@ use crate::compact::content_items_to_text;
 use crate::event_mapping::is_contextual_user_message_content;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use codex_default_client::build_reqwest_client;
+use codex_api_auth::auth_provider_from_auth_snapshot;
+use codex_api_types::ArcMonitorRuntimeRequest;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::ResponseItem;
 
@@ -101,8 +102,8 @@ pub(crate) async fn monitor_action(
     action: serde_json::Value,
     protection_client_callsite: &'static str,
 ) -> ArcMonitorOutcome {
-    let auth = match turn_context.auth_manager.as_ref() {
-        Some(auth_manager) => match auth_manager.auth().await {
+    let auth = match turn_context.auth_runtime.as_ref() {
+        Some(auth_runtime) => match auth_runtime.auth().await {
             Some(auth) if auth.uses_codex_backend() => Some(auth),
             _ => None,
         },
@@ -128,35 +129,53 @@ pub(crate) async fn monitor_action(
     };
     let body =
         build_arc_monitor_request(sess, turn_context, action, protection_client_callsite).await;
-    let client = build_reqwest_client();
-    let mut request = client.post(&url).timeout(ARC_MONITOR_TIMEOUT).json(&body);
-    if let Some(token) = env_token {
-        request = request.bearer_auth(token);
-    } else if let Some(auth) = auth.as_ref() {
-        request = request
-            .headers(codex_model_provider_api::auth_provider_from_auth(auth).to_auth_headers());
-    }
+    let body = match serde_json::to_value(&body) {
+        Ok(body) => body,
+        Err(err) => {
+            warn!(error = %err, %url, "failed to serialize safety monitor request");
+            return ArcMonitorOutcome::Ok;
+        }
+    };
+    let auth_headers: http::HeaderMap = if env_token.is_none() {
+        auth.as_ref()
+            .map(auth_provider_from_auth_snapshot)
+            .map(|auth_provider| auth_provider.to_auth_headers())
+            .unwrap_or_default()
+    } else {
+        http::HeaderMap::new()
+    };
 
-    let response = match request.send().await {
+    let response = match sess
+        .services
+        .api_runtime_factory
+        .arc_monitor_client()
+        .send(ArcMonitorRuntimeRequest {
+            url: url.clone(),
+            body,
+            bearer_token: env_token,
+            auth_headers,
+            timeout: ARC_MONITOR_TIMEOUT,
+        })
+        .await
+    {
         Ok(response) => response,
         Err(err) => {
             warn!(error = %err, %url, "safety monitor request failed");
             return ArcMonitorOutcome::Ok;
         }
     };
-    let status = response.status();
+    let status = response.status;
     if !status.is_success() {
-        let response_text = response.text().await.unwrap_or_default();
         warn!(
             %status,
             %url,
-            response_text,
+            response_text = response.body_text,
             "safety monitor returned non-success status"
         );
         return ArcMonitorOutcome::Ok;
     }
 
-    let response = match response.json::<ArcMonitorResult>().await {
+    let response = match serde_json::from_str::<ArcMonitorResult>(&response.body_text) {
         Ok(response) => response,
         Err(err) => {
             warn!(error = %err, %url, "failed to parse safety monitor response");

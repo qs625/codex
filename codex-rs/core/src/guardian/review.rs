@@ -636,7 +636,7 @@ pub(super) async fn run_guardian_review_session(
     external_cancel: Option<CancellationToken>,
 ) -> (GuardianReviewOutcome, GuardianReviewAnalyticsResult) {
     let live_network_config = match session.services.network_proxy.as_ref() {
-        Some(network_proxy) => match network_proxy.proxy().current_cfg().await {
+        Some(network_proxy) => match network_proxy.proxy().current_config().await {
             Ok(config) => Some(config),
             Err(err) => {
                 return (

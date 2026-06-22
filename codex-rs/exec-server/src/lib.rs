@@ -43,6 +43,7 @@ pub use codex_file_system::CopyOptions;
 pub use codex_file_system::CreateDirectoryOptions;
 pub use codex_file_system::ExecutorFileSystem;
 pub use codex_file_system::FileMetadata;
+pub use codex_file_system::FileSystemFuture;
 pub use codex_file_system::FileSystemResult;
 pub use codex_file_system::FileSystemSandboxContext;
 pub use codex_file_system::ReadDirectoryEntry;

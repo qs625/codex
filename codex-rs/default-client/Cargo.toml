@@ -14,14 +14,11 @@ workspace = true
 
 [dependencies]
 codex-client = { workspace = true }
-codex-config-types = { workspace = true }
-codex-terminal-detection = { workspace = true }
-os_info = { workspace = true }
+codex-default-client-api = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
-regex-lite = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 wiremock = { workspace = true }

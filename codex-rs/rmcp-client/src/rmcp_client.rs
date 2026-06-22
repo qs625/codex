@@ -11,10 +11,10 @@ use std::time::Instant;
 
 use anyhow::Result;
 use anyhow::anyhow;
-use codex_api_provider::SharedAuthProvider;
 use codex_client::build_reqwest_client_with_custom_ca;
 use codex_config_types::McpServerEnvVar;
 use codex_exec_server_api::HttpClient;
+use codex_mcp_runtime_api::SharedMcpAuthHeaderProvider;
 use codex_mcp_types::ElicitationAction;
 use codex_mcp_types::ElicitationResponse;
 use futures::FutureExt;
@@ -117,7 +117,7 @@ enum TransportRecipe {
         env_http_headers: Option<HashMap<String, String>>,
         store_mode: OAuthCredentialsStoreMode,
         http_client: Arc<dyn HttpClient>,
-        auth_provider: Option<SharedAuthProvider>,
+        auth_provider: Option<SharedMcpAuthHeaderProvider>,
     },
 }
 
@@ -333,7 +333,7 @@ impl RmcpClient {
         env_http_headers: Option<HashMap<String, String>>,
         store_mode: OAuthCredentialsStoreMode,
         http_client: Arc<dyn HttpClient>,
-        auth_provider: Option<SharedAuthProvider>,
+        auth_provider: Option<SharedMcpAuthHeaderProvider>,
     ) -> Result<Self> {
         let transport_recipe = TransportRecipe::StreamableHttp {
             server_name: server_name.to_string(),

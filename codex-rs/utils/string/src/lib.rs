@@ -51,17 +51,41 @@ pub fn sanitize_metric_tag_value(value: &str) -> String {
 }
 
 /// Find all UUIDs in a string.
-#[allow(clippy::unwrap_used)]
 pub fn find_uuids(s: &str) -> Vec<String> {
-    static RE: std::sync::OnceLock<regex_lite::Regex> = std::sync::OnceLock::new();
-    let re = RE.get_or_init(|| {
-        regex_lite::Regex::new(
-            r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}",
-        )
-        .unwrap() // Unwrap is safe thanks to the tests.
-    });
+    const UUID_LEN: usize = 36;
 
-    re.find_iter(s).map(|m| m.as_str().to_string()).collect()
+    let bytes = s.as_bytes();
+    let mut matches = Vec::new();
+    let mut index = 0;
+    while index + UUID_LEN <= bytes.len() {
+        let candidate = &bytes[index..index + UUID_LEN];
+        if is_uuid_bytes(candidate) {
+            matches.push(s[index..index + UUID_LEN].to_string());
+            index += UUID_LEN;
+        } else {
+            index += 1;
+        }
+    }
+    matches
+}
+
+fn is_uuid_bytes(bytes: &[u8]) -> bool {
+    bytes.len() == 36
+        && is_hex_range(bytes, 0..8)
+        && bytes[8] == b'-'
+        && is_hex_range(bytes, 9..13)
+        && bytes[13] == b'-'
+        && is_hex_range(bytes, 14..18)
+        && bytes[18] == b'-'
+        && is_hex_range(bytes, 19..23)
+        && bytes[23] == b'-'
+        && is_hex_range(bytes, 24..36)
+}
+
+fn is_hex_range(bytes: &[u8], range: std::ops::Range<usize>) -> bool {
+    range
+        .map(|index| bytes[index])
+        .all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Convert a markdown-style `#L..` location suffix into a terminal-friendly

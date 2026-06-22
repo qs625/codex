@@ -12,7 +12,6 @@ use crate::reasons::REASON_DENIED;
 use crate::reasons::REASON_NOT_ALLOWED;
 use crate::reasons::REASON_NOT_ALLOWED_LOCAL;
 use crate::state::build_config_state;
-use crate::state::validate_policy_against_constraints;
 use anyhow::Context;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -21,6 +20,7 @@ pub use codex_network_proxy_api::BlockedRequestArgs;
 pub use codex_network_proxy_api::BlockedRequestObserver;
 pub use codex_network_proxy_api::NetworkProxyAuditMetadata;
 use codex_network_proxy_api::NetworkProxyConstraints;
+use codex_network_proxy_api::validate_policy_against_constraints;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use globset::GlobSet;
 use std::collections::HashSet;
@@ -784,7 +784,6 @@ mod tests {
     use crate::policy::compile_allowlist_globset;
     use crate::policy::compile_denylist_globset;
     use crate::state::build_config_state;
-    use crate::state::validate_policy_against_constraints;
     use codex_network_proxy_api::NetworkProxyConstraints;
     use pretty_assertions::assert_eq;
 

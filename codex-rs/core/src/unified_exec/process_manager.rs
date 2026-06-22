@@ -1,4 +1,3 @@
-use rand::Rng;
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -62,9 +61,10 @@ use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
 use codex_protocol::protocol::ExecCommandSource;
-use codex_tools::ToolName;
+use codex_tool_planning::ToolName;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::approx_token_count;
+use uuid::Uuid;
 
 const UNIFIED_EXEC_ENV: [(&str, &str); 10] = [
     ("NO_COLOR", "1"),
@@ -426,8 +426,7 @@ impl UnifiedExecProcessManager {
                     .map(|m| std::cmp::max(m, 999) + 1)
                     .unwrap_or(1000)
             } else {
-                // production mode → random
-                rand::rng().random_range(1_000..100_000)
+                random_process_id()
             };
 
             if store.reserved_process_ids.contains(&process_id)
@@ -951,7 +950,7 @@ impl UnifiedExecProcessManager {
         let inherited_fds = spawn_lifecycle.inherited_fds();
 
         #[cfg(target_os = "windows")]
-        if request.sandbox == codex_sandboxing::SandboxType::WindowsRestrictedToken {
+        if request.sandbox == codex_sandboxing_api::SandboxType::WindowsRestrictedToken {
             let sandbox_policy = request.compatibility_sandbox_policy();
             let policy_json = serde_json::to_string(&sandbox_policy).map_err(|err| {
                 UnifiedExecError::create_process(format!(
@@ -1101,7 +1100,8 @@ impl UnifiedExecProcessManager {
             policy: exec_env_policy_from_shell_policy(&context.turn.shell_environment_policy),
             local_policy_env,
         };
-        let mut orchestrator = ToolOrchestrator::new();
+        let mut orchestrator =
+            ToolOrchestrator::new(Arc::clone(&context.session.services.sandbox_runtime));
         let mut runtime = UnifiedExecRuntime::new(
             self,
             context.turn.tools_config.unified_exec_shell_mode.clone(),
@@ -1367,6 +1367,13 @@ impl UnifiedExecProcessManager {
             entry.process.terminate();
         }
     }
+}
+
+fn random_process_id() -> i32 {
+    const MIN_PROCESS_ID: u128 = 1_000;
+    const PROCESS_ID_SPAN: u128 = 99_000;
+
+    (MIN_PROCESS_ID + (Uuid::new_v4().as_u128() % PROCESS_ID_SPAN)) as i32
 }
 
 enum ProcessStatus {

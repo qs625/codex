@@ -317,7 +317,7 @@ pub(crate) async fn handle_external_agent_config_migration_prompt_if_needed(
                     Ok(_) => {
                         let success_message =
                             external_agent_config_migration_success_message(&selected_items);
-                        *config = ConfigBuilder::default()
+                        *config = crate::config_builder()
                             .codex_home(config.codex_home.to_path_buf())
                             .cli_overrides(cli_kv_overrides.to_vec())
                             .harness_overrides(harness_overrides.clone())
@@ -383,7 +383,7 @@ mod tests {
     #[tokio::test]
     async fn visible_external_agent_config_migration_items_omits_hidden_scopes() {
         let codex_home = tempdir().expect("temp codex home");
-        let mut config = ConfigBuilder::default()
+        let mut config = crate::config_builder()
             .codex_home(codex_home.path().to_path_buf())
             .build()
             .await
@@ -434,7 +434,7 @@ mod tests {
     #[tokio::test]
     async fn visible_external_agent_config_migration_items_omits_recently_prompted_scopes() {
         let codex_home = tempdir().expect("temp codex home");
-        let mut config = ConfigBuilder::default()
+        let mut config = crate::config_builder()
             .codex_home(codex_home.path().to_path_buf())
             .build()
             .await
@@ -489,7 +489,7 @@ mod tests {
     #[tokio::test]
     async fn external_config_migration_scope_cooldown_expires_after_five_days() {
         let codex_home = tempdir().expect("temp codex home");
-        let mut config = ConfigBuilder::default()
+        let mut config = crate::config_builder()
             .codex_home(codex_home.path().to_path_buf())
             .build()
             .await
@@ -550,7 +550,7 @@ mod tests {
     #[tokio::test]
     async fn external_agent_config_migration_prompt_requires_trust_nux_entry() {
         let codex_home = tempdir().expect("temp codex home");
-        let mut config = ConfigBuilder::default()
+        let mut config = crate::config_builder()
             .codex_home(codex_home.path().to_path_buf())
             .build()
             .await

@@ -3,11 +3,11 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 
-use sha1::digest::Output;
-
 use codex_apply_patch::AppliedPatchChange;
 use codex_apply_patch::AppliedPatchDelta;
 use codex_apply_patch::AppliedPatchFileChange;
+use codex_apply_patch::unified_diff_from_texts;
+use codex_git_info::git_blob_oid;
 
 const ZERO_OID: &str = "0000000000000000000000000000000000000000";
 const DEV_NULL: &str = "/dev/null";
@@ -276,12 +276,13 @@ impl TurnDiffTracker {
             DEV_NULL.to_string()
         };
 
-        let unified =
-            similar::TextDiff::from_lines(left_content.unwrap_or(""), right_content.unwrap_or(""))
-                .unified_diff()
-                .context_radius(3)
-                .header(&old_header, &new_header)
-                .to_string();
+        let unified = unified_diff_from_texts(
+            left_content.unwrap_or(""),
+            right_content.unwrap_or(""),
+            3,
+            Some(&old_header),
+            Some(&new_header),
+        );
         diff.push_str(&unified);
         Some(diff)
     }
@@ -294,20 +295,6 @@ impl TurnDiffTracker {
             .unwrap_or(path);
         display.display().to_string().replace('\\', "/")
     }
-}
-
-fn git_blob_oid(data: &[u8]) -> String {
-    format!("{:x}", git_blob_sha1_hex_bytes(data))
-}
-
-/// Compute the Git SHA-1 blob object ID for the given content (bytes).
-fn git_blob_sha1_hex_bytes(data: &[u8]) -> Output<sha1::Sha1> {
-    let header = format!("blob {}\0", data.len());
-    use sha1::Digest;
-    let mut hasher = sha1::Sha1::new();
-    hasher.update(header.as_bytes());
-    hasher.update(data);
-    hasher.finalize()
 }
 
 #[cfg(test)]

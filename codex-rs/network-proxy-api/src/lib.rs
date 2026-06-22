@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
@@ -357,6 +358,474 @@ impl fmt::Display for NetworkProxyConstraintError {
 
 impl Error for NetworkProxyConstraintError {}
 
+pub fn validate_policy_against_constraints(
+    config: &NetworkProxyConfig,
+    constraints: &NetworkProxyConstraints,
+) -> Result<(), NetworkProxyConstraintError> {
+    fn invalid_value(
+        field_name: &'static str,
+        candidate: impl Into<String>,
+        allowed: impl Into<String>,
+    ) -> NetworkProxyConstraintError {
+        NetworkProxyConstraintError::InvalidValue {
+            field_name,
+            candidate: candidate.into(),
+            allowed: allowed.into(),
+        }
+    }
+
+    fn validate<T>(
+        candidate: T,
+        validator: impl FnOnce(&T) -> Result<(), NetworkProxyConstraintError>,
+    ) -> Result<(), NetworkProxyConstraintError> {
+        validator(&candidate)
+    }
+
+    let enabled = config.network.enabled;
+    let config_allowed_domains = config.network.allowed_domains().unwrap_or_default();
+    let config_denied_domains = config.network.denied_domains().unwrap_or_default();
+    let denied_domain_overrides: HashSet<String> = config_denied_domains
+        .iter()
+        .map(|entry| entry.to_ascii_lowercase())
+        .collect();
+    let config_allow_unix_sockets = config.network.allow_unix_sockets();
+    validate_non_global_wildcard_domain_patterns("network.denied_domains", &config_denied_domains)?;
+    if let Some(max_enabled) = constraints.enabled {
+        validate(enabled, move |candidate| {
+            if *candidate && !max_enabled {
+                Err(invalid_value(
+                    "network.enabled",
+                    "true",
+                    "false (disabled by managed config)",
+                ))
+            } else {
+                Ok(())
+            }
+        })?;
+    }
+
+    if let Some(max_mode) = constraints.mode {
+        validate(config.network.mode, move |candidate| {
+            if network_mode_rank(*candidate) > network_mode_rank(max_mode) {
+                Err(invalid_value(
+                    "network.mode",
+                    format!("{candidate:?}"),
+                    format!("{max_mode:?} or more restrictive"),
+                ))
+            } else {
+                Ok(())
+            }
+        })?;
+    }
+
+    let allow_upstream_proxy = constraints.allow_upstream_proxy;
+    validate(
+        config.network.allow_upstream_proxy,
+        move |candidate| match allow_upstream_proxy {
+            Some(true) | None => Ok(()),
+            Some(false) => {
+                if *candidate {
+                    Err(invalid_value(
+                        "network.allow_upstream_proxy",
+                        "true",
+                        "false (disabled by managed config)",
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+        },
+    )?;
+
+    let allow_non_loopback_proxy = constraints.dangerously_allow_non_loopback_proxy;
+    validate(
+        config.network.dangerously_allow_non_loopback_proxy,
+        move |candidate| match allow_non_loopback_proxy {
+            Some(true) | None => Ok(()),
+            Some(false) => {
+                if *candidate {
+                    Err(invalid_value(
+                        "network.dangerously_allow_non_loopback_proxy",
+                        "true",
+                        "false (disabled by managed config)",
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+        },
+    )?;
+
+    let allow_all_unix_sockets = constraints
+        .dangerously_allow_all_unix_sockets
+        .unwrap_or(constraints.allow_unix_sockets.is_none());
+    validate(
+        config.network.dangerously_allow_all_unix_sockets,
+        move |candidate| {
+            if *candidate && !allow_all_unix_sockets {
+                Err(invalid_value(
+                    "network.dangerously_allow_all_unix_sockets",
+                    "true",
+                    "false (disabled by managed config)",
+                ))
+            } else {
+                Ok(())
+            }
+        },
+    )?;
+
+    if let Some(allow_local_binding) = constraints.allow_local_binding {
+        validate(config.network.allow_local_binding, move |candidate| {
+            if *candidate && !allow_local_binding {
+                Err(invalid_value(
+                    "network.allow_local_binding",
+                    "true",
+                    "false (disabled by managed config)",
+                ))
+            } else {
+                Ok(())
+            }
+        })?;
+    }
+
+    if let Some(allowed_domains) = &constraints.allowed_domains {
+        validate_non_global_wildcard_domain_patterns("network.allowed_domains", allowed_domains)?;
+        match constraints.allowlist_expansion_enabled {
+            Some(true) => {
+                let required_set: HashSet<String> = allowed_domains
+                    .iter()
+                    .map(|entry| entry.to_ascii_lowercase())
+                    .collect();
+                validate(config_allowed_domains, |candidate| {
+                    let candidate_set: HashSet<String> = candidate
+                        .iter()
+                        .map(|entry| entry.to_ascii_lowercase())
+                        .collect();
+                    let missing: Vec<String> = required_set
+                        .iter()
+                        .filter(|entry| {
+                            !candidate_set.contains(*entry)
+                                && !denied_domain_overrides.contains(*entry)
+                        })
+                        .cloned()
+                        .collect();
+                    if missing.is_empty() {
+                        Ok(())
+                    } else {
+                        Err(invalid_value(
+                            "network.allowed_domains",
+                            "missing managed allowed_domains entries",
+                            format!("{missing:?}"),
+                        ))
+                    }
+                })?;
+            }
+            Some(false) => {
+                let required_set: HashSet<String> = allowed_domains
+                    .iter()
+                    .map(|entry| entry.to_ascii_lowercase())
+                    .collect();
+                validate(config_allowed_domains, |candidate| {
+                    let candidate_set: HashSet<String> = candidate
+                        .iter()
+                        .map(|entry| entry.to_ascii_lowercase())
+                        .collect();
+                    let expected_set: HashSet<String> = required_set
+                        .difference(&denied_domain_overrides)
+                        .cloned()
+                        .collect();
+                    if candidate_set == expected_set {
+                        Ok(())
+                    } else {
+                        Err(invalid_value(
+                            "network.allowed_domains",
+                            format!("{candidate:?}"),
+                            "must match managed allowed_domains",
+                        ))
+                    }
+                })?;
+            }
+            None => {
+                let managed_patterns: Vec<DomainPattern> = allowed_domains
+                    .iter()
+                    .map(|entry| DomainPattern::parse_for_constraints(entry))
+                    .collect();
+                validate(config_allowed_domains, move |candidate| {
+                    let mut invalid = Vec::new();
+                    for entry in candidate {
+                        let candidate_pattern = DomainPattern::parse_for_constraints(entry);
+                        if !managed_patterns
+                            .iter()
+                            .any(|managed| managed.allows(&candidate_pattern))
+                        {
+                            invalid.push(entry.clone());
+                        }
+                    }
+                    if invalid.is_empty() {
+                        Ok(())
+                    } else {
+                        Err(invalid_value(
+                            "network.allowed_domains",
+                            format!("{invalid:?}"),
+                            "subset of managed allowed_domains",
+                        ))
+                    }
+                })?;
+            }
+        }
+    }
+
+    if let Some(denied_domains) = &constraints.denied_domains {
+        validate_non_global_wildcard_domain_patterns("network.denied_domains", denied_domains)?;
+        let required_set: HashSet<String> = denied_domains
+            .iter()
+            .map(|s| s.to_ascii_lowercase())
+            .collect();
+        match constraints.denylist_expansion_enabled {
+            Some(false) => {
+                validate(config_denied_domains, move |candidate| {
+                    let candidate_set: HashSet<String> = candidate
+                        .iter()
+                        .map(|entry| entry.to_ascii_lowercase())
+                        .collect();
+                    if candidate_set == required_set {
+                        Ok(())
+                    } else {
+                        Err(invalid_value(
+                            "network.denied_domains",
+                            format!("{candidate:?}"),
+                            "must match managed denied_domains",
+                        ))
+                    }
+                })?;
+            }
+            Some(true) | None => {
+                validate(config_denied_domains, move |candidate| {
+                    let candidate_set: HashSet<String> =
+                        candidate.iter().map(|s| s.to_ascii_lowercase()).collect();
+                    let missing: Vec<String> = required_set
+                        .iter()
+                        .filter(|entry| !candidate_set.contains(*entry))
+                        .cloned()
+                        .collect();
+                    if missing.is_empty() {
+                        Ok(())
+                    } else {
+                        Err(invalid_value(
+                            "network.denied_domains",
+                            "missing managed denied_domains entries",
+                            format!("{missing:?}"),
+                        ))
+                    }
+                })?;
+            }
+        }
+    }
+
+    if let Some(allow_unix_sockets) = &constraints.allow_unix_sockets {
+        let allowed_set: HashSet<String> = allow_unix_sockets
+            .iter()
+            .map(|s| s.to_ascii_lowercase())
+            .collect();
+        validate(config_allow_unix_sockets, move |candidate| {
+            let mut invalid = Vec::new();
+            for entry in candidate {
+                if !allowed_set.contains(&entry.to_ascii_lowercase()) {
+                    invalid.push(entry.clone());
+                }
+            }
+            if invalid.is_empty() {
+                Ok(())
+            } else {
+                Err(invalid_value(
+                    "network.allow_unix_sockets",
+                    format!("{invalid:?}"),
+                    "subset of managed allow_unix_sockets",
+                ))
+            }
+        })?;
+    }
+
+    Ok(())
+}
+
+fn validate_non_global_wildcard_domain_patterns(
+    field_name: &'static str,
+    patterns: &[String],
+) -> Result<(), NetworkProxyConstraintError> {
+    if let Some(pattern) = patterns
+        .iter()
+        .find(|pattern| is_global_wildcard_domain_pattern(pattern))
+    {
+        return Err(NetworkProxyConstraintError::InvalidValue {
+            field_name,
+            candidate: pattern.trim().to_string(),
+            allowed: "exact hosts or scoped wildcards like *.example.com or **.example.com"
+                .to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn is_global_wildcard_domain_pattern(pattern: &str) -> bool {
+    let normalized = normalize_pattern(pattern);
+    expand_domain_pattern(&normalized)
+        .iter()
+        .any(|candidate| candidate == "*")
+}
+
+fn normalize_pattern(pattern: &str) -> String {
+    let pattern = pattern.trim();
+    if pattern == "*" {
+        return "*".to_string();
+    }
+
+    let (prefix, remainder) = if let Some(domain) = pattern.strip_prefix("**.") {
+        ("**.", domain)
+    } else if let Some(domain) = pattern.strip_prefix("*.") {
+        ("*.", domain)
+    } else {
+        ("", pattern)
+    };
+
+    let remainder = normalize_host(remainder);
+    if prefix.is_empty() {
+        remainder
+    } else {
+        format!("{prefix}{remainder}")
+    }
+}
+
+#[derive(Debug, Clone)]
+enum DomainPattern {
+    ApexAndSubdomains(String),
+    SubdomainsOnly(String),
+    Exact(String),
+}
+
+impl DomainPattern {
+    fn parse(input: &str) -> Self {
+        let input = input.trim();
+        if input.is_empty() {
+            return Self::Exact(String::new());
+        }
+        if let Some(domain) = input.strip_prefix("**.") {
+            Self::parse_domain(domain, Self::ApexAndSubdomains)
+        } else if let Some(domain) = input.strip_prefix("*.") {
+            Self::parse_domain(domain, Self::SubdomainsOnly)
+        } else {
+            Self::Exact(input.to_string())
+        }
+    }
+
+    fn parse_for_constraints(input: &str) -> Self {
+        let input = input.trim();
+        if input.is_empty() {
+            return Self::Exact(String::new());
+        }
+        if let Some(domain) = input.strip_prefix("**.") {
+            return Self::ApexAndSubdomains(parse_domain_for_constraints(domain));
+        }
+        if let Some(domain) = input.strip_prefix("*.") {
+            return Self::SubdomainsOnly(parse_domain_for_constraints(domain));
+        }
+        Self::Exact(parse_domain_for_constraints(input))
+    }
+
+    fn parse_domain(domain: &str, build: impl FnOnce(String) -> Self) -> Self {
+        let domain = domain.trim();
+        if domain.is_empty() {
+            return Self::Exact(String::new());
+        }
+        build(domain.to_string())
+    }
+
+    fn allows(&self, candidate: &DomainPattern) -> bool {
+        match self {
+            DomainPattern::Exact(domain) => match candidate {
+                DomainPattern::Exact(candidate) => domain_eq(candidate, domain),
+                _ => false,
+            },
+            DomainPattern::SubdomainsOnly(domain) => match candidate {
+                DomainPattern::Exact(candidate) => is_strict_subdomain(candidate, domain),
+                DomainPattern::SubdomainsOnly(candidate) => {
+                    is_subdomain_or_equal(candidate, domain)
+                }
+                DomainPattern::ApexAndSubdomains(candidate) => {
+                    is_strict_subdomain(candidate, domain)
+                }
+            },
+            DomainPattern::ApexAndSubdomains(domain) => match candidate {
+                DomainPattern::Exact(candidate) => is_subdomain_or_equal(candidate, domain),
+                DomainPattern::SubdomainsOnly(candidate) => {
+                    is_subdomain_or_equal(candidate, domain)
+                }
+                DomainPattern::ApexAndSubdomains(candidate) => {
+                    is_subdomain_or_equal(candidate, domain)
+                }
+            },
+        }
+    }
+}
+
+fn parse_domain_for_constraints(domain: &str) -> String {
+    let domain = domain.trim().trim_end_matches('.');
+    if domain.is_empty() {
+        return String::new();
+    }
+    let host = if domain.starts_with('[') && domain.ends_with(']') {
+        &domain[1..domain.len().saturating_sub(1)]
+    } else {
+        domain
+    };
+    if host.contains('*') || host.contains('?') || host.contains('%') {
+        return domain.to_string();
+    }
+    normalize_host(host)
+}
+
+fn expand_domain_pattern(pattern: &str) -> Vec<String> {
+    match DomainPattern::parse(pattern) {
+        DomainPattern::Exact(domain) => vec![domain],
+        DomainPattern::SubdomainsOnly(domain) => {
+            vec![format!("?*.{domain}")]
+        }
+        DomainPattern::ApexAndSubdomains(domain) => {
+            vec![domain.clone(), format!("?*.{domain}")]
+        }
+    }
+}
+
+fn normalize_domain(domain: &str) -> String {
+    domain.trim_end_matches('.').to_ascii_lowercase()
+}
+
+fn domain_eq(left: &str, right: &str) -> bool {
+    normalize_domain(left) == normalize_domain(right)
+}
+
+fn is_subdomain_or_equal(child: &str, parent: &str) -> bool {
+    let child = normalize_domain(child);
+    let parent = normalize_domain(parent);
+    if child == parent {
+        return true;
+    }
+    child.ends_with(&format!(".{parent}"))
+}
+
+fn is_strict_subdomain(child: &str, parent: &str) -> bool {
+    let child = normalize_domain(child);
+    let parent = normalize_domain(parent);
+    child != parent && child.ends_with(&format!(".{parent}"))
+}
+
+fn network_mode_rank(mode: NetworkMode) -> u8 {
+    match mode {
+        NetworkMode::Limited => 0,
+        NetworkMode::Full => 1,
+    }
+}
+
 /// Variant order encodes effective precedence for duplicate patterns:
 /// `None < Allow < Deny`, so deny wins over allow when entries conflict.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -623,6 +1092,93 @@ impl NetworkProxyRuntimeSnapshot {
             self.socks_enabled,
             self.allow_local_binding,
         );
+    }
+}
+
+pub type SharedNetworkProxyRuntime = Arc<dyn NetworkProxyRuntime>;
+
+pub type SharedStartedNetworkProxyRuntime = Arc<dyn StartedNetworkProxyRuntime>;
+
+pub type SharedNetworkProxyRuntimeFactory = Arc<dyn NetworkProxyRuntimeFactory>;
+
+/// Runtime handle for an already-started network proxy.
+///
+/// Implementations own concrete proxy state and process/task management. Consumers should use this
+/// trait when they only need to expose proxy settings to child processes or read the current
+/// effective configuration, without depending on the concrete Rama-backed proxy implementation.
+pub trait NetworkProxyRuntime: fmt::Debug + Send + Sync + 'static {
+    fn runtime_snapshot(&self) -> NetworkProxyRuntimeSnapshot;
+
+    fn current_config(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<NetworkProxyConfig>> + Send + '_>>;
+
+    fn http_addr(&self) -> SocketAddr {
+        self.runtime_snapshot().http_addr
+    }
+
+    fn socks_addr(&self) -> SocketAddr {
+        self.runtime_snapshot().socks_addr
+    }
+
+    fn add_allowed_domain<'a>(
+        &'a self,
+        host: &'a str,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>;
+
+    fn add_denied_domain<'a>(
+        &'a self,
+        host: &'a str,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>;
+
+    fn apply_to_env(&self, env: &mut HashMap<String, String>) {
+        self.runtime_snapshot().apply_to_env(env);
+    }
+}
+
+pub struct NetworkProxyStartRequest {
+    pub config: NetworkProxyConfig,
+    pub constraints: NetworkProxyConstraints,
+    pub policy_decider: Option<Arc<dyn NetworkPolicyDecider>>,
+    pub blocked_request_observer: Option<Arc<dyn BlockedRequestObserver>>,
+    pub audit_metadata: NetworkProxyAuditMetadata,
+}
+
+/// Owner for a started proxy and its background tasks.
+///
+/// The handle must keep the concrete proxy runtime alive until it is dropped. Core code should only
+/// keep this trait object and never depend on the concrete proxy implementation or task handles.
+pub trait StartedNetworkProxyRuntime: Send + Sync + 'static {
+    fn proxy(&self) -> SharedNetworkProxyRuntime;
+
+    fn update_config(
+        &self,
+        config: NetworkProxyConfig,
+        constraints: NetworkProxyConstraints,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>>;
+}
+
+/// Factory for creating started network proxy runtimes from lightweight config DTOs.
+pub trait NetworkProxyRuntimeFactory: Send + Sync + 'static {
+    fn start(
+        &self,
+        request: NetworkProxyStartRequest,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<SharedStartedNetworkProxyRuntime>> + Send + '_>>;
+}
+
+pub struct DisabledNetworkProxyRuntimeFactory;
+
+impl NetworkProxyRuntimeFactory for DisabledNetworkProxyRuntimeFactory {
+    fn start(
+        &self,
+        _request: NetworkProxyStartRequest,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<SharedStartedNetworkProxyRuntime>> + Send + '_>>
+    {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "network proxy runtime factory is not configured"
+            ))
+        })
     }
 }
 

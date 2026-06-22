@@ -36,6 +36,7 @@ codex-chatgpt = { workspace = true }
 codex-cloud-requirements = { workspace = true }
 codex-config-diagnostics = { workspace = true }
 codex-config-edit = { workspace = true }
+codex-config-local-loader = { workspace = true }
 codex-config-loader = { workspace = true }
 codex-config-requirements = { workspace = true }
 codex-config-state = { workspace = true }
@@ -47,9 +48,11 @@ codex-exec-server = { workspace = true }
 codex-features = { workspace = true }
 codex-feedback = { workspace = true }
 codex-file-search = { workspace = true }
-codex-git-utils = { workspace = true }
+codex-git-info = { workspace = true }
 codex-login = { workspace = true }
 codex-message-history = { workspace = true }
+codex-metrics-api = { workspace = true }
+codex-mcp = { workspace = true }
 codex-model-provider = { workspace = true }
 codex-model-provider-info = { workspace = true }
 codex-models-manager = { workspace = true }
@@ -61,8 +64,10 @@ codex-realtime-webrtc = { workspace = true }
 codex-rollout = { workspace = true }
 codex-sandboxing = { workspace = true }
 codex-shell-command = { workspace = true }
+codex-shell-utils = { workspace = true }
 codex-state = { workspace = true }
 codex-terminal-detection = { workspace = true }
+codex-thread-store = { workspace = true }
 codex-utils-approval-presets = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-cli = { workspace = true }
@@ -161,7 +166,6 @@ arboard = { workspace = true }
 [dev-dependencies]
 codex-app-server-client = { workspace = true, features = ["test-support"] }
 codex-cli = { workspace = true }
-codex-mcp = { workspace = true }
 core_test_support = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }
 assert_matches = { workspace = true }

@@ -32,7 +32,7 @@ use codex_api::ApiError;
 use codex_api::ResponsesWebsocketClient;
 use codex_api::is_azure_responses_provider;
 use codex_arg0::Arg0DispatchPaths;
-use codex_config_edit::CONFIG_TOML_FILE;
+use codex_config_types::CONFIG_TOML_FILE;
 use codex_config_types::McpServerConfig;
 use codex_config_types::McpServerTransportConfig;
 use codex_core::config::Config;
@@ -467,7 +467,7 @@ async fn load_config(
         ..config_overrides_from_interactive(interactive, arg0_paths)
     };
 
-    ConfigBuilder::default()
+    crate::config_builder()
         .cli_overrides(cli_kv_overrides)
         .harness_overrides(overrides)
         .build()
@@ -2116,7 +2116,10 @@ async fn websocket_reachability_check(
     let auth = runtime_provider.auth().await;
     details.push(format!(
         "auth mode: {}",
-        auth.as_ref().map(auth_mode_name).unwrap_or("none")
+        auth.as_ref()
+            .map(codex_auth_types::RequestAuthSnapshot::auth_mode)
+            .map(auth_mode_name)
+            .unwrap_or("none")
     ));
 
     let api_provider = match runtime_provider.api_provider().await {
@@ -2129,7 +2132,7 @@ async fn websocket_reachability_check(
             );
         }
     };
-    match api_provider.websocket_url_for_path("responses") {
+    match websocket_url_for_endpoint(api_provider.url_for_path("responses")) {
         Ok(url) => {
             details.push(format!("endpoint: {url}"));
             if let Some(host) = url.host_str()
@@ -2254,8 +2257,8 @@ fn websocket_error_detail(err: &ApiError) -> String {
     }
 }
 
-fn auth_mode_name(auth: &CodexAuth) -> &'static str {
-    match auth.auth_mode() {
+fn auth_mode_name(auth_mode: codex_auth_types::AuthMode) -> &'static str {
+    match auth_mode {
         codex_auth_types::AuthMode::ApiKey => "api_key",
         codex_auth_types::AuthMode::Chatgpt => "chatgpt",
         codex_auth_types::AuthMode::ChatgptAuthTokens => "chatgpt_auth_tokens",
@@ -2480,6 +2483,19 @@ fn provider_url_for_path(
     }
 
     url
+}
+
+fn websocket_url_for_endpoint(endpoint_url: String) -> Result<url::Url, url::ParseError> {
+    let mut url = url::Url::parse(&endpoint_url)?;
+
+    let scheme = match url.scheme() {
+        "http" => "ws",
+        "https" => "wss",
+        "ws" | "wss" => return Ok(url),
+        _ => return Ok(url),
+    };
+    let _ = url.set_scheme(scheme);
+    Ok(url)
 }
 
 async fn provider_reachability_check(plan: ReachabilityPlan) -> DoctorCheck {

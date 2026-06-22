@@ -2,16 +2,18 @@ use super::*;
 use crate::SkillMetadata;
 use crate::config_rules::resolve_disabled_skill_paths;
 use crate::config_rules::skill_config_rules_from_stack;
+use crate::loader::skill_config_layer_stack_from_config_layer_stack;
 use codex_config::CONFIG_TOML_FILE;
 use codex_config::ConfigLayerEntry;
 use codex_config::ConfigLayerStack;
 use codex_config::ConfigRequirementsToml;
 use codex_config_types::ConfigLayerSource;
+use codex_core_skills_api::SkillConfigLayerStack;
 use codex_file_system::LOCAL_FS;
+use codex_plugin_types::PluginSkillRoot;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::test_support::PathBufExt;
 use codex_utils_absolute_path::test_support::PathExt;
-use codex_utils_plugins::PluginSkillRoot;
 use pretty_assertions::assert_eq;
 use std::collections::HashSet;
 use std::fs;
@@ -20,7 +22,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 fn skill_stack(config_layer_stack: &ConfigLayerStack) -> SkillConfigLayerStack {
-    config_layer_stack.clone().into()
+    skill_config_layer_stack_from_config_layer_stack(config_layer_stack)
 }
 
 fn bundled_skills_enabled_from_config_stack(config_layer_stack: &ConfigLayerStack) -> bool {

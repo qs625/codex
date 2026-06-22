@@ -357,7 +357,7 @@ async fn exec_end_without_begin_uses_event_command() {
         &mut chat,
         AppServerThreadItem::CommandExecution {
             id: "call-orphan".to_string(),
-            command: codex_shell_command::parse_command::shlex_join(&command),
+            command: codex_shell_utils::shlex_join(&command),
             cwd,
             process_id: None,
             source: ExecCommandSource::Agent,

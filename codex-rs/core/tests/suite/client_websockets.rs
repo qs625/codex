@@ -1,12 +1,12 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
+use codex_api_types::ResponseEvent;
 use codex_api_types::WS_REQUEST_HEADER_TRACEPARENT_CLIENT_METADATA_KEY;
 use codex_api_types::WS_REQUEST_HEADER_TRACESTATE_CLIENT_METADATA_KEY;
+use codex_api_types::X_RESPONSESAPI_INCLUDE_TIMING_METRICS_HEADER;
 use codex_auth_types::TelemetryAuthMode;
 use codex_core::ModelClient;
 use codex_core::ModelClientSession;
 use codex_core::Prompt;
-use codex_core::ResponseEvent;
-use codex_core::X_RESPONSESAPI_INCLUDE_TIMING_METRICS_HEADER;
 use codex_features::Feature;
 use codex_login::CodexAuth;
 use codex_model_provider_info::ModelProviderInfo;
@@ -29,6 +29,7 @@ use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_protocol::user_input::UserInput;
+use codex_session_telemetry_api::SharedSessionTelemetry;
 use codex_trace_context::current_span_w3c_trace_context;
 use core_test_support::load_default_config_for_test;
 use core_test_support::responses::WebSocketConnectionConfig;
@@ -96,6 +97,7 @@ struct WebsocketTestHarness {
     effort: Option<ReasoningEffortConfig>,
     summary: ReasoningSummary,
     session_telemetry: SessionTelemetry,
+    shared_session_telemetry: SharedSessionTelemetry,
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -419,7 +421,7 @@ async fn responses_websocket_preconnect_does_not_replace_turn_trace_payload() {
     let harness = websocket_harness(&server).await;
     let mut client_session = harness.client.new_session();
     client_session
-        .preconnect_websocket(&harness.session_telemetry, &harness.model_info)
+        .preconnect_websocket(&harness.shared_session_telemetry, &harness.model_info)
         .await
         .expect("websocket preconnect failed");
     let prompt = prompt_with_input(vec![message_item("hello")]);
@@ -455,7 +457,7 @@ async fn responses_websocket_preconnect_reuses_connection() {
     let harness = websocket_harness(&server).await;
     let mut client_session = harness.client.new_session();
     client_session
-        .preconnect_websocket(&harness.session_telemetry, &harness.model_info)
+        .preconnect_websocket(&harness.shared_session_telemetry, &harness.model_info)
         .await
         .expect("websocket preconnect failed");
     let prompt = prompt_with_input(vec![message_item("hello")]);
@@ -489,7 +491,7 @@ async fn responses_websocket_request_prewarm_reuses_connection() {
         .prewarm_websocket(
             &prompt,
             &harness.model_info,
-            &harness.session_telemetry,
+            &harness.shared_session_telemetry,
             harness.effort,
             harness.summary,
             /*service_tier*/ None,
@@ -566,7 +568,7 @@ async fn responses_websocket_preconnect_is_reused_even_with_header_changes() {
     let harness = websocket_harness(&server).await;
     let mut client_session = harness.client.new_session();
     client_session
-        .preconnect_websocket(&harness.session_telemetry, &harness.model_info)
+        .preconnect_websocket(&harness.shared_session_telemetry, &harness.model_info)
         .await
         .expect("websocket preconnect failed");
     let prompt = prompt_with_input(vec![message_item("hello")]);
@@ -574,7 +576,7 @@ async fn responses_websocket_preconnect_is_reused_even_with_header_changes() {
         .stream(
             &prompt,
             &harness.model_info,
-            &harness.session_telemetry,
+            &harness.shared_session_telemetry,
             harness.effort,
             harness.summary,
             /*service_tier*/ None,
@@ -613,7 +615,7 @@ async fn responses_websocket_request_prewarm_is_reused_even_with_header_changes(
         .prewarm_websocket(
             &prompt,
             &harness.model_info,
-            &harness.session_telemetry,
+            &harness.shared_session_telemetry,
             harness.effort,
             harness.summary,
             /*service_tier*/ None,
@@ -625,7 +627,7 @@ async fn responses_websocket_request_prewarm_is_reused_even_with_header_changes(
         .stream(
             &prompt,
             &harness.model_info,
-            &harness.session_telemetry,
+            &harness.shared_session_telemetry,
             harness.effort,
             harness.summary,
             /*service_tier*/ None,
@@ -679,7 +681,7 @@ async fn responses_websocket_prewarm_uses_v2_when_provider_supports_websockets()
         .prewarm_websocket(
             &prompt,
             &harness.model_info,
-            &harness.session_telemetry,
+            &harness.shared_session_telemetry,
             harness.effort,
             harness.summary,
             /*service_tier*/ None,
@@ -732,7 +734,7 @@ async fn responses_websocket_preconnect_runs_when_only_v2_feature_enabled() {
     let harness = websocket_harness_with_options(&server, /*runtime_metrics_enabled*/ true).await;
     let mut client_session = harness.client.new_session();
     client_session
-        .preconnect_websocket(&harness.session_telemetry, &harness.model_info)
+        .preconnect_websocket(&harness.shared_session_telemetry, &harness.model_info)
         .await
         .expect("websocket preconnect failed");
 
@@ -1028,7 +1030,7 @@ async fn responses_websocket_emits_reasoning_included_event() {
         .stream(
             &prompt,
             &harness.model_info,
-            &harness.session_telemetry,
+            &harness.shared_session_telemetry,
             harness.effort,
             harness.summary,
             /*service_tier*/ None,
@@ -1102,7 +1104,7 @@ async fn responses_websocket_emits_rate_limit_events() {
         .stream(
             &prompt,
             &harness.model_info,
-            &harness.session_telemetry,
+            &harness.shared_session_telemetry,
             harness.effort,
             harness.summary,
             /*service_tier*/ None,
@@ -1753,7 +1755,7 @@ async fn responses_websocket_v2_after_error_uses_full_create_without_previous_re
         .stream(
             &prompt_two,
             &harness.model_info,
-            &harness.session_telemetry,
+            &harness.shared_session_telemetry,
             harness.effort,
             harness.summary,
             /*service_tier*/ None,
@@ -1841,7 +1843,7 @@ async fn responses_websocket_v2_surfaces_terminal_error_without_close_handshake(
         .stream(
             &prompt_two,
             &harness.model_info,
-            &harness.session_telemetry,
+            &harness.shared_session_telemetry,
             harness.effort,
             harness.summary,
             /*service_tier*/ None,
@@ -2021,6 +2023,7 @@ async fn websocket_harness_with_provider_options(
         SessionSource::Exec,
     )
     .with_metrics(metrics);
+    let shared_session_telemetry = Arc::new(session_telemetry.clone()) as SharedSessionTelemetry;
     let effort = None;
     let summary = ReasoningSummary::Auto;
     let client = ModelClient::new(
@@ -2028,6 +2031,7 @@ async fn websocket_harness_with_provider_options(
         session_id,
         thread_id,
         /*installation_id*/ TEST_INSTALLATION_ID.to_string(),
+        Arc::new(codex_api::DefaultApiRuntimeFactory),
         codex_core::test_support::model_provider_factory_for_tests(),
         provider.clone(),
         SessionSource::Exec,
@@ -2057,6 +2061,7 @@ async fn websocket_harness_with_provider_options(
         effort,
         summary,
         session_telemetry,
+        shared_session_telemetry,
     }
 }
 
@@ -2118,7 +2123,7 @@ async fn stream_until_complete_with_request_metadata(
         .stream(
             prompt,
             &harness.model_info,
-            &harness.session_telemetry,
+            &harness.shared_session_telemetry,
             harness.effort,
             harness.summary,
             service_tier.map(|service_tier| service_tier.request_value().to_string()),

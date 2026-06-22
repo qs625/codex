@@ -97,9 +97,6 @@ async fn emits_warning_when_resumed_model_differs() {
         CodexAuth::from_api_key("test"),
         config.model_provider.clone(),
     );
-    let auth_manager =
-        codex_core::test_support::auth_manager_from_auth(CodexAuth::from_api_key("test"));
-
     // Act: resume the conversation.
     let NewThread {
         thread: conversation,
@@ -108,7 +105,6 @@ async fn emits_warning_when_resumed_model_differs() {
         .resume_thread_with_history(
             config.clone(),
             initial_history,
-            auth_manager,
             /*persist_extended_history*/ false,
             /*parent_trace*/ None,
         )

@@ -15,11 +15,11 @@ use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
-use codex_tools::ResponsesApiNamespace;
-use codex_tools::ResponsesApiNamespaceTool;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
-use codex_tools::default_namespace_description;
+use codex_tool_planning::ResponsesApiNamespace;
+use codex_tool_planning::ResponsesApiNamespaceTool;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::default_namespace_description;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -44,9 +44,8 @@ impl codex_extension_api::ToolContributor for ExtensionEchoContributor {
 
 struct ExtensionEchoExecutor;
 
-#[async_trait::async_trait]
 impl ToolExecutor<ExtensionToolCall> for ExtensionEchoExecutor {
-    type Output = codex_tools::JsonToolOutput;
+    type Output = codex_tool_planning::JsonToolOutput;
 
     fn tool_name(&self) -> ToolName {
         ToolName::namespaced("extension/", "echo")
@@ -75,17 +74,22 @@ impl ToolExecutor<ExtensionToolCall> for ExtensionEchoExecutor {
         }))
     }
 
-    async fn handle(
-        &self,
+    fn handle<'a>(
+        &'a self,
         call: ExtensionToolCall,
-    ) -> Result<Self::Output, codex_tools::FunctionCallError> {
-        let arguments: serde_json::Value =
-            serde_json::from_str(call.function_arguments()?).expect("test arguments should parse");
-        Ok(codex_tools::JsonToolOutput::new(json!({
-            "arguments": arguments,
-            "callId": call.call_id,
-            "ok": true,
-        })))
+    ) -> codex_extension_api::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let arguments: serde_json::Value = serde_json::from_str(call.function_arguments()?)
+                .expect("test arguments should parse");
+            Ok(codex_tool_planning::JsonToolOutput::new(json!({
+                "arguments": arguments,
+                "callId": call.call_id,
+                "ok": true,
+            })))
+        })
     }
 }
 
@@ -307,13 +311,13 @@ fn mcp_tool_info(
         callable_name: tool_name.to_string(),
         callable_namespace: callable_namespace.to_string(),
         namespace_description: None,
-        tool: rmcp::model::Tool {
-            name: tool_name.to_string().into(),
+        tool: codex_mcp_tool_types::McpTool {
+            name: tool_name.to_string(),
             title: None,
-            description: Some("Test MCP tool".to_string().into()),
-            input_schema: Arc::new(rmcp::model::object(json!({
+            description: Some("Test MCP tool".to_string()),
+            input_schema: json!({
                 "type": "object",
-            }))),
+            }),
             output_schema: None,
             annotations: None,
             execution: None,

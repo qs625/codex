@@ -1,5 +1,8 @@
 use super::*;
 
+use codex_mcp_runtime_api::SharedMcpAuthHeaderProvider;
+use codex_mcp_runtime_api::StaticMcpAuthHeaderProvider;
+
 const MCP_TOOL_THREAD_ID_META_KEY: &str = "threadId";
 
 fn mcp_runtime_environment(
@@ -8,13 +11,30 @@ fn mcp_runtime_environment(
 ) -> McpRuntimeEnvironment {
     let local_http_client: Arc<dyn codex_exec_server_api::HttpClient> =
         Arc::new(codex_exec_server::ReqwestHttpClient);
-    McpRuntimeEnvironment::new(codex_mcp::McpRuntimeEnvironmentParams {
+    McpRuntimeEnvironment::new(codex_mcp_runtime_api::McpRuntimeEnvironmentParams {
         remote_available: environment.is_remote(),
         remote_exec_backend: environment.get_exec_backend(),
         local_http_client,
         remote_http_client: environment.get_http_client(),
         fallback_cwd,
     })
+}
+
+fn codex_apps_auth_context(
+    auth: Option<&codex_auth_types::RequestAuthSnapshot>,
+) -> Option<codex_mcp_types::CodexAppsAuthContext> {
+    auth.map(|auth| codex_mcp_types::CodexAppsAuthContext {
+        uses_codex_backend: auth.uses_codex_backend(),
+        account_id: auth.account_id().map(ToOwned::to_owned),
+        chatgpt_user_id: auth.chatgpt_user_id().map(ToOwned::to_owned),
+        is_workspace_account: auth.is_workspace_account(),
+    })
+}
+
+fn codex_apps_auth_provider(auth: Option<&CodexAuth>) -> Option<SharedMcpAuthHeaderProvider> {
+    auth.filter(|auth| auth.uses_codex_backend())
+        .map(codex_model_provider::auth_provider_from_auth)
+        .map(|auth_provider| StaticMcpAuthHeaderProvider::shared(auth_provider.to_auth_headers()))
 }
 
 #[derive(Clone)]
@@ -219,7 +239,7 @@ impl McpRequestProcessor {
         let outgoing = Arc::clone(&self.outgoing);
         let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
         let mcp_config = config
-            .to_mcp_config(self.thread_manager.plugins_manager().as_ref())
+            .to_mcp_config(self.thread_manager.plugin_runtime().as_ref())
             .await;
         let auth = self.auth_manager.auth().await;
         let environment_manager = Arc::clone(&self.environment_manager);
@@ -255,7 +275,7 @@ impl McpRequestProcessor {
         request_id: ConnectionRequestId,
         params: ListMcpServerStatusParams,
         config: Config,
-        mcp_config: codex_mcp::McpConfig,
+        mcp_config: codex_mcp_types::McpConfig,
         auth: Option<CodexAuth>,
         runtime_environment: McpRuntimeEnvironment,
     ) {
@@ -275,7 +295,7 @@ impl McpRequestProcessor {
         request_id: String,
         params: ListMcpServerStatusParams,
         config: Config,
-        mcp_config: codex_mcp::McpConfig,
+        mcp_config: codex_mcp_types::McpConfig,
         auth: Option<CodexAuth>,
         runtime_environment: McpRuntimeEnvironment,
     ) -> Result<ListMcpServerStatusResponse, JSONRPCErrorError> {
@@ -283,17 +303,20 @@ impl McpRequestProcessor {
             McpServerStatusDetail::Full => McpSnapshotDetail::Full,
             McpServerStatusDetail::ToolsAndAuthOnly => McpSnapshotDetail::ToolsAndAuthOnly,
         };
+        let auth_snapshot = auth.as_ref().map(CodexAuth::request_auth_snapshot);
+        let auth_context = codex_apps_auth_context(auth_snapshot.as_ref());
 
         let snapshot = collect_mcp_server_status_snapshot_with_detail(
             &mcp_config,
-            auth.as_ref(),
+            auth_context.as_ref(),
+            codex_apps_auth_provider(auth.as_ref()),
             request_id,
             runtime_environment,
             detail,
         )
         .await;
 
-        let effective_servers = effective_mcp_servers(&mcp_config, auth.as_ref());
+        let effective_servers = effective_mcp_servers(&mcp_config, auth_context.as_ref());
         let McpServerStatusSnapshot {
             tools_by_server,
             resources,
@@ -384,7 +407,7 @@ impl McpRequestProcessor {
 
         let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
         let mcp_config = config
-            .to_mcp_config(self.thread_manager.plugins_manager().as_ref())
+            .to_mcp_config(self.thread_manager.plugin_runtime().as_ref())
             .await;
         let auth = self.auth_manager.auth().await;
         let runtime_environment = {
@@ -397,11 +420,15 @@ impl McpRequestProcessor {
             mcp_runtime_environment(environment, config.cwd.to_path_buf())
         };
         let request_id = request_id.clone();
+        let codex_apps_auth_provider = codex_apps_auth_provider(auth.as_ref());
+        let auth_snapshot = auth.as_ref().map(CodexAuth::request_auth_snapshot);
+        let auth_context = codex_apps_auth_context(auth_snapshot.as_ref());
 
         tokio::spawn(async move {
             let result = read_mcp_resource_without_thread(
                 &mcp_config,
-                auth.as_ref(),
+                auth_context.as_ref(),
+                codex_apps_auth_provider,
                 runtime_environment,
                 &server,
                 &uri,

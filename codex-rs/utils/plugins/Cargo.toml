@@ -15,7 +15,9 @@ workspace = true
 
 [dependencies]
 codex-file-system = { workspace = true }
-codex-login = { workspace = true }
+codex-default-client-api = { workspace = true }
+codex-plugin-manifest = { workspace = true }
+codex-plugin-types = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

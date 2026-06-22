@@ -13,12 +13,13 @@ doctest = false
 workspace = true
 
 [dependencies]
-async-trait = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
-codex-git-utils = { workspace = true }
+codex-git-info = { workspace = true }
 codex-protocol = { workspace = true }
 codex-rollout = { workspace = true }
+codex-rollout-api = { workspace = true }
 codex-state = { workspace = true }
+codex-thread-store-api = { workspace = true }
 codex-utils-path = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

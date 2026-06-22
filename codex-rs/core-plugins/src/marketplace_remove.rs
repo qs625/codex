@@ -150,7 +150,7 @@ mod tests {
             Some(AbsolutePathBuf::try_from(installed_root.clone()).unwrap())
         );
         let config =
-            fs::read_to_string(codex_home.path().join(codex_config_edit::CONFIG_TOML_FILE))
+            fs::read_to_string(codex_home.path().join(codex_config_types::CONFIG_TOML_FILE))
                 .unwrap();
         assert!(!config.contains("[marketplaces.debug]"));
         assert!(!installed_root.exists());
@@ -207,7 +207,7 @@ mod tests {
         );
         assert!(installed_root.exists());
         let config =
-            fs::read_to_string(codex_home.path().join(codex_config_edit::CONFIG_TOML_FILE))
+            fs::read_to_string(codex_home.path().join(codex_config_types::CONFIG_TOML_FILE))
                 .unwrap();
         assert!(config.contains("[marketplaces.debug]"));
     }
@@ -216,7 +216,7 @@ mod tests {
     fn remove_marketplace_sync_keeps_installed_root_when_config_removal_fails() {
         let codex_home = TempDir::new().unwrap();
         fs::write(
-            codex_home.path().join(codex_config_edit::CONFIG_TOML_FILE),
+            codex_home.path().join(codex_config_types::CONFIG_TOML_FILE),
             "[marketplaces.debug\n",
         )
         .unwrap();
@@ -277,7 +277,7 @@ mod tests {
         );
         assert!(!installed_root.exists());
         let config =
-            fs::read_to_string(codex_home.path().join(codex_config_edit::CONFIG_TOML_FILE))
+            fs::read_to_string(codex_home.path().join(codex_config_types::CONFIG_TOML_FILE))
                 .unwrap();
         assert!(!config.contains("[marketplaces.debug]"));
     }
@@ -286,7 +286,7 @@ mod tests {
     fn remove_marketplace_sync_removes_inline_config_entry() {
         let codex_home = TempDir::new().unwrap();
         fs::write(
-            codex_home.path().join(codex_config_edit::CONFIG_TOML_FILE),
+            codex_home.path().join(codex_config_types::CONFIG_TOML_FILE),
             r#"
 marketplaces = { debug = { source_type = "git", source = "https://github.com/owner/repo.git" } }
 "#,
@@ -310,7 +310,7 @@ marketplaces = { debug = { source_type = "git", source = "https://github.com/own
         );
         assert!(!installed_root.exists());
         let config =
-            fs::read_to_string(codex_home.path().join(codex_config_edit::CONFIG_TOML_FILE))
+            fs::read_to_string(codex_home.path().join(codex_config_types::CONFIG_TOML_FILE))
                 .unwrap();
         assert!(!config.contains("debug"));
     }

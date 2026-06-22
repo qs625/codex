@@ -216,7 +216,7 @@ pub(super) fn thread_response_sandbox_policy(
     cwd: &Path,
 ) -> codex_app_server_protocol::SandboxPolicy {
     let file_system_policy = permission_profile.file_system_sandbox_policy();
-    let sandbox_policy = codex_sandboxing::compatibility_sandbox_policy_for_permission_profile(
+    let sandbox_policy = codex_sandboxing_api::compatibility_sandbox_policy_for_permission_profile(
         permission_profile,
         &file_system_policy,
         permission_profile.network_sandbox_policy(),

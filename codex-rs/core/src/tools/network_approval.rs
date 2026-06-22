@@ -10,14 +10,14 @@ use crate::network_policy_decision::denied_network_policy_message;
 use crate::session::session::Session;
 use crate::tools::sandboxing::PermissionRequestPayload;
 use crate::tools::sandboxing::ToolError;
-use codex_hooks::PermissionRequestDecision;
-use codex_network_proxy::NetworkProxy;
+use codex_hooks_api::PermissionRequestDecision;
 use codex_network_proxy_api::BlockedRequest;
 use codex_network_proxy_api::BlockedRequestObserver;
 use codex_network_proxy_api::NetworkDecision;
 use codex_network_proxy_api::NetworkPolicyDecider;
 use codex_network_proxy_api::NetworkPolicyRequest;
 use codex_network_proxy_api::NetworkProtocol;
+use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_protocol::approvals::NetworkApprovalContext;
 use codex_protocol::approvals::NetworkApprovalProtocol;
 use codex_protocol::approvals::NetworkPolicyRuleAction;
@@ -27,7 +27,6 @@ use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::WarningEvent;
-use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -47,7 +46,7 @@ pub(crate) enum NetworkApprovalMode {
 
 #[derive(Clone, Debug)]
 pub(crate) struct NetworkApprovalSpec {
-    pub network: Option<NetworkProxy>,
+    pub network: Option<SharedNetworkProxyRuntime>,
     pub mode: NetworkApprovalMode,
     pub trigger: GuardianNetworkAccessTrigger,
     pub command: String,
@@ -229,7 +228,7 @@ struct ActiveNetworkApprovalCall {
 
 #[derive(Default)]
 struct NetworkApprovalCallState {
-    active_calls: IndexMap<String, Arc<ActiveNetworkApprovalCall>>,
+    active_calls: HashMap<String, Arc<ActiveNetworkApprovalCall>>,
     call_outcomes: HashMap<String, NetworkApprovalOutcome>,
 }
 
@@ -348,7 +347,7 @@ impl NetworkApprovalService {
 
     async fn remove_call(&self, registration_id: &str) -> Option<NetworkApprovalOutcome> {
         let mut calls = self.calls.lock().await;
-        calls.active_calls.shift_remove(registration_id);
+        calls.active_calls.remove(registration_id);
         calls.call_outcomes.remove(registration_id)
     }
 

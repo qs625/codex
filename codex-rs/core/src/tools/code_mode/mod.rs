@@ -33,7 +33,7 @@ use crate::tools::router::ToolCall;
 use crate::tools::router::ToolCallSource;
 use crate::unified_exec::resolve_max_tokens;
 use codex_features::Feature;
-use codex_tools::ToolName;
+use codex_tool_planning::ToolName;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::formatted_truncate_text_content_items_with_policy;
 use codex_utils_output_truncation::truncate_function_output_items_with_policy;
@@ -312,7 +312,7 @@ mod tests {
     use super::build_nested_tool_payload;
     use crate::tools::context::ToolPayload;
     use codex_code_mode_api::CodeModeToolKind;
-    use codex_tools::ToolName;
+    use codex_tool_planning::ToolName;
     use serde_json::json;
 
     #[test]

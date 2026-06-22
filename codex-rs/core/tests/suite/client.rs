@@ -1,14 +1,13 @@
+use codex_api_types::ResponseEvent;
 use codex_auth_types::TelemetryAuthMode;
+use codex_client_identity::originator;
 use codex_config::ConfigLayerStack;
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_core::ModelClient;
 use codex_core::NewThread;
 use codex_core::Prompt;
-use codex_core::ResponseEvent;
 use codex_core::ThreadManager;
 use codex_core::resolve_installation_id;
-use codex_core::thread_store_from_config;
-use codex_default_client::originator;
 use codex_extension_api::empty_extension_registry;
 use codex_features::Feature;
 use codex_login::AuthManager;
@@ -66,6 +65,7 @@ use core_test_support::responses::sse_failed;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
+use core_test_support::thread_store_from_config;
 use core_test_support::wait_for_event;
 use dunce::canonicalize as normalize_path;
 use futures::StreamExt;
@@ -877,7 +877,7 @@ async fn send_provider_auth_request(server: &MockServer, auth: ModelProviderAuth
     let model_info =
         codex_core::test_support::construct_model_info_offline(model.as_str(), &config);
     let thread_id = ThreadId::new();
-    let session_telemetry = SessionTelemetry::new(
+    let session_telemetry = Arc::new(SessionTelemetry::new(
         thread_id,
         model.as_str(),
         model_info.slug.as_str(),
@@ -888,14 +888,15 @@ async fn send_provider_auth_request(server: &MockServer, auth: ModelProviderAuth
         /*log_user_prompts*/ false,
         "test".to_string(),
         SessionSource::Exec,
-    );
+    )) as codex_session_telemetry_api::SharedSessionTelemetry;
     let client = ModelClient::new(
-        Some(AuthManager::from_auth_for_testing(CodexAuth::from_api_key(
-            "unused-api-key",
+        codex_login::model_provider_auth_manager(Some(AuthManager::from_auth_for_testing(
+            CodexAuth::from_api_key("unused-api-key"),
         ))),
         thread_id.into(),
         thread_id,
         /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
+        Arc::new(codex_api::DefaultApiRuntimeFactory),
         codex_core::test_support::model_provider_factory_for_tests(),
         provider,
         SessionSource::Exec,
@@ -1131,19 +1132,22 @@ async fn prefers_apikey_when_config_prefers_apikey_even_with_chatgpt_tokens() {
     let installation_id = resolve_installation_id(&config.codex_home)
         .await
         .expect("resolve installation id");
-    let thread_manager = ThreadManager::new(
+    let thread_manager = ThreadManager::new_with_mcp_auth_runtime(
         &config,
-        auth_manager,
+        codex_core::test_support::thread_auth_runtimes_from_auth_manager(auth_manager),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         empty_extension_registry(),
         /*analytics_events_client*/ None,
         thread_store_from_config(&config, /*state_db*/ None),
         /*state_db*/ None,
+        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         installation_id,
         /*attestation_provider*/ None,
         codex_core::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
     let NewThread { thread: codex, .. } = thread_manager
         .start_thread(config.clone())
@@ -2307,7 +2311,7 @@ async fn azure_responses_request_includes_store_and_reasoning_ids() {
     let thread_id = ThreadId::new();
     let auth_manager =
         codex_core::test_support::auth_manager_from_auth(CodexAuth::from_api_key("Test API Key"));
-    let session_telemetry = SessionTelemetry::new(
+    let session_telemetry = Arc::new(SessionTelemetry::new(
         thread_id,
         model.as_str(),
         model_info.slug.as_str(),
@@ -2318,13 +2322,14 @@ async fn azure_responses_request_includes_store_and_reasoning_ids() {
         /*log_user_prompts*/ false,
         "test".to_string(),
         SessionSource::Exec,
-    );
+    )) as codex_session_telemetry_api::SharedSessionTelemetry;
 
     let client = ModelClient::new(
         /*auth_manager*/ None,
         thread_id.into(),
         thread_id,
         /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
+        Arc::new(codex_api::DefaultApiRuntimeFactory),
         codex_core::test_support::model_provider_factory_for_tests(),
         provider.clone(),
         SessionSource::Exec,

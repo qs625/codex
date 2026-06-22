@@ -1,0 +1,24 @@
+[package]
+name = "codex-execpolicy-loader"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Starlark-backed exec policy loader for Codex composition roots."
+
+[lib]
+name = "codex_execpolicy_loader"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-config-state = { workspace = true }
+codex-config-types = { workspace = true }
+codex-core = { workspace = true }
+codex-execpolicy = { workspace = true }
+codex-execpolicy-api = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs"] }
+tracing = { workspace = true, features = ["log"] }

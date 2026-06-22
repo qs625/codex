@@ -1,11 +1,8 @@
 use super::CoreShellActionProvider;
-use super::InterceptedExecPolicyContext;
 use super::ParsedShellCommand;
-use super::commands_for_intercepted_exec_policy;
-use super::evaluate_intercepted_exec_policy;
 use super::extract_shell_script;
-use super::join_program_and_argv;
 use super::map_exec_result;
+use crate::config::CONFIG_TOML_FILE;
 use crate::config::Constrained;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::tests::make_session_and_context;
@@ -17,6 +14,10 @@ use codex_execpolicy_api::Policy;
 use codex_execpolicy_api::RuleMatch;
 use codex_hooks::Hooks;
 use codex_hooks::HooksConfig;
+use codex_permissions_runtime::InterceptedExecPolicyContext;
+use codex_permissions_runtime::commands_for_intercepted_exec_policy;
+use codex_permissions_runtime::evaluate_intercepted_exec_policy;
+use codex_permissions_runtime::join_program_and_argv;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::FileSystemPermissions;
 use codex_protocol::models::PermissionProfile;
@@ -30,7 +31,7 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::GranularApprovalConfig;
 use codex_protocol::protocol::GuardianCommandSource;
 use codex_protocol::protocol::SandboxPolicy;
-use codex_sandboxing::SandboxType;
+use codex_sandboxing_api::SandboxType;
 use codex_shell_escalation::EscalationExecution;
 use codex_shell_escalation::EscalationPermissions;
 use codex_shell_escalation::ExecResult;
@@ -372,10 +373,7 @@ async fn execve_permission_request_hook_short_circuits_prompt() -> anyhow::Resul
         .to_string(),
     )
     .context("write hooks.json")?;
-    let config_toml_path = turn_context
-        .config
-        .codex_home
-        .join(codex_config_edit::CONFIG_TOML_FILE);
+    let config_toml_path = turn_context.config.codex_home.join(CONFIG_TOML_FILE);
     let hook_list = codex_hooks::list_hooks(HooksConfig {
         feature_enabled: true,
         config_layer_stack: Some(
@@ -405,20 +403,22 @@ async fn execve_permission_request_hook_short_circuits_prompt() -> anyhow::Resul
         .derive_exec_args("", /*use_login_shell*/ false);
     let hook_shell_program = hook_shell_argv.remove(0);
     let _ = hook_shell_argv.pop();
-    session
+    *session
         .services
         .hooks
-        .store(Arc::new(Hooks::new(HooksConfig {
-            feature_enabled: true,
-            config_layer_stack: Some(
-                crate::config::hook_config_layer_stack_from_config_layer_stack(
-                    &trusted_config_layer_stack,
-                ),
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(Hooks::new(HooksConfig {
+        feature_enabled: true,
+        config_layer_stack: Some(
+            crate::config::hook_config_layer_stack_from_config_layer_stack(
+                &trusted_config_layer_stack,
             ),
-            shell_program: Some(hook_shell_program),
-            shell_args: hook_shell_argv,
-            ..HooksConfig::default()
-        })));
+        ),
+        shell_program: Some(hook_shell_program),
+        shell_args: hook_shell_argv,
+        ..HooksConfig::default()
+    }))
+        as Arc<dyn codex_hooks_api::HookRuntime>;
 
     turn_context.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
     turn_context.permission_profile = PermissionProfile::from_runtime_permissions(
@@ -430,7 +430,7 @@ async fn execve_permission_request_hook_short_circuits_prompt() -> anyhow::Resul
     let target_str = target.display().to_string();
     let command = vec!["touch".to_string(), target_str.clone()];
     let expected_hook_command =
-        codex_shell_command::parse_command::shlex_join(&["/usr/bin/touch".to_string(), target_str]);
+        codex_shell_utils::shlex_join(&["/usr/bin/touch".to_string(), target_str]);
     let provider = CoreShellActionProvider {
         policy: std::sync::Arc::new(RwLock::new(Policy::empty())),
         session: std::sync::Arc::new(session),

@@ -7,19 +7,18 @@ use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::request_user_input::RequestUserInputArgs;
-use codex_tools::REQUEST_USER_INPUT_TOOL_NAME;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
-use codex_tools::create_request_user_input_tool;
-use codex_tools::normalize_request_user_input_args;
-use codex_tools::request_user_input_tool_description;
-use codex_tools::request_user_input_unavailable_message;
+use codex_tool_planning::REQUEST_USER_INPUT_TOOL_NAME;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::create_request_user_input_tool;
+use codex_tool_planning::normalize_request_user_input_args;
+use codex_tool_planning::request_user_input_tool_description;
+use codex_tool_planning::request_user_input_unavailable_message;
 
 pub struct RequestUserInputHandler {
     pub available_modes: Vec<ModeKind>,
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for RequestUserInputHandler {
     type Output = FunctionToolOutput;
 
@@ -33,54 +32,64 @@ impl ToolExecutor<ToolInvocation> for RequestUserInputHandler {
         ))
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            call_id,
-            payload,
-            ..
-        } = invocation;
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session,
+                turn,
+                call_id,
+                payload,
+                ..
+            } = invocation;
 
-        let arguments = match payload {
-            ToolPayload::Function { arguments } => arguments,
-            _ => {
-                return Err(FunctionCallError::RespondToModel(format!(
-                    "{REQUEST_USER_INPUT_TOOL_NAME} handler received unsupported payload"
-                )));
+            let arguments = match payload {
+                ToolPayload::Function { arguments } => arguments,
+                _ => {
+                    return Err(FunctionCallError::RespondToModel(format!(
+                        "{REQUEST_USER_INPUT_TOOL_NAME} handler received unsupported payload"
+                    )));
+                }
+            };
+
+            if turn.session_source.is_non_root_agent() {
+                return Err(FunctionCallError::RespondToModel(
+                    "request_user_input can only be used by the root thread".to_string(),
+                ));
             }
-        };
 
-        if turn.session_source.is_non_root_agent() {
-            return Err(FunctionCallError::RespondToModel(
-                "request_user_input can only be used by the root thread".to_string(),
-            ));
-        }
+            let mode = session.collaboration_mode().await.mode;
+            if let Some(message) =
+                request_user_input_unavailable_message(mode, &self.available_modes)
+            {
+                return Err(FunctionCallError::RespondToModel(message));
+            }
 
-        let mode = session.collaboration_mode().await.mode;
-        if let Some(message) = request_user_input_unavailable_message(mode, &self.available_modes) {
-            return Err(FunctionCallError::RespondToModel(message));
-        }
+            let args: RequestUserInputArgs = parse_arguments(&arguments)?;
+            let args = normalize_request_user_input_args(args)
+                .map_err(FunctionCallError::RespondToModel)?;
+            let response = session
+                .request_user_input(turn.as_ref(), call_id, args)
+                .await
+                .ok_or_else(|| {
+                    FunctionCallError::RespondToModel(format!(
+                        "{REQUEST_USER_INPUT_TOOL_NAME} was cancelled before receiving a response"
+                    ))
+                })?;
 
-        let args: RequestUserInputArgs = parse_arguments(&arguments)?;
-        let args =
-            normalize_request_user_input_args(args).map_err(FunctionCallError::RespondToModel)?;
-        let response = session
-            .request_user_input(turn.as_ref(), call_id, args)
-            .await
-            .ok_or_else(|| {
-                FunctionCallError::RespondToModel(format!(
-                    "{REQUEST_USER_INPUT_TOOL_NAME} was cancelled before receiving a response"
+            let content = serde_json::to_string(&response).map_err(|err| {
+                FunctionCallError::Fatal(format!(
+                    "failed to serialize {REQUEST_USER_INPUT_TOOL_NAME} response: {err}"
                 ))
             })?;
 
-        let content = serde_json::to_string(&response).map_err(|err| {
-            FunctionCallError::Fatal(format!(
-                "failed to serialize {REQUEST_USER_INPUT_TOOL_NAME} response: {err}"
-            ))
-        })?;
-
-        Ok(FunctionToolOutput::from_text(content, Some(true)))
+            Ok(FunctionToolOutput::from_text(content, Some(true)))
+        })
     }
 }
 

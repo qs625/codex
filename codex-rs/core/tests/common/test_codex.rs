@@ -19,11 +19,11 @@ use codex_core::config::Config;
 use codex_core::resolve_installation_id;
 use codex_core::shell::Shell;
 use codex_core::shell::get_shell_by_model_provided_path;
-use codex_core::thread_store_from_config;
 use codex_extension_api::empty_extension_registry;
 use codex_file_system::CreateDirectoryOptions;
 use codex_file_system::ExecutorFileSystem;
 use codex_file_system::RemoveOptions;
+use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::built_in_model_providers;
@@ -55,6 +55,7 @@ use crate::responses::WebSocketTestServer;
 use crate::responses::output_value_to_text;
 use crate::responses::start_mock_server;
 use crate::streaming_sse::StreamingSseServer;
+use crate::thread_store_from_config;
 use crate::wait_for_event_match;
 use crate::wait_for_event_with_timeout;
 use wiremock::Match;
@@ -465,68 +466,78 @@ impl TestCodexBuilder {
         environment_manager: Arc<codex_exec_server::EnvironmentManager>,
     ) -> anyhow::Result<TestCodex> {
         let auth = self.auth.clone();
-        let state_db = codex_core::init_state_db(&config).await;
+        let auth_manager = codex_core::test_support::auth_manager_from_auth(auth);
+        let state_db = codex_rollout::state_db::init(&config).await;
         let thread_store = thread_store_from_config(&config, state_db.clone());
         let installation_id = resolve_installation_id(&config.codex_home).await?;
         let environment_provider: Arc<dyn codex_exec_server_api::ExecEnvironmentProvider> =
             environment_manager.clone();
         let thread_manager = ThreadManager::new_with_workflow_runs_and_openai_file_uploader(
             &config,
-            codex_core::test_support::auth_manager_from_auth(auth.clone()),
+            codex_core::test_support::thread_auth_runtimes_from_auth_manager(Arc::clone(
+                &auth_manager,
+            )),
             SessionSource::Exec,
             environment_provider,
             empty_extension_registry(),
             /*analytics_events_client*/ None,
             thread_store,
             state_db.clone(),
+            Arc::new(codex_thread_store::DefaultLiveThreadFactory),
             installation_id,
             /*attestation_provider*/ None,
             codex_core::test_support::model_provider_factory_for_tests(),
             Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+            Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+            Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
             Arc::new(codex_workflow::WorkflowRunManager::new(
                 config.codex_home.clone(),
             )),
             Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
+            Arc::new(codex_core::EmptyExecPolicyLoader),
+            Arc::new(codex_api::DefaultApiRuntimeFactory),
+            Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
+            Arc::new(codex_sandboxing::SandboxManager::new()),
+            Arc::new(codex_otel::OtelSessionTelemetryFactory),
+            Arc::new(codex_hooks::DisabledHookRuntimeFactory),
+            Arc::new(codex_memories_read_api::DisabledMemoryToolDeveloperInstructionsProvider),
+            Arc::new(codex_core_skills_api::DisabledSkillsRuntime),
+            Arc::new(codex_core_plugins_api::DisabledPluginRuntime),
         );
         let thread_manager = Arc::new(thread_manager);
         let user_shell_override = self.user_shell_override.clone();
 
-        let new_conversation = match (resume_from, user_shell_override) {
-            (Some(path), Some(user_shell_override)) => {
-                let auth_manager = codex_core::test_support::auth_manager_from_auth(auth);
-                Box::pin(
+        let new_conversation =
+            match (resume_from, user_shell_override) {
+                (Some(path), Some(user_shell_override)) => Box::pin(
                     codex_core::test_support::resume_thread_from_rollout_with_user_shell_override(
                         thread_manager.as_ref(),
                         config.clone(),
                         path,
-                        auth_manager,
                         user_shell_override,
                     ),
                 )
-                .await?
-            }
-            (Some(path), None) => {
-                let auth_manager = codex_core::test_support::auth_manager_from_auth(auth);
-                Box::pin(thread_manager.resume_thread_from_rollout(
-                    config.clone(),
-                    path,
-                    auth_manager,
-                    /*parent_trace*/ None,
-                ))
-                .await?
-            }
-            (None, Some(user_shell_override)) => {
-                Box::pin(
-                    codex_core::test_support::start_thread_with_user_shell_override(
-                        thread_manager.as_ref(),
+                .await?,
+                (Some(path), None) => {
+                    Box::pin(thread_manager.resume_thread_from_rollout(
                         config.clone(),
-                        user_shell_override,
-                    ),
-                )
-                .await?
-            }
-            (None, None) => Box::pin(thread_manager.start_thread(config.clone())).await?,
-        };
+                        path,
+                        /*parent_trace*/ None,
+                    ))
+                    .await?
+                }
+                (None, Some(user_shell_override)) => {
+                    Box::pin(
+                        codex_core::test_support::start_thread_with_user_shell_override(
+                            thread_manager.as_ref(),
+                            config.clone(),
+                            user_shell_override,
+                        ),
+                    )
+                    .await?
+                }
+                (None, None) => Box::pin(thread_manager.start_thread(config.clone())).await?,
+            };
 
         Ok(TestCodex {
             home,
@@ -534,6 +545,7 @@ impl TestCodexBuilder {
             config,
             codex: new_conversation.thread,
             session_configured: new_conversation.session_configured,
+            auth_manager,
             thread_manager,
             _test_env: test_env,
         })
@@ -622,6 +634,7 @@ pub struct TestCodex {
     pub codex: Arc<CodexThread>,
     pub session_configured: SessionConfiguredEvent,
     pub config: Config,
+    pub auth_manager: Arc<AuthManager>,
     pub thread_manager: Arc<ThreadManager>,
     _test_env: TestEnv,
 }

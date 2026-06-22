@@ -1626,7 +1626,7 @@ mod tests {
     use tempfile::TempDir;
 
     async fn build_config(temp_dir: &TempDir) -> Config {
-        ConfigBuilder::default()
+        crate::config_builder()
             .codex_home(temp_dir.path().to_path_buf())
             .build()
             .await
@@ -1636,7 +1636,7 @@ mod tests {
     #[tokio::test]
     async fn thread_start_params_include_cwd_for_embedded_sessions() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
-        let config = ConfigBuilder::default()
+        let config = crate::config_builder()
             .codex_home(temp_dir.path().to_path_buf())
             .harness_overrides(ConfigOverrides {
                 default_permissions: Some(BUILT_IN_PERMISSION_PROFILE_WORKSPACE.to_string()),

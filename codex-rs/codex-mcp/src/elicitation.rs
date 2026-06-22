@@ -17,6 +17,8 @@ use anyhow::anyhow;
 use async_channel::Sender;
 use codex_mcp_types::ElicitationAction;
 use codex_mcp_types::ElicitationResponse;
+use codex_mcp_types::ElicitationReviewRequest;
+use codex_mcp_types::ElicitationReviewerHandle;
 use codex_protocol::approvals::ElicitationRequest;
 use codex_protocol::approvals::ElicitationRequestEvent;
 use codex_protocol::mcp::RequestId as ProtocolRequestId;
@@ -25,28 +27,11 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_rmcp_client::SendElicitation;
-use futures::future::BoxFuture;
 use futures::future::FutureExt;
 use rmcp::model::CreateElicitationRequestParams;
-use rmcp::model::RequestId;
+use rmcp::model::RequestId as RmcpRequestId;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot;
-
-#[derive(Debug, Clone)]
-pub struct ElicitationReviewRequest {
-    pub server_name: String,
-    pub request_id: RequestId,
-    pub elicitation: CreateElicitationRequestParams,
-}
-
-pub trait ElicitationReviewer: Send + Sync {
-    fn review(
-        &self,
-        request: ElicitationReviewRequest,
-    ) -> BoxFuture<'static, Result<Option<ElicitationResponse>>>;
-}
-
-pub type ElicitationReviewerHandle = Arc<dyn ElicitationReviewer>;
 
 #[derive(Clone)]
 pub(crate) struct ElicitationRequestManager {
@@ -88,7 +73,7 @@ impl ElicitationRequestManager {
     pub(crate) async fn resolve(
         &self,
         server_name: String,
-        id: RequestId,
+        id: ProtocolRequestId,
         response: ElicitationResponse,
     ) -> Result<()> {
         self.requests
@@ -160,50 +145,24 @@ impl ElicitationRequestManager {
                     });
                 }
 
+                let protocol_id = protocol_request_id(&id);
+
                 if let Some(reviewer) = reviewer.as_ref() {
                     let request = ElicitationReviewRequest {
                         server_name: server_name.clone(),
-                        request_id: id.clone(),
-                        elicitation: elicitation.clone(),
+                        request_id: protocol_id.clone(),
+                        elicitation: protocol_elicitation_request(&elicitation)?,
                     };
                     if let Some(response) = reviewer.review(request).await? {
                         return Ok(response);
                     }
                 }
 
-                let request = match elicitation {
-                    CreateElicitationRequestParams::FormElicitationParams {
-                        meta,
-                        message,
-                        requested_schema,
-                    } => ElicitationRequest::Form {
-                        meta: meta
-                            .map(serde_json::to_value)
-                            .transpose()
-                            .context("failed to serialize MCP elicitation metadata")?,
-                        message,
-                        requested_schema: serde_json::to_value(requested_schema)
-                            .context("failed to serialize MCP elicitation schema")?,
-                    },
-                    CreateElicitationRequestParams::UrlElicitationParams {
-                        meta,
-                        message,
-                        url,
-                        elicitation_id,
-                    } => ElicitationRequest::Url {
-                        meta: meta
-                            .map(serde_json::to_value)
-                            .transpose()
-                            .context("failed to serialize MCP elicitation metadata")?,
-                        message,
-                        url,
-                        elicitation_id,
-                    },
-                };
+                let request = protocol_elicitation_request(&elicitation)?;
                 let (tx, rx) = oneshot::channel();
                 {
                     let mut lock = elicitation_requests.lock().await;
-                    lock.insert((server_name.clone(), id.clone()), tx);
+                    lock.insert((server_name.clone(), protocol_id.clone()), tx);
                 }
                 let _ = tx_event
                     .send(Event {
@@ -211,14 +170,7 @@ impl ElicitationRequestManager {
                         msg: EventMsg::ElicitationRequest(ElicitationRequestEvent {
                             turn_id: None,
                             server_name,
-                            id: match id.clone() {
-                                rmcp::model::NumberOrString::String(value) => {
-                                    ProtocolRequestId::String(value.to_string())
-                                }
-                                rmcp::model::NumberOrString::Number(value) => {
-                                    ProtocolRequestId::Integer(value)
-                                }
-                            },
+                            id: protocol_id,
                             request,
                         }),
                     })
@@ -241,7 +193,50 @@ pub(crate) fn elicitation_is_rejected_by_policy(approval_policy: AskForApproval)
     }
 }
 
-type ResponderMap = HashMap<(String, RequestId), oneshot::Sender<ElicitationResponse>>;
+type ResponderMap = HashMap<(String, ProtocolRequestId), oneshot::Sender<ElicitationResponse>>;
+
+fn protocol_request_id(id: &RmcpRequestId) -> ProtocolRequestId {
+    match id {
+        rmcp::model::NumberOrString::String(value) => ProtocolRequestId::String(value.to_string()),
+        rmcp::model::NumberOrString::Number(value) => ProtocolRequestId::Integer(*value),
+    }
+}
+
+fn protocol_elicitation_request(
+    elicitation: &CreateElicitationRequestParams,
+) -> Result<ElicitationRequest> {
+    match elicitation {
+        CreateElicitationRequestParams::FormElicitationParams {
+            meta,
+            message,
+            requested_schema,
+        } => Ok(ElicitationRequest::Form {
+            meta: meta
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()
+                .context("failed to serialize MCP elicitation metadata")?,
+            message: message.clone(),
+            requested_schema: serde_json::to_value(requested_schema)
+                .context("failed to serialize MCP elicitation schema")?,
+        }),
+        CreateElicitationRequestParams::UrlElicitationParams {
+            meta,
+            message,
+            url,
+            elicitation_id,
+        } => Ok(ElicitationRequest::Url {
+            meta: meta
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()
+                .context("failed to serialize MCP elicitation metadata")?,
+            message: message.clone(),
+            url: url.clone(),
+            elicitation_id: elicitation_id.clone(),
+        }),
+    }
+}
 
 fn can_auto_accept_elicitation(elicitation: &CreateElicitationRequestParams) -> bool {
     match elicitation {

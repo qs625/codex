@@ -24,28 +24,6 @@ fn domain_permissions(
 }
 
 #[test]
-fn build_state_with_audit_metadata_threads_metadata_to_state() {
-    let spec = NetworkProxySpec {
-        base_config: NetworkProxyConfig::default(),
-        requirements: None,
-        config: NetworkProxyConfig::default(),
-        constraints: NetworkProxyConstraints::default(),
-        hard_deny_allowlist_misses: false,
-    };
-    let metadata = NetworkProxyAuditMetadata {
-        conversation_id: Some("conversation-1".to_string()),
-        app_version: Some("1.2.3".to_string()),
-        user_account_id: Some("acct-1".to_string()),
-        ..NetworkProxyAuditMetadata::default()
-    };
-
-    let state = spec
-        .build_state_with_audit_metadata(metadata.clone())
-        .expect("state should build");
-    assert_eq!(state.audit_metadata(), &metadata);
-}
-
-#[test]
 fn requirements_allowed_domains_are_a_baseline_for_user_allowlist() {
     let mut config = NetworkProxyConfig::default();
     config

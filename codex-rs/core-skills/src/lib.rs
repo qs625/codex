@@ -1,37 +1,45 @@
-mod config_layers;
-pub mod config_rules;
-mod env_var_dependencies;
-pub mod injection;
-pub(crate) mod invocation_utils;
+pub mod config_rules {
+    pub use codex_core_skills_api::config_rules::*;
+}
 pub mod loader;
 pub mod manager;
-mod mention_counts;
-pub mod model;
+pub mod model {
+    pub use codex_core_skills_api::model::*;
+}
+#[cfg(feature = "remote-http")]
 pub mod remote;
-pub mod render;
+pub mod render {
+    pub use codex_core_skills_api::render::*;
+}
 pub mod system;
 
-pub use config_layers::SkillConfigLayerEntry;
-pub use config_layers::SkillConfigLayerStack;
-pub use env_var_dependencies::SkillDependencyInfo;
-pub use env_var_dependencies::collect_env_var_dependencies;
-pub(crate) use invocation_utils::build_implicit_skill_path_indexes;
-pub use invocation_utils::detect_implicit_skill_invocation_for_command;
-pub use manager::SkillsLoadInput;
+pub use codex_core_skills_api::AvailableSkills;
+pub use codex_core_skills_api::DisabledSkillsRuntime;
+pub use codex_core_skills_api::SKILLS_HOW_TO_USE_WITH_ABSOLUTE_PATHS;
+pub use codex_core_skills_api::SKILLS_HOW_TO_USE_WITH_ALIASES;
+pub use codex_core_skills_api::SKILLS_INTRO_WITH_ABSOLUTE_PATHS;
+pub use codex_core_skills_api::SKILLS_INTRO_WITH_ALIASES;
+pub use codex_core_skills_api::SharedSkillsRuntime;
+pub use codex_core_skills_api::SkillConfigLayerEntry;
+pub use codex_core_skills_api::SkillConfigLayerStack;
+pub use codex_core_skills_api::SkillConfigLayerStackOrdering;
+pub use codex_core_skills_api::SkillDependencyInfo;
+pub use codex_core_skills_api::SkillError;
+pub use codex_core_skills_api::SkillLoadOutcome;
+pub use codex_core_skills_api::SkillMetadata;
+pub use codex_core_skills_api::SkillMetadataBudget;
+pub use codex_core_skills_api::SkillPolicy;
+pub use codex_core_skills_api::SkillRenderReport;
+pub use codex_core_skills_api::SkillsLoadInput;
+pub use codex_core_skills_api::SkillsRuntime;
+pub use codex_core_skills_api::SkillsRuntimeFuture;
+pub use codex_core_skills_api::build_available_skills;
+pub use codex_core_skills_api::build_skill_name_counts;
+pub use codex_core_skills_api::bundled_skills_enabled_from_stack;
+pub use codex_core_skills_api::collect_env_var_dependencies;
+pub use codex_core_skills_api::default_skill_metadata_budget;
+pub use codex_core_skills_api::detect_implicit_skill_invocation_for_command;
+pub use codex_core_skills_api::filter_skill_load_outcome_for_product;
+pub use codex_core_skills_api::injection;
+pub use codex_core_skills_api::render_available_skills_body;
 pub use manager::SkillsManager;
-pub use mention_counts::build_skill_name_counts;
-pub use model::SkillError;
-pub use model::SkillLoadOutcome;
-pub use model::SkillMetadata;
-pub use model::SkillPolicy;
-pub use model::filter_skill_load_outcome_for_product;
-pub use render::AvailableSkills;
-pub use render::SKILLS_HOW_TO_USE_WITH_ABSOLUTE_PATHS;
-pub use render::SKILLS_HOW_TO_USE_WITH_ALIASES;
-pub use render::SKILLS_INTRO_WITH_ABSOLUTE_PATHS;
-pub use render::SKILLS_INTRO_WITH_ALIASES;
-pub use render::SkillMetadataBudget;
-pub use render::SkillRenderReport;
-pub use render::build_available_skills;
-pub use render::default_skill_metadata_budget;
-pub use render::render_available_skills_body;

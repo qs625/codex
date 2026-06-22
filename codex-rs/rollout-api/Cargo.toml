@@ -1,0 +1,21 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-rollout-api"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "codex_rollout_api"
+path = "src/lib.rs"
+
+[dependencies]
+codex-context-manager = { workspace = true }
+codex-protocol = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

@@ -21,7 +21,7 @@ codex-cloud-tasks-client = { workspace = true }
 # TODO: codex-cloud-tasks-mock-client should be in dev-dependencies.
 codex-cloud-tasks-mock-client = { workspace = true }
 codex-core = { workspace = true }
-codex-git-utils = { workspace = true }
+codex-git-info = { workspace = true }
 codex-login = { path = "../login" }
 codex-model-provider = { workspace = true }
 codex-tui = { workspace = true }

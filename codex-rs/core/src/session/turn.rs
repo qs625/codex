@@ -70,11 +70,11 @@ use codex_analytics_api::SkillInvocation;
 use codex_analytics_api::TurnResolvedConfigFact;
 use codex_analytics_api::build_track_events_context;
 use codex_async_utils::OrCancelExt;
-use codex_git_utils::get_git_repo_root;
-use codex_hooks::HookEvent;
-use codex_hooks::HookEventAfterAgent;
-use codex_hooks::HookPayload;
-use codex_hooks::HookResult;
+use codex_git_info::get_git_repo_root;
+use codex_hooks_api::HookEvent;
+use codex_hooks_api::HookEventAfterAgent;
+use codex_hooks_api::HookPayload;
+use codex_hooks_api::HookResult;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::CodexErr;
@@ -100,8 +100,8 @@ use codex_protocol::protocol::ReasoningRawContentDeltaEvent;
 use codex_protocol::protocol::TurnDiffEvent;
 use codex_protocol::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
-use codex_tools::ToolName;
-use codex_tools::filter_request_plugin_install_discoverable_tools_for_client;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::filter_request_plugin_install_discoverable_tools_for_client;
 use codex_utils_stream_parser::AssistantTextChunk;
 use codex_utils_stream_parser::AssistantTextStreamParser;
 use codex_utils_stream_parser::ProposedPlanSegment;
@@ -157,7 +157,7 @@ pub(crate) async fn run_turn(
         .filter(|_| sess.services.model_client.provider_info() == turn_provider);
     let mut client_session = prewarmed_client_session.unwrap_or_else(|| {
         sess.services.model_client.new_session_for_provider(
-            Some(Arc::clone(&sess.services.auth_manager)),
+            sess.services.model_client.auth_manager(),
             turn_provider.clone(),
         )
     });
@@ -212,7 +212,7 @@ pub(crate) async fn run_turn(
         Vec::new()
     };
     let available_connectors = if turn_context.apps_enabled() {
-        let connectors = codex_connectors::merge::merge_plugin_connectors_with_accessible(
+        let connectors = codex_connectors_api::merge::merge_plugin_connectors_with_accessible(
             loaded_plugins
                 .effective_apps()
                 .into_iter()
@@ -266,7 +266,12 @@ pub(crate) async fn run_turn(
         items: skill_injections,
         warnings: skill_warnings,
         invocations: skill_invocations,
-    } = build_skill_injections(&mentioned_skills, skills_outcome, Some(&session_telemetry)).await;
+    } = build_skill_injections(
+        &mentioned_skills,
+        skills_outcome,
+        Some(session_telemetry.as_ref()),
+    )
+    .await;
     let analytics_skill_invocations = skill_invocations
         .iter()
         .map(|invocation| SkillInvocation {
@@ -550,7 +555,7 @@ pub(crate) async fn run_turn(
                         | AskForApproval::Granular(_) => "default",
                     }
                     .to_string();
-                    let stop_request = codex_hooks::StopRequest {
+                    let stop_request = codex_hooks_api::StopRequest {
                         session_id: sess.session_id().into(),
                         turn_id: turn_context.sub_id.clone(),
                         #[allow(deprecated)]
@@ -896,7 +901,7 @@ pub(super) fn collect_explicit_app_ids_from_skill_items(
 
     let connector_slug_counts = build_connector_slug_counts(connectors);
     for connector in connectors {
-        let slug = codex_connectors::metadata::connector_mention_slug(connector);
+        let slug = codex_connectors_api::metadata::connector_mention_slug(connector);
         let connector_count = connector_slug_counts.get(&slug).copied().unwrap_or(0);
         let skill_count = skill_name_counts_lower.get(&slug).copied().unwrap_or(0);
         if connector_count == 1 && skill_count == 0 && mention_names_lower.contains(&slug) {
@@ -971,7 +976,7 @@ fn connector_inserted_in_messages(
         return true;
     }
 
-    let mention_slug = codex_connectors::metadata::connector_mention_slug(connector);
+    let mention_slug = codex_connectors_api::metadata::connector_mention_slug(connector);
     let connector_count = connector_slug_counts
         .get(&mention_slug)
         .copied()
@@ -1189,7 +1194,7 @@ pub(crate) async fn built_tools(
             connectors::with_app_enabled_state(connectors.clone(), &turn_context.config)
         });
     let connectors = if apps_enabled {
-        let connectors = codex_connectors::merge::merge_plugin_connectors_with_accessible(
+        let connectors = codex_connectors_api::merge::merge_plugin_connectors_with_accessible(
             loaded_plugins
                 .effective_apps()
                 .into_iter()
@@ -1203,12 +1208,17 @@ pub(crate) async fn built_tools(
     } else {
         None
     };
-    let auth = sess.services.auth_manager.auth().await;
+    let auth_snapshot = match turn_context.auth_runtime.as_ref() {
+        Some(auth_runtime) => auth_runtime.auth().await,
+        None => None,
+    };
+    let connector_auth_context = crate::mcp::codex_apps_auth_context(auth_snapshot.as_ref());
     let discoverable_tools = if apps_enabled && turn_context.tools_config.tool_suggest {
         if let Some(accessible_connectors) = accessible_connectors_with_enabled_state.as_ref() {
             match connectors::list_tool_suggest_discoverable_tools_with_auth(
                 &turn_context.config,
-                auth.as_ref(),
+                sess.services.plugins_manager.as_ref(),
+                connector_auth_context.as_ref(),
                 accessible_connectors.as_slice(),
             )
             .await
@@ -1880,7 +1890,10 @@ async fn try_run_sampling_request(
         approval_policy = turn_context.approval_policy.value(),
         sandbox_policy = &turn_context.sandbox_policy(),
         effort = turn_context.reasoning_effort,
-        auth_mode = sess.services.auth_manager.auth_mode(),
+        auth_mode = turn_context
+            .auth_runtime
+            .as_deref()
+            .and_then(|auth_runtime| auth_runtime.telemetry_snapshot().auth_mode),
         features = sess.features.enabled_features(),
     );
     let inference_trace = sess.services.rollout_thread_trace.inference_trace_context(

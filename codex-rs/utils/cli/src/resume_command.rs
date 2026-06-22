@@ -1,7 +1,7 @@
 //! Shared formatting for user-facing `codex resume` command hints.
 
 use codex_protocol::ThreadId;
-use codex_shell_command::parse_command::shlex_join;
+use codex_shell_utils::shlex_join;
 
 pub fn resume_command(thread_name: Option<&str>, thread_id: Option<ThreadId>) -> Option<String> {
     let resume_target = thread_name

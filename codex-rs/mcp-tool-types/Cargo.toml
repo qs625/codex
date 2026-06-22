@@ -9,7 +9,7 @@ workspace = true
 
 [dependencies]
 codex-protocol = { workspace = true }
-rmcp = { workspace = true, default-features = false, features = ["server"] }
+codex-utils-output-truncation = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 

@@ -38,7 +38,7 @@ mod thread_list_cwd_filter_tests {
 
 mod thread_processor_behavior_tests {
     async fn forked_from_id_from_rollout(path: &Path) -> Option<String> {
-        codex_core::read_session_meta_line(path)
+        codex_rollout::read_session_meta_line(path)
             .await
             .ok()
             .and_then(|meta_line| meta_line.meta.forked_from_id)

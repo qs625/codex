@@ -1,10 +1,123 @@
 use std::path::Path;
 use std::path::PathBuf;
 
+mod exec_policy;
+
+pub use exec_policy::ExecPolicyApprovalRequest;
+pub use exec_policy::ExecPolicyCommandOrigin;
+pub use exec_policy::ExecPolicyCommands;
+pub use exec_policy::InterceptedExecPolicyCommands;
+pub use exec_policy::InterceptedExecPolicyContext;
+pub use exec_policy::UnmatchedCommandContext;
+pub use exec_policy::commands_for_exec_policy;
+pub use exec_policy::commands_for_intercepted_exec_policy;
+pub use exec_policy::create_exec_approval_requirement_for_command;
+#[doc(hidden)]
+pub use exec_policy::derive_requested_execpolicy_amendment_from_prefix_rule;
+pub use exec_policy::evaluate_intercepted_exec_policy;
+pub use exec_policy::is_policy_match;
+pub use exec_policy::join_program_and_argv;
+#[doc(hidden)]
+pub use exec_policy::profile_is_managed_read_only;
+pub use exec_policy::prompt_is_rejected_by_policy;
+pub use exec_policy::render_decision_for_unmatched_command;
+
+use codex_protocol::approvals::ExecPolicyAmendment;
+use codex_protocol::permissions::FileSystemSandboxKind;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
+use codex_protocol::protocol::AskForApproval;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use globset::GlobBuilder;
 use globset::GlobMatcher;
+
+/// Tool execution approval outcome after combining user approval policy,
+/// sandbox policy, and exec policy evaluation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExecApprovalRequirement {
+    /// No approval required for this tool call.
+    Skip {
+        /// The first attempt should skip sandboxing when the caller has an
+        /// explicit trust signal, such as an exec-policy allow rule.
+        bypass_sandbox: bool,
+        /// Proposed exec-policy amendment to skip future approvals for similar
+        /// commands.
+        proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
+    },
+    /// Approval required for this tool call.
+    NeedsApproval {
+        reason: Option<String>,
+        /// Proposed exec-policy amendment to skip future approvals for similar
+        /// commands.
+        proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
+    },
+    /// Execution forbidden for this tool call.
+    Forbidden { reason: String },
+}
+
+impl ExecApprovalRequirement {
+    /// Returns the exec-policy amendment proposed by this requirement, if any.
+    pub fn proposed_execpolicy_amendment(&self) -> Option<&ExecPolicyAmendment> {
+        match self {
+            Self::NeedsApproval {
+                proposed_execpolicy_amendment: Some(prefix),
+                ..
+            } => Some(prefix),
+            Self::Skip {
+                proposed_execpolicy_amendment: Some(prefix),
+                ..
+            } => Some(prefix),
+            Self::Forbidden { .. }
+            | Self::NeedsApproval {
+                proposed_execpolicy_amendment: None,
+                ..
+            }
+            | Self::Skip {
+                proposed_execpolicy_amendment: None,
+                ..
+            } => None,
+        }
+    }
+}
+
+/// Computes the default execution approval requirement for a tool call that did
+/// not provide a custom approval decision.
+pub fn default_exec_approval_requirement(
+    policy: AskForApproval,
+    file_system_sandbox_policy: &FileSystemSandboxPolicy,
+) -> ExecApprovalRequirement {
+    let needs_approval = match policy {
+        AskForApproval::Never | AskForApproval::OnFailure => false,
+        AskForApproval::OnRequest | AskForApproval::Granular(_) => {
+            matches!(
+                file_system_sandbox_policy.kind,
+                FileSystemSandboxKind::Restricted
+            )
+        }
+        AskForApproval::UnlessTrusted => true,
+    };
+
+    if needs_approval
+        && matches!(
+            policy,
+            AskForApproval::Granular(granular_config)
+                if !granular_config.allows_sandbox_approval()
+        )
+    {
+        ExecApprovalRequirement::Forbidden {
+            reason: "approval policy disallowed sandbox approval prompt".to_string(),
+        }
+    } else if needs_approval {
+        ExecApprovalRequirement::NeedsApproval {
+            reason: None,
+            proposed_execpolicy_amendment: None,
+        }
+    } else {
+        ExecApprovalRequirement::Skip {
+            bypass_sandbox: false,
+            proposed_execpolicy_amendment: None,
+        }
+    }
+}
 
 /// Runtime matcher for read-deny entries in a filesystem sandbox policy.
 pub struct ReadDenyMatcher {
@@ -165,7 +278,92 @@ mod tests {
     use codex_protocol::permissions::FileSystemAccessMode;
     use codex_protocol::permissions::FileSystemPath;
     use codex_protocol::permissions::FileSystemSandboxEntry;
+    use codex_protocol::protocol::GranularApprovalConfig;
+    use codex_protocol::protocol::NetworkAccess;
+    use codex_protocol::protocol::SandboxPolicy;
+    use pretty_assertions::assert_eq;
     use tempfile::TempDir;
+
+    #[test]
+    fn external_sandbox_skips_exec_approval_on_request() {
+        let sandbox_policy = SandboxPolicy::ExternalSandbox {
+            network_access: NetworkAccess::Restricted,
+        };
+        assert_eq!(
+            default_exec_approval_requirement(
+                AskForApproval::OnRequest,
+                &FileSystemSandboxPolicy::from(&sandbox_policy),
+            ),
+            ExecApprovalRequirement::Skip {
+                bypass_sandbox: false,
+                proposed_execpolicy_amendment: None,
+            }
+        );
+    }
+
+    #[test]
+    fn restricted_sandbox_requires_exec_approval_on_request() {
+        let sandbox_policy = SandboxPolicy::new_read_only_policy();
+        assert_eq!(
+            default_exec_approval_requirement(
+                AskForApproval::OnRequest,
+                &FileSystemSandboxPolicy::from(&sandbox_policy),
+            ),
+            ExecApprovalRequirement::NeedsApproval {
+                reason: None,
+                proposed_execpolicy_amendment: None,
+            }
+        );
+    }
+
+    #[test]
+    fn default_exec_approval_requirement_rejects_sandbox_prompt_when_granular_disables_it() {
+        let policy = AskForApproval::Granular(GranularApprovalConfig {
+            sandbox_approval: false,
+            rules: true,
+            skill_approval: true,
+            request_permissions: true,
+            mcp_elicitations: true,
+        });
+
+        let sandbox_policy = SandboxPolicy::new_read_only_policy();
+        let requirement = default_exec_approval_requirement(
+            policy,
+            &FileSystemSandboxPolicy::from(&sandbox_policy),
+        );
+
+        assert_eq!(
+            requirement,
+            ExecApprovalRequirement::Forbidden {
+                reason: "approval policy disallowed sandbox approval prompt".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn default_exec_approval_requirement_keeps_prompt_when_granular_allows_sandbox_approval() {
+        let policy = AskForApproval::Granular(GranularApprovalConfig {
+            sandbox_approval: true,
+            rules: false,
+            skill_approval: true,
+            request_permissions: true,
+            mcp_elicitations: false,
+        });
+
+        let sandbox_policy = SandboxPolicy::new_read_only_policy();
+        let requirement = default_exec_approval_requirement(
+            policy,
+            &FileSystemSandboxPolicy::from(&sandbox_policy),
+        );
+
+        assert_eq!(
+            requirement,
+            ExecApprovalRequirement::NeedsApproval {
+                reason: None,
+                proposed_execpolicy_amendment: None,
+            }
+        );
+    }
 
     #[cfg(unix)]
     fn symlink_dir(original: &Path, link: &Path) -> std::io::Result<()> {

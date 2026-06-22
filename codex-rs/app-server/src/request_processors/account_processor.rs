@@ -1,4 +1,6 @@
 use super::*;
+use codex_core_plugins_remote::RemotePluginAuth;
+use codex_login::default_client::get_codex_user_agent;
 
 // Duration before a browser ChatGPT login attempt is abandoned.
 const LOGIN_CHATGPT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -47,6 +49,17 @@ enum RefreshTokenRequestOutcome {
     FailedPermanently,
 }
 
+fn remote_plugin_auth_from_codex_auth(auth: Option<CodexAuth>) -> Option<RemotePluginAuth> {
+    auth.map(|auth| {
+        RemotePluginAuth::new(
+            auth.request_auth_snapshot(),
+            auth.get_account_id(),
+            auth.get_chatgpt_user_id(),
+            auth.is_workspace_account(),
+        )
+    })
+}
+
 impl Drop for ActiveLogin {
     fn drop(&mut self) {
         self.cancel();
@@ -57,6 +70,7 @@ impl Drop for ActiveLogin {
 pub(crate) struct AccountRequestProcessor {
     auth_manager: Arc<AuthManager>,
     thread_manager: Arc<ThreadManager>,
+    plugins_manager: Arc<PluginsManager>,
     outgoing: Arc<OutgoingMessageSender>,
     config: Arc<Config>,
     config_manager: ConfigManager,
@@ -67,6 +81,7 @@ impl AccountRequestProcessor {
     pub(crate) fn new(
         auth_manager: Arc<AuthManager>,
         thread_manager: Arc<ThreadManager>,
+        plugins_manager: Arc<PluginsManager>,
         outgoing: Arc<OutgoingMessageSender>,
         config: Arc<Config>,
         config_manager: ConfigManager,
@@ -74,6 +89,7 @@ impl AccountRequestProcessor {
         Self {
             auth_manager,
             thread_manager,
+            plugins_manager,
             outgoing,
             config,
             config_manager,
@@ -162,6 +178,7 @@ impl AccountRequestProcessor {
     async fn maybe_refresh_remote_installed_plugins_cache_for_current_config(
         config_manager: &ConfigManager,
         thread_manager: &Arc<ThreadManager>,
+        plugins_manager: &Arc<PluginsManager>,
         auth: Option<CodexAuth>,
     ) {
         match config_manager
@@ -170,19 +187,20 @@ impl AccountRequestProcessor {
         {
             Ok(config) => {
                 let refresh_thread_manager = Arc::clone(thread_manager);
+                let refresh_plugins_manager = Arc::clone(plugins_manager);
                 let refresh_config_manager = config_manager.clone();
-                thread_manager
-                    .plugins_manager()
-                    .maybe_start_remote_installed_plugins_cache_refresh(
-                        &config.plugins_config_input(),
-                        auth,
-                        Some(Arc::new(move || {
-                            Self::spawn_effective_plugins_changed_task(
-                                Arc::clone(&refresh_thread_manager),
-                                refresh_config_manager.clone(),
-                            );
-                        })),
-                    );
+                codex_core_plugins_remote::maybe_start_remote_installed_plugins_cache_refresh(
+                    Arc::clone(plugins_manager),
+                    &config.plugins_config_input(),
+                    remote_plugin_auth_from_codex_auth(auth),
+                    Some(Arc::new(move || {
+                        Self::spawn_effective_plugins_changed_task(
+                            Arc::clone(&refresh_thread_manager),
+                            Arc::clone(&refresh_plugins_manager),
+                            refresh_config_manager.clone(),
+                        );
+                    })),
+                );
             }
             Err(err) => {
                 warn!(
@@ -194,10 +212,11 @@ impl AccountRequestProcessor {
 
     fn spawn_effective_plugins_changed_task(
         thread_manager: Arc<ThreadManager>,
+        plugins_manager: Arc<PluginsManager>,
         config_manager: ConfigManager,
     ) {
         tokio::spawn(async move {
-            thread_manager.plugins_manager().clear_cache();
+            plugins_manager.clear_cache();
             thread_manager.skills_manager().clear_cache();
             if thread_manager.list_thread_ids().await.is_empty() {
                 return;
@@ -384,6 +403,8 @@ impl AccountRequestProcessor {
         let outgoing_clone = self.outgoing.clone();
         let config_manager = self.config_manager.clone();
         let thread_manager = Arc::clone(&self.thread_manager);
+        let plugins_manager = Arc::clone(&self.plugins_manager);
+        let auth_manager = Arc::clone(&self.auth_manager);
         let chatgpt_base_url = self.config.chatgpt_base_url.clone();
         let active_login = self.active_login.clone();
         let auth_url = server.auth_url.clone();
@@ -406,6 +427,8 @@ impl AccountRequestProcessor {
                 &outgoing_clone,
                 config_manager,
                 thread_manager,
+                plugins_manager,
+                auth_manager,
                 chatgpt_base_url,
                 login_id,
                 success,
@@ -460,6 +483,8 @@ impl AccountRequestProcessor {
         let outgoing_clone = self.outgoing.clone();
         let config_manager = self.config_manager.clone();
         let thread_manager = Arc::clone(&self.thread_manager);
+        let plugins_manager = Arc::clone(&self.plugins_manager);
+        let auth_manager = Arc::clone(&self.auth_manager);
         let chatgpt_base_url = self.config.chatgpt_base_url.clone();
         let active_login = self.active_login.clone();
         tokio::spawn(async move {
@@ -479,6 +504,8 @@ impl AccountRequestProcessor {
                 &outgoing_clone,
                 config_manager,
                 thread_manager,
+                plugins_manager,
+                auth_manager,
                 chatgpt_base_url,
                 login_id,
                 success,
@@ -601,6 +628,7 @@ impl AccountRequestProcessor {
         Self::maybe_refresh_remote_installed_plugins_cache_for_current_config(
             &self.config_manager,
             &self.thread_manager,
+            &self.plugins_manager,
             self.auth_manager.auth_cached(),
         )
         .await;
@@ -627,6 +655,8 @@ impl AccountRequestProcessor {
         outgoing: &OutgoingMessageSender,
         config_manager: ConfigManager,
         thread_manager: Arc<ThreadManager>,
+        plugins_manager: Arc<PluginsManager>,
+        auth_manager: Arc<AuthManager>,
         chatgpt_base_url: String,
         login_id: Uuid,
         success: bool,
@@ -642,7 +672,6 @@ impl AccountRequestProcessor {
             .await;
 
         if success {
-            let auth_manager = thread_manager.auth_manager();
             auth_manager.reload().await;
             config_manager
                 .replace_cloud_requirements_loader(auth_manager.clone(), chatgpt_base_url);
@@ -654,6 +683,7 @@ impl AccountRequestProcessor {
             Self::maybe_refresh_remote_installed_plugins_cache_for_current_config(
                 &config_manager,
                 &thread_manager,
+                &plugins_manager,
                 auth.clone(),
             )
             .await;
@@ -686,6 +716,7 @@ impl AccountRequestProcessor {
         Self::maybe_refresh_remote_installed_plugins_cache_for_current_config(
             &self.config_manager,
             &self.thread_manager,
+            &self.plugins_manager,
             self.auth_manager.auth_cached(),
         )
         .await;
@@ -873,8 +904,12 @@ impl AccountRequestProcessor {
             ));
         }
 
-        let client = BackendClient::from_auth(self.config.chatgpt_base_url.clone(), &auth)
-            .map_err(|err| internal_error(format!("failed to construct backend client: {err}")))?;
+        let client = BackendClient::from_auth_snapshot(
+            self.config.chatgpt_base_url.clone(),
+            &auth.request_auth_snapshot(),
+        )
+        .map(|client| client.with_user_agent(get_codex_user_agent()))
+        .map_err(|err| internal_error(format!("failed to construct backend client: {err}")))?;
 
         match client
             .send_add_credits_nudge_email(Self::backend_credit_type(params.credit_type))
@@ -918,8 +953,12 @@ impl AccountRequestProcessor {
             ));
         }
 
-        let client = BackendClient::from_auth(self.config.chatgpt_base_url.clone(), &auth)
-            .map_err(|err| internal_error(format!("failed to construct backend client: {err}")))?;
+        let client = BackendClient::from_auth_snapshot(
+            self.config.chatgpt_base_url.clone(),
+            &auth.request_auth_snapshot(),
+        )
+        .map(|client| client.with_user_agent(get_codex_user_agent()))
+        .map_err(|err| internal_error(format!("failed to construct backend client: {err}")))?;
 
         let snapshots = client
             .get_rate_limits_many()

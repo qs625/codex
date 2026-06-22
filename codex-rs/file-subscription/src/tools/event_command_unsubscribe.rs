@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use codex_extension_api::ExtensionToolOutput;
 use codex_extension_api::FunctionCallError;
 use codex_extension_api::JsonToolOutput;
@@ -32,7 +31,6 @@ pub(crate) struct EventCommandUnsubscribeTool {
     pub(crate) registry: Arc<FsSubscriptionRegistry>,
 }
 
-#[async_trait]
 impl ToolExecutor<ToolCall> for EventCommandUnsubscribeTool {
     type Output = ExtensionToolOutput;
 
@@ -48,15 +46,22 @@ impl ToolExecutor<ToolCall> for EventCommandUnsubscribeTool {
         ))
     }
 
-    async fn handle(&self, call: ToolCall) -> Result<Self::Output, FunctionCallError> {
-        let args: EventCommandUnsubscribeArgs = parse_args(&call)?;
-        let cancelled = self
-            .registry
-            .unsubscribe(self.thread_id, &args.subscription_id)
-            .await;
-        Ok(JsonToolOutput::new(json!({
-            "cancelled": cancelled,
-            "subscription_id": args.subscription_id,
-        })))
+    fn handle<'a>(
+        &'a self, call: ToolCall,
+    ) -> codex_extension_api::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+                    let args: EventCommandUnsubscribeArgs = parse_args(&call)?;
+                    let cancelled = self
+                        .registry
+                        .unsubscribe(self.thread_id, &args.subscription_id)
+                        .await;
+                    Ok(JsonToolOutput::new(json!({
+                        "cancelled": cancelled,
+                        "subscription_id": args.subscription_id,
+                    })))
+            })
     }
 }

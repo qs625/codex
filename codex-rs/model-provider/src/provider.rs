@@ -4,25 +4,24 @@ use std::sync::Arc;
 use codex_api_provider::Provider;
 use codex_auth_types::AuthMode;
 use codex_login::AuthManager;
-use codex_login::CodexAuth;
 use codex_model_provider_api::ModelProvider;
 use codex_model_provider_api::ModelProviderFactory;
 use codex_model_provider_api::ModelProviderFuture;
-use codex_model_provider_api::ProviderAccountError;
 use codex_model_provider_api::ProviderAccountResult;
 use codex_model_provider_api::ProviderAccountState;
 use codex_model_provider_api::SharedModelProvider;
+use codex_model_provider_api::SharedModelProviderAuthManager;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_models_manager::manager::ModelCachePolicy;
 use codex_models_manager::manager::OpenAiModelsManager;
 use codex_models_manager::manager::StaticModelsManager;
 use codex_models_manager_api::SharedModelsManager;
-use codex_protocol::account::ProviderAccount;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::openai_models::ModelsResponse;
 
 use crate::amazon_bedrock::AmazonBedrockModelProvider;
 use crate::auth::auth_manager_for_provider;
+use crate::auth::login_auth_manager;
 use crate::models_endpoint::OpenAiModelsEndpoint;
 
 /// Adapts serializable provider metadata into API-client provider configuration.
@@ -37,6 +36,13 @@ pub fn model_provider_info_to_api_provider(
 pub fn create_model_provider(
     provider_info: ModelProviderInfo,
     auth_manager: Option<Arc<AuthManager>>,
+) -> SharedModelProvider {
+    create_model_provider_with_auth_manager(provider_info, auth_manager.map(login_auth_manager))
+}
+
+fn create_model_provider_with_auth_manager(
+    provider_info: ModelProviderInfo,
+    auth_manager: Option<SharedModelProviderAuthManager>,
 ) -> SharedModelProvider {
     if provider_info.is_amazon_bedrock() {
         Arc::new(AmazonBedrockModelProvider::new(provider_info))
@@ -53,9 +59,9 @@ impl ModelProviderFactory for DefaultModelProviderFactory {
     fn create_model_provider(
         &self,
         provider_info: ModelProviderInfo,
-        auth_manager: Option<Arc<AuthManager>>,
+        auth_manager: Option<SharedModelProviderAuthManager>,
     ) -> SharedModelProvider {
-        create_model_provider(provider_info, auth_manager)
+        create_model_provider_with_auth_manager(provider_info, auth_manager)
     }
 }
 
@@ -63,11 +69,14 @@ impl ModelProviderFactory for DefaultModelProviderFactory {
 #[derive(Clone, Debug)]
 struct ConfiguredModelProvider {
     info: ModelProviderInfo,
-    auth_manager: Option<Arc<AuthManager>>,
+    auth_manager: Option<SharedModelProviderAuthManager>,
 }
 
 impl ConfiguredModelProvider {
-    fn new(provider_info: ModelProviderInfo, auth_manager: Option<Arc<AuthManager>>) -> Self {
+    fn new(
+        provider_info: ModelProviderInfo,
+        auth_manager: Option<SharedModelProviderAuthManager>,
+    ) -> Self {
         let auth_manager = auth_manager_for_provider(auth_manager, &provider_info);
         Self {
             info: provider_info,
@@ -81,7 +90,7 @@ impl ModelProvider for ConfiguredModelProvider {
         &self.info
     }
 
-    fn auth_manager(&self) -> Option<Arc<AuthManager>> {
+    fn auth_manager(&self) -> Option<SharedModelProviderAuthManager> {
         self.auth_manager.clone()
     }
 
@@ -92,7 +101,7 @@ impl ModelProvider for ConfiguredModelProvider {
             .is_some_and(|auth| auth.is_chatgpt_auth())
     }
 
-    fn auth(&self) -> ModelProviderFuture<'_, Option<CodexAuth>> {
+    fn auth(&self) -> ModelProviderFuture<'_, Option<codex_auth_types::RequestAuthSnapshot>> {
         Box::pin(async move {
             match self.auth_manager.as_ref() {
                 Some(auth_manager) => auth_manager.auth().await,
@@ -105,30 +114,9 @@ impl ModelProvider for ConfiguredModelProvider {
         let account = if self.info.requires_openai_auth {
             self.auth_manager
                 .as_ref()
-                .and_then(|auth_manager| {
-                    let auth = auth_manager.auth_cached()?;
-                    if auth_manager.refresh_failure_for_auth(&auth).is_some() {
-                        return None;
-                    }
-                    Some(auth)
-                })
-                .map(|auth| match &auth {
-                    CodexAuth::ApiKey(_) => Ok(ProviderAccount::ApiKey),
-                    CodexAuth::Chatgpt(_)
-                    | CodexAuth::ChatgptAuthTokens(_)
-                    | CodexAuth::AgentIdentity(_) => {
-                        let email = auth.get_account_email();
-                        let plan_type = auth.account_plan_type();
-
-                        match (email, plan_type) {
-                            (Some(email), Some(plan_type)) => {
-                                Ok(ProviderAccount::Chatgpt { email, plan_type })
-                            }
-                            _ => Err(ProviderAccountError::MissingChatgptAccountDetails),
-                        }
-                    }
-                })
+                .map(|auth_manager| auth_manager.account())
                 .transpose()?
+                .flatten()
         } else {
             None
         };
@@ -178,11 +166,13 @@ impl ModelProvider for ConfiguredModelProvider {
 mod tests {
     use std::num::NonZeroU64;
 
+    use codex_login::CodexAuth;
     use codex_model_provider_api::DEFAULT_APPROVAL_REVIEW_PREFERRED_MODEL;
     use codex_model_provider_api::ProviderCapabilities;
     use codex_model_provider_info::ModelProviderAwsAuthInfo;
     use codex_model_provider_info::WireApi;
     use codex_models_manager_api::RefreshStrategy;
+    use codex_protocol::account::ProviderAccount;
     use codex_protocol::config_types::ModelProviderAuthInfo;
     use codex_protocol::openai_models::ModelInfo;
     use codex_protocol::openai_models::ModelsResponse;
@@ -317,7 +307,7 @@ mod tests {
             .auth_manager()
             .expect("command auth provider should have an auth manager");
 
-        assert!(auth_manager.has_external_auth());
+        assert!(auth_manager.unauthorized_recovery().is_some());
     }
 
     #[test]

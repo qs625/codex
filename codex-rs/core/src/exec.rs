@@ -24,7 +24,7 @@ use crate::spawn::SpawnChildRequest;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
 use codex_command_runtime::bytes_to_string_smart;
-use codex_network_proxy::NetworkProxy;
+use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result;
@@ -40,12 +40,14 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
 use codex_protocol::protocol::ExecOutputStream;
 use codex_protocol::protocol::SandboxPolicy;
-use codex_sandboxing::SandboxCommand;
-use codex_sandboxing::SandboxManager;
-use codex_sandboxing::SandboxTransformRequest;
-use codex_sandboxing::SandboxType;
-use codex_sandboxing::SandboxablePreference;
+use codex_sandboxing_api::SandboxCommand;
+use codex_sandboxing_api::SandboxRuntime;
+use codex_sandboxing_api::SandboxTransformRequest;
+use codex_sandboxing_api::SandboxType;
+use codex_sandboxing_api::SandboxablePreference;
+use codex_sandboxing_api::resolve_windows_deny_read_paths;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_path::normalize_for_native_workdir;
 use codex_utils_pty::DEFAULT_OUTPUT_BYTES_CAP;
 use codex_utils_pty::process_group::kill_child_process_group;
 
@@ -54,6 +56,7 @@ pub const DEFAULT_EXEC_COMMAND_TIMEOUT_MS: u64 = 10_000;
 // Hardcode these since it does not seem worth including the libc crate just
 // for these.
 const SIGKILL_CODE: i32 = 9;
+const LINUX_SIGSYS_CODE: i32 = 31;
 const TIMEOUT_CODE: i32 = 64;
 const EXIT_CODE_SIGNAL_BASE: i32 = 128; // conventional shell: 128 + signal
 const EXEC_TIMEOUT_EXIT_CODE: i32 = 124; // conventional timeout exit code
@@ -88,7 +91,7 @@ pub struct ExecParams {
     pub expiration: ExecExpiration,
     pub capture_policy: ExecCapturePolicy,
     pub env: HashMap<String, String>,
-    pub network: Option<NetworkProxy>,
+    pub network: Option<SharedNetworkProxyRuntime>,
     pub sandbox_permissions: SandboxPermissions,
     pub windows_sandbox_level: codex_protocol::config_types::WindowsSandboxLevel,
     pub windows_sandbox_private_desktop: bool,
@@ -135,12 +138,13 @@ pub enum ExecCapturePolicy {
 }
 
 fn select_process_exec_tool_sandbox_type(
+    sandbox_runtime: &dyn SandboxRuntime,
     file_system_sandbox_policy: &FileSystemSandboxPolicy,
     network_sandbox_policy: NetworkSandboxPolicy,
     windows_sandbox_level: codex_protocol::config_types::WindowsSandboxLevel,
     enforce_managed_network: bool,
 ) -> SandboxType {
-    SandboxManager::new().select_initial(
+    sandbox_runtime.select_initial(
         file_system_sandbox_policy,
         network_sandbox_policy,
         SandboxablePreference::Auto,
@@ -299,6 +303,7 @@ pub async fn process_exec_tool_call(
     sandbox_cwd: &AbsolutePathBuf,
     codex_linux_sandbox_exe: &Option<PathBuf>,
     use_legacy_landlock: bool,
+    sandbox_runtime: &dyn SandboxRuntime,
     stdout_stream: Option<StdoutStream>,
 ) -> Result<ExecToolCallOutput> {
     let exec_req = build_exec_request(
@@ -307,6 +312,7 @@ pub async fn process_exec_tool_call(
         sandbox_cwd,
         codex_linux_sandbox_exe,
         use_legacy_landlock,
+        sandbox_runtime,
     )?;
 
     // Route through the sandboxing module for a single, unified execution path.
@@ -321,6 +327,7 @@ pub fn build_exec_request(
     sandbox_cwd: &AbsolutePathBuf,
     codex_linux_sandbox_exe: &Option<PathBuf>,
     use_legacy_landlock: bool,
+    sandbox_runtime: &dyn SandboxRuntime,
 ) -> Result<ExecRequest> {
     let ExecParams {
         command,
@@ -343,6 +350,7 @@ pub fn build_exec_request(
     let (file_system_sandbox_policy, network_sandbox_policy) =
         permission_profile.to_runtime_permissions();
     let sandbox_type = select_process_exec_tool_sandbox_type(
+        sandbox_runtime,
         &file_system_sandbox_policy,
         network_sandbox_policy,
         windows_sandbox_level,
@@ -353,7 +361,7 @@ pub fn build_exec_request(
     if let Some(network) = network.as_ref() {
         network.apply_to_env(&mut env);
     }
-    let network_snapshot = network.as_ref().map(NetworkProxy::runtime_snapshot);
+    let network_snapshot = network.as_ref().map(|network| network.runtime_snapshot());
     let (program, args) = command.split_first().ok_or_else(|| {
         CodexErr::Io(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -361,7 +369,6 @@ pub fn build_exec_request(
         ))
     })?;
 
-    let manager = SandboxManager::new();
     let command = SandboxCommand {
         program: program.clone().into(),
         args: args.to_vec(),
@@ -373,7 +380,7 @@ pub fn build_exec_request(
         expiration,
         capture_policy,
     };
-    let mut exec_req = manager
+    let mut exec_req = sandbox_runtime
         .transform(SandboxTransformRequest {
             command,
             permissions: permission_profile,
@@ -828,14 +835,10 @@ pub(crate) fn is_likely_sandbox_denied(
         return false;
     }
 
-    #[cfg(unix)]
+    if sandbox_type == SandboxType::LinuxSeccomp
+        && exec_output.exit_code == EXIT_CODE_SIGNAL_BASE + LINUX_SIGSYS_CODE
     {
-        const SIGSYS_CODE: i32 = libc::SIGSYS;
-        if sandbox_type == SandboxType::LinuxSeccomp
-            && exec_output.exit_code == EXIT_CODE_SIGNAL_BASE + SIGSYS_CODE
-        {
-            return true;
-        }
+        return true;
     }
 
     false
@@ -1064,10 +1067,8 @@ pub(crate) fn resolve_windows_restricted_token_filesystem_overrides(
         );
     }
 
-    let additional_deny_read_paths = codex_windows_sandbox::resolve_windows_deny_read_paths(
-        file_system_sandbox_policy,
-        sandbox_policy_cwd,
-    )?;
+    let additional_deny_read_paths =
+        resolve_windows_deny_read_paths(file_system_sandbox_policy, sandbox_policy_cwd)?;
     if !additional_deny_read_paths.is_empty() {
         return Err(
             "windows unelevated restricted-token sandbox cannot enforce deny-read restrictions directly; refusing to run unsandboxed"
@@ -1154,7 +1155,7 @@ pub(crate) fn resolve_windows_restricted_token_filesystem_overrides(
 }
 
 fn normalize_windows_override_path(path: &Path) -> std::result::Result<PathBuf, String> {
-    AbsolutePathBuf::from_absolute_path(dunce::simplified(path))
+    AbsolutePathBuf::from_absolute_path(normalize_for_native_workdir(path))
         .map(AbsolutePathBuf::into_path_buf)
         .map_err(|err| err.to_string())
 }
@@ -1192,10 +1193,8 @@ pub(crate) fn resolve_windows_elevated_filesystem_overrides(
         ));
     }
 
-    let additional_deny_read_paths = codex_windows_sandbox::resolve_windows_deny_read_paths(
-        file_system_sandbox_policy,
-        sandbox_policy_cwd,
-    )?;
+    let additional_deny_read_paths =
+        resolve_windows_deny_read_paths(file_system_sandbox_policy, sandbox_policy_cwd)?;
 
     let split_writable_roots =
         file_system_sandbox_policy.get_writable_roots_with_cwd(sandbox_policy_cwd);
@@ -1208,7 +1207,7 @@ pub(crate) fn resolve_windows_elevated_filesystem_overrides(
 
     let needs_direct_runtime_enforcement = file_system_sandbox_policy
         .needs_direct_runtime_enforcement(network_sandbox_policy, sandbox_policy_cwd);
-    let normalize_path = |path: PathBuf| dunce::canonicalize(&path).unwrap_or(path);
+    let normalize_path = canonicalize_absolute_path_or_original;
     let legacy_writable_roots = sandbox_policy.get_writable_roots_with_cwd(sandbox_policy_cwd);
     let legacy_root_paths: BTreeSet<PathBuf> = legacy_writable_roots
         .iter()
@@ -1294,6 +1293,13 @@ pub(crate) fn resolve_windows_elevated_filesystem_overrides(
         additional_deny_read_paths,
         additional_deny_write_paths,
     }))
+}
+
+fn canonicalize_absolute_path_or_original(path: PathBuf) -> PathBuf {
+    AbsolutePathBuf::from_absolute_path(&path)
+        .and_then(|path| path.canonicalize())
+        .map(AbsolutePathBuf::into_path_buf)
+        .unwrap_or(path)
 }
 
 fn has_reopened_writable_descendant(

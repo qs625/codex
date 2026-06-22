@@ -1,8 +1,6 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use codex_extension_api::ExtensionData;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::items::TurnItem;
@@ -15,10 +13,11 @@ use crate::function_tool::FunctionCallError;
 use crate::parse_turn_item;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
+use crate::state_db_bridge as state_db;
 use crate::tools::parallel::ToolCallRuntime;
 use crate::tools::router::ToolRouter;
-use codex_memories_read::citations::parse_memory_citation;
-use codex_memories_read::citations::thread_ids_from_memory_citation;
+use codex_memories_read_api::citations::parse_memory_citation;
+use codex_memories_read_api::citations::thread_ids_from_memory_citation;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result;
 use codex_protocol::memory_citation::MemoryCitation;
@@ -27,8 +26,8 @@ use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
-use codex_rollout::state_db;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_image::decode_base64_image_bytes;
 use codex_utils_stream_parser::strip_proposed_plan_blocks;
 use futures::Future;
 use tracing::debug;
@@ -112,11 +111,9 @@ async fn save_image_generation_result(
     call_id: &str,
     result: &str,
 ) -> Result<AbsolutePathBuf> {
-    let bytes = BASE64_STANDARD
-        .decode(result.trim().as_bytes())
-        .map_err(|err| {
-            CodexErr::InvalidRequest(format!("invalid image generation payload: {err}"))
-        })?;
+    let bytes = decode_base64_image_bytes(result.trim().as_bytes()).map_err(|err| {
+        CodexErr::InvalidRequest(format!("invalid image generation payload: {err}"))
+    })?;
     let path = image_generation_artifact_path(codex_home, session_id, call_id);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -231,9 +228,12 @@ async fn record_stage1_output_usage_for_memory_citation(
         return true;
     }
 
-    if let Some(db) = state_db_ctx {
-        let _ = db.record_stage1_output_usage(&thread_ids).await;
-    }
+    state_db::record_stage1_output_usage(
+        state_db_ctx.map(std::sync::Arc::as_ref),
+        &thread_ids,
+        "memory_citation",
+    )
+    .await;
     true
 }
 

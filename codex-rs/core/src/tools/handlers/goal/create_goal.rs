@@ -6,10 +6,10 @@ use crate::tools::context::ToolPayload;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
-use codex_tools::CREATE_GOAL_TOOL_NAME;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
-use codex_tools::create_create_goal_tool;
+use codex_tool_planning::CREATE_GOAL_TOOL_NAME;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::create_create_goal_tool;
 
 use super::CompletionBudgetReport;
 use super::CreateGoalArgs;
@@ -18,7 +18,6 @@ use super::goal_response;
 
 pub struct CreateGoalHandler;
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for CreateGoalHandler {
     type Output = FunctionToolOutput;
 
@@ -30,47 +29,55 @@ impl ToolExecutor<ToolInvocation> for CreateGoalHandler {
         Some(create_create_goal_tool())
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            payload,
-            ..
-        } = invocation;
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session,
+                turn,
+                payload,
+                ..
+            } = invocation;
 
-        let arguments = match payload {
-            ToolPayload::Function { arguments } => arguments,
-            _ => {
-                return Err(FunctionCallError::RespondToModel(
-                    "goal handler received unsupported payload".to_string(),
-                ));
-            }
-        };
-
-        let args: CreateGoalArgs = parse_arguments(&arguments)?;
-        let goal = session
-            .create_thread_goal(
-                turn.as_ref(),
-                CreateGoalRequest {
-                    objective: args.objective,
-                    token_budget: args.token_budget,
-                },
-            )
-            .await
-            .map_err(|err| {
-                if err
-                    .chain()
-                    .any(|cause| cause.to_string().contains("already has a goal"))
-                {
-                    FunctionCallError::RespondToModel(
-                        "cannot create a new goal because this thread already has a goal; use update_goal only when the existing goal is complete"
-                            .to_string(),
-                    )
-                } else {
-                    FunctionCallError::RespondToModel(format_goal_error(err))
+            let arguments = match payload {
+                ToolPayload::Function { arguments } => arguments,
+                _ => {
+                    return Err(FunctionCallError::RespondToModel(
+                        "goal handler received unsupported payload".to_string(),
+                    ));
                 }
-            })?;
-        goal_response(Some(goal), CompletionBudgetReport::Omit)
+            };
+
+            let args: CreateGoalArgs = parse_arguments(&arguments)?;
+            let goal = session
+                        .create_thread_goal(
+                            turn.as_ref(),
+                            CreateGoalRequest {
+                                objective: args.objective,
+                                token_budget: args.token_budget,
+                            },
+                        )
+                        .await
+                        .map_err(|err| {
+                            if err
+                                .chain()
+                                .any(|cause| cause.to_string().contains("already has a goal"))
+                            {
+                                FunctionCallError::RespondToModel(
+                                    "cannot create a new goal because this thread already has a goal; use update_goal only when the existing goal is complete"
+                                        .to_string(),
+                                )
+                            } else {
+                                FunctionCallError::RespondToModel(format_goal_error(err))
+                            }
+                        })?;
+            goal_response(Some(goal), CompletionBudgetReport::Omit)
+        })
     }
 }
 

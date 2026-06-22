@@ -14,12 +14,9 @@ use std::time::Instant;
 
 use crate::McpAuthStatusEntry;
 use crate::codex_apps::CodexAppsToolsCacheContext;
-use crate::codex_apps::CodexAppsToolsCacheKey;
 use crate::codex_apps::write_cached_codex_apps_tools_if_needed;
 use crate::elicitation::ElicitationRequestManager;
-use crate::elicitation::ElicitationReviewerHandle;
 use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
-use crate::mcp::ToolPluginProvenance;
 use crate::rmcp_client::AsyncManagedClient;
 use crate::rmcp_client::DEFAULT_STARTUP_TIMEOUT;
 use crate::rmcp_client::MCP_TOOLS_FETCH_UNCACHED_DURATION_METRIC;
@@ -27,9 +24,7 @@ use crate::rmcp_client::MCP_TOOLS_LIST_DURATION_METRIC;
 use crate::rmcp_client::ManagedClient;
 use crate::rmcp_client::StartupOutcomeError;
 use crate::rmcp_client::list_tools_for_client_uncached;
-use crate::runtime::McpRuntimeEnvironment;
 use crate::runtime::emit_duration;
-use crate::server::EffectiveMcpServer;
 use crate::server::McpServerMetadata;
 use crate::tools::filter_tools;
 use crate::tools::normalize_tools_for_model;
@@ -40,11 +35,31 @@ use async_channel::Sender;
 use codex_config_types::Constrained;
 use codex_config_types::McpServerTransportConfig;
 use codex_config_types::OAuthCredentialsStoreMode;
-use codex_login::CodexAuth;
+use codex_mcp_runtime_api::McpConnectionRuntime;
+use codex_mcp_runtime_api::McpConnectionRuntimeFactory;
+use codex_mcp_runtime_api::McpConnectionRuntimeStart;
+use codex_mcp_runtime_api::McpConnectionRuntimeStartRequest;
+use codex_mcp_runtime_api::McpRuntimeEnvironment;
+use codex_mcp_runtime_api::McpRuntimeFuture;
+use codex_mcp_runtime_api::McpToolRuntime;
+use codex_mcp_runtime_api::SharedMcpAuthHeaderProvider;
 use codex_mcp_tool_types::ToolInfo;
 use codex_mcp_tool_types::tool_with_model_visible_input_schema;
+use codex_mcp_types::CodexAppsToolsCacheKey;
+use codex_mcp_types::EffectiveMcpServer;
 use codex_mcp_types::ElicitationResponse;
+use codex_mcp_types::ElicitationReviewerHandle;
+use codex_mcp_types::McpClientElicitationSupport;
+use codex_mcp_types::ToolPluginProvenance;
 use codex_protocol::mcp::CallToolResult;
+use codex_protocol::mcp::ListResourceTemplatesResult;
+use codex_protocol::mcp::ListResourcesResult;
+use codex_protocol::mcp::PaginatedRequestParams;
+use codex_protocol::mcp::ReadResourceRequestParams;
+use codex_protocol::mcp::ReadResourceResult;
+use codex_protocol::mcp::Resource;
+use codex_protocol::mcp::ResourceContent;
+use codex_protocol::mcp::ResourceTemplate;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::Event;
@@ -54,14 +69,15 @@ use codex_protocol::protocol::McpStartupFailure;
 use codex_protocol::protocol::McpStartupStatus;
 use codex_protocol::protocol::McpStartupUpdateEvent;
 use rmcp::model::ElicitationCapability;
-use rmcp::model::ListResourceTemplatesResult;
-use rmcp::model::ListResourcesResult;
-use rmcp::model::PaginatedRequestParams;
-use rmcp::model::ReadResourceRequestParams;
-use rmcp::model::ReadResourceResult;
-use rmcp::model::RequestId;
-use rmcp::model::Resource;
-use rmcp::model::ResourceTemplate;
+use rmcp::model::FormElicitationCapability;
+use rmcp::model::ListResourceTemplatesResult as RmcpListResourceTemplatesResult;
+use rmcp::model::ListResourcesResult as RmcpListResourcesResult;
+use rmcp::model::PaginatedRequestParams as RmcpPaginatedRequestParams;
+use rmcp::model::ReadResourceRequestParams as RmcpReadResourceRequestParams;
+use rmcp::model::ReadResourceResult as RmcpReadResourceResult;
+use rmcp::model::Resource as RmcpResource;
+use rmcp::model::ResourceTemplate as RmcpResourceTemplate;
+use rmcp::model::UrlElicitationCapability;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::instrument;
@@ -74,6 +90,71 @@ pub struct McpConnectionManager {
     host_owned_codex_apps_enabled: bool,
     elicitation_requests: ElicitationRequestManager,
     startup_cancellation_token: CancellationToken,
+}
+
+#[derive(Debug, Default)]
+pub struct DefaultMcpConnectionRuntimeFactory;
+
+impl McpConnectionRuntimeFactory for DefaultMcpConnectionRuntimeFactory {
+    fn uninitialized(
+        &self,
+        approval_policy: &Constrained<AskForApproval>,
+        permission_profile: PermissionProfile,
+    ) -> Box<dyn McpConnectionRuntime> {
+        Box::new(
+            McpConnectionManager::new_uninitialized_with_permission_profile(
+                approval_policy,
+                &permission_profile,
+            ),
+        )
+    }
+
+    fn start(
+        &self,
+        request: McpConnectionRuntimeStartRequest,
+    ) -> McpRuntimeFuture<'_, McpConnectionRuntimeStart> {
+        Box::pin(async move {
+            let McpConnectionRuntimeStartRequest {
+                mcp_servers,
+                store_mode,
+                auth_entries,
+                approval_policy,
+                submit_id,
+                tx_event,
+                initial_permission_profile,
+                runtime_environment,
+                codex_home,
+                codex_apps_tools_cache_key,
+                host_owned_codex_apps_enabled,
+                client_elicitation_support,
+                tool_plugin_provenance,
+                codex_apps_auth_provider,
+                elicitation_reviewer,
+            } = request;
+            let (manager, startup_cancellation_token) = McpConnectionManager::new(
+                &mcp_servers,
+                store_mode,
+                auth_entries,
+                &approval_policy,
+                submit_id,
+                tx_event,
+                initial_permission_profile,
+                runtime_environment,
+                codex_home,
+                codex_apps_tools_cache_key,
+                host_owned_codex_apps_enabled,
+                client_elicitation_support,
+                tool_plugin_provenance,
+                codex_apps_auth_provider,
+                elicitation_reviewer,
+            )
+            .await;
+            McpConnectionRuntimeStart {
+                runtime: Box::new(manager),
+                startup_cancellation_token,
+            }
+        })
+    }
 }
 
 impl McpConnectionManager {
@@ -173,9 +254,9 @@ impl McpConnectionManager {
         codex_home: PathBuf,
         codex_apps_tools_cache_key: CodexAppsToolsCacheKey,
         host_owned_codex_apps_enabled: bool,
-        client_elicitation_capability: ElicitationCapability,
+        client_elicitation_support: McpClientElicitationSupport,
         tool_plugin_provenance: ToolPluginProvenance,
-        auth: Option<&CodexAuth>,
+        codex_apps_auth_provider: Option<SharedMcpAuthHeaderProvider>,
         elicitation_reviewer: Option<ElicitationReviewerHandle>,
     ) -> (Self, CancellationToken) {
         let cancel_token = CancellationToken::new();
@@ -188,10 +269,9 @@ impl McpConnectionManager {
             elicitation_reviewer,
         );
         let tool_plugin_provenance = Arc::new(tool_plugin_provenance);
+        let client_elicitation_capability =
+            client_elicitation_capability(client_elicitation_support);
         let startup_submit_id = submit_id.clone();
-        let codex_apps_auth_provider = auth
-            .filter(|auth| auth.uses_codex_backend())
-            .map(codex_model_provider_api::auth_provider_from_auth);
         let mcp_servers = mcp_servers.clone();
         for (server_name, server) in mcp_servers
             .into_iter()
@@ -315,7 +395,7 @@ impl McpConnectionManager {
     pub async fn resolve_elicitation(
         &self,
         server_name: String,
-        id: RequestId,
+        id: codex_protocol::mcp::RequestId,
         response: ElicitationResponse,
     ) -> Result<()> {
         self.elicitation_requests
@@ -462,7 +542,7 @@ impl McpConnectionManager {
                 let mut cursor: Option<String> = None;
 
                 loop {
-                    let params = cursor.as_ref().map(|next| PaginatedRequestParams {
+                    let params = cursor.as_ref().map(|next| RmcpPaginatedRequestParams {
                         meta: None,
                         cursor: Some(next.clone()),
                     });
@@ -471,7 +551,11 @@ impl McpConnectionManager {
                         Err(err) => return (server_name, Err(err)),
                     };
 
-                    collected.extend(response.resources);
+                    let resources = match resources_from_rmcp(response.resources) {
+                        Ok(resources) => resources,
+                        Err(err) => return (server_name, Err(err)),
+                    };
+                    collected.extend(resources);
 
                     match response.next_cursor {
                         Some(next) => {
@@ -528,7 +612,7 @@ impl McpConnectionManager {
                 let mut cursor: Option<String> = None;
 
                 loop {
-                    let params = cursor.as_ref().map(|next| PaginatedRequestParams {
+                    let params = cursor.as_ref().map(|next| RmcpPaginatedRequestParams {
                         meta: None,
                         cursor: Some(next.clone()),
                     });
@@ -537,7 +621,12 @@ impl McpConnectionManager {
                         Err(err) => return (server_name_cloned, Err(err)),
                     };
 
-                    collected.extend(response.resource_templates);
+                    let templates = match resource_templates_from_rmcp(response.resource_templates)
+                    {
+                        Ok(templates) => templates,
+                        Err(err) => return (server_name_cloned, Err(err)),
+                    };
+                    collected.extend(templates);
 
                     match response.next_cursor {
                         Some(next) => {
@@ -635,11 +724,12 @@ impl McpConnectionManager {
         let managed = self.client_by_name(server).await?;
         let timeout = managed.tool_timeout;
 
-        managed
+        let result = managed
             .client
-            .list_resources(params, timeout)
+            .list_resources(rmcp_paginated_params(params), timeout)
             .await
-            .with_context(|| format!("resources/list failed for `{server}`"))
+            .with_context(|| format!("resources/list failed for `{server}`"))?;
+        list_resources_result_from_rmcp(result)
     }
 
     /// List resource templates from the specified server.
@@ -653,9 +743,10 @@ impl McpConnectionManager {
         let timeout = managed.tool_timeout;
 
         client
-            .list_resource_templates(params, timeout)
+            .list_resource_templates(rmcp_paginated_params(params), timeout)
             .await
             .with_context(|| format!("resources/templates/list failed for `{server}`"))
+            .and_then(list_resource_templates_result_from_rmcp)
     }
 
     /// Read a resource from the specified server.
@@ -669,10 +760,17 @@ impl McpConnectionManager {
         let timeout = managed.tool_timeout;
         let uri = params.uri.clone();
 
-        client
-            .read_resource(params, timeout)
+        let result = client
+            .read_resource(
+                RmcpReadResourceRequestParams {
+                    meta: None,
+                    uri: uri.clone(),
+                },
+                timeout,
+            )
             .await
-            .with_context(|| format!("resources/read failed for `{server}` ({uri})"))
+            .with_context(|| format!("resources/read failed for `{server}` ({uri})"))?;
+        read_resource_result_from_rmcp(result)
     }
 
     async fn client_by_name(&self, name: &str) -> Result<ManagedClient> {
@@ -682,6 +780,220 @@ impl McpConnectionManager {
             .client()
             .await
             .context("failed to get client")
+    }
+}
+
+impl McpToolRuntime for McpConnectionManager {
+    fn call_tool<'a>(
+        &'a self,
+        server: &'a str,
+        tool: &'a str,
+        arguments: Option<serde_json::Value>,
+        meta: Option<serde_json::Value>,
+    ) -> McpRuntimeFuture<'a, anyhow::Result<CallToolResult>> {
+        Box::pin(async move {
+            McpConnectionManager::call_tool(self, server, tool, arguments, meta).await
+        })
+    }
+
+    fn server_origin(&self, server_name: &str) -> Option<String> {
+        McpConnectionManager::server_origin(self, server_name).map(str::to_string)
+    }
+
+    fn server_pollutes_memory(&self, server_name: &str) -> bool {
+        McpConnectionManager::server_pollutes_memory(self, server_name)
+    }
+
+    fn is_host_owned_codex_apps_server(&self, server_name: &str) -> bool {
+        McpConnectionManager::is_host_owned_codex_apps_server(self, server_name)
+    }
+
+    fn server_supports_sandbox_state_meta_capability<'a>(
+        &'a self,
+        server_name: &'a str,
+    ) -> McpRuntimeFuture<'a, anyhow::Result<bool>> {
+        Box::pin(async move {
+            McpConnectionManager::server_supports_sandbox_state_meta_capability(self, server_name)
+                .await
+        })
+    }
+}
+
+impl McpConnectionRuntime for McpConnectionManager {
+    fn has_servers(&self) -> bool {
+        McpConnectionManager::has_servers(self)
+    }
+
+    fn set_approval_policy(&self, approval_policy: &Constrained<AskForApproval>) {
+        McpConnectionManager::set_approval_policy(self, approval_policy);
+    }
+
+    fn set_permission_profile(&self, permission_profile: PermissionProfile) {
+        McpConnectionManager::set_permission_profile(self, permission_profile);
+    }
+
+    fn elicitations_auto_deny(&self) -> bool {
+        McpConnectionManager::elicitations_auto_deny(self)
+    }
+
+    fn set_elicitations_auto_deny(&self, auto_deny: bool) {
+        McpConnectionManager::set_elicitations_auto_deny(self, auto_deny);
+    }
+
+    fn resolve_elicitation<'a>(
+        &'a self,
+        server_name: String,
+        id: codex_protocol::mcp::RequestId,
+        response: ElicitationResponse,
+    ) -> McpRuntimeFuture<'a, Result<()>> {
+        Box::pin(async move {
+            McpConnectionManager::resolve_elicitation(self, server_name, id, response).await
+        })
+    }
+
+    fn list_all_tools<'a>(&'a self) -> McpRuntimeFuture<'a, Vec<ToolInfo>> {
+        Box::pin(async move { McpConnectionManager::list_all_tools(self).await })
+    }
+
+    fn hard_refresh_codex_apps_tools_cache<'a>(
+        &'a self,
+    ) -> McpRuntimeFuture<'a, Result<Vec<ToolInfo>>> {
+        Box::pin(
+            async move { McpConnectionManager::hard_refresh_codex_apps_tools_cache(self).await },
+        )
+    }
+
+    fn wait_for_server_ready<'a>(
+        &'a self,
+        server_name: &'a str,
+        timeout: Duration,
+    ) -> McpRuntimeFuture<'a, bool> {
+        Box::pin(async move {
+            McpConnectionManager::wait_for_server_ready(self, server_name, timeout).await
+        })
+    }
+
+    fn required_startup_failures<'a>(
+        &'a self,
+        required_servers: &'a [String],
+    ) -> McpRuntimeFuture<'a, Vec<McpStartupFailure>> {
+        Box::pin(async move {
+            McpConnectionManager::required_startup_failures(self, required_servers).await
+        })
+    }
+
+    fn list_all_resources<'a>(&'a self) -> McpRuntimeFuture<'a, HashMap<String, Vec<Resource>>> {
+        Box::pin(async move { McpConnectionManager::list_all_resources(self).await })
+    }
+
+    fn list_all_resource_templates<'a>(
+        &'a self,
+    ) -> McpRuntimeFuture<'a, HashMap<String, Vec<ResourceTemplate>>> {
+        Box::pin(async move { McpConnectionManager::list_all_resource_templates(self).await })
+    }
+
+    fn list_resources<'a>(
+        &'a self,
+        server: &'a str,
+        params: Option<PaginatedRequestParams>,
+    ) -> McpRuntimeFuture<'a, Result<ListResourcesResult>> {
+        Box::pin(async move { McpConnectionManager::list_resources(self, server, params).await })
+    }
+
+    fn list_resource_templates<'a>(
+        &'a self,
+        server: &'a str,
+        params: Option<PaginatedRequestParams>,
+    ) -> McpRuntimeFuture<'a, Result<ListResourceTemplatesResult>> {
+        Box::pin(async move {
+            McpConnectionManager::list_resource_templates(self, server, params).await
+        })
+    }
+
+    fn read_resource<'a>(
+        &'a self,
+        server: &'a str,
+        params: ReadResourceRequestParams,
+    ) -> McpRuntimeFuture<'a, Result<ReadResourceResult>> {
+        Box::pin(async move { McpConnectionManager::read_resource(self, server, params).await })
+    }
+
+    fn shutdown<'a>(&'a mut self) -> McpRuntimeFuture<'a, ()> {
+        Box::pin(async move { McpConnectionManager::shutdown(self).await })
+    }
+}
+
+fn rmcp_paginated_params(
+    params: Option<PaginatedRequestParams>,
+) -> Option<RmcpPaginatedRequestParams> {
+    params.map(|params| RmcpPaginatedRequestParams {
+        meta: None,
+        cursor: params.cursor,
+    })
+}
+
+fn list_resources_result_from_rmcp(result: RmcpListResourcesResult) -> Result<ListResourcesResult> {
+    Ok(ListResourcesResult {
+        resources: resources_from_rmcp(result.resources)?,
+        next_cursor: result.next_cursor,
+    })
+}
+
+fn list_resource_templates_result_from_rmcp(
+    result: RmcpListResourceTemplatesResult,
+) -> Result<ListResourceTemplatesResult> {
+    Ok(ListResourceTemplatesResult {
+        resource_templates: resource_templates_from_rmcp(result.resource_templates)?,
+        next_cursor: result.next_cursor,
+    })
+}
+
+fn read_resource_result_from_rmcp(result: RmcpReadResourceResult) -> Result<ReadResourceResult> {
+    let contents = result
+        .contents
+        .into_iter()
+        .map(resource_content_from_rmcp)
+        .collect::<Result<Vec<_>>>()?;
+    Ok(ReadResourceResult { contents })
+}
+
+fn resources_from_rmcp(resources: Vec<RmcpResource>) -> Result<Vec<Resource>> {
+    resources
+        .into_iter()
+        .map(resource_from_rmcp)
+        .collect::<Result<Vec<_>>>()
+}
+
+fn resource_templates_from_rmcp(
+    templates: Vec<RmcpResourceTemplate>,
+) -> Result<Vec<ResourceTemplate>> {
+    templates
+        .into_iter()
+        .map(resource_template_from_rmcp)
+        .collect::<Result<Vec<_>>>()
+}
+
+fn resource_from_rmcp(resource: RmcpResource) -> Result<Resource> {
+    Resource::from_mcp_value(serde_json::to_value(resource)?).context("failed to convert resource")
+}
+
+fn resource_template_from_rmcp(template: RmcpResourceTemplate) -> Result<ResourceTemplate> {
+    ResourceTemplate::from_mcp_value(serde_json::to_value(template)?)
+        .context("failed to convert resource template")
+}
+
+fn resource_content_from_rmcp(content: rmcp::model::ResourceContents) -> Result<ResourceContent> {
+    ResourceContent::from_mcp_value(serde_json::to_value(content)?)
+        .context("failed to convert resource content")
+}
+
+fn client_elicitation_capability(support: McpClientElicitationSupport) -> ElicitationCapability {
+    match support {
+        McpClientElicitationSupport::Disabled => ElicitationCapability::default(),
+        McpClientElicitationSupport::AuthElicitation => ElicitationCapability {
+            form: Some(FormElicitationCapability::default()),
+            url: Some(UrlElicitationCapability::default()),
+        },
     }
 }
 

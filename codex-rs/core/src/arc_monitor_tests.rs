@@ -252,7 +252,7 @@ async fn build_arc_monitor_request_includes_relevant_history_and_null_policies()
 async fn monitor_action_posts_expected_arc_request() {
     let server = MockServer::start().await;
     let (session, mut turn_context) = make_session_and_context().await;
-    turn_context.auth_manager = Some(crate::test_support::auth_manager_from_auth(
+    turn_context.auth_runtime = Some(crate::test_support::auth_manager_from_auth(
         codex_login::CodexAuth::create_dummy_chatgpt_auth_for_testing(),
     ));
     turn_context.developer_instructions = Some("Developer policy".to_string());
@@ -404,7 +404,7 @@ async fn monitor_action_rejects_legacy_response_fields() {
         .await;
 
     let (session, mut turn_context) = make_session_and_context().await;
-    turn_context.auth_manager = Some(crate::test_support::auth_manager_from_auth(
+    turn_context.auth_runtime = Some(crate::test_support::auth_manager_from_auth(
         codex_login::CodexAuth::create_dummy_chatgpt_auth_for_testing(),
     ));
     let mut config = (*turn_context.config).clone();

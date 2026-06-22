@@ -17,7 +17,7 @@ async-trait = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 codex-auth-types = { workspace = true }
 codex-collaboration-mode-templates = { workspace = true }
-codex-login = { workspace = true }
+codex-model-provider-api = { workspace = true }
 codex-models-manager-api = { workspace = true }
 codex-otel = { workspace = true }
 codex-protocol = { workspace = true }
@@ -29,6 +29,7 @@ tokio = { workspace = true, features = ["fs", "sync", "time"] }
 tracing = { workspace = true, features = ["log"] }
 
 [dev-dependencies]
+codex-login = { workspace = true }
 pretty_assertions = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

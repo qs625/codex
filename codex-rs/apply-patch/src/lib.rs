@@ -46,9 +46,9 @@ pub const CODEX_CORE_APPLY_PATCH_ARG1: &str = "--codex-run-as-apply-patch";
 #[derive(Debug, Error, PartialEq)]
 pub enum ApplyPatchError {
     #[error(transparent)]
-    ParseError(#[from] ParseError),
+    ParseError(ParseError),
     #[error(transparent)]
-    IoError(#[from] IoError),
+    IoError(IoError),
     /// Error that occurs while computing replacements when applying patch chunks
     #[error("{0}")]
     ComputeReplacements(String),
@@ -57,6 +57,12 @@ pub enum ApplyPatchError {
         "patch detected without explicit call to apply_patch. Rerun as [\"apply_patch\", \"<patch>\"]"
     )]
     ImplicitInvocation,
+}
+
+impl From<ParseError> for ApplyPatchError {
+    fn from(err: ParseError) -> Self {
+        ApplyPatchError::ParseError(err)
+    }
 }
 
 impl From<std::io::Error> for ApplyPatchError {
@@ -837,13 +843,30 @@ pub async fn unified_diff_from_chunks_with_context(
         original_contents,
         new_contents,
     } = derive_new_contents_from_chunks(path_abs, chunks, fs, sandbox).await?;
-    let text_diff = TextDiff::from_lines(&original_contents, &new_contents);
-    let unified_diff = text_diff.unified_diff().context_radius(context).to_string();
+    let unified_diff =
+        unified_diff_from_texts(&original_contents, &new_contents, context, None, None);
     Ok(ApplyPatchFileUpdate {
         unified_diff,
         original_content: original_contents,
         content: new_contents,
     })
+}
+
+/// Build a unified diff for text content using the apply-patch diff engine.
+pub fn unified_diff_from_texts(
+    original_contents: &str,
+    new_contents: &str,
+    context: usize,
+    old_header: Option<&str>,
+    new_header: Option<&str>,
+) -> String {
+    let text_diff = TextDiff::from_lines(original_contents, new_contents);
+    let mut unified_diff = text_diff.unified_diff();
+    let mut unified_diff = unified_diff.context_radius(context);
+    if let (Some(old_header), Some(new_header)) = (old_header, new_header) {
+        unified_diff = unified_diff.header(old_header, new_header);
+    }
+    unified_diff.to_string()
 }
 
 /// Print the summary of changes in git-style format.
@@ -1688,5 +1711,28 @@ g
         .unwrap();
 
         assert!(!delta.is_exact());
+    }
+
+    #[test]
+    fn unified_diff_from_texts_applies_headers_and_context() {
+        let diff = unified_diff_from_texts(
+            "a\nb\nc\nd\n",
+            "a\nB\nc\nd\n",
+            1,
+            Some("old.txt"),
+            Some("new.txt"),
+        );
+
+        assert_eq!(
+            diff,
+            r#"--- old.txt
++++ new.txt
+@@ -1,3 +1,3 @@
+ a
+-b
++B
+ c
+"#
+        );
     }
 }

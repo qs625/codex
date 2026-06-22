@@ -28,7 +28,7 @@ use crate::tools::sandboxing::ToolError;
 use crate::tools::sandboxing::ToolRuntime;
 use crate::tools::sandboxing::default_exec_approval_requirement;
 use crate::tools::sandboxing::sandbox_override_for_first_attempt;
-use codex_hooks::PermissionRequestDecision;
+use codex_hooks_api::PermissionRequestDecision;
 use codex_metrics_api::ToolDecisionSource;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
@@ -36,11 +36,11 @@ use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::NetworkPolicyRuleAction;
 use codex_protocol::protocol::ReviewDecision;
-use codex_sandboxing::SandboxManager;
-use codex_sandboxing::SandboxType;
+use codex_sandboxing_api::SandboxType;
+use codex_sandboxing_api::SharedSandboxRuntime;
 
 pub(crate) struct ToolOrchestrator {
-    sandbox: SandboxManager,
+    sandbox_runtime: SharedSandboxRuntime,
 }
 
 pub(crate) struct OrchestratorRunResult<Out> {
@@ -49,10 +49,8 @@ pub(crate) struct OrchestratorRunResult<Out> {
 }
 
 impl ToolOrchestrator {
-    pub fn new() -> Self {
-        Self {
-            sandbox: SandboxManager::new(),
-        }
+    pub fn new(sandbox_runtime: SharedSandboxRuntime) -> Self {
+        Self { sandbox_runtime }
     }
 
     async fn run_attempt<Rq, Out, T>(
@@ -83,7 +81,7 @@ impl ToolOrchestrator {
             sandbox: attempt.sandbox,
             permissions: attempt.permissions,
             enforce_managed_network: attempt.enforce_managed_network,
-            manager: attempt.manager,
+            sandbox_runtime: attempt.sandbox_runtime,
             sandbox_cwd: attempt.sandbox_cwd,
             codex_linux_sandbox_exe: attempt.codex_linux_sandbox_exe,
             use_legacy_landlock: attempt.use_legacy_landlock,
@@ -169,7 +167,7 @@ impl ToolOrchestrator {
                         approval_ctx,
                         tool_ctx,
                         /*evaluate_permission_request_hooks*/ false,
-                        &otel,
+                        otel.as_ref(),
                     )
                     .await?;
                     Self::reject_if_not_approved(tool_ctx, guardian_review_id.as_deref(), decision)
@@ -204,7 +202,7 @@ impl ToolOrchestrator {
                     approval_ctx,
                     tool_ctx,
                     /*evaluate_permission_request_hooks*/ !strict_auto_review,
-                    &otel,
+                    otel.as_ref(),
                 )
                 .await?;
 
@@ -223,7 +221,7 @@ impl ToolOrchestrator {
         let managed_network_active = turn_ctx.network.is_some();
         let initial_sandbox = match sandbox_override {
             SandboxOverride::BypassSandboxFirstAttempt => SandboxType::None,
-            SandboxOverride::NoOverride => self.sandbox.select_initial(
+            SandboxOverride::NoOverride => self.sandbox_runtime.select_initial(
                 &file_system_sandbox_policy,
                 network_sandbox_policy,
                 tool.sandbox_preference(),
@@ -232,7 +230,7 @@ impl ToolOrchestrator {
             ),
         };
 
-        // Platform-specific flag gating is handled by SandboxManager::select_initial.
+        // Platform-specific flag gating is handled by SandboxRuntime::select_initial.
         let use_legacy_landlock = turn_ctx.features.use_legacy_landlock();
         #[allow(deprecated)]
         let sandbox_cwd = tool.sandbox_cwd(req).unwrap_or(&turn_ctx.cwd);
@@ -240,7 +238,7 @@ impl ToolOrchestrator {
             sandbox: initial_sandbox,
             permissions: &turn_ctx.permission_profile,
             enforce_managed_network: managed_network_active,
-            manager: &self.sandbox,
+            sandbox_runtime: self.sandbox_runtime.as_ref(),
             sandbox_cwd,
             codex_linux_sandbox_exe: turn_ctx.codex_linux_sandbox_exe.as_ref(),
             use_legacy_landlock,
@@ -346,7 +344,7 @@ impl ToolOrchestrator {
                         approval_ctx,
                         tool_ctx,
                         /*evaluate_permission_request_hooks*/ !strict_auto_review,
-                        &otel,
+                        otel.as_ref(),
                     )
                     .await?;
 
@@ -358,7 +356,7 @@ impl ToolOrchestrator {
                     sandbox: SandboxType::None,
                     permissions: &turn_ctx.permission_profile,
                     enforce_managed_network: managed_network_active,
-                    manager: &self.sandbox,
+                    sandbox_runtime: self.sandbox_runtime.as_ref(),
                     sandbox_cwd,
                     codex_linux_sandbox_exe: None,
                     use_legacy_landlock,
@@ -398,7 +396,7 @@ impl ToolOrchestrator {
         approval_ctx: ApprovalCtx<'_>,
         tool_ctx: &ToolCtx,
         evaluate_permission_request_hooks: bool,
-        otel: &codex_otel::SessionTelemetry,
+        otel: &dyn codex_session_telemetry_api::SessionTelemetry,
     ) -> Result<ReviewDecision, ToolError>
     where
         T: ToolRuntime<Rq, Out>,

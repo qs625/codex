@@ -2,21 +2,24 @@ use super::*;
 use crate::SkillLoadOutcome;
 use crate::config::GhostSnapshotConfig;
 use crate::environment_selection::ResolvedTurnEnvironments;
+use codex_auth_types::AuthRuntime;
+use codex_auth_types::SharedAuthRuntime;
 use codex_exec_server_api::ExecEnvironment;
 use codex_model_provider_api::ModelProviderFactory;
 use codex_model_provider_api::SharedModelProvider;
+use codex_model_provider_api::SharedModelProviderAuthManager;
 use codex_protocol::SessionId;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TurnEnvironmentSelection;
-use codex_sandboxing::compatibility_sandbox_policy_for_permission_profile;
-use codex_sandboxing::policy_transforms::effective_file_system_sandbox_policy;
-use codex_sandboxing::policy_transforms::effective_network_sandbox_policy;
+use codex_sandboxing_api::compatibility_sandbox_policy_for_permission_profile;
+use codex_sandboxing_api::policy_transforms::effective_file_system_sandbox_policy;
+use codex_sandboxing_api::policy_transforms::effective_network_sandbox_policy;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
-pub(super) fn image_generation_tool_auth_allowed(auth_manager: Option<&AuthManager>) -> bool {
-    auth_manager.is_some_and(AuthManager::current_auth_uses_codex_backend)
+pub(super) fn image_generation_tool_auth_allowed(auth_runtime: Option<&dyn AuthRuntime>) -> bool {
+    auth_runtime.is_some_and(AuthRuntime::current_auth_uses_codex_backend)
 }
 
 #[derive(Clone, Debug)]
@@ -58,9 +61,9 @@ pub struct TurnContext {
     pub(crate) trace_id: Option<String>,
     pub(crate) realtime_active: bool,
     pub config: Arc<Config>,
-    pub(crate) auth_manager: Option<Arc<AuthManager>>,
+    pub(crate) auth_runtime: Option<SharedAuthRuntime>,
     pub(crate) model_info: ModelInfo,
-    pub(crate) session_telemetry: SessionTelemetry,
+    pub(crate) session_telemetry: SharedSessionTelemetry,
     pub(crate) provider: SharedModelProvider,
     pub(crate) reasoning_effort: Option<ReasoningEffortConfig>,
     pub(crate) reasoning_summary: ReasoningSummaryConfig,
@@ -82,7 +85,7 @@ pub struct TurnContext {
     pub(crate) personality: Option<Personality>,
     pub(crate) approval_policy: Constrained<AskForApproval>,
     pub(crate) permission_profile: PermissionProfile,
-    pub(crate) network: Option<NetworkProxy>,
+    pub(crate) network: Option<SharedNetworkProxyRuntime>,
     pub(crate) windows_sandbox_level: WindowsSandboxLevel,
     pub(crate) shell_environment_policy: ShellEnvironmentPolicy,
     pub(crate) tools_config: ToolsConfig,
@@ -151,9 +154,9 @@ impl TurnContext {
 
     pub(crate) fn apps_enabled(&self) -> bool {
         let uses_codex_backend = self
-            .auth_manager
+            .auth_runtime
             .as_deref()
-            .is_some_and(AuthManager::current_auth_uses_codex_backend);
+            .is_some_and(AuthRuntime::current_auth_uses_codex_backend);
         self.features.apps_enabled_for_auth(uses_codex_backend)
     }
 
@@ -204,7 +207,7 @@ impl TurnContext {
                 .await,
             features: &features,
             image_generation_tool_auth_allowed: image_generation_tool_auth_allowed(
-                self.auth_manager.as_deref(),
+                self.auth_runtime.as_deref(),
             ),
             web_search_mode: self.tools_config.web_search_mode,
             session_source: self.session_source.clone(),
@@ -236,7 +239,7 @@ impl TurnContext {
             trace_id: self.trace_id.clone(),
             realtime_active: self.realtime_active,
             config: Arc::new(config),
-            auth_manager: self.auth_manager.clone(),
+            auth_runtime: self.auth_runtime.clone(),
             model_info: model_info.clone(),
             session_telemetry: self
                 .session_telemetry
@@ -394,9 +397,9 @@ impl TurnContext {
 }
 
 fn local_time_context() -> (String, String) {
-    match iana_time_zone::get_timezone() {
-        Ok(timezone) => (Local::now().format("%Y-%m-%d").to_string(), timezone),
-        Err(_) => (
+    match codex_user_info::current_timezone() {
+        Some(timezone) => (Local::now().format("%Y-%m-%d").to_string(), timezone),
+        None => (
             Utc::now().format("%Y-%m-%d").to_string(),
             "Etc/UTC".to_string(),
         ),
@@ -462,9 +465,10 @@ impl Session {
     pub(crate) fn make_turn_context(
         thread_id: ThreadId,
         session_id: SessionId,
-        auth_manager: Option<Arc<AuthManager>>,
+        auth_runtime: Option<SharedAuthRuntime>,
+        provider_auth_manager: Option<SharedModelProviderAuthManager>,
         model_provider_factory: &dyn ModelProviderFactory,
-        session_telemetry: &SessionTelemetry,
+        session_telemetry: &SharedSessionTelemetry,
         provider: ModelProviderInfo,
         session_configuration: &SessionConfiguration,
         user_shell: &shell::Shell,
@@ -473,7 +477,7 @@ impl Session {
         per_turn_config: Config,
         model_info: ModelInfo,
         models_manager: &SharedModelsManager,
-        network: Option<NetworkProxy>,
+        network: Option<SharedNetworkProxyRuntime>,
         environments: ResolvedTurnEnvironments,
         cwd: AbsolutePathBuf,
         sub_id: String,
@@ -490,10 +494,9 @@ impl Session {
         );
         let session_source = session_configuration.session_source.clone();
         let image_generation_tool_auth_allowed =
-            image_generation_tool_auth_allowed(auth_manager.as_deref());
-        let auth_manager_for_context = auth_manager.clone();
+            image_generation_tool_auth_allowed(auth_runtime.as_deref());
         let provider_for_context =
-            model_provider_factory.create_model_provider(provider, auth_manager);
+            model_provider_factory.create_model_provider(provider, provider_auth_manager);
         let provider_capabilities = provider_for_context.capabilities();
         let session_telemetry_for_context = session_telemetry;
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
@@ -556,7 +559,7 @@ impl Session {
             trace_id: current_span_trace_id(),
             realtime_active: false,
             config: per_turn_config.clone(),
-            auth_manager: auth_manager_for_context,
+            auth_runtime,
             model_info: model_info.clone(),
             session_telemetry: session_telemetry_for_context,
             provider: provider_for_context,
@@ -754,7 +757,8 @@ impl Session {
         let mut turn_context: TurnContext = Self::make_turn_context(
             self.thread_id(),
             self.session_id(),
-            Some(Arc::clone(&self.services.auth_manager)),
+            Some(Arc::clone(&self.services.auth_runtime)),
+            self.services.model_client.auth_manager(),
             self.services.model_provider_factory.as_ref(),
             &self.services.session_telemetry,
             session_configuration.provider.clone(),

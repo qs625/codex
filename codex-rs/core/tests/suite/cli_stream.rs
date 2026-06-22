@@ -1,6 +1,6 @@
 use assert_cmd::Command as AssertCommand;
-use codex_git_utils::collect_git_info;
-use codex_login::CODEX_API_KEY_ENV_VAR;
+use codex_auth_types::CODEX_API_KEY_ENV_VAR;
+use codex_git_info::collect_git_info;
 use codex_protocol::protocol::GitInfo;
 use core_test_support::fs_wait;
 use core_test_support::responses;
@@ -76,7 +76,7 @@ async fn responses_mode_stream_cli() {
     //     home.path(),
     //     10,
     //     None,
-    //     codex_core::ThreadSortKey::UpdatedAt,
+    //     codex_rollout::ThreadSortKey::UpdatedAt,
     //     &[],
     //     Some(provider_filter.as_slice()),
     //     "mock",

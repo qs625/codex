@@ -3,7 +3,7 @@ use crate::collaboration_mode_presets::builtin_collaboration_mode_presets;
 use crate::model_info;
 use async_trait::async_trait;
 use codex_auth_types::AuthMode;
-use codex_login::AuthManager;
+use codex_model_provider_api::SharedModelProviderAuthManager;
 pub use codex_models_manager_api::ModelsManager;
 pub use codex_models_manager_api::ModelsManagerConfig;
 pub use codex_models_manager_api::ModelsManagerFuture;
@@ -68,14 +68,14 @@ pub struct OpenAiModelsManager {
     cache_manager: ModelsCacheManager,
     cache_policy: ModelCachePolicy,
     endpoint_client: SharedModelsEndpointClient,
-    auth_manager: Option<Arc<AuthManager>>,
+    auth_manager: Option<SharedModelProviderAuthManager>,
 }
 
 /// Static model manager backed by an authoritative in-process catalog.
 #[derive(Debug)]
 pub struct StaticModelsManager {
     remote_models: Vec<ModelInfo>,
-    auth_manager: Option<Arc<AuthManager>>,
+    auth_manager: Option<SharedModelProviderAuthManager>,
 }
 
 impl OpenAiModelsManager {
@@ -83,7 +83,7 @@ impl OpenAiModelsManager {
     pub fn new(
         codex_home: PathBuf,
         endpoint_client: Arc<dyn ModelsEndpointClient>,
-        auth_manager: Option<Arc<AuthManager>>,
+        auth_manager: Option<SharedModelProviderAuthManager>,
     ) -> Self {
         Self::new_with_fallback_models(
             codex_home,
@@ -98,7 +98,7 @@ impl OpenAiModelsManager {
     pub fn new_with_fallback_models(
         codex_home: PathBuf,
         endpoint_client: Arc<dyn ModelsEndpointClient>,
-        auth_manager: Option<Arc<AuthManager>>,
+        auth_manager: Option<SharedModelProviderAuthManager>,
         fallback_models: Vec<ModelInfo>,
         cache_policy: ModelCachePolicy,
     ) -> Self {
@@ -118,7 +118,10 @@ impl OpenAiModelsManager {
 
 impl StaticModelsManager {
     /// Construct a static model manager from an authoritative catalog.
-    pub fn new(auth_manager: Option<Arc<AuthManager>>, model_catalog: ModelsResponse) -> Self {
+    pub fn new(
+        auth_manager: Option<SharedModelProviderAuthManager>,
+        model_catalog: ModelsResponse,
+    ) -> Self {
         Self {
             remote_models: model_catalog.models,
             auth_manager,

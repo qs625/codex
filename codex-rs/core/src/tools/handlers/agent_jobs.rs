@@ -1,3 +1,4 @@
+use crate::StateDbHandle;
 use crate::agent::control::SpawnAgentOptions;
 use crate::agent::exceeds_thread_spawn_depth_limit;
 use crate::agent::next_thread_spawn_depth;
@@ -14,6 +15,9 @@ use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::user_input::UserInput;
+use codex_state_api::AgentJob;
+use codex_state_api::AgentJobItem;
+use codex_state_api::AgentJobItemStatus;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
@@ -98,9 +102,7 @@ struct ActiveJobItem {
     status_rx: Option<Receiver<AgentStatus>>,
 }
 
-fn required_state_db(
-    session: &Arc<Session>,
-) -> Result<Arc<codex_state::StateRuntime>, FunctionCallError> {
+fn required_state_db(session: &Arc<Session>) -> Result<StateDbHandle, FunctionCallError> {
     session.state_db().ok_or_else(|| {
         FunctionCallError::Fatal("sqlite state db is unavailable for this session".to_string())
     })
@@ -160,7 +162,7 @@ fn normalize_max_runtime_seconds(requested: Option<u64>) -> Result<Option<u64>, 
 async fn run_agent_job_loop(
     session: Arc<Session>,
     turn: Arc<TurnContext>,
-    db: Arc<codex_state::StateRuntime>,
+    db: StateDbHandle,
     job_id: String,
     options: JobRunnerOptions,
 ) -> anyhow::Result<()> {
@@ -192,7 +194,7 @@ async fn run_agent_job_loop(
             let pending_items = db
                 .list_agent_job_items(
                     job_id.as_str(),
-                    Some(codex_state::AgentJobItemStatus::Pending),
+                    Some(AgentJobItemStatus::Pending),
                     Some(slots),
                 )
                 .await?;
@@ -330,10 +332,7 @@ async fn run_agent_job_loop(
     Ok(())
 }
 
-async fn export_job_csv_snapshot(
-    db: Arc<codex_state::StateRuntime>,
-    job: &codex_state::AgentJob,
-) -> anyhow::Result<()> {
+async fn export_job_csv_snapshot(db: StateDbHandle, job: &AgentJob) -> anyhow::Result<()> {
     let items = db
         .list_agent_job_items(job.id.as_str(), /*status*/ None, /*limit*/ None)
         .await?;
@@ -349,7 +348,7 @@ async fn export_job_csv_snapshot(
 
 async fn recover_running_items(
     session: Arc<Session>,
-    db: Arc<codex_state::StateRuntime>,
+    db: StateDbHandle,
     job_id: &str,
     active_items: &mut HashMap<ThreadId, ActiveJobItem>,
     runtime_timeout: Duration,
@@ -357,7 +356,7 @@ async fn recover_running_items(
     let running_items = db
         .list_agent_job_items(
             job_id,
-            Some(codex_state::AgentJobItemStatus::Running),
+            Some(AgentJobItemStatus::Running),
             /*limit*/ None,
         )
         .await?;
@@ -473,7 +472,7 @@ async fn wait_for_status_change(active_items: &HashMap<ThreadId, ActiveJobItem>)
 
 async fn reap_stale_active_items(
     session: Arc<Session>,
-    db: Arc<codex_state::StateRuntime>,
+    db: StateDbHandle,
     job_id: &str,
     active_items: &mut HashMap<ThreadId, ActiveJobItem>,
     runtime_timeout: Duration,
@@ -503,7 +502,7 @@ async fn reap_stale_active_items(
 
 async fn finalize_finished_item(
     session: Arc<Session>,
-    db: Arc<codex_state::StateRuntime>,
+    db: StateDbHandle,
     job_id: &str,
     item_id: &str,
     thread_id: ThreadId,
@@ -514,7 +513,7 @@ async fn finalize_finished_item(
         .ok_or_else(|| {
             anyhow::anyhow!("job item not found for finalization: {job_id}/{item_id}")
         })?;
-    if matches!(item.status, codex_state::AgentJobItemStatus::Running) {
+    if matches!(item.status, AgentJobItemStatus::Running) {
         if item.result_json.is_some() {
             let _ = db.mark_agent_job_item_completed(job_id, item_id).await?;
         } else {
@@ -535,10 +534,7 @@ async fn finalize_finished_item(
     Ok(())
 }
 
-fn build_worker_prompt(
-    job: &codex_state::AgentJob,
-    item: &codex_state::AgentJobItem,
-) -> anyhow::Result<String> {
+fn build_worker_prompt(job: &AgentJob, item: &AgentJobItem) -> anyhow::Result<String> {
     let job_id = job.id.as_str();
     let item_id = item.item_id.as_str();
     let instruction = render_instruction_template(job.instruction.as_str(), &item.row_json);
@@ -605,13 +601,13 @@ fn ensure_unique_headers(headers: &[String]) -> Result<(), FunctionCallError> {
     Ok(())
 }
 
-fn job_runtime_timeout(job: &codex_state::AgentJob) -> Duration {
+fn job_runtime_timeout(job: &AgentJob) -> Duration {
     job.max_runtime_seconds
         .map(Duration::from_secs)
         .unwrap_or(DEFAULT_AGENT_JOB_ITEM_TIMEOUT)
 }
 
-fn started_at_from_item(item: &codex_state::AgentJobItem) -> Instant {
+fn started_at_from_item(item: &AgentJobItem) -> Instant {
     let now = chrono::Utc::now();
     let age = now.signed_duration_since(item.updated_at);
     if let Ok(age) = age.to_std() {
@@ -621,7 +617,7 @@ fn started_at_from_item(item: &codex_state::AgentJobItem) -> Instant {
     }
 }
 
-fn is_item_stale(item: &codex_state::AgentJobItem, runtime_timeout: Duration) -> bool {
+fn is_item_stale(item: &AgentJobItem, runtime_timeout: Duration) -> bool {
     let now = chrono::Utc::now();
     if let Ok(age) = now.signed_duration_since(item.updated_at).to_std() {
         age >= runtime_timeout
@@ -644,31 +640,134 @@ fn default_output_csv_path(input_csv_path: &AbsolutePathBuf, job_id: &str) -> Ab
 }
 
 fn parse_csv(content: &str) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(content.as_bytes());
-    let headers_record = reader.headers().map_err(|err| err.to_string())?;
-    let mut headers: Vec<String> = headers_record.iter().map(str::to_string).collect();
+    let mut records = parse_csv_records(content)?;
+    if records.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let mut headers = records.remove(0);
     if let Some(first) = headers.first_mut() {
         *first = first.trim_start_matches('\u{feff}').to_string();
     }
-    let mut rows = Vec::new();
-    for record in reader.records() {
-        let record = record.map_err(|err| err.to_string())?;
-        let row: Vec<String> = record.iter().map(str::to_string).collect();
-        if row.iter().all(std::string::String::is_empty) {
-            continue;
-        }
-        rows.push(row);
-    }
+    let rows = records
+        .into_iter()
+        .filter(|row| !row.iter().all(std::string::String::is_empty))
+        .collect();
     Ok((headers, rows))
 }
 
-fn render_job_csv(
-    headers: &[String],
-    items: &[codex_state::AgentJobItem],
-) -> Result<String, FunctionCallError> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CsvFieldState {
+    Start,
+    Unquoted,
+    Quoted,
+    AfterQuote,
+}
+
+fn parse_csv_records(content: &str) -> Result<Vec<Vec<String>>, String> {
+    let mut records = Vec::new();
+    let mut row = Vec::new();
+    let mut field = String::new();
+    let mut state = CsvFieldState::Start;
+    let mut chars = content.chars().peekable();
+    let mut last_char_ended_record = false;
+
+    while let Some(ch) = chars.next() {
+        last_char_ended_record = false;
+        match state {
+            CsvFieldState::Start => match ch {
+                '"' => state = CsvFieldState::Quoted,
+                ',' => row.push(String::new()),
+                '\n' => {
+                    row.push(String::new());
+                    records.push(std::mem::take(&mut row));
+                    last_char_ended_record = true;
+                }
+                '\r' => {
+                    if chars.peek() == Some(&'\n') {
+                        chars.next();
+                    }
+                    row.push(String::new());
+                    records.push(std::mem::take(&mut row));
+                    last_char_ended_record = true;
+                }
+                _ => {
+                    field.push(ch);
+                    state = CsvFieldState::Unquoted;
+                }
+            },
+            CsvFieldState::Unquoted => match ch {
+                '"' => return Err("unexpected quote in unquoted csv field".to_string()),
+                ',' => {
+                    row.push(std::mem::take(&mut field));
+                    state = CsvFieldState::Start;
+                }
+                '\n' => {
+                    row.push(std::mem::take(&mut field));
+                    records.push(std::mem::take(&mut row));
+                    state = CsvFieldState::Start;
+                    last_char_ended_record = true;
+                }
+                '\r' => {
+                    if chars.peek() == Some(&'\n') {
+                        chars.next();
+                    }
+                    row.push(std::mem::take(&mut field));
+                    records.push(std::mem::take(&mut row));
+                    state = CsvFieldState::Start;
+                    last_char_ended_record = true;
+                }
+                _ => field.push(ch),
+            },
+            CsvFieldState::Quoted => match ch {
+                '"' => {
+                    if chars.peek() == Some(&'"') {
+                        chars.next();
+                        field.push('"');
+                    } else {
+                        state = CsvFieldState::AfterQuote;
+                    }
+                }
+                _ => field.push(ch),
+            },
+            CsvFieldState::AfterQuote => match ch {
+                ',' => {
+                    row.push(std::mem::take(&mut field));
+                    state = CsvFieldState::Start;
+                }
+                '\n' => {
+                    row.push(std::mem::take(&mut field));
+                    records.push(std::mem::take(&mut row));
+                    state = CsvFieldState::Start;
+                    last_char_ended_record = true;
+                }
+                '\r' => {
+                    if chars.peek() == Some(&'\n') {
+                        chars.next();
+                    }
+                    row.push(std::mem::take(&mut field));
+                    records.push(std::mem::take(&mut row));
+                    state = CsvFieldState::Start;
+                    last_char_ended_record = true;
+                }
+                _ => return Err("unexpected character after closing csv quote".to_string()),
+            },
+        }
+    }
+
+    match state {
+        CsvFieldState::Quoted => return Err("unterminated quoted csv field".to_string()),
+        CsvFieldState::Start | CsvFieldState::Unquoted | CsvFieldState::AfterQuote => {}
+    }
+
+    if !content.is_empty() && !last_char_ended_record {
+        row.push(field);
+        records.push(row);
+    }
+
+    Ok(records)
+}
+
+fn render_job_csv(headers: &[String], items: &[AgentJobItem]) -> Result<String, FunctionCallError> {
     let mut csv = String::new();
     let mut output_headers = headers.to_vec();
     output_headers.extend([

@@ -3,6 +3,7 @@ use crate::common::ResponseEvent;
 use crate::common::ResponseProcessedWsRequest;
 use crate::common::ResponseStream;
 use crate::common::ResponsesWsRequest;
+use crate::common::response_stream_from_receiver;
 use crate::error::ApiError;
 use crate::provider::Provider;
 use crate::rate_limits::parse_rate_limit_event;
@@ -10,8 +11,15 @@ use crate::sse::ResponsesStreamEvent;
 use crate::sse::process_responses_event;
 use crate::telemetry::WebsocketTelemetry;
 use crate::telemetry::summarize_websocket_poll;
+use codex_api_types::ApiRuntimeFuture;
+use codex_api_types::ResponsesWebsocketClose;
+use codex_api_types::ResponsesWebsocketConnectRequest;
+use codex_api_types::ResponsesWebsocketConnectionRuntime;
+use codex_api_types::ResponsesWebsocketConnectorRuntime;
+use codex_api_types::ResponsesWebsocketProbe;
 use codex_client::TransportError;
 use codex_client::maybe_build_rustls_client_config_with_custom_ca;
+use codex_default_client::default_headers as default_client_headers;
 use codex_utils_rustls_provider::ensure_rustls_crypto_provider;
 use futures::SinkExt;
 use futures::StreamExt;
@@ -48,6 +56,22 @@ use tungstenite::extensions::ExtensionsConfig;
 use tungstenite::extensions::compression::deflate::DeflateConfig;
 use tungstenite::protocol::WebSocketConfig;
 use url::Url;
+
+fn websocket_url_for_provider_path(
+    provider: &Provider,
+    path: &str,
+) -> Result<Url, url::ParseError> {
+    let mut url = Url::parse(&provider.url_for_path(path))?;
+
+    let scheme = match url.scheme() {
+        "http" => "ws",
+        "https" => "wss",
+        "ws" | "wss" => return Ok(url),
+        _ => return Ok(url),
+    };
+    let _ = url.set_scheme(scheme);
+    Ok(url)
+}
 
 struct WsStream {
     tx_command: mpsc::Sender<WsCommand>,
@@ -316,9 +340,33 @@ impl ResponsesWebsocketConnection {
             .instrument(current_span),
         );
 
-        Ok(ResponseStream {
-            rx_event,
-            upstream_request_id: None,
+        Ok(response_stream_from_receiver(
+            rx_event, /*upstream_request_id*/ None,
+        ))
+    }
+}
+
+impl ResponsesWebsocketConnectionRuntime for ResponsesWebsocketConnection {
+    fn is_closed(&self) -> ApiRuntimeFuture<'_, bool> {
+        Box::pin(async move { ResponsesWebsocketConnection::is_closed(self).await })
+    }
+
+    fn send_response_processed(
+        &self,
+        response_id: String,
+    ) -> ApiRuntimeFuture<'_, Result<(), ApiError>> {
+        Box::pin(async move {
+            ResponsesWebsocketConnection::send_response_processed(self, response_id).await
+        })
+    }
+
+    fn stream_request(
+        &self,
+        request: ResponsesWsRequest,
+        connection_reused: bool,
+    ) -> ApiRuntimeFuture<'_, Result<ResponseStream, ApiError>> {
+        Box::pin(async move {
+            ResponsesWebsocketConnection::stream_request(self, request, connection_reused).await
         })
     }
 }
@@ -327,32 +375,6 @@ impl ResponsesWebsocketConnection {
 pub struct ResponsesWebsocketClient {
     provider: Provider,
     auth: SharedAuthProvider,
-}
-
-/// Close frame information captured by a handshake probe.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResponsesWebsocketClose {
-    /// WebSocket close code returned by the server.
-    pub code: String,
-    /// Human-readable close reason returned by the server.
-    pub reason: String,
-}
-
-/// Result of a handshake-only Responses WebSocket probe.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResponsesWebsocketProbe {
-    /// Redacted by callers before displaying or serializing support reports.
-    pub url: String,
-    /// HTTP status returned by the successful WebSocket upgrade.
-    pub status: StatusCode,
-    /// Whether the server reported reasoning support in the upgrade response.
-    pub reasoning_included: bool,
-    /// Whether the server returned a model catalog ETag in the upgrade response.
-    pub models_etag_present: bool,
-    /// Whether the server returned a server-selected model in the upgrade response.
-    pub server_model_present: bool,
-    /// Close frame received immediately after upgrade, when one arrives quickly.
-    pub immediate_close: Option<ResponsesWebsocketClose>,
 }
 
 impl ResponsesWebsocketClient {
@@ -374,13 +396,14 @@ impl ResponsesWebsocketClient {
         turn_state: Option<Arc<OnceLock<String>>>,
         telemetry: Option<Arc<dyn WebsocketTelemetry>>,
     ) -> Result<ResponsesWebsocketConnection, ApiError> {
-        let ws_url = self
-            .provider
-            .websocket_url_for_path("responses")
+        let ws_url = websocket_url_for_provider_path(&self.provider, "responses")
             .map_err(|err| ApiError::Stream(format!("failed to build websocket URL: {err}")))?;
 
-        let mut headers =
-            merge_request_headers(&self.provider.headers, extra_headers, default_headers);
+        let mut headers = merge_request_headers(
+            &self.provider.headers,
+            extra_headers,
+            with_default_client_headers(default_headers),
+        );
         self.auth.add_auth_headers(&mut headers);
 
         let (stream, _status, server_reasoning_included, models_etag, server_model) =
@@ -408,13 +431,14 @@ impl ResponsesWebsocketClient {
         default_headers: HeaderMap,
         immediate_close_timeout: Duration,
     ) -> Result<ResponsesWebsocketProbe, ApiError> {
-        let ws_url = self
-            .provider
-            .websocket_url_for_path("responses")
+        let ws_url = websocket_url_for_provider_path(&self.provider, "responses")
             .map_err(|err| ApiError::Stream(format!("failed to build websocket URL: {err}")))?;
 
-        let mut headers =
-            merge_request_headers(&self.provider.headers, extra_headers, default_headers);
+        let mut headers = merge_request_headers(
+            &self.provider.headers,
+            extra_headers,
+            with_default_client_headers(default_headers),
+        );
         self.auth.add_auth_headers(&mut headers);
 
         let (mut stream, status, reasoning_included, models_etag, server_model) =
@@ -436,6 +460,25 @@ impl ResponsesWebsocketClient {
             models_etag_present: models_etag.is_some(),
             server_model_present: server_model.is_some(),
             immediate_close,
+        })
+    }
+}
+
+impl ResponsesWebsocketConnectorRuntime for ResponsesWebsocketClient {
+    fn connect(
+        &self,
+        request: ResponsesWebsocketConnectRequest,
+    ) -> ApiRuntimeFuture<'_, Result<Box<dyn ResponsesWebsocketConnectionRuntime>, ApiError>> {
+        Box::pin(async move {
+            let connection = ResponsesWebsocketClient::connect(
+                self,
+                request.extra_headers,
+                request.default_headers,
+                request.turn_state,
+                request.telemetry,
+            )
+            .await?;
+            Ok(Box::new(connection) as Box<dyn ResponsesWebsocketConnectionRuntime>)
         })
     }
 }
@@ -466,6 +509,12 @@ fn merge_request_headers(
             entry.insert(value.clone());
         }
     }
+    headers
+}
+
+fn with_default_client_headers(default_headers: HeaderMap) -> HeaderMap {
+    let mut headers = default_client_headers();
+    headers.extend(default_headers);
     headers
 }
 

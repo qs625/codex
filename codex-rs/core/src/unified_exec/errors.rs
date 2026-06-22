@@ -1,27 +1,20 @@
 use codex_protocol::exec_output::ExecToolCallOutput;
-use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub(crate) enum UnifiedExecError {
-    #[error("Failed to create unified exec process: {message}")]
-    CreateProcess { message: String },
-    #[error("Unified exec process failed: {message}")]
-    ProcessFailed { message: String },
-    #[error("Unknown command id {process_id}")]
-    UnknownProcessId { process_id: i32 },
-    #[error("failed to write to stdin")]
+    CreateProcess {
+        message: String,
+    },
+    ProcessFailed {
+        message: String,
+    },
+    UnknownProcessId {
+        process_id: i32,
+    },
     WriteToStdin,
-    #[error(
-        "command_write_stdin requires non-empty chars; use command_wait for command completion or output notifications instead of polling for output"
-    )]
     EmptyStdin,
-    #[error(
-        "stdin is closed for this session; rerun exec_command with tty=true to keep stdin open"
-    )]
     StdinClosed,
-    #[error("missing command line for unified exec request")]
     MissingCommandLine,
-    #[error("Command denied by sandbox: {message}")]
     SandboxDenied {
         message: String,
         output: ExecToolCallOutput,
@@ -41,3 +34,34 @@ impl UnifiedExecError {
         Self::SandboxDenied { message, output }
     }
 }
+
+impl std::fmt::Display for UnifiedExecError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CreateProcess { message } => {
+                write!(f, "Failed to create unified exec process: {message}")
+            }
+            Self::ProcessFailed { message } => {
+                write!(f, "Unified exec process failed: {message}")
+            }
+            Self::UnknownProcessId { process_id } => {
+                write!(f, "Unknown command id {process_id}")
+            }
+            Self::WriteToStdin => write!(f, "failed to write to stdin"),
+            Self::EmptyStdin => write!(
+                f,
+                "command_write_stdin requires non-empty chars; use command_wait for command completion or output notifications instead of polling for output"
+            ),
+            Self::StdinClosed => write!(
+                f,
+                "stdin is closed for this session; rerun exec_command with tty=true to keep stdin open"
+            ),
+            Self::MissingCommandLine => write!(f, "missing command line for unified exec request"),
+            Self::SandboxDenied { message, .. } => {
+                write!(f, "Command denied by sandbox: {message}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for UnifiedExecError {}

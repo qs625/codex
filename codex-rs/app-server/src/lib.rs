@@ -7,9 +7,11 @@ use codex_config_loader::LoaderOverrides;
 use codex_config_loader::NoopThreadConfigLoader;
 use codex_config_loader::ThreadConfigLoader;
 use codex_config_loader_remote::RemoteThreadConfigLoader;
+use codex_config_local_loader::LocalConfigLayerLoader;
 use codex_config_state::ConfigLayerStackOrdering;
 use codex_config_types::ConfigLayerSource;
 use codex_core::config::Config;
+use codex_core::config::ConfigBuilder;
 use codex_core::resolve_installation_id;
 use codex_login::AuthManager;
 use codex_utils_cli::CliConfigOverrides;
@@ -47,11 +49,11 @@ use codex_app_server_protocol::RemoteControlStatusChangedNotification;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::TextPosition as AppTextPosition;
 use codex_app_server_protocol::TextRange as AppTextRange;
-use codex_core::ExecPolicyError;
-use codex_core::check_execpolicy_for_warnings;
 use codex_core::config::find_codex_home;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server_api::ExecServerRuntimePaths;
+use codex_execpolicy_loader::ExecPolicyError;
+use codex_execpolicy_loader::check_execpolicy_for_warnings;
 use codex_feedback::CodexFeedback;
 use codex_protocol::protocol::SessionSource;
 use codex_rollout::state_db as rollout_state_db;
@@ -70,6 +72,10 @@ use tracing_subscriber::filter::Targets;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::Registry;
 use tracing_subscriber::util::SubscriberInitExt;
+
+pub(crate) fn config_builder() -> ConfigBuilder {
+    ConfigBuilder::default().config_layer_loader(Arc::new(LocalConfigLayerLoader::default()))
+}
 
 mod analytics_utils;
 mod app_server_tracing;
@@ -99,6 +105,7 @@ mod server_request_error;
 mod skills_watcher;
 mod thread_state;
 mod thread_status;
+mod thread_store_factory;
 mod transport;
 
 pub use crate::error_code::INPUT_TOO_LARGE_ERROR_CODE;
@@ -539,10 +546,12 @@ pub async fn run_main_with_transport_options(
         let effective_toml = config.config_layer_stack.effective_config();
         match effective_toml.try_into() {
             Ok(config_toml) => {
+                let personality_migration_thread_store =
+                    thread_store_factory::thread_store_from_config(&config, state_db.clone());
                 match codex_core::personality_migration::maybe_migrate_personality(
                     &config.codex_home,
                     &config_toml,
-                    state_db.clone(),
+                    personality_migration_thread_store.as_ref(),
                 )
                 .await
                 {
@@ -598,7 +607,7 @@ pub async fn run_main_with_transport_options(
         });
     }
     if let Some(warning) =
-        codex_core::config::system_bwrap_warning(config.permissions.permission_profile())
+        codex_sandboxing::system_bwrap_warning(config.permissions.permission_profile())
     {
         config_warnings.push(ConfigWarningNotification {
             summary: warning,

@@ -12,15 +12,15 @@ use codex_protocol::models::CommandWaitNotificationKind as ResponseCommandWaitNo
 use codex_protocol::models::CommandWaitStatus as ResponseCommandWaitStatus;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::ResponseItem;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
 use serde::Deserialize;
 use serde::Serialize;
 use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-use codex_tools::create_command_wait_tool;
+use codex_tool_planning::create_command_wait_tool;
 
 #[derive(Debug, Deserialize)]
 struct CommandWaitArgs {
@@ -29,7 +29,6 @@ struct CommandWaitArgs {
 
 pub struct CommandWaitHandler;
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for CommandWaitHandler {
     type Output = FunctionToolOutput;
 
@@ -41,97 +40,105 @@ impl ToolExecutor<ToolInvocation> for CommandWaitHandler {
         Some(create_command_wait_tool())
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            payload,
-            ..
-        } = invocation;
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session,
+                turn,
+                payload,
+                ..
+            } = invocation;
 
-        let arguments = match payload {
-            ToolPayload::Function { arguments } => arguments,
-            _ => {
-                return Err(FunctionCallError::RespondToModel(
-                    "command_wait handler received unsupported payload".to_string(),
-                ));
-            }
-        };
+            let arguments = match payload {
+                ToolPayload::Function { arguments } => arguments,
+                _ => {
+                    return Err(FunctionCallError::RespondToModel(
+                        "command_wait handler received unsupported payload".to_string(),
+                    ));
+                }
+            };
 
-        let args: CommandWaitArgs = parse_arguments(&arguments)?;
-        let item_id = format!("response-item-{}", uuid::Uuid::new_v4());
-        let created_at_ms = now_unix_timestamp_ms();
-        let command_wait = session
-            .services
-            .unified_exec_manager
-            .begin_command_wait(CommandWaitRequest {
-                process_id: args.command_id,
+            let args: CommandWaitArgs = parse_arguments(&arguments)?;
+            let item_id = format!("response-item-{}", uuid::Uuid::new_v4());
+            let created_at_ms = now_unix_timestamp_ms();
+            let command_wait = session
+                .services
+                .unified_exec_manager
+                .begin_command_wait(CommandWaitRequest {
+                    process_id: args.command_id,
+                })
+                .await
+                .map_err(|err| {
+                    FunctionCallError::RespondToModel(format!("command_wait failed: {err}"))
+                })?;
+            let wait_timeout = command_wait.wait_timeout;
+            let started_item = command_wait_item(CommandWaitItemInput {
+                id: item_id.clone(),
+                command_id: command_wait.process_id,
+                status: CommandWaitStatus::Running,
+                notification: None,
+                exit_code: None,
+                wall_time: Duration::ZERO,
+                wait_timeout,
+                created_at_ms,
+            });
+            session
+                .emit_model_item_started_display_event(turn.as_ref(), &started_item)
+                .await;
+
+            let output = session
+                .services
+                .unified_exec_manager
+                .finish_command_wait(command_wait)
+                .await
+                .map_err(|err| {
+                    FunctionCallError::RespondToModel(format!("command_wait failed: {err}"))
+                })?;
+
+            let response_item = command_wait_item(CommandWaitItemInput {
+                id: item_id,
+                command_id: output.process_id,
+                status: output.status.clone(),
+                notification: output.notification,
+                exit_code: output.exit_code,
+                wall_time: output.wall_time,
+                wait_timeout: output.wait_timeout,
+                created_at_ms,
+            });
+            session
+                .record_model_items_and_emit_display_events(
+                    turn.as_ref(),
+                    std::slice::from_ref(&response_item),
+                )
+                .await;
+
+            let response = CommandWaitResponse {
+                command_id: output.process_id,
+                status: match &output.status {
+                    CommandWaitStatus::Running => "running",
+                    CommandWaitStatus::Completed => "completed",
+                },
+                notification: output.notification.map(|kind| match kind {
+                    CommandNotificationKind::Output => "output",
+                    CommandNotificationKind::Exit => "exit",
+                }),
+                exit_code: output.exit_code,
+                wall_time_seconds: output.wall_time.as_secs_f64(),
+                wait_timeout_ms: output.wait_timeout.as_millis() as i64,
+            };
+            let text = serde_json::to_string(&response)
+                .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
+            Ok(FunctionToolOutput {
+                body: vec![FunctionCallOutputContentItem::InputText { text }],
+                success: Some(true),
+                post_tool_use_response: None,
             })
-            .await
-            .map_err(|err| {
-                FunctionCallError::RespondToModel(format!("command_wait failed: {err}"))
-            })?;
-        let wait_timeout = command_wait.wait_timeout;
-        let started_item = command_wait_item(CommandWaitItemInput {
-            id: item_id.clone(),
-            command_id: command_wait.process_id,
-            status: CommandWaitStatus::Running,
-            notification: None,
-            exit_code: None,
-            wall_time: Duration::ZERO,
-            wait_timeout,
-            created_at_ms,
-        });
-        session
-            .emit_model_item_started_display_event(turn.as_ref(), &started_item)
-            .await;
-
-        let output = session
-            .services
-            .unified_exec_manager
-            .finish_command_wait(command_wait)
-            .await
-            .map_err(|err| {
-                FunctionCallError::RespondToModel(format!("command_wait failed: {err}"))
-            })?;
-
-        let response_item = command_wait_item(CommandWaitItemInput {
-            id: item_id,
-            command_id: output.process_id,
-            status: output.status.clone(),
-            notification: output.notification,
-            exit_code: output.exit_code,
-            wall_time: output.wall_time,
-            wait_timeout: output.wait_timeout,
-            created_at_ms,
-        });
-        session
-            .record_model_items_and_emit_display_events(
-                turn.as_ref(),
-                std::slice::from_ref(&response_item),
-            )
-            .await;
-
-        let response = CommandWaitResponse {
-            command_id: output.process_id,
-            status: match &output.status {
-                CommandWaitStatus::Running => "running",
-                CommandWaitStatus::Completed => "completed",
-            },
-            notification: output.notification.map(|kind| match kind {
-                CommandNotificationKind::Output => "output",
-                CommandNotificationKind::Exit => "exit",
-            }),
-            exit_code: output.exit_code,
-            wall_time_seconds: output.wall_time.as_secs_f64(),
-            wait_timeout_ms: output.wait_timeout.as_millis() as i64,
-        };
-        let text = serde_json::to_string(&response)
-            .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
-        Ok(FunctionToolOutput {
-            body: vec![FunctionCallOutputContentItem::InputText { text }],
-            success: Some(true),
-            post_tool_use_response: None,
         })
     }
 }

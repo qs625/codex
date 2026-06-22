@@ -16,8 +16,16 @@ use crate::endpoint::realtime_websocket::protocol::RealtimeVoice;
 use crate::endpoint::realtime_websocket::protocol::parse_realtime_event;
 use crate::error::ApiError;
 use crate::provider::Provider;
+use codex_api_types::ApiRuntimeFuture;
+use codex_api_types::RealtimeWebrtcSidebandConnectRuntimeRequest;
+use codex_api_types::RealtimeWebsocketClientRuntime;
+use codex_api_types::RealtimeWebsocketConnectRuntimeRequest;
+use codex_api_types::RealtimeWebsocketConnectionRuntime;
+use codex_api_types::RealtimeWebsocketEventsRuntime;
+use codex_api_types::RealtimeWebsocketWriterRuntime;
 use codex_client::backoff;
 use codex_client::maybe_build_rustls_client_config_with_custom_ca;
+use codex_default_client::default_headers as default_client_headers;
 use codex_protocol::protocol::RealtimeTranscriptDelta;
 use codex_utils_rustls_provider::ensure_rustls_crypto_provider;
 use futures::SinkExt;
@@ -281,6 +289,16 @@ impl RealtimeWebsocketConnection {
     }
 }
 
+impl RealtimeWebsocketConnectionRuntime for RealtimeWebsocketConnection {
+    fn writer(&self) -> Arc<dyn RealtimeWebsocketWriterRuntime> {
+        Arc::new(self.writer())
+    }
+
+    fn events(&self) -> Arc<dyn RealtimeWebsocketEventsRuntime> {
+        Arc::new(self.events())
+    }
+}
+
 impl RealtimeWebsocketWriter {
     pub async fn send_audio_frame(&self, frame: RealtimeAudioFrame) -> Result<(), ApiError> {
         self.send_json(&RealtimeOutboundMessage::InputAudioBufferAppend { audio: frame.data })
@@ -363,6 +381,40 @@ impl RealtimeWebsocketWriter {
             .await
             .map_err(|err| ApiError::Stream(format!("failed to send realtime request: {err}")))?;
         Ok(())
+    }
+}
+
+impl RealtimeWebsocketWriterRuntime for RealtimeWebsocketWriter {
+    fn send_audio_frame(
+        &self,
+        frame: RealtimeAudioFrame,
+    ) -> ApiRuntimeFuture<'_, Result<(), ApiError>> {
+        Box::pin(async move { Self::send_audio_frame(self, frame).await })
+    }
+
+    fn send_conversation_item_create(
+        &self,
+        text: String,
+    ) -> ApiRuntimeFuture<'_, Result<(), ApiError>> {
+        Box::pin(async move { Self::send_conversation_item_create(self, text).await })
+    }
+
+    fn send_conversation_function_call_output(
+        &self,
+        call_id: String,
+        output_text: String,
+    ) -> ApiRuntimeFuture<'_, Result<(), ApiError>> {
+        Box::pin(async move {
+            Self::send_conversation_function_call_output(self, call_id, output_text).await
+        })
+    }
+
+    fn send_response_create(&self) -> ApiRuntimeFuture<'_, Result<(), ApiError>> {
+        Box::pin(async move { Self::send_response_create(self).await })
+    }
+
+    fn send_payload(&self, payload: String) -> ApiRuntimeFuture<'_, Result<(), ApiError>> {
+        Box::pin(async move { Self::send_payload(self, payload).await })
     }
 }
 
@@ -480,6 +532,12 @@ impl RealtimeWebsocketEvents {
             | RealtimeEvent::ConversationItemAdded(_)
             | RealtimeEvent::Error(_) => {}
         }
+    }
+}
+
+impl RealtimeWebsocketEventsRuntime for RealtimeWebsocketEvents {
+    fn next_event(&self) -> ApiRuntimeFuture<'_, Result<Option<RealtimeEvent>, ApiError>> {
+        Box::pin(async move { Self::next_event(self).await })
     }
 }
 
@@ -654,7 +712,7 @@ impl RealtimeWebsocketClient {
         let headers = merge_request_headers(
             &self.provider.headers,
             with_session_id_header(extra_headers, config.session_id.as_deref())?,
-            default_headers,
+            with_default_client_headers(default_headers),
         );
         request.headers_mut().extend(headers);
 
@@ -697,6 +755,41 @@ impl RealtimeWebsocketClient {
     }
 }
 
+impl RealtimeWebsocketClientRuntime for RealtimeWebsocketClient {
+    fn connect(
+        &self,
+        request: RealtimeWebsocketConnectRuntimeRequest,
+    ) -> ApiRuntimeFuture<'_, Result<Box<dyn RealtimeWebsocketConnectionRuntime>, ApiError>> {
+        Box::pin(async move {
+            let connection = Self::connect(
+                self,
+                request.session_config,
+                request.extra_headers,
+                request.default_headers,
+            )
+            .await?;
+            Ok(Box::new(connection) as Box<dyn RealtimeWebsocketConnectionRuntime>)
+        })
+    }
+
+    fn connect_webrtc_sideband(
+        &self,
+        request: RealtimeWebrtcSidebandConnectRuntimeRequest,
+    ) -> ApiRuntimeFuture<'_, Result<Box<dyn RealtimeWebsocketConnectionRuntime>, ApiError>> {
+        Box::pin(async move {
+            let connection = Self::connect_webrtc_sideband(
+                self,
+                request.session_config,
+                &request.call_id,
+                request.extra_headers,
+                request.default_headers,
+            )
+            .await?;
+            Ok(Box::new(connection) as Box<dyn RealtimeWebsocketConnectionRuntime>)
+        })
+    }
+}
+
 fn merge_request_headers(
     provider_headers: &HeaderMap,
     extra_headers: HeaderMap,
@@ -709,6 +802,12 @@ fn merge_request_headers(
             entry.insert(value.clone());
         }
     }
+    headers
+}
+
+fn with_default_client_headers(default_headers: HeaderMap) -> HeaderMap {
+    let mut headers = default_client_headers();
+    headers.extend(default_headers);
     headers
 }
 

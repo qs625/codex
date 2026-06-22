@@ -9,8 +9,8 @@ use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::error::Result;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::models::PermissionProfile;
-use codex_sandboxing::SandboxType;
-use codex_sandboxing::get_platform_sandbox;
+use codex_sandboxing_api::SandboxType;
+use codex_sandboxing_api::get_platform_sandbox;
 use core_test_support::PathExt;
 use std::collections::HashMap;
 use tempfile::TempDir;
@@ -49,12 +49,14 @@ where
         arg0: None,
     };
 
+    let sandbox_runtime = codex_sandboxing::SandboxManager::new();
     process_exec_tool_call(
         params,
         &PermissionProfile::read_only(),
         &cwd,
         &None,
         /*use_legacy_landlock*/ false,
+        &sandbox_runtime,
         /*stdout_stream*/ None,
     )
     .await

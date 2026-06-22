@@ -5,6 +5,7 @@ use anyhow::ensure;
 use codex_arg0::Arg0PathEntryGuard;
 use codex_utils_cargo_bin::CargoBinError;
 use ctor::ctor;
+use std::sync::Arc;
 use std::sync::OnceLock;
 use tempfile::TempDir;
 
@@ -16,6 +17,8 @@ use codex_core::CodexThread;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
+use codex_core::config::ThreadStoreConfig;
+use codex_rollout::StateDbHandle;
 use codex_utils_absolute_path::AbsolutePathBuf;
 pub use codex_utils_absolute_path::test_support::PathBufExt;
 pub use codex_utils_absolute_path::test_support::PathExt;
@@ -32,6 +35,19 @@ pub mod test_codex;
 pub mod test_codex_exec;
 pub mod tracing;
 pub mod zsh_fork;
+
+pub fn thread_store_from_config(
+    config: &Config,
+    state_db: Option<StateDbHandle>,
+) -> Arc<dyn codex_thread_store::ThreadStore> {
+    match &config.experimental_thread_store {
+        ThreadStoreConfig::Local => Arc::new(codex_thread_store::LocalThreadStore::new(
+            codex_thread_store::LocalThreadStoreConfig::from_config(config),
+            state_db,
+        )),
+        ThreadStoreConfig::InMemory { id } => codex_thread_store::InMemoryThreadStore::for_id(id),
+    }
+}
 
 static TEST_ARG0_PATH_ENTRY: OnceLock<Option<Arg0PathEntryGuard>> = OnceLock::new();
 

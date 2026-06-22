@@ -130,12 +130,12 @@ use codex_exec_server::EnvironmentManager;
 use codex_features::FEATURES;
 use codex_features::Feature;
 #[cfg(test)]
-use codex_git_utils::CommitLogEntry;
-use codex_git_utils::current_branch_name;
-use codex_git_utils::get_git_repo_root;
-use codex_git_utils::local_git_branches;
-use codex_git_utils::recent_commits;
-use codex_otel::RuntimeMetricsSummary;
+use codex_git_info::CommitLogEntry;
+use codex_git_info::current_branch_name;
+use codex_git_info::get_git_repo_root;
+use codex_git_info::local_git_branches;
+use codex_git_info::recent_commits;
+use codex_metrics_api::RuntimeMetricsSummary;
 use codex_otel::SessionTelemetry;
 use codex_plugin::PluginCapabilitySummary;
 use codex_protocol::ThreadId;

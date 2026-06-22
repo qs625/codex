@@ -460,7 +460,7 @@ mod tests {
         let err = enroll_remote_control_server(
             &remote_control_target,
             &RemoteControlConnectionAuth {
-                auth_provider: codex_model_provider_api::unauthenticated_auth_provider(),
+                auth_provider: codex_api_auth::unauthenticated_auth_provider(),
                 account_id: "account_id".to_string(),
             },
             "11111111-1111-4111-8111-111111111111",

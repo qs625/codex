@@ -20,14 +20,16 @@ use sha2::Sha256;
 use toml::Value as TomlValue;
 
 use super::ConfiguredHandler;
-use super::HookListEntry;
-use crate::config_layers::HookConfigLayerEntry;
-use crate::config_layers::HookConfigLayerStack;
-use crate::config_layers::HookConfigLayerStackOrdering;
 use crate::config_rules::hook_states_from_stack;
-use crate::event_projection::hook_events_into_matcher_groups;
 use crate::events::common::matcher_pattern_for_event;
 use crate::events::common::validate_matcher_pattern;
+use codex_hooks_api::HookConfigLayerEntry;
+use codex_hooks_api::HookConfigLayerStack;
+use codex_hooks_api::HookConfigLayerStackOrdering;
+use codex_hooks_api::HookListEntry;
+use codex_hooks_api::hook_events_into_matcher_groups;
+use codex_hooks_api::hook_key;
+use codex_hooks_api::plugin_hook_key_source;
 use codex_protocol::protocol::HookHandlerType;
 use codex_protocol::protocol::HookSource;
 use codex_protocol::protocol::HookTrustStatus;
@@ -234,7 +236,7 @@ fn append_plugin_hook_sources(
             display_order,
             HookHandlerSource {
                 path: &source_path,
-                key_source: crate::declarations::plugin_hook_key_source(
+                key_source: plugin_hook_key_source(
                     plugin_id.as_str(),
                     source_relative_path.as_str(),
                 ),
@@ -468,8 +470,7 @@ fn append_matcher_groups(
                         command.replace(&format!("${{{key}}}"), value)
                     });
                     // TODO(abhinav): replace this positional suffix with a durable hook id.
-                    let key =
-                        crate::hook_key(&source.key_source, event_name, group_index, handler_index);
+                    let key = hook_key(&source.key_source, event_name, group_index, handler_index);
                     let state = source.hook_states.get(&key);
                     let enabled = hook_enabled(source.is_managed, state);
                     let trusted_hash = hook_trusted_hash(source.is_managed, state);

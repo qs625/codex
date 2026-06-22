@@ -1,8 +1,8 @@
 use codex_extension_api::ExtensionToolExecutor;
 use codex_mcp_tool_types::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
-use codex_tools::DiscoverableTool;
-use codex_tools::ToolsConfig;
+use codex_tool_config::ToolsConfig;
+use codex_tool_planning::DiscoverableTool;
 use std::sync::Arc;
 
 #[derive(Clone, Copy)]

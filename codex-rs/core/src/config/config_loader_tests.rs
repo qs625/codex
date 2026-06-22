@@ -1,3 +1,4 @@
+use crate::config::CONFIG_TOML_FILE;
 use crate::config::ConfigBuilder;
 use crate::config::ConfigOverrides;
 use crate::config::ConstraintError;
@@ -21,7 +22,6 @@ use codex_config::config_error_from_toml;
 use codex_config::config_toml::ConfigToml;
 use codex_config::loader::load_config_layers_state;
 use codex_config::loader::load_requirements_toml;
-use codex_config_edit::CONFIG_TOML_FILE;
 use codex_config_loader::ProjectConfig;
 use codex_config_types::ConfigLayerSource;
 use codex_file_system::LOCAL_FS;

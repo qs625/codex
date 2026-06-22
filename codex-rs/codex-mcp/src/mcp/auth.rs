@@ -4,7 +4,15 @@ use anyhow::Result;
 use codex_config_types::McpServerConfig;
 use codex_config_types::McpServerTransportConfig;
 use codex_config_types::OAuthCredentialsStoreMode;
-use codex_login::CodexAuth;
+use codex_mcp_runtime_api::McpAuthFuture;
+use codex_mcp_runtime_api::McpAuthRuntime;
+use codex_mcp_runtime_api::McpOAuthLoginRequest;
+use codex_mcp_types::EffectiveMcpServer;
+use codex_mcp_types::McpAuthStatusEntry;
+use codex_mcp_types::McpOAuthLoginConfig;
+use codex_mcp_types::McpOAuthLoginSupport;
+use codex_mcp_types::McpOAuthScopesSource;
+use codex_mcp_types::ResolvedMcpOAuthScopes;
 use codex_protocol::protocol::McpAuthStatus;
 use codex_rmcp_client::OAuthProviderError;
 use codex_rmcp_client::determine_streamable_http_auth_status;
@@ -12,43 +20,63 @@ use codex_rmcp_client::discover_streamable_http_oauth;
 use futures::future::join_all;
 use tracing::warn;
 
-use crate::server::EffectiveMcpServer;
-
 use super::CODEX_APPS_MCP_SERVER_NAME;
 
-#[derive(Debug, Clone)]
-pub struct McpOAuthLoginConfig {
-    pub url: String,
-    pub http_headers: Option<HashMap<String, String>>,
-    pub env_http_headers: Option<HashMap<String, String>>,
-    pub discovered_scopes: Option<Vec<String>>,
-}
+#[derive(Debug, Default)]
+pub struct DefaultMcpAuthRuntime;
 
-#[derive(Debug)]
-pub enum McpOAuthLoginSupport {
-    Supported(McpOAuthLoginConfig),
-    Unsupported,
-    Unknown(anyhow::Error),
-}
+impl McpAuthRuntime for DefaultMcpAuthRuntime {
+    fn oauth_login_support<'a>(
+        &'a self,
+        transport: &'a McpServerTransportConfig,
+    ) -> McpAuthFuture<'a, McpOAuthLoginSupport> {
+        Box::pin(oauth_login_support(transport))
+    }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum McpOAuthScopesSource {
-    Explicit,
-    Configured,
-    Discovered,
-    Empty,
-}
+    fn perform_oauth_login<'a>(
+        &'a self,
+        request: McpOAuthLoginRequest,
+    ) -> McpAuthFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move {
+            codex_rmcp_client::perform_oauth_login(
+                &request.server_name,
+                &request.server_url,
+                request.store_mode,
+                request.http_headers,
+                request.env_http_headers,
+                &request.scopes,
+                request.oauth_client_id.as_deref(),
+                request.oauth_resource.as_deref(),
+                request.callback_port,
+                request.callback_url.as_deref(),
+            )
+            .await
+        })
+    }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedMcpOAuthScopes {
-    pub scopes: Vec<String>,
-    pub source: McpOAuthScopesSource,
-}
+    fn should_retry_without_scopes(
+        &self,
+        scopes: &ResolvedMcpOAuthScopes,
+        error: &anyhow::Error,
+    ) -> bool {
+        self::should_retry_without_scopes(scopes, error)
+    }
 
-#[derive(Debug, Clone)]
-pub struct McpAuthStatusEntry {
-    pub config: Option<McpServerConfig>,
-    pub auth_status: McpAuthStatus,
+    fn compute_auth_statuses<'a>(
+        &'a self,
+        servers: Vec<(String, EffectiveMcpServer)>,
+        store_mode: OAuthCredentialsStoreMode,
+        host_owned_codex_apps_enabled: bool,
+    ) -> McpAuthFuture<'a, HashMap<String, McpAuthStatusEntry>> {
+        Box::pin(async move {
+            compute_auth_statuses(
+                servers.iter().map(|(name, server)| (name, server)),
+                store_mode,
+                host_owned_codex_apps_enabled,
+            )
+            .await
+        })
+    }
 }
 
 pub async fn oauth_login_support(transport: &McpServerTransportConfig) -> McpOAuthLoginSupport {
@@ -88,40 +116,6 @@ pub async fn discover_supported_scopes(
     }
 }
 
-pub fn resolve_oauth_scopes(
-    explicit_scopes: Option<Vec<String>>,
-    configured_scopes: Option<Vec<String>>,
-    discovered_scopes: Option<Vec<String>>,
-) -> ResolvedMcpOAuthScopes {
-    if let Some(scopes) = explicit_scopes {
-        return ResolvedMcpOAuthScopes {
-            scopes,
-            source: McpOAuthScopesSource::Explicit,
-        };
-    }
-
-    if let Some(scopes) = configured_scopes {
-        return ResolvedMcpOAuthScopes {
-            scopes,
-            source: McpOAuthScopesSource::Configured,
-        };
-    }
-
-    if let Some(scopes) = discovered_scopes
-        && !scopes.is_empty()
-    {
-        return ResolvedMcpOAuthScopes {
-            scopes,
-            source: McpOAuthScopesSource::Discovered,
-        };
-    }
-
-    ResolvedMcpOAuthScopes {
-        scopes: Vec::new(),
-        source: McpOAuthScopesSource::Empty,
-    }
-}
-
 pub fn should_retry_without_scopes(scopes: &ResolvedMcpOAuthScopes, error: &anyhow::Error) -> bool {
     scopes.source == McpOAuthScopesSource::Discovered
         && error.downcast_ref::<OAuthProviderError>().is_some()
@@ -130,7 +124,7 @@ pub fn should_retry_without_scopes(scopes: &ResolvedMcpOAuthScopes, error: &anyh
 pub async fn compute_auth_statuses<'a, I>(
     servers: I,
     store_mode: OAuthCredentialsStoreMode,
-    auth: Option<&CodexAuth>,
+    host_owned_codex_apps_enabled: bool,
 ) -> HashMap<String, McpAuthStatusEntry>
 where
     I: IntoIterator<Item = (&'a String, &'a EffectiveMcpServer)>,
@@ -139,7 +133,7 @@ where
         let name = name.clone();
         let config = server.configured_config().cloned();
         let has_runtime_auth = name == CODEX_APPS_MCP_SERVER_NAME
-            && auth.is_some_and(CodexAuth::uses_codex_backend)
+            && host_owned_codex_apps_enabled
             && config.as_ref().is_some_and(|config| {
                 matches!(
                     &config.transport,
@@ -213,97 +207,11 @@ async fn compute_auth_status(
 #[cfg(test)]
 mod tests {
     use anyhow::anyhow;
-    use pretty_assertions::assert_eq;
 
-    use super::McpOAuthScopesSource;
     use super::OAuthProviderError;
-    use super::ResolvedMcpOAuthScopes;
-    use super::resolve_oauth_scopes;
     use super::should_retry_without_scopes;
-
-    #[test]
-    fn resolve_oauth_scopes_prefers_explicit() {
-        let resolved = resolve_oauth_scopes(
-            Some(vec!["explicit".to_string()]),
-            Some(vec!["configured".to_string()]),
-            Some(vec!["discovered".to_string()]),
-        );
-
-        assert_eq!(
-            resolved,
-            ResolvedMcpOAuthScopes {
-                scopes: vec!["explicit".to_string()],
-                source: McpOAuthScopesSource::Explicit,
-            }
-        );
-    }
-
-    #[test]
-    fn resolve_oauth_scopes_prefers_configured_over_discovered() {
-        let resolved = resolve_oauth_scopes(
-            /*explicit_scopes*/ None,
-            Some(vec!["configured".to_string()]),
-            Some(vec!["discovered".to_string()]),
-        );
-
-        assert_eq!(
-            resolved,
-            ResolvedMcpOAuthScopes {
-                scopes: vec!["configured".to_string()],
-                source: McpOAuthScopesSource::Configured,
-            }
-        );
-    }
-
-    #[test]
-    fn resolve_oauth_scopes_uses_discovered_when_needed() {
-        let resolved = resolve_oauth_scopes(
-            /*explicit_scopes*/ None,
-            /*configured_scopes*/ None,
-            Some(vec!["discovered".to_string()]),
-        );
-
-        assert_eq!(
-            resolved,
-            ResolvedMcpOAuthScopes {
-                scopes: vec!["discovered".to_string()],
-                source: McpOAuthScopesSource::Discovered,
-            }
-        );
-    }
-
-    #[test]
-    fn resolve_oauth_scopes_preserves_explicitly_empty_configured_scopes() {
-        let resolved = resolve_oauth_scopes(
-            /*explicit_scopes*/ None,
-            Some(Vec::new()),
-            Some(vec!["ignored".into()]),
-        );
-
-        assert_eq!(
-            resolved,
-            ResolvedMcpOAuthScopes {
-                scopes: Vec::new(),
-                source: McpOAuthScopesSource::Configured,
-            }
-        );
-    }
-
-    #[test]
-    fn resolve_oauth_scopes_falls_back_to_empty() {
-        let resolved = resolve_oauth_scopes(
-            /*explicit_scopes*/ None, /*configured_scopes*/ None,
-            /*discovered_scopes*/ None,
-        );
-
-        assert_eq!(
-            resolved,
-            ResolvedMcpOAuthScopes {
-                scopes: Vec::new(),
-                source: McpOAuthScopesSource::Empty,
-            }
-        );
-    }
+    use codex_mcp_types::McpOAuthScopesSource;
+    use codex_mcp_types::ResolvedMcpOAuthScopes;
 
     #[test]
     fn should_retry_without_scopes_only_for_discovered_provider_errors() {

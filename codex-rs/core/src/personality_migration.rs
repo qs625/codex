@@ -1,12 +1,9 @@
 use crate::config::edit::ConfigEditsBuilder;
 use codex_config_toml::config_toml::ConfigToml;
 use codex_protocol::config_types::Personality;
-use codex_rollout::state_db::StateDbHandle;
-use codex_thread_store::ListThreadsParams;
-use codex_thread_store::LocalThreadStore;
-use codex_thread_store::LocalThreadStoreConfig;
-use codex_thread_store::ThreadSortKey;
-use codex_thread_store::ThreadStore;
+use codex_thread_store_api::ListThreadsParams;
+use codex_thread_store_api::ThreadSortKey;
+use codex_thread_store_api::ThreadStore;
 use std::io;
 use std::path::Path;
 use tokio::fs::OpenOptions;
@@ -25,7 +22,7 @@ pub enum PersonalityMigrationStatus {
 pub async fn maybe_migrate_personality(
     codex_home: &Path,
     config_toml: &ConfigToml,
-    state_db: Option<StateDbHandle>,
+    thread_store: &dyn ThreadStore,
 ) -> io::Result<PersonalityMigrationStatus> {
     let marker_path = codex_home.join(PERSONALITY_MIGRATION_FILENAME);
     if tokio::fs::try_exists(&marker_path).await? {
@@ -40,12 +37,7 @@ pub async fn maybe_migrate_personality(
         return Ok(PersonalityMigrationStatus::SkippedExplicitPersonality);
     }
 
-    let model_provider_id = config_profile
-        .model_provider
-        .or_else(|| config_toml.model_provider.clone())
-        .unwrap_or_else(|| "openai".to_string());
-
-    if !has_recorded_sessions(codex_home, model_provider_id.as_str(), state_db).await? {
+    if !has_recorded_sessions(thread_store).await? {
         create_marker(&marker_path).await?;
         return Ok(PersonalityMigrationStatus::SkippedNoSessions);
     }
@@ -62,32 +54,20 @@ pub async fn maybe_migrate_personality(
     Ok(PersonalityMigrationStatus::Applied)
 }
 
-async fn has_recorded_sessions(
-    codex_home: &Path,
-    default_provider: &str,
-    state_db: Option<StateDbHandle>,
-) -> io::Result<bool> {
-    let store = LocalThreadStore::new(
-        LocalThreadStoreConfig {
-            codex_home: codex_home.to_path_buf(),
-            sqlite_home: codex_home.to_path_buf(),
-            default_model_provider_id: default_provider.to_string(),
-        },
-        state_db,
-    );
-    if has_threads(&store, /*archived*/ false).await? {
+async fn has_recorded_sessions(store: &dyn ThreadStore) -> io::Result<bool> {
+    if has_threads(store, /*archived*/ false).await? {
         return Ok(true);
     }
-    has_threads(&store, /*archived*/ true).await
+    has_threads(store, /*archived*/ true).await
 }
 
-async fn has_threads(store: &LocalThreadStore, archived: bool) -> io::Result<bool> {
+async fn has_threads(store: &dyn ThreadStore, archived: bool) -> io::Result<bool> {
     store
         .list_threads(ListThreadsParams {
             page_size: 1,
             cursor: None,
             sort_key: ThreadSortKey::CreatedAt,
-            sort_direction: codex_thread_store::SortDirection::Desc,
+            sort_direction: codex_thread_store_api::SortDirection::Desc,
             allowed_sources: Vec::new(),
             model_providers: None,
             cwd_filters: None,

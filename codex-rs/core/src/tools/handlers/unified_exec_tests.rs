@@ -1,8 +1,8 @@
 use super::*;
 use crate::shell::ShellType;
 use crate::shell::default_user_shell;
-use codex_tools::UnifiedExecShellMode;
-use codex_tools::ZshForkConfig;
+use codex_tool_planning::UnifiedExecShellMode;
+use codex_tool_planning::ZshForkConfig;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
@@ -31,7 +31,7 @@ async fn invocation_for_payload(
         cancellation_token: tokio_util::sync::CancellationToken::new(),
         tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
         call_id: call_id.to_string(),
-        tool_name: codex_tools::ToolName::plain(tool_name),
+        tool_name: codex_tool_planning::ToolName::plain(tool_name),
         source: ToolCallSource::Direct,
         payload,
     }
@@ -216,7 +216,7 @@ async fn exec_command_pre_tool_use_payload_uses_raw_command() {
             cancellation_token: tokio_util::sync::CancellationToken::new(),
             tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
             call_id: "call-43".to_string(),
-            tool_name: codex_tools::ToolName::plain("exec_command"),
+            tool_name: codex_tool_planning::ToolName::plain("exec_command"),
             source: crate::tools::context::ToolCallSource::Direct,
             payload,
         }),
@@ -242,7 +242,7 @@ async fn exec_command_pre_tool_use_payload_skips_command_write_stdin() {
             cancellation_token: tokio_util::sync::CancellationToken::new(),
             tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
             call_id: "call-44".to_string(),
-            tool_name: codex_tools::ToolName::plain("command_write_stdin"),
+            tool_name: codex_tool_planning::ToolName::plain("command_write_stdin"),
             source: crate::tools::context::ToolCallSource::Direct,
             payload,
         }),

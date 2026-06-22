@@ -2525,7 +2525,6 @@ impl ThreadRequestProcessor {
             .resume_thread_with_history_and_source(
                 config,
                 thread_history,
-                self.auth_manager.clone(),
                 session_source,
                 /*parent_trace*/ None,
             )
@@ -2739,7 +2738,6 @@ impl ThreadRequestProcessor {
                 .resume_thread_with_history_and_source(
                     config.clone(),
                     thread_history,
-                    self.auth_manager.clone(),
                     session_source,
                     parent_trace,
                 )
@@ -2749,7 +2747,6 @@ impl ThreadRequestProcessor {
                 .resume_thread_with_history(
                     config.clone(),
                     thread_history,
-                    self.auth_manager.clone(),
                     /*persist_extended_history*/ false,
                     parent_trace,
                 )

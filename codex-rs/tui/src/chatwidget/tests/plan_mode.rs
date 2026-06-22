@@ -1471,7 +1471,7 @@ async fn make_startup_chat_with_cli_overrides(
     cli_overrides: Vec<(String, TomlValue)>,
 ) -> ChatWidget {
     let codex_home = tempdir().expect("tempdir");
-    let cfg = ConfigBuilder::default()
+    let cfg = crate::config_builder()
         .codex_home(codex_home.path().to_path_buf())
         .cli_overrides(cli_overrides)
         .build()

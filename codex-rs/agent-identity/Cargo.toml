@@ -16,6 +16,7 @@ workspace = true
 anyhow = { workspace = true }
 base64 = { workspace = true }
 chrono = { workspace = true }
+codex-agent-identity-api = { workspace = true }
 codex-protocol = { workspace = true }
 crypto_box = { workspace = true }
 ed25519-dalek = { workspace = true }

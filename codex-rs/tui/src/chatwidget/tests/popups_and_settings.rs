@@ -53,7 +53,7 @@ async fn deleted_realtime_meter_uses_shared_stop_path() {
 #[tokio::test]
 async fn experimental_mode_plan_is_ignored_on_startup() {
     let codex_home = tempdir().expect("tempdir");
-    let cfg = ConfigBuilder::default()
+    let cfg = crate::config_builder()
         .codex_home(codex_home.path().to_path_buf())
         .cli_overrides(vec![
             (

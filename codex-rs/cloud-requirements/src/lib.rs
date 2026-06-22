@@ -23,6 +23,7 @@ use codex_config_types::AuthCredentialsStoreMode;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::RefreshTokenError;
+use codex_login::default_client::get_codex_user_agent;
 use codex_protocol::account::PlanType;
 use codex_utils_backoff::backoff;
 use hmac::Hmac;
@@ -218,14 +219,18 @@ impl RequirementsFetcher for BackendRequirementsFetcher {
         &self,
         auth: &CodexAuth,
     ) -> Result<Option<String>, FetchAttemptError> {
-        let client = BackendClient::from_auth(self.base_url.clone(), auth)
-            .inspect_err(|err| {
-                tracing::warn!(
-                    error = %err,
-                    "Failed to construct backend client for cloud requirements"
-                );
-            })
-            .map_err(|_| FetchAttemptError::Retryable(RetryableFailureKind::BackendClientInit))?;
+        let client =
+            BackendClient::from_auth_snapshot(self.base_url.clone(), &auth.request_auth_snapshot())
+                .map(|client| client.with_user_agent(get_codex_user_agent()))
+                .inspect_err(|err| {
+                    tracing::warn!(
+                        error = %err,
+                        "Failed to construct backend client for cloud requirements"
+                    );
+                })
+                .map_err(|_| {
+                    FetchAttemptError::Retryable(RetryableFailureKind::BackendClientInit)
+                })?;
 
         let response = client
             .get_config_requirements_file()

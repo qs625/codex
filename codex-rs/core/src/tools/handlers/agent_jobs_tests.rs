@@ -17,6 +17,37 @@ fn parse_csv_supports_quotes_and_commas() {
 }
 
 #[test]
+fn parse_csv_supports_crlf_bom_and_skips_empty_rows() {
+    let input = "\u{feff}id,name\r\n1,alpha\r\n,\r\n2,beta\r\n";
+    let (headers, rows) = parse_csv(input).expect("csv parse");
+    assert_eq!(headers, vec!["id".to_string(), "name".to_string()]);
+    assert_eq!(
+        rows,
+        vec![
+            vec!["1".to_string(), "alpha".to_string()],
+            vec!["2".to_string(), "beta".to_string()],
+        ]
+    );
+}
+
+#[test]
+fn parse_csv_supports_quoted_newlines_and_escaped_quotes() {
+    let input = "id,notes\n1,\"hello\n\"\"world\"\"\"\n";
+    let (headers, rows) = parse_csv(input).expect("csv parse");
+    assert_eq!(headers, vec!["id".to_string(), "notes".to_string()]);
+    assert_eq!(
+        rows,
+        vec![vec!["1".to_string(), "hello\n\"world\"".to_string()]]
+    );
+}
+
+#[test]
+fn parse_csv_rejects_unterminated_quotes() {
+    let err = parse_csv("id,name\n1,\"alpha").expect_err("csv parse should fail");
+    assert_eq!(err, "unterminated quoted csv field");
+}
+
+#[test]
 fn csv_escape_quotes_when_needed() {
     assert_eq!(csv_escape("simple"), "simple");
     assert_eq!(csv_escape("a,b"), "\"a,b\"");

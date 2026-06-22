@@ -8,20 +8,7 @@ use super::AgentThreadId;
 use super::CodexTurnId;
 use super::ConversationItemId;
 use super::EdgeId;
-
-/// Coarse terminal status for the rollout.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RolloutStatus {
-    /// Writer has not seen a terminal rollout event.
-    Running,
-    /// Rollout ended normally.
-    Completed,
-    /// Rollout ended because an operation failed.
-    Failed,
-    /// Rollout was cancelled or otherwise stopped before normal completion.
-    Aborted,
-}
+use super::ExecutionStatus;
 
 /// One Codex thread/session participating in the rollout.
 ///
@@ -77,22 +64,6 @@ pub struct ExecutionWindow {
     pub ended_at_unix_ms: Option<i64>,
     pub ended_seq: Option<RawEventSeq>,
     pub status: ExecutionStatus,
-}
-
-/// Coarse lifecycle status for a runtime object.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExecutionStatus {
-    /// Object is still live or the trace ended before its terminal event.
-    Running,
-    /// Object completed successfully.
-    Completed,
-    /// Object reached an error state.
-    Failed,
-    /// Object was cancelled by user/policy/runtime before completion.
-    Cancelled,
-    /// Object was aborted when its owner/runtime stopped.
-    Aborted,
 }
 
 /// One activation of the Codex runtime for one thread.

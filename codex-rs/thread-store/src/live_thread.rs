@@ -23,6 +23,10 @@ use crate::ThreadStore;
 use crate::ThreadStoreResult;
 use crate::UpdateThreadMetadataParams;
 use crate::thread_metadata_sync::ThreadMetadataSync;
+use codex_thread_store_api::LiveThreadFactory;
+use codex_thread_store_api::LiveThreadHandle;
+use codex_thread_store_api::SharedLiveThread;
+use codex_thread_store_api::ThreadStoreFuture;
 
 /// Handle for an active thread's persistence lifecycle.
 ///
@@ -44,6 +48,35 @@ pub struct LiveThread {
 /// session owns the live thread for normal operation.
 pub struct LiveThreadInitGuard {
     live_thread: Option<LiveThread>,
+}
+
+#[derive(Debug, Default)]
+pub struct DefaultLiveThreadFactory;
+
+impl LiveThreadFactory for DefaultLiveThreadFactory {
+    fn create(
+        &self,
+        thread_store: Arc<dyn ThreadStore>,
+        params: CreateThreadParams,
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<SharedLiveThread>> {
+        Box::pin(async move {
+            let live_thread = LiveThread::create(thread_store, params).await?;
+            let live_thread: SharedLiveThread = Arc::new(live_thread);
+            Ok(live_thread)
+        })
+    }
+
+    fn resume(
+        &self,
+        thread_store: Arc<dyn ThreadStore>,
+        params: ResumeThreadParams,
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<SharedLiveThread>> {
+        Box::pin(async move {
+            let live_thread = LiveThread::resume(thread_store, params).await?;
+            let live_thread: SharedLiveThread = Arc::new(live_thread);
+            Ok(live_thread)
+        })
+    }
 }
 
 impl LiveThreadInitGuard {
@@ -299,6 +332,68 @@ impl LiveThread {
             .await
             .mark_pending_update_applied(&update);
         Ok(())
+    }
+}
+
+impl LiveThreadHandle for LiveThread {
+    fn append_items<'a>(
+        &'a self,
+        items: &'a [RolloutItem],
+    ) -> ThreadStoreFuture<'a, ThreadStoreResult<()>> {
+        Box::pin(async move { LiveThread::append_items(self, items).await })
+    }
+
+    fn persist(&self) -> ThreadStoreFuture<'_, ThreadStoreResult<()>> {
+        Box::pin(async move { LiveThread::persist(self).await })
+    }
+
+    fn flush(&self) -> ThreadStoreFuture<'_, ThreadStoreResult<()>> {
+        Box::pin(async move { LiveThread::flush(self).await })
+    }
+
+    fn shutdown(&self) -> ThreadStoreFuture<'_, ThreadStoreResult<()>> {
+        Box::pin(async move { LiveThread::shutdown(self).await })
+    }
+
+    fn discard(&self) -> ThreadStoreFuture<'_, ThreadStoreResult<()>> {
+        Box::pin(async move { LiveThread::discard(self).await })
+    }
+
+    fn load_history(
+        &self,
+        include_archived: bool,
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<StoredThreadHistory>> {
+        Box::pin(async move { LiveThread::load_history(self, include_archived).await })
+    }
+
+    fn read_thread(
+        &self,
+        include_archived: bool,
+        include_history: bool,
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<StoredThread>> {
+        Box::pin(
+            async move { LiveThread::read_thread(self, include_archived, include_history).await },
+        )
+    }
+
+    fn update_memory_mode(
+        &self,
+        mode: ThreadMemoryMode,
+        include_archived: bool,
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<()>> {
+        Box::pin(async move { LiveThread::update_memory_mode(self, mode, include_archived).await })
+    }
+
+    fn update_metadata(
+        &self,
+        patch: ThreadMetadataPatch,
+        include_archived: bool,
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<StoredThread>> {
+        Box::pin(async move { LiveThread::update_metadata(self, patch, include_archived).await })
+    }
+
+    fn local_rollout_path(&self) -> ThreadStoreFuture<'_, ThreadStoreResult<Option<PathBuf>>> {
+        Box::pin(async move { LiveThread::local_rollout_path(self).await })
     }
 }
 

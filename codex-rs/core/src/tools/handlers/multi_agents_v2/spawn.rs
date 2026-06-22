@@ -1,6 +1,5 @@
 use super::*;
 use crate::agent::AgentMode;
-use crate::agent::control::SpawnAgentForkMode;
 use crate::agent::control::SpawnAgentOptions;
 use crate::agent::control::render_input_preview;
 use crate::agent::exceeds_thread_spawn_depth_limit;
@@ -9,14 +8,15 @@ use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::apply_role_to_config;
 use crate::tools::handlers::parse_arguments_with_base_path;
 use crate::turn_timing::now_unix_timestamp_ms;
+use codex_agent_runtime::SpawnAgentForkMode;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
-use codex_tools::SpawnAgentToolOptions;
-use codex_tools::ToolSpec;
-use codex_tools::create_spawn_agent_tool_v2;
+use codex_tool_planning::SpawnAgentToolOptions;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::create_spawn_agent_tool_v2;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 #[derive(Default)]
@@ -30,7 +30,6 @@ impl Handler {
     }
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for Handler {
     type Output = SpawnAgentResult;
 
@@ -42,8 +41,14 @@ impl ToolExecutor<ToolInvocation> for Handler {
         Some(create_spawn_agent_tool_v2(self.options.clone()))
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        handle_spawn_agent(invocation).await
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move { handle_spawn_agent(invocation).await })
     }
 }
 

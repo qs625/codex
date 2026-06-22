@@ -33,7 +33,7 @@ use codex_protocol::protocol::ExecCommandEndEvent;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_protocol::protocol::ExecCommandStatus;
 use codex_protocol::protocol::TurnStartedEvent;
-use codex_sandboxing::SandboxType;
+use codex_sandboxing_api::SandboxType;
 use codex_shell_command::parse_command::parse_command;
 
 use super::SessionTask;

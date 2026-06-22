@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use codex_extension_api::ExtensionToolOutput;
 use codex_extension_api::FunctionCallError;
 use codex_extension_api::JsonToolOutput;
@@ -45,7 +44,6 @@ pub(crate) struct ScheduleSubscribeTool {
     pub(crate) registry: Arc<FsSubscriptionRegistry>,
 }
 
-#[async_trait]
 impl ToolExecutor<ToolCall> for ScheduleSubscribeTool {
     type Output = ExtensionToolOutput;
 
@@ -82,28 +80,36 @@ impl ToolExecutor<ToolCall> for ScheduleSubscribeTool {
         ))
     }
 
-    async fn handle(&self, call: ToolCall) -> Result<Self::Output, FunctionCallError> {
-        let args: ScheduleSubscribeArgs = parse_args(&call)?;
-        let compiled = CompiledSchedule::compile(args.schedule.clone())
-            .map_err(FunctionCallError::RespondToModel)?;
-        let next_fire_at = compiled
-            .next_fire_at(chrono::Utc::now())
-            .map_err(FunctionCallError::RespondToModel)?;
-        let schedule_summary = compiled.summary();
-        let subscription_id = Uuid::now_v7().to_string();
-        self.registry
-            .subscribe_schedule(
-                self.thread_id,
-                args.schedule,
-                compiled,
-                args.label,
-                subscription_id.clone(),
-            )
-            .await;
-        Ok(JsonToolOutput::new(json!(ScheduleSubscribeResult {
-            subscription_id,
-            next_fire_at: next_fire_at.to_rfc3339(),
-            schedule_summary,
-        })))
+    fn handle<'a>(
+        &'a self,
+        call: ToolCall,
+    ) -> codex_extension_api::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let args: ScheduleSubscribeArgs = parse_args(&call)?;
+            let compiled = CompiledSchedule::compile(args.schedule.clone())
+                .map_err(FunctionCallError::RespondToModel)?;
+            let next_fire_at = compiled
+                .next_fire_at(chrono::Utc::now())
+                .map_err(FunctionCallError::RespondToModel)?;
+            let schedule_summary = compiled.summary();
+            let subscription_id = Uuid::now_v7().to_string();
+            self.registry
+                .subscribe_schedule(
+                    self.thread_id,
+                    args.schedule,
+                    compiled,
+                    args.label,
+                    subscription_id.clone(),
+                )
+                .await;
+            Ok(JsonToolOutput::new(json!(ScheduleSubscribeResult {
+                subscription_id,
+                next_fire_at: next_fire_at.to_rfc3339(),
+                schedule_summary,
+            })))
+        })
     }
 }

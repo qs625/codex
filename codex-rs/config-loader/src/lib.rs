@@ -1,9 +1,13 @@
+mod layer_loader;
 mod loader_options;
 mod overrides;
 mod project_root_markers;
 mod project_trust;
 mod thread_config;
 
+pub use layer_loader::ConfigLayerLoadFuture;
+pub use layer_loader::ConfigLayerLoadRequest;
+pub use layer_loader::ConfigLayerLoader;
 pub use loader_options::ConfigLoadOptions;
 pub use loader_options::LoaderOverrides;
 pub use overrides::build_cli_overrides_layer;

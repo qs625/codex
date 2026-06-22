@@ -1,5 +1,6 @@
 use codex_backend_client::Client as BackendClient;
 use codex_login::AuthManager;
+use codex_login::default_client::get_codex_user_agent;
 use codex_protocol::protocol::RateLimitSnapshot;
 use codex_protocol::protocol::RateLimitWindow;
 use tracing::info;
@@ -25,9 +26,13 @@ async fn rate_limits_check(
         return None;
     }
 
-    let client = BackendClient::from_auth(settings.chatgpt_base_url.clone(), &auth)
-        .map_err(|err| warn!(%err, "failed to construct backend client"))
-        .ok()?;
+    let client = BackendClient::from_auth_snapshot(
+        settings.chatgpt_base_url.clone(),
+        &auth.request_auth_snapshot(),
+    )
+    .map(|client| client.with_user_agent(get_codex_user_agent()))
+    .map_err(|err| warn!(%err, "failed to construct backend client"))
+    .ok()?;
 
     let snapshots = client
         .get_rate_limits_many()

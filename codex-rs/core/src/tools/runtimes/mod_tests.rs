@@ -18,10 +18,11 @@ use codex_network_proxy_api::PROXY_ACTIVE_ENV_KEY;
 use codex_network_proxy_api::PROXY_ENV_KEYS;
 #[cfg(target_os = "macos")]
 use codex_network_proxy_api::PROXY_GIT_SSH_COMMAND_ENV_KEY;
+use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::PermissionProfile;
 use codex_sandboxing::SandboxManager;
-use codex_sandboxing::SandboxType;
+use codex_sandboxing_api::SandboxType;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
@@ -85,7 +86,7 @@ async fn test_network_proxy() -> anyhow::Result<NetworkProxy> {
 
 #[tokio::test]
 async fn explicit_escalation_prepares_exec_without_managed_network() -> anyhow::Result<()> {
-    let proxy = test_network_proxy().await?;
+    let proxy: SharedNetworkProxyRuntime = Arc::new(test_network_proxy().await?);
     let dir = tempdir().expect("create temp dir");
     let cwd = dir.path().abs();
     let mut env = HashMap::from([("CUSTOM_ENV".to_string(), "kept".to_string())]);
@@ -109,7 +110,7 @@ async fn explicit_escalation_prepares_exec_without_managed_network() -> anyhow::
         sandbox: SandboxType::None,
         permissions: &permissions,
         enforce_managed_network: false,
-        manager: &manager,
+        sandbox_runtime: &manager,
         sandbox_cwd: &cwd,
         codex_linux_sandbox_exe: None,
         use_legacy_landlock: false,
@@ -129,7 +130,7 @@ async fn explicit_escalation_prepares_exec_without_managed_network() -> anyhow::
         )
         .expect("prepare exec request");
 
-    assert_eq!(exec_request.network, None);
+    assert!(exec_request.network.is_none());
     for key in PROXY_ENV_KEYS {
         assert_eq!(exec_request.env.get(*key), None, "{key} should be unset");
     }

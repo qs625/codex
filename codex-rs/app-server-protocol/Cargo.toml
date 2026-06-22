@@ -12,25 +12,37 @@ doctest = false
 [lints]
 workspace = true
 
+[features]
+cli = ["dep:clap"]
+
+[[bin]]
+name = "export"
+path = "src/bin/export.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "write_schema_fixtures"
+path = "src/bin/write_schema_fixtures.rs"
+required-features = ["cli"]
+
 [dependencies]
 anyhow = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
+clap = { workspace = true, features = ["derive"], optional = true }
 codex-auth-types = { workspace = true }
 codex-config-types = { workspace = true }
 codex-connectors-types = { workspace = true }
+codex-command-display = { workspace = true }
 codex-experimental-api-macros = { workspace = true }
 codex-jsonrpc-types = { workspace = true }
 codex-mcp-types = { workspace = true }
 codex-plugin-types = { workspace = true }
 codex-protocol = { workspace = true }
-codex-shell-command = { workspace = true }
+codex-shell-utils = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-serde_with = { workspace = true }
 strum_macros = { workspace = true }
-thiserror = { workspace = true }
 rmcp = { workspace = true, default-features = false, features = [
     "base64",
     "macros",

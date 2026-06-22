@@ -1,11 +1,11 @@
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::LazyLock;
+use std::sync::Mutex;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use codex_utils_cache::BlockingLruCache;
-use codex_utils_cache::sha1_digest;
+use codex_utils_string::approx_bytes_for_tokens;
 use image::ColorType;
 use image::DynamicImage;
 use image::GenericImageView;
@@ -15,8 +15,18 @@ use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::PngEncoder;
 use image::codecs::webp::WebPEncoder;
 use image::imageops::FilterType;
+use lru::LruCache;
+use sha1::Digest;
+use sha1::Sha1;
+
 /// Maximum width or height used when resizing images before uploading.
 pub const MAX_DIMENSION: u32 = 2048;
+
+/// Maximum original-detail image patches used by the model-visible byte estimator.
+pub const ORIGINAL_IMAGE_MAX_PATCHES: usize = 10_000;
+
+const ORIGINAL_IMAGE_PATCH_SIZE: u32 = 32;
+const ORIGINAL_IMAGE_ESTIMATE_CACHE_SIZE: usize = 32;
 
 pub mod error;
 
@@ -37,6 +47,81 @@ impl EncodedImage {
     }
 }
 
+pub fn decode_base64_image_bytes(
+    payload: impl AsRef<[u8]>,
+) -> Result<Vec<u8>, base64::DecodeError> {
+    BASE64_STANDARD.decode(payload)
+}
+
+/// Returns the base64 payload for inline image data URLs that are eligible for image-cost
+/// estimation.
+pub fn base64_image_data_url_payload(url: &str) -> Option<&str> {
+    if !url
+        .get(.."data:".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"))
+    {
+        return None;
+    }
+    let comma_index = url.find(',')?;
+    let metadata = &url[..comma_index];
+    let payload = &url[comma_index + 1..];
+
+    let metadata_without_scheme = &metadata["data:".len()..];
+    let mut metadata_parts = metadata_without_scheme.split(';');
+    let mime_type = metadata_parts.next().unwrap_or_default();
+    let has_base64_marker = metadata_parts.any(|part| part.eq_ignore_ascii_case("base64"));
+    if !mime_type
+        .get(.."image/".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("image/"))
+    {
+        return None;
+    }
+    if !has_base64_marker {
+        return None;
+    }
+    Some(payload)
+}
+
+/// Estimates model-visible bytes for a `detail: "original"` inline image data URL.
+///
+/// Returns `None` when the URL is not a supported base64 image data URL or when image dimensions
+/// cannot be decoded.
+pub fn estimate_original_image_data_url_bytes(image_url: &str) -> Option<i64> {
+    let key = sha1_digest(image_url.as_bytes());
+    ORIGINAL_IMAGE_ESTIMATE_CACHE.get_or_insert_with(key, || {
+        let payload = match base64_image_data_url_payload(image_url) {
+            Some(payload) => payload,
+            None => {
+                tracing::trace!("skipping original-detail estimate for non-base64 image data URL");
+                return None;
+            }
+        };
+        let bytes = match decode_base64_image_bytes(payload) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::trace!("failed to decode original-detail image payload: {error}");
+                return None;
+            }
+        };
+        let (width, height) = match dimensions_from_memory(&bytes) {
+            Ok(dimensions) => dimensions,
+            Err(error) => {
+                tracing::trace!("failed to decode original-detail image bytes: {error}");
+                return None;
+            }
+        };
+        let width = i64::from(width);
+        let height = i64::from(height);
+        let patch_size = i64::from(ORIGINAL_IMAGE_PATCH_SIZE);
+        let patches_wide = width.saturating_add(patch_size.saturating_sub(1)) / patch_size;
+        let patches_high = height.saturating_add(patch_size.saturating_sub(1)) / patch_size;
+        let patch_count = patches_wide.saturating_mul(patches_high);
+        let patch_count = usize::try_from(patch_count).unwrap_or(usize::MAX);
+        let patch_count = patch_count.min(ORIGINAL_IMAGE_MAX_PATCHES);
+        Some(i64::try_from(approx_bytes_for_tokens(patch_count)).unwrap_or(i64::MAX))
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PromptImageMode {
     ResizeToFit,
@@ -49,8 +134,71 @@ struct ImageCacheKey {
     mode: PromptImageMode,
 }
 
-static IMAGE_CACHE: LazyLock<BlockingLruCache<ImageCacheKey, EncodedImage>> =
-    LazyLock::new(|| BlockingLruCache::new(NonZeroUsize::new(32).unwrap_or(NonZeroUsize::MIN)));
+struct ImageLruCache<K, V> {
+    inner: Mutex<LruCache<K, V>>,
+}
+
+impl<K, V> ImageLruCache<K, V>
+where
+    K: Eq + std::hash::Hash,
+{
+    fn new(capacity: NonZeroUsize) -> Self {
+        Self {
+            inner: Mutex::new(LruCache::new(capacity)),
+        }
+    }
+
+    fn get_or_insert_with(&self, key: K, value: impl FnOnce() -> V) -> V
+    where
+        V: Clone,
+    {
+        let Ok(mut guard) = self.inner.lock() else {
+            return value();
+        };
+        if let Some(cached) = guard.get(&key) {
+            return cached.clone();
+        }
+        let value = value();
+        guard.put(key, value.clone());
+        value
+    }
+
+    fn get_or_try_insert_with<E>(
+        &self,
+        key: K,
+        value: impl FnOnce() -> Result<V, E>,
+    ) -> Result<V, E>
+    where
+        V: Clone,
+    {
+        let Ok(mut guard) = self.inner.lock() else {
+            return value();
+        };
+        if let Some(cached) = guard.get(&key) {
+            return Ok(cached.clone());
+        }
+        let value = value()?;
+        guard.put(key, value.clone());
+        Ok(value)
+    }
+
+    #[cfg(test)]
+    fn clear(&self) {
+        if let Ok(mut guard) = self.inner.lock() {
+            guard.clear();
+        }
+    }
+}
+
+static IMAGE_CACHE: LazyLock<ImageLruCache<ImageCacheKey, EncodedImage>> =
+    LazyLock::new(|| ImageLruCache::new(NonZeroUsize::new(32).unwrap_or(NonZeroUsize::MIN)));
+
+static ORIGINAL_IMAGE_ESTIMATE_CACHE: LazyLock<ImageLruCache<[u8; 20], Option<i64>>> =
+    LazyLock::new(|| {
+        ImageLruCache::new(
+            NonZeroUsize::new(ORIGINAL_IMAGE_ESTIMATE_CACHE_SIZE).unwrap_or(NonZeroUsize::MIN),
+        )
+    });
 
 pub fn load_for_prompt_bytes(
     path: &Path,
@@ -122,6 +270,15 @@ pub fn dimensions_from_memory(bytes: &[u8]) -> Result<(u32, u32), ImageProcessin
     let dynamic = image::load_from_memory(bytes)
         .map_err(|source| ImageProcessingError::DecodeMemory { source })?;
     Ok(dynamic.dimensions())
+}
+
+fn sha1_digest(bytes: &[u8]) -> [u8; 20] {
+    let mut hasher = Sha1::new();
+    hasher.update(bytes);
+    let result = hasher.finalize();
+    let mut out = [0; 20];
+    out.copy_from_slice(&result);
+    out
 }
 
 fn can_preserve_source_bytes(format: ImageFormat) -> bool {

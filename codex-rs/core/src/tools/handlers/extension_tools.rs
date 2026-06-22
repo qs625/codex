@@ -2,12 +2,11 @@ use std::sync::Arc;
 
 use codex_extension_api::ExtensionToolExecutor;
 use codex_extension_api::ExtensionToolOutput;
-use codex_tools::ToolCall as ExtensionToolCall;
-use codex_tools::ToolName;
-use codex_tools::ToolSpec;
+use codex_tool_planning::ToolCall as ExtensionToolCall;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
 use serde_json::Value;
 
-use crate::function_tool::FunctionCallError;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
@@ -35,7 +34,6 @@ impl ExtensionToolHandler {
     }
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for ExtensionToolHandler {
     type Output = ExtensionToolOutput;
 
@@ -47,8 +45,14 @@ impl ToolExecutor<ToolInvocation> for ExtensionToolHandler {
         self.executor.spec()
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        self.executor.handle(to_extension_call(&invocation)).await
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+    ) -> crate::tools::registry::ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move { self.executor.handle(to_extension_call(&invocation)).await })
     }
 }
 
@@ -116,21 +120,20 @@ mod tests {
 
     struct StubExtensionExecutor;
 
-    #[async_trait::async_trait]
-    impl codex_extension_api::ToolExecutor<codex_tools::ToolCall> for StubExtensionExecutor {
-        type Output = codex_tools::JsonToolOutput;
+    impl codex_extension_api::ToolExecutor<codex_tool_planning::ToolCall> for StubExtensionExecutor {
+        type Output = codex_tool_planning::JsonToolOutput;
 
-        fn tool_name(&self) -> codex_tools::ToolName {
-            codex_tools::ToolName::plain("extension_echo")
+        fn tool_name(&self) -> codex_tool_planning::ToolName {
+            codex_tool_planning::ToolName::plain("extension_echo")
         }
 
-        fn spec(&self) -> Option<codex_tools::ToolSpec> {
-            Some(codex_tools::ToolSpec::Function(
-                codex_tools::ResponsesApiTool {
+        fn spec(&self) -> Option<codex_tool_planning::ToolSpec> {
+            Some(codex_tool_planning::ToolSpec::Function(
+                codex_tool_planning::ResponsesApiTool {
                     name: "extension_echo".to_string(),
                     description: "Echoes arguments.".to_string(),
                     strict: true,
-                    parameters: codex_tools::parse_tool_input_schema(&json!({
+                    parameters: codex_tool_planning::parse_tool_input_schema(&json!({
                         "type": "object",
                         "properties": {
                             "message": { "type": "string" },
@@ -145,11 +148,18 @@ mod tests {
             ))
         }
 
-        async fn handle(
-            &self,
-            _call: codex_tools::ToolCall,
-        ) -> Result<Self::Output, codex_tools::FunctionCallError> {
-            Ok(codex_tools::JsonToolOutput::new(json!({ "ok": true })))
+        fn handle<'a>(
+            &'a self,
+            _call: codex_tool_planning::ToolCall,
+        ) -> codex_extension_api::ToolExecutorFuture<'a, Self::Output>
+        where
+            Self: 'a,
+        {
+            Box::pin(async move {
+                Ok(codex_tool_planning::JsonToolOutput::new(
+                    json!({ "ok": true }),
+                ))
+            })
         }
     }
 
@@ -163,13 +173,13 @@ mod tests {
             cancellation_token: tokio_util::sync::CancellationToken::new(),
             tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
             call_id: "call-extension".to_string(),
-            tool_name: codex_tools::ToolName::plain("extension_echo"),
+            tool_name: codex_tool_planning::ToolName::plain("extension_echo"),
             source: ToolCallSource::Direct,
             payload: ToolPayload::Function {
                 arguments: json!({ "message": "hello" }).to_string(),
             },
         };
-        let output = codex_tools::JsonToolOutput::new(json!({ "ok": true }));
+        let output = codex_tool_planning::JsonToolOutput::new(json!({ "ok": true }));
 
         assert_eq!(
             ToolHandler::pre_tool_use_payload(&handler, &invocation),

@@ -8,7 +8,7 @@ use codex_core::ThreadManager;
 use codex_core::config::Config;
 use codex_core::config::skill_config_layer_stack_from_config_layer_stack;
 use codex_core::skills::SkillsLoadInput;
-use codex_core::skills::SkillsManager;
+use codex_core_skills_api::SharedSkillsRuntime;
 use codex_file_watcher::FileWatcher;
 use codex_file_watcher::FileWatcherSubscriber;
 use codex_file_watcher::Receiver;
@@ -29,7 +29,7 @@ pub(crate) struct SkillsWatcher {
 
 impl SkillsWatcher {
     pub(crate) fn new(
-        skills_manager: Arc<SkillsManager>,
+        skills_manager: SharedSkillsRuntime,
         outgoing: Arc<OutgoingMessageSender>,
     ) -> Arc<Self> {
         let file_watcher = match FileWatcher::new() {
@@ -68,8 +68,8 @@ impl SkillsWatcher {
         }
 
         let plugins_input = config.plugins_config_input();
-        let plugins_manager = thread_manager.plugins_manager();
-        let plugin_outcome = plugins_manager.plugins_for_config(&plugins_input).await;
+        let plugin_runtime = thread_manager.plugin_runtime();
+        let plugin_outcome = plugin_runtime.plugins_for_config(&plugins_input).await;
         let skills_input = SkillsLoadInput::new(
             config.cwd.clone(),
             plugin_outcome.effective_plugin_skill_roots(),
@@ -78,11 +78,11 @@ impl SkillsWatcher {
         );
         let roots = thread_manager
             .skills_manager()
-            .skill_roots_for_config(&skills_input, Some(environment.get_filesystem()))
+            .skill_root_paths_for_config(&skills_input, Some(environment.get_filesystem()))
             .await
             .into_iter()
             .map(|root| WatchPath {
-                path: root.path.into_path_buf(),
+                path: root.into_path_buf(),
                 recursive: true,
             })
             .collect();
@@ -91,7 +91,7 @@ impl SkillsWatcher {
 
     fn spawn_event_loop(
         rx: Receiver,
-        skills_manager: Arc<SkillsManager>,
+        skills_manager: SharedSkillsRuntime,
         outgoing: Arc<OutgoingMessageSender>,
     ) {
         let mut rx = ThrottledWatchReceiver::new(rx, WATCHER_THROTTLE_INTERVAL);

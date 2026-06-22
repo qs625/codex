@@ -1,13 +1,13 @@
-use std::path::PathBuf;
-
-use codex_protocol::ThreadId;
+pub use codex_hooks_api::PostCompactRequest;
+pub use codex_hooks_api::PreCompactOutcome;
+pub use codex_hooks_api::PreCompactRequest;
+pub use codex_hooks_api::StatelessHookOutcome;
 use codex_protocol::protocol::HookCompletedEvent;
 use codex_protocol::protocol::HookEventName;
 use codex_protocol::protocol::HookOutputEntry;
 use codex_protocol::protocol::HookOutputEntryKind;
 use codex_protocol::protocol::HookRunStatus;
 use codex_protocol::protocol::HookRunSummary;
-use codex_utils_absolute_path::AbsolutePathBuf;
 
 use super::common;
 use crate::engine::CommandShell;
@@ -17,40 +17,6 @@ use crate::engine::dispatcher;
 use crate::engine::output_parser;
 use crate::schema::PostCompactCommandInput;
 use crate::schema::PreCompactCommandInput;
-
-#[derive(Debug, Clone)]
-pub struct PreCompactRequest {
-    pub session_id: ThreadId,
-    pub turn_id: String,
-    pub cwd: AbsolutePathBuf,
-    pub transcript_path: Option<PathBuf>,
-    pub model: String,
-    pub trigger: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct PostCompactRequest {
-    pub session_id: ThreadId,
-    pub turn_id: String,
-    pub cwd: AbsolutePathBuf,
-    pub transcript_path: Option<PathBuf>,
-    pub model: String,
-    pub trigger: String,
-}
-
-#[derive(Debug)]
-pub struct StatelessHookOutcome {
-    pub hook_events: Vec<HookCompletedEvent>,
-    pub should_stop: bool,
-    pub stop_reason: Option<String>,
-}
-
-#[derive(Debug)]
-pub struct PreCompactOutcome {
-    pub hook_events: Vec<HookCompletedEvent>,
-    pub should_stop: bool,
-    pub stop_reason: Option<String>,
-}
 
 pub(crate) fn preview_pre(
     handlers: &[ConfiguredHandler],
