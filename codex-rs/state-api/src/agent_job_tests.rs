@@ -5,7 +5,7 @@ use serde_json::json;
 #[test]
 fn parse_csv_supports_quotes_and_commas() {
     let input = "id,name\n1,\"alpha, beta\"\n2,gamma\n";
-    let (headers, rows) = parse_csv(input).expect("csv parse");
+    let (headers, rows) = parse_agent_job_csv(input).expect("csv parse");
     assert_eq!(headers, vec!["id".to_string(), "name".to_string()]);
     assert_eq!(
         rows,
@@ -19,7 +19,7 @@ fn parse_csv_supports_quotes_and_commas() {
 #[test]
 fn parse_csv_supports_crlf_bom_and_skips_empty_rows() {
     let input = "\u{feff}id,name\r\n1,alpha\r\n,\r\n2,beta\r\n";
-    let (headers, rows) = parse_csv(input).expect("csv parse");
+    let (headers, rows) = parse_agent_job_csv(input).expect("csv parse");
     assert_eq!(headers, vec!["id".to_string(), "name".to_string()]);
     assert_eq!(
         rows,
@@ -33,7 +33,7 @@ fn parse_csv_supports_crlf_bom_and_skips_empty_rows() {
 #[test]
 fn parse_csv_supports_quoted_newlines_and_escaped_quotes() {
     let input = "id,notes\n1,\"hello\n\"\"world\"\"\"\n";
-    let (headers, rows) = parse_csv(input).expect("csv parse");
+    let (headers, rows) = parse_agent_job_csv(input).expect("csv parse");
     assert_eq!(headers, vec!["id".to_string(), "notes".to_string()]);
     assert_eq!(
         rows,
@@ -43,8 +43,8 @@ fn parse_csv_supports_quoted_newlines_and_escaped_quotes() {
 
 #[test]
 fn parse_csv_rejects_unterminated_quotes() {
-    let err = parse_csv("id,name\n1,\"alpha").expect_err("csv parse should fail");
-    assert_eq!(err, "unterminated quoted csv field");
+    let err = parse_agent_job_csv("id,name\n1,\"alpha").expect_err("csv parse should fail");
+    assert_eq!(err.to_string(), "unterminated quoted csv field");
 }
 
 #[test]
@@ -61,7 +61,7 @@ fn render_instruction_template_expands_placeholders_and_escapes_braces() {
         "area": "test",
         "file path": "docs/readme.md",
     });
-    let rendered = render_instruction_template(
+    let rendered = render_agent_job_instruction_template(
         "Review {path} in {area}. Also see {file path}. Use {{literal}}.",
         &row,
     );
@@ -76,18 +76,15 @@ fn render_instruction_template_leaves_unknown_placeholders() {
     let row = json!({
         "path": "src/lib.rs",
     });
-    let rendered = render_instruction_template("Check {path} then {missing}", &row);
+    let rendered = render_agent_job_instruction_template("Check {path} then {missing}", &row);
     assert_eq!(rendered, "Check src/lib.rs then {missing}");
 }
 
 #[test]
 fn ensure_unique_headers_rejects_duplicates() {
     let headers = vec!["path".to_string(), "path".to_string()];
-    let Err(err) = ensure_unique_headers(headers.as_slice()) else {
+    let Err(err) = ensure_unique_agent_job_headers(headers.as_slice()) else {
         panic!("expected duplicate header error");
     };
-    assert_eq!(
-        err,
-        FunctionCallError::RespondToModel("csv header path is duplicated".to_string())
-    );
+    assert_eq!(err.to_string(), "csv header path is duplicated");
 }

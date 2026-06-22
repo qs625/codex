@@ -152,10 +152,12 @@ Particularly when introducing a new concept/feature/API, before adding to `codex
   `ToolExecutor` / `ToolExposure` 的契约 owner 是 `codex-tool-types`；`codex-tool-planning` 只
   re-export 该契约并承载 spec/planning/helper，不要在 planning crate 重新定义 executor trait 或为
   旧 trait 形状保留 `async-trait` proc-macro dependency。
-  `agent_jobs` 的 CSV 输入解析和输出 escaping 属于 agent job handler 的小型本地格式边界；默认
-  `codex-core` graph 不应为了 `spawn_agents_on_csv` 重新 direct 依赖 `csv` crate。需要支持更完整的
-  CSV dialect 时，优先抽出轻量 agent-job CSV crate 或可注入 parser，而不是把通用 CSV runtime 拉回
-  core default graph。
+  `agent_jobs` 的 CSV 输入解析、输出 escaping、instruction template 渲染、worker prompt 构造和默认
+  output path 规则属于 `codex-state-api` 的 `AgentJob` DTO owner；`codex-core` 的 agent job handler 只
+  保留 tool argument validation、Session/AgentControl 编排、状态 DB mutation 和 worker lifecycle。
+  默认 `codex-core` graph 不应为了 `spawn_agents_on_csv` 重新 direct 或 indirect 依赖 `csv` crate。需要
+  支持更完整的 CSV dialect 时，先评估 `codex-state-api` 是否仍能保持无 tokio/sqlx/core/runtime 依赖；
+  不能满足时再抽出可注入 parser，不要把通用 CSV runtime 拉回 core default graph。
   `Session`、`TurnContext`、hooks、approval、
   telemetry、真实 tool handler 执行、`dispatch_any` 和 turn loop 编排继续留在 `codex-core`，
   除非先拆出稳定共享接口。
@@ -333,8 +335,9 @@ Particularly when introducing a new concept/feature/API, before adding to `codex
   goal accounting mode/outcome、agent-job/thread-metadata DTO，以及 core-facing `StateDbRuntime` /
   `ThreadStateRuntime` / `GoalStateRuntime` / `AgentJobStateRuntime` / `MemoryStateRuntime` traits
   应放在 API crate；thread goal 的 protocol DTO 转换、预算校验、external mutation DTO、
-  token/wall-clock accounting snapshot、token accounting delta 和 goal-update model item 构造也应在这里
-  统一维护，core/app-server 不要各自复制状态转换、预算规则或 accounting primitive。
+  token/wall-clock accounting snapshot、token accounting delta、goal-update model item 构造，以及
+  agent-job CSV/prompt/path shaping 也应在这里统一维护，core/app-server 不要各自复制状态转换、预算规则、
+  accounting primitive 或 agent-job 数据格式规则。
   `codex-state-api` 由 `codex-state` re-export 或实现以兼容旧路径。`codex-state-api` 不得依赖
   full `codex-state`、`sqlx`、`tokio` 或 `tracing-subscriber`；core/session 默认 production graph
   只允许依赖 `codex-state-api` 的 DTO 和 `Arc<dyn StateDbRuntime>` 这类 trait object，不要为了

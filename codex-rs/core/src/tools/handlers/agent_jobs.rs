@@ -18,7 +18,11 @@ use codex_protocol::user_input::UserInput;
 use codex_state_api::AgentJob;
 use codex_state_api::AgentJobItem;
 use codex_state_api::AgentJobItemStatus;
-use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_state_api::build_agent_job_worker_prompt;
+use codex_state_api::default_agent_job_output_csv_path;
+use codex_state_api::ensure_unique_agent_job_headers;
+use codex_state_api::parse_agent_job_csv;
+use codex_state_api::render_agent_job_csv;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use serde::Deserialize;
@@ -199,7 +203,7 @@ async fn run_agent_job_loop(
                 )
                 .await?;
             for item in pending_items {
-                let prompt = build_worker_prompt(&job, &item)?;
+                let prompt = build_agent_job_worker_prompt(&job, &item)?;
                 let items = vec![UserInput::Text {
                     text: prompt,
                     text_elements: Vec::new(),
@@ -336,7 +340,7 @@ async fn export_job_csv_snapshot(db: StateDbHandle, job: &AgentJob) -> anyhow::R
     let items = db
         .list_agent_job_items(job.id.as_str(), /*status*/ None, /*limit*/ None)
         .await?;
-    let csv_content = render_job_csv(job.input_headers.as_slice(), items.as_slice())
+    let csv_content = render_agent_job_csv(job.input_headers.as_slice(), items.as_slice())
         .map_err(|err| anyhow::anyhow!("failed to render job csv for auto-export: {err}"))?;
     let output_path = PathBuf::from(job.output_csv_path.clone());
     if let Some(parent) = output_path.parent() {
@@ -534,73 +538,6 @@ async fn finalize_finished_item(
     Ok(())
 }
 
-fn build_worker_prompt(job: &AgentJob, item: &AgentJobItem) -> anyhow::Result<String> {
-    let job_id = job.id.as_str();
-    let item_id = item.item_id.as_str();
-    let instruction = render_instruction_template(job.instruction.as_str(), &item.row_json);
-    let output_schema = job
-        .output_schema_json
-        .as_ref()
-        .map(serde_json::to_string_pretty)
-        .transpose()?
-        .unwrap_or_else(|| "{}".to_string());
-    let row_json = serde_json::to_string_pretty(&item.row_json)?;
-    Ok(format!(
-        "You are processing one item for a generic agent job.\n\
-Job ID: {job_id}\n\
-Item ID: {item_id}\n\n\
-Task instruction:\n\
-{instruction}\n\n\
-Input row (JSON):\n\
-{row_json}\n\n\
-Expected result schema (JSON Schema or {{}}):\n\
-{output_schema}\n\n\
-You MUST call the `report_agent_job_result` tool exactly once with:\n\
-1. `job_id` = \"{job_id}\"\n\
-2. `item_id` = \"{item_id}\"\n\
-3. `result` = a JSON object that contains your analysis result for this row.\n\n\
-If you need to stop the job early, include `stop` = true in the tool call.\n\n\
-After the tool call succeeds, stop.",
-    ))
-}
-
-fn render_instruction_template(instruction: &str, row_json: &Value) -> String {
-    const OPEN_BRACE_SENTINEL: &str = "__CODEX_OPEN_BRACE__";
-    const CLOSE_BRACE_SENTINEL: &str = "__CODEX_CLOSE_BRACE__";
-
-    let mut rendered = instruction
-        .replace("{{", OPEN_BRACE_SENTINEL)
-        .replace("}}", CLOSE_BRACE_SENTINEL);
-    let Some(row) = row_json.as_object() else {
-        return rendered
-            .replace(OPEN_BRACE_SENTINEL, "{")
-            .replace(CLOSE_BRACE_SENTINEL, "}");
-    };
-    for (key, value) in row {
-        let placeholder = format!("{{{key}}}");
-        let replacement = value
-            .as_str()
-            .map(str::to_string)
-            .unwrap_or_else(|| value.to_string());
-        rendered = rendered.replace(placeholder.as_str(), replacement.as_str());
-    }
-    rendered
-        .replace(OPEN_BRACE_SENTINEL, "{")
-        .replace(CLOSE_BRACE_SENTINEL, "}")
-}
-
-fn ensure_unique_headers(headers: &[String]) -> Result<(), FunctionCallError> {
-    let mut seen = HashSet::new();
-    for header in headers {
-        if !seen.insert(header) {
-            return Err(FunctionCallError::RespondToModel(format!(
-                "csv header {header} is duplicated"
-            )));
-        }
-    }
-    Ok(())
-}
-
 fn job_runtime_timeout(job: &AgentJob) -> Duration {
     job.max_runtime_seconds
         .map(Duration::from_secs)
@@ -625,240 +562,3 @@ fn is_item_stale(item: &AgentJobItem, runtime_timeout: Duration) -> bool {
         false
     }
 }
-
-fn default_output_csv_path(input_csv_path: &AbsolutePathBuf, job_id: &str) -> AbsolutePathBuf {
-    let stem = input_csv_path
-        .as_path()
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("agent_job_output");
-    let job_suffix = &job_id[..8];
-    let output_dir = input_csv_path
-        .parent()
-        .unwrap_or_else(|| input_csv_path.clone());
-    output_dir.join(format!("{stem}.agent-job-{job_suffix}.csv"))
-}
-
-fn parse_csv(content: &str) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
-    let mut records = parse_csv_records(content)?;
-    if records.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
-    }
-    let mut headers = records.remove(0);
-    if let Some(first) = headers.first_mut() {
-        *first = first.trim_start_matches('\u{feff}').to_string();
-    }
-    let rows = records
-        .into_iter()
-        .filter(|row| !row.iter().all(std::string::String::is_empty))
-        .collect();
-    Ok((headers, rows))
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CsvFieldState {
-    Start,
-    Unquoted,
-    Quoted,
-    AfterQuote,
-}
-
-fn parse_csv_records(content: &str) -> Result<Vec<Vec<String>>, String> {
-    let mut records = Vec::new();
-    let mut row = Vec::new();
-    let mut field = String::new();
-    let mut state = CsvFieldState::Start;
-    let mut chars = content.chars().peekable();
-    let mut last_char_ended_record = false;
-
-    while let Some(ch) = chars.next() {
-        last_char_ended_record = false;
-        match state {
-            CsvFieldState::Start => match ch {
-                '"' => state = CsvFieldState::Quoted,
-                ',' => row.push(String::new()),
-                '\n' => {
-                    row.push(String::new());
-                    records.push(std::mem::take(&mut row));
-                    last_char_ended_record = true;
-                }
-                '\r' => {
-                    if chars.peek() == Some(&'\n') {
-                        chars.next();
-                    }
-                    row.push(String::new());
-                    records.push(std::mem::take(&mut row));
-                    last_char_ended_record = true;
-                }
-                _ => {
-                    field.push(ch);
-                    state = CsvFieldState::Unquoted;
-                }
-            },
-            CsvFieldState::Unquoted => match ch {
-                '"' => return Err("unexpected quote in unquoted csv field".to_string()),
-                ',' => {
-                    row.push(std::mem::take(&mut field));
-                    state = CsvFieldState::Start;
-                }
-                '\n' => {
-                    row.push(std::mem::take(&mut field));
-                    records.push(std::mem::take(&mut row));
-                    state = CsvFieldState::Start;
-                    last_char_ended_record = true;
-                }
-                '\r' => {
-                    if chars.peek() == Some(&'\n') {
-                        chars.next();
-                    }
-                    row.push(std::mem::take(&mut field));
-                    records.push(std::mem::take(&mut row));
-                    state = CsvFieldState::Start;
-                    last_char_ended_record = true;
-                }
-                _ => field.push(ch),
-            },
-            CsvFieldState::Quoted => match ch {
-                '"' => {
-                    if chars.peek() == Some(&'"') {
-                        chars.next();
-                        field.push('"');
-                    } else {
-                        state = CsvFieldState::AfterQuote;
-                    }
-                }
-                _ => field.push(ch),
-            },
-            CsvFieldState::AfterQuote => match ch {
-                ',' => {
-                    row.push(std::mem::take(&mut field));
-                    state = CsvFieldState::Start;
-                }
-                '\n' => {
-                    row.push(std::mem::take(&mut field));
-                    records.push(std::mem::take(&mut row));
-                    state = CsvFieldState::Start;
-                    last_char_ended_record = true;
-                }
-                '\r' => {
-                    if chars.peek() == Some(&'\n') {
-                        chars.next();
-                    }
-                    row.push(std::mem::take(&mut field));
-                    records.push(std::mem::take(&mut row));
-                    state = CsvFieldState::Start;
-                    last_char_ended_record = true;
-                }
-                _ => return Err("unexpected character after closing csv quote".to_string()),
-            },
-        }
-    }
-
-    match state {
-        CsvFieldState::Quoted => return Err("unterminated quoted csv field".to_string()),
-        CsvFieldState::Start | CsvFieldState::Unquoted | CsvFieldState::AfterQuote => {}
-    }
-
-    if !content.is_empty() && !last_char_ended_record {
-        row.push(field);
-        records.push(row);
-    }
-
-    Ok(records)
-}
-
-fn render_job_csv(headers: &[String], items: &[AgentJobItem]) -> Result<String, FunctionCallError> {
-    let mut csv = String::new();
-    let mut output_headers = headers.to_vec();
-    output_headers.extend([
-        "job_id".to_string(),
-        "item_id".to_string(),
-        "row_index".to_string(),
-        "source_id".to_string(),
-        "status".to_string(),
-        "attempt_count".to_string(),
-        "last_error".to_string(),
-        "result_json".to_string(),
-        "reported_at".to_string(),
-        "completed_at".to_string(),
-    ]);
-    csv.push_str(
-        output_headers
-            .iter()
-            .map(|header| csv_escape(header.as_str()))
-            .collect::<Vec<_>>()
-            .join(",")
-            .as_str(),
-    );
-    csv.push('\n');
-    for item in items {
-        let row_object = item.row_json.as_object().ok_or_else(|| {
-            let item_id = item.item_id.as_str();
-            FunctionCallError::RespondToModel(format!(
-                "row_json for item {item_id} is not a JSON object"
-            ))
-        })?;
-        let mut row_values = Vec::new();
-        for header in headers {
-            let value = row_object
-                .get(header)
-                .map_or_else(String::new, value_to_csv_string);
-            row_values.push(csv_escape(value.as_str()));
-        }
-        row_values.push(csv_escape(item.job_id.as_str()));
-        row_values.push(csv_escape(item.item_id.as_str()));
-        row_values.push(csv_escape(item.row_index.to_string().as_str()));
-        row_values.push(csv_escape(
-            item.source_id.clone().unwrap_or_default().as_str(),
-        ));
-        row_values.push(csv_escape(item.status.as_str()));
-        row_values.push(csv_escape(item.attempt_count.to_string().as_str()));
-        row_values.push(csv_escape(
-            item.last_error.clone().unwrap_or_default().as_str(),
-        ));
-        row_values.push(csv_escape(
-            item.result_json
-                .as_ref()
-                .map_or_else(String::new, std::string::ToString::to_string)
-                .as_str(),
-        ));
-        row_values.push(csv_escape(
-            item.reported_at
-                .map(|value| value.to_rfc3339())
-                .unwrap_or_default()
-                .as_str(),
-        ));
-        row_values.push(csv_escape(
-            item.completed_at
-                .map(|value| value.to_rfc3339())
-                .unwrap_or_default()
-                .as_str(),
-        ));
-        csv.push_str(row_values.join(",").as_str());
-        csv.push('\n');
-    }
-    Ok(csv)
-}
-
-fn value_to_csv_string(value: &Value) -> String {
-    match value {
-        Value::Null => String::new(),
-        Value::String(s) => s.clone(),
-        Value::Bool(b) => b.to_string(),
-        Value::Number(n) => n.to_string(),
-        Value::Array(_) | Value::Object(_) => value.to_string(),
-    }
-}
-
-fn csv_escape(value: &str) -> String {
-    if value.contains(',') || value.contains('\n') || value.contains('\r') || value.contains('"') {
-        let escaped = value.replace('"', "\"\"");
-        format!("\"{escaped}\"")
-    } else {
-        value.to_string()
-    }
-}
-
-#[cfg(test)]
-#[path = "agent_jobs_tests.rs"]
-mod tests;

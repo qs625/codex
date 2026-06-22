@@ -90,7 +90,7 @@ pub async fn handle(
                 "failed to read csv input {input_path_display}: {err}"
             ))
         })?;
-    let (headers, rows) = parse_csv(csv_content.as_str()).map_err(|err| {
+    let (headers, rows) = parse_agent_job_csv(csv_content.as_str()).map_err(|err| {
         FunctionCallError::RespondToModel(format!("failed to parse csv input: {err}"))
     })?;
     if headers.is_empty() {
@@ -98,7 +98,8 @@ pub async fn handle(
             "csv input must include a header row".to_string(),
         ));
     }
-    ensure_unique_headers(headers.as_slice())?;
+    ensure_unique_agent_job_headers(headers.as_slice())
+        .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
 
     let id_column_index = args.id_column.as_ref().map_or(Ok(None), |column_name| {
         headers
@@ -153,9 +154,19 @@ pub async fn handle(
 
     let job_id = Uuid::new_v4().to_string();
     let output_csv_path = args.output_csv_path.map_or_else(
-        || default_output_csv_path(&input_path, job_id.as_str()),
-        |path| cwd.join(path),
-    );
+        || {
+            AbsolutePathBuf::from_absolute_path(default_agent_job_output_csv_path(
+                input_path.as_path(),
+                job_id.as_str(),
+            ))
+            .map_err(|err| {
+                FunctionCallError::RespondToModel(format!(
+                    "failed to resolve default output csv path: {err}"
+                ))
+            })
+        },
+        |path| Ok(cwd.join(path)),
+    )?;
     let job_suffix = &job_id[..8];
     let job_name = format!("agent-job-{job_suffix}");
     let max_runtime_seconds = normalize_max_runtime_seconds(
