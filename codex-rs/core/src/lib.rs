@@ -48,7 +48,7 @@ pub(crate) mod mcp;
 mod mcp_skill_dependencies;
 mod mcp_tool_exposure;
 mod network_policy_decision;
-pub use mcp::McpManager;
+pub use codex_mcp_runtime::McpManager;
 mod mcp_openai_file;
 mod mcp_tool_call;
 pub(crate) mod mention_syntax;

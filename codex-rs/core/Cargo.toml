@@ -74,6 +74,7 @@ codex-feedback-api = { workspace = true }
 codex-login = { workspace = true, optional = true, features = ["model-provider-auth"] }
 codex-memories-read-api = { workspace = true }
 codex-mcp = { workspace = true, optional = true }
+codex-mcp-runtime = { workspace = true }
 codex-mcp-runtime-api = { workspace = true }
 codex-mcp-tool-types = { workspace = true }
 codex-mcp-types = { workspace = true }
@@ -165,6 +166,7 @@ codex-execpolicy = { workspace = true }
 codex-exec-server = { workspace = true }
 codex-hooks = { workspace = true }
 codex-login = { workspace = true, features = ["model-provider-auth"] }
+codex-mcp-runtime = { workspace = true, features = ["test-support"] }
 codex-mcp = { workspace = true }
 codex-models-manager = { workspace = true }
 codex-network-proxy = { workspace = true }

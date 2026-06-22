@@ -1,0 +1,32 @@
+[package]
+name = "codex-mcp-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "codex_mcp_runtime"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[features]
+test-support = []
+
+[dependencies]
+codex-api-auth = { workspace = true }
+codex-auth-types = { workspace = true }
+codex-config = { workspace = true }
+codex-config-requirements = { workspace = true }
+codex-config-types = { workspace = true }
+codex-connectors-types = { workspace = true }
+codex-core-plugins-api = { workspace = true }
+codex-exec-server-api = { workspace = true }
+codex-features = { workspace = true }
+codex-mcp-runtime-api = { workspace = true }
+codex-mcp-tool-types = { workspace = true }
+codex-mcp-types = { workspace = true }
+codex-tool-config = { workspace = true }
+serde = { workspace = true, features = ["derive"] }

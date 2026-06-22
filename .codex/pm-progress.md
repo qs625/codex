@@ -12,7 +12,7 @@
 - owner: root PM direct implementation
 - status: active
 - current_step: 6C
-- current_focus: Step 6C 首个 service boundary 已开始：`command_wait` / `command_write_stdin` 通过 `codex-command-runtime::CommandSessionController` trait 调用，tool handler 不再直接依赖 `UnifiedExecProcessManager` concrete。
+- current_focus: Step 6C 继续推进 service/domain boundary：command session controller 已 trait 化；MCP registry、Codex Apps auth/runtime helpers、Apps tool policy 和 MCP tool exposure 规划已迁到 `codex-mcp-runtime`，core 只保留过渡 re-export wrapper。
 
 ## Current State
 
@@ -24,9 +24,10 @@
 - Step 6B 第三个切片已把 command output buffer、output runtime hub、local broadcast pump、UTF-8 output delta splitter 和 transcript aggregation helper 集中到 `codex-command-runtime::output`；core `UnifiedExecProcess` 只持有 `CommandOutputRuntime` 并负责 PTY/exec-server wiring 与 EventMsg emission。
 - 已补上 Step 6A 迁移后的 config test-support 边界：`codex-config/test-support` 公开测试构造 helper，`codex-core` dev build 启用该 feature，恢复 core 单测对 migrated config API 的访问。
 - Step 6C 首个切片已在 `codex-command-runtime` 增加 `CommandSessionController` / `CommandWaitOperation` trait；core 用 `UnifiedExecCommandSessionController` adapter 连接现有 `UnifiedExecProcessManager`，并在 `SessionServices` 中 constructor-inject 该 trait service。`command_wait` 和 `command_write_stdin` handler 现在只消费 command-runtime DTO/trait。
+- Step 6C 第二个切片新增 `codex-mcp-runtime` owner crate，迁出 `McpManager`、Codex Apps auth provider/context、MCP runtime environment 构造、Apps tool enable/approval policy、`with_app_enabled_state` 和 `build_mcp_tool_exposure`；`codex-core` 的 `mcp.rs`、`connectors.rs`、`mcp_tool_exposure.rs` 只保留兼容 re-export，后续 Step 6D 再清 callsite facade。
 - `UnifiedExecProcess` / `process_manager` 剩余逻辑仍绑定 exec-server protocol、PTY、sandbox denial detection、core error type、Session/TurnContext、ToolEmitter、ToolOrchestrator 和 network approval；继续迁移前需要 Step 6C 的 trait/service 边界，避免只做小 helper 或把 heavy runtime 间接拉回。
 - Step 6 前基线：`codex-rs/core/src` 约 293 个 Rust 文件、134123 行；`codex-app-server` 冷编译 timing 中 `codex-core` 单 unit 约 197.7s。
-- 当前 `codex-rs/core/src` 约 112207 行；`core/src/unified_exec` 剩余最大文件为 `process_manager.rs` 1226 行、`process.rs` 424 行、`async_watcher.rs` 347 行。
+- 当前 `codex-rs/core/src` 约 111923 行；`core/src/unified_exec` 剩余最大文件为 `process_manager.rs` 1226 行、`process.rs` 424 行、`async_watcher.rs` 347 行。
 
 ## Last Validation
 
@@ -34,14 +35,19 @@
 - `rtk cargo test -p codex-command-runtime`：通过。
 - `rtk cargo test -p codex-core command_wait -- --nocapture`：通过。
 - `rtk cargo test -p codex-core unified_exec::async_watcher -- --nocapture`：通过。
+- `rtk cargo check -p codex-mcp-runtime`：通过。
+- `rtk cargo test -p codex-core mcp_tool_exposure -- --nocapture`：通过。
+- `rtk cargo test -p codex-core connectors::tests::app_tool_policy -- --nocapture`：通过。
 - `rtk cargo check -p codex-core --lib`：通过，仅既有 warnings。
 - `rtk cargo build -p codex-app-server --bin codex-app-server`：通过，仅既有 warnings。
 - `rtk cargo tree -p codex-config --invert <heavy> --edges normal --depth 6`：未把 core、app-server protocol、code-mode、exec-server、state/sqlx 等 heavy runtime 拉回。
 - `rtk cargo tree -p codex-command-runtime --depth 2 --edges normal`：direct graph 仍仅为 decoding、rand、tokio/tokio-util。
 - workspace 反查 heavy crate 后检查 `codex-command-runtime` 是否出现在反向树：core、app-server protocol、code-mode、exec-server、state/sqlx 等均 PASS。
+- `rtk cargo tree -p codex-mcp-runtime --depth 2 --edges normal`：direct graph 通过 `codex-config`、MCP/API/config/types 和 exec-server-api 轻量边界承载 MCP registry/policy，不依赖 core。
+- workspace 反查 heavy crate 后检查 `codex-mcp-runtime` 是否出现在反向树：core、app-server protocol、code-mode、network-proxy、exec-server、state/sqlx、codex-api 均 PASS。
 - `rtk just bazel-lock-check`：通过，仅既有 rules_rs well-known crate annotation warnings。
 - `rtk git diff --check`、touched Rust `unsafe` scan：通过。
-- 用户要求后已执行 `rtk cargo clean`，当前 `codex-rs/target` 已移除；后续 broad Rust 验证会重新冷编译。
+- 用户要求后曾执行 `rtk cargo clean`；本轮 MCP runtime 验证已重新生成 `codex-rs/target` 增量缓存，后续 broad Rust 验证不再是完全冷编译。
 
 ## Next Action
 

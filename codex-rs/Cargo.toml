@@ -106,6 +106,7 @@ members = [
     "git-info",
     "codex-mcp",
     "mcp-server",
+    "mcp-runtime",
     "mcp-runtime-api",
     "mcp-tool-types",
     "mcp-types",
@@ -309,6 +310,7 @@ codex-memories-read = { path = "memories/read" }
 codex-memories-write = { path = "memories/write" }
 codex-mcp = { path = "codex-mcp" }
 codex-mcp-server = { path = "mcp-server" }
+codex-mcp-runtime = { path = "mcp-runtime" }
 codex-mcp-runtime-api = { path = "mcp-runtime-api" }
 codex-mcp-tool-types = { path = "mcp-tool-types" }
 codex-mcp-types = { path = "mcp-types" }

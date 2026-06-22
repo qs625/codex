@@ -2982,6 +2982,7 @@ dependencies = [
  "codex-hooks-api",
  "codex-login",
  "codex-mcp",
+ "codex-mcp-runtime",
  "codex-mcp-runtime-api",
  "codex-mcp-tool-types",
  "codex-mcp-types",
@@ -3844,6 +3845,26 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "codex-mcp-runtime"
+version = "0.0.0"
+dependencies = [
+ "codex-api-auth",
+ "codex-auth-types",
+ "codex-config",
+ "codex-config-requirements",
+ "codex-config-types",
+ "codex-connectors-types",
+ "codex-core-plugins-api",
+ "codex-exec-server-api",
+ "codex-features",
+ "codex-mcp-runtime-api",
+ "codex-mcp-tool-types",
+ "codex-mcp-types",
+ "codex-tool-config",
+ "serde",
 ]
 
 [[package]]
