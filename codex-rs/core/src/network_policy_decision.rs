@@ -1,7 +1,5 @@
 use codex_execpolicy_api::Decision as ExecPolicyDecision;
 use codex_execpolicy_api::NetworkRuleProtocol as ExecPolicyNetworkRuleProtocol;
-use codex_network_proxy_api::BlockedRequest;
-use codex_network_proxy_api::NetworkPolicyDecision;
 use codex_protocol::approvals::NetworkApprovalContext;
 use codex_protocol::approvals::NetworkApprovalProtocol;
 use codex_protocol::approvals::NetworkPolicyAmendment;
@@ -13,14 +11,6 @@ pub(crate) struct ExecPolicyNetworkRuleAmendment {
     pub protocol: ExecPolicyNetworkRuleProtocol,
     pub decision: ExecPolicyDecision,
     pub justification: String,
-}
-
-fn parse_network_policy_decision(value: &str) -> Option<NetworkPolicyDecision> {
-    match value {
-        "deny" => Some(NetworkPolicyDecision::Deny),
-        "ask" => Some(NetworkPolicyDecision::Ask),
-        _ => None,
-    }
 }
 
 pub(crate) fn network_approval_context_from_payload(
@@ -41,34 +31,6 @@ pub(crate) fn network_approval_context_from_payload(
         host: host.to_string(),
         protocol,
     })
-}
-
-pub(crate) fn denied_network_policy_message(blocked: &BlockedRequest) -> Option<String> {
-    let decision = blocked
-        .decision
-        .as_deref()
-        .and_then(parse_network_policy_decision);
-    if decision != Some(NetworkPolicyDecision::Deny) {
-        return None;
-    }
-
-    let host = blocked.host.trim();
-    if host.is_empty() {
-        return Some("Network access was blocked by policy.".to_string());
-    }
-
-    let detail = match blocked.reason.as_str() {
-        "denied" => "domain is explicitly denied by policy and cannot be approved from this prompt",
-        "not_allowed" => "domain is not on the allowlist for the current sandbox mode",
-        "not_allowed_local" => "local/private network addresses are blocked by the sandbox policy",
-        "method_not_allowed" => "request method is blocked by the current network mode",
-        "proxy_disabled" => "network proxy is disabled",
-        _ => "request is blocked by network policy",
-    };
-
-    Some(format!(
-        "Network access to \"{host}\" was blocked: {detail}."
-    ))
 }
 
 pub(crate) fn execpolicy_network_rule_amendment(

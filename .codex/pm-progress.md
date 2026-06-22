@@ -12,7 +12,7 @@
 - owner: root PM direct implementation
 - status: active
 - current_step: 6C
-- current_focus: Step 6C 继续推进 service/domain boundary：command session controller 已 trait 化；MCP registry、Codex Apps auth/runtime helpers、Apps tool policy、MCP tool exposure 规划、Apps SDK OpenAI file 参数重写和 Skill MCP dependency install runtime 已迁到 `codex-mcp-runtime`；agent role catalog/spec 已迁到 `codex-agent-roles`；exec policy manager/loader trait/update runtime 已迁到 `codex-permissions-runtime`，core 只保留过渡 wrapper/host adapter、Config reload adapter 和 child config policy reuse 判断。
+- current_focus: Step 6C 继续推进 service/domain boundary：command session controller 已 trait 化；MCP registry、Codex Apps auth/runtime helpers、Apps tool policy、MCP tool exposure 规划、Apps SDK OpenAI file 参数重写和 Skill MCP dependency install runtime 已迁到 `codex-mcp-runtime`；agent role catalog/spec 已迁到 `codex-agent-roles`；exec policy manager/loader trait/update runtime 和 network approval 纯状态机已迁到 `codex-permissions-runtime`，core 只保留过渡 wrapper/host adapter、Config reload adapter、Guardian/hook/session adapter 和 child config policy reuse 判断。
 
 ## Current State
 
@@ -29,9 +29,10 @@
 - Step 6C 第四个切片把 Skill MCP dependency install 的 first-party gating、missing dependency collection、prompt decision、global config persistence、OAuth login retry policy 和 refresh server merge 迁到 `codex-mcp-runtime::skill_dependencies`；core `mcp_skill_dependencies` 现在只实现 `McpSkillDependencyHost`，提供 Session prompt/state、MCP manager/auth runtime 和 live refresh adapter。
 - Step 6C 第五个切片把 built-in agent role declarations、built-in role config content、role resolution helper 和 spawn-agent tool role description builder 迁到 `codex-agent-roles`；core `agent::role` 现在只保留把 resolved role config layer 应用到 `Config` 的 adapter，spawn tool spec、agent nickname resolution 和默认 role 名直接依赖 `codex-agent-roles`。
 - Step 6C 第六个切片把 `ExecPolicyManager`、`ExecPolicyLoader`、`ExecPolicyLoadResult`、`ExecPolicyUpdateError` 和 exec policy rules append/update runtime 迁到 `codex-permissions-runtime`；core `exec_policy.rs` 只保留 `child_uses_parent_exec_policy` 和 test-only Starlark loader helpers，`codex-execpolicy-loader` 直接依赖 `codex-permissions-runtime` trait/result，不再依赖 `codex-core`。
+- Step 6C 第七个切片把 network approval 的 host/protocol/port key、pending approval 去重、session allow/deny cache、active call outcome/cancellation、blocked request denial message 和 approval-flow gating 迁到 `codex-permissions-runtime::network_approval`；core `tools::network_approval` 保留 `NetworkApprovalService` wrapper、`Session`/Guardian/hook prompt、network policy amendment persistence/display 和 deferred `ToolError` 映射。
 - `UnifiedExecProcess` / `process_manager` 剩余逻辑仍绑定 exec-server protocol、PTY、sandbox denial detection、core error type、Session/TurnContext、ToolEmitter、ToolOrchestrator 和 network approval；继续迁移前需要 Step 6C 的 trait/service 边界，避免只做小 helper 或把 heavy runtime 间接拉回。
 - Step 6 前基线：`codex-rs/core/src` 约 293 个 Rust 文件、134123 行；`codex-app-server` 冷编译 timing 中 `codex-core` 单 unit 约 197.7s。
-- 当前 `codex-rs/core/src` 约 270 个 Rust 文件、110688 行；`core/src/unified_exec` 剩余最大文件为 `process_manager.rs` 1226 行、`process.rs` 424 行、`async_watcher.rs` 347 行。
+- 当前 `codex-rs/core/src` 约 270 个 Rust 文件、110157 行；`core/src/tools/network_approval.rs` 已从约 760 行降到 586 行，纯状态测试迁到 `codex-permissions-runtime`；`core/src/unified_exec` 剩余最大文件为 `process_manager.rs` 1226 行、`process.rs` 424 行、`async_watcher.rs` 347 行。
 
 ## Last Validation
 
@@ -63,9 +64,17 @@
 - `rtk cargo test -p codex-core exec_policy -- --nocapture`：通过，覆盖 core exec policy config reuse、test-only loader 和 integration harness 的真实 Starlark loader。
 - `codex-permissions-runtime` 和 `codex-execpolicy-loader` normal graph grep 门禁：core、app-server protocol、code-mode、network-proxy、exec-server、state/sqlx、codex-api、concrete `codex-openai-files`、concrete `codex-core-skills` 均 absent。
 - workspace 反查 heavy crate 后检查 `codex-permissions-runtime` / `codex-execpolicy-loader` 是否出现在反向树：core、app-server protocol、code-mode、network-proxy、exec-server、state/sqlx、codex-api、concrete `codex-openai-files`、concrete `codex-core-skills` 均 PASS。
+- `rtk cargo test -p codex-permissions-runtime network_approval -- --nocapture`：通过 16 条，覆盖迁入的 network approval pending/cache/outcome/blocked-request 状态机。
+- `rtk cargo test -p codex-core --lib network_approval -- --nocapture`：通过 5 条，覆盖 core wrapper、真实 Guardian trigger 保存和 deferred `ToolError` 映射。
+- `rtk cargo test -p codex-permissions-runtime -- --nocapture`：通过 27 条。
+- `rtk cargo check -p codex-core --lib`：通过，仅既有 warnings。
+- `rtk cargo build -p codex-app-server --bin codex-app-server`：通过，仅既有 warnings。
+- `rtk cargo tree -p codex-permissions-runtime --depth 2 --edges normal`：direct graph 仍只通过 config-state、execpolicy-api、network-proxy-api、protocol、shell helper、globset、tokio/tokio-util 和 tracing 承载 permissions runtime，不依赖 core。
+- `codex-permissions-runtime` network approval 迁移后 normal graph grep 门禁和 `cargo tree --workspace --edges normal --invert <heavy>` 反向门禁：core、app-server protocol、code-mode、network-proxy、exec-server、state/sqlx、codex-api、concrete `codex-openai-files`、concrete `codex-core-skills` 均 PASS。
 - `rtk just bazel-lock-check`：通过，仅既有 rules_rs well-known crate annotation warnings。
 - `rtk git diff --check`、touched Rust `unsafe` scan：通过。
-- 用户要求后曾执行 `rtk cargo clean`；本轮 MCP runtime 验证已重新生成 `codex-rs/target` 增量缓存，后续 broad Rust 验证不再是完全冷编译。
+- 未作为本切片通过门禁：`rtk cargo test -p codex-core --test all permission_request_hook_allows_network_approval_without_prompt -- --nocapture` 当前等待 hook log 超时；普通 `permission_request_hook_allows_shell_command_without_user_approval` 也等待事件超时，说明失败不局限于本次 network approval 状态迁移，后续需要单独排查 integration hook harness。
+- 用户要求后曾执行 `rtk cargo clean`；本轮 network approval runtime 验证已重新生成 `codex-rs/target` 增量缓存，后续 broad Rust 验证不再是完全冷编译。
 
 ## Next Action
 

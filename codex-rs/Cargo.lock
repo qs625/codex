@@ -4368,6 +4368,7 @@ version = "0.0.0"
 dependencies = [
  "codex-config-state",
  "codex-execpolicy-api",
+ "codex-network-proxy-api",
  "codex-protocol",
  "codex-shell-command",
  "codex-shell-utils",
@@ -4376,6 +4377,7 @@ dependencies = [
  "pretty_assertions",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 mod exec_policy;
 mod exec_policy_manager;
+mod network_approval;
 
 pub use exec_policy::ExecPolicyApprovalRequest;
 pub use exec_policy::ExecPolicyCommandOrigin;
@@ -34,6 +35,15 @@ pub use exec_policy_manager::ExecPolicyManager;
 pub use exec_policy_manager::ExecPolicyUpdateError;
 #[doc(hidden)]
 pub use exec_policy_manager::default_policy_path;
+pub use network_approval::ActiveNetworkApprovalCall;
+pub use network_approval::HostApprovalKey;
+pub use network_approval::NetworkApprovalOutcome;
+pub use network_approval::NetworkApprovalRuntime;
+pub use network_approval::PendingApprovalDecision;
+pub use network_approval::PendingHostApproval;
+pub use network_approval::allows_network_approval_flow;
+pub use network_approval::denied_network_policy_message;
+pub use network_approval::permission_profile_allows_network_approval_flow;
 
 use codex_protocol::approvals::ExecPolicyAmendment;
 use codex_protocol::permissions::FileSystemSandboxKind;

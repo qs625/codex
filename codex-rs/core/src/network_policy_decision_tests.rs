@@ -1,6 +1,6 @@
 use super::*;
-use codex_network_proxy_api::BlockedRequest;
 use codex_network_proxy_api::NetworkDecisionSource;
+use codex_network_proxy_api::NetworkPolicyDecision;
 use codex_protocol::approvals::NetworkPolicyAmendment;
 use codex_protocol::approvals::NetworkPolicyRuleAction;
 use pretty_assertions::assert_eq;
@@ -150,43 +150,4 @@ fn execpolicy_network_rule_amendment_maps_protocol_action_and_justification() {
             justification: "Deny socks5_udp access to example.com".to_string(),
         }
     );
-}
-
-#[test]
-fn denied_network_policy_message_requires_deny_decision() {
-    let blocked = BlockedRequest {
-        host: "example.com".to_string(),
-        reason: "not_allowed".to_string(),
-        client: None,
-        method: Some("GET".to_string()),
-        mode: None,
-        protocol: "http".to_string(),
-        decision: Some("ask".to_string()),
-        source: Some("decider".to_string()),
-        port: Some(80),
-        timestamp: 0,
-    };
-    assert_eq!(denied_network_policy_message(&blocked), None);
-}
-
-#[test]
-fn denied_network_policy_message_for_denylist_block_is_explicit() {
-    let blocked = BlockedRequest {
-        host: "example.com".to_string(),
-        reason: "denied".to_string(),
-        client: None,
-        method: Some("GET".to_string()),
-        mode: None,
-        protocol: "http".to_string(),
-        decision: Some("deny".to_string()),
-        source: Some("baseline_policy".to_string()),
-        port: Some(80),
-        timestamp: 0,
-    };
-    assert_eq!(
-            denied_network_policy_message(&blocked),
-            Some(
-                "Network access to \"example.com\" was blocked: domain is explicitly denied by policy and cannot be approved from this prompt.".to_string()
-            )
-        );
 }
