@@ -97,6 +97,7 @@ codex-network-proxy = { workspace = true, optional = true }
 codex-network-proxy-api = { workspace = true }
 codex-openai-files-api = { workspace = true }
 codex-permissions-runtime = { workspace = true }
+codex-process-exec = { workspace = true }
 codex-session-telemetry-api = { workspace = true }
 codex-plugin-types = { workspace = true }
 codex-protocol = { workspace = true }

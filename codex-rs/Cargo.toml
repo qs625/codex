@@ -129,6 +129,7 @@ members = [
     "permissions-runtime",
     "plugin-manifest",
     "plugin-types",
+    "process-exec",
     "process-hardening",
     "protocol",
     "realtime",
@@ -333,6 +334,7 @@ codex-plugin = { path = "plugin" }
 codex-plugin-manifest = { path = "plugin-manifest" }
 codex-plugin-types = { path = "plugin-types" }
 codex-model-provider = { path = "model-provider" }
+codex-process-exec = { path = "process-exec" }
 codex-process-hardening = { path = "process-hardening" }
 codex-protocol = { path = "protocol" }
 codex-realtime = { path = "realtime" }

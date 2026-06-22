@@ -1,20 +1,14 @@
-#[cfg(unix)]
-use std::os::unix::process::ExitStatusExt;
-
 use std::collections::HashMap;
 use std::io;
+#[cfg(target_family = "unix")]
+use std::os::unix::process::ExitStatusExt;
 #[cfg(target_os = "windows")]
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::ExitStatus;
 use std::time::Duration;
 use std::time::Instant;
 
 use async_channel::Sender;
-use tokio::io::AsyncRead;
-use tokio::io::AsyncReadExt;
-use tokio::io::BufReader;
-use tokio::process::Child;
 
 use crate::sandboxing::ExecOptions;
 use crate::sandboxing::ExecRequest;
@@ -28,9 +22,23 @@ pub use codex_command_runtime::ExecExpiration;
 pub use codex_command_runtime::ExecExpirationOutcome;
 pub use codex_command_runtime::IO_DRAIN_TIMEOUT_MS;
 pub use codex_command_runtime::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
-use codex_command_runtime::bytes_to_string_smart;
 pub use codex_command_runtime::cancel_when_either;
 use codex_network_proxy_api::SharedNetworkProxyRuntime;
+use codex_process_exec::CapturedProcessOutput as RawExecToolCallOutput;
+use codex_process_exec::CapturedStreamOutput;
+use codex_process_exec::EXEC_TIMEOUT_EXIT_CODE;
+use codex_process_exec::EXIT_CODE_SIGNAL_BASE;
+use codex_process_exec::LINUX_SIGSYS_CODE;
+use codex_process_exec::ProcessOutputChunk;
+use codex_process_exec::ProcessOutputSender;
+use codex_process_exec::ProcessOutputStream;
+#[cfg(target_family = "unix")]
+use codex_process_exec::TIMEOUT_CODE;
+#[cfg(target_os = "windows")]
+use codex_process_exec::aggregate_output;
+use codex_process_exec::consume_process_output;
+#[cfg(target_os = "windows")]
+use codex_process_exec::synthetic_exit_status;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result;
 use codex_protocol::error::SandboxErr;
@@ -54,19 +62,7 @@ use codex_sandboxing_api::resolve_windows_elevated_filesystem_overrides;
 use codex_sandboxing_api::resolve_windows_restricted_token_filesystem_overrides;
 use codex_sandboxing_api::windows_sandbox_uses_elevated_backend;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use codex_utils_pty::process_group::kill_child_process_group;
-
-// Hardcode these since it does not seem worth including the libc crate just
-// for these.
-const SIGKILL_CODE: i32 = 9;
-const LINUX_SIGSYS_CODE: i32 = 31;
-const TIMEOUT_CODE: i32 = 64;
-const EXIT_CODE_SIGNAL_BASE: i32 = 128; // conventional shell: 128 + signal
-const EXEC_TIMEOUT_EXIT_CODE: i32 = 124; // conventional timeout exit code
-
-// I/O buffer sizing
-const READ_CHUNK_SIZE: usize = 8192; // bytes per read
-const AGGREGATE_BUFFER_INITIAL_CAPACITY: usize = 8 * 1024; // 8 KiB
+use tokio::task::JoinHandle;
 
 #[derive(Debug)]
 pub struct ExecParams {
@@ -509,11 +505,11 @@ async fn exec_windows_sandbox(
     {
         stderr_text.truncate(max_bytes);
     }
-    let stdout = StreamOutput {
+    let stdout = CapturedStreamOutput {
         text: stdout_text,
         truncated_after_lines: None,
     };
-    let stderr = StreamOutput {
+    let stderr = CapturedStreamOutput {
         text: stderr_text,
         truncated_after_lines: None,
     };
@@ -588,10 +584,11 @@ fn finalize_exec_result(
     }
 }
 
-fn decode_stream_output(output: StreamOutput<Vec<u8>>) -> StreamOutput<String> {
+fn decode_stream_output(output: CapturedStreamOutput) -> StreamOutput<String> {
+    let truncated_after_lines = output.truncated_after_lines;
     StreamOutput {
-        text: bytes_to_string_smart(&output.text),
-        truncated_after_lines: output.truncated_after_lines,
+        text: output.into_utf8_lossy(),
+        truncated_after_lines,
     }
 }
 
@@ -653,69 +650,6 @@ pub(crate) fn is_likely_sandbox_denied(
     false
 }
 
-#[derive(Debug)]
-struct RawExecToolCallOutput {
-    pub exit_status: ExitStatus,
-    pub stdout: StreamOutput<Vec<u8>>,
-    pub stderr: StreamOutput<Vec<u8>>,
-    pub aggregated_output: StreamOutput<Vec<u8>>,
-    pub timed_out: bool,
-}
-
-#[inline]
-fn append_capped(dst: &mut Vec<u8>, src: &[u8], max_bytes: usize) {
-    if dst.len() >= max_bytes {
-        return;
-    }
-    let remaining = max_bytes.saturating_sub(dst.len());
-    let take = remaining.min(src.len());
-    dst.extend_from_slice(&src[..take]);
-}
-
-fn aggregate_output(
-    stdout: &StreamOutput<Vec<u8>>,
-    stderr: &StreamOutput<Vec<u8>>,
-    max_bytes: Option<usize>,
-) -> StreamOutput<Vec<u8>> {
-    let Some(max_bytes) = max_bytes else {
-        let total_len = stdout.text.len().saturating_add(stderr.text.len());
-        let mut aggregated = Vec::with_capacity(total_len);
-        aggregated.extend_from_slice(&stdout.text);
-        aggregated.extend_from_slice(&stderr.text);
-        return StreamOutput {
-            text: aggregated,
-            truncated_after_lines: None,
-        };
-    };
-
-    let total_len = stdout.text.len().saturating_add(stderr.text.len());
-    let mut aggregated = Vec::with_capacity(total_len.min(max_bytes));
-
-    if total_len <= max_bytes {
-        aggregated.extend_from_slice(&stdout.text);
-        aggregated.extend_from_slice(&stderr.text);
-        return StreamOutput {
-            text: aggregated,
-            truncated_after_lines: None,
-        };
-    }
-
-    // Under contention, reserve 1/3 for stdout and 2/3 for stderr; rebalance unused stderr to stdout.
-    let want_stdout = stdout.text.len().min(max_bytes / 3);
-    let want_stderr = stderr.text.len();
-    let stderr_take = want_stderr.min(max_bytes.saturating_sub(want_stdout));
-    let remaining = max_bytes.saturating_sub(want_stdout + stderr_take);
-    let stdout_take = want_stdout + remaining.min(stdout.text.len().saturating_sub(want_stdout));
-
-    aggregated.extend_from_slice(&stdout.text[..stdout_take]);
-    aggregated.extend_from_slice(&stderr.text[..stderr_take]);
-
-    StreamOutput {
-        text: aggregated,
-        truncated_after_lines: None,
-    }
-}
-
 /// This is a general-purpose function for executing a command specified by
 /// [ExecParams]. Events are reported via `stdout_stream`, if specified, and
 /// `after_spawn` is invoked once the child process has been spawned, before
@@ -728,6 +662,44 @@ fn aggregate_output(
 /// Note this command does not apply any sandboxing logic. The caller is
 /// responsible for constructing [ExecParams::command] to include any sandboxing
 /// wrapper args, as appropriate.
+struct OutputDeltaForwarder {
+    sender: ProcessOutputSender,
+    task: JoinHandle<()>,
+}
+
+impl OutputDeltaForwarder {
+    async fn finish(self) {
+        drop(self.sender);
+        let _ = self.task.await;
+    }
+}
+
+fn spawn_output_delta_forwarder(stdout_stream: StdoutStream) -> OutputDeltaForwarder {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ProcessOutputChunk>();
+    let task = tokio::spawn(async move {
+        while let Some(chunk) = rx.recv().await {
+            let msg = EventMsg::ExecCommandOutputDelta(ExecCommandOutputDeltaEvent {
+                call_id: stdout_stream.call_id.clone(),
+                sequence: None,
+                generates_notification: false,
+                created_at_ms: 0,
+                stream: match chunk.stream {
+                    ProcessOutputStream::Stdout => ExecOutputStream::Stdout,
+                    ProcessOutputStream::Stderr => ExecOutputStream::Stderr,
+                },
+                chunk: chunk.chunk,
+            });
+            let event = Event {
+                id: stdout_stream.sub_id.clone(),
+                msg,
+            };
+            #[allow(clippy::let_unit_value)]
+            let _ = stdout_stream.tx_event.send(event).await;
+        }
+    });
+    OutputDeltaForwarder { sender: tx, task }
+}
+
 async fn exec(
     params: ExecParams,
     network_sandbox_policy: NetworkSandboxPolicy,
@@ -779,198 +751,17 @@ async fn exec(
     if let Some(after_spawn) = after_spawn {
         after_spawn();
     }
-    consume_output(child, expiration, capture_policy, stdout_stream).await
-}
-
-/// Consumes the output of a child process according to the configured capture
-/// policy.
-async fn consume_output(
-    mut child: Child,
-    expiration: ExecExpiration,
-    capture_policy: ExecCapturePolicy,
-    stdout_stream: Option<StdoutStream>,
-) -> Result<RawExecToolCallOutput> {
-    // Both stdout and stderr were configured with `Stdio::piped()`
-    // above, therefore `take()` should normally return `Some`.  If it doesn't
-    // we treat it as an exceptional I/O error
-
-    let stdout_reader = child.stdout.take().ok_or_else(|| {
-        CodexErr::Io(io::Error::other(
-            "stdout pipe was unexpectedly not available",
-        ))
-    })?;
-    let stderr_reader = child.stderr.take().ok_or_else(|| {
-        CodexErr::Io(io::Error::other(
-            "stderr pipe was unexpectedly not available",
-        ))
-    })?;
-
-    let retained_bytes_cap = capture_policy.retained_bytes_cap();
-    let stdout_handle = tokio::spawn(read_output(
-        BufReader::new(stdout_reader),
-        stdout_stream.clone(),
-        /*is_stderr*/ false,
-        retained_bytes_cap,
-    ));
-    let stderr_handle = tokio::spawn(read_output(
-        BufReader::new(stderr_reader),
-        stdout_stream.clone(),
-        /*is_stderr*/ true,
-        retained_bytes_cap,
-    ));
-
-    let expiration_wait = async {
-        if capture_policy.uses_expiration() {
-            Some(expiration.wait_with_outcome().await)
-        } else {
-            std::future::pending::<Option<ExecExpirationOutcome>>().await
-        }
-    };
-    tokio::pin!(expiration_wait);
-    let (exit_status, timed_out) = tokio::select! {
-        status_result = child.wait() => {
-            let exit_status = status_result?;
-            (exit_status, false)
-        }
-        outcome = &mut expiration_wait => {
-            kill_child_process_group(&mut child)?;
-            child.start_kill()?;
-            let timed_out = matches!(outcome, Some(ExecExpirationOutcome::TimedOut));
-            let exit_status = if timed_out {
-                synthetic_exit_status(EXIT_CODE_SIGNAL_BASE + TIMEOUT_CODE)
-            } else {
-                synthetic_exit_status_for_code(/*code*/ 1)
-            };
-            (exit_status, timed_out)
-        }
-        _ = tokio::signal::ctrl_c() => {
-            kill_child_process_group(&mut child)?;
-            child.start_kill()?;
-            (synthetic_exit_status(EXIT_CODE_SIGNAL_BASE + SIGKILL_CODE), false)
-        }
-    };
-
-    // We need mutable bindings so we can `abort()` them on timeout.
-    use tokio::task::JoinHandle;
-
-    async fn await_output(
-        handle: &mut JoinHandle<std::io::Result<StreamOutput<Vec<u8>>>>,
-        timeout: Duration,
-    ) -> std::io::Result<StreamOutput<Vec<u8>>> {
-        match tokio::time::timeout(timeout, &mut *handle).await {
-            Ok(join_res) => match join_res {
-                Ok(io_res) => io_res,
-                Err(join_err) => Err(std::io::Error::other(join_err)),
-            },
-            Err(_elapsed) => {
-                // Timeout: abort the task to avoid hanging on open pipes.
-                handle.abort();
-                Ok(StreamOutput {
-                    text: Vec::new(),
-                    truncated_after_lines: None,
-                })
-            }
-        }
+    let output_forwarder = stdout_stream.map(spawn_output_delta_forwarder);
+    let output_sender = output_forwarder
+        .as_ref()
+        .map(|forwarder| forwarder.sender.clone());
+    let result = consume_process_output(child, expiration, capture_policy, output_sender)
+        .await
+        .map_err(CodexErr::Io);
+    if let Some(forwarder) = output_forwarder {
+        forwarder.finish().await;
     }
-
-    let mut stdout_handle = stdout_handle;
-    let mut stderr_handle = stderr_handle;
-
-    let stdout = await_output(&mut stdout_handle, capture_policy.io_drain_timeout()).await?;
-    let stderr = await_output(&mut stderr_handle, capture_policy.io_drain_timeout()).await?;
-    let aggregated_output = aggregate_output(&stdout, &stderr, retained_bytes_cap);
-
-    Ok(RawExecToolCallOutput {
-        exit_status,
-        stdout,
-        stderr,
-        aggregated_output,
-        timed_out,
-    })
-}
-
-async fn read_output<R: AsyncRead + Unpin + Send + 'static>(
-    mut reader: R,
-    stream: Option<StdoutStream>,
-    is_stderr: bool,
-    max_bytes: Option<usize>,
-) -> io::Result<StreamOutput<Vec<u8>>> {
-    let mut buf = Vec::with_capacity(
-        max_bytes.map_or(AGGREGATE_BUFFER_INITIAL_CAPACITY, |max_bytes| {
-            AGGREGATE_BUFFER_INITIAL_CAPACITY.min(max_bytes)
-        }),
-    );
-    let mut tmp = [0u8; READ_CHUNK_SIZE];
-    let mut emitted_deltas: usize = 0;
-
-    loop {
-        let n = reader.read(&mut tmp).await?;
-        if n == 0 {
-            break;
-        }
-
-        if let Some(stream) = &stream
-            && emitted_deltas < MAX_EXEC_OUTPUT_DELTAS_PER_CALL
-        {
-            let chunk = tmp[..n].to_vec();
-            let msg = EventMsg::ExecCommandOutputDelta(ExecCommandOutputDeltaEvent {
-                call_id: stream.call_id.clone(),
-                sequence: None,
-                generates_notification: false,
-                created_at_ms: 0,
-                stream: if is_stderr {
-                    ExecOutputStream::Stderr
-                } else {
-                    ExecOutputStream::Stdout
-                },
-                chunk,
-            });
-            let event = Event {
-                id: stream.sub_id.clone(),
-                msg,
-            };
-            #[allow(clippy::let_unit_value)]
-            let _ = stream.tx_event.send(event).await;
-            emitted_deltas += 1;
-        }
-
-        if let Some(max_bytes) = max_bytes {
-            append_capped(&mut buf, &tmp[..n], max_bytes);
-        } else {
-            buf.extend_from_slice(&tmp[..n]);
-        }
-        // Continue reading to EOF to avoid back-pressure
-    }
-
-    Ok(StreamOutput {
-        text: buf,
-        truncated_after_lines: None,
-    })
-}
-
-#[cfg(unix)]
-fn synthetic_exit_status(code: i32) -> ExitStatus {
-    use std::os::unix::process::ExitStatusExt;
-    std::process::ExitStatus::from_raw(code)
-}
-
-#[cfg(unix)]
-fn synthetic_exit_status_for_code(code: i32) -> ExitStatus {
-    use std::os::unix::process::ExitStatusExt;
-    std::process::ExitStatus::from_raw(code << 8)
-}
-
-#[cfg(windows)]
-fn synthetic_exit_status(code: i32) -> ExitStatus {
-    use std::os::windows::process::ExitStatusExt;
-    // On Windows the raw status is a u32. Use a direct cast to avoid
-    // panicking on negative i32 values produced by prior narrowing casts.
-    std::process::ExitStatus::from_raw(code as u32)
-}
-
-#[cfg(windows)]
-fn synthetic_exit_status_for_code(code: i32) -> ExitStatus {
-    synthetic_exit_status(code)
+    result
 }
 
 #[cfg(test)]

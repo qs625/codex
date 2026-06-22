@@ -1,0 +1,22 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-process-exec"
+version.workspace = true
+
+[lib]
+name = "codex_process_exec"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-command-runtime = { workspace = true }
+codex-utils-pty = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "process", "rt", "signal", "sync", "time"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "time"] }
