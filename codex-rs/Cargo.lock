@@ -3859,6 +3859,7 @@ name = "codex-mcp-runtime"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "codex-api-auth",
  "codex-api-provider",
  "codex-auth-types",
@@ -3867,6 +3868,7 @@ dependencies = [
  "codex-config-edit",
  "codex-config-requirements",
  "codex-config-types",
+ "codex-connectors-api",
  "codex-connectors-types",
  "codex-core-plugins-api",
  "codex-core-skills-api",

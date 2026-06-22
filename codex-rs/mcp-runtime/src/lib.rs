@@ -20,6 +20,7 @@ use codex_mcp_types::effective_mcp_servers;
 use codex_mcp_types::tool_plugin_provenance as collect_tool_plugin_provenance;
 
 mod app_tools;
+mod connectors;
 mod openai_file;
 mod skill_dependencies;
 mod tool_exposure;
@@ -36,6 +37,16 @@ pub use app_tools::codex_app_tool_is_enabled;
 #[cfg(any(test, feature = "test-support"))]
 pub use app_tools::managed_app_tool_approval;
 pub use app_tools::with_app_enabled_state;
+pub use connectors::AccessibleConnectorsStatus;
+pub use connectors::accessible_connectors_from_mcp_tools;
+pub use connectors::list_accessible_and_enabled_connectors_from_manager;
+pub use connectors::list_accessible_connectors_from_mcp_tools;
+pub use connectors::list_accessible_connectors_from_mcp_tools_with_environment_provider;
+pub use connectors::list_accessible_connectors_from_mcp_tools_with_options;
+pub use connectors::list_accessible_connectors_from_mcp_tools_with_options_and_status;
+pub use connectors::list_cached_accessible_connectors_from_mcp_tools;
+pub use connectors::refresh_accessible_connectors_cache_from_mcp_tools;
+pub use connectors::with_app_plugin_sources;
 pub use openai_file::OpenAiFilePathResolver;
 pub use openai_file::rewrite_mcp_tool_arguments_for_openai_files;
 pub use skill_dependencies::McpSkillDependencyHost;

@@ -17,6 +17,7 @@ test-support = []
 
 [dependencies]
 anyhow = { workspace = true }
+async-channel = { workspace = true }
 codex-api-auth = { workspace = true }
 codex-api-provider = { workspace = true }
 codex-auth-types = { workspace = true }
@@ -25,6 +26,7 @@ codex-config = { workspace = true }
 codex-config-edit = { workspace = true }
 codex-config-requirements = { workspace = true }
 codex-config-types = { workspace = true }
+codex-connectors-api = { workspace = true }
 codex-connectors-types = { workspace = true }
 codex-core-skills-api = { workspace = true }
 codex-core-plugins-api = { workspace = true }
@@ -44,6 +46,7 @@ tokio-util = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+codex-config = { workspace = true, features = ["test-support"] }
 codex-openai-files = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
