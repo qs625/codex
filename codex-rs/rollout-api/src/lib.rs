@@ -1,6 +1,7 @@
 //! Lightweight rollout path and configuration API shared by rollout consumers.
 
 mod fork_snapshot;
+mod reconstruction;
 mod truncation;
 
 use std::path::Path;
@@ -16,6 +17,10 @@ pub use fork_snapshot::fork_history_from_snapshot;
 pub use fork_snapshot::interrupted_turn_history_marker;
 pub use fork_snapshot::snapshot_turn_state;
 pub use fork_snapshot::truncate_before_nth_user_message;
+pub use reconstruction::PreviousTurnSettings;
+pub use reconstruction::RolloutReconstruction;
+pub use reconstruction::RolloutReconstructionOptions;
+pub use reconstruction::reconstruct_history_from_rollout;
 pub use truncation::fork_turn_positions_in_rollout;
 pub use truncation::initial_history_has_prior_user_turns;
 pub use truncation::truncate_rollout_before_nth_user_message_from_start;

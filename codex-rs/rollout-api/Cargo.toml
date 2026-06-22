@@ -12,6 +12,7 @@ path = "src/lib.rs"
 [dependencies]
 codex-context-manager = { workspace = true }
 codex-protocol = { workspace = true }
+codex-utils-output-truncation = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

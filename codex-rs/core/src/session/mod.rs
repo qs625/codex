@@ -193,6 +193,7 @@ use uuid::Uuid;
 
 use crate::client::ModelClient;
 use crate::codex_thread::ThreadConfigSnapshot;
+#[cfg(test)]
 use crate::compact::collect_user_messages;
 use crate::config::CONFIG_TOML_FILE;
 use crate::config::Config;
@@ -285,17 +286,7 @@ impl SteerInputError {
     }
 }
 
-/// Notes from the previous real user turn.
-///
-/// Conceptually this is the same role that `previous_model` used to fill, but
-/// it can carry other prior-turn settings that matter when constructing
-/// sensible state-change diffs or full-context reinjection, such as model
-/// switches or detecting a prior `realtime_active -> false` transition.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PreviousTurnSettings {
-    pub(crate) model: String,
-    pub(crate) realtime_active: Option<bool>,
-}
+pub(crate) use codex_rollout_api::PreviousTurnSettings;
 
 #[cfg(test)]
 use crate::SkillLoadOutcome;

@@ -4608,6 +4608,7 @@ version = "0.0.0"
 dependencies = [
  "codex-context-manager",
  "codex-protocol",
+ "codex-utils-output-truncation",
  "pretty_assertions",
  "serde_json",
 ]
