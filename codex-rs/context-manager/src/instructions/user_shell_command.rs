@@ -3,15 +3,15 @@ use std::time::Duration;
 use super::ContextualUserFragment;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct UserShellCommand {
-    pub(crate) command: String,
-    pub(crate) exit_code: i32,
-    pub(crate) duration_seconds: f64,
-    pub(crate) output: String,
+pub struct UserShellCommand {
+    pub command: String,
+    pub exit_code: i32,
+    pub duration_seconds: f64,
+    pub output: String,
 }
 
 impl UserShellCommand {
-    pub(crate) fn new(
+    pub fn new(
         command: impl Into<String>,
         exit_code: i32,
         duration: Duration,

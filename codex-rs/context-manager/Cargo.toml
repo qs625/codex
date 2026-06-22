@@ -13,9 +13,18 @@ path = "src/lib.rs"
 doctest = false
 
 [dependencies]
+codex-agent-roles = { workspace = true }
+codex-connectors-types = { workspace = true }
+codex-core-skills-api = { workspace = true }
+codex-execpolicy-api = { workspace = true }
+codex-mcp-types = { workspace = true }
+codex-plugin-types = { workspace = true }
 codex-protocol = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
 codex-utils-image = { workspace = true }
 codex-utils-output-truncation = { workspace = true }
+codex-utils-template = { workspace = true }
+codex-workflow-api = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true, features = ["log"] }
 

@@ -1,6 +1,6 @@
-use crate::config::AgentCapabilityAllowlist;
-use crate::config::AgentRoleConfig;
-use crate::config::AgentRoleSource;
+use codex_agent_roles::AgentCapabilityAllowlist;
+use codex_agent_roles::AgentRoleConfig;
+use codex_agent_roles::AgentRoleSource;
 
 use super::ContextualUserFragment;
 
@@ -8,7 +8,7 @@ const MAX_RENDERED_AGENTS: usize = 32;
 const MAX_RENDERED_ALLOWLIST_PATTERNS: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AvailableAgentsInstructions {
+pub struct AvailableAgentsInstructions {
     agents: Vec<AvailableAgent>,
     omitted_agents: usize,
 }
@@ -25,7 +25,7 @@ struct AvailableAgent {
 }
 
 impl AvailableAgentsInstructions {
-    pub(crate) fn from_agent_roles(
+    pub fn from_agent_roles(
         agent_roles: &std::collections::BTreeMap<String, AgentRoleConfig>,
     ) -> Option<Self> {
         let mut agents = agent_roles
@@ -138,10 +138,10 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::collections::BTreeMap;
 
-    use crate::config::AgentCapabilityAllowlist;
-    use crate::config::AgentRoleConfig;
-    use crate::config::AgentRoleSource;
-    use crate::context::ContextualUserFragment;
+    use crate::ContextualUserFragment;
+    use codex_agent_roles::AgentCapabilityAllowlist;
+    use codex_agent_roles::AgentRoleConfig;
+    use codex_agent_roles::AgentRoleSource;
 
     use super::AvailableAgentsInstructions;
 

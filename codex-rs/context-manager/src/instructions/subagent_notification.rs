@@ -3,13 +3,13 @@ use codex_protocol::protocol::AgentStatus;
 use super::ContextualUserFragment;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct SubagentNotification {
-    pub(crate) agent_reference: String,
-    pub(crate) status: AgentStatus,
+pub struct SubagentNotification {
+    pub agent_reference: String,
+    pub status: AgentStatus,
 }
 
 impl SubagentNotification {
-    pub(crate) fn new(agent_reference: impl Into<String>, status: AgentStatus) -> Self {
+    pub fn new(agent_reference: impl Into<String>, status: AgentStatus) -> Self {
         Self {
             agent_reference: agent_reference.into(),
             status,

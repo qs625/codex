@@ -1,9 +1,9 @@
 use super::ContextualUserFragment;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct UserInstructions {
-    pub(crate) directory: String,
-    pub(crate) text: String,
+pub struct UserInstructions {
+    pub directory: String,
+    pub text: String,
 }
 
 impl ContextualUserFragment for UserInstructions {

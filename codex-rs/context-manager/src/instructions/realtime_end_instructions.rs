@@ -5,12 +5,12 @@ use codex_protocol::protocol::REALTIME_CONVERSATION_OPEN_TAG;
 const REALTIME_END_INSTRUCTIONS: &str = include_str!("prompts/realtime/realtime_end.md");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RealtimeEndInstructions {
+pub struct RealtimeEndInstructions {
     reason: String,
 }
 
 impl RealtimeEndInstructions {
-    pub(crate) fn new(reason: impl Into<String>) -> Self {
+    pub fn new(reason: impl Into<String>) -> Self {
         Self {
             reason: reason.into(),
         }

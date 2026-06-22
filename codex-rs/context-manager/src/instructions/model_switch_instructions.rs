@@ -1,12 +1,12 @@
 use super::ContextualUserFragment;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ModelSwitchInstructions {
+pub struct ModelSwitchInstructions {
     model_instructions: String,
 }
 
 impl ModelSwitchInstructions {
-    pub(crate) fn new(model_instructions: impl Into<String>) -> Self {
+    pub fn new(model_instructions: impl Into<String>) -> Self {
         Self {
             model_instructions: model_instructions.into(),
         }

@@ -2,13 +2,13 @@ use super::ContextualUserFragment;
 use std::fmt::Display;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ImageGenerationInstructions {
+pub struct ImageGenerationInstructions {
     image_output_dir: String,
     image_output_path: String,
 }
 
 impl ImageGenerationInstructions {
-    pub(crate) fn new(image_output_dir: impl Display, image_output_path: impl Display) -> Self {
+    pub fn new(image_output_dir: impl Display, image_output_path: impl Display) -> Self {
         Self {
             image_output_dir: image_output_dir.to_string(),
             image_output_path: image_output_path.to_string(),

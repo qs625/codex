@@ -1,7 +1,7 @@
 use super::ContextualUserFragment;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct GuardianFollowupReviewReminder;
+pub struct GuardianFollowupReviewReminder;
 
 impl ContextualUserFragment for GuardianFollowupReviewReminder {
     const ROLE: &'static str = "developer";

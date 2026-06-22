@@ -2906,9 +2906,18 @@ name = "codex-context-manager"
 version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
+ "codex-agent-roles",
+ "codex-connectors-types",
+ "codex-core-skills-api",
+ "codex-execpolicy-api",
+ "codex-mcp-types",
+ "codex-plugin-types",
  "codex-protocol",
+ "codex-utils-absolute-path",
  "codex-utils-image",
  "codex-utils-output-truncation",
+ "codex-utils-template",
+ "codex-workflow-api",
  "image",
  "pretty_assertions",
  "regex-lite",

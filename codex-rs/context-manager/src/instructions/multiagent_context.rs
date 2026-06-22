@@ -3,16 +3,13 @@ use codex_protocol::AgentPath;
 use super::ContextualUserFragment;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MultiagentContext {
-    pub(crate) current_thread_path: AgentPath,
-    pub(crate) direct_subagent_paths: Vec<AgentPath>,
+pub struct MultiagentContext {
+    pub current_thread_path: AgentPath,
+    pub direct_subagent_paths: Vec<AgentPath>,
 }
 
 impl MultiagentContext {
-    pub(crate) fn new(
-        current_thread_path: AgentPath,
-        direct_subagent_paths: Vec<AgentPath>,
-    ) -> Self {
+    pub fn new(current_thread_path: AgentPath, direct_subagent_paths: Vec<AgentPath>) -> Self {
         Self {
             current_thread_path,
             direct_subagent_paths,

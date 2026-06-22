@@ -12,7 +12,7 @@
 - owner: root PM direct implementation
 - status: active
 - current_step: 6C
-- current_focus: 继续推进 service/domain boundary。最新切片已把 rollout/history replay reconstruction 迁到 `codex-rollout-api`；core 只保留 `Session` wrapper、真实 Session hydration 集成测试和调用接线。下一步继续评估更大的 core 功能域边界，优先选择能显著减少 core 生产代码或测试归属的拆分，不做几百行 helper 式碎片化。
+- current_focus: 继续推进 service/domain boundary。最新切片已把 context prompt/instruction renderer 迁到 `codex-context-manager`；core 只保留 `EnvironmentContext` 的 `TurnContext` 适配和原 `crate::context` facade。下一步继续评估更大的 core 功能域边界，优先选择能显著减少 core 生产代码或测试归属的拆分，不做几百行 helper 式碎片化。
 
 ## Current State
 
@@ -28,28 +28,29 @@
   - `codex-permissions-runtime`: exec policy manager/loader/update runtime、network approval 纯状态机。
   - `codex-sandboxing-api`: Windows sandbox filesystem override 解析。
   - `codex-rollout-api`: fork snapshot history transform、interrupted-turn marker policy、rollout/history replay reconstruction、`PreviousTurnSettings` / `RolloutReconstruction` API。
+  - `codex-context-manager`: context history/fragment normalization，以及 context prompt/instruction renderer（permissions、apps、agents、skills、workflows、plugins、realtime、subagent/user-shell 等）。
 - 当前 core 保留范围：Session/TurnContext 编排、tool host adapter、Guardian/hook adapter、goal persistence/event/turn policy、exec spawn/PTY/event emission、sandbox execution glue、thread store/read adapter、core-owned tool-suggest plugin/discoverable 聚合逻辑。
 - Step 6 前基线：`codex-rs/core/src` 约 293 个 Rust 文件、134123 行；`codex-app-server` 冷编译 timing 中 `codex-core` 单 unit 约 197.7s。
-- 当前 `codex-rs/core/src`：约 105477 行。`core/src/session/rollout_reconstruction.rs` 已收缩到 19 行 wrapper；`core/src/session/rollout_reconstruction_tests.rs` 从约 1500 行纯 replay + hydration 混合测试收缩为 195 行 Session hydration 集成测试；纯 replay 测试迁到 `codex-rollout-api`。
+- 当前 `codex-rs/core/src`：约 103761 行。`core/src/session/rollout_reconstruction.rs` 已收缩到 19 行 wrapper；`core/src/session/rollout_reconstruction_tests.rs` 从约 1500 行纯 replay + hydration 混合测试收缩为 195 行 Session hydration 集成测试；纯 replay 测试迁到 `codex-rollout-api`。`core/src/context` 只保留 `EnvironmentContext` 和 facade，其他 prompt/instruction renderer 迁到 `codex-context-manager`。
 
 ## Latest Slice
 
-Step 6C 第十九切片：rollout/history replay reconstruction 迁到 `codex-rollout-api`。
+Step 6C 第二十切片：context prompt/instruction renderer 迁到 `codex-context-manager`。
 
-- 新增 `codex-rollout-api::reconstruction`，拥有 `reconstruct_history_from_rollout`、`RolloutReconstructionOptions`、`RolloutReconstruction` 和 `PreviousTurnSettings`。
-- `codex-core` 的 `Session::reconstruct_history_from_rollout` 只负责把当前 `TurnContext` 的 truncation policy 和 core-owned `SUMMARY_PREFIX` 传入 rollout-api。
-- legacy compaction replay 的 user-message 收集、legacy warning 过滤、summary-prefix 过滤和 compacted-history rebuild 迁到 rollout-api；正式 compact prompt/template 仍归 core compact runtime 持有。
-- `core/src/session/mod.rs` 改为 re-export `codex_rollout_api::PreviousTurnSettings`，现有 core callsite 继续通过 `crate::session::PreviousTurnSettings` 编译。
-- `codex-rollout-api` 新增 replay 单测覆盖 rollback metadata/history 同步、inter-agent turn boundary、replacement-history checkpoint、legacy compaction filtering 和 overlong user-message truncation。
+- 新增 `codex-context-manager::instructions`，拥有 permissions、apps、agents、skills、workflows、plugins、realtime、subagent notification、user shell command、skill injection、model/personality switch 等 prompt fragment renderer。
+- `codex-core::context` 保留兼容 facade，现有 core callsite 继续通过 `crate::context::*` 编译；`EnvironmentContext` 暂留 core，因为它直接依赖 `TurnContext`/`Shell` runtime 适配。
+- permissions/realtime prompt 模板和 renderer 单测迁到 `codex-context-manager`，并在 `context-manager/BUILD.bazel` 中显式声明 compile_data，避免 Cargo/Bazel 表现分叉。
+- `codex-context-manager` 新增的依赖均为已有轻量 API/DTO crate；未新增第三方 runtime 依赖。
 
 ## Last Validation
 
-- `rtk cargo test -p codex-rollout-api -- --nocapture`：通过，28 条。
-- `rtk cargo test -p codex-core --lib rollout_reconstruction -- --nocapture`：通过。
+- `rtk cargo check -p codex-context-manager --lib`：通过。
+- `rtk cargo test -p codex-context-manager -- --nocapture`：通过，87 条。
+- `rtk cargo test -p codex-core --lib build_initial_context -- --nocapture`：通过。
 - `rtk cargo check -p codex-core --lib`：通过，仅既有 warnings。
 - `rtk cargo build -p codex-app-server --bin codex-app-server`：通过。
-- `rtk cargo tree -p codex-rollout-api --depth 2 --edges normal`：direct graph 为 `codex-context-manager`、`codex-protocol`、`codex-utils-output-truncation`；不依赖 core。
-- `codex-rollout-api` normal graph 精确 grep 和 workspace reverse gate：`codex-core`、`codex-app-server-protocol`、`codex-code-mode`、`codex-network-proxy`、`codex-exec-server`、`codex-state`、`sqlx`、`codex-api`、`codex-openai-files`、`codex-core-skills` 均 PASS。
+- `rtk cargo tree -p codex-context-manager --depth 2 --edges normal`：direct graph 为 agent/workflow/plugin/skills/execpolicy/MCP/protocol/utils 等轻量 API/DTO crate；不依赖 core。
+- `codex-context-manager` normal graph 精确 grep 和 workspace reverse gate：`codex-core`、`codex-app-server-protocol`、`codex-code-mode`、`codex-network-proxy`、`codex-exec-server`、`codex-state`、`sqlx`、`codex-api`、`codex-openai-files`、`codex-core-skills` 均 PASS。
 - `rtk git diff --check`：通过。
 - touched Rust files `rtk rg -n "unsafe"`：无命中，本切片没有新增 unsafe。
 

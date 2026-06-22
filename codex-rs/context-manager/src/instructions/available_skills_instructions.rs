@@ -6,7 +6,7 @@ use codex_protocol::protocol::SKILLS_INSTRUCTIONS_OPEN_TAG;
 use super::ContextualUserFragment;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AvailableSkillsInstructions {
+pub struct AvailableSkillsInstructions {
     skill_root_lines: Vec<String>,
     skill_lines: Vec<String>,
 }

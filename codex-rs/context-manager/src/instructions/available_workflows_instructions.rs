@@ -1,15 +1,15 @@
-use crate::workflows::WorkflowRegistry;
-use crate::workflows::render_available_workflows_body;
+use codex_workflow_api::WorkflowRegistry;
+use codex_workflow_api::render_available_workflows_body;
 
 use super::ContextualUserFragment;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct AvailableWorkflowsInstructions {
+pub struct AvailableWorkflowsInstructions {
     body: String,
 }
 
 impl AvailableWorkflowsInstructions {
-    pub(crate) fn from_registry(registry: &WorkflowRegistry) -> Option<Self> {
+    pub fn from_registry(registry: &WorkflowRegistry) -> Option<Self> {
         render_available_workflows_body(registry).map(|body| Self { body })
     }
 }
@@ -27,9 +27,9 @@ impl ContextualUserFragment for AvailableWorkflowsInstructions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workflows::WorkflowInputSpec;
-    use crate::workflows::WorkflowSource;
-    use crate::workflows::WorkflowSummary;
+    use codex_workflow_api::WorkflowInputSpec;
+    use codex_workflow_api::WorkflowSource;
+    use codex_workflow_api::WorkflowSummary;
     use std::collections::BTreeMap;
 
     #[test]

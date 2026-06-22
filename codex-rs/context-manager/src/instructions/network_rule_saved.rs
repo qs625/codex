@@ -3,13 +3,13 @@ use codex_protocol::approvals::NetworkPolicyAmendment;
 use codex_protocol::approvals::NetworkPolicyRuleAction;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct NetworkRuleSaved {
+pub struct NetworkRuleSaved {
     action: NetworkPolicyRuleAction,
     host: String,
 }
 
 impl NetworkRuleSaved {
-    pub(crate) fn new(amendment: &NetworkPolicyAmendment) -> Self {
+    pub fn new(amendment: &NetworkPolicyAmendment) -> Self {
         Self {
             action: amendment.action,
             host: amendment.host.clone(),

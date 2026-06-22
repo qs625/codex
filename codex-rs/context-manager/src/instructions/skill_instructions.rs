@@ -3,10 +3,10 @@ use codex_core_skills_api::injection::SkillInjection;
 use super::ContextualUserFragment;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct SkillInstructions {
-    pub(crate) name: String,
-    pub(crate) path: String,
-    pub(crate) contents: String,
+pub struct SkillInstructions {
+    pub name: String,
+    pub path: String,
+    pub contents: String,
 }
 
 impl From<&SkillInjection> for SkillInstructions {

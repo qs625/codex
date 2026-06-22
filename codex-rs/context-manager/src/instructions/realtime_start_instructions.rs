@@ -5,7 +5,7 @@ use codex_protocol::protocol::REALTIME_CONVERSATION_OPEN_TAG;
 const REALTIME_START_INSTRUCTIONS: &str = include_str!("prompts/realtime/realtime_start.md");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RealtimeStartInstructions;
+pub struct RealtimeStartInstructions;
 
 impl ContextualUserFragment for RealtimeStartInstructions {
     const ROLE: &'static str = "developer";

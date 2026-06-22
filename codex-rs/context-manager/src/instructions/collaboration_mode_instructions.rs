@@ -4,12 +4,12 @@ use codex_protocol::protocol::COLLABORATION_MODE_CLOSE_TAG;
 use codex_protocol::protocol::COLLABORATION_MODE_OPEN_TAG;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct CollaborationModeInstructions {
+pub struct CollaborationModeInstructions {
     instructions: String,
 }
 
 impl CollaborationModeInstructions {
-    pub(crate) fn from_collaboration_mode(collaboration_mode: &CollaborationMode) -> Option<Self> {
+    pub fn from_collaboration_mode(collaboration_mode: &CollaborationMode) -> Option<Self> {
         collaboration_mode
             .settings
             .developer_instructions

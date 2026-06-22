@@ -1,12 +1,12 @@
 use super::ContextualUserFragment;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct PluginInstructions {
+pub struct PluginInstructions {
     text: String,
 }
 
 impl PluginInstructions {
-    pub(crate) fn new(text: impl Into<String>) -> Self {
+    pub fn new(text: impl Into<String>) -> Self {
         Self { text: text.into() }
     }
 }

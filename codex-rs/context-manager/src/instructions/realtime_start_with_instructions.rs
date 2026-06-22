@@ -3,12 +3,12 @@ use codex_protocol::protocol::REALTIME_CONVERSATION_CLOSE_TAG;
 use codex_protocol::protocol::REALTIME_CONVERSATION_OPEN_TAG;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RealtimeStartWithInstructions {
+pub struct RealtimeStartWithInstructions {
     instructions: String,
 }
 
 impl RealtimeStartWithInstructions {
-    pub(crate) fn new(instructions: impl Into<String>) -> Self {
+    pub fn new(instructions: impl Into<String>) -> Self {
         Self {
             instructions: instructions.into(),
         }

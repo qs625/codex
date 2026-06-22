@@ -1,12 +1,12 @@
 use super::ContextualUserFragment;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ApprovedCommandPrefixSaved {
+pub struct ApprovedCommandPrefixSaved {
     prefixes: String,
 }
 
 impl ApprovedCommandPrefixSaved {
-    pub(crate) fn new(prefixes: impl Into<String>) -> Self {
+    pub fn new(prefixes: impl Into<String>) -> Self {
         Self {
             prefixes: prefixes.into(),
         }

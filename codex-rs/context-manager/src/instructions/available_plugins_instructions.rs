@@ -5,12 +5,12 @@ use codex_protocol::protocol::PLUGINS_INSTRUCTIONS_OPEN_TAG;
 use super::ContextualUserFragment;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct AvailablePluginsInstructions {
+pub struct AvailablePluginsInstructions {
     plugins: Vec<PluginCapabilitySummary>,
 }
 
 impl AvailablePluginsInstructions {
-    pub(crate) fn from_plugins(plugins: &[PluginCapabilitySummary]) -> Option<Self> {
+    pub fn from_plugins(plugins: &[PluginCapabilitySummary]) -> Option<Self> {
         if plugins.is_empty() {
             return None;
         }

@@ -1,12 +1,12 @@
 use super::ContextualUserFragment;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct HookAdditionalContext {
+pub struct HookAdditionalContext {
     text: String,
 }
 
 impl HookAdditionalContext {
-    pub(crate) fn new(text: impl Into<String>) -> Self {
+    pub fn new(text: impl Into<String>) -> Self {
         Self { text: text.into() }
     }
 }

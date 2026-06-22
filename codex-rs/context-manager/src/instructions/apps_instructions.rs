@@ -6,10 +6,10 @@ use codex_protocol::protocol::APPS_INSTRUCTIONS_OPEN_TAG;
 use super::ContextualUserFragment;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct AppsInstructions;
+pub struct AppsInstructions;
 
 impl AppsInstructions {
-    pub(crate) fn from_connectors(connectors: &[AppInfo]) -> Option<Self> {
+    pub fn from_connectors(connectors: &[AppInfo]) -> Option<Self> {
         connectors
             .iter()
             .any(|connector| connector.is_accessible && connector.is_enabled)

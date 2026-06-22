@@ -1,12 +1,12 @@
 use super::ContextualUserFragment;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct PersonalitySpecInstructions {
+pub struct PersonalitySpecInstructions {
     spec: String,
 }
 
 impl PersonalitySpecInstructions {
-    pub(crate) fn new(spec: impl Into<String>) -> Self {
+    pub fn new(spec: impl Into<String>) -> Self {
         Self { spec: spec.into() }
     }
 }
