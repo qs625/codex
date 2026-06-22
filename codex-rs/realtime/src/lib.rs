@@ -1,5 +1,6 @@
 mod conversation;
 mod prompt;
+mod startup_context;
 
 pub use conversation::DEFAULT_REALTIME_API_BASE_URL;
 pub use conversation::DEFAULT_REALTIME_MODEL;
@@ -18,3 +19,6 @@ pub use conversation::realtime_request_headers;
 pub use conversation::validate_realtime_voice;
 pub use prompt::DEFAULT_REALTIME_BACKEND_PROMPT;
 pub use prompt::prepare_realtime_backend_prompt;
+pub use startup_context::REALTIME_TURN_TOKEN_BUDGET;
+pub use startup_context::build_realtime_startup_context;
+pub use startup_context::truncate_realtime_text_to_token_budget;

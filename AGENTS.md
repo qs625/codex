@@ -251,12 +251,13 @@ Particularly when introducing a new concept/feature/API, before adding to `codex
   `codex-core` 拉回 normal graph。
 - 后端 realtime conversation runtime 属于 `codex-rs/realtime`（`codex-realtime`）：WebSocket/WebRTC
   sideband input loop、audio/text/handoff channel 管理、realtime event fanout input parser、默认 backend
-  prompt、voice validation、API provider/header/auth helper 和 handoff delegation formatting 都归该 crate。
-  `codex-core` 只保留读取 `Session`/`Config`、构造 startup context、发送 `EventMsg` 和把 handoff 文本路由回
-  turn 的 adapter；不要把 realtime transport loop、prompt template、ChatGPT backend rewrite 或 API key
-  fallback 逻辑重新放回 core。`codex-realtime` 不得依赖 `codex-core`、app-server display protocol、
-  code-mode runtime、exec/sandbox runtime、MCP runtime 或 login runtime；只需要认证 snapshot/env helper 时
-  依赖 `codex-auth-types`。
+  prompt、voice validation、API provider/header/auth helper、handoff delegation formatting，以及 realtime
+  startup context 的 current-thread/recent-work/workspace-map 渲染都归该 crate。`codex-core` 只保留读取
+  `Session`/`Config`/thread-store 输入、发送 `EventMsg` 和把 handoff 文本路由回 turn 的 adapter；不要把
+  realtime transport loop、prompt template、ChatGPT backend rewrite、API key fallback 或 startup-context
+  格式化/扫描逻辑重新放回 core。`codex-realtime` 不得依赖 `codex-core`、app-server display protocol、
+  code-mode runtime、exec/sandbox runtime、MCP runtime、login runtime 或 state/sqlx runtime；只需要认证
+  snapshot/env helper 时依赖 `codex-auth-types`，只需要 recent-thread DTO 时依赖 thread-store API。
 - model-visible conversation history 和 context-manager 纯历史规则属于 `codex-rs/context-manager`
   （`codex-context-manager`）：`ContextManager`、history normalization、tool call/output pair 修复、
   image token byte estimate glue、user-turn boundary 判断，以及 contextual user/dev message marker
