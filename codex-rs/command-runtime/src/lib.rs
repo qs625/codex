@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -21,7 +23,10 @@ pub const DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS: u64 = 300_000;
 pub const DEFAULT_MAX_OUTPUT_TOKENS: usize = 10_000;
 pub const DEFAULT_COMMAND_OUTPUT_MAX_BYTES: usize = 1024 * 1024; // 1 MiB
 pub const DEFAULT_COMMAND_OUTPUT_MAX_TOKENS: usize = DEFAULT_COMMAND_OUTPUT_MAX_BYTES / 4;
+pub const DEFAULT_MAX_COMPLETED_COMMAND_PROCESSES: usize = 256;
 pub const WAIT_BACKOFF_MULTIPLIER: u32 = 2;
+const MIN_PROCESS_ID: i32 = 1_000;
+const PROCESS_ID_SPAN: i32 = 99_000;
 
 /// A capped buffer that preserves a stable prefix ("head") and suffix ("tail"),
 /// dropping the middle once it exceeds the configured maximum. The buffer is
@@ -494,6 +499,108 @@ pub fn generate_chunk_id() -> String {
     (0..6)
         .map(|_| format!("{:x}", rng.random_range(0..16)))
         .collect()
+}
+
+#[derive(Debug)]
+pub struct CommandProcessIdAllocator {
+    reserved_process_ids: HashSet<i32>,
+    completed_processes: HashMap<i32, CompletedCommandProcess>,
+    max_completed_processes: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompletedCommandProcess {
+    pub exit_code: Option<i32>,
+    completed_at: Instant,
+}
+
+impl CommandProcessIdAllocator {
+    pub fn new(max_completed_processes: usize) -> Self {
+        Self {
+            max_completed_processes,
+            ..Self::default()
+        }
+    }
+
+    pub fn reserve_next(&mut self, deterministic: bool) -> i32 {
+        loop {
+            let process_id = if deterministic {
+                self.next_deterministic_process_id()
+            } else {
+                random_process_id()
+            };
+
+            if self.reserved_process_ids.contains(&process_id)
+                || self.completed_processes.contains_key(&process_id)
+            {
+                continue;
+            }
+
+            self.reserved_process_ids.insert(process_id);
+            return process_id;
+        }
+    }
+
+    pub fn release_reservation(&mut self, process_id: i32) {
+        self.reserved_process_ids.remove(&process_id);
+    }
+
+    pub fn clear_reservations(&mut self) {
+        self.reserved_process_ids.clear();
+    }
+
+    pub fn mark_completed(&mut self, process_id: i32, exit_code: Option<i32>) {
+        self.completed_processes.insert(
+            process_id,
+            CompletedCommandProcess {
+                exit_code,
+                completed_at: Instant::now(),
+            },
+        );
+        self.prune_completed_processes();
+    }
+
+    pub fn completed_process(&self, process_id: i32) -> Option<&CompletedCommandProcess> {
+        self.completed_processes.get(&process_id)
+    }
+
+    fn next_deterministic_process_id(&self) -> i32 {
+        self.reserved_process_ids
+            .iter()
+            .chain(self.completed_processes.keys())
+            .copied()
+            .max()
+            .map(|m| std::cmp::max(m, MIN_PROCESS_ID - 1) + 1)
+            .unwrap_or(MIN_PROCESS_ID)
+    }
+
+    fn prune_completed_processes(&mut self) {
+        while self.completed_processes.len() > self.max_completed_processes {
+            let Some(process_id) = self
+                .completed_processes
+                .iter()
+                .min_by_key(|(_, entry)| entry.completed_at)
+                .map(|(process_id, _)| *process_id)
+            else {
+                return;
+            };
+            self.completed_processes.remove(&process_id);
+        }
+    }
+}
+
+impl Default for CommandProcessIdAllocator {
+    fn default() -> Self {
+        Self {
+            reserved_process_ids: HashSet::new(),
+            completed_processes: HashMap::new(),
+            max_completed_processes: DEFAULT_MAX_COMPLETED_COMMAND_PROCESSES,
+        }
+    }
+}
+
+fn random_process_id() -> i32 {
+    rng().random_range(MIN_PROCESS_ID..MIN_PROCESS_ID + PROCESS_ID_SPAN)
 }
 
 #[cfg(test)]

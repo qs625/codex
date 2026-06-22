@@ -61,7 +61,6 @@ use codex_protocol::protocol::ExecCommandSource;
 use codex_tool_planning::ToolName;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::approx_token_count;
-use uuid::Uuid;
 
 const UNIFIED_EXEC_ENV: [(&str, &str); 10] = [
     ("NO_COLOR", "1"),
@@ -348,7 +347,7 @@ impl UnifiedExecProcessManager {
         let pending = {
             let mut store = self.process_store.lock().await;
             let Some(entry) = store.processes.get_mut(&process_id) else {
-                if let Some(entry) = store.completed_processes.get(&process_id) {
+                if let Some(entry) = store.process_ids.completed_process(process_id) {
                     return Ok(CommandWaitBegin {
                         process_id,
                         wait_timeout: Duration::ZERO,
@@ -409,32 +408,10 @@ impl UnifiedExecProcessManager {
     }
 
     pub(crate) async fn allocate_process_id(&self) -> i32 {
-        loop {
-            let mut store = self.process_store.lock().await;
-
-            let process_id = if should_use_deterministic_process_ids() {
-                // test or deterministic mode
-                store
-                    .reserved_process_ids
-                    .iter()
-                    .chain(store.completed_processes.keys())
-                    .copied()
-                    .max()
-                    .map(|m| std::cmp::max(m, 999) + 1)
-                    .unwrap_or(1000)
-            } else {
-                random_process_id()
-            };
-
-            if store.reserved_process_ids.contains(&process_id)
-                || store.completed_processes.contains_key(&process_id)
-            {
-                continue;
-            }
-
-            store.reserved_process_ids.insert(process_id);
-            return process_id;
-        }
+        let mut store = self.process_store.lock().await;
+        store
+            .process_ids
+            .reserve_next(should_use_deterministic_process_ids())
     }
 
     pub(crate) async fn release_process_id(&self, process_id: i32) {
@@ -1220,7 +1197,7 @@ impl UnifiedExecProcessManager {
                 .drain()
                 .map(|(_, entry)| entry)
                 .collect();
-            processes.reserved_process_ids.clear();
+            processes.process_ids.clear_reservations();
             entries
         };
 
@@ -1229,13 +1206,6 @@ impl UnifiedExecProcessManager {
             entry.process.terminate();
         }
     }
-}
-
-fn random_process_id() -> i32 {
-    const MIN_PROCESS_ID: u128 = 1_000;
-    const PROCESS_ID_SPAN: u128 = 99_000;
-
-    (MIN_PROCESS_ID + (Uuid::new_v4().as_u128() % PROCESS_ID_SPAN)) as i32
 }
 
 enum ProcessStatus {

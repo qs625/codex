@@ -29,6 +29,7 @@
     - Step 6A 已提交：`47db37b refactor config runtime out of core`。
     - Step 6B 首个切片已把 command output handles 和 output deadline collector 下沉到 `codex-command-runtime`；core unified_exec 只保留调用和 session pause state 接入。
     - Step 6B 首个切片已提交：`3d7cda6 refactor command output waiting into runtime`。
+    - Step 6B 第二个切片已把 process id reservation、completed process id history 和 completed-history pruning policy 下沉到 `codex-command-runtime`；core `ProcessStore` 继续只持有 actual process/session/network approval entries。
   latest_validation:
     - `rtk cargo test -p codex-config`：通过，393 个测试通过。
     - `rtk cargo check -p codex-core --lib`：通过；仍有既有 unused/dead_code warnings。
@@ -47,9 +48,16 @@
       - `rtk cargo tree -p codex-command-runtime --depth 2 --edges normal`：direct graph 仅为 decoding、rand、tokio/tokio-util。
       - `rtk cargo tree -p codex-command-runtime --invert <heavy> --edges normal --depth 6`：`codex-core`、app-server protocol、code-mode implementation、network proxy backend、execpolicy implementation、exec-server、state/sqlx、codex-api 均不在 graph。
       - `rtk git diff --check`、touched Rust unsafe scan、`rtk just bazel-lock-check`：通过。
+    - Step 6B process id allocator 切片：
+      - `rtk cargo test -p codex-command-runtime`：通过，27 个测试通过。
+      - `rtk cargo check -p codex-core --lib`：通过；仍有既有 unused/dead_code warnings。
+      - `rtk cargo build -p codex-app-server --bin codex-app-server`：通过；仍有既有 warnings。
+      - `rtk cargo tree -p codex-command-runtime --depth 2 --edges normal`：direct graph 仍仅为 decoding、rand、tokio/tokio-util。
+      - `rtk cargo tree -p codex-command-runtime --invert <heavy> --edges normal --depth 6`：`codex-core`、app-server protocol、code-mode implementation、network proxy backend、execpolicy implementation、exec-server、state/sqlx、codex-api 均不在 graph。
+      - `rtk git diff --check`、touched Rust unsafe scan、`rtk just bazel-lock-check`：通过。
   remaining_validation:
-    - 继续盘点 process id allocation / pruning / completed-process bookkeeping 是否能作为下一块 command-runtime primitive 下沉。
-  next_action: 推进 Step 6B 第二块：先设计 process id allocation 和 process store pruning 的 owner 边界，避免把 session/network approval/process handle 间接拉入 command-runtime。
+    - 提交 Step 6B process id allocator 切片前做最终 diff sanity check。
+  next_action: 提交 Step 6B process id allocator 切片；随后继续盘点 process lifecycle / output task primitive 的可迁移边界。
 
 ## Step Plan
 

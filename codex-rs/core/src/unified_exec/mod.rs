@@ -22,13 +22,13 @@
 //! - `process_manager.rs`: orchestration (approvals, sandboxing, reuse) and request handling.
 
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Weak;
 
 pub(crate) use codex_command_runtime::CommandNotificationFilter;
 pub(crate) use codex_command_runtime::CommandNotificationKind;
 pub(crate) use codex_command_runtime::CommandNotificationState;
+pub(crate) use codex_command_runtime::CommandProcessIdAllocator;
 pub(crate) use codex_command_runtime::CommandWaitOutput;
 pub(crate) use codex_command_runtime::CommandWaitRequest;
 pub(crate) use codex_command_runtime::CommandWaitStatus;
@@ -72,7 +72,6 @@ pub(crate) use process::SpawnLifecycleHandle;
 pub(crate) use process::UnifiedExecProcess;
 
 pub(crate) const MAX_UNIFIED_EXEC_PROCESSES: usize = 64;
-pub(crate) const MAX_COMPLETED_UNIFIED_EXEC_PROCESSES: usize = 256;
 
 pub(crate) struct UnifiedExecContext {
     pub session: Arc<Session>,
@@ -123,39 +122,18 @@ pub(crate) fn command_notification_filter_to_protocol(
 #[derive(Default)]
 pub(crate) struct ProcessStore {
     processes: HashMap<i32, ProcessEntry>,
-    completed_processes: HashMap<i32, CompletedProcessEntry>,
-    reserved_process_ids: HashSet<i32>,
+    process_ids: CommandProcessIdAllocator,
 }
 
 impl ProcessStore {
     fn remove(&mut self, process_id: i32) -> Option<ProcessEntry> {
-        self.reserved_process_ids.remove(&process_id);
+        self.process_ids.release_reservation(process_id);
         let entry = self.processes.remove(&process_id)?;
         if entry.process.has_exited() || entry.process.exit_code().is_some() {
-            self.completed_processes.insert(
-                process_id,
-                CompletedProcessEntry {
-                    exit_code: entry.process.exit_code(),
-                    completed_at: tokio::time::Instant::now(),
-                },
-            );
-            self.prune_completed_processes();
+            self.process_ids
+                .mark_completed(process_id, entry.process.exit_code());
         }
         Some(entry)
-    }
-
-    fn prune_completed_processes(&mut self) {
-        while self.completed_processes.len() > MAX_COMPLETED_UNIFIED_EXEC_PROCESSES {
-            let Some(process_id) = self
-                .completed_processes
-                .iter()
-                .min_by_key(|(_, entry)| entry.completed_at)
-                .map(|(process_id, _)| *process_id)
-            else {
-                return;
-            };
-            self.completed_processes.remove(&process_id);
-        }
     }
 }
 
@@ -227,11 +205,6 @@ struct ProcessEntry {
     transcript: Arc<Mutex<HeadTailBuffer>>,
     notification_state: Arc<CommandNotificationState>,
     command_wait_backoff: WaitBackoffState,
-}
-
-struct CompletedProcessEntry {
-    exit_code: Option<i32>,
-    completed_at: tokio::time::Instant,
 }
 
 #[cfg(test)]

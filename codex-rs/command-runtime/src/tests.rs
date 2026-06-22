@@ -227,3 +227,56 @@ fn generates_six_hex_character_chunk_ids() {
     assert_eq!(id.len(), 6);
     assert!(id.chars().all(|ch| ch.is_ascii_hexdigit()));
 }
+
+#[test]
+fn deterministic_process_ids_start_at_one_thousand_and_advance() {
+    let mut allocator = CommandProcessIdAllocator::default();
+
+    assert_eq!(allocator.reserve_next(/*deterministic*/ true), 1000);
+    assert_eq!(allocator.reserve_next(/*deterministic*/ true), 1001);
+}
+
+#[test]
+fn released_process_id_can_be_reserved_again() {
+    let mut allocator = CommandProcessIdAllocator::default();
+    let first = allocator.reserve_next(/*deterministic*/ true);
+    allocator.release_reservation(first);
+
+    assert_eq!(allocator.reserve_next(/*deterministic*/ true), first);
+}
+
+#[test]
+fn completed_process_id_is_not_reused_until_pruned() {
+    let mut allocator = CommandProcessIdAllocator::new(/*max_completed_processes*/ 1);
+    let first = allocator.reserve_next(/*deterministic*/ true);
+    allocator.release_reservation(first);
+    allocator.mark_completed(first, Some(7));
+
+    assert_eq!(
+        allocator.completed_process(first),
+        Some(&CompletedCommandProcess {
+            exit_code: Some(7),
+            completed_at: allocator
+                .completed_process(first)
+                .expect("completed process should exist")
+                .completed_at,
+        })
+    );
+    assert_eq!(allocator.reserve_next(/*deterministic*/ true), first + 1);
+}
+
+#[test]
+fn completed_process_history_prunes_oldest_entry() {
+    let mut allocator = CommandProcessIdAllocator::new(/*max_completed_processes*/ 1);
+    allocator.mark_completed(1000, Some(0));
+    std::thread::sleep(Duration::from_millis(1));
+    allocator.mark_completed(1001, Some(1));
+
+    assert!(allocator.completed_process(1000).is_none());
+    assert_eq!(
+        allocator
+            .completed_process(1001)
+            .map(|entry| entry.exit_code),
+        Some(Some(1))
+    );
+}
