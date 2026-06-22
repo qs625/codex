@@ -12,7 +12,7 @@
 - owner: root PM direct implementation
 - status: active
 - current_step: 6C
-- current_focus: Step 6C 继续推进 service/domain boundary：command session controller、exec timeout/capture policy DTO 已迁到 `codex-command-runtime`；本地进程 output capture/aggregation、process result interpretation 和 process exec request DTO 已迁到 `codex-process-exec`；MCP runtime、Apps file/skill dependency runtime 已迁到 `codex-mcp-runtime`；agent role catalog/spec、goal hidden-context prompt policy 和 goal runtime state 已迁到 `codex-agent-runtime` / `codex-agent-roles`；exec policy manager/loader trait/update runtime 和 network approval 纯状态机已迁到 `codex-permissions-runtime`；Windows sandbox filesystem override 解析已迁到 `codex-sandboxing-api`；unified-exec 专属 exec-server env policy 已从通用 `sandboxing::ExecRequest` 剥离。core 继续保留 session/tool host adapter、Guardian/hook adapter、goal persistence/event/turn policy、exec spawn/PTY/event emission 和 sandbox execution glue。
+- current_focus: Step 6C 继续推进 service/domain boundary：command session controller、exec timeout/capture policy DTO 已迁到 `codex-command-runtime`；本地进程 output capture/aggregation、process result interpretation 和 process exec request DTO 已迁到 `codex-process-exec`；MCP runtime、Apps file/skill dependency runtime 已迁到 `codex-mcp-runtime`；agent role catalog/spec、goal hidden-context prompt policy、goal runtime state、direct child completion tracker 和 post-turn selector 已迁到 `codex-agent-runtime` / `codex-agent-roles`；exec policy manager/loader trait/update runtime 和 network approval 纯状态机已迁到 `codex-permissions-runtime`；Windows sandbox filesystem override 解析已迁到 `codex-sandboxing-api`；unified-exec 专属 exec-server env policy 已从通用 `sandboxing::ExecRequest` 剥离。core 继续保留 session/tool host adapter、Guardian/hook adapter、goal persistence/event/turn policy、exec spawn/PTY/event emission 和 sandbox execution glue。
 
 ## Current State
 
@@ -38,9 +38,10 @@
 - Step 6C 第十三个切片把 goal continuation / budget limit / objective-updated 的 hidden `<goal_context>` prompt policy 和模板迁到 `codex-agent-runtime::goal_context`；core `goals.rs` 只负责读取 goal state、调度 continuation turn、注入 pending input 和发 typed events。core 旧 `context::GoalContext` wrapper 已删除，相关 prompt 单测迁到 `codex-agent-runtime`，core 仅保留 display/parser 边界和 session 行为测试。
 - Step 6C 第十四个切片把 process exec public request DTO `ExecParams` 迁到 `codex-process-exec`，`codex-core::exec::ExecParams` 仅作为兼容 re-export；app-server command-exec request processor 已直接依赖 `codex_process_exec::ExecParams` 和 protocol-owned `SandboxPermissions`，不再为了 DTO 构造走 core exec/sandboxing facade。真实 sandbox transform、env 注入、spawn 和 EventMsg emission 仍留 core，避免触碰 sandbox env var 约束或把执行编排迁入 lightweight owner crate。
 - Step 6C 第十五个切片把 goal continuation/accounting 的 mutable runtime state 迁到 `codex-agent-runtime::GoalRuntimeState`：state DB cache、budget-limit reported goal id、accounting semaphore/snapshot 和 continuation turn reservation 由 agent runtime owner 持有；core `goals.rs` 继续保留 goal persistence 查询、metrics accounting policy、typed event emission、pending input 注入和 turn lifecycle 编排，避免把 Session/TurnContext 或 concrete state runtime 迁入 lightweight owner crate。
+- Step 6C 第十六个切片把 direct child completion tracker 和 post-turn selector 迁到 `codex-agent-runtime`：parent-visible completion 的 active gate、pending direct child completion counts、typed completion consumed 后才减少 pending 的时序，以及 pending input -> active goal -> wait child -> wait command -> complete 的 selector 顺序由 agent runtime owner 表达；core `Session` 只收集 active turn/mailbox/goal/direct child/command 事实并执行 parent delivery。
 - `UnifiedExecProcess` / `process_manager` 剩余逻辑仍绑定 exec-server protocol、PTY、sandbox denial detection、core error type、Session/TurnContext、ToolEmitter、ToolOrchestrator 和 network approval；继续迁移前需要 Step 6C 的 trait/service 边界，避免只做小 helper 或把 heavy runtime 间接拉回。
 - Step 6 前基线：`codex-rs/core/src` 约 293 个 Rust 文件、134123 行；`codex-app-server` 冷编译 timing 中 `codex-core` 单 unit 约 197.7s。
-- 当前 `codex-rs/core/src` 约 270 个 Rust 文件、108066 行；`core/src/exec.rs` 已从 1517 行降到约 619 行，`core/src/goals.rs` 已降到约 1321 行，Windows sandbox override 单测迁到 `codex-sandboxing-api`，exec timeout/capture DTO 单测迁到 `codex-command-runtime`，本地 process output capture、sandbox-denial/result interpretation 和 process exec request DTO 迁到 `codex-process-exec`，goal hidden-context prompt 单测和 runtime state 迁到 `codex-agent-runtime`，unified-exec exec-server env policy 不再污染通用 `ExecRequest`；`core/src/unified_exec` 剩余最大文件为 `process_manager.rs`、`process.rs`、`async_watcher.rs`。
+- 当前 `codex-rs/core/src` 约 270 个 Rust 文件、108036 行；`core/src/exec.rs` 已从 1517 行降到约 619 行，`core/src/goals.rs` 约 1329 行，`core/src/session/mod.rs` 已降到约 4014 行，Windows sandbox override 单测迁到 `codex-sandboxing-api`，exec timeout/capture DTO 单测迁到 `codex-command-runtime`，本地 process output capture、sandbox-denial/result interpretation 和 process exec request DTO 迁到 `codex-process-exec`，goal hidden-context prompt 单测、goal runtime state、direct child completion tracker 和 post-turn selector 迁到 `codex-agent-runtime`，unified-exec exec-server env policy 不再污染通用 `ExecRequest`；`core/src/unified_exec` 剩余最大文件为 `process_manager.rs`、`process.rs`、`async_watcher.rs`。
 
 ## Last Validation
 
@@ -146,10 +147,20 @@
 - `rtk cargo build -p codex-app-server --bin codex-app-server`：通过，覆盖 app-server 组合根接入新的 agent runtime dependency graph。
 - `rtk just bazel-lock-check`：通过，仅既有 rules_rs well-known crate annotation warnings。
 - `rtk git diff --check`：通过；touched Rust 文件 `rtk rg -n "unsafe"` 无命中，本切片没有新增 unsafe。
+- `rtk cargo test -p codex-agent-runtime -- --nocapture`：通过 28 条，新增覆盖 post-turn selector 优先级，确认 `ChildCompletionState` 编译通过。
+- `rtk cargo check -p codex-core --lib`：通过，仅既有 warnings，覆盖 core `Session` 改用 `ChildCompletionState` 和 post-turn selector 接线。
+- `rtk cargo test -p codex-core --lib turn_start_consumes_child_completion_before_parent_visible_complete -- --nocapture`：通过，覆盖 parent 消费 typed child completion 后才 parent-visible complete 的时序。
+- `rtk cargo test -p codex-core --lib goal_post_turn_state_continues_despite_live_direct_child -- --nocapture`：通过，覆盖 active goal continuation 优先于 live direct child。
+- `rtk cargo test -p codex-core --lib post_turn_state_waits_for_live_direct_child_without_active_goal -- --nocapture`：通过，覆盖无 active goal 时进入 WaitChild。
+- `rtk cargo test -p codex-core --lib post_turn_state_waits_for_active_event_subscription_without_active_goal -- --nocapture`：通过，覆盖无 active goal/child 时进入 WaitCommand。
+- `rtk cargo test -p codex-core --lib multi_agent_v2_completion_waits_for_pending_mailbox_input -- --nocapture`：通过，覆盖 child completion delivery 等待 pending mailbox input。
+- `codex-agent-runtime` child completion/post-turn selector 迁移后 normal graph 精确 grep 门禁和 `cargo tree --workspace --edges normal --invert <heavy>` 反向门禁：core、app-server protocol、code-mode、concrete network-proxy、exec-server、state/sqlx、codex-api、concrete `codex-openai-files`、concrete `codex-core-skills` 均 PASS；本切片未新增 Cargo dependency。
+- `rtk cargo build -p codex-app-server --bin codex-app-server`：通过，仅既有 warnings。
+- `rtk git diff --check`：通过；touched Rust 文件 `rtk rg -n "unsafe"` 无命中，本切片没有新增 unsafe。
 
 ## Next Action
 
-继续 Step 6C：在 process capture、process result interpretation、process exec request DTO、goal prompt policy、goal runtime state 和 unified-exec env policy 已拆出/收口后，继续评估 `ExecRequest` / Windows sandbox execution glue、unified-exec process manager service 边界或 workflow/thread-store runtime 边界；真实 sandbox selection、EventMsg emission 和 Session/TurnContext 编排暂留 core，避免把 heavy runtime 通过 indirect graph 拉回。
+继续 Step 6C：在 process capture、process result interpretation、process exec request DTO、goal prompt policy、goal runtime state、direct child completion tracker/post-turn selector 和 unified-exec env policy 已拆出/收口后，继续评估 `ExecRequest` / Windows sandbox execution glue、unified-exec process manager service 边界、tool orchestrator host trait 或 workflow/thread-store runtime 边界；真实 sandbox selection、EventMsg emission 和 Session/TurnContext 编排暂留 core，避免把 heavy runtime 通过 indirect graph 拉回。
 
 ## Step Plan
 

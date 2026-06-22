@@ -1,6 +1,7 @@
 use super::*;
 use crate::config::ConstraintError;
 use crate::workflow_runs::WorkflowRunController;
+use codex_agent_runtime::ChildCompletionState;
 use codex_agent_runtime::GoalRuntimeState;
 use codex_api_runtime_api::SharedApiRuntimeFactory;
 use codex_auth_types::AuthRuntime;
@@ -54,8 +55,7 @@ pub(crate) struct Session {
     pub(crate) workflow_runs: Arc<dyn WorkflowRunController>,
     pub(crate) services: SessionServices,
     pub(super) next_internal_sub_id: AtomicU64,
-    pub(super) parent_child_completion_active: AtomicBool,
-    pub(super) pending_direct_child_completions: Mutex<std::collections::HashMap<ThreadId, usize>>,
+    pub(super) child_completion: ChildCompletionState,
     pub(super) wait_agent_backoff:
         Mutex<std::collections::HashMap<(ThreadId, ThreadId), WaitBackoffState>>,
 }
@@ -1125,8 +1125,7 @@ impl Session {
                 workflow_runs,
                 services,
                 next_internal_sub_id: AtomicU64::new(0),
-                parent_child_completion_active: AtomicBool::new(true),
-                pending_direct_child_completions: Mutex::new(std::collections::HashMap::new()),
+                child_completion: ChildCompletionState::new(),
                 wait_agent_backoff: Mutex::new(std::collections::HashMap::new()),
             });
             if let Some(network_policy_decider_session) = network_policy_decider_session {

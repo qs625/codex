@@ -1,3 +1,4 @@
+mod child_completion_state;
 mod fork_history;
 mod goal_context;
 mod goal_runtime_state;
@@ -5,6 +6,7 @@ mod registry;
 mod status;
 mod thread_post_turn;
 
+pub use child_completion_state::ChildCompletionState;
 pub use fork_history::SpawnAgentForkMode;
 pub use fork_history::select_forked_rollout_items;
 pub use goal_context::goal_budget_limit_steering_item;
@@ -21,4 +23,6 @@ pub use registry::next_thread_spawn_depth;
 pub use status::agent_status_from_event;
 pub use status::is_final;
 pub use thread_post_turn::ThreadIdleReason;
+pub use thread_post_turn::ThreadPostTurnInputs;
 pub use thread_post_turn::ThreadPostTurnState;
+pub use thread_post_turn::select_thread_post_turn_state;

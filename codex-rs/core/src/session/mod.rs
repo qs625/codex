@@ -4,9 +4,7 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
@@ -1830,17 +1828,12 @@ impl Session {
             ThreadPostTurnState::ThreadActive
             | ThreadPostTurnState::ThreadIdle(_)
             | ThreadPostTurnState::GoContextContinuation { .. } => {
-                self.parent_child_completion_active
-                    .store(true, Ordering::SeqCst);
+                self.child_completion.mark_delivery_active();
                 return;
             }
         }
 
-        if self
-            .parent_child_completion_active
-            .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
+        if !self.child_completion.try_begin_delivery() {
             return;
         }
 
@@ -1852,8 +1845,7 @@ impl Session {
         ))
         .await
         {
-            self.parent_child_completion_active
-                .store(true, Ordering::SeqCst);
+            self.child_completion.mark_delivery_active();
         }
     }
 
@@ -1974,48 +1966,29 @@ impl Session {
     }
 
     pub(crate) async fn mark_direct_child_completion_pending(&self, child_thread_id: ThreadId) {
-        let mut pending = self.pending_direct_child_completions.lock().await;
-        *pending.entry(child_thread_id).or_default() += 1;
+        self.child_completion.mark_pending(child_thread_id).await;
     }
 
     pub(crate) async fn mark_direct_child_completion_received(
         &self,
         child_thread_id: ThreadId,
     ) -> bool {
-        let mut pending = self.pending_direct_child_completions.lock().await;
-        let Some(count) = pending.get_mut(&child_thread_id) else {
-            return false;
-        };
-        if *count > 1 {
-            *count -= 1;
-        } else {
-            pending.remove(&child_thread_id);
-        }
-        pending.is_empty()
+        self.child_completion.mark_received(child_thread_id).await
     }
 
     pub(crate) async fn clear_direct_child_completion_pending(
         &self,
         child_thread_id: ThreadId,
     ) -> bool {
-        let mut pending = self.pending_direct_child_completions.lock().await;
-        let Some(_) = pending.remove(&child_thread_id) else {
-            return false;
-        };
-        pending.is_empty()
+        self.child_completion.clear_pending(child_thread_id).await
     }
 
     pub(crate) fn mark_child_completion_active(&self) {
-        self.parent_child_completion_active
-            .store(true, Ordering::SeqCst);
+        self.child_completion.mark_delivery_active();
     }
 
     pub(crate) async fn has_pending_direct_child_completions(&self) -> bool {
-        !self
-            .pending_direct_child_completions
-            .lock()
-            .await
-            .is_empty()
+        self.child_completion.has_pending().await
     }
 
     pub(crate) async fn mark_direct_child_completions_received_from_pending_input<'a>(
@@ -2039,17 +2012,9 @@ impl Session {
         if child_thread_ids.is_empty() {
             return;
         }
-        let mut pending = self.pending_direct_child_completions.lock().await;
-        for child_thread_id in child_thread_ids {
-            let Some(count) = pending.get_mut(&child_thread_id) else {
-                continue;
-            };
-            if *count > 1 {
-                *count -= 1;
-            } else {
-                pending.remove(&child_thread_id);
-            }
-        }
+        self.child_completion
+            .mark_received_many(child_thread_ids)
+            .await;
     }
 
     async fn maybe_mirror_event_text_to_realtime(&self, msg: &EventMsg) {

@@ -14,11 +14,12 @@ use crate::tasks::RegularTask;
 use anyhow::Context;
 use chrono::DateTime;
 use chrono::Utc;
-use codex_agent_runtime::ThreadIdleReason;
+use codex_agent_runtime::ThreadPostTurnInputs;
 use codex_agent_runtime::ThreadPostTurnState;
 use codex_agent_runtime::goal_budget_limit_steering_item;
 use codex_agent_runtime::goal_continuation_input_item;
 use codex_agent_runtime::goal_objective_updated_steering_item;
+use codex_agent_runtime::select_thread_post_turn_state;
 use codex_agent_runtime::should_ignore_goal_for_mode;
 use codex_features::Feature;
 use codex_metrics_api::GOAL_BUDGET_LIMITED_METRIC;
@@ -1171,7 +1172,10 @@ impl Session {
 
     pub(crate) async fn thread_post_turn_state(&self) -> ThreadPostTurnState {
         if self.active_turn.lock().await.is_some() || self.has_pending_turn_input().await {
-            return ThreadPostTurnState::ThreadActive;
+            return select_thread_post_turn_state(ThreadPostTurnInputs {
+                has_pending_turn_input: true,
+                ..ThreadPostTurnInputs::default()
+            });
         }
         if !self.enabled(Feature::Goals) {
             return self.thread_idle_or_completion().await;
@@ -1198,9 +1202,10 @@ impl Session {
         };
         match goal.status {
             codex_state_api::ThreadGoalStatus::Active => {
-                ThreadPostTurnState::GoContextContinuation {
-                    goal_id: goal.goal_id,
-                }
+                select_thread_post_turn_state(ThreadPostTurnInputs {
+                    active_goal_id: Some(goal.goal_id),
+                    ..ThreadPostTurnInputs::default()
+                })
             }
             codex_state_api::ThreadGoalStatus::Complete
             | codex_state_api::ThreadGoalStatus::Paused
@@ -1212,12 +1217,15 @@ impl Session {
 
     async fn thread_idle_or_completion(&self) -> ThreadPostTurnState {
         if Box::pin(self.has_incomplete_direct_child()).await {
-            return ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitChild);
+            return select_thread_post_turn_state(ThreadPostTurnInputs {
+                has_incomplete_direct_child: true,
+                ..ThreadPostTurnInputs::default()
+            });
         }
-        if Box::pin(self.has_wait_command()).await {
-            return ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitCommand);
-        }
-        ThreadPostTurnState::ThreadCompletion
+        select_thread_post_turn_state(ThreadPostTurnInputs {
+            has_wait_command: Box::pin(self.has_wait_command()).await,
+            ..ThreadPostTurnInputs::default()
+        })
     }
 }
 

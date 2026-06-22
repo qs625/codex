@@ -4713,8 +4713,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         workflow_runs: Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
         services,
         next_internal_sub_id: AtomicU64::new(0),
-        parent_child_completion_active: std::sync::atomic::AtomicBool::new(true),
-        pending_direct_child_completions: Mutex::new(std::collections::HashMap::new()),
+        child_completion: codex_agent_runtime::ChildCompletionState::new(),
         wait_agent_backoff: Mutex::new(std::collections::HashMap::new()),
     };
 
@@ -6655,8 +6654,7 @@ where
         workflow_runs: Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
         services,
         next_internal_sub_id: AtomicU64::new(0),
-        parent_child_completion_active: std::sync::atomic::AtomicBool::new(true),
-        pending_direct_child_completions: Mutex::new(std::collections::HashMap::new()),
+        child_completion: codex_agent_runtime::ChildCompletionState::new(),
         wait_agent_backoff: Mutex::new(std::collections::HashMap::new()),
     });
 
