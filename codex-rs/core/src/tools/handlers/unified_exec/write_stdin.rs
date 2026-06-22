@@ -5,7 +5,7 @@ use crate::tools::context::ToolPayload;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
-use crate::unified_exec::WriteStdinRequest;
+use codex_command_runtime::WriteStdinRequest;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
@@ -76,7 +76,7 @@ impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
             }
             let response = session
                 .services
-                .unified_exec_manager
+                .command_session_controller
                 .write_command_stdin(WriteStdinRequest {
                     process_id: args.command_id,
                     input: &chars,

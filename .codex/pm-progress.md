@@ -12,7 +12,7 @@
 - owner: root PM direct implementation
 - status: active
 - current_step: 6C
-- current_focus: Step 6B 的 command runtime primitive 抽取已完成；剩余 `unified_exec` lifecycle 继续拆需要先建立 exec-server/sandbox/core-error trait 边界。下一步进入 Step 6C，设计 session/tool runtime service registry 和 constructor injection 边界。
+- current_focus: Step 6C 首个 service boundary 已开始：`command_wait` / `command_write_stdin` 通过 `codex-command-runtime::CommandSessionController` trait 调用，tool handler 不再直接依赖 `UnifiedExecProcessManager` concrete。
 
 ## Current State
 
@@ -23,6 +23,7 @@
   `81570cb refactor command process ids into runtime` 将 process id reservation、completed process id history 和 pruning policy 下沉到 `codex-command-runtime`。
 - Step 6B 第三个切片已把 command output buffer、output runtime hub、local broadcast pump、UTF-8 output delta splitter 和 transcript aggregation helper 集中到 `codex-command-runtime::output`；core `UnifiedExecProcess` 只持有 `CommandOutputRuntime` 并负责 PTY/exec-server wiring 与 EventMsg emission。
 - 已补上 Step 6A 迁移后的 config test-support 边界：`codex-config/test-support` 公开测试构造 helper，`codex-core` dev build 启用该 feature，恢复 core 单测对 migrated config API 的访问。
+- Step 6C 首个切片已在 `codex-command-runtime` 增加 `CommandSessionController` / `CommandWaitOperation` trait；core 用 `UnifiedExecCommandSessionController` adapter 连接现有 `UnifiedExecProcessManager`，并在 `SessionServices` 中 constructor-inject 该 trait service。`command_wait` 和 `command_write_stdin` handler 现在只消费 command-runtime DTO/trait。
 - `UnifiedExecProcess` / `process_manager` 剩余逻辑仍绑定 exec-server protocol、PTY、sandbox denial detection、core error type、Session/TurnContext、ToolEmitter、ToolOrchestrator 和 network approval；继续迁移前需要 Step 6C 的 trait/service 边界，避免只做小 helper 或把 heavy runtime 间接拉回。
 - Step 6 前基线：`codex-rs/core/src` 约 293 个 Rust 文件、134123 行；`codex-app-server` 冷编译 timing 中 `codex-core` 单 unit 约 197.7s。
 - 当前 `codex-rs/core/src` 约 112207 行；`core/src/unified_exec` 剩余最大文件为 `process_manager.rs` 1226 行、`process.rs` 424 行、`async_watcher.rs` 347 行。
@@ -31,6 +32,7 @@
 
 - `rtk cargo test -p codex-config`：通过。
 - `rtk cargo test -p codex-command-runtime`：通过。
+- `rtk cargo test -p codex-core command_wait -- --nocapture`：通过。
 - `rtk cargo test -p codex-core unified_exec::async_watcher -- --nocapture`：通过。
 - `rtk cargo check -p codex-core --lib`：通过，仅既有 warnings。
 - `rtk cargo build -p codex-app-server --bin codex-app-server`：通过，仅既有 warnings。
@@ -39,10 +41,11 @@
 - workspace 反查 heavy crate 后检查 `codex-command-runtime` 是否出现在反向树：core、app-server protocol、code-mode、exec-server、state/sqlx 等均 PASS。
 - `rtk just bazel-lock-check`：通过，仅既有 rules_rs well-known crate annotation warnings。
 - `rtk git diff --check`、touched Rust `unsafe` scan：通过。
+- 用户要求后已执行 `rtk cargo clean`，当前 `codex-rs/target` 已移除；后续 broad Rust 验证会重新冷编译。
 
 ## Next Action
 
-进入 Step 6C：先盘点 session、tool runtime、MCP runtime、workflow manager、thread-store/rollout 的组合根和 concrete implementation 依赖，确定 trait/API crate 与 service registry 的最小稳定边界。
+继续 Step 6C：按同样模式继续拆 session/tool runtime concrete service，优先选择已存在 API crate 或轻量 owner crate 能承载的 trait service；避免把 exec-server、sandbox、state/sqlx、app-server protocol 等 heavy runtime 通过 indirect graph 拉回。
 
 ## Step Plan
 

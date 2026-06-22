@@ -994,6 +994,10 @@ impl Session {
             let unified_exec_manager = Arc::new(UnifiedExecProcessManager::new(
                 config.background_terminal_max_timeout,
             ));
+            let command_session_controller =
+                Arc::new(crate::unified_exec::UnifiedExecCommandSessionController::new(
+                    Arc::clone(&unified_exec_manager),
+                ));
             let session_extension_data =
                 codex_extension_api::ExtensionData::new(session_id.to_string());
             session_extension_data.insert(crate::unified_exec::UnifiedExecManagerHandle::new(
@@ -1025,6 +1029,7 @@ impl Session {
                 network_proxy_runtime_factory,
                 mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
                 unified_exec_manager,
+                command_session_controller,
                 shell_zsh_path: config.zsh_path.clone(),
                 main_execve_wrapper_exe: config.main_execve_wrapper_exe.clone(),
                 analytics_events_client,

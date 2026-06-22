@@ -12,6 +12,7 @@ use tokio::time::Instant;
 
 mod output;
 pub mod output_decoding;
+mod session_controller;
 pub use output::CommandOutputBuffer;
 pub use output::CommandOutputHandles;
 pub use output::CommandOutputRuntime;
@@ -22,6 +23,10 @@ pub use output::resolve_aggregated_output;
 pub use output::split_valid_utf8_prefix;
 pub use output::split_valid_utf8_prefix_with_max;
 pub use output_decoding::bytes_to_string_smart;
+pub use session_controller::CommandSessionController;
+pub use session_controller::CommandSessionError;
+pub use session_controller::CommandSessionFuture;
+pub use session_controller::CommandWaitOperation;
 
 pub const MIN_YIELD_TIME_MS: u64 = 250;
 pub const MAX_YIELD_TIME_MS: u64 = 30_000;

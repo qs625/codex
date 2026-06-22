@@ -21,6 +21,7 @@ use codex_api_runtime_api::SharedApiRuntimeFactory;
 use codex_auth_types::SharedAuthRuntime;
 use codex_code_mode_api::CodeModeRuntimeFactory;
 use codex_code_mode_api::CodeModeRuntimeService;
+use codex_command_runtime::CommandSessionController;
 use codex_core_plugins_api::SharedPluginRuntime;
 use codex_core_skills_api::SharedSkillsRuntime;
 use codex_exec_server_api::ExecEnvironmentProvider;
@@ -56,6 +57,7 @@ pub(crate) struct SessionServices {
     pub(crate) sandbox_runtime: SharedSandboxRuntime,
     pub(crate) mcp_startup_cancellation_token: Mutex<CancellationToken>,
     pub(crate) unified_exec_manager: Arc<UnifiedExecProcessManager>,
+    pub(crate) command_session_controller: Arc<dyn CommandSessionController>,
     #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) shell_zsh_path: Option<PathBuf>,
     #[cfg_attr(not(unix), allow(dead_code))]

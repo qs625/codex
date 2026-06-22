@@ -52,6 +52,10 @@ use crate::unified_exec::generate_chunk_id;
 use crate::unified_exec::process::SpawnLifecycleHandle;
 use crate::unified_exec::process::UnifiedExecProcess;
 use codex_command_runtime::CommandNotificationSnapshot;
+use codex_command_runtime::CommandSessionController;
+use codex_command_runtime::CommandSessionError;
+use codex_command_runtime::CommandSessionFuture;
+use codex_command_runtime::CommandWaitOperation;
 use codex_command_runtime::collect_output_until_deadline;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
@@ -104,6 +108,78 @@ enum CommandWaitBeginState {
         notification_state: Arc<CommandNotificationState>,
         snapshot: CommandNotificationSnapshot,
     },
+}
+
+#[derive(Clone)]
+pub(crate) struct UnifiedExecCommandSessionController {
+    manager: Arc<UnifiedExecProcessManager>,
+}
+
+impl UnifiedExecCommandSessionController {
+    pub(crate) fn new(manager: Arc<UnifiedExecProcessManager>) -> Self {
+        Self { manager }
+    }
+}
+
+struct UnifiedExecCommandWaitOperation {
+    manager: Arc<UnifiedExecProcessManager>,
+    wait: CommandWaitBegin,
+}
+
+impl CommandWaitOperation for UnifiedExecCommandWaitOperation {
+    fn process_id(&self) -> i32 {
+        self.wait.process_id
+    }
+
+    fn wait_timeout(&self) -> Duration {
+        self.wait.wait_timeout
+    }
+
+    fn finish(
+        self: Box<Self>,
+    ) -> CommandSessionFuture<'static, Result<CommandWaitOutput, CommandSessionError>> {
+        Box::pin(async move {
+            self.manager
+                .finish_command_wait(self.wait)
+                .await
+                .map_err(command_session_error_from_unified_exec)
+        })
+    }
+}
+
+impl CommandSessionController for UnifiedExecCommandSessionController {
+    fn begin_command_wait<'a>(
+        &'a self,
+        request: CommandWaitRequest,
+    ) -> CommandSessionFuture<'a, Result<Box<dyn CommandWaitOperation>, CommandSessionError>> {
+        Box::pin(async move {
+            let wait = self
+                .manager
+                .begin_command_wait(request)
+                .await
+                .map_err(command_session_error_from_unified_exec)?;
+            Ok(Box::new(UnifiedExecCommandWaitOperation {
+                manager: Arc::clone(&self.manager),
+                wait,
+            }) as Box<dyn CommandWaitOperation>)
+        })
+    }
+
+    fn write_command_stdin<'a>(
+        &'a self,
+        request: WriteStdinRequest<'a>,
+    ) -> CommandSessionFuture<'a, Result<WriteStdinOutput, CommandSessionError>> {
+        Box::pin(async move {
+            self.manager
+                .write_command_stdin(request)
+                .await
+                .map_err(command_session_error_from_unified_exec)
+        })
+    }
+}
+
+fn command_session_error_from_unified_exec(err: UnifiedExecError) -> CommandSessionError {
+    CommandSessionError::new(err.to_string())
 }
 
 fn deterministic_process_ids_forced_for_tests() -> bool {

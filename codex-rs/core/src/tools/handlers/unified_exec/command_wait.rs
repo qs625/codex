@@ -5,9 +5,9 @@ use crate::tools::context::ToolPayload;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
-use crate::unified_exec::CommandNotificationKind;
-use crate::unified_exec::CommandWaitRequest;
-use crate::unified_exec::CommandWaitStatus;
+use codex_command_runtime::CommandNotificationKind;
+use codex_command_runtime::CommandWaitRequest;
+use codex_command_runtime::CommandWaitStatus;
 use codex_protocol::models::CommandWaitNotificationKind as ResponseCommandWaitNotificationKind;
 use codex_protocol::models::CommandWaitStatus as ResponseCommandWaitStatus;
 use codex_protocol::models::FunctionCallOutputContentItem;
@@ -69,7 +69,7 @@ impl ToolExecutor<ToolInvocation> for CommandWaitHandler {
             let created_at_ms = now_unix_timestamp_ms();
             let command_wait = session
                 .services
-                .unified_exec_manager
+                .command_session_controller
                 .begin_command_wait(CommandWaitRequest {
                     process_id: args.command_id,
                 })
@@ -77,10 +77,10 @@ impl ToolExecutor<ToolInvocation> for CommandWaitHandler {
                 .map_err(|err| {
                     FunctionCallError::RespondToModel(format!("command_wait failed: {err}"))
                 })?;
-            let wait_timeout = command_wait.wait_timeout;
+            let wait_timeout = command_wait.wait_timeout();
             let started_item = command_wait_item(CommandWaitItemInput {
                 id: item_id.clone(),
-                command_id: command_wait.process_id,
+                command_id: command_wait.process_id(),
                 status: CommandWaitStatus::Running,
                 notification: None,
                 exit_code: None,
@@ -92,14 +92,9 @@ impl ToolExecutor<ToolInvocation> for CommandWaitHandler {
                 .emit_model_item_started_display_event(turn.as_ref(), &started_item)
                 .await;
 
-            let output = session
-                .services
-                .unified_exec_manager
-                .finish_command_wait(command_wait)
-                .await
-                .map_err(|err| {
-                    FunctionCallError::RespondToModel(format!("command_wait failed: {err}"))
-                })?;
+            let output = command_wait.finish().await.map_err(|err| {
+                FunctionCallError::RespondToModel(format!("command_wait failed: {err}"))
+            })?;
 
             let response_item = command_wait_item(CommandWaitItemInput {
                 id: item_id,

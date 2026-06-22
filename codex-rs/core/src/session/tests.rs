@@ -4550,6 +4550,14 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         codex_exec_server::Environment::create_for_tests(/*exec_server_url*/ None)
             .expect("create environment"),
     );
+    let unified_exec_manager = Arc::new(UnifiedExecProcessManager::new(
+        config.background_terminal_max_timeout,
+    ));
+    let command_session_controller = Arc::new(
+        crate::unified_exec::UnifiedExecCommandSessionController::new(Arc::clone(
+            &unified_exec_manager,
+        )),
+    );
 
     let services = SessionServices {
         mcp_connection_manager: Arc::new(RwLock::new(Box::new(
@@ -4564,9 +4572,8 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             codex_network_proxy::DefaultNetworkProxyRuntimeFactory,
         ),
         mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
-        unified_exec_manager: Arc::new(UnifiedExecProcessManager::new(
-            config.background_terminal_max_timeout,
-        )),
+        unified_exec_manager,
+        command_session_controller,
         shell_zsh_path: None,
         main_execve_wrapper_exe: config.main_execve_wrapper_exe.clone(),
         analytics_events_client: AnalyticsEventsClient::disabled(),
@@ -6485,6 +6492,14 @@ where
         codex_exec_server::Environment::create_for_tests(/*exec_server_url*/ None)
             .expect("create environment"),
     );
+    let unified_exec_manager = Arc::new(UnifiedExecProcessManager::new(
+        config.background_terminal_max_timeout,
+    ));
+    let command_session_controller = Arc::new(
+        crate::unified_exec::UnifiedExecCommandSessionController::new(Arc::clone(
+            &unified_exec_manager,
+        )),
+    );
 
     let services = SessionServices {
         mcp_connection_manager: Arc::new(RwLock::new(Box::new(
@@ -6499,9 +6514,8 @@ where
             codex_network_proxy::DefaultNetworkProxyRuntimeFactory,
         ),
         mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
-        unified_exec_manager: Arc::new(UnifiedExecProcessManager::new(
-            config.background_terminal_max_timeout,
-        )),
+        unified_exec_manager,
+        command_session_controller,
         shell_zsh_path: None,
         main_execve_wrapper_exe: config.main_execve_wrapper_exe.clone(),
         analytics_events_client: AnalyticsEventsClient::disabled(),
