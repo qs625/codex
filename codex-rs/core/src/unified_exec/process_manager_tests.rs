@@ -81,6 +81,19 @@ fn exec_server_params_use_env_policy_overlay_contract() {
             &file_system_sandbox_policy,
             network_sandbox_policy,
         );
+    let exec_server_env_config = ExecServerEnvConfig {
+        policy: codex_exec_server_protocol::ExecEnvPolicy {
+            inherit: codex_protocol::config_types::ShellEnvironmentPolicyInherit::Core,
+            ignore_default_excludes: false,
+            exclude: Vec::new(),
+            r#set: HashMap::new(),
+            include_only: Vec::new(),
+        },
+        local_policy_env: HashMap::from([
+            ("HOME".to_string(), "/client-home".to_string()),
+            ("PATH".to_string(), "/client-path".to_string()),
+        ]),
+    };
     let request = ExecRequest {
         command: vec!["bash".to_string(), "-lc".to_string(), "true".to_string()],
         cwd: cwd.clone(),
@@ -89,19 +102,6 @@ fn exec_server_params_use_env_policy_overlay_contract() {
             ("PATH".to_string(), "/sandbox-path".to_string()),
             ("CODEX_THREAD_ID".to_string(), "thread-1".to_string()),
         ]),
-        exec_server_env_config: Some(ExecServerEnvConfig {
-            policy: codex_exec_server_protocol::ExecEnvPolicy {
-                inherit: codex_protocol::config_types::ShellEnvironmentPolicyInherit::Core,
-                ignore_default_excludes: false,
-                exclude: Vec::new(),
-                r#set: HashMap::new(),
-                include_only: Vec::new(),
-            },
-            local_policy_env: HashMap::from([
-                ("HOME".to_string(), "/client-home".to_string()),
-                ("PATH".to_string(), "/client-path".to_string()),
-            ]),
-        }),
         network: None,
         expiration: crate::exec::ExecExpiration::DefaultTimeout,
         capture_policy: crate::exec::ExecCapturePolicy::ShellTool,
@@ -116,8 +116,12 @@ fn exec_server_params_use_env_policy_overlay_contract() {
         arg0: None,
     };
 
-    let params =
-        exec_server_params_for_request(/*process_id*/ 123, &request, /*tty*/ true);
+    let params = exec_server_params_for_request(
+        /*process_id*/ 123,
+        &request,
+        Some(&exec_server_env_config),
+        /*tty*/ true,
+    );
 
     assert_eq!(params.process_id.as_str(), "123");
     assert!(params.env_policy.is_some());

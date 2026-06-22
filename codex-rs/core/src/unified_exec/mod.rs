@@ -70,6 +70,7 @@ pub(crate) use process::NoopSpawnLifecycle;
 pub(crate) use process::SpawnLifecycle;
 pub(crate) use process::SpawnLifecycleHandle;
 pub(crate) use process::UnifiedExecProcess;
+pub(crate) use process_manager::ExecServerEnvConfig;
 pub(crate) use process_manager::UnifiedExecCommandSessionController;
 
 pub(crate) const MAX_UNIFIED_EXEC_PROCESSES: usize = 64;

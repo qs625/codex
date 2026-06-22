@@ -35,18 +35,11 @@ pub(crate) struct ExecOptions {
     pub(crate) capture_policy: ExecCapturePolicy,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct ExecServerEnvConfig {
-    pub(crate) policy: codex_exec_server_protocol::ExecEnvPolicy,
-    pub(crate) local_policy_env: HashMap<String, String>,
-}
-
 #[derive(Debug)]
 pub struct ExecRequest {
     pub command: Vec<String>,
     pub cwd: AbsolutePathBuf,
     pub env: HashMap<String, String>,
-    pub(crate) exec_server_env_config: Option<ExecServerEnvConfig>,
     pub network: Option<SharedNetworkProxyRuntime>,
     pub expiration: ExecExpiration,
     pub capture_policy: ExecCapturePolicy,
@@ -83,7 +76,6 @@ impl ExecRequest {
             command,
             cwd,
             env,
-            exec_server_env_config: None,
             network,
             expiration,
             capture_policy,
@@ -145,7 +137,6 @@ impl ExecRequest {
             command,
             cwd,
             env,
-            exec_server_env_config: None,
             network,
             expiration,
             capture_policy,

@@ -10,7 +10,6 @@ use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::GuardianNetworkAccessTrigger;
 use crate::guardian::review_approval_request;
 use crate::sandboxing::ExecOptions;
-use crate::sandboxing::ExecServerEnvConfig;
 use crate::sandboxing::SandboxPermissions;
 use crate::shell::ShellType;
 use crate::tools::flat_tool_name;
@@ -32,6 +31,7 @@ use crate::tools::sandboxing::ToolError;
 use crate::tools::sandboxing::ToolRuntime;
 use crate::tools::sandboxing::managed_network_for_sandbox_permissions;
 use crate::tools::sandboxing::with_cached_approval;
+use crate::unified_exec::ExecServerEnvConfig;
 use crate::unified_exec::NoopSpawnLifecycle;
 use crate::unified_exec::UnifiedExecError;
 use crate::unified_exec::UnifiedExecProcess;
@@ -289,10 +289,9 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
                 build_sandbox_command(&command, &req.cwd, &env, req.additional_permissions.clone())
                     .map_err(|_| ToolError::Rejected("missing command line for PTY".to_string()))?;
             let options = unified_exec_options(attempt.network_denial_cancellation_token.clone());
-            let mut exec_env = attempt
+            let exec_env = attempt
                 .env_for(command, options, managed_network.clone())
                 .map_err(|err| ToolError::Codex(err.into()))?;
-            exec_env.exec_server_env_config = req.exec_server_env_config.clone();
             match zsh_fork_backend::maybe_prepare_unified_exec(
                 req,
                 attempt,
@@ -314,6 +313,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
                         .open_session_with_exec_env(
                             req.process_id,
                             &prepared.exec_request,
+                            req.exec_server_env_config.as_ref(),
                             req.tty,
                             prepared.spawn_lifecycle,
                             req.environment.as_ref(),
@@ -340,14 +340,14 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
             build_sandbox_command(&command, &req.cwd, &env, req.additional_permissions.clone())
                 .map_err(|_| ToolError::Rejected("missing command line for PTY".to_string()))?;
         let options = unified_exec_options(attempt.network_denial_cancellation_token.clone());
-        let mut exec_env = attempt
+        let exec_env = attempt
             .env_for(command, options, managed_network)
             .map_err(|err| ToolError::Codex(err.into()))?;
-        exec_env.exec_server_env_config = req.exec_server_env_config.clone();
         self.manager
             .open_session_with_exec_env(
                 req.process_id,
                 &exec_env,
+                req.exec_server_env_config.as_ref(),
                 req.tty,
                 Box::new(NoopSpawnLifecycle),
                 req.environment.as_ref(),

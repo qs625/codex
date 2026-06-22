@@ -12,7 +12,6 @@ use crate::exec_env::CODEX_THREAD_ID_ENV_VAR;
 use crate::exec_env::create_env;
 use crate::exec_policy::ExecApprovalRequest;
 use crate::sandboxing::ExecRequest;
-use crate::sandboxing::ExecServerEnvConfig;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
@@ -87,6 +86,12 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
 /// In production builds this value should remain at its default (`false`) and
 /// must not be toggled.
 static FORCE_DETERMINISTIC_PROCESS_IDS: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Debug)]
+pub(crate) struct ExecServerEnvConfig {
+    pub(crate) policy: codex_exec_server_protocol::ExecEnvPolicy,
+    pub(crate) local_policy_env: HashMap<String, String>,
+}
 
 pub(super) fn set_deterministic_process_ids_for_tests(enabled: bool) {
     FORCE_DETERMINISTIC_PROCESS_IDS.store(enabled, Ordering::Relaxed);
@@ -230,11 +235,12 @@ fn env_overlay_for_exec_server(
 
 fn exec_server_env_for_request(
     request: &ExecRequest,
+    exec_server_env_config: Option<&ExecServerEnvConfig>,
 ) -> (
     Option<codex_exec_server_protocol::ExecEnvPolicy>,
     HashMap<String, String>,
 ) {
-    if let Some(exec_server_env_config) = &request.exec_server_env_config {
+    if let Some(exec_server_env_config) = exec_server_env_config {
         (
             Some(exec_server_env_config.policy.clone()),
             env_overlay_for_exec_server(&request.env, &exec_server_env_config.local_policy_env),
@@ -247,9 +253,10 @@ fn exec_server_env_for_request(
 fn exec_server_params_for_request(
     process_id: i32,
     request: &ExecRequest,
+    exec_server_env_config: Option<&ExecServerEnvConfig>,
     tty: bool,
 ) -> codex_exec_server_protocol::ExecParams {
-    let (env_policy, env) = exec_server_env_for_request(request);
+    let (env_policy, env) = exec_server_env_for_request(request, exec_server_env_config);
     codex_exec_server_protocol::ExecParams {
         process_id: exec_server_process_id(process_id).into(),
         argv: request.command.clone(),
@@ -983,6 +990,7 @@ impl UnifiedExecProcessManager {
         &self,
         process_id: i32,
         request: &ExecRequest,
+        exec_server_env_config: Option<&ExecServerEnvConfig>,
         tty: bool,
         mut spawn_lifecycle: SpawnLifecycleHandle,
         environment: &dyn codex_exec_server_api::ExecEnvironment,
@@ -1081,7 +1089,12 @@ impl UnifiedExecProcessManager {
 
             let started = environment
                 .get_exec_backend()
-                .start(exec_server_params_for_request(process_id, request, tty))
+                .start(exec_server_params_for_request(
+                    process_id,
+                    request,
+                    exec_server_env_config,
+                    tty,
+                ))
                 .await
                 .map_err(|err| UnifiedExecError::create_process(err.to_string()))?;
             spawn_lifecycle.after_spawn();
