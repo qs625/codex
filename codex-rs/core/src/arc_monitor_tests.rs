@@ -72,7 +72,7 @@ async fn build_arc_monitor_request_includes_relevant_history_and_null_policies()
     session
         .record_into_history(
             &[ContextualUserFragment::into(
-                crate::context::EnvironmentContext::new(
+                codex_context_manager::EnvironmentContext::new(
                     Vec::new(),
                     /*current_date*/ None,
                     /*timezone*/ None,

@@ -3222,7 +3222,7 @@ impl Session {
         if turn_context.config.include_environment_context {
             let shell = self.user_shell();
             contextual_user_sections.push(
-                crate::context::EnvironmentContext::from_turn_context(turn_context, shell.as_ref())
+                crate::context::environment_context_from_turn_context(turn_context, shell.as_ref())
                     .render(),
             );
             contextual_user_sections.push(

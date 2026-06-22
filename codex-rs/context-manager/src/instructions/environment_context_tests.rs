@@ -1,33 +1,20 @@
-use crate::shell::ShellType;
-
 use super::*;
-use codex_utils_absolute_path::test_support::PathBufExt;
-use core_test_support::test_path_buf;
 use pretty_assertions::assert_eq;
 use std::path::PathBuf;
 
-fn fake_shell_name() -> String {
-    let shell = crate::shell::Shell {
-        shell_type: ShellType::Bash,
-        shell_path: PathBuf::from("/bin/bash"),
-        shell_snapshot: crate::shell::empty_shell_snapshot_receiver(),
-    };
-    shell.name().to_string()
-}
-
 fn test_abs_path(unix_path: &str) -> AbsolutePathBuf {
-    test_path_buf(unix_path).abs()
+    AbsolutePathBuf::try_from(PathBuf::from(unix_path)).expect("test path should be absolute")
 }
 
 #[test]
 fn serialize_workspace_write_environment_context() {
-    let cwd = test_path_buf("/repo");
+    let cwd = PathBuf::from("/repo");
     let context = EnvironmentContext::new(
-        vec![EnvironmentContextEnvironment {
-            id: "local".to_string(),
-            cwd: cwd.abs(),
-            shell: fake_shell_name(),
-        }],
+        vec![EnvironmentContextEnvironment::new(
+            "local",
+            test_abs_path("/repo"),
+            "bash",
+        )],
         Some("2026-02-26".to_string()),
         Some("America/Los_Angeles".to_string()),
         /*network*/ None,
@@ -53,11 +40,11 @@ fn serialize_environment_context_with_network() {
         vec!["blocked.example.com".to_string()],
     );
     let context = EnvironmentContext::new(
-        vec![EnvironmentContextEnvironment {
-            id: "local".to_string(),
-            cwd: test_path_buf("/repo").abs(),
-            shell: fake_shell_name(),
-        }],
+        vec![EnvironmentContextEnvironment::new(
+            "local",
+            test_abs_path("/repo"),
+            "bash",
+        )],
         Some("2026-02-26".to_string()),
         Some("America/Los_Angeles".to_string()),
         Some(network),
@@ -71,7 +58,7 @@ fn serialize_environment_context_with_network() {
   <timezone>America/Los_Angeles</timezone>
   <network enabled="true"><allowed>api.example.com,*.openai.com</allowed><denied>blocked.example.com</denied></network>
 </environment_context>"#,
-        test_path_buf("/repo").display()
+        PathBuf::from("/repo").display()
     );
 
     assert_eq!(context.render(), expected);
@@ -97,21 +84,21 @@ fn serialize_read_only_environment_context() {
 #[test]
 fn equals_except_shell_compares_cwd() {
     let context1 = EnvironmentContext::new(
-        vec![EnvironmentContextEnvironment {
-            id: "local".to_string(),
-            cwd: test_abs_path("/repo"),
-            shell: fake_shell_name(),
-        }],
+        vec![EnvironmentContextEnvironment::new(
+            "local",
+            test_abs_path("/repo"),
+            "bash",
+        )],
         /*current_date*/ None,
         /*timezone*/ None,
         /*network*/ None,
     );
     let context2 = EnvironmentContext::new(
-        vec![EnvironmentContextEnvironment {
-            id: "local".to_string(),
-            cwd: test_abs_path("/repo"),
-            shell: fake_shell_name(),
-        }],
+        vec![EnvironmentContextEnvironment::new(
+            "local",
+            test_abs_path("/repo"),
+            "bash",
+        )],
         /*current_date*/ None,
         /*timezone*/ None,
         /*network*/ None,
@@ -122,21 +109,21 @@ fn equals_except_shell_compares_cwd() {
 #[test]
 fn equals_except_shell_compares_cwd_differences() {
     let context1 = EnvironmentContext::new(
-        vec![EnvironmentContextEnvironment {
-            id: "local".to_string(),
-            cwd: test_abs_path("/repo1"),
-            shell: fake_shell_name(),
-        }],
+        vec![EnvironmentContextEnvironment::new(
+            "local",
+            test_abs_path("/repo1"),
+            "bash",
+        )],
         /*current_date*/ None,
         /*timezone*/ None,
         /*network*/ None,
     );
     let context2 = EnvironmentContext::new(
-        vec![EnvironmentContextEnvironment {
-            id: "local".to_string(),
-            cwd: test_abs_path("/repo2"),
-            shell: fake_shell_name(),
-        }],
+        vec![EnvironmentContextEnvironment::new(
+            "local",
+            test_abs_path("/repo2"),
+            "bash",
+        )],
         /*current_date*/ None,
         /*timezone*/ None,
         /*network*/ None,
@@ -148,21 +135,21 @@ fn equals_except_shell_compares_cwd_differences() {
 #[test]
 fn equals_except_shell_ignores_shell() {
     let context1 = EnvironmentContext::new(
-        vec![EnvironmentContextEnvironment {
-            id: "local".to_string(),
-            cwd: test_abs_path("/repo"),
-            shell: "bash".to_string(),
-        }],
+        vec![EnvironmentContextEnvironment::new(
+            "local",
+            test_abs_path("/repo"),
+            "bash",
+        )],
         /*current_date*/ None,
         /*timezone*/ None,
         /*network*/ None,
     );
     let context2 = EnvironmentContext::new(
-        vec![EnvironmentContextEnvironment {
-            id: "other".to_string(),
-            cwd: test_abs_path("/repo"),
-            shell: "zsh".to_string(),
-        }],
+        vec![EnvironmentContextEnvironment::new(
+            "other",
+            test_abs_path("/repo"),
+            "zsh",
+        )],
         /*current_date*/ None,
         /*timezone*/ None,
         /*network*/ None,
@@ -173,20 +160,12 @@ fn equals_except_shell_ignores_shell() {
 
 #[test]
 fn serialize_environment_context_with_multiple_selected_environments() {
-    let local_cwd = test_path_buf("/repo/local");
-    let remote_cwd = test_path_buf("/repo/remote");
+    let local_cwd = PathBuf::from("/repo/local");
+    let remote_cwd = PathBuf::from("/repo/remote");
     let context = EnvironmentContext::new(
         vec![
-            EnvironmentContextEnvironment {
-                id: "local".to_string(),
-                cwd: local_cwd.abs(),
-                shell: "bash".to_string(),
-            },
-            EnvironmentContextEnvironment {
-                id: "remote".to_string(),
-                cwd: remote_cwd.abs(),
-                shell: "bash".to_string(),
-            },
+            EnvironmentContextEnvironment::new("local", test_abs_path("/repo/local"), "bash"),
+            EnvironmentContextEnvironment::new("remote", test_abs_path("/repo/remote"), "bash"),
         ],
         Some("2026-02-26".to_string()),
         Some("America/Los_Angeles".to_string()),
@@ -217,20 +196,12 @@ fn serialize_environment_context_with_multiple_selected_environments() {
 
 #[test]
 fn serialize_environment_context_prefers_environment_shell_when_present() {
-    let local_cwd = test_path_buf("/repo/local");
-    let remote_cwd = test_path_buf("/repo/remote");
+    let local_cwd = PathBuf::from("/repo/local");
+    let remote_cwd = PathBuf::from("/repo/remote");
     let context = EnvironmentContext::new(
         vec![
-            EnvironmentContextEnvironment {
-                id: "local".to_string(),
-                cwd: local_cwd.abs(),
-                shell: "powershell".to_string(),
-            },
-            EnvironmentContextEnvironment {
-                id: "remote".to_string(),
-                cwd: remote_cwd.abs(),
-                shell: "cmd".to_string(),
-            },
+            EnvironmentContextEnvironment::new("local", test_abs_path("/repo/local"), "powershell"),
+            EnvironmentContextEnvironment::new("remote", test_abs_path("/repo/remote"), "cmd"),
         ],
         /*current_date*/ None,
         /*timezone*/ None,

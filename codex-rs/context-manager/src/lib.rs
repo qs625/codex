@@ -3,6 +3,7 @@ mod fragment;
 mod history;
 mod instructions;
 mod normalize;
+mod updates;
 
 pub use contextual_user_message::has_non_contextual_dev_message_content;
 pub use contextual_user_message::is_contextual_dev_message_content;
@@ -24,11 +25,15 @@ pub use instructions::AvailablePluginsInstructions;
 pub use instructions::AvailableSkillsInstructions;
 pub use instructions::AvailableWorkflowsInstructions;
 pub use instructions::CollaborationModeInstructions;
+pub use instructions::EnvironmentContext;
+pub use instructions::EnvironmentContextEnvironment;
+pub use instructions::EnvironmentContextEnvironments;
 pub use instructions::GuardianFollowupReviewReminder;
 pub use instructions::HookAdditionalContext;
 pub use instructions::ImageGenerationInstructions;
 pub use instructions::ModelSwitchInstructions;
 pub use instructions::MultiagentContext;
+pub use instructions::NetworkContext;
 pub use instructions::NetworkRuleSaved;
 pub use instructions::PermissionsInstructions;
 pub use instructions::PersonalitySpecInstructions;
@@ -40,6 +45,15 @@ pub use instructions::SkillInstructions;
 pub use instructions::SubagentNotification;
 pub use instructions::UserInstructions;
 pub use instructions::UserShellCommand;
+pub use updates::PreviousTurnSettingsView;
+pub use updates::SettingsUpdateInput;
+pub use updates::build_contextual_user_message;
+pub use updates::build_developer_update_item;
+pub use updates::build_initial_realtime_item;
+pub use updates::build_model_instructions_update_item;
+pub use updates::build_realtime_update_item;
+pub use updates::build_settings_update_items;
+pub use updates::personality_message_for;
 
 pub(crate) fn error_or_panic(message: impl std::string::ToString) {
     if cfg!(debug_assertions) {

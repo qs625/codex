@@ -6873,7 +6873,7 @@ async fn environment_context_uses_session_shell_when_environment_shell_is_absent
     }
 
     let session_shell = session.user_shell();
-    let environment_context = crate::context::EnvironmentContext::from_turn_context(
+    let environment_context = crate::context::environment_context_from_turn_context(
         &turn_context,
         session_shell.as_ref(),
     )
@@ -6890,7 +6890,7 @@ async fn environment_context_uses_session_shell_when_environment_shell_is_absent
         .expect("primary environment");
     primary_environment.shell = Some("cmd".to_string());
 
-    let environment_context = crate::context::EnvironmentContext::from_turn_context(
+    let environment_context = crate::context::environment_context_from_turn_context(
         &turn_context,
         session_shell.as_ref(),
     )

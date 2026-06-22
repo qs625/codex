@@ -1,0 +1,260 @@
+use codex_protocol::protocol::TurnContextItem;
+use codex_protocol::protocol::TurnContextNetworkItem;
+use codex_utils_absolute_path::AbsolutePathBuf;
+
+use super::ContextualUserFragment;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnvironmentContext {
+    pub environments: EnvironmentContextEnvironments,
+    pub current_date: Option<String>,
+    pub timezone: Option<String>,
+    pub network: Option<NetworkContext>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvironmentContextEnvironment {
+    pub id: String,
+    pub cwd: AbsolutePathBuf,
+    pub shell: String,
+}
+
+impl EnvironmentContextEnvironment {
+    pub fn new(id: impl Into<String>, cwd: AbsolutePathBuf, shell: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            cwd,
+            shell: shell.into(),
+        }
+    }
+
+    fn legacy(cwd: AbsolutePathBuf, shell: String) -> Self {
+        Self {
+            id: String::new(),
+            cwd,
+            shell,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnvironmentContextEnvironments {
+    None,
+    Single(EnvironmentContextEnvironment),
+    Multiple(Vec<EnvironmentContextEnvironment>),
+}
+
+impl EnvironmentContextEnvironments {
+    fn from_vec(environments: Vec<EnvironmentContextEnvironment>) -> Self {
+        let mut environments = environments;
+        match environments.pop() {
+            None => Self::None,
+            Some(environment) if environments.is_empty() => Self::Single(environment),
+            Some(environment) => {
+                environments.push(environment);
+                Self::Multiple(environments)
+            }
+        }
+    }
+
+    fn equals_except_shell(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::None, Self::None) => true,
+            (Self::Single(left), Self::Single(right)) => left.cwd == right.cwd,
+            (Self::Multiple(left), Self::Multiple(right)) => {
+                left.len() == right.len()
+                    && left
+                        .iter()
+                        .zip(right.iter())
+                        .all(|(left, right)| left.id == right.id && left.cwd == right.cwd)
+            }
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct NetworkContext {
+    allowed_domains: Vec<String>,
+    denied_domains: Vec<String>,
+}
+
+impl NetworkContext {
+    pub fn new(allowed_domains: Vec<String>, denied_domains: Vec<String>) -> Self {
+        Self {
+            allowed_domains,
+            denied_domains,
+        }
+    }
+
+    fn render(&self) -> String {
+        let mut rendered = "<network enabled=\"true\">".to_string();
+        Self::push_rendered_domain_element(&mut rendered, "allowed", &self.allowed_domains);
+        Self::push_rendered_domain_element(&mut rendered, "denied", &self.denied_domains);
+        rendered.push_str("</network>");
+        rendered
+    }
+
+    fn push_rendered_domain_element(rendered_network: &mut String, name: &str, domains: &[String]) {
+        if domains.is_empty() {
+            return;
+        }
+
+        rendered_network.push_str(&format!("<{name}>"));
+        rendered_network.push_str(&domains.join(","));
+        rendered_network.push_str(&format!("</{name}>"));
+    }
+}
+
+impl EnvironmentContext {
+    pub fn new(
+        environments: Vec<EnvironmentContextEnvironment>,
+        current_date: Option<String>,
+        timezone: Option<String>,
+        network: Option<NetworkContext>,
+    ) -> Self {
+        Self {
+            environments: EnvironmentContextEnvironments::from_vec(environments),
+            current_date,
+            timezone,
+            network,
+        }
+    }
+
+    fn new_with_environments(
+        environments: EnvironmentContextEnvironments,
+        current_date: Option<String>,
+        timezone: Option<String>,
+        network: Option<NetworkContext>,
+    ) -> Self {
+        Self {
+            environments,
+            current_date,
+            timezone,
+            network,
+        }
+    }
+
+    /// Compares two environment contexts, ignoring the shell. Useful when
+    /// comparing turn to turn, since the initial environment_context will
+    /// include the shell, and then it is not configurable from turn to turn.
+    pub fn equals_except_shell(&self, other: &EnvironmentContext) -> bool {
+        self.environments.equals_except_shell(&other.environments)
+            && self.current_date == other.current_date
+            && self.timezone == other.timezone
+            && self.network == other.network
+    }
+
+    pub fn diff_from_turn_context_item(
+        before: &TurnContextItem,
+        after: &EnvironmentContext,
+    ) -> Self {
+        let before_network = Self::network_from_turn_context_item(before);
+        let environments = match &after.environments {
+            EnvironmentContextEnvironments::Single(environment) => {
+                if before.cwd.as_path() != environment.cwd.as_path() {
+                    EnvironmentContextEnvironments::Single(EnvironmentContextEnvironment::legacy(
+                        environment.cwd.clone(),
+                        environment.shell.clone(),
+                    ))
+                } else {
+                    EnvironmentContextEnvironments::None
+                }
+            }
+            EnvironmentContextEnvironments::Multiple(environments) => {
+                EnvironmentContextEnvironments::Multiple(environments.clone())
+            }
+            EnvironmentContextEnvironments::None => EnvironmentContextEnvironments::None,
+        };
+        let network = if before_network != after.network {
+            after.network.clone()
+        } else {
+            before_network
+        };
+        EnvironmentContext::new_with_environments(
+            environments,
+            after.current_date.clone(),
+            after.timezone.clone(),
+            network,
+        )
+    }
+
+    pub fn from_turn_context_item(turn_context_item: &TurnContextItem, shell: String) -> Self {
+        let cwd = match AbsolutePathBuf::try_from(turn_context_item.cwd.clone()) {
+            Ok(cwd) => cwd,
+            Err(_) => AbsolutePathBuf::resolve_path_against_base(&turn_context_item.cwd, "/"),
+        };
+        Self::new(
+            vec![EnvironmentContextEnvironment::legacy(cwd, shell)],
+            turn_context_item.current_date.clone(),
+            turn_context_item.timezone.clone(),
+            Self::network_from_turn_context_item(turn_context_item),
+        )
+    }
+
+    fn network_from_turn_context_item(
+        turn_context_item: &TurnContextItem,
+    ) -> Option<NetworkContext> {
+        let TurnContextNetworkItem {
+            allowed_domains,
+            denied_domains,
+        } = turn_context_item.network.as_ref()?;
+        Some(NetworkContext::new(
+            allowed_domains.clone(),
+            denied_domains.clone(),
+        ))
+    }
+}
+
+impl ContextualUserFragment for EnvironmentContext {
+    const ROLE: &'static str = "user";
+    const START_MARKER: &'static str = codex_protocol::protocol::ENVIRONMENT_CONTEXT_OPEN_TAG;
+    const END_MARKER: &'static str = codex_protocol::protocol::ENVIRONMENT_CONTEXT_CLOSE_TAG;
+
+    fn body(&self) -> String {
+        let mut lines = Vec::new();
+        match &self.environments {
+            EnvironmentContextEnvironments::Single(environment) => {
+                lines.push(format!(
+                    "  <cwd>{}</cwd>",
+                    environment.cwd.to_string_lossy()
+                ));
+                lines.push(format!("  <shell>{}</shell>", environment.shell));
+            }
+            EnvironmentContextEnvironments::Multiple(environments) => {
+                lines.push("  <environments>".to_string());
+                for environment in environments {
+                    lines.push(format!("    <environment id=\"{}\">", environment.id));
+                    lines.push(format!(
+                        "      <cwd>{}</cwd>",
+                        environment.cwd.to_string_lossy()
+                    ));
+                    lines.push(format!("      <shell>{}</shell>", environment.shell));
+                    lines.push("    </environment>".to_string());
+                }
+                lines.push("  </environments>".to_string());
+            }
+            EnvironmentContextEnvironments::None => {}
+        }
+        if let Some(current_date) = &self.current_date {
+            lines.push(format!("  <current_date>{current_date}</current_date>"));
+        }
+        if let Some(timezone) = &self.timezone {
+            lines.push(format!("  <timezone>{timezone}</timezone>"));
+        }
+        match &self.network {
+            Some(network) => {
+                lines.push(format!("  {}", network.render()));
+            }
+            None => {
+                // TODO(mbolin): Include this line if it helps the model.
+                // lines.push("  <network enabled=\"false\" />".to_string());
+            }
+        }
+        format!("\n{}\n", lines.join("\n"))
+    }
+}
+
+#[cfg(test)]
+#[path = "environment_context_tests.rs"]
+mod tests;
