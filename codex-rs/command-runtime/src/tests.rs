@@ -1,7 +1,21 @@
 use super::*;
 
 use pretty_assertions::assert_eq;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use tokio::time::Duration;
+use tokio::time::Instant;
+use tokio_util::sync::CancellationToken;
+
+fn test_output_handles() -> CommandOutputHandles {
+    CommandOutputHandles {
+        output_buffer: Arc::new(Mutex::new(HeadTailBuffer::default())),
+        output_notify: Arc::new(Notify::new()),
+        output_closed: Arc::new(AtomicBool::new(false)),
+        output_closed_notify: Arc::new(Notify::new()),
+        cancellation_token: CancellationToken::new(),
+    }
+}
 
 #[test]
 fn keeps_prefix_and_suffix_when_over_budget() {
@@ -96,6 +110,73 @@ fn process_state_preserves_failure_when_exited() {
             failure_message: Some("failed".to_string()),
         }
     );
+}
+
+#[tokio::test]
+async fn collect_output_drains_available_chunks() {
+    let handles = test_output_handles();
+    handles
+        .output_buffer
+        .lock()
+        .await
+        .push_chunk(b"ready".to_vec());
+
+    let collected =
+        collect_output_until_deadline(&handles, None, Instant::now() + Duration::from_millis(1))
+            .await;
+
+    assert_eq!(collected, b"ready".to_vec());
+}
+
+#[tokio::test]
+async fn collect_output_waits_for_notification_before_deadline() {
+    let handles = test_output_handles();
+    let handles_for_task = handles.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        handles_for_task
+            .output_buffer
+            .lock()
+            .await
+            .push_chunk(b"later".to_vec());
+        handles_for_task.output_notify.notify_waiters();
+    });
+
+    let collected =
+        collect_output_until_deadline(&handles, None, Instant::now() + Duration::from_millis(200))
+            .await;
+
+    assert_eq!(collected, b"later".to_vec());
+}
+
+#[tokio::test]
+async fn collect_output_extends_deadline_while_paused() {
+    let handles = test_output_handles();
+    let handles_for_task = handles.clone();
+    let (pause_tx, pause_rx) = tokio::sync::watch::channel(true);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        handles_for_task
+            .output_buffer
+            .lock()
+            .await
+            .push_chunk(b"after-pause".to_vec());
+        handles_for_task.output_notify.notify_waiters();
+        pause_tx.send(false).expect("pause receiver should be open");
+    });
+
+    let collected = tokio::time::timeout(
+        Duration::from_secs(1),
+        collect_output_until_deadline(
+            &handles,
+            Some(pause_rx),
+            Instant::now() + Duration::from_millis(5),
+        ),
+    )
+    .await
+    .expect("collector should finish");
+
+    assert_eq!(collected, b"after-pause".to_vec());
 }
 
 #[tokio::test]

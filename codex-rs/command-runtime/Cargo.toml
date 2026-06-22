@@ -11,7 +11,8 @@ workspace = true
 chardetng = { workspace = true }
 encoding_rs = { workspace = true }
 rand = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "time"] }
+tokio-util = { workspace = true, features = ["rt"] }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

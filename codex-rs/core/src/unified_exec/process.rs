@@ -28,6 +28,8 @@ use codex_utils_pty::SpawnedPty;
 use super::HeadTailBuffer;
 use super::UNIFIED_EXEC_OUTPUT_MAX_TOKENS;
 use super::UnifiedExecError;
+use codex_command_runtime::CommandOutputBuffer as OutputBuffer;
+use codex_command_runtime::CommandOutputHandles as OutputHandles;
 use codex_command_runtime::ProcessState;
 
 const EARLY_EXIT_GRACE_PERIOD: Duration = Duration::from_millis(150);
@@ -52,16 +54,6 @@ pub(crate) type SpawnLifecycleHandle = Box<dyn SpawnLifecycle>;
 pub(crate) struct NoopSpawnLifecycle;
 
 impl SpawnLifecycle for NoopSpawnLifecycle {}
-
-pub(crate) type OutputBuffer = Arc<Mutex<HeadTailBuffer>>;
-/// Shared output state exposed to polling and streaming consumers.
-pub(crate) struct OutputHandles {
-    pub(crate) output_buffer: OutputBuffer,
-    pub(crate) output_notify: Arc<Notify>,
-    pub(crate) output_closed: Arc<AtomicBool>,
-    pub(crate) output_closed_notify: Arc<Notify>,
-    pub(crate) cancellation_token: CancellationToken,
-}
 
 /// Transport-specific process handle used by unified exec.
 enum ProcessHandle {

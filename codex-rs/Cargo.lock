@@ -2610,6 +2610,7 @@ dependencies = [
  "pretty_assertions",
  "rand 0.9.3",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

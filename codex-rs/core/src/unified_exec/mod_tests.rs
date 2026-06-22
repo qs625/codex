@@ -10,6 +10,7 @@ use crate::tools::context::ExecCommandToolOutput;
 use crate::unified_exec::WriteStdinRequest;
 use crate::unified_exec::process::OutputHandles;
 use codex_command_runtime::DEFAULT_COMMAND_OUTPUT_MAX_BYTES;
+use codex_command_runtime::collect_output_until_deadline;
 use codex_sandboxing_api::SandboxType;
 use codex_utils_output_truncation::approx_token_count;
 use core_test_support::get_remote_test_env;
@@ -143,12 +144,15 @@ async fn exec_command_with_tty(
     }
 
     let deadline = started_at + Duration::from_millis(yield_time_ms);
-    let collected = UnifiedExecProcessManager::collect_output_until_deadline(
-        &output_buffer,
-        &output_notify,
-        &output_closed,
-        &output_closed_notify,
-        &cancellation_token,
+    let output_handles = OutputHandles {
+        output_buffer,
+        output_notify,
+        output_closed,
+        output_closed_notify,
+        cancellation_token,
+    };
+    let collected = collect_output_until_deadline(
+        &output_handles,
         Some(session.subscribe_out_of_band_elicitation_pause_state()),
         deadline,
     )
@@ -217,21 +221,11 @@ async fn write_stdin(
                 .process,
         )
     };
-    let OutputHandles {
-        output_buffer,
-        output_notify,
-        output_closed,
-        output_closed_notify,
-        cancellation_token,
-    } = process.output_handles();
+    let output_handles = process.output_handles();
     let start = Instant::now();
     let deadline = start + Duration::from_millis(yield_time_ms);
-    let collected = UnifiedExecProcessManager::collect_output_until_deadline(
-        &output_buffer,
-        &output_notify,
-        &output_closed,
-        &output_closed_notify,
-        &cancellation_token,
+    let collected = collect_output_until_deadline(
+        &output_handles,
         Some(session.subscribe_out_of_band_elicitation_pause_state()),
         deadline,
     )
@@ -920,19 +914,9 @@ async fn unified_exec_uses_remote_exec_server_when_configured() -> anyhow::Resul
     process.write(b"printf 'remote-unified-exec\\n'\n").await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let crate::unified_exec::process::OutputHandles {
-        output_buffer,
-        output_notify,
-        output_closed,
-        output_closed_notify,
-        cancellation_token,
-    } = process.output_handles();
-    let collected = UnifiedExecProcessManager::collect_output_until_deadline(
-        &output_buffer,
-        &output_notify,
-        &output_closed,
-        &output_closed_notify,
-        &cancellation_token,
+    let output_handles = process.output_handles();
+    let collected = collect_output_until_deadline(
+        &output_handles,
         /*pause_state*/ None,
         Instant::now() + Duration::from_millis(2_500),
     )

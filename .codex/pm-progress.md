@@ -27,6 +27,7 @@
     - 已移除 `core-plugins-api` / `hooks-api` 对 `codex-config` 的 optional test-support 回边，避免 `codex-config -> api crate -> codex-config` cycle。
     - 清理了迁移后暴露的 config runtime unused warning，并删除 app-server 中一个不再使用的 core config facade import。
     - Step 6A 已提交：`47db37b refactor config runtime out of core`。
+    - Step 6B 首个切片已把 command output handles 和 output deadline collector 下沉到 `codex-command-runtime`；core unified_exec 只保留调用和 session pause state 接入。
   latest_validation:
     - `rtk cargo test -p codex-config`：通过，393 个测试通过。
     - `rtk cargo check -p codex-core --lib`：通过；仍有既有 unused/dead_code warnings。
@@ -38,9 +39,16 @@
     - `rtk git diff --check`：通过。
     - touched Rust unsafe scan：无 Rust `unsafe` 语法命中；仅测试字符串中出现 “unsafe nickname”。
     - `rtk just bazel-lock-check`：通过，仅打印既有 rules_rs well-known crate annotation warnings。
+    - Step 6B output collector 切片：
+      - `rtk cargo test -p codex-command-runtime`：通过，23 个测试通过。
+      - `rtk cargo check -p codex-core --lib`：通过；仍有既有 unused/dead_code warnings。
+      - `rtk cargo build -p codex-app-server --bin codex-app-server`：通过；仍有既有 warnings。
+      - `rtk cargo tree -p codex-command-runtime --depth 2 --edges normal`：direct graph 仅为 decoding、rand、tokio/tokio-util。
+      - `rtk cargo tree -p codex-command-runtime --invert <heavy> --edges normal --depth 6`：`codex-core`、app-server protocol、code-mode implementation、network proxy backend、execpolicy implementation、exec-server、state/sqlx、codex-api 均不在 graph。
+      - `rtk git diff --check`、touched Rust unsafe scan、`rtk just bazel-lock-check`：通过。
   remaining_validation:
-    - Step 6B 开始前盘点 `codex-rs/core/src/unified_exec` 与 `codex-command-runtime` 当前 ownership、callsite 和 dependency graph。
-  next_action: 进入 Step 6B，先定 unified exec 拆分边界和 dependency gate，再实施第一块迁移。
+    - 提交 Step 6B 首个切片前做最终 diff sanity check。
+  next_action: 提交 Step 6B output collector 切片；随后继续拆 process id allocation/prune policy 或 process lifecycle primitive。
 
 ## Step Plan
 

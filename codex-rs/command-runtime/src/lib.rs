@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -7,6 +8,9 @@ use rand::Rng;
 use rand::rng;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
+use tokio::sync::watch;
+use tokio::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 pub mod output_decoding;
 pub use output_decoding::bytes_to_string_smart;
@@ -185,6 +189,136 @@ impl HeadTailBuffer {
                 None => break,
             }
         }
+    }
+}
+
+pub type CommandOutputBuffer = Arc<Mutex<HeadTailBuffer>>;
+
+/// Shared command output state used by initial exec and stdin follow-up waits.
+#[derive(Clone)]
+pub struct CommandOutputHandles {
+    pub output_buffer: CommandOutputBuffer,
+    pub output_notify: Arc<Notify>,
+    pub output_closed: Arc<AtomicBool>,
+    pub output_closed_notify: Arc<Notify>,
+    pub cancellation_token: CancellationToken,
+}
+
+pub async fn collect_output_until_deadline(
+    output_handles: &CommandOutputHandles,
+    mut pause_state: Option<watch::Receiver<bool>>,
+    mut deadline: Instant,
+) -> Vec<u8> {
+    const POST_EXIT_CLOSE_WAIT_CAP: Duration = Duration::from_millis(50);
+
+    let mut collected: Vec<u8> = Vec::with_capacity(4096);
+    let mut exit_signal_received = output_handles.cancellation_token.is_cancelled();
+    let mut post_exit_deadline: Option<Instant> = None;
+    loop {
+        extend_deadlines_while_paused(&mut pause_state, &mut deadline, &mut post_exit_deadline)
+            .await;
+        let drained_chunks: Vec<Vec<u8>>;
+        let mut wait_for_output = None;
+        {
+            let mut guard = output_handles.output_buffer.lock().await;
+            drained_chunks = guard.drain_chunks();
+            if drained_chunks.is_empty() {
+                wait_for_output = Some(output_handles.output_notify.notified());
+            }
+        }
+
+        if drained_chunks.is_empty() {
+            exit_signal_received |= output_handles.cancellation_token.is_cancelled();
+            if exit_signal_received && output_handles.output_closed.load(Ordering::Acquire) {
+                break;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining == Duration::ZERO {
+                break;
+            }
+
+            if exit_signal_received {
+                let now = Instant::now();
+                let close_wait_deadline = *post_exit_deadline
+                    .get_or_insert_with(|| now + remaining.min(POST_EXIT_CLOSE_WAIT_CAP));
+                let close_wait_remaining = close_wait_deadline.saturating_duration_since(now);
+                if close_wait_remaining == Duration::ZERO {
+                    break;
+                }
+                let notified =
+                    wait_for_output.unwrap_or_else(|| output_handles.output_notify.notified());
+                let closed = output_handles.output_closed_notify.notified();
+                tokio::pin!(notified);
+                tokio::pin!(closed);
+                tokio::select! {
+                    _ = &mut notified => {}
+                    _ = &mut closed => {}
+                    _ = tokio::time::sleep(close_wait_remaining) => break,
+                    _ = wait_for_pause_change(pause_state.as_ref()) => {}
+                }
+                continue;
+            }
+
+            let notified =
+                wait_for_output.unwrap_or_else(|| output_handles.output_notify.notified());
+            tokio::pin!(notified);
+            let exit_notified = output_handles.cancellation_token.cancelled();
+            tokio::pin!(exit_notified);
+            tokio::select! {
+                _ = &mut notified => {}
+                _ = &mut exit_notified => exit_signal_received = true,
+                _ = tokio::time::sleep(remaining) => break,
+                _ = wait_for_pause_change(pause_state.as_ref()) => {}
+            }
+            continue;
+        }
+
+        for chunk in drained_chunks {
+            collected.extend_from_slice(&chunk);
+        }
+
+        exit_signal_received |= output_handles.cancellation_token.is_cancelled();
+        if Instant::now() >= deadline {
+            break;
+        }
+    }
+
+    collected
+}
+
+async fn extend_deadlines_while_paused(
+    pause_state: &mut Option<watch::Receiver<bool>>,
+    deadline: &mut Instant,
+    post_exit_deadline: &mut Option<Instant>,
+) {
+    let Some(receiver) = pause_state.as_mut() else {
+        return;
+    };
+    if !*receiver.borrow() {
+        return;
+    }
+
+    let paused_at = Instant::now();
+    while *receiver.borrow() {
+        if receiver.changed().await.is_err() {
+            break;
+        }
+    }
+
+    let paused_for = paused_at.elapsed();
+    *deadline += paused_for;
+    if let Some(post_exit_deadline) = post_exit_deadline.as_mut() {
+        *post_exit_deadline += paused_for;
+    }
+}
+
+async fn wait_for_pause_change(pause_state: Option<&watch::Receiver<bool>>) {
+    match pause_state {
+        Some(pause_state) => {
+            let mut receiver = pause_state.clone();
+            let _ = receiver.changed().await;
+        }
+        None => std::future::pending::<()>().await,
     }
 }
 

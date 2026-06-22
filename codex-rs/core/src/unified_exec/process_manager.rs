@@ -4,8 +4,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
-use tokio::sync::Notify;
-use tokio::sync::watch;
 use tokio::time::Duration;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -51,11 +49,10 @@ use crate::unified_exec::async_watcher::start_streaming_output;
 use crate::unified_exec::clamp_yield_time;
 use crate::unified_exec::command_notification_filter_to_protocol;
 use crate::unified_exec::generate_chunk_id;
-use crate::unified_exec::process::OutputBuffer;
-use crate::unified_exec::process::OutputHandles;
 use crate::unified_exec::process::SpawnLifecycleHandle;
 use crate::unified_exec::process::UnifiedExecProcess;
 use codex_command_runtime::CommandNotificationSnapshot;
+use codex_command_runtime::collect_output_until_deadline;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::error::CodexErr;
@@ -528,20 +525,10 @@ impl UnifiedExecProcessManager {
         // For the initial exec_command call, we both stream output to events
         // (via start_streaming_output above) and collect a snapshot here for
         // the tool response body.
-        let OutputHandles {
-            output_buffer,
-            output_notify,
-            output_closed,
-            output_closed_notify,
-            cancellation_token,
-        } = process.output_handles();
+        let output_handles = process.output_handles();
         let deadline = start + Duration::from_millis(yield_time_ms);
-        let collected = Self::collect_output_until_deadline(
-            &output_buffer,
-            &output_notify,
-            &output_closed,
-            &output_closed_notify,
-            &cancellation_token,
+        let collected = collect_output_until_deadline(
+            &output_handles,
             Some(
                 context
                     .session
@@ -1176,131 +1163,6 @@ impl UnifiedExecProcessManager {
                 }
                 other => UnifiedExecError::create_process(format!("{other:?}")),
             })
-    }
-
-    pub(super) async fn collect_output_until_deadline(
-        output_buffer: &OutputBuffer,
-        output_notify: &Arc<Notify>,
-        output_closed: &Arc<AtomicBool>,
-        output_closed_notify: &Arc<Notify>,
-        cancellation_token: &CancellationToken,
-        mut pause_state: Option<watch::Receiver<bool>>,
-        mut deadline: Instant,
-    ) -> Vec<u8> {
-        const POST_EXIT_CLOSE_WAIT_CAP: Duration = Duration::from_millis(50);
-
-        let mut collected: Vec<u8> = Vec::with_capacity(4096);
-        let mut exit_signal_received = cancellation_token.is_cancelled();
-        let mut post_exit_deadline: Option<Instant> = None;
-        loop {
-            Self::extend_deadlines_while_paused(
-                &mut pause_state,
-                &mut deadline,
-                &mut post_exit_deadline,
-            )
-            .await;
-            let drained_chunks: Vec<Vec<u8>>;
-            let mut wait_for_output = None;
-            {
-                let mut guard = output_buffer.lock().await;
-                drained_chunks = guard.drain_chunks();
-                if drained_chunks.is_empty() {
-                    wait_for_output = Some(output_notify.notified());
-                }
-            }
-
-            if drained_chunks.is_empty() {
-                exit_signal_received |= cancellation_token.is_cancelled();
-                if exit_signal_received && output_closed.load(std::sync::atomic::Ordering::Acquire)
-                {
-                    break;
-                }
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                if remaining == Duration::ZERO {
-                    break;
-                }
-
-                if exit_signal_received {
-                    let now = Instant::now();
-                    let close_wait_deadline = *post_exit_deadline
-                        .get_or_insert_with(|| now + remaining.min(POST_EXIT_CLOSE_WAIT_CAP));
-                    let close_wait_remaining = close_wait_deadline.saturating_duration_since(now);
-                    if close_wait_remaining == Duration::ZERO {
-                        break;
-                    }
-                    let notified = wait_for_output.unwrap_or_else(|| output_notify.notified());
-                    let closed = output_closed_notify.notified();
-                    tokio::pin!(notified);
-                    tokio::pin!(closed);
-                    tokio::select! {
-                        _ = &mut notified => {}
-                        _ = &mut closed => {}
-                        _ = tokio::time::sleep(close_wait_remaining) => break,
-                        _ = Self::wait_for_pause_change(pause_state.as_ref()) => {}
-                    }
-                    continue;
-                }
-
-                let notified = wait_for_output.unwrap_or_else(|| output_notify.notified());
-                tokio::pin!(notified);
-                let exit_notified = cancellation_token.cancelled();
-                tokio::pin!(exit_notified);
-                tokio::select! {
-                    _ = &mut notified => {}
-                    _ = &mut exit_notified => exit_signal_received = true,
-                    _ = tokio::time::sleep(remaining) => break,
-                    _ = Self::wait_for_pause_change(pause_state.as_ref()) => {}
-                }
-                continue;
-            }
-
-            for chunk in drained_chunks {
-                collected.extend_from_slice(&chunk);
-            }
-
-            exit_signal_received |= cancellation_token.is_cancelled();
-            if Instant::now() >= deadline {
-                break;
-            }
-        }
-
-        collected
-    }
-
-    async fn extend_deadlines_while_paused(
-        pause_state: &mut Option<watch::Receiver<bool>>,
-        deadline: &mut Instant,
-        post_exit_deadline: &mut Option<Instant>,
-    ) {
-        let Some(receiver) = pause_state.as_mut() else {
-            return;
-        };
-        if !*receiver.borrow() {
-            return;
-        }
-
-        let paused_at = Instant::now();
-        while *receiver.borrow() {
-            if receiver.changed().await.is_err() {
-                break;
-            }
-        }
-
-        let paused_for = paused_at.elapsed();
-        *deadline += paused_for;
-        if let Some(post_exit_deadline) = post_exit_deadline.as_mut() {
-            *post_exit_deadline += paused_for;
-        }
-    }
-
-    async fn wait_for_pause_change(pause_state: Option<&watch::Receiver<bool>>) {
-        match pause_state {
-            Some(pause_state) => {
-                let mut receiver = pause_state.clone();
-                let _ = receiver.changed().await;
-            }
-            None => std::future::pending::<()>().await,
-        }
     }
 
     fn prune_processes_if_needed(store: &mut ProcessStore) -> Option<ProcessEntry> {
