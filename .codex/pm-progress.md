@@ -12,8 +12,8 @@
   owner: root PM direct implementation
   status: active
   started_at: 2026-06-18 16:18:00 CST
-  current_step: 6A
-  current_focus: 先把 `core::config` 作为大块迁到 `codex-config`，core 只保留兼容 facade；随后再处理 unified exec、session/tool runtime 等更大块。
+  current_step: 6B
+  current_focus: Step 6A 已提交；下一步先设计并推进 `core/src/unified_exec` 到 `codex-command-runtime` 的大块拆分，core 只保留 approval/sandbox/spawn/session wiring。
   baseline:
     - 冷编译测量：`rtk cargo clean && rtk cargo build --timings -p codex-app-server --bin codex-app-server` 通过；Cargo timing total 359.2s，`codex-core` 单 unit 197.7s。
     - Step 6 前 `codex-rs/core/src` 约 293 个 Rust 文件、134123 行，是当前最大的编译和维护瓶颈。
@@ -26,6 +26,7 @@
     - `config.schema.json` 和 schema 说明已从 `codex-rs/core` 迁到 `codex-rs/config`；`codex-write-config-schema` 默认写入新的 owner 路径，release asset 复制路径同步更新。
     - 已移除 `core-plugins-api` / `hooks-api` 对 `codex-config` 的 optional test-support 回边，避免 `codex-config -> api crate -> codex-config` cycle。
     - 清理了迁移后暴露的 config runtime unused warning，并删除 app-server 中一个不再使用的 core config facade import。
+    - Step 6A 已提交：`47db37b refactor config runtime out of core`。
   latest_validation:
     - `rtk cargo test -p codex-config`：通过，393 个测试通过。
     - `rtk cargo check -p codex-core --lib`：通过；仍有既有 unused/dead_code warnings。
@@ -38,8 +39,8 @@
     - touched Rust unsafe scan：无 Rust `unsafe` 语法命中；仅测试字符串中出现 “unsafe nickname”。
     - `rtk just bazel-lock-check`：通过，仅打印既有 rules_rs well-known crate annotation warnings。
   remaining_validation:
-    - 提交前做最终 `git status` / diff sanity check。
-  next_action: 提交 Step 6A 阶段成果 `refactor config runtime out of core`，然后进入 Step 6B unified exec 拆分设计/实施。
+    - Step 6B 开始前盘点 `codex-rs/core/src/unified_exec` 与 `codex-command-runtime` 当前 ownership、callsite 和 dependency graph。
+  next_action: 进入 Step 6B，先定 unified exec 拆分边界和 dependency gate，再实施第一块迁移。
 
 ## Step Plan
 
@@ -64,11 +65,11 @@
   summary: 清 app-server 旁路 core 依赖：`codex-cloud-requirements`、`codex-app-server-transport`、`codex-guardian`、`codex-chatgpt`、`codex-file-subscription`、`codex-memories-write` 已脱离 app-server 到 core 的 normal 反向路径；最终剩余只有 `codex-app-server -> codex-core`。
 
 - step: 6A
-  status: ready_to_commit
-  summary: `core::config` 大块迁移到 `codex-config`，core 只保留兼容 re-export facade；schema fixture 和生成工具 ownership 同步迁到 config；验证已通过，等待提交。
+  status: completed
+  summary: `core::config` 大块迁移到 `codex-config`，core 只保留兼容 re-export facade；schema fixture 和生成工具 ownership 同步迁到 config；已验证并提交为 `47db37b`。
 
 - step: 6B
-  status: pending
+  status: in_progress
   summary: 将 `core/src/unified_exec` 的 command runtime primitive 和可独立测试逻辑迁到 `codex-command-runtime`；core 保留 approval/sandbox/spawn/session wiring。
 
 - step: 6C
