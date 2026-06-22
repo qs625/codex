@@ -22,7 +22,6 @@ mod realtime_start_instructions;
 mod realtime_start_with_instructions;
 mod skill_instructions;
 mod subagent_notification;
-mod turn_aborted;
 mod user_instructions;
 mod user_shell_command;
 
@@ -50,6 +49,5 @@ pub(crate) use realtime_start_instructions::RealtimeStartInstructions;
 pub(crate) use realtime_start_with_instructions::RealtimeStartWithInstructions;
 pub(crate) use skill_instructions::SkillInstructions;
 pub(crate) use subagent_notification::SubagentNotification;
-pub(crate) use turn_aborted::TurnAborted;
 pub(crate) use user_instructions::UserInstructions;
 pub(crate) use user_shell_command::UserShellCommand;

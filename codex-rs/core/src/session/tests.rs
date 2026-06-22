@@ -4,7 +4,6 @@ use crate::config::CONFIG_TOML_FILE;
 use crate::config::ConfigBuilder;
 use crate::config::test_config;
 use crate::context::ContextualUserFragment;
-use crate::context::TurnAborted;
 use crate::function_tool::FunctionCallError;
 use crate::shell::default_user_shell;
 use crate::skills::SkillRenderSideEffects;
@@ -23,6 +22,7 @@ use codex_config::loader::project_trust_key;
 use codex_config::types::ToolSuggestDisabledTool;
 use codex_core_plugins::PluginsManager;
 use codex_core_skills::SkillsManager;
+use codex_rollout_api::TurnAborted;
 
 use codex_features::Feature;
 use codex_hooks::Hooks;

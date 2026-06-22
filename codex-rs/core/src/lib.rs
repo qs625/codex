@@ -103,7 +103,7 @@ pub mod windows_sandbox;
 pub(crate) mod windows_sandbox_read_grants;
 pub mod workflow_runs;
 pub mod workflows;
-pub use thread_manager::ForkSnapshot;
+pub use codex_rollout_api::ForkSnapshot;
 pub use thread_manager::NewThread;
 pub use thread_manager::StartThreadOptions;
 pub use thread_manager::ThreadAuthRuntimes;

@@ -4,8 +4,6 @@ use crate::installation_id::INSTALLATION_ID_FILENAME;
 use crate::session::session::SessionSettingsUpdate;
 use crate::session::tests::make_session_and_context;
 use crate::state_db_bridge::init_state_db;
-use crate::tasks::InterruptedTurnHistoryMarker;
-use crate::tasks::interrupted_turn_history_marker;
 use codex_extension_api::empty_extension_registry;
 use codex_features::Feature;
 use codex_models_manager::manager::RefreshStrategy;
@@ -17,12 +15,22 @@ use codex_protocol::protocol::AgentMessageEvent;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::InternalSessionSource;
 use codex_protocol::protocol::ResumedHistory;
+use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::ThreadSource;
+use codex_protocol::protocol::TurnAbortReason;
+use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::UserMessageEvent;
 use codex_protocol::user_input::UserInput;
 use codex_rollout::RolloutRecorder;
+use codex_rollout_api::ForkSnapshot;
+use codex_rollout_api::InterruptedTurnHistoryMarker;
+use codex_rollout_api::SnapshotTurnState;
+use codex_rollout_api::append_interrupted_boundary;
+use codex_rollout_api::interrupted_turn_history_marker;
+use codex_rollout_api::snapshot_turn_state;
+use codex_rollout_api::truncate_before_nth_user_message;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use core_test_support::responses::mount_models_once;
@@ -1151,7 +1159,7 @@ fn multi_agent_v2_interrupted_marker_uses_developer_input_message() {
         matches!(
             content.as_slice(),
             [ContentItem::InputText { text }]
-                if text.contains(crate::context::TurnAborted::INTERRUPTED_DEVELOPER_GUIDANCE)
+                if text.contains(codex_rollout_api::TurnAborted::INTERRUPTED_DEVELOPER_GUIDANCE)
         ),
         "expected interrupted marker to use developer InputText content"
     );
@@ -1284,10 +1292,9 @@ async fn interrupted_fork_snapshot_does_not_synthesize_turn_id_for_legacy_histor
         .into_iter()
         .filter(|item| !matches!(item, RolloutItem::SessionMeta(_)))
         .collect();
-    let interrupted_marker_json = serde_json::to_value(RolloutItem::ResponseItem(
-        contextual_user_interrupted_marker(),
-    ))
-    .expect("serialize interrupted marker");
+    let interrupted_marker_json =
+        serde_json::to_value(RolloutItem::ResponseItem(developer_interrupted_marker()))
+            .expect("serialize interrupted marker");
     let interrupted_abort_json = serde_json::to_value(RolloutItem::EventMsg(
         EventMsg::TurnAborted(TurnAbortedEvent {
             turn_id: expected_turn_id,
@@ -1496,10 +1503,9 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
         .into_iter()
         .filter(|item| !matches!(item, RolloutItem::SessionMeta(_)))
         .collect();
-    let interrupted_marker_json = serde_json::to_value(RolloutItem::ResponseItem(
-        contextual_user_interrupted_marker(),
-    ))
-    .expect("serialize interrupted marker");
+    let interrupted_marker_json =
+        serde_json::to_value(RolloutItem::ResponseItem(developer_interrupted_marker()))
+            .expect("serialize interrupted marker");
     assert_eq!(
         forked_rollout_items
             .iter()

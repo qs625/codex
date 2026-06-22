@@ -9,14 +9,12 @@ use crate::environment_selection::resolve_environment_selections;
 use crate::exec_policy::EmptyExecPolicyLoader;
 use crate::exec_policy::ExecPolicyLoader;
 use crate::mcp::McpManager;
-use crate::rollout::truncation;
 use crate::session::Codex;
 use crate::session::CodexSpawnArgs;
 use crate::session::CodexSpawnOk;
 use crate::session::INITIAL_SUBMIT_ID;
 use crate::shell_snapshot::ShellSnapshot;
-use crate::tasks::InterruptedTurnHistoryMarker;
-use crate::tasks::interrupted_turn_history_marker;
+use crate::tasks::interrupted_turn_history_marker_from_config;
 use crate::workflow_runs::WorkflowRunController;
 use codex_analytics_api::AnalyticsEventsClient;
 use codex_api_runtime_api::DisabledApiRuntimeFactory;
@@ -73,15 +71,14 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::ResumedHistory;
-use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::ThreadSource;
-use codex_protocol::protocol::TurnAbortReason;
-use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::protocol::W3cTraceContext;
+use codex_rollout_api::ForkSnapshot;
+use codex_rollout_api::fork_history_from_snapshot;
 use codex_sandboxing_api::DisabledSandboxRuntime;
 use codex_sandboxing_api::SharedSandboxRuntime;
 use codex_session_telemetry_api::DisabledSessionTelemetryFactory;
@@ -163,45 +160,6 @@ impl ThreadCreatedEvent {
         match self {
             Self::Started(thread_id) | Self::Resumed(thread_id) => *thread_id,
         }
-    }
-}
-
-// TODO(ccunningham): Add an explicit non-interrupting live-turn snapshot once
-// core can represent sampling boundaries directly instead of relying on
-// whichever items happened to be persisted mid-turn.
-//
-// Two likely future variants:
-// - `TruncateToLastSamplingBoundary` for callers that want a coherent fork from
-//   the last stable model boundary without synthesizing an interrupt.
-// - `WaitUntilNextSamplingBoundary` (or similar) for callers that prefer to
-//   fork after the next sampling boundary rather than interrupting immediately.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ForkSnapshot {
-    /// Fork a committed prefix ending strictly before the nth user message.
-    ///
-    /// When `n` is within range, this cuts before that 0-based user-message
-    /// boundary. When `n` is out of range and the source thread is currently
-    /// mid-turn, this instead cuts before the active turn's opening boundary
-    /// so the fork drops the unfinished turn suffix. When `n` is out of range
-    /// and the source thread is already at a turn boundary, this returns the
-    /// full committed history unchanged.
-    TruncateBeforeNthUserMessage(usize),
-
-    /// Fork the current persisted history as if the source thread had been
-    /// interrupted now.
-    ///
-    /// If the persisted snapshot ends mid-turn, this appends the same
-    /// `<turn_aborted>` marker produced by a real interrupt. If the snapshot is
-    /// already at a turn boundary, this returns the current persisted history
-    /// unchanged.
-    Interrupted,
-}
-
-/// Preserve legacy `fork_thread(usize, ...)` callsites by mapping them to the
-/// existing truncate-before-nth-user-message snapshot mode.
-impl From<usize> for ForkSnapshot {
-    fn from(value: usize) -> Self {
-        Self::TruncateBeforeNthUserMessage(value)
     }
 }
 
@@ -952,7 +910,7 @@ impl ThreadManager {
         options.initial_history = fork_history_from_snapshot(
             ForkSnapshot::Interrupted,
             history,
-            InterruptedTurnHistoryMarker::from_config(&options.config),
+            interrupted_turn_history_marker_from_config(&options.config),
         );
         self.start_thread_with_options(options).await
     }
@@ -1219,7 +1177,7 @@ impl ThreadManager {
         persist_extended_history: bool,
         parent_trace: Option<W3cTraceContext>,
     ) -> CodexResult<NewThread> {
-        let interrupted_marker = InterruptedTurnHistoryMarker::from_config(&config);
+        let interrupted_marker = interrupted_turn_history_marker_from_config(&config);
         let history = fork_history_from_snapshot(snapshot, history, interrupted_marker);
         let environments = default_thread_environment_selections(
             self.state.environment_manager.as_ref(),
@@ -1740,203 +1698,6 @@ fn thread_store_metadata_update_error(thread_id: ThreadId, err: ThreadStoreError
         err => CodexErr::Fatal(format!(
             "failed to update thread metadata {thread_id}: {err}"
         )),
-    }
-}
-
-/// Return a fork snapshot cut strictly before the nth user message (0-based).
-///
-/// Out-of-range values keep the full committed history at a turn boundary, but
-/// when the source thread is currently mid-turn they fall back to cutting
-/// before the active turn's opening boundary so the fork omits the unfinished
-/// suffix entirely.
-fn truncate_before_nth_user_message(
-    history: InitialHistory,
-    n: usize,
-    snapshot_state: &SnapshotTurnState,
-) -> InitialHistory {
-    let items: Vec<RolloutItem> = history.get_rollout_items();
-    let user_positions = truncation::user_message_positions_in_rollout(&items);
-    let rolled = if snapshot_state.ends_mid_turn && n >= user_positions.len() {
-        if let Some(cut_idx) = snapshot_state
-            .active_turn_start_index
-            .or_else(|| user_positions.last().copied())
-        {
-            items[..cut_idx].to_vec()
-        } else {
-            items
-        }
-    } else {
-        truncation::truncate_rollout_before_nth_user_message_from_start(&items, n)
-    };
-
-    if rolled.is_empty() {
-        InitialHistory::New
-    } else {
-        InitialHistory::Forked(rolled)
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-struct SnapshotTurnState {
-    ends_mid_turn: bool,
-    active_turn_id: Option<String>,
-    active_turn_start_index: Option<usize>,
-}
-
-fn snapshot_turn_state(history: &InitialHistory) -> SnapshotTurnState {
-    let rollout_items = history.get_rollout_items();
-
-    let mut finished_explicit_turn_ids = HashSet::new();
-    let mut active_explicit_turn: Option<(String, usize)> = None;
-    for (index, item) in rollout_items.iter().enumerate() {
-        match item {
-            RolloutItem::EventMsg(EventMsg::TurnStarted(event)) => {
-                if let Some((turn_id, _)) = active_explicit_turn.take() {
-                    finished_explicit_turn_ids.insert(turn_id);
-                }
-                active_explicit_turn = Some((event.turn_id.clone(), index));
-            }
-            RolloutItem::EventMsg(EventMsg::TurnComplete(event)) => {
-                if active_explicit_turn
-                    .as_ref()
-                    .is_some_and(|(turn_id, _)| turn_id == &event.turn_id)
-                {
-                    if let Some((turn_id, _)) = active_explicit_turn.take() {
-                        finished_explicit_turn_ids.insert(turn_id);
-                    }
-                } else if !finished_explicit_turn_ids.contains(&event.turn_id)
-                    && let Some((turn_id, _)) = active_explicit_turn.take()
-                {
-                    finished_explicit_turn_ids.insert(turn_id);
-                }
-            }
-            RolloutItem::EventMsg(EventMsg::TurnAborted(event)) => match event.turn_id.as_deref() {
-                Some(aborted_turn_id) => {
-                    if active_explicit_turn
-                        .as_ref()
-                        .is_some_and(|(turn_id, _)| turn_id == aborted_turn_id)
-                    {
-                        if let Some((turn_id, _)) = active_explicit_turn.take() {
-                            finished_explicit_turn_ids.insert(turn_id);
-                        }
-                    } else if !finished_explicit_turn_ids.contains(aborted_turn_id)
-                        && let Some((turn_id, _)) = active_explicit_turn.take()
-                    {
-                        finished_explicit_turn_ids.insert(turn_id);
-                    }
-                }
-                None => {
-                    if let Some((turn_id, _)) = active_explicit_turn.take() {
-                        finished_explicit_turn_ids.insert(turn_id);
-                    }
-                }
-            },
-            _ => {}
-        }
-    }
-
-    if let Some((turn_id, start_index)) = active_explicit_turn {
-        return SnapshotTurnState {
-            ends_mid_turn: true,
-            active_turn_id: Some(turn_id),
-            active_turn_start_index: Some(start_index),
-        };
-    }
-
-    let Some(last_user_position) = truncation::user_message_positions_in_rollout(&rollout_items)
-        .last()
-        .copied()
-    else {
-        return SnapshotTurnState {
-            ends_mid_turn: false,
-            active_turn_id: None,
-            active_turn_start_index: None,
-        };
-    };
-
-    // Synthetic fork/resume histories can contain user/assistant response items
-    // without explicit turn lifecycle events. If the persisted snapshot has no
-    // terminating boundary after its last user message, treat it as mid-turn.
-    SnapshotTurnState {
-        ends_mid_turn: !rollout_items[last_user_position + 1..].iter().any(|item| {
-            matches!(
-                item,
-                RolloutItem::EventMsg(EventMsg::TurnComplete(_) | EventMsg::TurnAborted(_))
-            )
-        }),
-        active_turn_id: None,
-        active_turn_start_index: None,
-    }
-}
-
-fn fork_history_from_snapshot(
-    snapshot: ForkSnapshot,
-    history: InitialHistory,
-    interrupted_marker: InterruptedTurnHistoryMarker,
-) -> InitialHistory {
-    let snapshot_state = snapshot_turn_state(&history);
-    match snapshot {
-        ForkSnapshot::TruncateBeforeNthUserMessage(nth_user_message) => {
-            truncate_before_nth_user_message(history, nth_user_message, &snapshot_state)
-        }
-        ForkSnapshot::Interrupted => {
-            let history = match history {
-                InitialHistory::New => InitialHistory::New,
-                InitialHistory::Cleared => InitialHistory::Cleared,
-                InitialHistory::Forked(history) => InitialHistory::Forked(history),
-                InitialHistory::Resumed(resumed) => InitialHistory::Forked(resumed.history),
-            };
-            if snapshot_state.ends_mid_turn {
-                append_interrupted_boundary(
-                    history,
-                    snapshot_state.active_turn_id,
-                    interrupted_marker,
-                )
-            } else {
-                history
-            }
-        }
-    }
-}
-
-/// Append the same persisted interrupt boundary used by the live interrupt path
-/// to an existing fork snapshot after the source thread has been confirmed to
-/// be mid-turn.
-fn append_interrupted_boundary(
-    history: InitialHistory,
-    turn_id: Option<String>,
-    interrupted_marker: InterruptedTurnHistoryMarker,
-) -> InitialHistory {
-    let aborted_event = RolloutItem::EventMsg(EventMsg::TurnAborted(TurnAbortedEvent {
-        turn_id,
-        reason: TurnAbortReason::Interrupted,
-        completed_at: None,
-        duration_ms: None,
-    }));
-
-    match history {
-        InitialHistory::New | InitialHistory::Cleared => {
-            let mut history = Vec::new();
-            if let Some(marker) = interrupted_turn_history_marker(interrupted_marker) {
-                history.push(RolloutItem::ResponseItem(marker));
-            }
-            history.push(aborted_event);
-            InitialHistory::Forked(history)
-        }
-        InitialHistory::Forked(mut history) => {
-            if let Some(marker) = interrupted_turn_history_marker(interrupted_marker) {
-                history.push(RolloutItem::ResponseItem(marker));
-            }
-            history.push(aborted_event);
-            InitialHistory::Forked(history)
-        }
-        InitialHistory::Resumed(mut resumed) => {
-            if let Some(marker) = interrupted_turn_history_marker(interrupted_marker) {
-                resumed.history.push(RolloutItem::ResponseItem(marker));
-            }
-            resumed.history.push(aborted_event);
-            InitialHistory::Forked(resumed.history)
-        }
     }
 }
 

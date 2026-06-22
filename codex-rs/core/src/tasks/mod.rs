@@ -22,7 +22,6 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::config::Config;
-use crate::context::ContextualUserFragment;
 use crate::goals::GoalRuntimeEvent;
 use crate::hook_runtime::PendingInputHookDisposition;
 use crate::hook_runtime::inspect_pending_input;
@@ -43,7 +42,6 @@ use codex_metrics_api::TURN_TOKEN_USAGE_METRIC;
 use codex_metrics_api::TURN_TOOL_CALL_METRIC;
 use codex_model_provider_api::SharedModelProviderAuthManager;
 use codex_models_manager_api::SharedModelsManager;
-use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::TokenUsage;
@@ -52,9 +50,10 @@ use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnCompleteEvent;
 use codex_protocol::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
+pub(crate) use codex_rollout_api::InterruptedTurnHistoryMarker;
+pub(crate) use codex_rollout_api::interrupted_turn_history_marker;
 
 use codex_features::Feature;
-use codex_protocol::models::ContentItem;
 pub(crate) use compact::CompactTask;
 pub(crate) use regular::RegularTask;
 pub(crate) use review::ReviewTask;
@@ -64,46 +63,13 @@ pub(crate) use user_shell::execute_user_shell_command;
 
 const GRACEFULL_INTERRUPTION_TIMEOUT_MS: u64 = 100;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum InterruptedTurnHistoryMarker {
-    Disabled,
-    ContextualUser,
-    Developer,
-}
-
-impl InterruptedTurnHistoryMarker {
-    pub(crate) fn from_config(config: &Config) -> Self {
-        if !config.agent_interrupt_message_enabled {
-            return Self::Disabled;
-        }
-        Self::Developer
+pub(crate) fn interrupted_turn_history_marker_from_config(
+    config: &Config,
+) -> InterruptedTurnHistoryMarker {
+    if !config.agent_interrupt_message_enabled {
+        return InterruptedTurnHistoryMarker::Disabled;
     }
-}
-
-/// Shared model-visible marker used by both the real interrupt path and
-/// interrupted fork snapshots.
-pub(crate) fn interrupted_turn_history_marker(
-    marker: InterruptedTurnHistoryMarker,
-) -> Option<ResponseItem> {
-    match marker {
-        InterruptedTurnHistoryMarker::Disabled => None,
-        InterruptedTurnHistoryMarker::ContextualUser => Some(ContextualUserFragment::into(
-            crate::context::TurnAborted::new(crate::context::TurnAborted::INTERRUPTED_GUIDANCE),
-        )),
-        InterruptedTurnHistoryMarker::Developer => {
-            let marker = crate::context::TurnAborted::new(
-                crate::context::TurnAborted::INTERRUPTED_DEVELOPER_GUIDANCE,
-            );
-            Some(ResponseItem::Message {
-                id: None,
-                role: "developer".to_string(),
-                content: vec![ContentItem::InputText {
-                    text: marker.render(),
-                }],
-                phase: None,
-            })
-        }
-    }
+    InterruptedTurnHistoryMarker::Developer
 }
 
 fn emit_turn_network_proxy_metric(
@@ -857,7 +823,7 @@ impl Session {
 
         if reason == TurnAbortReason::Interrupted
             && let Some(marker) = interrupted_turn_history_marker(
-                InterruptedTurnHistoryMarker::from_config(task.turn_context.config.as_ref()),
+                interrupted_turn_history_marker_from_config(task.turn_context.config.as_ref()),
             )
         {
             self.record_into_history(std::slice::from_ref(&marker), task.turn_context.as_ref())
