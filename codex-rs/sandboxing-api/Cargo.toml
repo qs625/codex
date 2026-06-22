@@ -17,6 +17,7 @@ codex-network-proxy-api = { workspace = true }
 codex-permissions-runtime = { workspace = true }
 codex-protocol = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
+codex-utils-path = { workspace = true }
 dunce = { workspace = true }
 
 [dev-dependencies]

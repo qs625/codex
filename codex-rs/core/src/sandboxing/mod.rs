@@ -10,7 +10,6 @@ ExecRequest for execution.
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
 use crate::exec::StdoutStream;
-use crate::exec::WindowsSandboxFilesystemOverrides;
 use crate::exec::execute_exec_request;
 #[cfg(target_os = "macos")]
 use crate::spawn::CODEX_SANDBOX_ENV_VAR;
@@ -25,6 +24,7 @@ use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_sandboxing_api::SandboxExecRequest;
 use codex_sandboxing_api::SandboxType;
+use codex_sandboxing_api::WindowsSandboxFilesystemOverrides;
 use codex_sandboxing_api::compatibility_sandbox_policy_for_permission_profile;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;

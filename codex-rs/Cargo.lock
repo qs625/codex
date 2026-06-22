@@ -4653,6 +4653,7 @@ dependencies = [
  "codex-permissions-runtime",
  "codex-protocol",
  "codex-utils-absolute-path",
+ "codex-utils-path",
  "dunce",
  "pretty_assertions",
  "tempfile",

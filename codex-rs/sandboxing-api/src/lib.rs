@@ -7,6 +7,7 @@ mod manager;
 pub mod policy_transforms;
 mod sandbox_tags;
 mod windows_deny_read;
+mod windows_filesystem_overrides;
 
 pub use manager::SandboxCommand;
 pub use manager::SandboxExecRequest;
@@ -21,6 +22,12 @@ pub use sandbox_tags::permission_profile_policy_tag;
 pub use sandbox_tags::permission_profile_sandbox_tag;
 pub use sandbox_tags::sandbox_tag;
 pub use windows_deny_read::resolve_windows_deny_read_paths;
+pub use windows_filesystem_overrides::WindowsSandboxFilesystemOverrides;
+pub use windows_filesystem_overrides::resolve_windows_elevated_filesystem_overrides;
+pub use windows_filesystem_overrides::resolve_windows_restricted_token_filesystem_overrides;
+pub use windows_filesystem_overrides::should_use_windows_restricted_token_sandbox;
+pub use windows_filesystem_overrides::unsupported_windows_restricted_token_sandbox_reason;
+pub use windows_filesystem_overrides::windows_sandbox_uses_elevated_backend;
 
 /// Runtime capability for selecting and transforming sandboxed process commands.
 ///
