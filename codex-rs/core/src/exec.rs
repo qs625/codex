@@ -15,7 +15,6 @@ use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 use tokio::process::Child;
-use tokio_util::sync::CancellationToken;
 
 use crate::sandboxing::ExecOptions;
 use crate::sandboxing::ExecRequest;
@@ -23,7 +22,14 @@ use crate::sandboxing::SandboxPermissions;
 use crate::spawn::SpawnChildRequest;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
+pub use codex_command_runtime::DEFAULT_EXEC_COMMAND_TIMEOUT_MS;
+pub use codex_command_runtime::ExecCapturePolicy;
+pub use codex_command_runtime::ExecExpiration;
+pub use codex_command_runtime::ExecExpirationOutcome;
+pub use codex_command_runtime::IO_DRAIN_TIMEOUT_MS;
+pub use codex_command_runtime::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
 use codex_command_runtime::bytes_to_string_smart;
+pub use codex_command_runtime::cancel_when_either;
 use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result;
@@ -48,10 +54,7 @@ use codex_sandboxing_api::resolve_windows_elevated_filesystem_overrides;
 use codex_sandboxing_api::resolve_windows_restricted_token_filesystem_overrides;
 use codex_sandboxing_api::windows_sandbox_uses_elevated_backend;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use codex_utils_pty::DEFAULT_OUTPUT_BYTES_CAP;
 use codex_utils_pty::process_group::kill_child_process_group;
-
-pub const DEFAULT_EXEC_COMMAND_TIMEOUT_MS: u64 = 10_000;
 
 // Hardcode these since it does not seem worth including the libc crate just
 // for these.
@@ -64,25 +67,6 @@ const EXEC_TIMEOUT_EXIT_CODE: i32 = 124; // conventional timeout exit code
 // I/O buffer sizing
 const READ_CHUNK_SIZE: usize = 8192; // bytes per read
 const AGGREGATE_BUFFER_INITIAL_CAPACITY: usize = 8 * 1024; // 8 KiB
-
-/// Hard cap on bytes retained from exec stdout/stderr/aggregated output.
-///
-/// This mirrors unified exec's output cap so a single runaway command cannot
-/// OOM the process by dumping huge amounts of data to stdout/stderr.
-const EXEC_OUTPUT_MAX_BYTES: usize = DEFAULT_OUTPUT_BYTES_CAP;
-
-/// Limit the number of ExecCommandOutputDelta events emitted per exec call.
-/// Aggregation still collects full output; only the live event stream is capped.
-pub(crate) const MAX_EXEC_OUTPUT_DELTAS_PER_CALL: usize = 10_000;
-
-// Wait for the stdout/stderr collection tasks but guard against them
-// hanging forever. In the normal case, both pipes are closed once the child
-// terminates so the tasks exit quickly. However, if the child process
-// spawned grandchildren that inherited its stdout/stderr file descriptors
-// those pipes may stay open after we `kill` the direct child on timeout.
-// That would cause the `read_capped` tasks to block on `read()`
-// indefinitely, effectively hanging the whole agent.
-pub const IO_DRAIN_TIMEOUT_MS: u64 = 2_000; // 2 s should be plenty for local pipes
 
 #[derive(Debug)]
 pub struct ExecParams {
@@ -99,16 +83,6 @@ pub struct ExecParams {
     pub arg0: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ExecCapturePolicy {
-    /// Shell-like execs keep the historical output cap and timeout behavior.
-    #[default]
-    ShellTool,
-    /// Trusted internal helpers can buffer the full child output in memory
-    /// without the shell-oriented output cap or exec-expiration behavior.
-    FullBuffer,
-}
-
 fn select_process_exec_tool_sandbox_type(
     sandbox_runtime: &dyn SandboxRuntime,
     file_system_sandbox_policy: &FileSystemSandboxPolicy,
@@ -123,142 +97,6 @@ fn select_process_exec_tool_sandbox_type(
         windows_sandbox_level,
         enforce_managed_network,
     )
-}
-
-/// Mechanism to terminate an exec invocation before it finishes naturally.
-#[derive(Clone, Debug)]
-pub enum ExecExpiration {
-    Timeout(Duration),
-    DefaultTimeout,
-    Cancellation(CancellationToken),
-    TimeoutOrCancellation {
-        timeout: Duration,
-        cancellation: CancellationToken,
-    },
-}
-
-/// Why an `ExecExpiration` completed.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ExecExpirationOutcome {
-    /// The configured timeout elapsed.
-    TimedOut,
-    /// The cancellation token was cancelled.
-    Cancelled,
-}
-
-impl From<Option<u64>> for ExecExpiration {
-    fn from(timeout_ms: Option<u64>) -> Self {
-        timeout_ms.map_or(ExecExpiration::DefaultTimeout, |timeout_ms| {
-            ExecExpiration::Timeout(Duration::from_millis(timeout_ms))
-        })
-    }
-}
-
-impl From<u64> for ExecExpiration {
-    fn from(timeout_ms: u64) -> Self {
-        ExecExpiration::Timeout(Duration::from_millis(timeout_ms))
-    }
-}
-
-impl ExecExpiration {
-    /// Waits for this expiration and reports whether it timed out or was cancelled.
-    pub async fn wait_with_outcome(self) -> ExecExpirationOutcome {
-        match self {
-            ExecExpiration::Timeout(duration) => {
-                tokio::time::sleep(duration).await;
-                ExecExpirationOutcome::TimedOut
-            }
-            ExecExpiration::DefaultTimeout => {
-                tokio::time::sleep(Duration::from_millis(DEFAULT_EXEC_COMMAND_TIMEOUT_MS)).await;
-                ExecExpirationOutcome::TimedOut
-            }
-            ExecExpiration::Cancellation(cancel) => {
-                cancel.cancelled().await;
-                ExecExpirationOutcome::Cancelled
-            }
-            ExecExpiration::TimeoutOrCancellation {
-                timeout,
-                cancellation,
-            } => {
-                tokio::select! {
-                    biased;
-                    _ = cancellation.cancelled() => ExecExpirationOutcome::Cancelled,
-                    _ = tokio::time::sleep(timeout) => ExecExpirationOutcome::TimedOut,
-                }
-            }
-        }
-    }
-
-    /// If ExecExpiration is a timeout, returns the timeout in milliseconds.
-    pub(crate) fn timeout_ms(&self) -> Option<u64> {
-        match self {
-            ExecExpiration::Timeout(duration) => Some(duration.as_millis() as u64),
-            ExecExpiration::DefaultTimeout => Some(DEFAULT_EXEC_COMMAND_TIMEOUT_MS),
-            ExecExpiration::Cancellation(_) => None,
-            ExecExpiration::TimeoutOrCancellation { timeout, .. } => {
-                Some(timeout.as_millis() as u64)
-            }
-        }
-    }
-
-    pub(crate) fn with_cancellation(self, cancellation: CancellationToken) -> Self {
-        match self {
-            ExecExpiration::Timeout(timeout) => ExecExpiration::TimeoutOrCancellation {
-                timeout,
-                cancellation,
-            },
-            ExecExpiration::DefaultTimeout => ExecExpiration::TimeoutOrCancellation {
-                timeout: Duration::from_millis(DEFAULT_EXEC_COMMAND_TIMEOUT_MS),
-                cancellation,
-            },
-            ExecExpiration::Cancellation(existing) => {
-                ExecExpiration::Cancellation(cancel_when_either(existing, cancellation))
-            }
-            ExecExpiration::TimeoutOrCancellation {
-                timeout,
-                cancellation: existing,
-            } => ExecExpiration::TimeoutOrCancellation {
-                timeout,
-                cancellation: cancel_when_either(existing, cancellation),
-            },
-        }
-    }
-}
-
-pub(crate) fn cancel_when_either(
-    first: CancellationToken,
-    second: CancellationToken,
-) -> CancellationToken {
-    let combined = CancellationToken::new();
-    let cancel = combined.clone();
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = first.cancelled() => {}
-            _ = second.cancelled() => {}
-        }
-        cancel.cancel();
-    });
-    combined
-}
-
-impl ExecCapturePolicy {
-    fn retained_bytes_cap(self) -> Option<usize> {
-        match self {
-            Self::ShellTool => Some(EXEC_OUTPUT_MAX_BYTES),
-            Self::FullBuffer => None,
-        }
-    }
-
-    fn io_drain_timeout(self) -> Duration {
-        Duration::from_millis(IO_DRAIN_TIMEOUT_MS)
-    }
-
-    fn uses_expiration(self) -> bool {
-        match self {
-            Self::ShellTool => true,
-            Self::FullBuffer => false,
-        }
-    }
 }
 
 #[derive(Clone)]

@@ -10,9 +10,18 @@ use tokio::sync::Mutex;
 use tokio::sync::Notify;
 use tokio::time::Instant;
 
+mod exec_control;
 mod output;
 pub mod output_decoding;
 mod session_controller;
+pub use exec_control::DEFAULT_EXEC_COMMAND_TIMEOUT_MS;
+pub use exec_control::DEFAULT_EXEC_OUTPUT_MAX_BYTES;
+pub use exec_control::ExecCapturePolicy;
+pub use exec_control::ExecExpiration;
+pub use exec_control::ExecExpirationOutcome;
+pub use exec_control::IO_DRAIN_TIMEOUT_MS;
+pub use exec_control::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
+pub use exec_control::cancel_when_either;
 pub use output::CommandOutputBuffer;
 pub use output::CommandOutputHandles;
 pub use output::CommandOutputRuntime;

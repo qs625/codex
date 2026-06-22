@@ -12,7 +12,7 @@
 - owner: root PM direct implementation
 - status: active
 - current_step: 6C
-- current_focus: Step 6C 继续推进 service/domain boundary：command session controller 已 trait 化；MCP runtime、Apps file/skill dependency runtime 已迁到 `codex-mcp-runtime`；agent role catalog/spec 已迁到 `codex-agent-roles`；exec policy manager/loader trait/update runtime 和 network approval 纯状态机已迁到 `codex-permissions-runtime`；Windows sandbox filesystem override 解析已迁到 `codex-sandboxing-api`。core 继续保留 session/tool host adapter、Guardian/hook adapter、exec spawn/PTY/event emission 和 sandbox execution glue。
+- current_focus: Step 6C 继续推进 service/domain boundary：command session controller、exec timeout/capture policy DTO 已迁到 `codex-command-runtime`；MCP runtime、Apps file/skill dependency runtime 已迁到 `codex-mcp-runtime`；agent role catalog/spec 已迁到 `codex-agent-roles`；exec policy manager/loader trait/update runtime 和 network approval 纯状态机已迁到 `codex-permissions-runtime`；Windows sandbox filesystem override 解析已迁到 `codex-sandboxing-api`。core 继续保留 session/tool host adapter、Guardian/hook adapter、exec spawn/PTY/event emission 和 sandbox execution glue。
 
 ## Current State
 
@@ -31,9 +31,10 @@
 - Step 6C 第六个切片把 `ExecPolicyManager`、`ExecPolicyLoader`、`ExecPolicyLoadResult`、`ExecPolicyUpdateError` 和 exec policy rules append/update runtime 迁到 `codex-permissions-runtime`；core `exec_policy.rs` 只保留 `child_uses_parent_exec_policy` 和 test-only Starlark loader helpers，`codex-execpolicy-loader` 直接依赖 `codex-permissions-runtime` trait/result，不再依赖 `codex-core`。
 - Step 6C 第七个切片把 network approval 的 host/protocol/port key、pending approval 去重、session allow/deny cache、active call outcome/cancellation、blocked request denial message 和 approval-flow gating 迁到 `codex-permissions-runtime::network_approval`；core `tools::network_approval` 保留 `NetworkApprovalService` wrapper、`Session`/Guardian/hook prompt、network policy amendment persistence/display 和 deferred `ToolError` 映射。
 - Step 6C 第八个切片把 Windows sandbox filesystem override 解析迁到 `codex-sandboxing-api::windows_filesystem_overrides`：包括 restricted-token/elevated backend selection、unsupported reason、read/write root override、deny-read/deny-write overlay 和原 core 单测；core `exec.rs` 只在 build/execute path 调用该 API，`core::sandboxing::ExecRequest` 保存 sandboxing-api owner type。
+- Step 6C 第九个切片把 `ExecExpiration`、`ExecExpirationOutcome`、`ExecCapturePolicy`、默认 exec timeout、IO drain timeout 和 output delta 上限迁到 `codex-command-runtime::exec_control`；core `exec.rs` 短期 re-export 兼容旧测试/外部 crate，app-server streaming/process exec 路径已直接依赖 `codex-command-runtime`，不再通过 `codex-core::exec` 获取这些基础 DTO。
 - `UnifiedExecProcess` / `process_manager` 剩余逻辑仍绑定 exec-server protocol、PTY、sandbox denial detection、core error type、Session/TurnContext、ToolEmitter、ToolOrchestrator 和 network approval；继续迁移前需要 Step 6C 的 trait/service 边界，避免只做小 helper 或把 heavy runtime 间接拉回。
 - Step 6 前基线：`codex-rs/core/src` 约 293 个 Rust 文件、134123 行；`codex-app-server` 冷编译 timing 中 `codex-core` 单 unit 约 197.7s。
-- 当前 `codex-rs/core/src` 约 270 个 Rust 文件、109162 行；`core/src/exec.rs` 已从 1517 行降到 1141 行，Windows sandbox override 单测迁到 `codex-sandboxing-api`；`core/src/unified_exec` 剩余最大文件为 `process_manager.rs` 1226 行、`process.rs` 424 行、`async_watcher.rs` 347 行。
+- 当前 `codex-rs/core/src` 约 270 个 Rust 文件、108992 行；`core/src/exec.rs` 已从 1517 行降到 979 行，Windows sandbox override 单测迁到 `codex-sandboxing-api`，exec timeout/capture DTO 单测迁到 `codex-command-runtime`；`core/src/unified_exec` 剩余最大文件为 `process_manager.rs` 1226 行、`process.rs` 424 行、`async_watcher.rs` 347 行。
 
 ## Last Validation
 
@@ -83,12 +84,19 @@
 - `rtk just bazel-lock-check`：通过，仅既有 rules_rs well-known crate annotation warnings。
 - `rtk git diff --check`：通过；touched Rust `unsafe` scan 只命中 `core/src/exec_tests.rs` 中既有 `libc::kill(pid, 0)` 测试代码，本切片没有新增 unsafe。
 - 未作为本切片通过门禁：`rtk cargo test -p codex-core --lib exec -- --nocapture` 编译通过，但测试过滤过宽，额外命中既有 `tools::spec::*unified_exec_web_search` workflow 顺序断言失败；本切片改用更窄 core 调用路径测试覆盖。
+- `rtk cargo test -p codex-command-runtime -- --nocapture`：通过 34 条，覆盖迁入后的 exec control DTO、command output runtime 和 wait backoff。
+- `rtk cargo test -p codex-core --lib exec_full_buffer_capture_ignores_expiration -- --nocapture`：通过，覆盖 core exec full-buffer 行为继续消费迁出后的 capture/expiration DTO。
+- `rtk cargo check -p codex-core --lib`：通过，仅既有 warnings。
+- `rtk cargo build -p codex-app-server --bin codex-app-server`：通过，仅既有 warnings。
+- `rtk cargo tree -p codex-command-runtime --depth 2 --edges normal`：direct graph 仍仅为 decoding、rand、tokio/tokio-util。
+- `codex-command-runtime` exec control 迁移后 normal graph 精确 grep 门禁和 `cargo tree --workspace --edges normal --invert <heavy>` 反向门禁：core、app-server protocol、code-mode、concrete network-proxy、exec-server、state/sqlx、codex-api、concrete `codex-openai-files`、concrete `codex-core-skills` 均 PASS。
+- `rtk git diff --check`：通过；新增 Rust diff 中没有新增 unsafe。
 - 未作为本切片通过门禁：`rtk cargo test -p codex-core --test all permission_request_hook_allows_network_approval_without_prompt -- --nocapture` 当前等待 hook log 超时；普通 `permission_request_hook_allows_shell_command_without_user_approval` 也等待事件超时，说明失败不局限于本次 network approval 状态迁移，后续需要单独排查 integration hook harness。
 - 用户要求后曾执行 `rtk cargo clean`；本轮 Windows sandbox override 验证和 app-server build 已重新生成 `codex-rs/target` 增量缓存，后续 broad Rust 验证不再是完全冷编译。
 
 ## Next Action
 
-继续 Step 6C：优先评估 `ExecExpiration` / `ExecCapturePolicy` / `ExecRequest` 的 owner 边界，目标是把 exec DTO 和纯 sandbox request glue 继续从 core 收缩到 `codex-command-runtime` / `codex-sandboxing-api`，但不把 exec-server、sandbox、state/sqlx、app-server protocol 等 heavy runtime 通过 indirect graph 拉回。
+继续 Step 6C：优先评估 `ExecRequest` / `ExecOptions` 的 owner 边界，目标是把纯 sandbox request glue 继续从 core 收缩到 `codex-sandboxing-api` 或合适 runtime API；真实 spawn、exec-server、PTY、EventMsg emission 和 Session/TurnContext 编排暂留 core，避免把 heavy runtime 通过 indirect graph 拉回。
 
 ## Step Plan
 

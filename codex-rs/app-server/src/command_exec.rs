@@ -18,11 +18,11 @@ use codex_app_server_protocol::CommandExecWriteParams;
 use codex_app_server_protocol::CommandExecWriteResponse;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::ServerNotification;
+use codex_command_runtime::ExecExpiration;
+use codex_command_runtime::ExecExpirationOutcome;
+use codex_command_runtime::IO_DRAIN_TIMEOUT_MS;
 use codex_command_runtime::bytes_to_string_smart;
 use codex_core::config::StartedNetworkProxy;
-use codex_core::exec::ExecExpiration;
-use codex_core::exec::ExecExpirationOutcome;
-use codex_core::exec::IO_DRAIN_TIMEOUT_MS;
 use codex_core::sandboxing::ExecRequest;
 use codex_sandboxing_api::SandboxType;
 use codex_utils_pty::DEFAULT_OUTPUT_BYTES_CAP;
@@ -676,6 +676,7 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::error_code::INVALID_REQUEST_ERROR_CODE;
+    use codex_command_runtime::ExecCapturePolicy;
     use codex_protocol::config_types::WindowsSandboxLevel;
     use codex_protocol::models::PermissionProfile;
     use codex_utils_absolute_path::AbsolutePathBuf;
@@ -701,7 +702,7 @@ mod tests {
             HashMap::new(),
             /*network*/ None,
             ExecExpiration::DefaultTimeout,
-            codex_core::exec::ExecCapturePolicy::ShellTool,
+            ExecCapturePolicy::ShellTool,
             SandboxType::WindowsRestrictedToken,
             WindowsSandboxLevel::Disabled,
             /*windows_sandbox_private_desktop*/ false,
@@ -817,7 +818,7 @@ mod tests {
                     HashMap::new(),
                     /*network*/ None,
                     ExecExpiration::Cancellation(CancellationToken::new()),
-                    codex_core::exec::ExecCapturePolicy::ShellTool,
+                    ExecCapturePolicy::ShellTool,
                     SandboxType::None,
                     WindowsSandboxLevel::Disabled,
                     /*windows_sandbox_private_desktop*/ false,
@@ -905,7 +906,7 @@ mod tests {
                         timeout: Duration::from_secs(30),
                         cancellation,
                     },
-                    codex_core::exec::ExecCapturePolicy::ShellTool,
+                    ExecCapturePolicy::ShellTool,
                     SandboxType::None,
                     WindowsSandboxLevel::Disabled,
                     /*windows_sandbox_private_desktop*/ false,

@@ -1,4 +1,5 @@
 use super::*;
+use codex_command_runtime::DEFAULT_EXEC_OUTPUT_MAX_BYTES as EXEC_OUTPUT_MAX_BYTES;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::PermissionProfile;
 use codex_sandboxing_api::SandboxType;
@@ -7,6 +8,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 
 fn make_exec_output(
     exit_code: i32,
@@ -233,16 +235,6 @@ fn aggregate_output_keeps_all_bytes_when_uncapped() {
         aggregated.text[EXEC_OUTPUT_MAX_BYTES..],
         vec![b'b'; EXEC_OUTPUT_MAX_BYTES]
     );
-}
-
-#[test]
-fn full_buffer_capture_policy_disables_caps_and_exec_expiration() {
-    assert_eq!(ExecCapturePolicy::FullBuffer.retained_bytes_cap(), None);
-    assert_eq!(
-        ExecCapturePolicy::FullBuffer.io_drain_timeout(),
-        Duration::from_millis(IO_DRAIN_TIMEOUT_MS)
-    );
-    assert!(!ExecCapturePolicy::FullBuffer.uses_expiration());
 }
 
 #[tokio::test]

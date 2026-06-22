@@ -254,6 +254,8 @@ use codex_backend_client::AddCreditsNudgeCreditType as BackendAddCreditsNudgeCre
 use codex_backend_client::Client as BackendClient;
 use codex_chatgpt::connectors as chatgpt_connectors;
 use codex_chatgpt::workspace_settings;
+use codex_command_runtime::ExecCapturePolicy;
+use codex_command_runtime::ExecExpiration;
 use codex_config_loader::project_trust_key;
 use codex_config_requirements::CloudRequirementsLoadError;
 use codex_config_requirements::CloudRequirementsLoadErrorCode;
@@ -273,8 +275,6 @@ use codex_core::config::NetworkProxyAuditMetadata;
 use codex_core::config::edit::ConfigEdit;
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::connectors as core_connectors;
-use codex_core::exec::ExecCapturePolicy;
-use codex_core::exec::ExecExpiration;
 use codex_core::exec::ExecParams;
 use codex_core::exec_env::create_env;
 use codex_core::path_utils;
