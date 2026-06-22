@@ -29,11 +29,21 @@ use std::task::Poll;
 use std::time::Duration;
 
 mod api_bridge;
+mod arc_monitor;
 mod error;
 pub mod rate_limits;
 mod response_debug_context;
 
 pub use api_bridge::map_api_error;
+pub use arc_monitor::ArcMonitorChatMessage;
+pub use arc_monitor::ArcMonitorEvidence;
+pub use arc_monitor::ArcMonitorMetadata;
+pub use arc_monitor::ArcMonitorPolicies;
+pub use arc_monitor::ArcMonitorRequest;
+pub use arc_monitor::ArcMonitorResult;
+pub use arc_monitor::ArcMonitorResultOutcome;
+pub use arc_monitor::ArcMonitorRiskLevel;
+pub use arc_monitor::build_arc_monitor_request;
 pub use error::ApiError;
 pub use error::extract_response_debug_context_from_api_error;
 pub use error::telemetry_api_error_message;

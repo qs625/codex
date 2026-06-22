@@ -806,7 +806,9 @@ Particularly when introducing a new concept/feature/API, before adding to `codex
   `ResponsesOptions`、`ResponseCreateWsRequest`、`ResponsesWsRequest`、`ResponseEvent`、`Compression`、`ChatCompletionsPath`、
   `ResponseStream`、`ApiError`、websocket request metadata key、`X_RESPONSESAPI_INCLUDE_TIMING_METRICS_HEADER` 和
   `CompactionInput`、`MemorySummarizeInput`、`MemorySummarizeOutput`、`RawMemory`、`RawMemoryMetadata`、
-  `RealtimeCallResponse`、`ResponsesWebsocketClose`、`ResponsesWebsocketProbe`、
+  `RealtimeCallResponse`、`ResponsesWebsocketClose`、`ResponsesWebsocketProbe`、ARC monitor typed request/result
+  DTO（`ArcMonitorRequest`、`ArcMonitorResult`、metadata/policy/message/evidence/risk/outcome types）和
+  history-to-ARC-message shaping helper、
   `create_text_param_for_request` / `response_create_client_metadata` 这类纯 DTO/helper 应从该 crate 引用；
   `ResponseDebugContext`、`extract_response_debug_context`、
   `extract_response_debug_context_from_api_error`、`telemetry_transport_error_message` 和
@@ -869,10 +871,11 @@ Particularly when introducing a new concept/feature/API, before adding to `codex
   HTTP transport、SSE/WebSocket parser 和 endpoint runtime；
   core/session runtime 不应为了构造 request body、text controls 或匹配 response stream event 依赖完整
   `codex-api`，也不应为了 `ApiError` 或 API error debug/telemetry helper 依赖完整 `codex-api`。
-  ARC monitor 这类 core 决策逻辑可以继续在 core 内构造 typed JSON request、选择 env token 或
-  auth snapshot headers、解析 monitor result，但实际 HTTP POST、timeout、reqwest/custom-CA setup
-  必须通过 `ArcMonitorClientRuntime` 由 concrete `codex-api` runtime 执行；不要在 core/session/tool
-  runtime 内直接调用 `codex_default_client::build_reqwest_client`。
+  ARC monitor 的 request/result DTO 和 history-to-message shaping 属于 `codex-api-types`；core 只保留
+  session/env token/auth snapshot headers、endpoint 选择、runtime 调用和 outcome 映射 adapter，不要把
+  ARC monitor DTO/shaping 重新放回 `codex-core`。实际 HTTP POST、timeout、reqwest/custom-CA setup 必须通过
+  `ArcMonitorClientRuntime` 由 concrete `codex-api` runtime 执行；不要在 core/session/tool runtime 内直接调用
+  `codex_default_client::build_reqwest_client`。
 - OpenAI file upload API 边界属于 `codex-rs/openai-files-api`（`codex-openai-files-api`）：
   `UploadedOpenAiFile`、`OpenAiFileUploader`、`SharedOpenAiFileUploader` 和 disabled uploader 从该轻量
   crate 引用；文件上传只需要 header-only `OpenAiFileUploadAuth`，该 API crate 不得依赖完整
