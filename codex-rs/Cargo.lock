@@ -1812,6 +1812,7 @@ dependencies = [
  "codex-metrics-api",
  "codex-protocol",
  "codex-rollout-api",
+ "codex-utils-template",
  "pretty_assertions",
  "rand 0.9.3",
  "serde",

@@ -1,6 +1,4 @@
 use super::parse_turn_item;
-use crate::context::ContextualUserFragment;
-use crate::context::GoalContext;
 use codex_protocol::AgentPath;
 use codex_protocol::event_command::EventCommandEvent;
 use codex_protocol::event_command::EventCommandEventKind;
@@ -543,10 +541,9 @@ fn goal_context_does_not_parse_as_visible_turn_item() {
         id: Some("msg-1".to_string()),
         role: "user".to_string(),
         content: vec![ContentItem::InputText {
-            text: GoalContext {
-                prompt: "Continue working toward the active thread goal.".to_string(),
-            }
-            .render(),
+            text:
+                "<goal_context>\nContinue working toward the active thread goal.\n</goal_context>"
+                    .to_string(),
         }],
         phase: None,
     };
