@@ -11,8 +11,8 @@
 - workdir: /Users/bytedance/Projects/my-codex
 - owner: root PM direct implementation
 - status: active
-- current_step: 6B
-- current_focus: Step 6B 第三个切片已实现；下一步继续判断 `UnifiedExecProcess` 剩余 lifecycle 是否需要先拆 exec-server/sandbox error trait 边界，或转入 Step 6C 的 session/tool runtime trait 边界。
+- current_step: 6C
+- current_focus: Step 6B 的 command runtime primitive 抽取已完成；剩余 `unified_exec` lifecycle 继续拆需要先建立 exec-server/sandbox/core-error trait 边界。下一步进入 Step 6C，设计 session/tool runtime service registry 和 constructor injection 边界。
 
 ## Current State
 
@@ -23,8 +23,9 @@
   `81570cb refactor command process ids into runtime` 将 process id reservation、completed process id history 和 pruning policy 下沉到 `codex-command-runtime`。
 - Step 6B 第三个切片已把 command output buffer、output runtime hub、local broadcast pump、UTF-8 output delta splitter 和 transcript aggregation helper 集中到 `codex-command-runtime::output`；core `UnifiedExecProcess` 只持有 `CommandOutputRuntime` 并负责 PTY/exec-server wiring 与 EventMsg emission。
 - 已补上 Step 6A 迁移后的 config test-support 边界：`codex-config/test-support` 公开测试构造 helper，`codex-core` dev build 启用该 feature，恢复 core 单测对 migrated config API 的访问。
-- `UnifiedExecProcess` 仍依赖 exec-server protocol、PTY、sandbox denial detection 和 core error type，不能在没有边界拆分前整体搬迁。
+- `UnifiedExecProcess` / `process_manager` 剩余逻辑仍绑定 exec-server protocol、PTY、sandbox denial detection、core error type、Session/TurnContext、ToolEmitter、ToolOrchestrator 和 network approval；继续迁移前需要 Step 6C 的 trait/service 边界，避免只做小 helper 或把 heavy runtime 间接拉回。
 - Step 6 前基线：`codex-rs/core/src` 约 293 个 Rust 文件、134123 行；`codex-app-server` 冷编译 timing 中 `codex-core` 单 unit 约 197.7s。
+- 当前 `codex-rs/core/src` 约 112207 行；`core/src/unified_exec` 剩余最大文件为 `process_manager.rs` 1226 行、`process.rs` 424 行、`async_watcher.rs` 347 行。
 
 ## Last Validation
 
@@ -41,7 +42,7 @@
 
 ## Next Action
 
-完成本轮切片提交后，继续盘点 `UnifiedExecProcess` 剩余 lifecycle：如果不先引入 exec-server/sandbox/core-error trait 边界就只能做小块 helper，则记录阻塞原因并转向 Step 6C 的 session/tool runtime trait 边界。
+进入 Step 6C：先盘点 session、tool runtime、MCP runtime、workflow manager、thread-store/rollout 的组合根和 concrete implementation 依赖，确定 trait/API crate 与 service registry 的最小稳定边界。
 
 ## Step Plan
 
@@ -51,8 +52,8 @@
 - Step 4: completed。拆 tools/code-mode API，V8-backed runtime 由组合根注入。
 - Step 5: completed。清 app-server 旁路 core 依赖；最终剩余主路径为 `codex-app-server -> codex-core`。
 - Step 6A: completed。`core::config` 大块迁移到 `codex-config`。
-- Step 6B: in_progress。拆 `core/src/unified_exec` 到 `codex-command-runtime`。
-- Step 6C: pending。以 service registry / constructor injection 拆 session、tool runtime、MCP runtime、workflow manager、thread-store/rollout 边界。
+- Step 6B: completed。已把 `core/src/unified_exec` 中不依赖 exec-server/PTY/sandbox/session 的 command runtime primitive 迁到 `codex-command-runtime`；剩余 lifecycle 需要 Step 6C 边界。
+- Step 6C: in_progress。以 service registry / constructor injection 拆 session、tool runtime、MCP runtime、workflow manager、thread-store/rollout 边界。
 - Step 6D: pending。清理 core facade 和旧 re-export callsite，把新增代码默认落到 owner crate。
 
 ## Guardrails
