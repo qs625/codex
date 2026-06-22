@@ -1,5 +1,6 @@
 mod fork_history;
 mod goal_context;
+mod goal_runtime_state;
 mod registry;
 mod status;
 mod thread_post_turn;
@@ -10,6 +11,7 @@ pub use goal_context::goal_budget_limit_steering_item;
 pub use goal_context::goal_continuation_input_item;
 pub use goal_context::goal_objective_updated_steering_item;
 pub use goal_context::should_ignore_goal_for_mode;
+pub use goal_runtime_state::GoalRuntimeState;
 pub use registry::AgentMetadata;
 pub use registry::AgentMode;
 pub use registry::AgentRegistry;

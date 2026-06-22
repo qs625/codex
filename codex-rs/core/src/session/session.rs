@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::ConstraintError;
-use crate::goals::GoalRuntimeState;
 use crate::workflow_runs::WorkflowRunController;
+use codex_agent_runtime::GoalRuntimeState;
 use codex_api_runtime_api::SharedApiRuntimeFactory;
 use codex_auth_types::AuthRuntime;
 use codex_auth_types::SharedAuthRuntime;

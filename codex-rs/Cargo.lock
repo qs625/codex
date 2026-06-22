@@ -1809,13 +1809,16 @@ dependencies = [
 name = "codex-agent-runtime"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
  "codex-metrics-api",
  "codex-protocol",
  "codex-rollout-api",
+ "codex-state-api",
  "codex-utils-template",
  "pretty_assertions",
  "rand 0.9.3",
  "serde",
+ "tokio",
 ]
 
 [[package]]

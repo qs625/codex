@@ -8,12 +8,15 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+anyhow = { workspace = true }
 codex-metrics-api = { workspace = true }
 codex-protocol = { workspace = true }
 codex-rollout-api = { workspace = true }
+codex-state-api = { workspace = true }
 codex-utils-template = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

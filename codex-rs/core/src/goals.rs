@@ -4,7 +4,6 @@
 //! goal mutations, converts between state and protocol shapes, emits goal-update
 //! events, and owns helper hooks used by goal lifecycle behavior.
 
-use crate::StateDbHandle;
 use crate::pending_input::PendingInputItem;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
@@ -39,7 +38,7 @@ use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::validate_thread_goal_objective;
 use codex_state_api::ExternalGoalPreviousStatus;
 use codex_state_api::ExternalGoalSet;
-use codex_state_api::ThreadGoalAccountingSnapshot as GoalAccountingSnapshot;
+use codex_state_api::SharedStateDbRuntime;
 use codex_state_api::ThreadGoalTurnAccountingSnapshot as GoalTurnAccountingSnapshot;
 use codex_state_api::protocol_goal_from_state;
 use codex_state_api::state_goal_status_from_protocol;
@@ -50,8 +49,6 @@ use futures::future::BoxFuture;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::sync::Semaphore;
-use tokio::sync::SemaphorePermit;
 
 pub(crate) struct SetGoalRequest {
     pub(crate) objective: Option<String>,
@@ -110,40 +107,9 @@ pub(crate) enum GoalRuntimeEvent<'a> {
     ThreadResumed,
 }
 
-pub(crate) struct GoalRuntimeState {
-    pub(crate) state_db: Mutex<Option<StateDbHandle>>,
-    pub(crate) budget_limit_reported_goal_id: Mutex<Option<String>>,
-    accounting_lock: Semaphore,
-    accounting: Mutex<GoalAccountingSnapshot>,
-    continuation_turn_id: Mutex<Option<String>>,
-    pub(crate) continuation_lock: Semaphore,
-}
-
 struct GoalContinuationCandidate {
     goal_id: String,
     items: Vec<ResponseInputItem>,
-}
-
-impl GoalRuntimeState {
-    pub(crate) fn new() -> Self {
-        Self {
-            state_db: Mutex::new(None),
-            budget_limit_reported_goal_id: Mutex::new(None),
-            accounting_lock: Semaphore::new(/*permits*/ 1),
-            accounting: Mutex::new(GoalAccountingSnapshot::new()),
-            continuation_turn_id: Mutex::new(None),
-            continuation_lock: Semaphore::new(/*permits*/ 1),
-        }
-    }
-}
-
-impl GoalRuntimeState {
-    async fn accounting_permit(&self) -> anyhow::Result<SemaphorePermit<'_>> {
-        self.accounting_lock
-            .acquire()
-            .await
-            .context("goal accounting semaphore closed")
-    }
 }
 
 impl Session {
@@ -613,7 +579,7 @@ impl Session {
 
     async fn current_goal_status_for_metrics(
         &self,
-        state_db: &StateDbHandle,
+        state_db: &SharedStateDbRuntime,
         expected_goal_id: Option<&str>,
     ) -> anyhow::Result<Option<codex_state_api::ThreadGoalStatus>> {
         let goal = state_db.get_thread_goal(self.conversation_id).await?;
@@ -688,17 +654,13 @@ impl Session {
     }
 
     async fn mark_thread_goal_continuation_turn_started(&self, turn_id: String) {
-        *self.goal_runtime.continuation_turn_id.lock().await = Some(turn_id);
+        self.goal_runtime
+            .mark_continuation_turn_started(turn_id)
+            .await;
     }
 
     async fn take_thread_goal_continuation_turn(&self, turn_id: &str) -> bool {
-        let mut continuation_turn_id = self.goal_runtime.continuation_turn_id.lock().await;
-        if continuation_turn_id.as_deref() == Some(turn_id) {
-            *continuation_turn_id = None;
-            true
-        } else {
-            false
-        }
+        self.goal_runtime.take_continuation_turn(turn_id).await
     }
 
     async fn clear_reserved_goal_continuation_turn(&self, turn_state: &Arc<Mutex<TurnState>>) {
@@ -925,7 +887,7 @@ impl Session {
 
     async fn account_thread_goal_wall_clock_usage(
         &self,
-        state_db: &StateDbHandle,
+        state_db: &SharedStateDbRuntime,
         mode: codex_state_api::ThreadGoalAccountingMode,
         terminal_metric_emission: TerminalMetricEmission,
     ) -> anyhow::Result<Option<ThreadGoal>> {
@@ -1260,7 +1222,7 @@ impl Session {
 }
 
 impl Session {
-    async fn state_db_for_thread_goals(&self) -> anyhow::Result<Option<StateDbHandle>> {
+    async fn state_db_for_thread_goals(&self) -> anyhow::Result<Option<SharedStateDbRuntime>> {
         let config = self.get_config().await;
         if config.ephemeral {
             return Ok(None);
@@ -1270,7 +1232,7 @@ impl Session {
             .await
             .context("failed to materialize rollout before opening state db for thread goals")?;
 
-        let state_db = if let Some(state_db) = self.state_db() {
+        let state_db: SharedStateDbRuntime = if let Some(state_db) = self.state_db() {
             state_db
         } else if let Some(state_db) = self.goal_runtime.state_db.lock().await.clone() {
             state_db
@@ -1343,7 +1305,7 @@ impl Session {
         metadata
     }
 
-    async fn require_state_db_for_thread_goals(&self) -> anyhow::Result<StateDbHandle> {
+    async fn require_state_db_for_thread_goals(&self) -> anyhow::Result<SharedStateDbRuntime> {
         self.state_db_for_thread_goals().await?.ok_or_else(|| {
             anyhow::anyhow!("thread goals require a persisted thread; this thread is ephemeral")
         })
