@@ -6,11 +6,11 @@ use std::time::UNIX_EPOCH;
 use codex_metrics_api::TURN_TTFM_DURATION_METRIC;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::ResponseItem;
+use codex_turn_items::raw_assistant_output_text_from_item;
 use tokio::sync::Mutex;
 
 use crate::client_common::ResponseEvent;
 use crate::session::turn_context::TurnContext;
-use crate::stream_events_utils::raw_assistant_output_text_from_item;
 
 pub(crate) async fn record_turn_ttft_metric(turn_context: &TurnContext, event: &ResponseEvent) {
     let Some(duration) = turn_context

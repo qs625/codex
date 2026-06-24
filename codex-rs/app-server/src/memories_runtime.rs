@@ -43,6 +43,7 @@ use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::user_input::UserInput;
 use codex_rollout_trace::InferenceTraceContext;
+use codex_session_api::SessionCommandHandle;
 use codex_state::StateRuntime;
 use codex_terminal_detection::user_agent;
 use futures::StreamExt;
@@ -187,8 +188,11 @@ impl MemoryStartupRuntime for CoreMemoryStartupRuntime {
                 .config
                 .model_reasoning_summary
                 .unwrap_or(context.model_info.default_reasoning_summary);
-            let turn_metadata_header =
-                codex_core::build_turn_metadata_header(&self.config.cwd, /*sandbox*/ None).await;
+            let turn_metadata_header = codex_turn_metadata::build_turn_metadata_header(
+                &self.config.cwd,
+                /*sandbox*/ None,
+            )
+            .await;
             let session_telemetry = Arc::new(self.session_telemetry.clone().with_model(
                 context.model_info.slug.as_str(),
                 context.model_info.slug.as_str(),
@@ -304,7 +308,7 @@ impl MemoryStartupRuntime for CoreMemoryStartupRuntime {
                 .await?;
 
             if let Err(err) = thread
-                .submit(Op::UserInput {
+                .submit_op(Op::UserInput {
                     items: prompt,
                     environments: None,
                     final_output_json_schema: None,

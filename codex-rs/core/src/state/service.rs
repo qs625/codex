@@ -13,7 +13,8 @@ use crate::exec_policy::ExecPolicyManager;
 use crate::guardian::GuardianRejection;
 use crate::guardian::GuardianRejectionCircuitBreaker;
 use crate::mcp::McpManager;
-use crate::tools::network_approval::NetworkApprovalService;
+use crate::network_approval::NetworkApprovalService;
+use crate::tools::router::ToolRouterFactory;
 use crate::tools::sandboxing::ApprovalStore;
 use crate::unified_exec::UnifiedExecProcessManager;
 use codex_analytics_api::AnalyticsEventsClient;
@@ -103,6 +104,7 @@ pub(crate) struct SessionServices {
     pub(crate) openai_file_uploader: SharedOpenAiFileUploader,
     pub(crate) code_mode_service: Arc<dyn CodeModeRuntimeService>,
     pub(crate) code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+    pub(crate) tool_router_factory: Arc<dyn ToolRouterFactory>,
     /// Shared process-level environment registry. Sessions carry an `Arc` handle so they can pass
     /// the same manager through child-thread spawn paths without reconstructing it.
     pub(crate) environment_manager: Arc<dyn ExecEnvironmentProvider>,

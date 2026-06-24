@@ -1,9 +1,15 @@
+use super::AssistantMessageStreamParsers;
+use super::PlanModeStreamAction;
+use super::PlanModeStreamState;
+use super::ProposedPlanSegment;
+use super::last_assistant_message_from_item;
 use super::parse_turn_item;
 use codex_protocol::AgentPath;
 use codex_protocol::event_command::EventCommandEvent;
 use codex_protocol::event_command::EventCommandEventKind;
 use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::items::AgentMessageContent;
+use codex_protocol::items::AgentMessageItem;
 use codex_protocol::items::HookPromptFragment;
 use codex_protocol::items::TurnItem;
 use codex_protocol::items::WebSearchItem;
@@ -19,6 +25,214 @@ use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::InterAgentOperation;
 use codex_protocol::user_input::UserInput;
 use pretty_assertions::assert_eq;
+
+#[test]
+fn assistant_message_stream_parsers_can_be_seeded_from_output_item_added_text() {
+    let mut parsers = AssistantMessageStreamParsers::new(/*plan_mode*/ false);
+    let item_id = "msg-1";
+
+    let seeded = parsers.seed_item_text(item_id, "hello <oai-mem-citation>doc");
+    let parsed = parsers.parse_delta(item_id, "1</oai-mem-citation> world");
+    let tail = parsers.finish_item(item_id);
+
+    assert_eq!(seeded.visible_text, "hello ");
+    assert_eq!(seeded.citations, Vec::<String>::new());
+    assert_eq!(parsed.visible_text, " world");
+    assert_eq!(parsed.citations, vec!["doc1".to_string()]);
+    assert_eq!(tail.visible_text, "");
+    assert_eq!(tail.citations, Vec::<String>::new());
+}
+
+#[test]
+fn assistant_message_stream_parsers_seed_buffered_prefix_stays_out_of_finish_tail() {
+    let mut parsers = AssistantMessageStreamParsers::new(/*plan_mode*/ false);
+    let item_id = "msg-1";
+
+    let seeded = parsers.seed_item_text(item_id, "hello <oai-mem-");
+    let parsed = parsers.parse_delta(item_id, "citation>doc</oai-mem-citation> world");
+    let tail = parsers.finish_item(item_id);
+
+    assert_eq!(seeded.visible_text, "hello ");
+    assert_eq!(seeded.citations, Vec::<String>::new());
+    assert_eq!(parsed.visible_text, " world");
+    assert_eq!(parsed.citations, vec!["doc".to_string()]);
+    assert_eq!(tail.visible_text, "");
+    assert_eq!(tail.citations, Vec::<String>::new());
+}
+
+#[test]
+fn assistant_message_stream_parsers_seed_plan_parser_across_added_and_delta_boundaries() {
+    let mut parsers = AssistantMessageStreamParsers::new(/*plan_mode*/ true);
+    let item_id = "msg-1";
+
+    let seeded = parsers.seed_item_text(item_id, "Intro\n<proposed");
+    let parsed = parsers.parse_delta(item_id, "_plan>\n- step\n</proposed_plan>\nOutro");
+    let tail = parsers.finish_item(item_id);
+
+    assert_eq!(seeded.visible_text, "Intro\n");
+    assert_eq!(
+        seeded.plan_segments,
+        vec![ProposedPlanSegment::Normal("Intro\n".to_string())]
+    );
+    assert_eq!(parsed.visible_text, "Outro");
+    assert_eq!(
+        parsed.plan_segments,
+        vec![
+            ProposedPlanSegment::ProposedPlanStart,
+            ProposedPlanSegment::ProposedPlanDelta("- step\n".to_string()),
+            ProposedPlanSegment::ProposedPlanEnd,
+            ProposedPlanSegment::Normal("Outro".to_string()),
+        ]
+    );
+    assert_eq!(tail.visible_text, "");
+    assert!(tail.plan_segments.is_empty());
+}
+
+fn assistant_output_text(text: &str) -> ResponseItem {
+    ResponseItem::Message {
+        id: Some("msg-1".to_string()),
+        role: "assistant".to_string(),
+        content: vec![ContentItem::OutputText {
+            text: text.to_string(),
+        }],
+        phase: None,
+    }
+}
+
+fn agent_message_item(id: &str, text: &str) -> AgentMessageItem {
+    AgentMessageItem {
+        id: id.to_string(),
+        content: vec![AgentMessageContent::Text {
+            text: text.to_string(),
+        }],
+        phase: None,
+        memory_citation: None,
+    }
+}
+
+#[test]
+fn plan_mode_stream_buffers_leading_whitespace_until_agent_text() {
+    let mut state = PlanModeStreamState::new("turn-1");
+    state.stage_agent_message_item(
+        "msg-1".to_string(),
+        TurnItem::AgentMessage(agent_message_item("msg-1", "")),
+    );
+
+    let leading = state.handle_segments(
+        "msg-1",
+        vec![ProposedPlanSegment::Normal("  \n".to_string())],
+    );
+    assert!(leading.is_empty());
+
+    let actions = state.handle_segments(
+        "msg-1",
+        vec![ProposedPlanSegment::Normal("hello".to_string())],
+    );
+
+    assert_eq!(actions.len(), 2);
+    match &actions[0] {
+        PlanModeStreamAction::TurnItemStarted(TurnItem::AgentMessage(item)) => {
+            assert_eq!(item.id, "msg-1");
+        }
+        _ => panic!("expected agent message start action"),
+    }
+    match &actions[1] {
+        PlanModeStreamAction::AgentMessageDelta { item_id, delta } => {
+            assert_eq!(item_id, "msg-1");
+            assert_eq!(delta, "  \nhello");
+        }
+        _ => panic!("expected agent message delta action"),
+    }
+}
+
+#[test]
+fn plan_mode_stream_starts_delta_and_completes_plan_from_final_message() {
+    let mut state = PlanModeStreamState::new("turn-1");
+
+    let actions = state.handle_segments(
+        "msg-1",
+        vec![ProposedPlanSegment::ProposedPlanDelta(
+            "- step\n".to_string(),
+        )],
+    );
+
+    assert_eq!(actions.len(), 2);
+    match &actions[0] {
+        PlanModeStreamAction::TurnItemStarted(TurnItem::Plan(item)) => {
+            assert_eq!(item.id, "turn-1-plan");
+            assert_eq!(item.text, "");
+        }
+        _ => panic!("expected plan start action"),
+    }
+    match &actions[1] {
+        PlanModeStreamAction::PlanDelta { item_id, delta } => {
+            assert_eq!(item_id, "turn-1-plan");
+            assert_eq!(delta, "- step\n");
+        }
+        _ => panic!("expected plan delta action"),
+    }
+
+    let complete_actions = state.complete_plan_from_message(&assistant_output_text(
+        "<proposed_plan>\n- step\n</proposed_plan>",
+    ));
+
+    assert_eq!(complete_actions.len(), 1);
+    match &complete_actions[0] {
+        PlanModeStreamAction::TurnItemCompleted(TurnItem::Plan(item)) => {
+            assert_eq!(item.id, "turn-1-plan");
+            assert_eq!(item.text, "- step\n");
+        }
+        _ => panic!("expected plan completion action"),
+    }
+}
+
+#[test]
+fn plan_mode_stream_suppresses_empty_pending_agent_message() {
+    let mut state = PlanModeStreamState::new("turn-1");
+    state.stage_agent_message_item(
+        "msg-1".to_string(),
+        TurnItem::AgentMessage(agent_message_item("msg-1", "")),
+    );
+
+    let actions = state.complete_turn_item(
+        TurnItem::AgentMessage(agent_message_item("msg-1", " \n")),
+        /*previously_active_item*/ None,
+    );
+
+    assert!(actions.is_empty());
+}
+
+#[test]
+fn last_assistant_message_from_item_strips_citations_and_plan_blocks() {
+    let item = assistant_output_text(
+        "before<oai-mem-citation>doc1</oai-mem-citation>\n<proposed_plan>\n- x\n</proposed_plan>\nafter",
+    );
+
+    let message = last_assistant_message_from_item(&item, /*plan_mode*/ true)
+        .expect("assistant text should remain after stripping");
+
+    assert_eq!(message, "before\nafter");
+}
+
+#[test]
+fn last_assistant_message_from_item_returns_none_for_citation_only_message() {
+    let item = assistant_output_text("<oai-mem-citation>doc1</oai-mem-citation>");
+
+    assert_eq!(
+        last_assistant_message_from_item(&item, /*plan_mode*/ false),
+        None
+    );
+}
+
+#[test]
+fn last_assistant_message_from_item_returns_none_for_plan_only_hidden_message() {
+    let item = assistant_output_text("<proposed_plan>\n- x\n</proposed_plan>");
+
+    assert_eq!(
+        last_assistant_message_from_item(&item, /*plan_mode*/ true),
+        None
+    );
+}
 
 #[test]
 fn parses_user_message_with_text_and_two_images() {

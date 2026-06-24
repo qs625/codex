@@ -13,14 +13,16 @@ use codex_thread_store_api::LiveThreadFactory;
 use codex_thread_store_api::ThreadStore;
 use tokio_util::sync::CancellationToken;
 
+use crate::client_common::PromptBuildParams;
+use crate::client_common::build_prompt;
 use crate::config::Config;
 use crate::resolve_installation_id;
 use crate::session::session::Session;
-use crate::session::turn::build_prompt;
 use crate::session::turn::built_tools;
 use crate::state_db_bridge::StateDbHandle;
-use crate::thread_manager::ThreadAuthRuntimes;
-use crate::thread_manager::ThreadManager;
+use crate::thread::ThreadAuthRuntimes;
+use crate::thread::ThreadManager;
+use crate::tools::router::ToolRouterFactory;
 use codex_extension_api::empty_extension_registry;
 
 /// Build the model-visible `input` list for a single debug turn.
@@ -34,6 +36,7 @@ pub async fn build_prompt_input(
     live_thread_factory: Arc<dyn LiveThreadFactory>,
     auth_runtimes: ThreadAuthRuntimes,
     model_provider_factory: SharedModelProviderFactory,
+    tool_router_factory: Arc<dyn ToolRouterFactory>,
     mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
     mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
 ) -> CodexResult<Vec<ResponseItem>> {
@@ -54,6 +57,7 @@ pub async fn build_prompt_input(
         /*attestation_provider*/ None,
         model_provider_factory,
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        tool_router_factory,
         mcp_auth_runtime,
         mcp_connection_runtime_factory,
     );
@@ -96,12 +100,17 @@ pub(crate) async fn build_prompt_input_from_session(
     )
     .await?;
     let base_instructions = sess.get_base_instructions().await;
-    let prompt = build_prompt(
-        prompt_input,
-        router.as_ref(),
-        turn_context.as_ref(),
+    let prompt = build_prompt(PromptBuildParams {
+        input: prompt_input,
+        tools: router.model_visible_specs(),
+        parallel_tool_calls: turn_context.model_info.supports_parallel_tool_calls,
         base_instructions,
-    );
+        personality: turn_context.personality,
+        output_schema: turn_context.final_output_json_schema.clone(),
+        output_schema_strict: !crate::guardian::is_guardian_reviewer_source(
+            &turn_context.session_source,
+        ),
+    });
 
     Ok(prompt.get_formatted_input())
 }

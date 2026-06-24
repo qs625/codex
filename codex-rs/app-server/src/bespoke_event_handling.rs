@@ -84,7 +84,6 @@ use codex_app_server_protocol::guardian_auto_approval_review_notification;
 use codex_app_server_protocol::item_event_to_server_notification;
 use codex_core::CodexThread;
 use codex_core::ThreadManager;
-use codex_core::ThreadRuntimeStatus;
 use codex_core::review_format::format_review_findings_block;
 use codex_core::review_prompts;
 use codex_protocol::ThreadId;
@@ -112,7 +111,9 @@ use codex_protocol::request_permissions::RequestPermissionsResponse as CoreReque
 use codex_protocol::request_user_input::RequestUserInputAnswer as CoreRequestUserInputAnswer;
 use codex_protocol::request_user_input::RequestUserInputResponse as CoreRequestUserInputResponse;
 use codex_sandboxing_api::policy_transforms::intersect_permission_profiles;
+use codex_session_api::SessionCommandHandle;
 use codex_shell_utils::shlex_join;
+use codex_thread_api::ThreadRuntimeStatus;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -748,7 +749,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                         "failed to parse typed MCP elicitation schema"
                     );
                     if let Err(err) = conversation
-                        .submit(Op::ResolveElicitation {
+                        .submit_op(Op::ResolveElicitation {
                             server_name: request.server_name,
                             request_id: request.id,
                             decision: codex_protocol::approvals::ElicitationAction::Cancel,
@@ -1686,14 +1687,16 @@ async fn handle_error(
     state.turn_summary.last_error = Some(error);
 }
 
-async fn on_request_user_input_response(
+async fn on_request_user_input_response<H>(
     event_turn_id: String,
     pending_request_id: RequestId,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    conversation: Arc<CodexThread>,
+    conversation: Arc<H>,
     thread_state: Arc<Mutex<ThreadState>>,
     user_input_guard: ThreadWatchActiveGuard,
-) {
+) where
+    H: SessionCommandHandle + 'static,
+{
     let response = receiver.await;
     resolve_server_request_on_thread_listener(&thread_state, pending_request_id).await;
     drop(user_input_guard);
@@ -1706,7 +1709,7 @@ async fn on_request_user_input_response(
                 answers: HashMap::new(),
             };
             if let Err(err) = conversation
-                .submit(Op::UserInputAnswer {
+                .submit_op(Op::UserInputAnswer {
                     id: event_turn_id,
                     response: empty,
                 })
@@ -1722,7 +1725,7 @@ async fn on_request_user_input_response(
                 answers: HashMap::new(),
             };
             if let Err(err) = conversation
-                .submit(Op::UserInputAnswer {
+                .submit_op(Op::UserInputAnswer {
                     id: event_turn_id,
                     response: empty,
                 })
@@ -1757,7 +1760,7 @@ async fn on_request_user_input_response(
     };
 
     if let Err(err) = conversation
-        .submit(Op::UserInputAnswer {
+        .submit_op(Op::UserInputAnswer {
             id: event_turn_id,
             response,
         })
@@ -1767,22 +1770,24 @@ async fn on_request_user_input_response(
     }
 }
 
-async fn on_mcp_server_elicitation_response(
+async fn on_mcp_server_elicitation_response<H>(
     server_name: String,
     request_id: codex_protocol::mcp::RequestId,
     pending_request_id: RequestId,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    conversation: Arc<CodexThread>,
+    conversation: Arc<H>,
     thread_state: Arc<Mutex<ThreadState>>,
     permission_guard: ThreadWatchActiveGuard,
-) {
+) where
+    H: SessionCommandHandle + 'static,
+{
     let response = receiver.await;
     resolve_server_request_on_thread_listener(&thread_state, pending_request_id).await;
     drop(permission_guard);
     let response = mcp_server_elicitation_response_from_client_result(response);
 
     if let Err(err) = conversation
-        .submit(Op::ResolveElicitation {
+        .submit_op(Op::ResolveElicitation {
             server_name,
             request_id,
             decision: response.action.to_core(),
@@ -1834,11 +1839,13 @@ fn mcp_server_elicitation_response_from_client_result(
     }
 }
 
-async fn on_request_permissions_response(
+async fn on_request_permissions_response<H>(
     pending_response: PendingRequestPermissionsResponse,
-    conversation: Arc<CodexThread>,
+    conversation: Arc<H>,
     thread_state: Arc<Mutex<ThreadState>>,
-) {
+) where
+    H: SessionCommandHandle + 'static,
+{
     let PendingRequestPermissionsResponse {
         call_id,
         requested_permissions,
@@ -1861,7 +1868,7 @@ async fn on_request_permissions_response(
     outgoing.track_effective_permissions_approval_response(pending_request_id, response.clone());
 
     if let Err(err) = conversation
-        .submit(Op::RequestPermissionsResponse {
+        .submit_op(Op::RequestPermissionsResponse {
             id: call_id,
             response,
         })
@@ -1979,7 +1986,7 @@ async fn on_file_change_request_approval_response(
     item_id: String,
     pending_request_id: RequestId,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    codex: Arc<CodexThread>,
+    codex: Arc<impl SessionCommandHandle + 'static>,
     thread_state: Arc<Mutex<ThreadState>>,
     permission_guard: ThreadWatchActiveGuard,
 ) {
@@ -2010,7 +2017,7 @@ async fn on_file_change_request_approval_response(
     };
 
     if let Err(err) = codex
-        .submit(Op::PatchApproval {
+        .submit_op(Op::PatchApproval {
             id: item_id,
             decision,
         })
@@ -2021,7 +2028,7 @@ async fn on_file_change_request_approval_response(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn on_command_execution_request_approval_response(
+async fn on_command_execution_request_approval_response<H>(
     event_turn_id: String,
     conversation_id: ThreadId,
     approval_id: Option<String>,
@@ -2029,11 +2036,13 @@ async fn on_command_execution_request_approval_response(
     completion_item: Option<CommandExecutionCompletionItem>,
     pending_request_id: RequestId,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    conversation: Arc<CodexThread>,
+    conversation: Arc<H>,
     outgoing: ThreadScopedOutgoingMessageSender,
     thread_state: Arc<Mutex<ThreadState>>,
     permission_guard: ThreadWatchActiveGuard,
-) {
+) where
+    H: SessionCommandHandle + 'static,
+{
     let response = receiver.await;
     resolve_server_request_on_thread_listener(&thread_state, pending_request_id).await;
     drop(permission_guard);
@@ -2134,7 +2143,7 @@ async fn on_command_execution_request_approval_response(
     }
 
     if let Err(err) = conversation
-        .submit(Op::ExecApproval {
+        .submit_op(Op::ExecApproval {
             id: approval_id.unwrap_or_else(|| item_id.clone()),
             turn_id: Some(event_turn_id),
             decision,

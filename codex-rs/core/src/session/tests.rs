@@ -37,7 +37,6 @@ use codex_otel::SessionTelemetry;
 use codex_protocol::AgentPath;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
-use codex_protocol::account::PlanType as AccountPlanType;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::exec_output::ExecToolCallOutput;
@@ -54,7 +53,6 @@ use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::FileSystemSpecialPath;
-use codex_protocol::protocol::NonSteerableTurnKind;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::request_permissions::PermissionGrantScope;
@@ -64,8 +62,8 @@ use codex_state_api::ExternalGoalSet;
 use codex_thread_store::LiveThread;
 use tracing::Span;
 
-use crate::goals::GoalRuntimeEvent;
-use crate::goals::SetGoalRequest;
+use crate::goal::GoalRuntimeEvent;
+use crate::goal::SetGoalRequest;
 use crate::pending_input::PendingInputItem;
 use crate::state::ActiveTurn;
 use crate::state::TaskKind;
@@ -75,19 +73,17 @@ use crate::tasks::UserShellCommandMode;
 use crate::tasks::execute_user_shell_command;
 use crate::tools::ToolRouter;
 use crate::tools::context::ToolInvocation;
+use crate::tools::context::ToolInvocationMetadata;
 use crate::tools::context::ToolPayload;
-use crate::tools::handlers::CreateGoalHandler;
-use crate::tools::handlers::ExecCommandHandler;
-use crate::tools::handlers::ShellCommandHandler;
-use crate::tools::handlers::SpawnAgentHandler;
-use crate::tools::handlers::UpdateGoalHandler;
+use crate::tools::handlers::CoreToolDomainHost;
+use crate::tools::handlers::core_tool_domain_host;
 use crate::tools::registry::ToolExecutor;
+use crate::tools::router::DefaultToolRouterFactory;
 use crate::tools::router::ToolCallSource;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_auth_types::TelemetryAuthMode;
 use codex_config::config_toml::ConfigToml;
 use codex_config_loader::ProjectConfig;
-use codex_connectors_types::AppInfo;
 use codex_execpolicy_api::Decision;
 use codex_execpolicy_api::NetworkRuleProtocol;
 use codex_execpolicy_api::Policy;
@@ -122,7 +118,6 @@ use codex_protocol::protocol::GranularApprovalConfig;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::InterAgentOperation;
-use codex_protocol::protocol::NetworkApprovalProtocol;
 use codex_protocol::protocol::RateLimitSnapshot;
 use codex_protocol::protocol::RateLimitWindow;
 use codex_protocol::protocol::RealtimeAudioFrame;
@@ -146,6 +141,7 @@ use codex_protocol::protocol::W3cTraceContext;
 use codex_protocol::request_user_input::RequestUserInputAnswer;
 use codex_protocol::request_user_input::RequestUserInputResponse;
 use codex_rollout::RolloutRecorder;
+use codex_tool_handlers::SpawnAgentHandler;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use core_test_support::context_snapshot;
@@ -265,17 +261,6 @@ fn histogram_sum(resource_metrics: &ResourceMetrics, name: &str) -> u64 {
             _ => panic!("unexpected histogram aggregation"),
         },
         _ => panic!("unexpected metric data type"),
-    }
-}
-
-fn skill_message(text: &str) -> ResponseItem {
-    ResponseItem::Message {
-        id: None,
-        role: "user".to_string(),
-        content: vec![ContentItem::InputText {
-            text: text.to_string(),
-        }],
-        phase: None,
     }
 }
 
@@ -577,86 +562,6 @@ fn test_tool_runtime(session: Arc<Session>, turn_context: Arc<TurnContext>) -> T
     ToolCallRuntime::new(router, session, turn_context, tracker)
 }
 
-fn make_connector(id: &str, name: &str) -> AppInfo {
-    AppInfo {
-        id: id.to_string(),
-        name: name.to_string(),
-        description: None,
-        logo_url: None,
-        logo_url_dark: None,
-        distribution_channel: None,
-        branding: None,
-        app_metadata: None,
-        labels: None,
-        install_url: None,
-        is_accessible: true,
-        is_enabled: true,
-        plugin_display_names: Vec::new(),
-    }
-}
-
-#[test]
-fn assistant_message_stream_parsers_can_be_seeded_from_output_item_added_text() {
-    let mut parsers = AssistantMessageStreamParsers::new(/*plan_mode*/ false);
-    let item_id = "msg-1";
-
-    let seeded = parsers.seed_item_text(item_id, "hello <oai-mem-citation>doc");
-    let parsed = parsers.parse_delta(item_id, "1</oai-mem-citation> world");
-    let tail = parsers.finish_item(item_id);
-
-    assert_eq!(seeded.visible_text, "hello ");
-    assert_eq!(seeded.citations, Vec::<String>::new());
-    assert_eq!(parsed.visible_text, " world");
-    assert_eq!(parsed.citations, vec!["doc1".to_string()]);
-    assert_eq!(tail.visible_text, "");
-    assert_eq!(tail.citations, Vec::<String>::new());
-}
-
-#[test]
-fn assistant_message_stream_parsers_seed_buffered_prefix_stays_out_of_finish_tail() {
-    let mut parsers = AssistantMessageStreamParsers::new(/*plan_mode*/ false);
-    let item_id = "msg-1";
-
-    let seeded = parsers.seed_item_text(item_id, "hello <oai-mem-");
-    let parsed = parsers.parse_delta(item_id, "citation>doc</oai-mem-citation> world");
-    let tail = parsers.finish_item(item_id);
-
-    assert_eq!(seeded.visible_text, "hello ");
-    assert_eq!(seeded.citations, Vec::<String>::new());
-    assert_eq!(parsed.visible_text, " world");
-    assert_eq!(parsed.citations, vec!["doc".to_string()]);
-    assert_eq!(tail.visible_text, "");
-    assert_eq!(tail.citations, Vec::<String>::new());
-}
-
-#[test]
-fn assistant_message_stream_parsers_seed_plan_parser_across_added_and_delta_boundaries() {
-    let mut parsers = AssistantMessageStreamParsers::new(/*plan_mode*/ true);
-    let item_id = "msg-1";
-
-    let seeded = parsers.seed_item_text(item_id, "Intro\n<proposed");
-    let parsed = parsers.parse_delta(item_id, "_plan>\n- step\n</proposed_plan>\nOutro");
-    let tail = parsers.finish_item(item_id);
-
-    assert_eq!(seeded.visible_text, "Intro\n");
-    assert_eq!(
-        seeded.plan_segments,
-        vec![ProposedPlanSegment::Normal("Intro\n".to_string())]
-    );
-    assert_eq!(parsed.visible_text, "Outro");
-    assert_eq!(
-        parsed.plan_segments,
-        vec![
-            ProposedPlanSegment::ProposedPlanStart,
-            ProposedPlanSegment::ProposedPlanDelta("- step\n".to_string()),
-            ProposedPlanSegment::ProposedPlanEnd,
-            ProposedPlanSegment::Normal("Outro".to_string()),
-        ]
-    );
-    assert_eq!(tail.visible_text, "");
-    assert!(tail.plan_segments.is_empty());
-}
-
 #[tokio::test]
 async fn beta_features_header_omits_remote_compaction_v2() -> anyhow::Result<()> {
     let mut config = ConfigBuilder::default().build().await?;
@@ -666,41 +571,6 @@ async fn beta_features_header_omits_remote_compaction_v2() -> anyhow::Result<()>
 
     assert_eq!(header, None);
     Ok(())
-}
-
-#[test]
-fn validated_network_policy_amendment_host_allows_normalized_match() {
-    let amendment = NetworkPolicyAmendment {
-        host: "ExAmPlE.Com.:443".to_string(),
-        action: NetworkPolicyRuleAction::Allow,
-    };
-    let context = NetworkApprovalContext {
-        host: "example.com".to_string(),
-        protocol: NetworkApprovalProtocol::Https,
-    };
-
-    let host = Session::validated_network_policy_amendment_host(&amendment, &context)
-        .expect("normalized hosts should match");
-
-    assert_eq!(host, "example.com");
-}
-
-#[test]
-fn validated_network_policy_amendment_host_rejects_mismatch() {
-    let amendment = NetworkPolicyAmendment {
-        host: "evil.example.com".to_string(),
-        action: NetworkPolicyRuleAction::Deny,
-    };
-    let context = NetworkApprovalContext {
-        host: "api.example.com".to_string(),
-        protocol: NetworkApprovalProtocol::Https,
-    };
-
-    let err = Session::validated_network_policy_amendment_host(&amendment, &context)
-        .expect_err("mismatched hosts should be rejected");
-
-    let message = err.to_string();
-    assert!(message.contains("does not match approved host"));
 }
 
 #[tokio::test]
@@ -982,6 +852,8 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
     }
 
     impl crate::tools::sandboxing::Approvable<()> for ProbeToolRuntime {
+        type Session = Arc<crate::session::session::Session>;
+        type Turn = Arc<crate::session::turn_context::TurnContext>;
         type ApprovalKey = String;
 
         fn approval_keys(&self, _req: &()) -> Vec<Self::ApprovalKey> {
@@ -1004,6 +876,8 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
     }
 
     impl crate::tools::sandboxing::ToolRuntime<(), ()> for ProbeToolRuntime {
+        type NetworkApprovalTrigger = crate::guardian::GuardianNetworkAccessTrigger;
+
         async fn run(
             &mut self,
             _req: &(),
@@ -1551,117 +1425,6 @@ disabled_tools = [
             ToolSuggestDisabledTool::plugin("slack@openai-curated"),
         ]
     );
-}
-
-#[test]
-fn filter_connectors_for_input_skips_duplicate_slug_mentions() {
-    let connectors = vec![
-        make_connector("one", "Foo Bar"),
-        make_connector("two", "Foo-Bar"),
-    ];
-    let input = vec![user_message("use $foo-bar")];
-    let explicitly_enabled_connectors = HashSet::new();
-    let skill_name_counts_lower = HashMap::new();
-
-    let selected = filter_connectors_for_input(
-        &connectors,
-        &input,
-        &explicitly_enabled_connectors,
-        &skill_name_counts_lower,
-    );
-
-    assert_eq!(selected, Vec::new());
-}
-
-#[test]
-fn filter_connectors_for_input_skips_when_skill_name_conflicts() {
-    let connectors = vec![make_connector("one", "Todoist")];
-    let input = vec![user_message("use $todoist")];
-    let explicitly_enabled_connectors = HashSet::new();
-    let skill_name_counts_lower = HashMap::from([("todoist".to_string(), 1)]);
-
-    let selected = filter_connectors_for_input(
-        &connectors,
-        &input,
-        &explicitly_enabled_connectors,
-        &skill_name_counts_lower,
-    );
-
-    assert_eq!(selected, Vec::new());
-}
-
-#[test]
-fn filter_connectors_for_input_skips_disabled_connectors() {
-    let mut connector = make_connector("calendar", "Calendar");
-    connector.is_enabled = false;
-    let input = vec![user_message("use $calendar")];
-    let explicitly_enabled_connectors = HashSet::new();
-    let selected = filter_connectors_for_input(
-        &[connector],
-        &input,
-        &explicitly_enabled_connectors,
-        &HashMap::new(),
-    );
-
-    assert_eq!(selected, Vec::new());
-}
-
-#[test]
-fn filter_connectors_for_input_skips_plugin_mentions() {
-    let connectors = vec![make_connector("figma", "Figma")];
-    let input = vec![user_message("use [@figma](plugin://figma@openai-curated)")];
-    let explicitly_enabled_connectors = HashSet::new();
-    let selected = filter_connectors_for_input(
-        &connectors,
-        &input,
-        &explicitly_enabled_connectors,
-        &HashMap::new(),
-    );
-
-    assert_eq!(selected, Vec::new());
-}
-
-#[test]
-fn collect_explicit_app_ids_from_skill_items_includes_linked_mentions() {
-    let connectors = vec![make_connector("calendar", "Calendar")];
-    let skill_items = vec![skill_message(
-        "<skill>\n<name>demo</name>\n<path>/tmp/skills/demo/SKILL.md</path>\nuse [$calendar](app://calendar)\n</skill>",
-    )];
-
-    let connector_ids =
-        collect_explicit_app_ids_from_skill_items(&skill_items, &connectors, &HashMap::new());
-
-    assert_eq!(connector_ids, HashSet::from(["calendar".to_string()]));
-}
-
-#[test]
-fn collect_explicit_app_ids_from_skill_items_resolves_unambiguous_plain_mentions() {
-    let connectors = vec![make_connector("calendar", "Calendar")];
-    let skill_items = vec![skill_message(
-        "<skill>\n<name>demo</name>\n<path>/tmp/skills/demo/SKILL.md</path>\nuse $calendar\n</skill>",
-    )];
-
-    let connector_ids =
-        collect_explicit_app_ids_from_skill_items(&skill_items, &connectors, &HashMap::new());
-
-    assert_eq!(connector_ids, HashSet::from(["calendar".to_string()]));
-}
-
-#[test]
-fn collect_explicit_app_ids_from_skill_items_skips_plain_mentions_with_skill_conflicts() {
-    let connectors = vec![make_connector("calendar", "Calendar")];
-    let skill_items = vec![skill_message(
-        "<skill>\n<name>demo</name>\n<path>/tmp/skills/demo/SKILL.md</path>\nuse $calendar\n</skill>",
-    )];
-    let skill_name_counts_lower = HashMap::from([("calendar".to_string(), 1)]);
-
-    let connector_ids = collect_explicit_app_ids_from_skill_items(
-        &skill_items,
-        &connectors,
-        &skill_name_counts_lower,
-    );
-
-    assert_eq!(connector_ids, HashSet::<String>::new());
 }
 
 #[tokio::test]
@@ -3523,90 +3286,6 @@ fn session_telemetry(
     )
 }
 
-#[test]
-fn get_service_tier_defaults_enterprise_accounts_to_fast() {
-    assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
-            /*fast_default_opt_out*/ false,
-            is_enterprise_default_service_tier_plan(AccountPlanType::Enterprise),
-            /*fast_mode_enabled*/ true,
-        ),
-        Some(ServiceTier::Fast.request_value().to_string())
-    );
-    assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
-            /*fast_default_opt_out*/ false,
-            is_enterprise_default_service_tier_plan(AccountPlanType::EnterpriseCbpUsageBased),
-            /*fast_mode_enabled*/ true,
-        ),
-        Some(ServiceTier::Fast.request_value().to_string())
-    );
-    assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
-            /*fast_default_opt_out*/ false,
-            is_enterprise_default_service_tier_plan(AccountPlanType::Business),
-            /*fast_mode_enabled*/ true,
-        ),
-        Some(ServiceTier::Fast.request_value().to_string())
-    );
-    assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
-            /*fast_default_opt_out*/ false,
-            is_enterprise_default_service_tier_plan(AccountPlanType::Team),
-            /*fast_mode_enabled*/ true,
-        ),
-        Some(ServiceTier::Fast.request_value().to_string())
-    );
-    assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
-            /*fast_default_opt_out*/ false,
-            is_enterprise_default_service_tier_plan(AccountPlanType::SelfServeBusinessUsageBased),
-            /*fast_mode_enabled*/ true,
-        ),
-        Some(ServiceTier::Fast.request_value().to_string())
-    );
-}
-
-#[test]
-fn get_service_tier_respects_fast_default_opt_out() {
-    assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
-            /*fast_default_opt_out*/ true,
-            is_enterprise_default_service_tier_plan(AccountPlanType::Enterprise),
-            /*fast_mode_enabled*/ true,
-        ),
-        None
-    );
-}
-
-#[test]
-fn get_service_tier_does_not_default_non_enterprise_or_disabled_fast_mode() {
-    assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
-            /*fast_default_opt_out*/ false,
-            is_enterprise_default_service_tier_plan(AccountPlanType::Pro),
-            /*fast_mode_enabled*/ true,
-        ),
-        None
-    );
-    assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
-            /*fast_default_opt_out*/ false,
-            is_enterprise_default_service_tier_plan(AccountPlanType::Enterprise),
-            /*fast_mode_enabled*/ false,
-        ),
-        None
-    );
-}
-
 #[tokio::test]
 async fn session_settings_null_service_tier_update_clears_service_tier() {
     let session_configuration = make_session_configuration_for_tests().await;
@@ -4446,6 +4125,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(DefaultToolRouterFactory),
         Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
     )
     .await;
@@ -4650,6 +4330,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         openai_file_uploader: Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         code_mode_service: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         code_mode_runtime_factory: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        tool_router_factory: Arc::new(DefaultToolRouterFactory),
         environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     };
 
@@ -4852,6 +4533,7 @@ async fn make_session_with_config_and_rx(
         Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(DefaultToolRouterFactory),
         Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
     )
     .await?;
@@ -4983,6 +4665,7 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(DefaultToolRouterFactory),
         Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
     )
     .await?;
@@ -5140,35 +4823,6 @@ async fn enable_strict_auto_review_for_turn_uses_originating_turn() {
             .lock()
             .await
             .strict_auto_review_enabled()
-    );
-}
-
-#[test]
-fn strict_auto_review_session_scope_grants_no_permissions() {
-    let requested_permissions = RequestPermissionProfile {
-        network: Some(codex_protocol::models::NetworkPermissions {
-            enabled: Some(true),
-        }),
-        ..RequestPermissionProfile::default()
-    };
-
-    let response = Session::normalize_request_permissions_response(
-        requested_permissions.clone(),
-        codex_protocol::request_permissions::RequestPermissionsResponse {
-            permissions: requested_permissions,
-            scope: PermissionGrantScope::Session,
-            strict_auto_review: true,
-        },
-        std::path::Path::new("/tmp"),
-    );
-
-    assert_eq!(
-        response,
-        codex_protocol::request_permissions::RequestPermissionsResponse {
-            permissions: RequestPermissionProfile::default(),
-            scope: PermissionGrantScope::Turn,
-            strict_auto_review: false,
-        }
     );
 }
 
@@ -6591,6 +6245,7 @@ where
         openai_file_uploader: Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         code_mode_service: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         code_mode_runtime_factory: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        tool_router_factory: Arc::new(DefaultToolRouterFactory),
         environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     };
 
@@ -8778,106 +8433,6 @@ async fn explicit_record_conversation_items_ignores_unknown_collab_message() {
 }
 
 #[tokio::test]
-async fn steer_input_requires_active_turn() {
-    let (sess, _tc, _rx) = make_session_and_context_with_rx().await;
-    let input = vec![UserInput::Text {
-        text: "steer".to_string(),
-        text_elements: Vec::new(),
-    }];
-
-    let err = sess
-        .steer_input(
-            input, /*expected_turn_id*/ None, /*responsesapi_client_metadata*/ None,
-        )
-        .await
-        .expect_err("steering without active turn should fail");
-
-    assert!(matches!(err, SteerInputError::NoActiveTurn(_)));
-}
-
-#[tokio::test]
-async fn steer_input_enforces_expected_turn_id() {
-    let (sess, tc, _rx) = make_session_and_context_with_rx().await;
-    let input = vec![UserInput::Text {
-        text: "hello".to_string(),
-        text_elements: Vec::new(),
-    }];
-    sess.spawn_task(
-        Arc::clone(&tc),
-        input,
-        NeverEndingTask {
-            kind: TaskKind::Regular,
-            listen_to_cancellation_token: false,
-        },
-    )
-    .await;
-
-    let steer_input = vec![UserInput::Text {
-        text: "steer".to_string(),
-        text_elements: Vec::new(),
-    }];
-    let err = sess
-        .steer_input(
-            steer_input,
-            Some("different-turn-id"),
-            /*responsesapi_client_metadata*/ None,
-        )
-        .await
-        .expect_err("mismatched expected turn id should fail");
-
-    match err {
-        SteerInputError::ExpectedTurnMismatch { expected, actual } => {
-            assert_eq!(
-                (expected, actual),
-                ("different-turn-id".to_string(), tc.sub_id.clone())
-            );
-        }
-        other => panic!("unexpected error: {other:?}"),
-    }
-}
-
-#[tokio::test]
-async fn steer_input_rejects_non_regular_turns() {
-    for (task_kind, turn_kind) in [
-        (TaskKind::Review, NonSteerableTurnKind::Review),
-        (TaskKind::Compact, NonSteerableTurnKind::Compact),
-    ] {
-        let (sess, _tc, _rx) = make_session_and_context_with_rx().await;
-        let input = vec![UserInput::Text {
-            text: "hello".to_string(),
-            text_elements: Vec::new(),
-        }];
-        let turn_context = sess.new_default_turn_with_sub_id("turn".to_string()).await;
-        sess.spawn_task(
-            turn_context,
-            input,
-            NeverEndingTask {
-                kind: task_kind,
-                listen_to_cancellation_token: true,
-            },
-        )
-        .await;
-
-        let steer_input = vec![UserInput::Text {
-            text: "steer".to_string(),
-            text_elements: Vec::new(),
-        }];
-        let err = sess
-            .steer_input(
-                steer_input,
-                /*expected_turn_id*/ None,
-                /*responsesapi_client_metadata*/ None,
-            )
-            .await
-            .expect_err("steering a non-regular turn should fail");
-
-        assert_eq!(err, SteerInputError::ActiveTurnNotSteerable { turn_kind });
-
-        sess.abort_all_tasks(TurnAbortReason::Interrupted).await;
-    }
-}
-
-#[tokio::test]
 async fn steer_input_returns_active_turn_id() {
     let (sess, tc, _rx) = make_session_and_context_with_rx().await;
     let input = vec![UserInput::Text {
@@ -10342,7 +9897,7 @@ async fn fatal_tool_error_stops_turn_and_reports_error() {
         input: "{}".to_string(),
     };
 
-    let call = ToolRouter::build_tool_call(item.clone())
+    let call = codex_tool_planning::ToolCall::from_response_item(item.clone())
         .expect("build tool call")
         .expect("tool call present");
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
@@ -10535,7 +10090,7 @@ async fn sample_rollout(
 async fn create_goal_tool_rejects_existing_goal() {
     let (session, turn_context, rx, _codex_home) = make_goal_session_and_context_with_rx().await;
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-    let handler = CreateGoalHandler;
+    let handler = codex_tool_handlers::CreateGoalHandler::new(core_tool_domain_host());
 
     handler
         .handle(ToolInvocation {
@@ -10543,15 +10098,17 @@ async fn create_goal_tool_rejects_existing_goal() {
             turn: Arc::clone(&turn_context),
             cancellation_token: CancellationToken::new(),
             tracker: Arc::clone(&tracker),
-            call_id: "create-goal-1".to_string(),
-            tool_name: codex_tool_planning::ToolName::plain("create_goal"),
-            source: ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "objective": "Keep the watcher alive",
-                    "token_budget": 123,
-                })
-                .to_string(),
+            metadata: ToolInvocationMetadata {
+                call_id: "create-goal-1".to_string(),
+                tool_name: codex_tool_planning::ToolName::plain("create_goal"),
+                source: ToolCallSource::Direct,
+                payload: ToolPayload::Function {
+                    arguments: serde_json::json!({
+                        "objective": "Keep the watcher alive",
+                        "token_budget": 123,
+                    })
+                    .to_string(),
+                },
             },
         })
         .await
@@ -10586,15 +10143,17 @@ async fn create_goal_tool_rejects_existing_goal() {
             turn: Arc::clone(&turn_context),
             cancellation_token: CancellationToken::new(),
             tracker,
-            call_id: "create-goal-2".to_string(),
-            tool_name: codex_tool_planning::ToolName::plain("create_goal"),
-            source: ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "objective": "Replace the watcher",
-                    "token_budget": 456,
-                })
-                .to_string(),
+            metadata: ToolInvocationMetadata {
+                call_id: "create-goal-2".to_string(),
+                tool_name: codex_tool_planning::ToolName::plain("create_goal"),
+                source: ToolCallSource::Direct,
+                payload: ToolPayload::Function {
+                    arguments: serde_json::json!({
+                        "objective": "Replace the watcher",
+                        "token_budget": 456,
+                    })
+                    .to_string(),
+                },
             },
         })
         .await;
@@ -10620,8 +10179,8 @@ async fn create_goal_tool_rejects_existing_goal() {
 async fn update_goal_tool_rejects_pausing_goal() {
     let (session, turn_context, _rx, _codex_home) = make_goal_session_and_context_with_rx().await;
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-    let create_handler = CreateGoalHandler;
-    let update_handler = UpdateGoalHandler;
+    let create_handler = codex_tool_handlers::CreateGoalHandler::new(core_tool_domain_host());
+    let update_handler = codex_tool_handlers::UpdateGoalHandler::new(core_tool_domain_host());
 
     create_handler
         .handle(ToolInvocation {
@@ -10629,15 +10188,17 @@ async fn update_goal_tool_rejects_pausing_goal() {
             turn: Arc::clone(&turn_context),
             cancellation_token: CancellationToken::new(),
             tracker: Arc::clone(&tracker),
-            call_id: "create-goal".to_string(),
-            tool_name: codex_tool_planning::ToolName::plain("create_goal"),
-            source: ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "objective": "Keep the watcher alive",
-                    "token_budget": 123,
-                })
-                .to_string(),
+            metadata: ToolInvocationMetadata {
+                call_id: "create-goal".to_string(),
+                tool_name: codex_tool_planning::ToolName::plain("create_goal"),
+                source: ToolCallSource::Direct,
+                payload: ToolPayload::Function {
+                    arguments: serde_json::json!({
+                        "objective": "Keep the watcher alive",
+                        "token_budget": 123,
+                    })
+                    .to_string(),
+                },
             },
         })
         .await
@@ -10649,14 +10210,16 @@ async fn update_goal_tool_rejects_pausing_goal() {
             turn: Arc::clone(&turn_context),
             cancellation_token: CancellationToken::new(),
             tracker,
-            call_id: "pause-goal".to_string(),
-            tool_name: codex_tool_planning::ToolName::plain("update_goal"),
-            source: ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "status": "paused",
-                })
-                .to_string(),
+            metadata: ToolInvocationMetadata {
+                call_id: "pause-goal".to_string(),
+                tool_name: codex_tool_planning::ToolName::plain("update_goal"),
+                source: ToolCallSource::Direct,
+                payload: ToolPayload::Function {
+                    arguments: serde_json::json!({
+                        "status": "paused",
+                    })
+                    .to_string(),
+                },
             },
         })
         .await;
@@ -10681,8 +10244,8 @@ async fn update_goal_tool_rejects_pausing_goal() {
 async fn update_goal_tool_marks_goal_complete() {
     let (session, turn_context, rx, _codex_home) = make_goal_session_and_context_with_rx().await;
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-    let create_handler = CreateGoalHandler;
-    let update_handler = UpdateGoalHandler;
+    let create_handler = codex_tool_handlers::CreateGoalHandler::new(core_tool_domain_host());
+    let update_handler = codex_tool_handlers::UpdateGoalHandler::new(core_tool_domain_host());
 
     create_handler
         .handle(ToolInvocation {
@@ -10690,15 +10253,17 @@ async fn update_goal_tool_marks_goal_complete() {
             turn: Arc::clone(&turn_context),
             cancellation_token: CancellationToken::new(),
             tracker: Arc::clone(&tracker),
-            call_id: "create-goal".to_string(),
-            tool_name: codex_tool_planning::ToolName::plain("create_goal"),
-            source: ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "objective": "Keep the watcher alive",
-                    "token_budget": 123,
-                })
-                .to_string(),
+            metadata: ToolInvocationMetadata {
+                call_id: "create-goal".to_string(),
+                tool_name: codex_tool_planning::ToolName::plain("create_goal"),
+                source: ToolCallSource::Direct,
+                payload: ToolPayload::Function {
+                    arguments: serde_json::json!({
+                        "objective": "Keep the watcher alive",
+                        "token_budget": 123,
+                    })
+                    .to_string(),
+                },
             },
         })
         .await
@@ -10710,14 +10275,16 @@ async fn update_goal_tool_marks_goal_complete() {
             turn: Arc::clone(&turn_context),
             cancellation_token: CancellationToken::new(),
             tracker,
-            call_id: "complete-goal".to_string(),
-            tool_name: codex_tool_planning::ToolName::plain("update_goal"),
-            source: ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "status": "complete",
-                })
-                .to_string(),
+            metadata: ToolInvocationMetadata {
+                call_id: "complete-goal".to_string(),
+                tool_name: codex_tool_planning::ToolName::plain("update_goal"),
+                source: ToolCallSource::Direct,
+                payload: ToolPayload::Function {
+                    arguments: serde_json::json!({
+                        "status": "complete",
+                    })
+                    .to_string(),
+                },
             },
         })
         .await
@@ -10779,7 +10346,7 @@ async fn spawn_agent_tool_rejects_depth_limit_at_call_time() {
     let session = Arc::new(session);
     let turn_context = Arc::new(turn_context);
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-    let handler = SpawnAgentHandler::default();
+    let handler: SpawnAgentHandler<CoreToolDomainHost> = SpawnAgentHandler::default();
 
     let response = handler
         .handle(ToolInvocation {
@@ -10787,15 +10354,17 @@ async fn spawn_agent_tool_rejects_depth_limit_at_call_time() {
             turn: turn_context,
             cancellation_token: CancellationToken::new(),
             tracker,
-            call_id: "spawn-depth-limit".to_string(),
-            tool_name: codex_tool_planning::ToolName::plain("spawn_agent"),
-            source: ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "task_name": "blocked_child",
-                    "message": "try to spawn",
-                })
-                .to_string(),
+            metadata: ToolInvocationMetadata {
+                call_id: "spawn-depth-limit".to_string(),
+                tool_name: codex_tool_planning::ToolName::plain("spawn_agent"),
+                source: ToolCallSource::Direct,
+                payload: ToolPayload::Function {
+                    arguments: serde_json::json!({
+                        "task_name": "blocked_child",
+                        "message": "try to spawn",
+                    })
+                    .to_string(),
+                },
             },
         })
         .await;
@@ -10836,7 +10405,10 @@ async fn rejects_escalated_permissions_when_policy_not_on_request() {
     let tool_name = "shell_command";
     let call_id = "test-call".to_string();
 
-    let handler = ShellCommandHandler::from(ShellCommandBackendConfig::Classic);
+    let handler = codex_tool_handlers::ShellCommandHandler::from_backend_config(
+        core_tool_domain_host(),
+        ShellCommandBackendConfig::Classic,
+    );
     #[allow(deprecated)]
     let workdir = Some(turn_context.cwd.to_string_lossy().to_string());
     let resp = handler
@@ -10845,18 +10417,20 @@ async fn rejects_escalated_permissions_when_policy_not_on_request() {
             turn: Arc::clone(&turn_context),
             cancellation_token: CancellationToken::new(),
             tracker: Arc::clone(&turn_diff_tracker),
-            call_id,
-            tool_name: codex_tool_planning::ToolName::plain(tool_name),
-            source: crate::tools::context::ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "command": command_script,
-                    "workdir": workdir,
-                    "timeout_ms": timeout_ms,
-                    "sandbox_permissions": sandbox_permissions,
-                    "justification": Some("test"),
-                })
-                .to_string(),
+            metadata: ToolInvocationMetadata {
+                call_id,
+                tool_name: codex_tool_planning::ToolName::plain(tool_name),
+                source: crate::tools::context::ToolCallSource::Direct,
+                payload: ToolPayload::Function {
+                    arguments: serde_json::json!({
+                        "command": command_script,
+                        "workdir": workdir,
+                        "timeout_ms": timeout_ms,
+                        "sandbox_permissions": sandbox_permissions,
+                        "justification": Some("test"),
+                    })
+                    .to_string(),
+                },
             },
         })
         .await;
@@ -10917,23 +10491,32 @@ async fn unified_exec_rejects_escalated_permissions_when_policy_not_on_request()
     let turn_context = Arc::new(turn_context_raw);
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
 
-    let handler = ExecCommandHandler::default();
+    let handler = codex_tool_handlers::ExecCommandHandler::new(
+        core_tool_domain_host(),
+        codex_tool_handlers::ExecCommandHandlerOptions {
+            allow_login_shell: false,
+            exec_permission_approvals_enabled: false,
+            include_environment_id: false,
+        },
+    );
     let resp = handler
         .handle(ToolInvocation {
             session: Arc::clone(&session),
             turn: Arc::clone(&turn_context),
             cancellation_token: CancellationToken::new(),
             tracker: Arc::clone(&tracker),
-            call_id: "exec-call".to_string(),
-            tool_name: codex_tool_planning::ToolName::plain("exec_command"),
-            source: crate::tools::context::ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "cmd": "echo hi",
-                    "sandbox_permissions": SandboxPermissions::RequireEscalated,
-                    "justification": "need unsandboxed execution",
-                })
-                .to_string(),
+            metadata: ToolInvocationMetadata {
+                call_id: "exec-call".to_string(),
+                tool_name: codex_tool_planning::ToolName::plain("exec_command"),
+                source: crate::tools::context::ToolCallSource::Direct,
+                payload: ToolPayload::Function {
+                    arguments: serde_json::json!({
+                        "cmd": "echo hi",
+                        "sandbox_permissions": SandboxPermissions::RequireEscalated,
+                        "justification": "need unsandboxed execution",
+                    })
+                    .to_string(),
+                },
             },
         })
         .await;

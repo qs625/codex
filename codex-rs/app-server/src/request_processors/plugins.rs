@@ -10,6 +10,7 @@ use codex_core_plugins_api::PluginRuntime;
 use codex_core_plugins_remote::RemotePluginAuth;
 use codex_core_plugins_remote::is_valid_remote_plugin_id;
 use codex_core_plugins_remote::validate_remote_plugin_id;
+use codex_core_skills_api::SkillMetadata;
 use codex_mcp::oauth_login_support;
 use codex_mcp::should_retry_without_scopes;
 use codex_mcp_types::McpOAuthLoginSupport;
@@ -43,7 +44,7 @@ fn remote_plugin_auth_from_codex_auth(auth: Option<&CodexAuth>) -> Option<Remote
 }
 
 fn plugin_skills_to_info(
-    skills: &[codex_core::skills::SkillMetadata],
+    skills: &[SkillMetadata],
     disabled_skill_paths: &HashSet<AbsolutePathBuf>,
 ) -> Vec<SkillSummary> {
     skills

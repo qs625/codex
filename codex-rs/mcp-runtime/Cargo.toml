@@ -32,12 +32,14 @@ codex-core-skills-api = { workspace = true }
 codex-core-plugins-api = { workspace = true }
 codex-exec-server-api = { workspace = true }
 codex-features = { workspace = true }
+codex-guardian = { workspace = true }
 codex-mcp-runtime-api = { workspace = true }
 codex-mcp-tool-types = { workspace = true }
 codex-mcp-types = { workspace = true }
 codex-openai-files-api = { workspace = true }
 codex-protocol = { workspace = true }
 codex-tool-config = { workspace = true }
+codex-utils-string = { workspace = true }
 http = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -47,8 +49,13 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 codex-config = { workspace = true, features = ["test-support"] }
+codex-models-manager = { workspace = true }
 codex-openai-files = { workspace = true }
+codex-plugin-types = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+toml = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-test = { workspace = true, features = ["no-env-filter"] }
 wiremock = { workspace = true }

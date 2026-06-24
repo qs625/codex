@@ -1,4 +1,7 @@
 use super::*;
+use codex_core_skills_api::SkillError;
+use codex_core_skills_api::SkillMetadata;
+use codex_core_skills_api::SkillsLoadInput;
 use futures::StreamExt;
 
 #[derive(Clone)]
@@ -15,7 +18,7 @@ pub(crate) struct CatalogRequestProcessor {
 const SKILLS_LIST_CWD_CONCURRENCY: usize = 5;
 
 fn skills_to_info(
-    skills: &[codex_core::skills::SkillMetadata],
+    skills: &[SkillMetadata],
     disabled_paths: &HashSet<AbsolutePathBuf>,
 ) -> Vec<codex_app_server_protocol::SkillMetadata> {
     skills
@@ -83,9 +86,7 @@ fn hooks_to_info(hooks: &[codex_hooks::HookListEntry]) -> Vec<HookMetadata> {
         .collect()
 }
 
-fn errors_to_info(
-    errors: &[codex_core::skills::SkillError],
-) -> Vec<codex_app_server_protocol::SkillErrorInfo> {
+fn errors_to_info(errors: &[SkillError]) -> Vec<codex_app_server_protocol::SkillErrorInfo> {
     errors
         .iter()
         .map(|err| codex_app_server_protocol::SkillErrorInfo {
@@ -454,7 +455,7 @@ impl CatalogRequestProcessor {
                     } else {
                         Vec::new()
                     };
-                    let skills_input = codex_core::skills::SkillsLoadInput::new(
+                    let skills_input = SkillsLoadInput::new(
                         cwd_abs.clone(),
                         effective_skill_roots,
                         codex_core::config::skill_config_layer_stack_from_config_layer_stack(

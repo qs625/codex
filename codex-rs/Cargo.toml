@@ -8,6 +8,7 @@ members = [
     "agent-identity-api",
     "agent-runtime",
     "agent-roles",
+    "agent-tool-handlers",
     "backend-client",
     "bwrap",
     "ansi-escape",
@@ -143,16 +144,22 @@ members = [
     "response-debug-context",
     "sandboxing-api",
     "sandboxing",
+    "session-runtime",
+    "session-api",
     "session-telemetry-api",
     "stdio-to-uds",
     "otel",
     "otel-init",
     "tui",
     "tool-config",
+    "tool-handlers",
     "tool-planning",
+    "tool-runtime",
+    "tool-runtime-api",
     "tool-types",
     "tools",
     "turn-items",
+    "turn-metadata",
     "v8-poc",
     "utils/absolute-path",
     "utils/backoff",
@@ -185,6 +192,7 @@ members = [
     "trace-context",
     "test-binary-support",
     "thread-manager-sample",
+    "thread-api",
     "thread-store-api",
     "thread-store",
     "uds",
@@ -216,6 +224,7 @@ codex-agent-identity = { path = "agent-identity" }
 codex-agent-identity-api = { path = "agent-identity-api" }
 codex-agent-runtime = { path = "agent-runtime" }
 codex-agent-roles = { path = "agent-roles" }
+codex-agent-tool-handlers = { path = "agent-tool-handlers" }
 codex-ansi-escape = { path = "ansi-escape" }
 codex-api = { path = "codex-api" }
 codex-api-auth = { path = "api-auth" }
@@ -355,6 +364,8 @@ codex-shell-command = { path = "shell-command" }
 codex-state-api = { path = "state-api" }
 codex-shell-escalation = { path = "shell-escalation" }
 codex-shell-escalation-cli = { path = "shell-escalation-cli" }
+codex-session-api = { path = "session-api" }
+codex-session-runtime = { path = "session-runtime" }
 codex-session-telemetry-api = { path = "session-telemetry-api" }
 codex-skills = { path = "skills" }
 codex-state = { path = "state" }
@@ -363,14 +374,19 @@ codex-stdio-to-uds = { path = "stdio-to-uds" }
 codex-terminal-detection = { path = "terminal-detection" }
 codex-trace-context = { path = "trace-context" }
 codex-test-binary-support = { path = "test-binary-support" }
+codex-thread-api = { path = "thread-api" }
 codex-thread-store-api = { path = "thread-store-api" }
 codex-thread-store = { path = "thread-store" }
 codex-tool-config = { path = "tool-config" }
+codex-tool-handlers = { path = "tool-handlers" }
 codex-tool-planning = { path = "tool-planning" }
+codex-tool-runtime = { path = "tool-runtime" }
+codex-tool-runtime-api = { path = "tool-runtime-api" }
 codex-tool-types = { path = "tool-types" }
 codex-tools = { path = "tools" }
 codex-tui = { path = "tui" }
 codex-turn-items = { path = "turn-items" }
+codex-turn-metadata = { path = "turn-metadata" }
 codex-uds = { path = "uds" }
 codex-user-info = { path = "user-info" }
 codex-workflow-api = { path = "workflow-api" }

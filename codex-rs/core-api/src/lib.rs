@@ -31,6 +31,8 @@ pub use codex_core::StartThreadOptions;
 pub use codex_core::ThreadAuthRuntimes;
 pub use codex_core::ThreadManager;
 pub use codex_core::ThreadShutdownReport;
+pub use codex_core::ToolRouterBuildParams;
+pub use codex_core::ToolRouterFactory;
 pub use codex_core::config::Config;
 pub use codex_core::config::ConfigLayerStack;
 pub use codex_core::config::Constrained;
@@ -44,7 +46,7 @@ pub use codex_core::config::TerminalResizeReflowConfig;
 pub use codex_core::config::ThreadStoreConfig;
 pub use codex_core::config::find_codex_home;
 pub use codex_core::resolve_installation_id;
-pub use codex_core::skills::SkillsManager;
+pub use codex_core_skills::SkillsManager;
 pub use codex_exec_server::EnvironmentManager;
 pub use codex_exec_server::ExecServerRuntimePaths;
 pub use codex_extension_api::empty_extension_registry;
@@ -83,6 +85,30 @@ pub use codex_state_api::SharedStateDbRuntime as CoreStateDbHandle;
 pub use codex_thread_store::DefaultLiveThreadFactory;
 pub use codex_thread_store::ThreadStore;
 pub use codex_utils_absolute_path::AbsolutePathBuf;
+
+#[derive(Default)]
+pub struct DefaultCoreToolRouterFactory;
+
+impl ToolRouterFactory for DefaultCoreToolRouterFactory {
+    fn build_tool_router(
+        &self,
+        config: &codex_tool_config::ToolsConfig,
+        params: ToolRouterBuildParams<'_>,
+    ) -> codex_core::CoreToolRuntimeRouter {
+        codex_tool_handlers::build_tool_router(
+            config,
+            &codex_core::CoreToolDomainHost,
+            codex_tool_handlers::ToolRuntimeBuildParams {
+                mcp_tools: params.mcp_tools,
+                deferred_mcp_tools: params.deferred_mcp_tools,
+                discoverable_tools: params.discoverable_tools,
+                extension_tool_executors: params.extension_tool_executors,
+                dynamic_tools: params.dynamic_tools,
+                default_agent_type_description: params.default_agent_type_description,
+            },
+        )
+    }
+}
 
 pub async fn init_state_db(config: &Config) -> Option<StateDbHandle> {
     codex_rollout::state_db::init(config).await

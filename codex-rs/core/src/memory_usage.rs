@@ -1,7 +1,7 @@
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::flat_tool_name;
-use crate::tools::handlers::unified_exec::ExecCommandArgs;
+use crate::unified_exec::ExecCommandArgs;
 use codex_protocol::models::ShellCommandToolCallParams;
 use codex_protocol::parse_command::ParsedCommand;
 use codex_shell_command::is_safe_command::is_known_safe_command;
@@ -117,7 +117,7 @@ fn shell_command_for_invocation(invocation: &ToolInvocation) -> Option<(Vec<Stri
         (None, "exec_command") => serde_json::from_str::<ExecCommandArgs>(arguments)
             .ok()
             .and_then(|params| {
-                let command = crate::tools::handlers::unified_exec::get_command(
+                let command = crate::unified_exec::get_command(
                     &params,
                     invocation.session.user_shell(),
                     &invocation.turn.tools_config.unified_exec_shell_mode,

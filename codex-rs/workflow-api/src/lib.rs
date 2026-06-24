@@ -1,4 +1,5 @@
 mod runtime;
+mod tool_contract;
 
 pub use runtime::DisabledWorkflowRunController;
 pub use runtime::WorkflowAgentBinding;
@@ -13,6 +14,19 @@ pub use runtime::WorkflowRunUpdateReceiver;
 pub use runtime::WorkflowRuntimeBridge;
 pub use runtime::WorkflowRuntimeError;
 pub use runtime::WorkflowRuntimeRequest;
+pub use tool_contract::WorkflowAbortArgs;
+pub use tool_contract::WorkflowDescribeArgs;
+pub use tool_contract::WorkflowFollowupTaskToolCall;
+pub use tool_contract::WorkflowResumeArgs;
+pub use tool_contract::WorkflowSpawnAgentToolCall;
+pub use tool_contract::WorkflowStartArgs;
+pub use tool_contract::WorkflowStatusArgs;
+pub use tool_contract::WorkflowWaitAgentToolCall;
+pub use tool_contract::workflow_followup_task_tool_call;
+pub use tool_contract::workflow_spawn_agent_tool_call;
+pub use tool_contract::workflow_tool_call_id;
+pub use tool_contract::workflow_tool_output_json;
+pub use tool_contract::workflow_wait_agent_tool_call;
 
 use serde::Deserialize;
 use serde::Serialize;

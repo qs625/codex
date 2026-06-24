@@ -3,10 +3,14 @@ use codex_auth_types::TelemetryAuthMode;
 use codex_client_identity::originator;
 use codex_config::ConfigLayerStack;
 use codex_config::types::AuthCredentialsStoreMode;
+use codex_core::CoreToolDomainHost;
+use codex_core::CoreToolRuntimeRouter;
 use codex_core::ModelClient;
 use codex_core::NewThread;
 use codex_core::Prompt;
 use codex_core::ThreadManager;
+use codex_core::ToolRouterBuildParams;
+use codex_core::ToolRouterFactory;
 use codex_core::resolve_installation_id;
 use codex_extension_api::empty_extension_registry;
 use codex_features::Feature;
@@ -88,6 +92,29 @@ use wiremock::matchers::path;
 use wiremock::matchers::query_param;
 
 const INSTALLATION_ID_FILENAME: &str = "installation_id";
+
+struct TestToolRouterFactory;
+
+impl ToolRouterFactory for TestToolRouterFactory {
+    fn build_tool_router(
+        &self,
+        config: &codex_tool_config::ToolsConfig,
+        params: ToolRouterBuildParams<'_>,
+    ) -> CoreToolRuntimeRouter {
+        codex_tool_handlers::build_tool_router(
+            config,
+            &CoreToolDomainHost,
+            codex_tool_handlers::ToolRuntimeBuildParams {
+                mcp_tools: params.mcp_tools,
+                deferred_mcp_tools: params.deferred_mcp_tools,
+                discoverable_tools: params.discoverable_tools,
+                extension_tool_executors: params.extension_tool_executors,
+                dynamic_tools: params.dynamic_tools,
+                default_agent_type_description: params.default_agent_type_description,
+            },
+        )
+    }
+}
 
 #[expect(clippy::unwrap_used)]
 fn assert_message_role(request_body: &serde_json::Value, role: &str) {
@@ -1146,6 +1173,7 @@ async fn prefers_apikey_when_config_prefers_apikey_even_with_chatgpt_tokens() {
         /*attestation_provider*/ None,
         codex_core::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(TestToolRouterFactory),
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );

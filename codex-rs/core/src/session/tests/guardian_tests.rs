@@ -8,6 +8,8 @@ use crate::test_support::create_model_provider_for_tests_with_provider_auth;
 use crate::test_support::models_manager_with_provider_auth;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolCallSource;
+use crate::tools::context::ToolInvocationMetadata;
+use crate::tools::router::DefaultToolRouterFactory;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_config::ConfigLayerEntry;
 use codex_config::ConfigRequirements;
@@ -291,7 +293,8 @@ async fn guardian_allows_shell_command_additional_permissions_requests_past_poli
     let turn_context = Arc::new(turn_context_raw);
     let expiration_ms: u64 = if cfg!(windows) { 2_500 } else { 1_000 };
 
-    let handler = crate::tools::handlers::ShellCommandHandler::from(
+    let handler = codex_tool_handlers::ShellCommandHandler::from_backend_config(
+        crate::tools::handlers::core_tool_domain_host(),
         codex_tool_planning::ShellCommandBackendConfig::Classic,
     );
     #[allow(deprecated)]
@@ -302,25 +305,27 @@ async fn guardian_allows_shell_command_additional_permissions_requests_past_poli
             turn: Arc::clone(&turn_context),
             cancellation_token: CancellationToken::new(),
             tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
-            call_id: "test-call".to_string(),
-            tool_name: codex_tool_planning::ToolName::plain("shell_command"),
-            source: crate::tools::context::ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "command": "echo hi",
-                    "login": false,
-                    "workdir": workdir,
-                    "timeout_ms": expiration_ms,
-                    "sandbox_permissions": SandboxPermissions::WithAdditionalPermissions,
-                    "additional_permissions": PermissionProfile {
-                        network: Some(NetworkPermissions {
-                            enabled: Some(true),
-                        }),
-                        file_system: None,
-                    },
-                    "justification": Some("test"),
-                })
-                .to_string(),
+            metadata: ToolInvocationMetadata {
+                call_id: "test-call".to_string(),
+                tool_name: codex_tool_planning::ToolName::plain("shell_command"),
+                source: crate::tools::context::ToolCallSource::Direct,
+                payload: ToolPayload::Function {
+                    arguments: serde_json::json!({
+                        "command": "echo hi",
+                        "login": false,
+                        "workdir": workdir,
+                        "timeout_ms": expiration_ms,
+                        "sandbox_permissions": SandboxPermissions::WithAdditionalPermissions,
+                        "additional_permissions": PermissionProfile {
+                            network: Some(NetworkPermissions {
+                                enabled: Some(true),
+                            }),
+                            file_system: None,
+                        },
+                        "justification": Some("test"),
+                    })
+                    .to_string(),
+                },
             },
         })
         .await;
@@ -394,7 +399,8 @@ async fn strict_auto_review_turn_grant_forces_guardian_for_shell_command_policy_
     let session = Arc::new(session);
     let turn_context = Arc::new(turn_context_raw);
 
-    let handler = crate::tools::handlers::ShellCommandHandler::from(
+    let handler = codex_tool_handlers::ShellCommandHandler::from_backend_config(
+        crate::tools::handlers::core_tool_domain_host(),
         codex_tool_planning::ShellCommandBackendConfig::Classic,
     );
     #[allow(deprecated)]
@@ -405,17 +411,19 @@ async fn strict_auto_review_turn_grant_forces_guardian_for_shell_command_policy_
             turn: Arc::clone(&turn_context),
             cancellation_token: CancellationToken::new(),
             tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
-            call_id: "strict-shell-command-call".to_string(),
-            tool_name: codex_tool_planning::ToolName::plain("shell_command"),
-            source: ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "command": "echo hi",
-                    "login": false,
-                    "workdir": workdir,
-                    "timeout_ms": 1_000_u64,
-                })
-                .to_string(),
+            metadata: ToolInvocationMetadata {
+                call_id: "strict-shell-command-call".to_string(),
+                tool_name: codex_tool_planning::ToolName::plain("shell_command"),
+                source: ToolCallSource::Direct,
+                payload: ToolPayload::Function {
+                    arguments: serde_json::json!({
+                        "command": "echo hi",
+                        "login": false,
+                        "workdir": workdir,
+                        "timeout_ms": 1_000_u64,
+                    })
+                    .to_string(),
+                },
             },
         })
         .await;
@@ -445,23 +453,32 @@ async fn guardian_allows_unified_exec_additional_permissions_requests_past_polic
     let turn_context = Arc::new(turn_context_raw);
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
 
-    let handler = ExecCommandHandler::default();
+    let handler = codex_tool_handlers::ExecCommandHandler::new(
+        crate::tools::handlers::core_tool_domain_host(),
+        codex_tool_handlers::ExecCommandHandlerOptions {
+            allow_login_shell: false,
+            exec_permission_approvals_enabled: false,
+            include_environment_id: false,
+        },
+    );
     let resp = handler
         .handle(ToolInvocation {
             session: Arc::clone(&session),
             turn: Arc::clone(&turn_context),
             cancellation_token: CancellationToken::new(),
             tracker: Arc::clone(&tracker),
-            call_id: "exec-call".to_string(),
-            tool_name: codex_tool_planning::ToolName::plain("exec_command"),
-            source: crate::tools::context::ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "cmd": "echo hi",
-                    "sandbox_permissions": SandboxPermissions::WithAdditionalPermissions,
-                    "justification": "need additional sandbox permissions",
-                })
-                .to_string(),
+            metadata: ToolInvocationMetadata {
+                call_id: "exec-call".to_string(),
+                tool_name: codex_tool_planning::ToolName::plain("exec_command"),
+                source: crate::tools::context::ToolCallSource::Direct,
+                payload: ToolPayload::Function {
+                    arguments: serde_json::json!({
+                        "cmd": "echo hi",
+                        "sandbox_permissions": SandboxPermissions::WithAdditionalPermissions,
+                        "justification": "need additional sandbox permissions",
+                    })
+                    .to_string(),
+                },
             },
         })
         .await;
@@ -562,7 +579,8 @@ async fn shell_command_allows_sticky_turn_permissions_without_inline_request_per
     let session = Arc::new(session);
     let turn_context = Arc::new(turn_context_raw);
 
-    let handler = crate::tools::handlers::ShellCommandHandler::from(
+    let handler = codex_tool_handlers::ShellCommandHandler::from_backend_config(
+        crate::tools::handlers::core_tool_domain_host(),
         codex_tool_planning::ShellCommandBackendConfig::Classic,
     );
     #[allow(deprecated)]
@@ -573,17 +591,19 @@ async fn shell_command_allows_sticky_turn_permissions_without_inline_request_per
             turn: Arc::clone(&turn_context),
             cancellation_token: CancellationToken::new(),
             tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
-            call_id: "sticky-turn-grant".to_string(),
-            tool_name: codex_tool_planning::ToolName::plain("shell_command"),
-            source: crate::tools::context::ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "command": "echo hi",
-                    "login": false,
-                    "timeout_ms": 1_000_u64,
-                    "workdir": workdir,
-                })
-                .to_string(),
+            metadata: ToolInvocationMetadata {
+                call_id: "sticky-turn-grant".to_string(),
+                tool_name: codex_tool_planning::ToolName::plain("shell_command"),
+                source: crate::tools::context::ToolCallSource::Direct,
+                payload: ToolPayload::Function {
+                    arguments: serde_json::json!({
+                        "command": "echo hi",
+                        "login": false,
+                        "timeout_ms": 1_000_u64,
+                        "workdir": workdir,
+                    })
+                    .to_string(),
+                },
             },
         })
         .await;
@@ -632,7 +652,7 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
     let command = [vec!["rm".to_string()]];
     let parent_exec_policy = ExecPolicyManager::load(
         &config.config_layer_stack,
-        &crate::exec_policy::TestExecPolicyLoader,
+        &codex_execpolicy_loader::StarlarkExecPolicyLoader,
     )
     .await
     .expect("load parent exec policy");
@@ -723,6 +743,7 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
         openai_file_uploader: Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         code_mode_service: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         code_mode_runtime_factory: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        tool_router_factory: Arc::new(DefaultToolRouterFactory),
         workflow_runs: Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
     })
     .await

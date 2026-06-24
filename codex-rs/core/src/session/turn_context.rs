@@ -1,6 +1,10 @@
 use super::*;
 use crate::SkillLoadOutcome;
+use crate::config::EffectiveSessionConfigOverlay;
 use crate::config::GhostSnapshotConfig;
+use crate::config::SessionConfigOverlay;
+use crate::config::build_effective_session_config_from_session_overlay;
+use crate::config::build_per_turn_config_from_session_overlay;
 use crate::environment_selection::ResolvedTurnEnvironments;
 use codex_auth_types::AuthRuntime;
 use codex_auth_types::SharedAuthRuntime;
@@ -15,6 +19,8 @@ use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_sandboxing_api::compatibility_sandbox_policy_for_permission_profile;
 use codex_sandboxing_api::policy_transforms::effective_file_system_sandbox_policy;
 use codex_sandboxing_api::policy_transforms::effective_network_sandbox_policy;
+use codex_session_runtime::TurnContextItemBuildInput;
+use codex_session_runtime::build_turn_context_item;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
@@ -326,22 +332,6 @@ impl TurnContext {
         }
     }
 
-    fn non_legacy_file_system_sandbox_policy(&self) -> Option<FileSystemSandboxPolicy> {
-        // Omit the derived split filesystem policy when it is equivalent to
-        // the legacy sandbox policy. This keeps turn-context payloads stable
-        // while both fields exist; once callers consume only the split policy,
-        // this comparison and the legacy projection should go away.
-        let legacy_file_system_sandbox_policy =
-            FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
-                &self.sandbox_policy(),
-                #[allow(deprecated)]
-                &self.cwd,
-            );
-        let file_system_sandbox_policy = self.file_system_sandbox_policy();
-        (file_system_sandbox_policy != legacy_file_system_sandbox_policy)
-            .then_some(file_system_sandbox_policy)
-    }
-
     pub(crate) fn compact_prompt(&self) -> &str {
         self.compact_prompt
             .as_deref()
@@ -349,29 +339,29 @@ impl TurnContext {
     }
 
     pub(crate) fn to_turn_context_item(&self) -> TurnContextItem {
-        TurnContextItem {
+        build_turn_context_item(TurnContextItemBuildInput {
             turn_id: Some(self.sub_id.clone()),
             trace_id: self.trace_id.clone(),
             #[allow(deprecated)]
-            cwd: self.cwd.to_path_buf(),
+            cwd: self.cwd.clone(),
             current_date: self.current_date.clone(),
             timezone: self.timezone.clone(),
             approval_policy: self.approval_policy.value(),
             sandbox_policy: self.sandbox_policy(),
-            permission_profile: Some(self.permission_profile()),
+            permission_profile: self.permission_profile(),
             network: self.turn_context_network_item(),
-            file_system_sandbox_policy: self.non_legacy_file_system_sandbox_policy(),
+            file_system_sandbox_policy: self.file_system_sandbox_policy(),
             model: self.model_info.slug.clone(),
             personality: self.personality,
-            collaboration_mode: Some(self.collaboration_mode.clone()),
-            realtime_active: Some(self.realtime_active),
+            collaboration_mode: self.collaboration_mode.clone(),
+            realtime_active: self.realtime_active,
             effort: self.reasoning_effort,
             summary: self.reasoning_summary,
             user_instructions: self.user_instructions.clone(),
             developer_instructions: self.developer_instructions.clone(),
             final_output_json_schema: self.final_output_json_schema.clone(),
-            truncation_policy: Some(self.truncation_policy),
-        }
+            truncation_policy: self.truncation_policy,
+        })
     }
 
     fn turn_context_network_item(&self) -> Option<TurnContextNetworkItem> {
@@ -412,53 +402,45 @@ impl Session {
         session_configuration: &SessionConfiguration,
         cwd: AbsolutePathBuf,
     ) -> Config {
-        // todo(aibrahim): store this state somewhere else so we don't need to mut config
-        let config = session_configuration.original_config_do_not_use.clone();
-        let mut per_turn_config = (*config).clone();
-        per_turn_config.cwd = cwd;
-        per_turn_config.workspace_roots = session_configuration.workspace_roots.clone();
-        per_turn_config
-            .permissions
-            .set_workspace_roots(session_configuration.workspace_roots.clone());
-        per_turn_config.model_reasoning_effort =
-            session_configuration.collaboration_mode.reasoning_effort();
-        per_turn_config.model_reasoning_summary = session_configuration.model_reasoning_summary;
-        per_turn_config.service_tier = session_configuration.service_tier.clone();
-        per_turn_config.personality = session_configuration.personality;
-        per_turn_config.approvals_reviewer = session_configuration.approvals_reviewer;
-        session_configuration
-            .apply_permission_profile_to_permissions(&mut per_turn_config.permissions);
-        let permission_profile = session_configuration.permission_profile();
-        let resolved_web_search_mode =
-            resolve_web_search_mode_for_turn(&per_turn_config.web_search_mode, &permission_profile);
-        if let Err(err) = per_turn_config
-            .web_search_mode
-            .set(resolved_web_search_mode)
-        {
-            let fallback_value = per_turn_config.web_search_mode.value();
-            tracing::warn!(
-                error = %err,
-                ?resolved_web_search_mode,
-                ?fallback_value,
-                "resolved web_search_mode is disallowed by requirements; keeping constrained value"
-            );
-        }
-        per_turn_config.features = config.features.clone();
-        per_turn_config
+        build_per_turn_config_from_session_overlay(
+            &session_configuration.original_config_do_not_use,
+            SessionConfigOverlay {
+                cwd,
+                workspace_roots: session_configuration.workspace_roots.clone(),
+                model_reasoning_effort: session_configuration.collaboration_mode.reasoning_effort(),
+                model_reasoning_summary: session_configuration.model_reasoning_summary,
+                service_tier: session_configuration.service_tier.clone(),
+                personality: session_configuration.personality,
+                approvals_reviewer: session_configuration.approvals_reviewer,
+                permission_profile_state: session_configuration.permission_profile_state.clone(),
+            },
+        )
     }
 
     pub(crate) fn build_effective_session_config(
         session_configuration: &SessionConfiguration,
     ) -> Config {
-        let mut config =
-            Self::build_per_turn_config(session_configuration, session_configuration.cwd.clone());
-        config.model = Some(session_configuration.collaboration_mode.model().to_string());
-        config.permissions.approval_policy = session_configuration.approval_policy.clone();
-        config.workspace_roots = session_configuration.workspace_roots.clone();
-        config
-            .permissions
-            .set_workspace_roots(session_configuration.workspace_roots.clone());
-        config
+        build_effective_session_config_from_session_overlay(
+            &session_configuration.original_config_do_not_use,
+            EffectiveSessionConfigOverlay {
+                session: SessionConfigOverlay {
+                    cwd: session_configuration.cwd.clone(),
+                    workspace_roots: session_configuration.workspace_roots.clone(),
+                    model_reasoning_effort: session_configuration
+                        .collaboration_mode
+                        .reasoning_effort(),
+                    model_reasoning_summary: session_configuration.model_reasoning_summary,
+                    service_tier: session_configuration.service_tier.clone(),
+                    personality: session_configuration.personality,
+                    approvals_reviewer: session_configuration.approvals_reviewer,
+                    permission_profile_state: session_configuration
+                        .permission_profile_state
+                        .clone(),
+                },
+                model: session_configuration.collaboration_mode.model().to_string(),
+                approval_policy: session_configuration.approval_policy.clone(),
+            },
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -513,7 +495,7 @@ impl Session {
         .with_image_generation_capability(provider_capabilities.image_generation)
         .with_web_search_capability(provider_capabilities.web_search)
         .with_unified_exec_shell_mode_for_session(
-            crate::tools::spec::tool_user_shell_type(user_shell),
+            crate::tools::runtimes::runtime_shell_type(&user_shell.shell_type),
             shell_zsh_path,
             main_execve_wrapper_exe,
         )

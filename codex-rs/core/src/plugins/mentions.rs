@@ -1,42 +1,18 @@
-use std::collections::HashMap;
 use std::collections::HashSet;
 
-use codex_connectors_api::metadata::connector_mention_slug;
+use codex_core_skills_api::collect_tool_mentions_from_messages_with_sigil;
 use codex_protocol::user_input::UserInput;
 
-use crate::connectors;
 use crate::injection::ToolMentionKind;
 use crate::injection::app_id_from_path;
-use crate::injection::extract_tool_mentions_with_sigil;
 use crate::injection::plugin_config_name_from_path;
 use crate::injection::tool_kind_for_path;
 use crate::mention_syntax::PLUGIN_TEXT_MENTION_SIGIL;
-use crate::mention_syntax::TOOL_MENTION_SIGIL;
 
 use super::PluginCapabilitySummary;
 
-pub(crate) struct CollectedToolMentions {
-    pub(crate) plain_names: HashSet<String>,
-    pub(crate) paths: HashSet<String>,
-}
-
-pub(crate) fn collect_tool_mentions_from_messages(messages: &[String]) -> CollectedToolMentions {
-    collect_tool_mentions_from_messages_with_sigil(messages, TOOL_MENTION_SIGIL)
-}
-
-fn collect_tool_mentions_from_messages_with_sigil(
-    messages: &[String],
-    sigil: char,
-) -> CollectedToolMentions {
-    let mut plain_names = HashSet::new();
-    let mut paths = HashSet::new();
-    for message in messages {
-        let mentions = extract_tool_mentions_with_sigil(message, sigil);
-        plain_names.extend(mentions.plain_names().map(str::to_string));
-        paths.extend(mentions.paths().map(str::to_string));
-    }
-    CollectedToolMentions { plain_names, paths }
-}
+pub(crate) use codex_core_skills_api::build_connector_slug_counts;
+pub(crate) use codex_core_skills_api::collect_tool_mentions_from_messages;
 
 pub(crate) fn collect_explicit_app_ids(input: &[UserInput]) -> HashSet<String> {
     let messages = input
@@ -103,17 +79,6 @@ pub(crate) fn collect_explicit_plugin_mentions(
 }
 
 pub(crate) use crate::build_skill_name_counts;
-
-pub(crate) fn build_connector_slug_counts(
-    connectors: &[connectors::AppInfo],
-) -> HashMap<String, usize> {
-    let mut counts: HashMap<String, usize> = HashMap::new();
-    for connector in connectors {
-        let slug = connector_mention_slug(connector);
-        *counts.entry(slug).or_insert(0) += 1;
-    }
-    counts
-}
 
 #[cfg(test)]
 #[path = "mentions_tests.rs"]

@@ -1,17 +1,12 @@
-use super::ShellRequest;
 use crate::sandboxing::ExecRequest;
-use crate::tools::runtimes::unified_exec::UnifiedExecRequest;
 use crate::tools::sandboxing::SandboxAttempt;
 use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
-use crate::unified_exec::SpawnLifecycleHandle;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_tool_config::ZshForkConfig;
-
-pub(crate) struct PreparedUnifiedExecSpawn {
-    pub(crate) exec_request: ExecRequest,
-    pub(crate) spawn_lifecycle: SpawnLifecycleHandle,
-}
+use codex_tool_runtime_api::PreparedUnifiedExecSpawn;
+use codex_tool_runtime_api::ShellRequest;
+use codex_tool_runtime_api::UnifiedExecRequest;
 
 /// Runs the zsh-fork shell-command backend when this request should be handled
 /// by executable-level escalation instead of the default shell runtime.
@@ -39,14 +34,14 @@ pub(crate) async fn maybe_prepare_unified_exec(
     ctx: &ToolCtx,
     exec_request: ExecRequest,
     zsh_fork_config: &ZshForkConfig,
-) -> Result<Option<PreparedUnifiedExecSpawn>, ToolError> {
+) -> Result<Option<PreparedUnifiedExecSpawn<ExecRequest>>, ToolError> {
     imp::maybe_prepare_unified_exec(req, attempt, ctx, exec_request, zsh_fork_config).await
 }
 
 #[cfg(unix)]
 mod imp {
     use super::*;
-    use crate::tools::runtimes::shell::unix_escalation;
+    use crate::shell_escalation_adapter;
     use crate::unified_exec::SpawnLifecycle;
     use codex_shell_escalation::ESCALATE_SOCKET_ENV_VAR;
     use codex_shell_escalation::EscalationSession;
@@ -77,7 +72,7 @@ mod imp {
         ctx: &ToolCtx,
         command: &[String],
     ) -> Result<Option<ExecToolCallOutput>, ToolError> {
-        unix_escalation::try_run_zsh_fork(req, attempt, ctx, command).await
+        shell_escalation_adapter::try_run_zsh_fork(req, attempt, ctx, command).await
     }
 
     pub(super) async fn maybe_prepare_unified_exec(
@@ -86,8 +81,8 @@ mod imp {
         ctx: &ToolCtx,
         exec_request: ExecRequest,
         zsh_fork_config: &ZshForkConfig,
-    ) -> Result<Option<PreparedUnifiedExecSpawn>, ToolError> {
-        let Some(prepared) = unix_escalation::prepare_unified_exec_zsh_fork(
+    ) -> Result<Option<PreparedUnifiedExecSpawn<ExecRequest>>, ToolError> {
+        let Some(prepared) = shell_escalation_adapter::prepare_unified_exec_zsh_fork(
             req,
             attempt,
             ctx,
@@ -129,7 +124,7 @@ mod imp {
         ctx: &ToolCtx,
         exec_request: ExecRequest,
         zsh_fork_config: &ZshForkConfig,
-    ) -> Result<Option<PreparedUnifiedExecSpawn>, ToolError> {
+    ) -> Result<Option<PreparedUnifiedExecSpawn<ExecRequest>>, ToolError> {
         let _ = (req, attempt, ctx, exec_request, zsh_fork_config);
         Ok(None)
     }

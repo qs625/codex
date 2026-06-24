@@ -10,7 +10,9 @@ use crate::SkillLoadOutcome;
 use crate::build_skill_injections;
 use crate::client::ModelClientSession;
 use crate::client_common::Prompt;
+use crate::client_common::PromptBuildParams;
 use crate::client_common::ResponseEvent;
+use crate::client_common::build_prompt;
 use crate::collect_env_var_dependencies;
 use crate::collect_explicit_skill_mentions;
 use crate::compact::InitialContextInjection;
@@ -27,16 +29,11 @@ use crate::hook_runtime::record_additional_contexts;
 use crate::hook_runtime::record_pending_input;
 use crate::hook_runtime::run_pending_session_start_hooks;
 use crate::hook_runtime::run_user_prompt_submit_hooks;
-use crate::injection::ToolMentionKind;
-use crate::injection::app_id_from_path;
-use crate::injection::tool_kind_for_path;
-use crate::mcp_skill_dependencies::maybe_prompt_and_install_mcp_dependencies;
-use crate::mcp_tool_exposure::build_mcp_tool_exposure;
+use crate::mcp::maybe_prompt_and_install_mcp_dependencies;
 use crate::mentions::build_connector_slug_counts;
 use crate::mentions::build_skill_name_counts;
 use crate::mentions::collect_explicit_app_ids;
 use crate::mentions::collect_explicit_plugin_mentions;
-use crate::mentions::collect_tool_mentions_from_messages;
 use crate::parse_turn_item;
 use crate::plugins::build_plugin_injections;
 use crate::resolve_skill_dependencies_for_turn;
@@ -48,15 +45,13 @@ use crate::stream_events_utils::TurnItemContributorPolicy;
 use crate::stream_events_utils::finalize_non_tool_response_item;
 use crate::stream_events_utils::handle_non_tool_response_item;
 use crate::stream_events_utils::handle_output_item_done;
-use crate::stream_events_utils::last_assistant_message_from_item;
 use crate::stream_events_utils::mark_thread_memory_mode_polluted_if_external_context;
-use crate::stream_events_utils::raw_assistant_output_text_from_item;
 use crate::stream_events_utils::record_completed_response_item_with_finalized_facts;
+use crate::tools::ToolCallRuntime;
 use crate::tools::ToolRouter;
 use crate::tools::context::SharedTurnDiffTracker;
-use crate::tools::parallel::ToolCallRuntime;
 use crate::tools::registry::ToolArgumentDiffConsumer;
-use crate::tools::router::ToolRouterParams;
+use crate::tools::router::ToolRouterBuildParams;
 use crate::tools::router::extension_tool_executors;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::turn_timing::record_turn_ttft_metric;
@@ -67,24 +62,22 @@ use codex_analytics_api::CompactionPhase;
 use codex_analytics_api::CompactionReason;
 use codex_analytics_api::InvocationType;
 use codex_analytics_api::SkillInvocation;
-use codex_analytics_api::TurnResolvedConfigFact;
 use codex_analytics_api::build_track_events_context;
 use codex_async_utils::OrCancelExt;
+use codex_core_skills_api::collect_explicit_app_ids_from_skill_items;
+use codex_core_skills_api::filter_connectors_for_user_messages;
 use codex_git_info::get_git_repo_root;
 use codex_hooks_api::HookEvent;
 use codex_hooks_api::HookEventAfterAgent;
 use codex_hooks_api::HookPayload;
 use codex_hooks_api::HookResult;
+use codex_mcp_runtime::build_mcp_tool_exposure;
 use codex_protocol::config_types::ModeKind;
-use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
-use codex_protocol::items::PlanItem;
 use codex_protocol::items::TurnItem;
 use codex_protocol::items::UserMessageItem;
 use codex_protocol::items::build_hook_prompt_message;
-use codex_protocol::models::BaseInstructions;
-use codex_protocol::models::ContentItem;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
@@ -100,13 +93,15 @@ use codex_protocol::protocol::ReasoningRawContentDeltaEvent;
 use codex_protocol::protocol::TurnDiffEvent;
 use codex_protocol::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
+use codex_session_runtime::TurnResolvedConfigFactInput;
+use codex_session_runtime::build_turn_resolved_config_fact;
 use codex_tool_planning::ToolName;
 use codex_tool_planning::filter_request_plugin_install_discoverable_tools_for_client;
-use codex_utils_stream_parser::AssistantTextChunk;
-use codex_utils_stream_parser::AssistantTextStreamParser;
-use codex_utils_stream_parser::ProposedPlanSegment;
-use codex_utils_stream_parser::extract_proposed_plan_text;
-use codex_utils_stream_parser::strip_citations;
+use codex_turn_items::AssistantMessageStreamParsers;
+use codex_turn_items::ParsedAssistantTextDelta;
+use codex_turn_items::PlanModeStreamAction;
+use codex_turn_items::PlanModeStreamState;
+use codex_turn_items::raw_assistant_output_text_from_item;
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::FuturesOrdered;
@@ -718,37 +713,34 @@ async fn track_turn_resolved_config_analytics(
     };
     sess.services
         .analytics_events_client
-        .track_turn_resolved_config(TurnResolvedConfigFact {
-            turn_id: turn_context.sub_id.clone(),
-            thread_id: sess.conversation_id.to_string(),
-            num_input_images: input
-                .iter()
-                .filter(|item| {
-                    matches!(item, UserInput::Image { .. } | UserInput::LocalImage { .. })
-                })
-                .count(),
-            submission_type: None,
-            ephemeral: thread_config.ephemeral,
-            session_source: thread_config.session_source,
-            model: turn_context.model_info.slug.clone(),
-            model_provider: turn_context.config.model_provider_id.clone(),
-            permission_profile: turn_context.permission_profile(),
-            #[allow(deprecated)]
-            permission_profile_cwd: turn_context.cwd.to_path_buf(),
-            reasoning_effort: turn_context.reasoning_effort,
-            reasoning_summary: Some(turn_context.reasoning_summary),
-            service_tier: turn_context
-                .config
-                .service_tier
-                .as_deref()
-                .and_then(ServiceTier::from_request_value),
-            approval_policy: turn_context.approval_policy.value(),
-            approvals_reviewer: turn_context.config.approvals_reviewer,
-            sandbox_network_access: turn_context.network_sandbox_policy().is_enabled(),
-            collaboration_mode: turn_context.collaboration_mode.mode,
-            personality: turn_context.personality,
-            is_first_turn,
-        });
+        .track_turn_resolved_config(build_turn_resolved_config_fact(
+            TurnResolvedConfigFactInput {
+                turn_id: turn_context.sub_id.clone(),
+                thread_id: sess.conversation_id.to_string(),
+                num_input_images: input
+                    .iter()
+                    .filter(|item| {
+                        matches!(item, UserInput::Image { .. } | UserInput::LocalImage { .. })
+                    })
+                    .count(),
+                ephemeral: thread_config.ephemeral,
+                session_source: thread_config.session_source,
+                model: turn_context.model_info.slug.clone(),
+                model_provider: turn_context.config.model_provider_id.clone(),
+                permission_profile: turn_context.permission_profile(),
+                #[allow(deprecated)]
+                permission_profile_cwd: turn_context.cwd.to_path_buf(),
+                reasoning_effort: turn_context.reasoning_effort,
+                reasoning_summary: turn_context.reasoning_summary,
+                service_tier: turn_context.config.service_tier.clone(),
+                approval_policy: turn_context.approval_policy.value(),
+                approvals_reviewer: turn_context.config.approvals_reviewer,
+                sandbox_network_access: turn_context.network_sandbox_policy().is_enabled(),
+                collaboration_mode: turn_context.collaboration_mode.mode,
+                personality: turn_context.personality,
+                is_first_turn,
+            },
+        ));
 }
 
 struct PreSamplingCompactResult {
@@ -861,152 +853,6 @@ async fn run_auto_compact(
     Ok(true)
 }
 
-pub(super) fn collect_explicit_app_ids_from_skill_items(
-    skill_items: &[ResponseItem],
-    connectors: &[connectors::AppInfo],
-    skill_name_counts_lower: &HashMap<String, usize>,
-) -> HashSet<String> {
-    if skill_items.is_empty() || connectors.is_empty() {
-        return HashSet::new();
-    }
-
-    let skill_messages = skill_items
-        .iter()
-        .filter_map(|item| match item {
-            ResponseItem::Message { content, .. } => {
-                content.iter().find_map(|content_item| match content_item {
-                    ContentItem::InputText { text } => Some(text.clone()),
-                    _ => None,
-                })
-            }
-            _ => None,
-        })
-        .collect::<Vec<String>>();
-    if skill_messages.is_empty() {
-        return HashSet::new();
-    }
-
-    let mentions = collect_tool_mentions_from_messages(&skill_messages);
-    let mention_names_lower = mentions
-        .plain_names
-        .iter()
-        .map(|name| name.to_ascii_lowercase())
-        .collect::<HashSet<String>>();
-    let mut connector_ids = mentions
-        .paths
-        .iter()
-        .filter(|path| tool_kind_for_path(path) == ToolMentionKind::App)
-        .filter_map(|path| app_id_from_path(path).map(str::to_string))
-        .collect::<HashSet<String>>();
-
-    let connector_slug_counts = build_connector_slug_counts(connectors);
-    for connector in connectors {
-        let slug = codex_connectors_api::metadata::connector_mention_slug(connector);
-        let connector_count = connector_slug_counts.get(&slug).copied().unwrap_or(0);
-        let skill_count = skill_name_counts_lower.get(&slug).copied().unwrap_or(0);
-        if connector_count == 1 && skill_count == 0 && mention_names_lower.contains(&slug) {
-            connector_ids.insert(connector.id.clone());
-        }
-    }
-
-    connector_ids
-}
-
-pub(super) fn filter_connectors_for_input(
-    connectors: &[connectors::AppInfo],
-    input: &[ResponseItem],
-    explicitly_enabled_connectors: &HashSet<String>,
-    skill_name_counts_lower: &HashMap<String, usize>,
-) -> Vec<connectors::AppInfo> {
-    let connectors: Vec<connectors::AppInfo> = connectors
-        .iter()
-        .filter(|connector| connector.is_enabled)
-        .cloned()
-        .collect::<Vec<_>>();
-    if connectors.is_empty() {
-        return Vec::new();
-    }
-
-    let user_messages = collect_user_messages(input);
-    if user_messages.is_empty() && explicitly_enabled_connectors.is_empty() {
-        return Vec::new();
-    }
-
-    let mentions = collect_tool_mentions_from_messages(&user_messages);
-    let mention_names_lower = mentions
-        .plain_names
-        .iter()
-        .map(|name| name.to_ascii_lowercase())
-        .collect::<HashSet<String>>();
-
-    let connector_slug_counts = build_connector_slug_counts(&connectors);
-    let mut allowed_connector_ids = explicitly_enabled_connectors.clone();
-    for path in mentions
-        .paths
-        .iter()
-        .filter(|path| tool_kind_for_path(path) == ToolMentionKind::App)
-    {
-        if let Some(connector_id) = app_id_from_path(path) {
-            allowed_connector_ids.insert(connector_id.to_string());
-        }
-    }
-
-    connectors
-        .into_iter()
-        .filter(|connector| {
-            connector_inserted_in_messages(
-                connector,
-                &mention_names_lower,
-                &allowed_connector_ids,
-                &connector_slug_counts,
-                skill_name_counts_lower,
-            )
-        })
-        .collect()
-}
-
-fn connector_inserted_in_messages(
-    connector: &connectors::AppInfo,
-    mention_names_lower: &HashSet<String>,
-    allowed_connector_ids: &HashSet<String>,
-    connector_slug_counts: &HashMap<String, usize>,
-    skill_name_counts_lower: &HashMap<String, usize>,
-) -> bool {
-    if allowed_connector_ids.contains(&connector.id) {
-        return true;
-    }
-
-    let mention_slug = codex_connectors_api::metadata::connector_mention_slug(connector);
-    let connector_count = connector_slug_counts
-        .get(&mention_slug)
-        .copied()
-        .unwrap_or(0);
-    let skill_count = skill_name_counts_lower
-        .get(&mention_slug)
-        .copied()
-        .unwrap_or(0);
-    connector_count == 1 && skill_count == 0 && mention_names_lower.contains(&mention_slug)
-}
-
-pub(crate) fn build_prompt(
-    input: Vec<ResponseItem>,
-    router: &ToolRouter,
-    turn_context: &TurnContext,
-    base_instructions: BaseInstructions,
-) -> Prompt {
-    Prompt {
-        input,
-        tools: router.model_visible_specs(),
-        parallel_tool_calls: turn_context.model_info.supports_parallel_tool_calls,
-        base_instructions,
-        personality: turn_context.personality,
-        output_schema: turn_context.final_output_json_schema.clone(),
-        output_schema_strict: !crate::guardian::is_guardian_reviewer_source(
-            &turn_context.session_source,
-        ),
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 #[allow(deprecated)]
 #[instrument(level = "trace",
@@ -1047,7 +893,7 @@ async fn run_sampling_request(
         Arc::clone(&turn_context),
         Arc::clone(&turn_diff_tracker),
     );
-    let _code_mode_worker = crate::tools::code_mode::start_turn_worker(
+    let _code_mode_worker = crate::code_mode_host::start_turn_worker(
         &sess.services.code_mode_service,
         &sess,
         &turn_context,
@@ -1064,12 +910,17 @@ async fn run_sampling_request(
                 .await
                 .for_prompt(&turn_context.model_info.input_modalities)
         };
-        let prompt = build_prompt(
-            prompt_input,
-            router.as_ref(),
-            turn_context.as_ref(),
-            base_instructions.clone(),
-        );
+        let prompt = build_prompt(PromptBuildParams {
+            input: prompt_input,
+            tools: router.model_visible_specs(),
+            parallel_tool_calls: turn_context.model_info.supports_parallel_tool_calls,
+            base_instructions: base_instructions.clone(),
+            personality: turn_context.personality,
+            output_schema: turn_context.final_output_json_schema.clone(),
+            output_schema_strict: !crate::guardian::is_guardian_reviewer_source(
+                &turn_context.session_source,
+            ),
+        });
         let err = match try_run_sampling_request(
             tool_runtime.clone(),
             Arc::clone(&sess),
@@ -1247,9 +1098,10 @@ pub(crate) async fn built_tools(
             build_skill_name_counts(&outcome.skills, &outcome.disabled_paths).1
         });
 
-        filter_connectors_for_input(
+        let user_messages = collect_user_messages(input);
+        filter_connectors_for_user_messages(
             connectors,
-            input,
+            &user_messages,
             &effective_explicitly_enabled_connectors,
             &skill_name_counts_lower,
         )
@@ -1265,16 +1117,21 @@ pub(crate) async fn built_tools(
     );
     let mcp_tools = has_mcp_servers.then_some(mcp_tool_exposure.direct_tools);
     let deferred_mcp_tools = mcp_tool_exposure.deferred_tools;
-    Ok(Arc::new(ToolRouter::from_config(
+    let extension_tool_executors = extension_tool_executors(sess);
+    let default_agent_type_description =
+        codex_agent_roles::spawn_tool_spec::build(&std::collections::BTreeMap::new());
+    let inner = sess.services.tool_router_factory.build_tool_router(
         &turn_context.tools_config,
-        ToolRouterParams {
-            mcp_tools,
-            deferred_mcp_tools,
-            discoverable_tools,
-            extension_tool_executors: extension_tool_executors(sess),
+        ToolRouterBuildParams {
+            mcp_tools: mcp_tools.as_deref(),
+            deferred_mcp_tools: deferred_mcp_tools.as_deref(),
+            discoverable_tools: discoverable_tools.as_deref(),
+            extension_tool_executors: &extension_tool_executors,
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
+            default_agent_type_description: &default_agent_type_description,
         },
-    )))
+    );
+    Ok(Arc::new(ToolRouter::from_runtime(inner)))
 }
 
 #[derive(Debug)]
@@ -1283,348 +1140,39 @@ struct SamplingRequestResult {
     last_agent_message: Option<String>,
 }
 
-/// Ephemeral per-response state for streaming a single proposed plan.
-/// This is intentionally not persisted or stored in session/state since it
-/// only exists while a response is actively streaming. The final plan text
-/// is extracted from the completed assistant message.
-/// Tracks a single proposed plan item across a streaming response.
-struct ProposedPlanItemState {
-    item_id: String,
-    started: bool,
-    completed: bool,
-}
-
-/// Aggregated state used only while streaming a plan-mode response.
-/// Includes per-item parsers, deferred agent message bookkeeping, and the plan item lifecycle.
-struct PlanModeStreamState {
-    /// Agent message items started by the model but deferred until we see non-plan text.
-    pending_agent_message_items: HashMap<String, TurnItem>,
-    /// Agent message items whose start notification has been emitted.
-    started_agent_message_items: HashSet<String>,
-    /// Leading whitespace buffered until we see non-whitespace text for an item.
-    leading_whitespace_by_item: HashMap<String, String>,
-    /// Tracks plan item lifecycle while streaming plan output.
-    plan_item_state: ProposedPlanItemState,
-}
-
-impl PlanModeStreamState {
-    fn new(turn_id: &str) -> Self {
-        Self {
-            pending_agent_message_items: HashMap::new(),
-            started_agent_message_items: HashSet::new(),
-            leading_whitespace_by_item: HashMap::new(),
-            plan_item_state: ProposedPlanItemState::new(turn_id),
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-pub(super) struct AssistantMessageStreamParsers {
-    plan_mode: bool,
-    parsers_by_item: HashMap<String, AssistantTextStreamParser>,
-}
-
-type ParsedAssistantTextDelta = AssistantTextChunk;
-
-impl AssistantMessageStreamParsers {
-    pub(super) fn new(plan_mode: bool) -> Self {
-        Self {
-            plan_mode,
-            parsers_by_item: HashMap::new(),
-        }
-    }
-
-    fn parser_mut(&mut self, item_id: &str) -> &mut AssistantTextStreamParser {
-        let plan_mode = self.plan_mode;
-        self.parsers_by_item
-            .entry(item_id.to_string())
-            .or_insert_with(|| AssistantTextStreamParser::new(plan_mode))
-    }
-
-    pub(super) fn seed_item_text(&mut self, item_id: &str, text: &str) -> ParsedAssistantTextDelta {
-        if text.is_empty() {
-            return ParsedAssistantTextDelta::default();
-        }
-        self.parser_mut(item_id).push_str(text)
-    }
-
-    pub(super) fn parse_delta(&mut self, item_id: &str, delta: &str) -> ParsedAssistantTextDelta {
-        self.parser_mut(item_id).push_str(delta)
-    }
-
-    pub(super) fn finish_item(&mut self, item_id: &str) -> ParsedAssistantTextDelta {
-        let Some(mut parser) = self.parsers_by_item.remove(item_id) else {
-            return ParsedAssistantTextDelta::default();
-        };
-        parser.finish()
-    }
-
-    fn drain_finished(&mut self) -> Vec<(String, ParsedAssistantTextDelta)> {
-        let parsers_by_item = std::mem::take(&mut self.parsers_by_item);
-        parsers_by_item
-            .into_iter()
-            .map(|(item_id, mut parser)| (item_id, parser.finish()))
-            .collect()
-    }
-}
-
-impl ProposedPlanItemState {
-    fn new(turn_id: &str) -> Self {
-        Self {
-            item_id: format!("{turn_id}-plan"),
-            started: false,
-            completed: false,
-        }
-    }
-
-    async fn start(&mut self, sess: &Session, turn_context: &TurnContext) {
-        if self.started || self.completed {
-            return;
-        }
-        self.started = true;
-        let item = TurnItem::Plan(PlanItem {
-            id: self.item_id.clone(),
-            text: String::new(),
-        });
-        sess.emit_turn_item_started(turn_context, &item).await;
-    }
-
-    async fn push_delta(&mut self, sess: &Session, turn_context: &TurnContext, delta: &str) {
-        if self.completed {
-            return;
-        }
-        if delta.is_empty() {
-            return;
-        }
-        let event = PlanDeltaEvent {
-            thread_id: sess.conversation_id.to_string(),
-            turn_id: turn_context.sub_id.clone(),
-            item_id: self.item_id.clone(),
-            delta: delta.to_string(),
-        };
-        sess.send_event(turn_context, EventMsg::PlanDelta(event))
-            .await;
-    }
-
-    async fn complete_with_text(
-        &mut self,
-        sess: &Session,
-        turn_context: &TurnContext,
-        text: String,
-    ) {
-        if self.completed || !self.started {
-            return;
-        }
-        self.completed = true;
-        let item = TurnItem::Plan(PlanItem {
-            id: self.item_id.clone(),
-            text,
-        });
-        sess.emit_turn_item_completed(turn_context, item).await;
-    }
-}
-
-/// In plan mode we defer agent message starts until the parser emits non-plan
-/// text. The parser buffers each line until it can rule out a tag prefix, so
-/// plan-only outputs never show up as empty assistant messages.
-async fn maybe_emit_pending_agent_message_start(
+async fn emit_plan_mode_stream_actions(
     sess: &Session,
     turn_context: &TurnContext,
-    state: &mut PlanModeStreamState,
-    item_id: &str,
+    actions: Vec<PlanModeStreamAction>,
 ) {
-    if state.started_agent_message_items.contains(item_id) {
-        return;
-    }
-    if let Some(item) = state.pending_agent_message_items.remove(item_id) {
-        sess.emit_turn_item_started(turn_context, &item).await;
-        state
-            .started_agent_message_items
-            .insert(item_id.to_string());
-    }
-}
-
-/// Agent messages are text-only today; concatenate all text entries.
-fn agent_message_text(item: &codex_protocol::items::AgentMessageItem) -> String {
-    item.content
-        .iter()
-        .map(|entry| match entry {
-            codex_protocol::items::AgentMessageContent::Text { text } => text.as_str(),
-        })
-        .collect()
-}
-
-pub(super) fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
-    match msg {
-        EventMsg::AgentMessage(event) => Some(event.message.clone()),
-        EventMsg::ItemCompleted(event) => match &event.item {
-            TurnItem::AgentMessage(item) => Some(agent_message_text(item)),
-            TurnItem::UserMessage(_)
-            | TurnItem::HookPrompt(_)
-            | TurnItem::InjectedContext(_)
-            | TurnItem::EventDrivenTool(_)
-            | TurnItem::EventCommandEvent(_)
-            | TurnItem::CollabAgentMessage(_)
-            | TurnItem::Plan(_)
-            | TurnItem::Reasoning(_)
-            | TurnItem::WebSearch(_)
-            | TurnItem::ImageView(_)
-            | TurnItem::ImageGeneration(_)
-            | TurnItem::FileChange(_)
-            | TurnItem::McpToolCall(_)
-            | TurnItem::ContextCompaction(_) => None,
-        },
-        EventMsg::Error(_)
-        | EventMsg::Warning(_)
-        | EventMsg::GuardianWarning(_)
-        | EventMsg::RealtimeConversationStarted(_)
-        | EventMsg::RealtimeConversationSdp(_)
-        | EventMsg::RealtimeConversationRealtime(_)
-        | EventMsg::RealtimeConversationClosed(_)
-        | EventMsg::ModelReroute(_)
-        | EventMsg::ModelVerification(_)
-        | EventMsg::ContextCompacted(_)
-        | EventMsg::ThreadRolledBack(_)
-        | EventMsg::TurnStarted(_)
-        | EventMsg::TurnComplete(_)
-        | EventMsg::TokenCount(_)
-        | EventMsg::UserMessage(_)
-        | EventMsg::AgentReasoning(_)
-        | EventMsg::AgentReasoningRawContent(_)
-        | EventMsg::AgentReasoningSectionBreak(_)
-        | EventMsg::SessionConfigured(_)
-        | EventMsg::ThreadGoalUpdated(_)
-        | EventMsg::ThreadSkillsUpdated(_)
-        | EventMsg::McpStartupUpdate(_)
-        | EventMsg::McpStartupComplete(_)
-        | EventMsg::McpToolCallBegin(_)
-        | EventMsg::McpToolCallEnd(_)
-        | EventMsg::WebSearchBegin(_)
-        | EventMsg::WebSearchEnd(_)
-        | EventMsg::ExecCommandBegin(_)
-        | EventMsg::ExecCommandOutputDelta(_)
-        | EventMsg::TerminalInteraction(_)
-        | EventMsg::ExecCommandEnd(_)
-        | EventMsg::PatchApplyBegin(_)
-        | EventMsg::PatchApplyUpdated(_)
-        | EventMsg::PatchApplyEnd(_)
-        | EventMsg::ImageGenerationBegin(_)
-        | EventMsg::ImageGenerationEnd(_)
-        | EventMsg::ViewImageToolCall(_)
-        | EventMsg::ExecApprovalRequest(_)
-        | EventMsg::RequestPermissions(_)
-        | EventMsg::RequestUserInput(_)
-        | EventMsg::DynamicToolCallRequest(_)
-        | EventMsg::DynamicToolCallResponse(_)
-        | EventMsg::GuardianAssessment(_)
-        | EventMsg::ElicitationRequest(_)
-        | EventMsg::ApplyPatchApprovalRequest(_)
-        | EventMsg::DeprecationNotice(_)
-        | EventMsg::StreamError(_)
-        | EventMsg::TurnDiff(_)
-        | EventMsg::RealtimeConversationListVoicesResponse(_)
-        | EventMsg::PlanUpdate(_)
-        | EventMsg::TurnAborted(_)
-        | EventMsg::ShutdownComplete
-        | EventMsg::EnteredReviewMode(_)
-        | EventMsg::ExitedReviewMode(_)
-        | EventMsg::RawResponseItem(_)
-        | EventMsg::ItemStarted(_)
-        | EventMsg::ResponseItemStarted(_)
-        | EventMsg::ResponseItemCompleted(_)
-        | EventMsg::CommandWaitStarted(_)
-        | EventMsg::CommandWaitCompleted(_)
-        | EventMsg::CommandWriteStdinCompleted(_)
-        | EventMsg::CommandExecutionNotificationCompleted(_)
-        | EventMsg::WorkflowRunProgressCompleted(_)
-        | EventMsg::EventCommandEventCompleted(_)
-        | EventMsg::EventDrivenToolCompleted(_)
-        | EventMsg::InterAgentCommunicationCompleted(_)
-        | EventMsg::ThreadGoalUpdateCompleted(_)
-        | EventMsg::HookStarted(_)
-        | EventMsg::HookCompleted(_)
-        | EventMsg::AgentMessageContentDelta(_)
-        | EventMsg::PlanDelta(_)
-        | EventMsg::ReasoningContentDelta(_)
-        | EventMsg::ReasoningRawContentDelta(_)
-        | EventMsg::CollabAgentSpawnBegin(_)
-        | EventMsg::CollabAgentSpawnEnd(_)
-        | EventMsg::CollabAgentInteractionBegin(_)
-        | EventMsg::CollabAgentInteractionEnd(_)
-        | EventMsg::CollabListAgentsBegin(_)
-        | EventMsg::CollabListAgentsEnd(_)
-        | EventMsg::CollabWaitingBegin(_)
-        | EventMsg::CollabWaitingEnd(_)
-        | EventMsg::CollabCloseBegin(_)
-        | EventMsg::CollabCloseEnd(_)
-        | EventMsg::CollabResumeBegin(_)
-        | EventMsg::CollabResumeEnd(_)
-        | EventMsg::ThreadContextUsageUpdated(_) => None,
-    }
-}
-
-/// Split the stream into normal assistant text vs. proposed plan content.
-/// Normal text becomes AgentMessage deltas; plan content becomes PlanDelta +
-/// TurnItem::Plan.
-async fn handle_plan_segments(
-    sess: &Session,
-    turn_context: &TurnContext,
-    state: &mut PlanModeStreamState,
-    item_id: &str,
-    segments: Vec<ProposedPlanSegment>,
-) {
-    for segment in segments {
-        match segment {
-            ProposedPlanSegment::Normal(delta) => {
-                if delta.is_empty() {
-                    continue;
-                }
-                let has_non_whitespace = delta.chars().any(|ch| !ch.is_whitespace());
-                if !has_non_whitespace && !state.started_agent_message_items.contains(item_id) {
-                    let entry = state
-                        .leading_whitespace_by_item
-                        .entry(item_id.to_string())
-                        .or_default();
-                    entry.push_str(&delta);
-                    continue;
-                }
-                let delta = if !state.started_agent_message_items.contains(item_id) {
-                    if let Some(prefix) = state.leading_whitespace_by_item.remove(item_id) {
-                        format!("{prefix}{delta}")
-                    } else {
-                        delta
-                    }
-                } else {
-                    delta
-                };
-                maybe_emit_pending_agent_message_start(sess, turn_context, state, item_id).await;
-
+    for action in actions {
+        match action {
+            PlanModeStreamAction::TurnItemStarted(item) => {
+                sess.emit_turn_item_started(turn_context, &item).await;
+            }
+            PlanModeStreamAction::TurnItemCompleted(item) => {
+                sess.emit_turn_item_completed(turn_context, item).await;
+            }
+            PlanModeStreamAction::AgentMessageDelta { item_id, delta } => {
                 let event = AgentMessageContentDeltaEvent {
                     thread_id: sess.conversation_id.to_string(),
                     turn_id: turn_context.sub_id.clone(),
-                    item_id: item_id.to_string(),
+                    item_id,
                     delta,
                 };
                 sess.send_event(turn_context, EventMsg::AgentMessageContentDelta(event))
                     .await;
             }
-            ProposedPlanSegment::ProposedPlanStart => {
-                if !state.plan_item_state.completed {
-                    state.plan_item_state.start(sess, turn_context).await;
-                }
+            PlanModeStreamAction::PlanDelta { item_id, delta } => {
+                let event = PlanDeltaEvent {
+                    thread_id: sess.conversation_id.to_string(),
+                    turn_id: turn_context.sub_id.clone(),
+                    item_id,
+                    delta,
+                };
+                sess.send_event(turn_context, EventMsg::PlanDelta(event))
+                    .await;
             }
-            ProposedPlanSegment::ProposedPlanDelta(delta) => {
-                if !state.plan_item_state.completed {
-                    if !state.plan_item_state.started {
-                        state.plan_item_state.start(sess, turn_context).await;
-                    }
-                    state
-                        .plan_item_state
-                        .push_delta(sess, turn_context, &delta)
-                        .await;
-                }
-            }
-            ProposedPlanSegment::ProposedPlanEnd => {}
         }
     }
 }
@@ -1646,7 +1194,8 @@ async fn emit_streamed_assistant_text_delta(
     }
     if let Some(state) = plan_mode_state {
         if !parsed.plan_segments.is_empty() {
-            handle_plan_segments(sess, turn_context, state, item_id, parsed.plan_segments).await;
+            let actions = state.handle_segments(item_id, parsed.plan_segments);
+            emit_plan_mode_stream_actions(sess, turn_context, actions).await;
         }
         return;
     }
@@ -1694,99 +1243,6 @@ async fn flush_assistant_text_segments_all(
     }
 }
 
-/// Emit completion for plan items by parsing the finalized assistant message.
-async fn maybe_complete_plan_item_from_message(
-    sess: &Session,
-    turn_context: &TurnContext,
-    state: &mut PlanModeStreamState,
-    item: &ResponseItem,
-) {
-    if let ResponseItem::Message { role, content, .. } = item
-        && role == "assistant"
-    {
-        let mut text = String::new();
-        for entry in content {
-            if let ContentItem::OutputText { text: chunk } = entry {
-                text.push_str(chunk);
-            }
-        }
-        if let Some(plan_text) = extract_proposed_plan_text(&text) {
-            let (plan_text, _citations) = strip_citations(&plan_text);
-            if !state.plan_item_state.started {
-                state.plan_item_state.start(sess, turn_context).await;
-            }
-            state
-                .plan_item_state
-                .complete_with_text(sess, turn_context, plan_text)
-                .await;
-        }
-    }
-}
-
-/// Emit a completed agent message in plan mode, respecting deferred starts.
-async fn emit_agent_message_in_plan_mode(
-    sess: &Session,
-    turn_context: &TurnContext,
-    agent_message: codex_protocol::items::AgentMessageItem,
-    state: &mut PlanModeStreamState,
-) {
-    let agent_message_id = agent_message.id.clone();
-    let text = agent_message_text(&agent_message);
-    if text.trim().is_empty() {
-        state.pending_agent_message_items.remove(&agent_message_id);
-        state.started_agent_message_items.remove(&agent_message_id);
-        return;
-    }
-
-    maybe_emit_pending_agent_message_start(sess, turn_context, state, &agent_message_id).await;
-
-    if !state
-        .started_agent_message_items
-        .contains(&agent_message_id)
-    {
-        let start_item = state
-            .pending_agent_message_items
-            .remove(&agent_message_id)
-            .unwrap_or_else(|| {
-                TurnItem::AgentMessage(codex_protocol::items::AgentMessageItem {
-                    id: agent_message_id.clone(),
-                    content: Vec::new(),
-                    phase: None,
-                    memory_citation: None,
-                })
-            });
-        sess.emit_turn_item_started(turn_context, &start_item).await;
-        state
-            .started_agent_message_items
-            .insert(agent_message_id.clone());
-    }
-
-    sess.emit_turn_item_completed(turn_context, TurnItem::AgentMessage(agent_message))
-        .await;
-    state.started_agent_message_items.remove(&agent_message_id);
-}
-
-/// Emit completion for a plan-mode turn item, handling agent messages specially.
-async fn emit_turn_item_in_plan_mode(
-    sess: &Session,
-    turn_context: &TurnContext,
-    turn_item: TurnItem,
-    previously_active_item: Option<&TurnItem>,
-    state: &mut PlanModeStreamState,
-) {
-    match turn_item {
-        TurnItem::AgentMessage(agent_message) => {
-            emit_agent_message_in_plan_mode(sess, turn_context, agent_message, state).await;
-        }
-        _ => {
-            if previously_active_item.is_none() {
-                sess.emit_turn_item_started(turn_context, &turn_item).await;
-            }
-            sess.emit_turn_item_completed(turn_context, turn_item).await;
-        }
-    }
-}
-
 /// Handle a completed assistant response item in plan mode, returning true if handled.
 async fn handle_assistant_item_done_in_plan_mode(
     sess: &Session,
@@ -1800,7 +1256,8 @@ async fn handle_assistant_item_done_in_plan_mode(
     if let ResponseItem::Message { role, .. } = item
         && role == "assistant"
     {
-        maybe_complete_plan_item_from_message(sess, turn_context, state, item).await;
+        let actions = state.complete_plan_from_message(item);
+        emit_plan_mode_stream_actions(sess, turn_context, actions).await;
 
         let mut finalized_facts = None;
         if let Some(finalized_turn_item) = finalize_non_tool_response_item(
@@ -1813,14 +1270,9 @@ async fn handle_assistant_item_done_in_plan_mode(
         .await
         {
             finalized_facts = Some(finalized_turn_item.facts.clone());
-            emit_turn_item_in_plan_mode(
-                sess,
-                turn_context,
-                finalized_turn_item.turn_item,
-                previously_active_item,
-                state,
-            )
-            .await;
+            let actions =
+                state.complete_turn_item(finalized_turn_item.turn_item, previously_active_item);
+            emit_plan_mode_stream_actions(sess, turn_context, actions).await;
         }
         let final_last_agent_message = finalized_facts
             .as_ref()
@@ -1923,7 +1375,7 @@ async fn try_run_sampling_request(
     let mut active_item: Option<TurnItem> = None;
     let mut active_tool_argument_diff_consumer: Option<(
         String,
-        Box<dyn ToolArgumentDiffConsumer>,
+        Box<dyn ToolArgumentDiffConsumer<crate::session::turn_context::TurnContext>>,
     )> = None;
     let mut should_emit_turn_diff = false;
     let mut should_emit_token_count = false;
@@ -2125,9 +1577,7 @@ async fn try_run_sampling_request(
                             && matches!(turn_item, TurnItem::AgentMessage(_))
                         {
                             let item_id = turn_item.id();
-                            state
-                                .pending_agent_message_items
-                                .insert(item_id, turn_item.clone());
+                            state.stage_agent_message_item(item_id, turn_item.clone());
                         } else {
                             sess.emit_turn_item_started(&turn_context, &turn_item).await;
                         }
@@ -2368,15 +1818,6 @@ async fn try_run_sampling_request(
     }
 
     outcome
-}
-
-pub(crate) fn get_last_assistant_message_from_turn(responses: &[ResponseItem]) -> Option<String> {
-    for item in responses.iter().rev() {
-        if let Some(message) = last_assistant_message_from_item(item, /*plan_mode*/ false) {
-            return Some(message);
-        }
-    }
-    None
 }
 
 #[cfg(test)]

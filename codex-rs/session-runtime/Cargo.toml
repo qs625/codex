@@ -1,0 +1,24 @@
+[package]
+name = "codex-session-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+doctest = false
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+codex-analytics-api = { workspace = true }
+codex-config-toml = { workspace = true }
+codex-config-types = { workspace = true }
+codex-features = { workspace = true }
+codex-protocol = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+toml = { workspace = true }

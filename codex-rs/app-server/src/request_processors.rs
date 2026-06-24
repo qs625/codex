@@ -393,6 +393,8 @@ use codex_state::ThreadMetadata;
 use codex_state::log_db::LogDbLayer;
 use codex_state_api::ExternalGoalPreviousStatus;
 use codex_state_api::ExternalGoalSet;
+use codex_thread_api::LiveThreadHandle;
+use codex_thread_api::LiveThreadRegistry;
 use codex_thread_store::ArchiveThreadParams as StoreArchiveThreadParams;
 use codex_thread_store::GitInfoPatch as StoreGitInfoPatch;
 use codex_thread_store::ListThreadsParams as StoreListThreadsParams;

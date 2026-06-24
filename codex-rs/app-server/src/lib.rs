@@ -106,6 +106,7 @@ mod skills_watcher;
 mod thread_state;
 mod thread_status;
 mod thread_store_factory;
+mod tool_router_factory;
 mod transport;
 
 pub use crate::error_code::INPUT_TOO_LARGE_ERROR_CODE;

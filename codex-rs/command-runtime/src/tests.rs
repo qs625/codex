@@ -324,3 +324,72 @@ fn completed_process_history_prunes_oldest_entry() {
         Some(Some(1))
     );
 }
+
+fn prune_meta(
+    process_id: i32,
+    last_used: tokio::time::Instant,
+    has_exited: bool,
+) -> CommandProcessPruneMeta {
+    CommandProcessPruneMeta {
+        process_id,
+        last_used,
+        has_exited,
+    }
+}
+
+#[test]
+fn pruning_prefers_exited_processes_outside_recently_used() {
+    let now = tokio::time::Instant::now();
+    let meta = vec![
+        prune_meta(1, now - Duration::from_secs(40), false),
+        prune_meta(2, now - Duration::from_secs(30), true),
+        prune_meta(3, now - Duration::from_secs(20), false),
+        prune_meta(4, now - Duration::from_secs(19), false),
+        prune_meta(5, now - Duration::from_secs(18), false),
+        prune_meta(6, now - Duration::from_secs(17), false),
+        prune_meta(7, now - Duration::from_secs(16), false),
+        prune_meta(8, now - Duration::from_secs(15), false),
+        prune_meta(9, now - Duration::from_secs(14), false),
+        prune_meta(10, now - Duration::from_secs(13), false),
+    ];
+
+    assert_eq!(command_process_id_to_prune(&meta), Some(2));
+}
+
+#[test]
+fn pruning_falls_back_to_lru_when_no_exited() {
+    let now = tokio::time::Instant::now();
+    let meta = vec![
+        prune_meta(1, now - Duration::from_secs(40), false),
+        prune_meta(2, now - Duration::from_secs(30), false),
+        prune_meta(3, now - Duration::from_secs(20), false),
+        prune_meta(4, now - Duration::from_secs(19), false),
+        prune_meta(5, now - Duration::from_secs(18), false),
+        prune_meta(6, now - Duration::from_secs(17), false),
+        prune_meta(7, now - Duration::from_secs(16), false),
+        prune_meta(8, now - Duration::from_secs(15), false),
+        prune_meta(9, now - Duration::from_secs(14), false),
+        prune_meta(10, now - Duration::from_secs(13), false),
+    ];
+
+    assert_eq!(command_process_id_to_prune(&meta), Some(1));
+}
+
+#[test]
+fn pruning_protects_recent_processes_even_if_exited() {
+    let now = tokio::time::Instant::now();
+    let meta = vec![
+        prune_meta(1, now - Duration::from_secs(40), false),
+        prune_meta(2, now - Duration::from_secs(30), false),
+        prune_meta(3, now - Duration::from_secs(20), true),
+        prune_meta(4, now - Duration::from_secs(19), false),
+        prune_meta(5, now - Duration::from_secs(18), false),
+        prune_meta(6, now - Duration::from_secs(17), false),
+        prune_meta(7, now - Duration::from_secs(16), false),
+        prune_meta(8, now - Duration::from_secs(15), false),
+        prune_meta(9, now - Duration::from_secs(14), false),
+        prune_meta(10, now - Duration::from_secs(13), true),
+    ];
+
+    assert_eq!(command_process_id_to_prune(&meta), Some(1));
+}

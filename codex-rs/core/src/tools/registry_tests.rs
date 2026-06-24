@@ -1,5 +1,5 @@
 use super::*;
-use crate::tools::handlers::GetGoalHandler;
+use crate::tools::handlers::core_tool_domain_host;
 use codex_tool_planning::GET_GOAL_TOOL_NAME;
 use codex_tool_planning::create_get_goal_tool;
 use pretty_assertions::assert_eq;
@@ -31,7 +31,10 @@ impl ToolExecutor<ToolInvocation> for TestHandler {
     }
 }
 
-impl ToolHandler for TestHandler {}
+impl ToolHandler<crate::tools::context::ToolInvocation, crate::session::turn_context::TurnContext>
+    for TestHandler
+{
+}
 
 #[test]
 fn handler_looks_up_namespaced_aliases_explicitly() {
@@ -41,10 +44,12 @@ fn handler_looks_up_namespaced_aliases_explicitly() {
     let namespaced_name = codex_tool_planning::ToolName::namespaced(namespace, tool_name);
     let plain_handler = Arc::new(TestHandler {
         tool_name: plain_name.clone(),
-    }) as Arc<dyn RegisteredTool>;
+    });
     let namespaced_handler = Arc::new(TestHandler {
         tool_name: namespaced_name.clone(),
-    }) as Arc<dyn RegisteredTool>;
+    });
+    let plain_handler = registered_tool(plain_handler);
+    let namespaced_handler = registered_tool(namespaced_handler);
     let registry = ToolRegistry::new(HashMap::from([
         (plain_name.clone(), Arc::clone(&plain_handler)),
         (namespaced_name.clone(), Arc::clone(&namespaced_handler)),
@@ -75,7 +80,9 @@ fn handler_looks_up_namespaced_aliases_explicitly() {
 #[test]
 fn register_tool_adds_executor_and_spec() {
     let mut builder = ToolRegistryBuilder::new();
-    builder.register_tool(Arc::new(GetGoalHandler));
+    builder.register_tool(registered_tool(Arc::new(
+        codex_tool_handlers::GetGoalHandler::new(core_tool_domain_host()),
+    )));
 
     let (specs, registry) = builder.build();
 

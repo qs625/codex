@@ -66,7 +66,11 @@ use codex_config_edit::load_global_mcp_servers;
 use codex_config_loader::ProjectConfig;
 use codex_config_local_loader::load_config_layers_state;
 use codex_config_types::RealtimeAudioConfig;
-use codex_core_plugins::PluginsManager;
+use codex_core_plugins_api::PluginLoadOutcome;
+use codex_core_plugins_api::PluginRuntime;
+use codex_core_plugins_api::PluginRuntimeFuture;
+use codex_core_plugins_api::PluginsConfigInput;
+use codex_core_plugins_api::ToolSuggestDiscoverablePlugin;
 use codex_features::Feature;
 use codex_features::FeaturesToml;
 use codex_file_system::LOCAL_FS;
@@ -75,6 +79,7 @@ use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use codex_model_provider_info::WireApi;
 use codex_models_manager::bundled_models_response;
+use codex_plugin_types::LoadedPlugin;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
@@ -202,6 +207,62 @@ fn http_mcp(url: &str) -> McpServerConfig {
         oauth_resource: None,
         tools: HashMap::new(),
     }
+}
+
+#[derive(Clone, Default)]
+struct TestPluginRuntime {
+    outcome: PluginLoadOutcome,
+}
+
+impl TestPluginRuntime {
+    fn with_mcp_servers(mcp_servers: impl IntoIterator<Item = (String, McpServerConfig)>) -> Self {
+        Self {
+            outcome: PluginLoadOutcome::from_plugins(vec![LoadedPlugin {
+                config_name: "sample@test".to_string(),
+                manifest_name: Some("sample".to_string()),
+                manifest_description: None,
+                root: test_absolute_path("/tmp/test-plugin"),
+                enabled: true,
+                skill_roots: Vec::new(),
+                disabled_skill_paths: Default::default(),
+                has_enabled_skills: false,
+                mcp_servers: mcp_servers.into_iter().collect(),
+                apps: Vec::new(),
+                hook_sources: Vec::new(),
+                hook_load_warnings: Vec::new(),
+                error: None,
+            }]),
+        }
+    }
+}
+
+impl PluginRuntime for TestPluginRuntime {
+    fn plugins_for_config<'a>(
+        &'a self,
+        _config: &'a PluginsConfigInput,
+    ) -> PluginRuntimeFuture<'a, PluginLoadOutcome> {
+        let outcome = self.outcome.clone();
+        Box::pin(async move { outcome })
+    }
+
+    fn is_configured_plugin_installed(
+        &self,
+        _config: &PluginsConfigInput,
+        _plugin_id: &str,
+    ) -> bool {
+        false
+    }
+
+    fn list_tool_suggest_discoverable_plugins<'a>(
+        &'a self,
+        _config: &'a PluginsConfigInput,
+        _configured_plugin_ids: &'a std::collections::HashSet<String>,
+        _disabled_plugin_ids: &'a std::collections::HashSet<String>,
+    ) -> PluginRuntimeFuture<'a, Result<Vec<ToolSuggestDiscoverablePlugin>, String>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn clear_cache(&self) {}
 }
 
 async fn derive_legacy_sandbox_policy_for_test(
@@ -3854,8 +3915,11 @@ async fn rebuild_preserving_session_layers_refreshes_plugin_derived_mcp_config()
     let config = thread_config
         .rebuild_preserving_session_layers(&refreshed_config)
         .await?;
-    let plugins_manager = PluginsManager::new(codex_home.path().to_path_buf());
-    let mcp_config = config.to_mcp_config(&plugins_manager).await;
+    let plugin_runtime = TestPluginRuntime::with_mcp_servers([(
+        "sample".to_string(),
+        http_mcp("https://sample.example/mcp"),
+    )]);
+    let mcp_config = config.to_mcp_config(&plugin_runtime).await;
 
     assert_eq!(
         mcp_config.configured_mcp_servers.get("sample"),
@@ -3926,8 +3990,14 @@ enabled = true
         }))
         .build()
         .await?;
-    let plugins_manager = PluginsManager::new(codex_home.path().to_path_buf());
-    let mcp_config = config.to_mcp_config(&plugins_manager).await;
+    let plugin_runtime = TestPluginRuntime::with_mcp_servers([
+        ("sample".to_string(), http_mcp("https://sample.example/mcp")),
+        (
+            "unlisted".to_string(),
+            http_mcp("https://unlisted.example/mcp"),
+        ),
+    ]);
+    let mcp_config = config.to_mcp_config(&plugin_runtime).await;
 
     assert_eq!(
         mcp_config
@@ -3996,8 +4066,11 @@ enabled = true
         }))
         .build()
         .await?;
-    let plugins_manager = PluginsManager::new(codex_home.path().to_path_buf());
-    let mcp_config = config.to_mcp_config(&plugins_manager).await;
+    let plugin_runtime = TestPluginRuntime::with_mcp_servers([(
+        "sample".to_string(),
+        http_mcp("https://sample.example/mcp"),
+    )]);
+    let mcp_config = config.to_mcp_config(&plugin_runtime).await;
 
     assert_eq!(
         mcp_config
@@ -4910,10 +4983,10 @@ async fn to_mcp_config_preserves_apps_feature_from_config() -> std::io::Result<(
         codex_home.abs(),
     )
     .await?;
-    let plugins_manager = PluginsManager::new(codex_home.path().to_path_buf());
+    let plugin_runtime = TestPluginRuntime::default();
 
     config.apps_mcp_path_override = Some("/custom/mcp".to_string());
-    let mcp_config = config.to_mcp_config(&plugins_manager).await;
+    let mcp_config = config.to_mcp_config(&plugin_runtime).await;
     assert!(mcp_config.apps_enabled);
     assert_eq!(
         mcp_config.apps_mcp_path_override.as_deref(),
@@ -4921,11 +4994,11 @@ async fn to_mcp_config_preserves_apps_feature_from_config() -> std::io::Result<(
     );
 
     let _ = config.features.disable(Feature::Apps);
-    let mcp_config = config.to_mcp_config(&plugins_manager).await;
+    let mcp_config = config.to_mcp_config(&plugin_runtime).await;
     assert!(!mcp_config.apps_enabled);
 
     let _ = config.features.enable(Feature::Apps);
-    let mcp_config = config.to_mcp_config(&plugins_manager).await;
+    let mcp_config = config.to_mcp_config(&plugin_runtime).await;
     assert!(mcp_config.apps_enabled);
 
     Ok(())
@@ -4940,16 +5013,16 @@ async fn to_mcp_config_preserves_auth_elicitation_feature_from_config() -> std::
         codex_home.abs(),
     )
     .await?;
-    let plugins_manager = PluginsManager::new(codex_home.path().to_path_buf());
+    let plugin_runtime = TestPluginRuntime::default();
 
-    let mcp_config = config.to_mcp_config(&plugins_manager).await;
+    let mcp_config = config.to_mcp_config(&plugin_runtime).await;
     assert_eq!(
         mcp_config.client_elicitation_support,
         codex_mcp_types::McpClientElicitationSupport::Disabled
     );
 
     let _ = config.features.enable(Feature::AuthElicitation);
-    let mcp_config = config.to_mcp_config(&plugins_manager).await;
+    let mcp_config = config.to_mcp_config(&plugin_runtime).await;
     assert_eq!(
         mcp_config.client_elicitation_support,
         codex_mcp_types::McpClientElicitationSupport::AuthElicitation

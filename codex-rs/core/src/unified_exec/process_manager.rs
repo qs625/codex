@@ -1,6 +1,3 @@
-use std::cmp::Reverse;
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -11,16 +8,15 @@ use tokio_util::sync::CancellationToken;
 use crate::exec_env::CODEX_THREAD_ID_ENV_VAR;
 use crate::exec_env::create_env;
 use crate::exec_policy::ExecApprovalRequest;
+use crate::network_approval::DeferredNetworkApproval;
+use crate::network_approval::finish_deferred_network_approval;
 use crate::sandboxing::ExecRequest;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
 use crate::tools::events::ToolEventStage;
-use crate::tools::network_approval::DeferredNetworkApproval;
-use crate::tools::network_approval::finish_deferred_network_approval;
 use crate::tools::orchestrator::ToolOrchestrator;
-use crate::tools::runtimes::unified_exec::UnifiedExecRequest as UnifiedExecToolRequest;
-use crate::tools::runtimes::unified_exec::UnifiedExecRuntime;
+use crate::tools::runtimes::CoreUnifiedExecRuntimeHost;
 use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
 use crate::unified_exec::CommandNotificationFilter;
@@ -30,13 +26,16 @@ use crate::unified_exec::CommandWaitOutput;
 use crate::unified_exec::CommandWaitRequest;
 use crate::unified_exec::CommandWaitStatus;
 use crate::unified_exec::ExecCommandRequest;
+use crate::unified_exec::ExecServerEnvConfig;
 use crate::unified_exec::HeadTailBuffer;
 use crate::unified_exec::MAX_UNIFIED_EXEC_PROCESSES;
 use crate::unified_exec::ProcessEntry;
 use crate::unified_exec::ProcessExitSubscription;
 use crate::unified_exec::ProcessStore;
+use crate::unified_exec::SpawnLifecycleHandle;
 use crate::unified_exec::UnifiedExecContext;
 use crate::unified_exec::UnifiedExecError;
+use crate::unified_exec::UnifiedExecProcess;
 use crate::unified_exec::UnifiedExecProcessManager;
 use crate::unified_exec::WaitBackoffState;
 use crate::unified_exec::WriteStdinOutput;
@@ -48,35 +47,28 @@ use crate::unified_exec::async_watcher::start_streaming_output;
 use crate::unified_exec::clamp_yield_time;
 use crate::unified_exec::command_notification_filter_to_protocol;
 use crate::unified_exec::generate_chunk_id;
-use crate::unified_exec::process::SpawnLifecycleHandle;
-use crate::unified_exec::process::UnifiedExecProcess;
 use codex_command_runtime::CommandNotificationSnapshot;
+use codex_command_runtime::CommandProcessPruneMeta;
 use codex_command_runtime::CommandSessionController;
 use codex_command_runtime::CommandSessionError;
 use codex_command_runtime::CommandSessionFuture;
 use codex_command_runtime::CommandWaitOperation;
+use codex_command_runtime::ExecServerSpawnRequest;
+use codex_command_runtime::apply_unified_exec_env;
 use codex_command_runtime::collect_output_until_deadline;
+use codex_command_runtime::command_process_id_to_prune;
+use codex_command_runtime::exec_env_policy_from_shell_policy;
+use codex_command_runtime::exec_server_spawn_params;
 use codex_protocol::ThreadId;
-use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_tool_planning::ToolName;
+use codex_tool_runtime::runtimes::unified_exec::UnifiedExecRuntime;
+use codex_tool_runtime_api::UnifiedExecRequest as UnifiedExecToolRequest;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::approx_token_count;
 
-const UNIFIED_EXEC_ENV: [(&str, &str); 10] = [
-    ("NO_COLOR", "1"),
-    ("TERM", "dumb"),
-    ("LANG", "C.UTF-8"),
-    ("LC_CTYPE", "C.UTF-8"),
-    ("LC_ALL", "C.UTF-8"),
-    ("COLORTERM", ""),
-    ("PAGER", "cat"),
-    ("GIT_PAGER", "cat"),
-    ("GH_PAGER", "cat"),
-    ("CODEX_CI", "1"),
-];
 const NETWORK_ACCESS_DENIED_MESSAGE: &str =
     "Network access was denied by the Codex sandbox network proxy.";
 const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
@@ -86,12 +78,6 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
 /// In production builds this value should remain at its default (`false`) and
 /// must not be toggled.
 static FORCE_DETERMINISTIC_PROCESS_IDS: AtomicBool = AtomicBool::new(false);
-
-#[derive(Clone, Debug)]
-pub(crate) struct ExecServerEnvConfig {
-    pub(crate) policy: codex_exec_server_protocol::ExecEnvPolicy,
-    pub(crate) local_policy_env: HashMap<String, String>,
-}
 
 pub(super) fn set_deterministic_process_ids_for_tests(enabled: bool) {
     FORCE_DETERMINISTIC_PROCESS_IDS.store(enabled, Ordering::Relaxed);
@@ -195,82 +181,23 @@ fn should_use_deterministic_process_ids() -> bool {
     cfg!(test) || deterministic_process_ids_forced_for_tests()
 }
 
-fn apply_unified_exec_env(mut env: HashMap<String, String>) -> HashMap<String, String> {
-    for (key, value) in UNIFIED_EXEC_ENV {
-        env.insert(key.to_string(), value.to_string());
-    }
-    env
-}
-
-fn exec_env_policy_from_shell_policy(
-    policy: &ShellEnvironmentPolicy,
-) -> codex_exec_server_protocol::ExecEnvPolicy {
-    codex_exec_server_protocol::ExecEnvPolicy {
-        inherit: policy.inherit.clone(),
-        ignore_default_excludes: policy.ignore_default_excludes,
-        exclude: policy
-            .exclude
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect(),
-        r#set: policy.r#set.clone(),
-        include_only: policy
-            .include_only
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect(),
-    }
-}
-
-fn env_overlay_for_exec_server(
-    request_env: &HashMap<String, String>,
-    local_policy_env: &HashMap<String, String>,
-) -> HashMap<String, String> {
-    request_env
-        .iter()
-        .filter(|(key, value)| local_policy_env.get(*key) != Some(*value))
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect()
-}
-
-fn exec_server_env_for_request(
-    request: &ExecRequest,
-    exec_server_env_config: Option<&ExecServerEnvConfig>,
-) -> (
-    Option<codex_exec_server_protocol::ExecEnvPolicy>,
-    HashMap<String, String>,
-) {
-    if let Some(exec_server_env_config) = exec_server_env_config {
-        (
-            Some(exec_server_env_config.policy.clone()),
-            env_overlay_for_exec_server(&request.env, &exec_server_env_config.local_policy_env),
-        )
-    } else {
-        (None, request.env.clone())
-    }
-}
-
 fn exec_server_params_for_request(
     process_id: i32,
     request: &ExecRequest,
     exec_server_env_config: Option<&ExecServerEnvConfig>,
     tty: bool,
 ) -> codex_exec_server_protocol::ExecParams {
-    let (env_policy, env) = exec_server_env_for_request(request, exec_server_env_config);
-    codex_exec_server_protocol::ExecParams {
-        process_id: exec_server_process_id(process_id).into(),
-        argv: request.command.clone(),
-        cwd: request.cwd.to_path_buf(),
-        env_policy,
-        env,
+    exec_server_spawn_params(
+        process_id,
+        ExecServerSpawnRequest {
+            command: request.command.clone(),
+            cwd: request.cwd.to_path_buf(),
+            env: request.env.clone(),
+            arg0: request.arg0.clone(),
+        },
+        exec_server_env_config,
         tty,
-        pipe_stdin: false,
-        arg0: request.arg0.clone(),
-    }
-}
-
-fn exec_server_process_id(process_id: i32) -> String {
-    process_id.to_string()
+    )
 }
 
 async fn unregister_network_approval_for_entry(entry: &ProcessEntry) {
@@ -1156,7 +1083,7 @@ impl UnifiedExecProcessManager {
         let mut orchestrator =
             ToolOrchestrator::new(Arc::clone(&context.session.services.sandbox_runtime));
         let mut runtime = UnifiedExecRuntime::new(
-            self,
+            CoreUnifiedExecRuntimeHost { manager: self },
             context.turn.tools_config.unified_exec_shell_mode.clone(),
         );
         let file_system_sandbox_policy = context.turn.file_system_sandbox_policy();
@@ -1182,7 +1109,7 @@ impl UnifiedExecProcessManager {
             .await;
         let req = UnifiedExecToolRequest {
             command: request.command.clone(),
-            shell_type: request.shell_type.clone(),
+            shell_type: crate::tools::runtimes::runtime_shell_type(&request.shell_type),
             hook_command: request.hook_command.clone(),
             process_id: request.process_id,
             cwd,
@@ -1236,46 +1163,21 @@ impl UnifiedExecProcessManager {
             return None;
         }
 
-        let meta: Vec<(i32, Instant, bool)> = store
+        let meta: Vec<CommandProcessPruneMeta> = store
             .processes
             .iter()
-            .map(|(id, entry)| (*id, entry.last_used, entry.process.has_exited()))
+            .map(|(id, entry)| CommandProcessPruneMeta {
+                process_id: *id,
+                last_used: entry.last_used,
+                has_exited: entry.process.has_exited(),
+            })
             .collect();
 
-        if let Some(process_id) = Self::process_id_to_prune_from_meta(&meta) {
+        if let Some(process_id) = command_process_id_to_prune(&meta) {
             return store.remove(process_id);
         }
 
         None
-    }
-
-    // Centralized pruning policy so we can easily swap strategies later.
-    fn process_id_to_prune_from_meta(meta: &[(i32, Instant, bool)]) -> Option<i32> {
-        if meta.is_empty() {
-            return None;
-        }
-
-        let mut by_recency = meta.to_vec();
-        by_recency.sort_by_key(|(_, last_used, _)| Reverse(*last_used));
-        let protected: HashSet<i32> = by_recency
-            .iter()
-            .take(8)
-            .map(|(process_id, _, _)| *process_id)
-            .collect();
-
-        let mut lru = meta.to_vec();
-        lru.sort_by_key(|(_, last_used, _)| *last_used);
-
-        if let Some((process_id, _, _)) = lru
-            .iter()
-            .find(|(process_id, _, exited)| !protected.contains(process_id) && *exited)
-        {
-            return Some(*process_id);
-        }
-
-        lru.into_iter()
-            .find(|(process_id, _, _)| !protected.contains(process_id))
-            .map(|(process_id, _, _)| process_id)
     }
 
     pub(crate) async fn terminate_all_processes(&self) {

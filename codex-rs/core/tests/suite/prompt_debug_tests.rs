@@ -14,6 +14,29 @@ use pretty_assertions::assert_eq;
 use std::sync::Arc;
 use tempfile::TempDir;
 
+struct TestToolRouterFactory;
+
+impl codex_core::ToolRouterFactory for TestToolRouterFactory {
+    fn build_tool_router(
+        &self,
+        config: &codex_tool_config::ToolsConfig,
+        params: codex_core::ToolRouterBuildParams<'_>,
+    ) -> codex_core::CoreToolRuntimeRouter {
+        codex_tool_handlers::build_tool_router(
+            config,
+            &codex_core::CoreToolDomainHost,
+            codex_tool_handlers::ToolRuntimeBuildParams {
+                mcp_tools: params.mcp_tools,
+                deferred_mcp_tools: params.deferred_mcp_tools,
+                discoverable_tools: params.discoverable_tools,
+                extension_tool_executors: params.extension_tool_executors,
+                dynamic_tools: params.dynamic_tools,
+                default_agent_type_description: params.default_agent_type_description,
+            },
+        )
+    }
+}
+
 fn thread_store_from_config(
     config: &Config,
     state_db: Option<StateDbHandle>,
@@ -74,6 +97,7 @@ async fn build_prompt_input_includes_context_and_user_message() -> Result<()> {
         Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         auth_runtimes,
         codex_core::test_support::model_provider_factory_for_tests(),
+        Arc::new(TestToolRouterFactory),
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     )

@@ -41,6 +41,7 @@ use crate::codex_tool_config::CodexToolCallReplyParam;
 use crate::codex_tool_config::create_tool_for_codex_tool_call_param;
 use crate::codex_tool_config::create_tool_for_codex_tool_call_reply_param;
 use crate::outgoing_message::OutgoingMessageSender;
+use crate::tool_router_factory::McpServerToolRouterFactory;
 
 fn thread_store_from_config(
     config: &Config,
@@ -129,6 +130,7 @@ impl MessageProcessor {
                         SessionSource::Mcp.restriction_product(),
                     ),
                 ),
+                Arc::new(McpServerToolRouterFactory),
             )
             .with_terminal_type(user_agent()),
         );

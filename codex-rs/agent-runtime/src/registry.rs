@@ -40,7 +40,7 @@ struct ActiveAgents {
     nickname_reset_count: usize,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AgentMetadata {
     pub agent_id: Option<ThreadId>,
     pub agent_path: Option<AgentPath>,

@@ -1,0 +1,62 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-tool-handlers"
+version.workspace = true
+
+[lib]
+doctest = false
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+codex-agent-tool-handlers = { workspace = true }
+codex-apply-patch = { workspace = true }
+codex-agent-runtime = { workspace = true }
+codex-command-runtime = { workspace = true }
+codex-code-mode-api = { workspace = true }
+codex-context-manager = { workspace = true }
+codex-extension-api = { workspace = true }
+codex-exec-server-api = { workspace = true }
+codex-file-system = { workspace = true }
+codex-git-info = { workspace = true }
+codex-hooks-api = { workspace = true }
+codex-metrics-api = { workspace = true }
+codex-mcp-tool-types = { workspace = true }
+codex-network-proxy-api = { workspace = true }
+codex-permissions-runtime = { workspace = true }
+codex-process-exec = { workspace = true }
+codex-protocol = { workspace = true }
+codex-sandboxing-api = { workspace = true }
+codex-session-telemetry-api = { workspace = true }
+codex-shell-command = { workspace = true }
+codex-state-api = { workspace = true }
+codex-tool-planning = { workspace = true }
+codex-tool-config = { workspace = true }
+codex-tool-runtime = { workspace = true }
+codex-tool-runtime-api = { workspace = true }
+codex-tool-types = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+codex-utils-image = { workspace = true }
+codex-utils-output-truncation = { workspace = true }
+codex-utils-path = { workspace = true }
+codex-utils-string = { workspace = true }
+codex-workflow-api = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync"] }
+tokio-util = { workspace = true, features = ["rt"] }
+tracing = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+codex-connectors-types = { workspace = true }
+codex-features = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }

@@ -1810,6 +1810,13 @@ name = "codex-agent-runtime"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "chrono",
+ "codex-agent-roles",
+ "codex-config",
+ "codex-config-state",
+ "codex-config-toml",
+ "codex-config-types",
+ "codex-file-system",
  "codex-metrics-api",
  "codex-protocol",
  "codex-rollout-api",
@@ -1818,7 +1825,31 @@ dependencies = [
  "pretty_assertions",
  "rand 0.9.3",
  "serde",
+ "tempfile",
  "tokio",
+ "toml 0.9.11+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
+name = "codex-agent-tool-handlers"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "codex-agent-runtime",
+ "codex-protocol",
+ "codex-state-api",
+ "codex-tool-planning",
+ "codex-tool-runtime",
+ "codex-tool-runtime-api",
+ "codex-tool-types",
+ "codex-utils-absolute-path",
+ "futures",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -2016,12 +2047,17 @@ dependencies = [
  "codex-rollout-trace",
  "codex-sandboxing",
  "codex-sandboxing-api",
+ "codex-session-api",
  "codex-shell-utils",
  "codex-state",
  "codex-state-api",
  "codex-terminal-detection",
+ "codex-thread-api",
  "codex-thread-store",
+ "codex-tool-config",
+ "codex-tool-handlers",
  "codex-tools",
+ "codex-turn-metadata",
  "codex-utils-absolute-path",
  "codex-utils-cargo-bin",
  "codex-utils-cli",
@@ -2395,6 +2431,8 @@ dependencies = [
  "codex-stdio-to-uds",
  "codex-terminal-detection",
  "codex-thread-store",
+ "codex-tool-config",
+ "codex-tool-handlers",
  "codex-tui",
  "codex-utils-absolute-path",
  "codex-utils-cargo-bin",
@@ -2612,7 +2650,14 @@ name = "codex-command-runtime"
 version = "0.0.0"
 dependencies = [
  "chardetng",
+ "codex-exec-server-api",
+ "codex-exec-server-protocol",
+ "codex-protocol",
+ "codex-sandboxing-api",
+ "codex-utils-output-truncation",
+ "codex-utils-pty",
  "encoding_rs",
+ "futures",
  "pretty_assertions",
  "rand 0.9.3",
  "tokio",
@@ -2638,7 +2683,6 @@ dependencies = [
  "codex-config-state",
  "codex-config-toml",
  "codex-config-types",
- "codex-core-plugins",
  "codex-core-plugins-api",
  "codex-core-skills-api",
  "codex-execpolicy",
@@ -2653,6 +2697,7 @@ dependencies = [
  "codex-models-manager",
  "codex-models-manager-api",
  "codex-network-proxy-api",
+ "codex-plugin-types",
  "codex-protocol",
  "codex-rollout-api",
  "codex-sandboxing-api",
@@ -2987,6 +3032,7 @@ dependencies = [
  "codex-exec-server-protocol",
  "codex-execpolicy",
  "codex-execpolicy-api",
+ "codex-execpolicy-loader",
  "codex-extension-api",
  "codex-features",
  "codex-feedback-api",
@@ -3026,6 +3072,8 @@ dependencies = [
  "codex-rollout-trace-api",
  "codex-sandboxing",
  "codex-sandboxing-api",
+ "codex-session-api",
+ "codex-session-runtime",
  "codex-session-telemetry-api",
  "codex-shell-command",
  "codex-shell-escalation",
@@ -3033,12 +3081,17 @@ dependencies = [
  "codex-state",
  "codex-state-api",
  "codex-test-binary-support",
+ "codex-thread-api",
  "codex-thread-store",
  "codex-thread-store-api",
  "codex-tool-config",
+ "codex-tool-handlers",
  "codex-tool-planning",
+ "codex-tool-runtime",
+ "codex-tool-runtime-api",
  "codex-trace-context",
  "codex-turn-items",
+ "codex-turn-metadata",
  "codex-user-info",
  "codex-utils-absolute-path",
  "codex-utils-backoff",
@@ -3105,6 +3158,7 @@ dependencies = [
  "codex-code-mode-api",
  "codex-config-types",
  "codex-core",
+ "codex-core-skills",
  "codex-exec-server",
  "codex-extension-api",
  "codex-features",
@@ -3116,6 +3170,8 @@ dependencies = [
  "codex-rollout",
  "codex-state-api",
  "codex-thread-store",
+ "codex-tool-config",
+ "codex-tool-handlers",
  "codex-utils-absolute-path",
 ]
 
@@ -3236,6 +3292,8 @@ name = "codex-core-skills-api"
 version = "0.0.0"
 dependencies = [
  "codex-config-types",
+ "codex-connectors-api",
+ "codex-connectors-types",
  "codex-file-system",
  "codex-metrics-api",
  "codex-plugin-types",
@@ -3475,14 +3533,23 @@ dependencies = [
 name = "codex-execpolicy-loader"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
+ "codex-config",
+ "codex-config-loader",
  "codex-config-state",
  "codex-config-types",
  "codex-execpolicy",
  "codex-execpolicy-api",
  "codex-permissions-runtime",
+ "codex-protocol",
+ "codex-utils-absolute-path",
+ "pretty_assertions",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "toml 0.9.11+spec-1.1.0",
  "tracing",
+ "which 8.0.0",
 ]
 
 [[package]]
@@ -3647,11 +3714,14 @@ dependencies = [
  "codex-file-system",
  "codex-protocol",
  "codex-utils-absolute-path",
+ "codex-utils-path",
+ "core_test_support",
  "futures",
  "once_cell",
  "pretty_assertions",
  "schemars 0.8.22",
  "serde",
+ "serde_json",
  "sha1",
  "tempfile",
  "thiserror 2.0.18",
@@ -3676,6 +3746,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "codex-analytics-api",
+ "codex-context-manager",
  "codex-extension-api",
  "codex-protocol",
  "codex-shell-utils",
@@ -3884,13 +3955,17 @@ dependencies = [
  "codex-core-skills-api",
  "codex-exec-server-api",
  "codex-features",
+ "codex-guardian",
  "codex-mcp-runtime-api",
  "codex-mcp-tool-types",
  "codex-mcp-types",
+ "codex-models-manager",
  "codex-openai-files",
  "codex-openai-files-api",
+ "codex-plugin-types",
  "codex-protocol",
  "codex-tool-config",
+ "codex-utils-string",
  "http 1.4.0",
  "pretty_assertions",
  "serde",
@@ -3898,7 +3973,10 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "toml 0.9.11+spec-1.1.0",
  "tracing",
+ "tracing-subscriber",
+ "tracing-test",
  "wiremock",
 ]
 
@@ -3950,6 +4028,8 @@ dependencies = [
  "codex-state-api",
  "codex-terminal-detection",
  "codex-thread-store",
+ "codex-tool-config",
+ "codex-tool-handlers",
  "codex-utils-absolute-path",
  "codex-utils-cli",
  "codex-utils-json-to-toml",
@@ -4078,6 +4158,7 @@ dependencies = [
  "codex-secrets",
  "codex-session-telemetry-api",
  "codex-state",
+ "codex-turn-metadata",
  "codex-utils-absolute-path",
  "codex-utils-output-truncation",
  "codex-utils-template",
@@ -4715,6 +4796,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-session-api"
+version = "0.0.0"
+dependencies = [
+ "codex-protocol",
+]
+
+[[package]]
+name = "codex-session-runtime"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "codex-analytics-api",
+ "codex-config-toml",
+ "codex-config-types",
+ "codex-features",
+ "codex-protocol",
+ "codex-utils-absolute-path",
+ "serde",
+ "serde_json",
+ "toml 0.9.11+spec-1.1.0",
+]
+
+[[package]]
 name = "codex-session-telemetry-api"
 version = "0.0.0"
 dependencies = [
@@ -4745,7 +4849,12 @@ name = "codex-shell-escalation"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "codex-execpolicy",
+ "codex-execpolicy-api",
+ "codex-permissions-runtime",
+ "codex-process-exec",
  "codex-protocol",
+ "codex-sandboxing-api",
  "codex-utils-absolute-path",
  "libc",
  "pretty_assertions",
@@ -4863,6 +4972,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-thread-api"
+version = "0.0.0"
+dependencies = [
+ "codex-protocol",
+ "codex-session-api",
+ "codex-thread-store-api",
+]
+
+[[package]]
 name = "codex-thread-manager-sample"
 version = "0.0.0"
 dependencies = [
@@ -4918,6 +5036,57 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-tool-handlers"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "codex-agent-runtime",
+ "codex-agent-tool-handlers",
+ "codex-apply-patch",
+ "codex-code-mode-api",
+ "codex-command-runtime",
+ "codex-connectors-types",
+ "codex-context-manager",
+ "codex-exec-server-api",
+ "codex-extension-api",
+ "codex-features",
+ "codex-file-system",
+ "codex-git-info",
+ "codex-hooks-api",
+ "codex-mcp-tool-types",
+ "codex-metrics-api",
+ "codex-network-proxy-api",
+ "codex-permissions-runtime",
+ "codex-process-exec",
+ "codex-protocol",
+ "codex-sandboxing-api",
+ "codex-session-telemetry-api",
+ "codex-shell-command",
+ "codex-state-api",
+ "codex-tool-config",
+ "codex-tool-planning",
+ "codex-tool-runtime",
+ "codex-tool-runtime-api",
+ "codex-tool-types",
+ "codex-utils-absolute-path",
+ "codex-utils-image",
+ "codex-utils-output-truncation",
+ "codex-utils-path",
+ "codex-utils-string",
+ "codex-workflow-api",
+ "futures",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "codex-tool-planning"
 version = "0.0.0"
 dependencies = [
@@ -4935,6 +5104,73 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
+]
+
+[[package]]
+name = "codex-tool-runtime"
+version = "0.0.0"
+dependencies = [
+ "codex-apply-patch",
+ "codex-code-mode-api",
+ "codex-command-runtime",
+ "codex-context-manager",
+ "codex-file-system",
+ "codex-git-info",
+ "codex-hooks-api",
+ "codex-metrics-api",
+ "codex-network-proxy-api",
+ "codex-protocol",
+ "codex-sandboxing-api",
+ "codex-session-telemetry-api",
+ "codex-shell-command",
+ "codex-tool-config",
+ "codex-tool-planning",
+ "codex-tool-runtime-api",
+ "codex-tool-types",
+ "codex-utils-absolute-path",
+ "codex-utils-output-truncation",
+ "codex-utils-path",
+ "codex-utils-string",
+ "futures",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "codex-tool-runtime-api"
+version = "0.0.0"
+dependencies = [
+ "codex-agent-runtime",
+ "codex-apply-patch",
+ "codex-code-mode-api",
+ "codex-command-runtime",
+ "codex-exec-server-api",
+ "codex-file-system",
+ "codex-hooks-api",
+ "codex-network-proxy-api",
+ "codex-permissions-runtime",
+ "codex-process-exec",
+ "codex-protocol",
+ "codex-sandboxing-api",
+ "codex-session-telemetry-api",
+ "codex-state-api",
+ "codex-tool-config",
+ "codex-tool-planning",
+ "codex-tool-types",
+ "codex-utils-absolute-path",
+ "codex-utils-output-truncation",
+ "codex-workflow-api",
+ "futures",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -5093,11 +5329,30 @@ name = "codex-turn-items"
 version = "0.0.0"
 dependencies = [
  "codex-context-manager",
+ "codex-memories-read-api",
  "codex-protocol",
+ "codex-utils-stream-parser",
  "pretty_assertions",
  "serde_json",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "codex-turn-metadata"
+version = "0.0.0"
+dependencies = [
+ "codex-git-info",
+ "codex-protocol",
+ "codex-sandboxing-api",
+ "codex-utils-absolute-path",
+ "codex-utils-string",
+ "core_test_support",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -5652,6 +5907,8 @@ dependencies = [
  "codex-rollout",
  "codex-sandboxing",
  "codex-thread-store",
+ "codex-tool-config",
+ "codex-tool-handlers",
  "codex-utils-absolute-path",
  "codex-utils-cargo-bin",
  "codex-workflow",

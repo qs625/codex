@@ -9,9 +9,10 @@ use tracing::info;
 use tracing::warn;
 
 use crate::client::ModelClientSession;
+use crate::client_common::PromptBuildParams;
+use crate::client_common::build_prompt;
 use crate::session::INITIAL_SUBMIT_ID;
 use crate::session::session::Session;
-use crate::session::turn::build_prompt;
 use crate::session::turn::built_tools;
 use codex_metrics_api::STARTUP_PREWARM_AGE_AT_FIRST_TURN_METRIC;
 use codex_metrics_api::STARTUP_PREWARM_DURATION_METRIC;
@@ -247,14 +248,19 @@ async fn schedule_startup_prewarm_inner(
         /*status*/ None,
     );
     let build_prompt_started_at = Instant::now();
-    let startup_prompt = build_prompt(
-        Vec::new(),
-        startup_router.as_ref(),
-        startup_turn_context.as_ref(),
-        BaseInstructions {
+    let startup_prompt = build_prompt(PromptBuildParams {
+        input: Vec::new(),
+        tools: startup_router.model_visible_specs(),
+        parallel_tool_calls: startup_turn_context.model_info.supports_parallel_tool_calls,
+        base_instructions: BaseInstructions {
             text: base_instructions,
         },
-    );
+        personality: startup_turn_context.personality,
+        output_schema: startup_turn_context.final_output_json_schema.clone(),
+        output_schema_strict: !crate::guardian::is_guardian_reviewer_source(
+            &startup_turn_context.session_source,
+        ),
+    });
     startup_turn_context.session_telemetry.record_startup_phase(
         "startup_prewarm_build_prompt",
         build_prompt_started_at.elapsed(),

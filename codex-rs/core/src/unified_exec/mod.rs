@@ -32,7 +32,6 @@ pub(crate) use codex_command_runtime::CommandProcessIdAllocator;
 pub(crate) use codex_command_runtime::CommandWaitOutput;
 pub(crate) use codex_command_runtime::CommandWaitRequest;
 pub(crate) use codex_command_runtime::CommandWaitStatus;
-pub(crate) use codex_command_runtime::DEFAULT_COMMAND_OUTPUT_MAX_TOKENS as UNIFIED_EXEC_OUTPUT_MAX_TOKENS;
 pub(crate) use codex_command_runtime::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
 pub(crate) use codex_command_runtime::HeadTailBuffer;
 #[cfg(test)]
@@ -42,36 +41,37 @@ pub(crate) use codex_command_runtime::WriteStdinOutput;
 pub(crate) use codex_command_runtime::WriteStdinRequest;
 pub(crate) use codex_command_runtime::clamp_yield_time;
 pub(crate) use codex_command_runtime::generate_chunk_id;
-pub(crate) use codex_command_runtime::resolve_max_tokens;
 use codex_exec_server_api::ExecEnvironment;
 use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use tokio::sync::Mutex;
 
+use crate::network_approval::DeferredNetworkApproval;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::shell::ShellType;
-use crate::tools::network_approval::DeferredNetworkApproval;
 
 mod async_watcher;
-mod errors;
-mod process;
 mod process_manager;
+mod tool_host;
 
 pub(crate) fn set_deterministic_process_ids_for_tests(enabled: bool) {
     process_manager::set_deterministic_process_ids_for_tests(enabled);
 }
 
-pub(crate) use errors::UnifiedExecError;
-pub(crate) use process::NoopSpawnLifecycle;
+pub(crate) use codex_command_runtime::ExecServerEnvConfig;
+#[cfg(test)]
+pub(crate) use codex_command_runtime::NoopSpawnLifecycle;
 #[cfg(unix)]
-pub(crate) use process::SpawnLifecycle;
-pub(crate) use process::SpawnLifecycleHandle;
-pub(crate) use process::UnifiedExecProcess;
-pub(crate) use process_manager::ExecServerEnvConfig;
+pub(crate) use codex_command_runtime::SpawnLifecycle;
+pub(crate) use codex_command_runtime::SpawnLifecycleHandle;
+pub(crate) use codex_command_runtime::UnifiedExecError;
+pub(crate) use codex_command_runtime::UnifiedExecProcess;
+pub(crate) use codex_tool_runtime_api::ExecCommandArgs;
 pub(crate) use process_manager::UnifiedExecCommandSessionController;
+pub(crate) use tool_host::get_command;
 
 pub(crate) const MAX_UNIFIED_EXEC_PROCESSES: usize = 64;
 
@@ -209,10 +209,6 @@ struct ProcessEntry {
     command_wait_backoff: WaitBackoffState,
 }
 
-#[cfg(test)]
-#[cfg(unix)]
-#[path = "process_tests.rs"]
-mod process_tests;
 #[cfg(test)]
 #[cfg(unix)]
 #[path = "mod_tests.rs"]

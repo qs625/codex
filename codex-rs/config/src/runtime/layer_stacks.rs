@@ -1,3 +1,4 @@
+use codex_config_state::ConfigLayerEntry;
 use codex_config_state::ConfigLayerStack;
 use codex_config_state::ConfigLayerStackOrdering;
 use codex_core_plugins_api::PluginConfigLayerEntry;
@@ -7,6 +8,32 @@ use codex_core_skills_api::SkillConfigLayerStack;
 use codex_hooks_api::HookConfigLayerEntry;
 use codex_hooks_api::HookConfigLayerStack;
 use codex_hooks_api::HookManagedHooksRequirement;
+
+use crate::Config;
+
+pub fn child_uses_parent_exec_policy(parent_config: &Config, child_config: &Config) -> bool {
+    fn exec_policy_config_folders(config: &Config) -> Vec<crate::AbsolutePathBuf> {
+        config
+            .config_layer_stack
+            .get_layers(
+                ConfigLayerStackOrdering::LowestPrecedenceFirst,
+                /*include_disabled*/ false,
+            )
+            .into_iter()
+            .filter_map(ConfigLayerEntry::config_folder)
+            .collect()
+    }
+
+    exec_policy_config_folders(parent_config) == exec_policy_config_folders(child_config)
+        && parent_config
+            .config_layer_stack
+            .ignore_user_and_project_exec_policy_rules()
+            == child_config
+                .config_layer_stack
+                .ignore_user_and_project_exec_policy_rules()
+        && parent_config.config_layer_stack.requirements().exec_policy
+            == child_config.config_layer_stack.requirements().exec_policy
+}
 
 pub fn hook_config_layer_stack_from_config_layer_stack(
     config_layer_stack: &ConfigLayerStack,

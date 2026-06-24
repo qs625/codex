@@ -9,9 +9,9 @@ use tracing::Instrument;
 use tracing::debug_span;
 use tracing::info_span;
 
+use crate::session::SessionSettingsUpdate;
 use crate::session::SteerInputError;
 use crate::session::session::Session;
-use crate::session::session::SessionSettingsUpdate;
 
 use crate::config::Config;
 use crate::pending_input::PendingInputItem;
@@ -51,13 +51,11 @@ use codex_protocol::request_user_input::RequestUserInputResponse;
 use crate::context_manager::is_user_turn_boundary;
 use codex_mcp_types::ElicitationAction;
 use codex_mcp_types::ElicitationResponse;
-use codex_protocol::config_types::CollaborationMode;
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::config_types::Settings;
 use codex_protocol::dynamic_tools::DynamicToolResponse;
 use codex_protocol::items::UserMessageItem;
 use codex_protocol::mcp::RequestId as ProtocolRequestId;
 use codex_protocol::user_input::UserInput;
+use codex_session_runtime::user_turn_submission_from_op;
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::debug;
@@ -113,132 +111,16 @@ pub(super) async fn user_input_or_turn_inner(
     op: Op,
     mirror_user_text_to_realtime: Option<()>,
 ) {
-    let (items, updates, responsesapi_client_metadata) = match op {
-        Op::UserTurn {
-            cwd,
-            approval_policy,
-            approvals_reviewer,
-            sandbox_policy,
-            permission_profile,
-            model,
-            effort,
-            summary,
-            service_tier,
-            final_output_json_schema,
-            items,
-            collaboration_mode,
-            personality,
-            environments,
-        } => {
-            let collaboration_mode = collaboration_mode.or_else(|| {
-                Some(CollaborationMode {
-                    mode: ModeKind::Default,
-                    settings: Settings {
-                        model: model.clone(),
-                        reasoning_effort: effort,
-                        developer_instructions: None,
-                    },
-                })
-            });
-            (
-                items,
-                SessionSettingsUpdate {
-                    cwd: Some(cwd),
-                    approval_policy: Some(approval_policy),
-                    approvals_reviewer,
-                    sandbox_policy: Some(sandbox_policy),
-                    workspace_roots: None,
-                    profile_workspace_roots: None,
-                    permission_profile,
-                    active_permission_profile: None,
-                    windows_sandbox_level: None,
-                    model_provider: None,
-                    collaboration_mode,
-                    reasoning_summary: summary,
-                    service_tier,
-                    final_output_json_schema: Some(final_output_json_schema),
-                    environments,
-                    personality,
-                    app_server_client_name: None,
-                    app_server_client_version: None,
-                },
-                None,
-            )
-        }
-        Op::UserInputWithTurnContext {
-            cwd,
-            workspace_roots,
-            profile_workspace_roots,
-            approval_policy,
-            approvals_reviewer,
-            sandbox_policy,
-            permission_profile,
-            active_permission_profile,
-            windows_sandbox_level,
-            model,
-            model_provider,
-            effort,
-            summary,
-            service_tier,
-            final_output_json_schema,
-            items,
-            responsesapi_client_metadata,
-            collaboration_mode,
-            personality,
-            environments,
-        } => {
-            let collaboration_mode = if let Some(collab_mode) = collaboration_mode {
-                Some(collab_mode)
-            } else {
-                let state = sess.state.lock().await;
-                Some(
-                    state
-                        .session_configuration
-                        .collaboration_mode
-                        .with_updates(model, effort, /*developer_instructions*/ None),
-                )
-            };
-            (
-                items,
-                SessionSettingsUpdate {
-                    cwd,
-                    workspace_roots,
-                    profile_workspace_roots,
-                    approval_policy,
-                    approvals_reviewer,
-                    sandbox_policy,
-                    permission_profile,
-                    active_permission_profile,
-                    windows_sandbox_level,
-                    model_provider,
-                    collaboration_mode,
-                    reasoning_summary: summary,
-                    service_tier,
-                    final_output_json_schema: Some(final_output_json_schema),
-                    environments,
-                    personality,
-                    app_server_client_name: None,
-                    app_server_client_version: None,
-                },
-                responsesapi_client_metadata,
-            )
-        }
-        Op::UserInput {
-            items,
-            environments,
-            final_output_json_schema,
-            responsesapi_client_metadata,
-        } => (
-            items,
-            SessionSettingsUpdate {
-                final_output_json_schema: Some(final_output_json_schema),
-                environments,
-                ..Default::default()
-            },
-            responsesapi_client_metadata,
-        ),
-        _ => unreachable!(),
+    let current_collaboration_mode = {
+        let state = sess.state.lock().await;
+        state.session_configuration.collaboration_mode.clone()
     };
+    let Some(submission) = user_turn_submission_from_op(op, &current_collaboration_mode) else {
+        unreachable!()
+    };
+    let items = submission.items;
+    let updates = submission.updates;
+    let responsesapi_client_metadata = submission.responsesapi_client_metadata;
 
     let Ok(current_context) = sess.new_turn_with_sub_id(sub_id.clone(), updates).await else {
         // new_turn_with_sub_id already emits the error event.

@@ -14,6 +14,7 @@ pub use codex_connectors_types::AppMetadata;
 use codex_core_plugins_api::PluginRuntime;
 use codex_features::Feature;
 pub use codex_mcp_runtime::AccessibleConnectorsStatus;
+#[cfg(test)]
 pub(crate) use codex_mcp_runtime::AppToolPolicy;
 #[cfg(test)]
 pub(crate) use codex_mcp_runtime::app_is_enabled;

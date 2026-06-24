@@ -1,3 +1,4 @@
+use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::GuardianAssessmentOutcome;
 use codex_protocol::protocol::GuardianRiskLevel;
 use codex_protocol::protocol::GuardianUserAuthorization;
@@ -7,6 +8,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 
+use super::AUTO_REVIEW_DENIED_ACTION_APPROVAL_DEVELOPER_PREFIX;
 use super::GuardianApprovalRequest;
 use super::format_guardian_action_pretty;
 use super::guardian_truncate_text;
@@ -77,6 +79,103 @@ pub struct GuardianTranscriptCursor {
 pub enum GuardianPromptMode {
     Full,
     Delta { cursor: GuardianTranscriptCursor },
+}
+
+/// Retains human-readable conversation plus recent tool call/result evidence
+/// for guardian review, skipping synthetic contextual scaffolding.
+pub fn collect_guardian_transcript_entries(items: &[ResponseItem]) -> Vec<GuardianTranscriptEntry> {
+    let mut entries = Vec::new();
+    let mut tool_names_by_call_id = std::collections::HashMap::new();
+    let non_empty_entry = |kind, text: String| {
+        (!text.trim().is_empty()).then_some(GuardianTranscriptEntry { kind, text })
+    };
+    let content_entry = |kind, content| {
+        codex_context_manager::content_items_to_text(content)
+            .and_then(|text| non_empty_entry(kind, text))
+    };
+    let serialized_entry =
+        |kind, serialized: Option<String>| serialized.and_then(|text| non_empty_entry(kind, text));
+
+    for item in items {
+        let entry = match item {
+            ResponseItem::Message { role, content, .. } if role == "user" => {
+                if codex_context_manager::is_contextual_user_message_content(content) {
+                    None
+                } else {
+                    content_entry(GuardianTranscriptEntryKind::User, content)
+                }
+            }
+            ResponseItem::Message { role, content, .. } if role == "developer" => {
+                codex_context_manager::content_items_to_text(content).and_then(|text| {
+                    text.starts_with(AUTO_REVIEW_DENIED_ACTION_APPROVAL_DEVELOPER_PREFIX)
+                        .then_some(GuardianTranscriptEntry {
+                            kind: GuardianTranscriptEntryKind::Developer,
+                            text,
+                        })
+                })
+            }
+            ResponseItem::Message { role, content, .. } if role == "assistant" => {
+                content_entry(GuardianTranscriptEntryKind::Assistant, content)
+            }
+            ResponseItem::LocalShellCall { action, .. } => serialized_entry(
+                GuardianTranscriptEntryKind::Tool("tool shell call".to_string()),
+                serde_json::to_string(action).ok(),
+            ),
+            ResponseItem::FunctionCall {
+                call_id,
+                name,
+                arguments,
+                ..
+            } => {
+                tool_names_by_call_id.insert(call_id.clone(), name.clone());
+                (!arguments.trim().is_empty()).then(|| GuardianTranscriptEntry {
+                    kind: GuardianTranscriptEntryKind::Tool(format!("tool {name} call")),
+                    text: arguments.clone(),
+                })
+            }
+            ResponseItem::CustomToolCall {
+                call_id,
+                name,
+                input,
+                ..
+            } => {
+                tool_names_by_call_id.insert(call_id.clone(), name.clone());
+                (!input.trim().is_empty()).then(|| GuardianTranscriptEntry {
+                    kind: GuardianTranscriptEntryKind::Tool(format!("tool {name} call")),
+                    text: input.clone(),
+                })
+            }
+            ResponseItem::WebSearchCall { action, .. } => action.as_ref().and_then(|action| {
+                serialized_entry(
+                    GuardianTranscriptEntryKind::Tool("tool web_search call".to_string()),
+                    serde_json::to_string(action).ok(),
+                )
+            }),
+            ResponseItem::FunctionCallOutput {
+                call_id, output, ..
+            }
+            | ResponseItem::CustomToolCallOutput {
+                call_id, output, ..
+            } => output.body.to_text().and_then(|text| {
+                non_empty_entry(
+                    GuardianTranscriptEntryKind::Tool(
+                        tool_names_by_call_id.get(call_id).map_or_else(
+                            || "tool result".to_string(),
+                            |name| format!("tool {name} result"),
+                        ),
+                    ),
+                    text,
+                )
+            }),
+            _ => None,
+        };
+
+        if let Some(entry) = entry {
+            entries.push(entry);
+        }
+    }
+
+    entries
 }
 
 /// Builds the guardian user content items from:
@@ -485,10 +584,15 @@ mod tests {
     use super::GuardianAssessment;
     use super::GuardianTranscriptEntry;
     use super::GuardianTranscriptEntryKind;
+    use super::collect_guardian_transcript_entries;
     use super::guardian_output_schema;
     use super::parse_guardian_assessment;
     use super::render_guardian_transcript_entries;
+    use crate::AUTO_REVIEW_DENIED_ACTION_APPROVAL_DEVELOPER_PREFIX;
     use crate::guardian_truncate_text;
+    use codex_protocol::models::ContentItem;
+    use codex_protocol::models::FunctionCallOutputPayload;
+    use codex_protocol::models::ResponseItem;
 
     #[test]
     fn build_guardian_transcript_keeps_original_numbering() {
@@ -517,6 +621,125 @@ mod tests {
             ]
         );
         assert!(omission.is_none());
+    }
+
+    #[test]
+    fn collect_guardian_transcript_entries_skips_contextual_user_messages() {
+        let items = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "<environment_context>\n<cwd>/tmp</cwd>\n</environment_context>"
+                        .to_string(),
+                }],
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "hello".to_string(),
+                }],
+                phase: None,
+            },
+        ];
+
+        let entries = collect_guardian_transcript_entries(&items);
+
+        assert_eq!(
+            entries,
+            vec![GuardianTranscriptEntry {
+                kind: GuardianTranscriptEntryKind::Assistant,
+                text: "hello".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn collect_guardian_transcript_entries_keeps_manual_approval_developer_message() {
+        let approval_text = format!(
+            "{AUTO_REVIEW_DENIED_ACTION_APPROVAL_DEVELOPER_PREFIX}\n\nApproved action:\n{{}}"
+        );
+        let items = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "developer".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "ordinary developer context".to_string(),
+                }],
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "developer".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: approval_text.clone(),
+                }],
+                phase: None,
+            },
+        ];
+
+        let entries = collect_guardian_transcript_entries(&items);
+
+        assert_eq!(
+            entries,
+            vec![GuardianTranscriptEntry {
+                kind: GuardianTranscriptEntryKind::Developer,
+                text: approval_text,
+            }]
+        );
+    }
+
+    #[test]
+    fn collect_guardian_transcript_entries_includes_recent_tool_calls_and_output() {
+        let items = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "check the repo".to_string(),
+                }],
+                phase: None,
+            },
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "read_file".to_string(),
+                namespace: None,
+                arguments: "{\"path\":\"README.md\"}".to_string(),
+                call_id: "call-1".to_string(),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "call-1".to_string(),
+                output: FunctionCallOutputPayload::from_text("repo is public".to_string()),
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "I need to push a fix".to_string(),
+                }],
+                phase: None,
+            },
+        ];
+
+        let entries = collect_guardian_transcript_entries(&items);
+
+        assert_eq!(entries.len(), 4);
+        assert_eq!(
+            entries[1],
+            GuardianTranscriptEntry {
+                kind: GuardianTranscriptEntryKind::Tool("tool read_file call".to_string()),
+                text: "{\"path\":\"README.md\"}".to_string(),
+            }
+        );
+        assert_eq!(
+            entries[2],
+            GuardianTranscriptEntry {
+                kind: GuardianTranscriptEntryKind::Tool("tool read_file result".to_string()),
+                text: "repo is public".to_string(),
+            }
+        );
     }
 
     #[test]

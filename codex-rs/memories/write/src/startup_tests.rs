@@ -553,8 +553,11 @@ impl MemoryStartupRuntime for TestMemoryStartupRuntime {
                 .config
                 .model_reasoning_summary
                 .unwrap_or(context.model_info.default_reasoning_summary);
-            let turn_metadata_header =
-                codex_core::build_turn_metadata_header(&self.config.cwd, /*sandbox*/ None).await;
+            let turn_metadata_header = codex_turn_metadata::build_turn_metadata_header(
+                &self.config.cwd,
+                /*sandbox*/ None,
+            )
+            .await;
             let mut client_session = model_client.new_session();
             let telemetry = SessionTelemetryTrait::with_model(
                 &self.session_telemetry,
@@ -752,7 +755,7 @@ async fn stream_consolidation_prompt(
         .model_reasoning_summary
         .unwrap_or(model_info.default_reasoning_summary);
     let turn_metadata_header =
-        codex_core::build_turn_metadata_header(&config.cwd, /*sandbox*/ None).await;
+        codex_turn_metadata::build_turn_metadata_header(&config.cwd, /*sandbox*/ None).await;
     let mut client_session = model_client.new_session();
     let telemetry = SessionTelemetryTrait::with_model(
         &session_telemetry,

@@ -90,6 +90,29 @@ use codex_rollout::StateDbHandle;
 use codex_state_api::SharedStateDbRuntime;
 use codex_terminal_detection::TerminalName;
 
+struct CliToolRouterFactory;
+
+impl codex_core::ToolRouterFactory for CliToolRouterFactory {
+    fn build_tool_router(
+        &self,
+        config: &codex_tool_config::ToolsConfig,
+        params: codex_core::ToolRouterBuildParams<'_>,
+    ) -> codex_core::CoreToolRuntimeRouter {
+        codex_tool_handlers::build_tool_router(
+            config,
+            &codex_core::CoreToolDomainHost,
+            codex_tool_handlers::ToolRuntimeBuildParams {
+                mcp_tools: params.mcp_tools,
+                deferred_mcp_tools: params.deferred_mcp_tools,
+                discoverable_tools: params.discoverable_tools,
+                extension_tool_executors: params.extension_tool_executors,
+                dynamic_tools: params.dynamic_tools,
+                default_agent_type_description: params.default_agent_type_description,
+            },
+        )
+    }
+}
+
 pub(crate) fn config_builder() -> ConfigBuilder {
     ConfigBuilder::default().config_layer_loader(Arc::new(LocalConfigLayerLoader::default()))
 }
@@ -1695,6 +1718,7 @@ async fn run_debug_prompt_input_command(
         Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         auth_runtimes,
         Arc::new(codex_model_provider::DefaultModelProviderFactory),
+        Arc::new(CliToolRouterFactory),
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     )

@@ -1,0 +1,14 @@
+pub mod apply_patch;
+pub mod code_mode;
+pub mod command_interaction;
+pub mod exec_command;
+pub mod extension_tools;
+pub mod function_tools;
+pub mod goal;
+pub mod mcp_resource;
+pub mod mcp_tool_call;
+pub mod request_plugin_install;
+pub mod shell;
+pub mod test_sync;
+pub mod tool_search;
+pub mod workflow;

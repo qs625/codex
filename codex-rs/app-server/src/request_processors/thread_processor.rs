@@ -774,7 +774,7 @@ impl ThreadRequestProcessor {
         let thread_id = ThreadId::from_string(&params.thread_id)
             .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
 
-        if self.thread_manager.get_thread(thread_id).await.is_err() {
+        if !self.thread_manager.is_thread_loaded(thread_id).await {
             self.finalize_thread_teardown(thread_id).await;
             return Ok(ThreadUnsubscribeResponse {
                 status: ThreadUnsubscribeStatus::NotLoaded,
@@ -1677,8 +1677,8 @@ impl ThreadRequestProcessor {
             self.config.model_provider_id.as_str(),
             &self.config.cwd,
         );
-        if let Ok(loaded_thread) = self.thread_manager.get_thread(thread_uuid).await {
-            thread.session_id = loaded_thread.session_configured().session_id.to_string();
+        if let Ok(live_info) = self.thread_manager.live_thread_info(thread_uuid).await {
+            thread.session_id = live_info.session_id.to_string();
         }
         self.attach_thread_name(thread_uuid, &mut thread).await;
         thread.status = resolve_thread_status(
@@ -2242,12 +2242,13 @@ impl ThreadRequestProcessor {
         // every request. Rollback and compaction events can change earlier turns, so
         // the server has to rebuild the full turn list until turn metadata is indexed
         // separately.
-        let loaded_thread = self.thread_manager.get_thread(thread_uuid).await.ok();
-        let has_live_running_thread = match loaded_thread.as_ref() {
-            Some(thread) => matches!(thread.agent_status().await, AgentStatus::Running),
-            None => false,
-        };
-        let active_turn = if loaded_thread.is_some() {
+        let live_agent_status = self
+            .thread_manager
+            .thread_agent_status(thread_uuid)
+            .await
+            .ok();
+        let has_live_running_thread = matches!(live_agent_status, Some(AgentStatus::Running));
+        let active_turn = if live_agent_status.is_some() {
             // Persisted history may not yet include the currently running turn. The
             // app-server listener has already projected live turn events into ThreadState,
             // so merge that in-memory snapshot before paginating.
@@ -2388,7 +2389,7 @@ impl ThreadRequestProcessor {
             .await;
 
         for thread_id in thread_ids {
-            if self.thread_manager.get_thread(thread_id).await.is_err() {
+            if !self.thread_manager.is_thread_loaded(thread_id).await {
                 // Reconcile stale app-server bookkeeping when the thread has already been
                 // removed from the core manager.
                 self.finalize_thread_teardown(thread_id).await;
@@ -2419,7 +2420,7 @@ impl ThreadRequestProcessor {
             });
 
         for thread_id in thread_ids {
-            if self.thread_manager.get_thread(thread_id).await.is_ok() {
+            if self.thread_manager.is_thread_loaded(thread_id).await {
                 continue;
             }
             self.restore_persisted_active_thread(thread_id).await;
@@ -2927,9 +2928,8 @@ impl ThreadRequestProcessor {
             if let Ok(existing_thread_id) = ThreadId::from_string(&params.thread_id)
                 && self
                     .thread_manager
-                    .get_thread(existing_thread_id)
+                    .is_thread_loaded(existing_thread_id)
                     .await
-                    .is_ok()
             {
                 return Err(invalid_request(format!(
                     "cannot resume thread {existing_thread_id} with history while it is already running"

@@ -95,10 +95,15 @@ codex-rollout = { workspace = true }
 codex-rollout-trace = { workspace = true }
 codex-sandboxing-api = { workspace = true }
 codex-sandboxing = { workspace = true }
+codex-session-api = { workspace = true }
 codex-state-api = { workspace = true }
 codex-state = { workspace = true }
+codex-thread-api = { workspace = true }
 codex-thread-store = { workspace = true }
+codex-tool-config = { workspace = true }
+codex-tool-handlers = { workspace = true }
 codex-tools = { workspace = true }
+codex-turn-metadata = { workspace = true }
 codex-terminal-detection = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-json-to-toml = { workspace = true }

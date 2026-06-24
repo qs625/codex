@@ -3,9 +3,12 @@ mod exit_status;
 pub(crate) mod login;
 
 use clap::Parser;
+use codex_config_local_loader::LocalConfigLayerLoader;
+use codex_core::config::ConfigBuilder;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub use debug_sandbox::run_command_under_landlock;
 pub use debug_sandbox::run_command_under_seatbelt;
@@ -19,6 +22,10 @@ pub use login::run_login_with_chatgpt;
 pub use login::run_login_with_device_code;
 pub use login::run_login_with_device_code_fallback_to_browser;
 pub use login::run_logout;
+
+pub(crate) fn config_builder() -> ConfigBuilder {
+    ConfigBuilder::default().config_layer_loader(Arc::new(LocalConfigLayerLoader::default()))
+}
 
 // TODO: Deduplicate these shared sandbox options if we remove the explicit
 // `codex sandbox <os>` platform subcommands.

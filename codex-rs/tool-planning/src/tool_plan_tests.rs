@@ -2,6 +2,7 @@ use super::*;
 use crate::JsonSchema;
 use crate::ResponsesApiNamespace;
 use crate::ResponsesApiTool;
+use crate::ToolName;
 use codex_features::Feature;
 use codex_features::Features;
 use codex_protocol::config_types::WebSearchMode;
@@ -145,6 +146,122 @@ fn code_mode_exec_plan_sorts_namespaced_tools_after_plain_tools() {
             .description,
         "Alpha tools"
     );
+}
+
+#[test]
+fn plan_tool_registry_entries_splits_host_entries_from_model_visible_specs() {
+    let mut config = tools_config_with_agent_tool_patterns(vec![
+        "safe*".to_string(),
+        "mcp__server__allowed".to_string(),
+    ]);
+    config.code_mode_enabled = true;
+    config.search_tool = true;
+    config.namespace_tools = true;
+
+    let deferred_search_info = ToolSearchInfo::from_spec(
+        "allowed deferred tool".to_string(),
+        ToolSpec::Function(function_tool("allowed", "Allowed deferred tool")),
+        None,
+    )
+    .expect("function spec should be searchable");
+    let entries = vec![
+        TestRegistryEntry {
+            name: ToolName::plain("safe_direct"),
+            exposure: ToolExposure::Direct,
+            spec: Some(ToolSpec::Function(function_tool(
+                "safe_direct",
+                "Direct tool",
+            ))),
+            search_info: None,
+        },
+        TestRegistryEntry {
+            name: ToolName::plain("safe_model_only"),
+            exposure: ToolExposure::DirectModelOnly,
+            spec: Some(ToolSpec::Function(function_tool(
+                "safe_model_only",
+                "Model only tool",
+            ))),
+            search_info: None,
+        },
+        TestRegistryEntry {
+            name: ToolName::namespaced("mcp__server__", "allowed"),
+            exposure: ToolExposure::Deferred,
+            spec: Some(namespace_spec(
+                "mcp__server__",
+                "Server tools",
+                vec![function_tool("allowed", "Allowed deferred tool")],
+            )),
+            search_info: Some(deferred_search_info.clone()),
+        },
+        TestRegistryEntry {
+            name: ToolName::plain("blocked"),
+            exposure: ToolExposure::Direct,
+            spec: Some(ToolSpec::Function(function_tool("blocked", "Blocked tool"))),
+            search_info: None,
+        },
+    ];
+
+    let plan = plan_tool_registry_entries(
+        &config,
+        entries,
+        vec![ToolSpec::Function(function_tool(
+            "safe_hosted",
+            "Hosted tool",
+        ))],
+    );
+
+    assert_eq!(
+        plan.entries
+            .iter()
+            .map(|entry| entry.name.to_string())
+            .collect::<Vec<_>>(),
+        vec!["safe_direct", "safe_model_only", "mcp__server__allowed"]
+    );
+    assert_eq!(plan.deferred_search_infos, vec![deferred_search_info]);
+    assert!(plan.deferred_tools_available);
+
+    let model_visible_names = plan
+        .model_visible_specs
+        .iter()
+        .map(ToolSpec::name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        model_visible_names,
+        vec!["safe_direct", "safe_model_only", "safe_hosted"]
+    );
+
+    let code_mode_nested_names = plan
+        .code_mode_nested_tool_specs
+        .iter()
+        .map(ToolSpec::name)
+        .collect::<Vec<_>>();
+    assert_eq!(code_mode_nested_names, vec!["safe_direct", "mcp__server__"]);
+}
+
+#[derive(Clone)]
+struct TestRegistryEntry {
+    name: ToolName,
+    exposure: ToolExposure,
+    spec: Option<ToolSpec>,
+    search_info: Option<ToolSearchInfo>,
+}
+
+impl ToolRegistryEntry for TestRegistryEntry {
+    fn tool_name(&self) -> ToolName {
+        self.name.clone()
+    }
+
+    fn spec(&self) -> Option<ToolSpec> {
+        self.spec.clone()
+    }
+
+    fn exposure(&self) -> ToolExposure {
+        self.exposure
+    }
+
+    fn search_info(&self) -> Option<ToolSearchInfo> {
+        self.search_info.clone()
+    }
 }
 
 fn function_tool(name: &str, description: &str) -> ResponsesApiTool {

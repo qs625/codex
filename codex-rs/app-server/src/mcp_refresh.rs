@@ -1,10 +1,10 @@
 use crate::config_manager::ConfigManager;
-use codex_core::CodexThread;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::Op;
+use codex_session_api::SessionCommandHandle;
 use std::io;
 use std::sync::Arc;
 use tracing::warn;
@@ -80,13 +80,16 @@ async fn build_refresh_config(
     })
 }
 
-async fn queue_refresh(
+async fn queue_refresh<H>(
     thread_id: ThreadId,
-    thread: Arc<CodexThread>,
+    thread: Arc<H>,
     config: McpServerRefreshConfig,
-) -> io::Result<()> {
+) -> io::Result<()>
+where
+    H: SessionCommandHandle,
+{
     thread
-        .submit(Op::RefreshMcpServers { config })
+        .submit_op(Op::RefreshMcpServers { config })
         .await
         .map(|_| ())
         .map_err(|err| {
@@ -101,6 +104,7 @@ mod tests {
     use super::*;
     use crate::extensions::guardian_agent_spawner;
     use crate::extensions::thread_extensions;
+    use crate::tool_router_factory::AppServerToolRouterFactory;
     use codex_arg0::Arg0DispatchPaths;
     use codex_config_loader::LoaderOverrides;
     use codex_config_loader::ThreadConfigContext;
@@ -186,7 +190,6 @@ mod tests {
         );
         let thread_watch_manager = crate::thread_status::ThreadWatchManager::new();
         let thread_manager = Arc::new_cyclic(|thread_manager| {
-            let core_state_db: Arc<dyn codex_state_api::StateDbRuntime> = state_db.clone();
             let auth_runtimes = codex_core::ThreadAuthRuntimes::from_auth_runtime(
                 auth_manager.clone(),
                 codex_login::model_provider_auth_manager(Some(auth_manager.clone())),
@@ -204,7 +207,7 @@ mod tests {
                 ),
                 /*analytics_events_client*/ None,
                 thread_store,
-                Some(core_state_db),
+                Some(state_db.clone()),
                 Arc::new(codex_thread_store::DefaultLiveThreadFactory),
                 "11111111-1111-4111-8111-111111111111".to_string(),
                 /*attestation_provider*/ None,
@@ -236,6 +239,7 @@ mod tests {
                         SessionSource::Exec.restriction_product(),
                     ),
                 ),
+                Arc::new(AppServerToolRouterFactory),
             )
         });
         thread_manager.start_thread(good_config).await?;

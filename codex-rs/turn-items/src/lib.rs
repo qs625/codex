@@ -36,6 +36,35 @@ use uuid::Uuid;
 use codex_context_manager::is_contextual_user_message_content;
 use codex_context_manager::parse_visible_hook_prompt_message;
 
+mod assistant_stream;
+mod plan_mode_stream;
+mod remote_compaction;
+mod response_item_policy;
+
+pub use assistant_stream::AssistantMessageStreamParsers;
+pub use assistant_stream::ParsedAssistantTextDelta;
+pub use assistant_stream::ProposedPlanSegment;
+pub use assistant_stream::agent_message_text;
+pub use assistant_stream::last_assistant_message_from_item;
+pub use assistant_stream::last_assistant_message_from_turn;
+pub use assistant_stream::proposed_plan_text_from_assistant_response_item;
+pub use assistant_stream::raw_assistant_output_text_from_item;
+pub use assistant_stream::realtime_text_for_event;
+pub use assistant_stream::strip_hidden_assistant_markup;
+pub use plan_mode_stream::PlanModeStreamAction;
+pub use plan_mode_stream::PlanModeStreamState;
+pub use remote_compaction::CompactRequestLogData;
+pub use remote_compaction::build_compact_request_log_data;
+pub use remote_compaction::build_remote_v2_compacted_history;
+pub use remote_compaction::process_remote_compacted_history;
+pub use remote_compaction::should_keep_remote_compacted_history_item;
+pub use response_item_policy::FinalizedTurnItemFacts;
+pub use response_item_policy::completed_item_defers_mailbox_delivery_to_next_turn;
+pub use response_item_policy::finalize_agent_message_content;
+pub use response_item_policy::finalized_turn_item_facts;
+pub use response_item_policy::response_input_to_response_item;
+pub use response_item_policy::response_item_may_include_external_context;
+
 fn search_action_detail(query: &Option<String>, queries: &Option<Vec<String>>) -> String {
     query.clone().filter(|q| !q.is_empty()).unwrap_or_else(|| {
         let items = queries.as_ref();

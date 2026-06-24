@@ -1,0 +1,18 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-thread-api"
+version.workspace = true
+
+[lib]
+name = "codex_thread_api"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-protocol = { workspace = true }
+codex-session-api = { workspace = true }
+codex-thread-store-api = { workspace = true }

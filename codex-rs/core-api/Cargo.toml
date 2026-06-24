@@ -20,6 +20,7 @@ codex-analytics-api = { workspace = true }
 codex-code-mode-api = { workspace = true }
 codex-config-types = { workspace = true }
 codex-core = { workspace = true }
+codex-core-skills = { workspace = true }
 codex-extension-api = { workspace = true }
 codex-exec-server = { workspace = true }
 codex-features = { workspace = true }
@@ -31,4 +32,6 @@ codex-protocol = { workspace = true }
 codex-rollout = { workspace = true }
 codex-state-api = { workspace = true }
 codex-thread-store = { workspace = true }
+codex-tool-config = { workspace = true }
+codex-tool-handlers = { workspace = true }
 codex-utils-absolute-path = { workspace = true }

@@ -18,6 +18,7 @@ use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::subscriptions::PersistedSubscription;
+use codex_thread_api::LiveThreadRegistry;
 use codex_thread_store::ThreadMetadataPatch;
 
 use crate::thread_status::ThreadWatchManager;
@@ -83,13 +84,13 @@ impl codex_file_subscription::FileSubscriptionThreadRuntime for CoreFileSubscrip
     ) -> codex_file_subscription::SubscriptionRuntimeFuture<'a, Result<(), String>> {
         Box::pin(async move {
             let thread_manager = self.upgrade_thread_manager()?;
-            let thread = thread_manager
-                .get_thread(thread_id)
+            let _ = thread_manager
+                .append_thread_conversation_item(
+                    thread_id,
+                    ResponseItem::EventDrivenTool { id: None, trigger },
+                )
                 .await
                 .map_err(|err| err.to_string())?;
-            let _ = thread
-                .append_message(ResponseItem::EventDrivenTool { id: None, trigger })
-                .await;
             Ok(())
         })
     }
@@ -101,13 +102,13 @@ impl codex_file_subscription::FileSubscriptionThreadRuntime for CoreFileSubscrip
     ) -> codex_file_subscription::SubscriptionRuntimeFuture<'a, Result<(), String>> {
         Box::pin(async move {
             let thread_manager = self.upgrade_thread_manager()?;
-            let thread = thread_manager
-                .get_thread(thread_id)
+            let _ = thread_manager
+                .append_thread_conversation_item(
+                    thread_id,
+                    ResponseItem::EventCommandEvent { id: None, event },
+                )
                 .await
                 .map_err(|err| err.to_string())?;
-            let _ = thread
-                .append_message(ResponseItem::EventCommandEvent { id: None, event })
-                .await;
             Ok(())
         })
     }

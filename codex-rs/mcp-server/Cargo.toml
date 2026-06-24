@@ -43,6 +43,8 @@ codex-sandboxing = { workspace = true }
 codex-state-api = { workspace = true }
 codex-terminal-detection = { workspace = true }
 codex-thread-store = { workspace = true }
+codex-tool-config = { workspace = true }
+codex-tool-handlers = { workspace = true }
 codex-workflow = { workspace = true }
 codex-utils-cli = { workspace = true }
 codex-utils-json-to-toml = { workspace = true }

@@ -9,12 +9,19 @@ workspace = true
 
 [dependencies]
 chardetng = { workspace = true }
+codex-exec-server-api = { workspace = true }
+codex-exec-server-protocol = { workspace = true }
+codex-protocol = { workspace = true }
+codex-sandboxing-api = { workspace = true }
+codex-utils-output-truncation = { workspace = true }
+codex-utils-pty = { workspace = true }
 encoding_rs = { workspace = true }
 rand = { workspace = true }
-tokio = { workspace = true, features = ["sync", "time"] }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tokio-util = { workspace = true, features = ["rt"] }
 
 [dev-dependencies]
+futures = { workspace = true }
 pretty_assertions = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
 

@@ -1,5 +1,8 @@
 use super::*;
 use codex_connectors_types::AppInfo;
+use codex_tool_types::JsonSchema;
+use codex_tool_types::ResponsesApiTool;
+use codex_tool_types::ToolSpec;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
@@ -15,6 +18,43 @@ fn discoverable_tool_enums_use_expected_wire_names() {
             "action_type": "install",
         })
     );
+}
+
+#[test]
+fn tool_search_info_from_spec_converts_function_to_loadable_output() {
+    let source_info = ToolSearchSourceInfo {
+        name: "Calendar".to_string(),
+        description: Some("Calendar tools".to_string()),
+    };
+    let info = ToolSearchInfo::from_spec(
+        "create calendar event".to_string(),
+        ToolSpec::Function(ResponsesApiTool {
+            name: "create_event".to_string(),
+            description: "Create an event".to_string(),
+            strict: true,
+            parameters: JsonSchema::object(
+                /*properties*/ Default::default(),
+                /*required*/ None,
+                /*additional_properties*/ None,
+            ),
+            output_schema: Some(json!({
+                "type": "object",
+                "properties": {}
+            })),
+            defer_loading: None,
+        }),
+        Some(source_info.clone()),
+    )
+    .expect("function spec should be searchable");
+
+    assert_eq!(info.entry.search_text, "create calendar event");
+    assert_eq!(info.source_info, Some(source_info));
+    let codex_tool_types::LoadableToolSpec::Function(tool) = info.entry.output else {
+        panic!("expected function output");
+    };
+    assert_eq!(tool.name, "create_event");
+    assert_eq!(tool.defer_loading, Some(true));
+    assert_eq!(tool.output_schema, None);
 }
 
 #[test]

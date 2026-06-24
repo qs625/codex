@@ -35,6 +35,12 @@ pub enum ExecCapturePolicy {
     FullBuffer,
 }
 
+#[derive(Debug)]
+pub struct ExecOptions {
+    pub expiration: ExecExpiration,
+    pub capture_policy: ExecCapturePolicy,
+}
+
 impl ExecCapturePolicy {
     pub fn retained_bytes_cap(self) -> Option<usize> {
         match self {

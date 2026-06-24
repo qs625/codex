@@ -26,6 +26,7 @@ pub use prompt::GuardianTranscriptCursor;
 pub use prompt::GuardianTranscriptEntry;
 pub use prompt::GuardianTranscriptEntryKind;
 pub use prompt::build_guardian_prompt_items_from_entries;
+pub use prompt::collect_guardian_transcript_entries;
 pub use prompt::guardian_output_schema;
 pub use prompt::guardian_policy_prompt;
 pub use prompt::guardian_policy_prompt_with_config;
@@ -34,6 +35,76 @@ pub use prompt::render_guardian_transcript_entries;
 
 const GUARDIAN_MAX_ACTION_STRING_TOKENS: usize = 16_000;
 const TRUNCATION_TAG: &str = "truncated";
+pub const MAX_CONSECUTIVE_GUARDIAN_DENIALS_PER_TURN: u32 = 3;
+pub const MAX_RECENT_AUTO_REVIEW_DENIALS_PER_TURN: u32 = 10;
+pub const AUTO_REVIEW_DENIAL_WINDOW_SIZE: usize = 50;
+pub const AUTO_REVIEW_DENIED_ACTION_APPROVAL_DEVELOPER_PREFIX: &str =
+    "The user has manually approved a specific action that was previously `Rejected`.";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuardianRejection {
+    pub rationale: String,
+    pub source: codex_protocol::protocol::GuardianAssessmentDecisionSource,
+}
+
+#[derive(Debug, Default)]
+pub struct GuardianRejectionCircuitBreaker {
+    turns: std::collections::HashMap<String, GuardianRejectionCircuitBreakerTurn>,
+}
+
+#[derive(Debug, Default)]
+struct GuardianRejectionCircuitBreakerTurn {
+    consecutive_denials: u32,
+    recent_denials: std::collections::VecDeque<bool>,
+    interrupt_triggered: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuardianRejectionCircuitBreakerAction {
+    Continue,
+    InterruptTurn {
+        consecutive_denials: u32,
+        recent_denials: u32,
+    },
+}
+
+impl GuardianRejectionCircuitBreaker {
+    pub fn clear_turn(&mut self, turn_id: &str) {
+        self.turns.remove(turn_id);
+    }
+
+    pub fn record_denial(&mut self, turn_id: &str) -> GuardianRejectionCircuitBreakerAction {
+        let turn = self.turns.entry(turn_id.to_string()).or_default();
+        turn.consecutive_denials = turn.consecutive_denials.saturating_add(1);
+        Self::record_recent_review(turn, /*denied*/ true);
+        let recent_denials = turn.recent_denials.iter().filter(|denied| **denied).count() as u32;
+        if !turn.interrupt_triggered
+            && (turn.consecutive_denials >= MAX_CONSECUTIVE_GUARDIAN_DENIALS_PER_TURN
+                || recent_denials >= MAX_RECENT_AUTO_REVIEW_DENIALS_PER_TURN)
+        {
+            turn.interrupt_triggered = true;
+            GuardianRejectionCircuitBreakerAction::InterruptTurn {
+                consecutive_denials: turn.consecutive_denials,
+                recent_denials,
+            }
+        } else {
+            GuardianRejectionCircuitBreakerAction::Continue
+        }
+    }
+
+    pub fn record_non_denial(&mut self, turn_id: &str) {
+        let turn = self.turns.entry(turn_id.to_string()).or_default();
+        turn.consecutive_denials = 0;
+        Self::record_recent_review(turn, /*denied*/ false);
+    }
+
+    fn record_recent_review(turn: &mut GuardianRejectionCircuitBreakerTurn, denied: bool) {
+        turn.recent_denials.push_back(denied);
+        if turn.recent_denials.len() > AUTO_REVIEW_DENIAL_WINDOW_SIZE {
+            turn.recent_denials.pop_front();
+        }
+    }
+}
 
 fn guardian_truncate_text(content: &str, token_cap: usize) -> (String, bool) {
     if content.is_empty() {
@@ -166,14 +237,104 @@ mod tests {
     use codex_protocol::models::SandboxPermissions;
     use codex_utils_absolute_path::AbsolutePathBuf;
 
+    use super::AUTO_REVIEW_DENIAL_WINDOW_SIZE;
     use super::GuardianApprovalRequest;
     use super::GuardianMcpAnnotations;
     use super::GuardianNetworkAccessTrigger;
+    use super::GuardianRejectionCircuitBreaker;
+    use super::GuardianRejectionCircuitBreakerAction;
     use super::format_guardian_action_pretty;
     use super::guardian_approval_request_to_json;
 
     fn test_path_buf(path: &str) -> AbsolutePathBuf {
         AbsolutePathBuf::try_from(std::path::PathBuf::from(path)).unwrap()
+    }
+
+    #[test]
+    fn guardian_rejection_circuit_breaker_interrupts_after_three_consecutive_denials() {
+        let mut circuit_breaker = GuardianRejectionCircuitBreaker::default();
+        assert_eq!(
+            circuit_breaker.record_denial("turn-1"),
+            GuardianRejectionCircuitBreakerAction::Continue
+        );
+        assert_eq!(
+            circuit_breaker.record_denial("turn-1"),
+            GuardianRejectionCircuitBreakerAction::Continue
+        );
+        assert_eq!(
+            circuit_breaker.record_denial("turn-1"),
+            GuardianRejectionCircuitBreakerAction::InterruptTurn {
+                consecutive_denials: 3,
+                recent_denials: 3,
+            }
+        );
+        assert_eq!(
+            circuit_breaker.record_denial("turn-1"),
+            GuardianRejectionCircuitBreakerAction::Continue
+        );
+    }
+
+    #[test]
+    fn guardian_rejection_circuit_breaker_resets_consecutive_denials_on_non_denial() {
+        let mut circuit_breaker = GuardianRejectionCircuitBreaker::default();
+        assert_eq!(
+            circuit_breaker.record_denial("turn-1"),
+            GuardianRejectionCircuitBreakerAction::Continue
+        );
+        circuit_breaker.record_non_denial("turn-1");
+        assert_eq!(
+            circuit_breaker.record_denial("turn-1"),
+            GuardianRejectionCircuitBreakerAction::Continue
+        );
+        assert_eq!(
+            circuit_breaker.record_denial("turn-1"),
+            GuardianRejectionCircuitBreakerAction::Continue
+        );
+        assert_eq!(
+            circuit_breaker.record_denial("turn-1"),
+            GuardianRejectionCircuitBreakerAction::InterruptTurn {
+                consecutive_denials: 3,
+                recent_denials: 4,
+            }
+        );
+    }
+
+    #[test]
+    fn auto_review_rejection_circuit_breaker_interrupts_after_ten_recent_denials() {
+        let mut circuit_breaker = GuardianRejectionCircuitBreaker::default();
+        for _ in 0..9 {
+            assert_eq!(
+                circuit_breaker.record_denial("turn-1"),
+                GuardianRejectionCircuitBreakerAction::Continue
+            );
+            circuit_breaker.record_non_denial("turn-1");
+        }
+        assert_eq!(
+            circuit_breaker.record_denial("turn-1"),
+            GuardianRejectionCircuitBreakerAction::InterruptTurn {
+                consecutive_denials: 1,
+                recent_denials: 10,
+            }
+        );
+    }
+
+    #[test]
+    fn auto_review_rejection_circuit_breaker_forgets_denials_outside_recent_review_window() {
+        let mut circuit_breaker = GuardianRejectionCircuitBreaker::default();
+        for _ in 0..9 {
+            assert_eq!(
+                circuit_breaker.record_denial("turn-1"),
+                GuardianRejectionCircuitBreakerAction::Continue
+            );
+            circuit_breaker.record_non_denial("turn-1");
+        }
+        for _ in 0..(AUTO_REVIEW_DENIAL_WINDOW_SIZE - 18) {
+            circuit_breaker.record_non_denial("turn-1");
+        }
+        assert_eq!(
+            circuit_breaker.record_denial("turn-1"),
+            GuardianRejectionCircuitBreakerAction::Continue
+        );
     }
 
     #[test]

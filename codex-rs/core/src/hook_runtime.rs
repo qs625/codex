@@ -36,8 +36,8 @@ use crate::event_mapping::parse_turn_item;
 use crate::pending_input::PendingInputItem;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use crate::tools::hook_names::HookToolName;
 use crate::tools::sandboxing::PermissionRequestPayload;
+use codex_tool_runtime_api::HookToolName;
 
 pub(crate) struct HookRuntimeOutcome {
     pub should_stop: bool,

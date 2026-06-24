@@ -244,8 +244,8 @@ impl FeedbackRequestProcessor {
         conversation_id: ThreadId,
         state_db_ctx: Option<&StateDbHandle>,
     ) -> Option<PathBuf> {
-        if let Ok(conversation) = self.thread_manager.get_thread(conversation_id).await
-            && let Some(rollout_path) = conversation.rollout_path()
+        if let Ok(live_info) = self.thread_manager.live_thread_info(conversation_id).await
+            && let Some(rollout_path) = live_info.rollout_path
         {
             return Some(rollout_path);
         }

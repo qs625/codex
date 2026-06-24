@@ -1,71 +1,34 @@
-pub(crate) mod agent_jobs;
-pub(crate) mod apply_patch;
-mod dynamic;
-pub(crate) mod extension_tools;
-mod goal;
-mod mcp;
-mod mcp_resource;
-pub(crate) mod multi_agents_common;
-pub(crate) mod multi_agents_v2;
-mod plan;
-mod request_permissions;
-mod request_plugin_install;
-mod request_user_input;
-mod shell;
-mod test_sync;
-mod tool_search;
-pub(crate) mod unified_exec;
-mod view_image;
-mod workflow;
-
-use codex_sandboxing_api::policy_transforms::intersect_permission_profiles;
-use codex_sandboxing_api::policy_transforms::merge_permission_profiles;
-use codex_sandboxing_api::policy_transforms::normalize_additional_permissions;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
 use serde::Deserialize;
+#[cfg(test)]
 use serde_json::Map;
 use serde_json::Value;
-use std::path::Path;
 
 use crate::function_tool::FunctionCallError;
+#[cfg(test)]
 use crate::sandboxing::SandboxPermissions;
+#[cfg(test)]
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::session::turn_context::TurnEnvironment;
-pub(crate) use crate::tools::code_mode::CodeModeExecuteHandler;
-pub(crate) use crate::tools::code_mode::CodeModeWaitHandler;
-pub use apply_patch::ApplyPatchHandler;
+pub(crate) type CoreToolDomainHost = crate::apply_patch_tool_host::CoreApplyPatchHandlerHost;
+#[cfg(test)]
 use codex_protocol::models::AdditionalPermissionProfile;
-use codex_protocol::protocol::AskForApproval;
-pub use dynamic::DynamicToolHandler;
-pub use goal::CreateGoalHandler;
-pub use goal::GetGoalHandler;
-pub use goal::UpdateGoalHandler;
-pub use mcp::McpHandler;
-pub use mcp_resource::ListMcpResourceTemplatesHandler;
-pub use mcp_resource::ListMcpResourcesHandler;
-pub use mcp_resource::ReadMcpResourceHandler;
-pub(crate) use multi_agents_v2::SpawnAgentHandler;
-pub use plan::PlanHandler;
-pub use request_permissions::RequestPermissionsHandler;
-pub use request_plugin_install::RequestPluginInstallHandler;
-pub use request_user_input::RequestUserInputHandler;
-pub use shell::ShellCommandHandler;
-pub(crate) use shell::ShellCommandHandlerOptions;
-pub use test_sync::TestSyncHandler;
-pub use tool_search::ToolSearchHandler;
-pub use unified_exec::CommandWaitHandler;
-pub use unified_exec::ExecCommandHandler;
-pub(crate) use unified_exec::ExecCommandHandlerOptions;
-pub use unified_exec::WriteStdinHandler;
-pub use view_image::ViewImageHandler;
-pub use workflow::WorkflowAbortHandler;
-pub use workflow::WorkflowDescribeHandler;
-pub use workflow::WorkflowListHandler;
-pub use workflow::WorkflowResumeHandler;
-pub use workflow::WorkflowStartHandler;
-pub use workflow::WorkflowStatusHandler;
+#[cfg(test)]
+pub(super) use codex_tool_handlers::EffectiveAdditionalPermissions;
+#[cfg(test)]
+pub(super) use codex_tool_handlers::implicit_granted_permissions;
+#[cfg(test)]
+pub(crate) use codex_tool_handlers::normalize_and_validate_additional_permissions;
+
+pub(crate) fn core_tool_domain_host() -> CoreToolDomainHost {
+    fn assert_tool_domain_host<Host: codex_tool_runtime_api::ToolDomainHost>(host: Host) -> Host {
+        host
+    }
+
+    assert_tool_domain_host(crate::apply_patch_tool_host::CoreApplyPatchHandlerHost)
+}
 
 pub(crate) fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
 where
@@ -76,6 +39,7 @@ where
     })
 }
 
+#[cfg(test)]
 fn updated_hook_command(updated_input: &Value) -> Result<&str, FunctionCallError> {
     updated_input
         .get("command")
@@ -87,6 +51,7 @@ fn updated_hook_command(updated_input: &Value) -> Result<&str, FunctionCallError
         })
 }
 
+#[cfg(test)]
 fn rewrite_function_arguments(
     arguments: &str,
     tool_name: &str,
@@ -106,6 +71,7 @@ fn rewrite_function_arguments(
     })
 }
 
+#[cfg(test)]
 fn rewrite_function_string_argument(
     arguments: &str,
     tool_name: &str,
@@ -128,7 +94,7 @@ where
     parse_arguments(arguments)
 }
 
-fn resolve_workdir_base_path(
+pub(crate) fn resolve_workdir_base_path(
     arguments: &str,
     default_cwd: &AbsolutePathBuf,
 ) -> Result<AbsolutePathBuf, FunctionCallError> {
@@ -140,7 +106,7 @@ fn resolve_workdir_base_path(
         .map_or_else(|| default_cwd.clone(), |workdir| default_cwd.join(workdir)))
 }
 
-fn resolve_tool_environment<'a>(
+pub(crate) fn resolve_tool_environment<'a>(
     turn: &'a TurnContext,
     environment_id: Option<&str>,
 ) -> Result<Option<&'a TurnEnvironment>, FunctionCallError> {
@@ -161,143 +127,22 @@ fn resolve_tool_environment<'a>(
     )
 }
 
-/// Validates feature/policy constraints for `with_additional_permissions` and
-/// normalizes any path-based permissions. Errors if the request is invalid.
-pub(crate) fn normalize_and_validate_additional_permissions(
-    additional_permissions_allowed: bool,
-    approval_policy: AskForApproval,
-    sandbox_permissions: SandboxPermissions,
-    additional_permissions: Option<AdditionalPermissionProfile>,
-    permissions_preapproved: bool,
-    _cwd: &Path,
-) -> Result<Option<AdditionalPermissionProfile>, String> {
-    let uses_additional_permissions = matches!(
-        sandbox_permissions,
-        SandboxPermissions::WithAdditionalPermissions
-    );
-
-    if !permissions_preapproved
-        && !additional_permissions_allowed
-        && (uses_additional_permissions || additional_permissions.is_some())
-    {
-        return Err(
-            "additional permissions are disabled; enable `features.exec_permission_approvals` before using `with_additional_permissions`"
-                .to_string(),
-        );
-    }
-
-    if uses_additional_permissions {
-        if !permissions_preapproved && !matches!(approval_policy, AskForApproval::OnRequest) {
-            return Err(format!(
-                "approval policy is {approval_policy:?}; reject command — you cannot request additional permissions unless the approval policy is OnRequest"
-            ));
-        }
-        let Some(additional_permissions) = additional_permissions else {
-            return Err(
-                "missing `additional_permissions`; provide at least one of `network` or `file_system` when using `with_additional_permissions`"
-                    .to_string(),
-            );
-        };
-        let normalized = normalize_additional_permissions(additional_permissions)?;
-        if normalized.is_empty() {
-            return Err(
-                "`additional_permissions` must include at least one requested permission in `network` or `file_system`"
-                    .to_string(),
-            );
-        }
-        return Ok(Some(normalized));
-    }
-
-    if additional_permissions.is_some() {
-        Err(
-            "`additional_permissions` requires `sandbox_permissions` set to `with_additional_permissions`"
-                .to_string(),
-        )
-    } else {
-        Ok(None)
-    }
-}
-
-pub(super) struct EffectiveAdditionalPermissions {
-    pub sandbox_permissions: SandboxPermissions,
-    pub additional_permissions: Option<AdditionalPermissionProfile>,
-    pub permissions_preapproved: bool,
-}
-
-pub(super) fn implicit_granted_permissions(
-    sandbox_permissions: SandboxPermissions,
-    additional_permissions: Option<&AdditionalPermissionProfile>,
-    effective_additional_permissions: &EffectiveAdditionalPermissions,
-) -> Option<AdditionalPermissionProfile> {
-    if !sandbox_permissions.uses_additional_permissions()
-        && !matches!(sandbox_permissions, SandboxPermissions::RequireEscalated)
-        && additional_permissions.is_none()
-    {
-        effective_additional_permissions
-            .additional_permissions
-            .clone()
-    } else {
-        None
-    }
-}
-
+#[cfg(test)]
 pub(super) async fn apply_granted_turn_permissions(
     session: &Session,
     cwd: &std::path::Path,
     sandbox_permissions: SandboxPermissions,
     additional_permissions: Option<AdditionalPermissionProfile>,
 ) -> EffectiveAdditionalPermissions {
-    if matches!(sandbox_permissions, SandboxPermissions::RequireEscalated) {
-        return EffectiveAdditionalPermissions {
-            sandbox_permissions,
-            additional_permissions,
-            permissions_preapproved: false,
-        };
-    }
-
-    let granted_session_permissions = session.granted_session_permissions().await;
-    let granted_turn_permissions = session.granted_turn_permissions().await;
-    let granted_permissions = merge_permission_profiles(
-        granted_session_permissions.as_ref(),
-        granted_turn_permissions.as_ref(),
-    );
-    let effective_permissions = merge_permission_profiles(
-        additional_permissions.as_ref(),
-        granted_permissions.as_ref(),
-    );
-    let permissions_preapproved = match (effective_permissions.as_ref(), granted_permissions) {
-        (Some(effective_permissions), Some(granted_permissions)) => {
-            permissions_are_preapproved(effective_permissions, granted_permissions, cwd)
-        }
-        _ => false,
-    };
-
-    let sandbox_permissions =
-        if effective_permissions.is_some() && !sandbox_permissions.uses_additional_permissions() {
-            SandboxPermissions::WithAdditionalPermissions
-        } else {
-            sandbox_permissions
-        };
-
-    EffectiveAdditionalPermissions {
-        sandbox_permissions,
-        additional_permissions: effective_permissions,
-        permissions_preapproved,
-    }
-}
-
-fn permissions_are_preapproved(
-    effective_permissions: &AdditionalPermissionProfile,
-    granted_permissions: AdditionalPermissionProfile,
-    cwd: &Path,
-) -> bool {
-    let materialized_effective_permissions = intersect_permission_profiles(
-        effective_permissions.clone(),
-        effective_permissions.clone(),
+    codex_tool_handlers::apply_granted_permissions_from_grants(
+        codex_tool_runtime_api::ToolPermissionGrants {
+            session: session.granted_session_permissions().await,
+            turn: session.granted_turn_permissions().await,
+        },
         cwd,
-    );
-    intersect_permission_profiles(effective_permissions.clone(), granted_permissions, cwd)
-        == materialized_effective_permissions
+        sandbox_permissions,
+        additional_permissions,
+    )
 }
 
 #[cfg(test)]
@@ -305,7 +150,6 @@ mod tests {
     use super::EffectiveAdditionalPermissions;
     use super::implicit_granted_permissions;
     use super::normalize_and_validate_additional_permissions;
-    use super::permissions_are_preapproved;
     use crate::sandboxing::SandboxPermissions;
     use codex_protocol::models::AdditionalPermissionProfile;
     use codex_protocol::models::FileSystemPermissions;
@@ -317,7 +161,6 @@ mod tests {
     use codex_protocol::protocol::AskForApproval;
     use codex_protocol::protocol::GranularApprovalConfig;
     use codex_sandboxing_api::policy_transforms::intersect_permission_profiles;
-    use codex_sandboxing_api::policy_transforms::merge_permission_profiles;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
@@ -449,14 +292,16 @@ mod tests {
             requested_permissions.clone(),
             cwd.path(),
         );
-        let effective_permissions =
-            merge_permission_profiles(Some(&requested_permissions), Some(&stored_grant))
-                .expect("merged permissions");
-
-        assert!(permissions_are_preapproved(
-            &effective_permissions,
-            stored_grant,
+        let effective_permissions = codex_tool_handlers::apply_granted_permissions_from_grants(
+            codex_tool_runtime_api::ToolPermissionGrants {
+                session: None,
+                turn: Some(stored_grant),
+            },
             cwd.path(),
-        ));
+            SandboxPermissions::UseDefault,
+            Some(requested_permissions),
+        );
+
+        assert!(effective_permissions.permissions_preapproved);
     }
 }

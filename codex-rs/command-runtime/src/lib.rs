@@ -11,17 +11,28 @@ use tokio::sync::Notify;
 use tokio::time::Instant;
 
 mod exec_control;
+mod exec_server_env;
 mod output;
 pub mod output_decoding;
+mod sandbox_denial;
 mod session_controller;
+mod unified_exec_error;
+mod unified_exec_process;
 pub use exec_control::DEFAULT_EXEC_COMMAND_TIMEOUT_MS;
 pub use exec_control::DEFAULT_EXEC_OUTPUT_MAX_BYTES;
 pub use exec_control::ExecCapturePolicy;
 pub use exec_control::ExecExpiration;
 pub use exec_control::ExecExpirationOutcome;
+pub use exec_control::ExecOptions;
 pub use exec_control::IO_DRAIN_TIMEOUT_MS;
 pub use exec_control::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
 pub use exec_control::cancel_when_either;
+pub use exec_server_env::ExecServerSpawnRequest;
+pub use exec_server_env::apply_unified_exec_env;
+pub use exec_server_env::env_overlay_for_exec_server;
+pub use exec_server_env::exec_env_policy_from_shell_policy;
+pub use exec_server_env::exec_server_process_id;
+pub use exec_server_env::exec_server_spawn_params;
 pub use output::CommandOutputBuffer;
 pub use output::CommandOutputHandles;
 pub use output::CommandOutputRuntime;
@@ -32,10 +43,22 @@ pub use output::resolve_aggregated_output;
 pub use output::split_valid_utf8_prefix;
 pub use output::split_valid_utf8_prefix_with_max;
 pub use output_decoding::bytes_to_string_smart;
+pub use sandbox_denial::is_likely_sandbox_denied;
 pub use session_controller::CommandSessionController;
 pub use session_controller::CommandSessionError;
 pub use session_controller::CommandSessionFuture;
 pub use session_controller::CommandWaitOperation;
+pub use unified_exec_error::UnifiedExecError;
+pub use unified_exec_process::NoopSpawnLifecycle;
+pub use unified_exec_process::SpawnLifecycle;
+pub use unified_exec_process::SpawnLifecycleHandle;
+pub use unified_exec_process::UnifiedExecProcess;
+
+#[derive(Clone, Debug)]
+pub struct ExecServerEnvConfig {
+    pub policy: codex_exec_server_protocol::ExecEnvPolicy,
+    pub local_policy_env: HashMap<String, String>,
+}
 
 pub const MIN_YIELD_TIME_MS: u64 = 250;
 pub const MAX_YIELD_TIME_MS: u64 = 30_000;
@@ -221,6 +244,51 @@ pub fn generate_chunk_id() -> String {
         .map(|_| format!("{:x}", rng.random_range(0..16)))
         .collect()
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CommandProcessPruneMeta {
+    pub process_id: i32,
+    pub last_used: Instant,
+    pub has_exited: bool,
+}
+
+/// Selects which process to prune when the live process store is full.
+///
+/// The newest eight processes are protected to avoid killing a recently used
+/// command. Outside that protected set, exited processes are pruned before
+/// still-running processes; if none have exited, the least recently used
+/// process is selected.
+pub fn command_process_id_to_prune(meta: &[CommandProcessPruneMeta]) -> Option<i32> {
+    if meta.is_empty() {
+        return None;
+    }
+
+    let mut by_recency = meta.to_vec();
+    by_recency.sort_by_key(|entry| std::cmp::Reverse(entry.last_used));
+    let protected: HashSet<i32> = by_recency
+        .iter()
+        .take(8)
+        .map(|entry| entry.process_id)
+        .collect();
+
+    let mut lru = meta.to_vec();
+    lru.sort_by_key(|entry| entry.last_used);
+
+    if let Some(entry) = lru
+        .iter()
+        .find(|entry| !protected.contains(&entry.process_id) && entry.has_exited)
+    {
+        return Some(entry.process_id);
+    }
+
+    lru.into_iter()
+        .find(|entry| !protected.contains(&entry.process_id))
+        .map(|entry| entry.process_id)
+}
+
+#[cfg(test)]
+#[path = "unified_exec_process_tests.rs"]
+mod unified_exec_process_tests;
 
 #[derive(Debug)]
 pub struct CommandProcessIdAllocator {

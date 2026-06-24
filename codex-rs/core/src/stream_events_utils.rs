@@ -4,6 +4,13 @@ use std::sync::Arc;
 use codex_extension_api::ExtensionData;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::items::TurnItem;
+use codex_turn_items::FinalizedTurnItemFacts;
+use codex_turn_items::completed_item_defers_mailbox_delivery_to_next_turn;
+use codex_turn_items::finalize_agent_message_content;
+use codex_turn_items::finalized_turn_item_facts;
+use codex_turn_items::raw_assistant_output_text_from_item;
+use codex_turn_items::response_input_to_response_item;
+use codex_turn_items::response_item_may_include_external_context;
 use codex_utils_stream_parser::strip_citations;
 use tokio_util::sync::CancellationToken;
 
@@ -14,8 +21,7 @@ use crate::parse_turn_item;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::state_db_bridge as state_db;
-use crate::tools::parallel::ToolCallRuntime;
-use crate::tools::router::ToolRouter;
+use crate::tools::ToolCallRuntime;
 use codex_memories_read_api::citations::parse_memory_citation;
 use codex_memories_read_api::citations::thread_ids_from_memory_citation;
 use codex_protocol::error::CodexErr;
@@ -23,12 +29,11 @@ use codex_protocol::error::Result;
 use codex_protocol::memory_citation::MemoryCitation;
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputPayload;
-use codex_protocol::models::MessagePhase;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
+use codex_tool_planning::ToolCall;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_image::decode_base64_image_bytes;
-use codex_utils_stream_parser::strip_proposed_plan_blocks;
 use futures::Future;
 use tracing::debug;
 use tracing::instrument;
@@ -62,47 +67,6 @@ pub(crate) fn image_generation_artifact_path(
         .join(GENERATED_IMAGE_ARTIFACTS_DIR)
         .join(sanitize(session_id))
         .join(format!("{}.png", sanitize(call_id)))
-}
-
-fn strip_hidden_assistant_markup(text: &str, plan_mode: bool) -> String {
-    let (without_citations, _) = strip_citations(text);
-    if plan_mode {
-        strip_proposed_plan_blocks(&without_citations)
-    } else {
-        without_citations
-    }
-}
-
-fn strip_hidden_assistant_markup_and_parse_memory_citation(
-    text: &str,
-    plan_mode: bool,
-) -> (
-    String,
-    Option<codex_protocol::memory_citation::MemoryCitation>,
-) {
-    let (without_citations, citations) = strip_citations(text);
-    let visible_text = if plan_mode {
-        strip_proposed_plan_blocks(&without_citations)
-    } else {
-        without_citations
-    };
-    (visible_text, parse_memory_citation(citations))
-}
-
-pub(crate) fn raw_assistant_output_text_from_item(item: &ResponseItem) -> Option<String> {
-    if let ResponseItem::Message { role, content, .. } = item
-        && role == "assistant"
-    {
-        let combined = content
-            .iter()
-            .filter_map(|ci| match ci {
-                codex_protocol::models::ContentItem::OutputText { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<String>();
-        return Some(combined);
-    }
-    None
 }
 
 async fn save_image_generation_result(
@@ -175,15 +139,6 @@ pub(crate) async fn record_completed_response_item_with_finalized_facts(
         sess.record_memory_citation_for_turn(&turn_context.sub_id)
             .await;
     }
-}
-
-fn response_item_may_include_external_context(item: &ResponseItem) -> bool {
-    matches!(
-        item,
-        ResponseItem::ToolSearchCall { .. }
-            | ResponseItem::ToolSearchOutput { .. }
-            | ResponseItem::WebSearchCall { .. }
-    )
 }
 
 pub(crate) async fn mark_thread_memory_mode_polluted_if_external_context(
@@ -284,13 +239,6 @@ pub(crate) struct FinalizedTurnItem {
     pub(crate) facts: FinalizedTurnItemFacts,
 }
 
-#[derive(Clone, Default)]
-pub(crate) struct FinalizedTurnItemFacts {
-    pub(crate) memory_citation: Option<MemoryCitation>,
-    pub(crate) last_agent_message: Option<String>,
-    pub(crate) defers_mailbox_delivery_to_next_turn: bool,
-}
-
 pub(crate) async fn finalize_non_tool_response_item(
     sess: &Session,
     turn_context: &TurnContext,
@@ -301,41 +249,8 @@ pub(crate) async fn finalize_non_tool_response_item(
     let turn_item =
         handle_non_tool_response_item(sess, turn_context, contributor_policy, item, plan_mode)
             .await?;
-    let (memory_citation, last_agent_message, defers_mailbox_delivery_to_next_turn) =
-        match &turn_item {
-            TurnItem::AgentMessage(agent_message) => {
-                let combined = agent_message
-                    .content
-                    .iter()
-                    .map(|entry| match entry {
-                        codex_protocol::items::AgentMessageContent::Text { text } => text.as_str(),
-                    })
-                    .collect::<String>();
-                let last_agent_message = if combined.trim().is_empty() {
-                    None
-                } else {
-                    Some(combined)
-                };
-                let defers_mailbox_delivery_to_next_turn =
-                    !matches!(agent_message.phase, Some(MessagePhase::Commentary))
-                        && last_agent_message.is_some();
-                (
-                    agent_message.memory_citation.clone(),
-                    last_agent_message,
-                    defers_mailbox_delivery_to_next_turn,
-                )
-            }
-            TurnItem::ImageGeneration(_) => (None, None, true),
-            _ => (None, None, false),
-        };
-    Some(FinalizedTurnItem {
-        turn_item,
-        facts: FinalizedTurnItemFacts {
-            memory_citation,
-            last_agent_message,
-            defers_mailbox_delivery_to_next_turn,
-        },
-    })
+    let facts = finalized_turn_item_facts(&turn_item);
+    Some(FinalizedTurnItem { turn_item, facts })
 }
 
 #[instrument(level = "trace", skip_all)]
@@ -347,7 +262,7 @@ pub(crate) async fn handle_output_item_done(
     let mut output = OutputItemResult::default();
     let plan_mode = ctx.turn_context.collaboration_mode.mode == ModeKind::Plan;
 
-    match ToolRouter::build_tool_call(item.clone()) {
+    match ToolCall::from_response_item(item.clone()) {
         // The model emitted a tool call; log it, persist the item immediately, and queue the tool execution.
         Ok(Some(call)) => {
             ctx.sess
@@ -466,20 +381,7 @@ pub(crate) async fn handle_non_tool_response_item(
                 apply_turn_item_contributors(sess, turn_store, &mut turn_item).await;
             }
             if let TurnItem::AgentMessage(agent_message) = &mut turn_item {
-                let combined = agent_message
-                    .content
-                    .iter()
-                    .map(|entry| match entry {
-                        codex_protocol::items::AgentMessageContent::Text { text } => text.as_str(),
-                    })
-                    .collect::<String>();
-                let (stripped, memory_citation) =
-                    strip_hidden_assistant_markup_and_parse_memory_citation(&combined, plan_mode);
-                agent_message.content =
-                    vec![codex_protocol::items::AgentMessageContent::Text { text: stripped }];
-                if agent_message.memory_citation.is_none() {
-                    agent_message.memory_citation = memory_citation;
-                }
+                finalize_agent_message_content(agent_message, plan_mode);
             }
             if let TurnItem::ImageGeneration(image_item) = &mut turn_item {
                 let session_id = sess.conversation_id.to_string();
@@ -534,80 +436,6 @@ pub(crate) async fn handle_non_tool_response_item(
             debug!("unexpected tool output from stream");
             None
         }
-        _ => None,
-    }
-}
-
-pub(crate) fn last_assistant_message_from_item(
-    item: &ResponseItem,
-    plan_mode: bool,
-) -> Option<String> {
-    if let Some(combined) = raw_assistant_output_text_from_item(item) {
-        if combined.is_empty() {
-            return None;
-        }
-        let stripped = strip_hidden_assistant_markup(&combined, plan_mode);
-        if stripped.trim().is_empty() {
-            return None;
-        }
-        return Some(stripped);
-    }
-    None
-}
-
-fn completed_item_defers_mailbox_delivery_to_next_turn(
-    item: &ResponseItem,
-    plan_mode: bool,
-) -> bool {
-    match item {
-        ResponseItem::Message { role, phase, .. } => {
-            if role != "assistant" || matches!(phase, Some(MessagePhase::Commentary)) {
-                return false;
-            }
-            // Treat `None` like final-answer text so untagged providers default
-            // to the safer "defer mailbox mail" behavior.
-            last_assistant_message_from_item(item, plan_mode).is_some()
-        }
-        ResponseItem::ImageGenerationCall { .. } => true,
-        _ => false,
-    }
-}
-
-pub(crate) fn response_input_to_response_item(input: &ResponseInputItem) -> Option<ResponseItem> {
-    match input {
-        ResponseInputItem::FunctionCallOutput { call_id, output } => {
-            Some(ResponseItem::FunctionCallOutput {
-                call_id: call_id.clone(),
-                output: output.clone(),
-            })
-        }
-        ResponseInputItem::CustomToolCallOutput {
-            call_id,
-            name,
-            output,
-        } => Some(ResponseItem::CustomToolCallOutput {
-            call_id: call_id.clone(),
-            name: name.clone(),
-            output: output.clone(),
-        }),
-        ResponseInputItem::McpToolCallOutput { call_id, output } => {
-            let output = output.as_function_call_output_payload();
-            Some(ResponseItem::FunctionCallOutput {
-                call_id: call_id.clone(),
-                output,
-            })
-        }
-        ResponseInputItem::ToolSearchOutput {
-            call_id,
-            status,
-            execution,
-            tools,
-        } => Some(ResponseItem::ToolSearchOutput {
-            call_id: Some(call_id.clone()),
-            status: status.clone(),
-            execution: execution.clone(),
-            tools: tools.clone(),
-        }),
         _ => None,
     }
 }

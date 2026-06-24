@@ -1,0 +1,16 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-session-api"
+version.workspace = true
+
+[lib]
+name = "codex_session_api"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-protocol = { workspace = true }

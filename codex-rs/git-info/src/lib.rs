@@ -24,3 +24,7 @@ pub use info::local_git_branches;
 pub use info::recent_commits;
 pub use info::resolve_root_git_project_for_trust;
 pub use object_id::git_blob_oid;
+
+#[cfg(test)]
+#[path = "integration_tests.rs"]
+mod integration_tests;

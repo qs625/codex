@@ -9,7 +9,11 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+codex-execpolicy-api = { workspace = true }
+codex-permissions-runtime = { workspace = true }
+codex-process-exec = { workspace = true }
 codex-protocol = { workspace = true }
+codex-sandboxing-api = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 libc = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
@@ -28,6 +32,7 @@ tokio-util = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+codex-execpolicy = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 

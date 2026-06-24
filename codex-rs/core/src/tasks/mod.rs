@@ -22,7 +22,7 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::config::Config;
-use crate::goals::GoalRuntimeEvent;
+use crate::goal::GoalRuntimeEvent;
 use crate::hook_runtime::PendingInputHookDisposition;
 use crate::hook_runtime::inspect_pending_input;
 use crate::hook_runtime::record_additional_contexts;

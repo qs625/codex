@@ -44,6 +44,7 @@ use crate::skills_watcher::SkillsWatcher;
 use crate::thread_state::ConnectionCapabilities;
 use crate::thread_state::ThreadStateManager;
 use crate::thread_store_factory::thread_store_from_config;
+use crate::tool_router_factory::AppServerToolRouterFactory;
 use crate::transport::AppServerTransport;
 use crate::transport::RemoteControlHandle;
 use async_trait::async_trait;
@@ -369,6 +370,9 @@ impl MessageProcessor {
         let thread_manager = Arc::new_cyclic(|thread_manager| {
             let runtime_environment_provider: Arc<dyn ExecEnvironmentProvider> =
                 environment_manager.clone();
+            #[cfg(test)]
+            let core_state_db = state_db.clone();
+            #[cfg(not(test))]
             let core_state_db = state_db.clone().map(|state_db| {
                 let state_db: Arc<dyn codex_state_api::StateDbRuntime> = state_db;
                 state_db
@@ -420,6 +424,7 @@ impl MessageProcessor {
                     ),
                 ),
                 thread_manager_plugin_runtime.clone(),
+                Arc::new(AppServerToolRouterFactory),
             )
             .with_terminal_type(user_agent())
         });

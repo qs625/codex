@@ -48,6 +48,28 @@ pub struct Prompt {
     pub output_schema_strict: bool,
 }
 
+pub struct PromptBuildParams {
+    pub input: Vec<ResponseItem>,
+    pub tools: Vec<ToolSpec>,
+    pub parallel_tool_calls: bool,
+    pub base_instructions: BaseInstructions,
+    pub personality: Option<Personality>,
+    pub output_schema: Option<Value>,
+    pub output_schema_strict: bool,
+}
+
+pub fn build_prompt(params: PromptBuildParams) -> Prompt {
+    Prompt {
+        input: params.input,
+        tools: params.tools,
+        parallel_tool_calls: params.parallel_tool_calls,
+        base_instructions: params.base_instructions,
+        personality: params.personality,
+        output_schema: params.output_schema,
+        output_schema_strict: params.output_schema_strict,
+    }
+}
+
 impl Default for Prompt {
     fn default() -> Self {
         Self {

@@ -34,6 +34,7 @@ mod exec_approval;
 pub(crate) mod message_processor;
 mod outgoing_message;
 mod patch_approval;
+mod tool_router_factory;
 
 use crate::message_processor::MessageProcessor;
 use crate::outgoing_message::OutgoingJsonRpcMessage;

@@ -7,7 +7,6 @@ use crate::client_common::ResponseEvent;
 use crate::compact::CompactionAnalyticsAttempt;
 use crate::compact::InitialContextInjection;
 use crate::compact::compaction_status_from_result;
-use crate::compact_remote::build_compact_request_log_data;
 use crate::compact_remote::log_remote_compact_failure;
 use crate::compact_remote::process_compacted_history;
 use crate::compact_remote::trim_function_call_history_to_fit_context_window;
@@ -29,6 +28,8 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_rollout_trace_api::CompactionCheckpointTracePayload;
 use codex_rollout_trace_api::InferenceTraceContext;
+use codex_turn_items::build_compact_request_log_data;
+use codex_turn_items::build_remote_v2_compacted_history;
 use futures::Stream;
 use futures::StreamExt;
 use futures::TryFutureExt;
@@ -209,7 +210,7 @@ async fn run_remote_compact_task_inner_impl(
             .map(|(item, _)| std::slice::from_ref(item)),
     );
     let (compaction_output, response_id) = compaction_output_result?;
-    let compacted_history = build_v2_compacted_history(&prompt_input, compaction_output);
+    let compacted_history = build_remote_v2_compacted_history(&prompt_input, compaction_output);
     let new_history = process_compacted_history(
         sess.as_ref(),
         turn_context.as_ref(),
@@ -337,27 +338,6 @@ where
     Ok((context_compaction_output, response_id))
 }
 
-fn build_v2_compacted_history(
-    prompt_input: &[ResponseItem],
-    compaction_output: ResponseItem,
-) -> Vec<ResponseItem> {
-    let mut retained = prompt_input
-        .iter()
-        .filter(|item| is_retained_for_remote_compaction_v2(item))
-        .cloned()
-        .collect::<Vec<_>>();
-    retained.push(compaction_output);
-    retained
-}
-
-fn is_retained_for_remote_compaction_v2(item: &ResponseItem) -> bool {
-    let ResponseItem::Message { role, .. } = item else {
-        return false;
-    };
-
-    matches!(role.as_str(), "user" | "developer" | "system")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,42 +354,6 @@ mod tests {
             }],
             phase,
         }
-    }
-
-    #[test]
-    fn build_v2_compacted_history_matches_prod_retention_shape() {
-        let input = vec![
-            message("developer", "dev", /*phase*/ None),
-            message("system", "sys", /*phase*/ None),
-            message("user", "user", /*phase*/ None),
-            message("assistant", "commentary", Some(MessagePhase::Commentary)),
-            message("assistant", "final", Some(MessagePhase::FinalAnswer)),
-            ResponseItem::FunctionCall {
-                id: None,
-                name: "shell_command".to_string(),
-                namespace: None,
-                arguments: "{}".to_string(),
-                call_id: "call_1".to_string(),
-            },
-            ResponseItem::Compaction {
-                encrypted_content: "old".to_string(),
-            },
-        ];
-        let output = ResponseItem::ContextCompaction {
-            encrypted_content: Some("new".to_string()),
-        };
-
-        let history = build_v2_compacted_history(&input, output.clone());
-
-        assert_eq!(
-            history,
-            vec![
-                message("developer", "dev", /*phase*/ None),
-                message("system", "sys", /*phase*/ None),
-                message("user", "user", /*phase*/ None),
-                output,
-            ]
-        );
     }
 
     #[tokio::test]

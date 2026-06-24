@@ -14,7 +14,11 @@ use anyhow::Result;
 use anyhow::anyhow;
 use codex_config_requirements::CloudRequirementsLoader;
 use codex_core::CodexThread;
+use codex_core::CoreToolDomainHost;
+use codex_core::CoreToolRuntimeRouter;
 use codex_core::ThreadManager;
+use codex_core::ToolRouterBuildParams;
+use codex_core::ToolRouterFactory;
 use codex_core::config::Config;
 use codex_core::resolve_installation_id;
 use codex_core::shell::Shell;
@@ -69,6 +73,29 @@ const TEST_MODEL_WITH_EXPERIMENTAL_TOOLS: &str = "test-gpt-5.1-codex";
 const REMOTE_EXEC_SERVER_URL_ENV_VAR: &str = "CODEX_TEST_REMOTE_EXEC_SERVER_URL";
 static REMOTE_TEST_INSTANCE_COUNTER: AtomicU64 = AtomicU64::new(0);
 const SUBMIT_TURN_COMPLETE_TIMEOUT: Duration = Duration::from_secs(30);
+
+struct TestToolRouterFactory;
+
+impl ToolRouterFactory for TestToolRouterFactory {
+    fn build_tool_router(
+        &self,
+        config: &codex_tool_config::ToolsConfig,
+        params: ToolRouterBuildParams<'_>,
+    ) -> CoreToolRuntimeRouter {
+        codex_tool_handlers::build_tool_router(
+            config,
+            &CoreToolDomainHost,
+            codex_tool_handlers::ToolRuntimeBuildParams {
+                mcp_tools: params.mcp_tools,
+                deferred_mcp_tools: params.deferred_mcp_tools,
+                discoverable_tools: params.discoverable_tools,
+                extension_tool_executors: params.extension_tool_executors,
+                dynamic_tools: params.dynamic_tools,
+                default_agent_type_description: params.default_agent_type_description,
+            },
+        )
+    }
+}
 
 #[derive(Debug)]
 pub struct TestEnv {
@@ -503,6 +530,7 @@ impl TestCodexBuilder {
             Arc::new(codex_memories_read_api::DisabledMemoryToolDeveloperInstructionsProvider),
             Arc::new(codex_core_skills_api::DisabledSkillsRuntime),
             Arc::new(codex_core_plugins_api::DisabledPluginRuntime),
+            Arc::new(TestToolRouterFactory),
         );
         let thread_manager = Arc::new(thread_manager);
         let user_shell_override = self.user_shell_override.clone();

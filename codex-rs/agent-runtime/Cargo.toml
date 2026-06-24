@@ -9,6 +9,12 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+codex-agent-roles = { workspace = true }
+codex-config = { workspace = true }
+codex-config-state = { workspace = true }
+codex-config-toml = { workspace = true }
+codex-config-types = { workspace = true }
+codex-file-system = { workspace = true }
 codex-metrics-api = { workspace = true }
 codex-protocol = { workspace = true }
 codex-rollout-api = { workspace = true }
@@ -16,10 +22,16 @@ codex-state-api = { workspace = true }
 codex-utils-template = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["fs", "sync"] }
+toml = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
+chrono = { workspace = true }
+codex-config = { workspace = true, features = ["test-support"] }
 pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lib]
 doctest = false

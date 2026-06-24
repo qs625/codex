@@ -362,7 +362,10 @@ pub(super) async fn ensure_listener_task_running(
     Ok(())
 }
 
-pub(super) async fn wait_for_thread_shutdown(thread: &Arc<CodexThread>) -> ThreadShutdownResult {
+pub(super) async fn wait_for_thread_shutdown<H>(thread: &Arc<H>) -> ThreadShutdownResult
+where
+    H: LiveThreadHandle,
+{
     match tokio::time::timeout(Duration::from_secs(10), thread.shutdown_and_wait()).await {
         Ok(Ok(())) => ThreadShutdownResult::Complete,
         Ok(Err(_)) => ThreadShutdownResult::SubmitFailed,
@@ -370,15 +373,17 @@ pub(super) async fn wait_for_thread_shutdown(thread: &Arc<CodexThread>) -> Threa
     }
 }
 
-pub(super) async fn unload_thread_without_subscribers(
+pub(super) async fn unload_thread_without_subscribers<H>(
     thread_manager: Arc<ThreadManager>,
     outgoing: Arc<OutgoingMessageSender>,
     pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
     thread_state_manager: ThreadStateManager,
     thread_watch_manager: ThreadWatchManager,
     thread_id: ThreadId,
-    thread: Arc<CodexThread>,
-) {
+    thread: Arc<H>,
+) where
+    H: LiveThreadHandle + 'static,
+{
     info!("thread {thread_id} has no subscribers and is idle; shutting down");
 
     // Any pending app-server -> client requests for this thread can no longer be

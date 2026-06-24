@@ -152,7 +152,7 @@ async fn parallel_support_does_not_match_namespaced_local_tool_names() -> anyhow
 async fn build_tool_call_uses_namespace_for_registry_name() -> anyhow::Result<()> {
     let tool_name = "create_event".to_string();
 
-    let call = ToolRouter::build_tool_call(ResponseItem::FunctionCall {
+    let call = codex_tool_planning::ToolCall::from_response_item(ResponseItem::FunctionCall {
         id: None,
         name: tool_name.clone(),
         namespace: Some("mcp__codex_apps__calendar".to_string()),
@@ -358,7 +358,7 @@ async fn extension_tool_executors_are_model_visible_and_dispatchable() -> anyhow
         "expected extension-provided tool to be visible to the model"
     );
 
-    let call = ToolRouter::build_tool_call(ResponseItem::FunctionCall {
+    let call = codex_tool_planning::ToolCall::from_response_item(ResponseItem::FunctionCall {
         id: None,
         name: "echo".to_string(),
         namespace: Some("extension/".to_string()),

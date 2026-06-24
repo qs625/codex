@@ -5,6 +5,7 @@
 
 mod manager;
 pub mod policy_transforms;
+mod request_permissions;
 mod sandbox_tags;
 mod windows_deny_read;
 mod windows_filesystem_overrides;
@@ -18,6 +19,7 @@ pub use manager::SandboxablePreference;
 pub use manager::compatibility_sandbox_policy_for_permission_profile;
 pub use manager::get_platform_sandbox;
 pub use manager::select_initial_sandbox;
+pub use request_permissions::normalize_request_permissions_response;
 pub use sandbox_tags::permission_profile_policy_tag;
 pub use sandbox_tags::permission_profile_sandbox_tag;
 pub use sandbox_tags::sandbox_tag;

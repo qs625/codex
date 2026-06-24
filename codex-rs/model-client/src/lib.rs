@@ -134,11 +134,13 @@ pub use attestation::AttestationProvider;
 pub use attestation::GenerateAttestationFuture;
 pub use attestation::X_OAI_ATTESTATION_HEADER;
 pub use prompt::Prompt;
+pub use prompt::PromptBuildParams;
 pub use prompt::REVIEW_EXIT_INTERRUPTED_TMPL;
 pub use prompt::REVIEW_EXIT_SUCCESS_TMPL;
 pub use prompt::REVIEW_PROMPT;
 pub use prompt::ResponseEvent;
 pub use prompt::ResponseStream;
+pub use prompt::build_prompt;
 
 macro_rules! feedback_tags {
     ($( $key:ident = $value:expr ),+ $(,)?) => {

@@ -19,6 +19,7 @@ use codex_core_api::CodexThread;
 use codex_core_api::Config;
 use codex_core_api::ConfigLayerStack;
 use codex_core_api::Constrained;
+use codex_core_api::DefaultCoreToolRouterFactory;
 use codex_core_api::DefaultLiveThreadFactory;
 use codex_core_api::DefaultModelProviderFactory;
 use codex_core_api::DisabledCodeModeRuntimeFactory;
@@ -143,6 +144,7 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         /*attestation_provider*/ None,
         Arc::new(DefaultModelProviderFactory),
         Arc::new(DisabledCodeModeRuntimeFactory),
+        Arc::new(DefaultCoreToolRouterFactory),
     );
 
     let NewThread {

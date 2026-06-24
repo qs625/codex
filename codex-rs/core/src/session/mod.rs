@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Debug;
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -98,10 +97,9 @@ use codex_network_proxy_api::NetworkProxyAuditMetadata;
 use codex_network_proxy_api::NetworkProxyRuntimeFactory;
 use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_network_proxy_api::SharedNetworkProxyRuntimeFactory;
-use codex_network_proxy_api::normalize_host;
 use codex_openai_files_api::SharedOpenAiFileUploader;
+use codex_permissions_runtime::validate_network_policy_amendment_host;
 use codex_protocol::ThreadId;
-use codex_protocol::account::PlanType as AccountPlanType;
 use codex_protocol::approvals::ElicitationRequestEvent;
 use codex_protocol::approvals::ExecPolicyAmendment;
 use codex_protocol::approvals::NetworkPolicyAmendment;
@@ -124,7 +122,6 @@ use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::PermissionProfile;
-use codex_protocol::models::SandboxEnforcement;
 use codex_protocol::models::format_allow_prefixes;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
@@ -159,7 +156,7 @@ use codex_protocol::request_user_input::RequestUserInputResponse;
 use codex_rollout_trace_api::AgentResultTracePayload;
 use codex_rollout_trace_api::ThreadStartedTraceMetadata;
 use codex_rollout_trace_api::ThreadTraceContext;
-use codex_sandboxing_api::policy_transforms::intersect_permission_profiles;
+use codex_sandboxing_api::normalize_request_permissions_response;
 use codex_shell_command::parse_command::parse_command;
 use codex_thread_store_api::CreateThreadParams;
 use codex_thread_store_api::LiveThreadFactory;
@@ -192,7 +189,6 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::client::ModelClient;
-use crate::codex_thread::ThreadConfigSnapshot;
 #[cfg(test)]
 use crate::compact::collect_user_messages;
 use crate::config::CONFIG_TOML_FILE;
@@ -201,9 +197,9 @@ use crate::config::Constrained;
 use crate::config::ConstraintResult;
 use crate::config::PermissionProfileState;
 use crate::config::StartedNetworkProxy;
-use crate::config::resolve_web_search_mode_for_turn;
 use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
+use crate::thread::ThreadConfigSnapshot;
 use codex_config_state::ConfigLayerStackOrdering;
 use codex_config_types::ConfigLayerSource;
 use codex_config_types::McpServerConfig;
@@ -234,59 +230,18 @@ use self::review::spawn_review_thread;
 use self::session::AppServerClientMetadata;
 use self::session::Session;
 use self::session::SessionConfiguration;
-pub(crate) use self::session::SessionSettingsUpdate;
-#[cfg(test)]
-use self::turn::AssistantMessageStreamParsers;
-#[cfg(test)]
-use self::turn::collect_explicit_app_ids_from_skill_items;
-#[cfg(test)]
-use self::turn::filter_connectors_for_input;
-use self::turn::realtime_text_for_event;
 use self::turn_context::TurnContext;
 use self::turn_context::TurnSkillsContext;
 #[cfg(test)]
 mod rollout_reconstruction_tests;
 
-#[derive(Debug, PartialEq)]
-pub enum SteerInputError {
-    NoActiveTurn(Vec<UserInput>),
-    ExpectedTurnMismatch { expected: String, actual: String },
-    ActiveTurnNotSteerable { turn_kind: NonSteerableTurnKind },
-    EmptyInput,
-}
-
-impl SteerInputError {
-    fn to_error_event(&self) -> ErrorEvent {
-        match self {
-            Self::NoActiveTurn(_) => ErrorEvent {
-                message: "no active turn to steer".to_string(),
-                codex_error_info: Some(CodexErrorInfo::BadRequest),
-            },
-            Self::ExpectedTurnMismatch { expected, actual } => ErrorEvent {
-                message: format!("expected active turn id `{expected}` but found `{actual}`"),
-                codex_error_info: Some(CodexErrorInfo::BadRequest),
-            },
-            Self::ActiveTurnNotSteerable { turn_kind } => {
-                let turn_kind_label = match turn_kind {
-                    NonSteerableTurnKind::Review => "review",
-                    NonSteerableTurnKind::Compact => "compact",
-                };
-                ErrorEvent {
-                    message: format!("cannot steer a {turn_kind_label} turn"),
-                    codex_error_info: Some(CodexErrorInfo::ActiveTurnNotSteerable {
-                        turn_kind: *turn_kind,
-                    }),
-                }
-            }
-            Self::EmptyInput => ErrorEvent {
-                message: "input must not be empty".to_string(),
-                codex_error_info: Some(CodexErrorInfo::BadRequest),
-            },
-        }
-    }
-}
-
 pub(crate) use codex_rollout_api::PreviousTurnSettings;
+use codex_session_runtime::ActiveSteerTurn;
+pub(crate) use codex_session_runtime::SessionSettingsUpdate;
+pub use codex_session_runtime::SteerInputError;
+use codex_session_runtime::SteerableTaskKind;
+use codex_session_runtime::resolve_session_service_tier;
+use codex_session_runtime::validate_steer_input;
 
 #[cfg(test)]
 use crate::SkillLoadOutcome;
@@ -297,6 +252,9 @@ use crate::context::UserInstructions;
 use crate::exec_policy::ExecPolicyUpdateError;
 use crate::guardian::GuardianReviewSessionManager;
 use crate::mcp::McpManager;
+use crate::network_approval::NetworkApprovalService;
+use crate::network_approval::build_blocked_request_observer;
+use crate::network_approval::build_network_policy_decider;
 use crate::network_policy_decision::execpolicy_network_rule_amendment;
 use crate::rollout::map_session_init_error;
 use crate::session_startup_prewarm::SessionStartupPrewarmHandle;
@@ -307,6 +265,7 @@ use crate::state::MailboxDeliveryPhase;
 use crate::state::PendingRequestPermissions;
 use crate::state::SessionServices;
 use crate::state::SessionState;
+use crate::state::TaskKind;
 use crate::state_db_bridge as state_db;
 use crate::state_db_bridge::StateDbHandle;
 #[cfg(test)]
@@ -314,11 +273,9 @@ use crate::stream_events_utils::HandleOutputCtx;
 #[cfg(test)]
 use crate::stream_events_utils::handle_output_item_done;
 use crate::tasks::ReviewTask;
-use crate::tools::network_approval::NetworkApprovalService;
-use crate::tools::network_approval::build_blocked_request_observer;
-use crate::tools::network_approval::build_network_policy_decider;
 #[cfg(test)]
-use crate::tools::parallel::ToolCallRuntime;
+use crate::tools::ToolCallRuntime;
+use crate::tools::router::ToolRouterFactory;
 use crate::tools::sandboxing::ApprovalStore;
 use crate::turn_timing::TurnTimingState;
 use crate::turn_timing::record_turn_ttfm_metric;
@@ -337,7 +294,6 @@ use codex_metrics_api::THREAD_STARTED_METRIC;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
-use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
@@ -359,7 +315,6 @@ use codex_protocol::protocol::ModelRerouteReason;
 use codex_protocol::protocol::ModelVerification;
 use codex_protocol::protocol::ModelVerificationEvent;
 use codex_protocol::protocol::NetworkApprovalContext;
-use codex_protocol::protocol::NonSteerableTurnKind;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::RateLimitSnapshot;
 use codex_protocol::protocol::RequestUserInputEvent;
@@ -385,9 +340,8 @@ use codex_trace_context::context_from_w3c_trace_context;
 use codex_trace_context::current_span_trace_id;
 use codex_trace_context::current_span_w3c_trace_context;
 use codex_trace_context::set_parent_from_w3c_trace_context;
+use codex_turn_items::realtime_text_for_event;
 use codex_utils_absolute_path::AbsolutePathBuf;
-#[cfg(test)]
-use codex_utils_stream_parser::ProposedPlanSegment;
 
 /// The high-level interface to the Codex system.
 /// It operates as a queue pair where you send submissions and receive events.
@@ -460,6 +414,7 @@ pub(crate) struct CodexSpawnArgs {
     pub(crate) openai_file_uploader: SharedOpenAiFileUploader,
     pub(crate) code_mode_service: Arc<dyn CodeModeRuntimeService>,
     pub(crate) code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+    pub(crate) tool_router_factory: Arc<dyn ToolRouterFactory>,
     pub(crate) workflow_runs: Arc<dyn crate::workflow_runs::WorkflowRunController>,
 }
 
@@ -587,6 +542,7 @@ impl Codex {
             openai_file_uploader,
             code_mode_service,
             code_mode_runtime_factory,
+            tool_router_factory,
             memory_tool_developer_instructions_provider,
             workflow_runs,
         } = args;
@@ -698,7 +654,7 @@ impl Codex {
         let uses_enterprise_default_service_tier = auth_runtime_ref
             .telemetry_snapshot()
             .uses_enterprise_default_service_tier;
-        let service_tier = get_service_tier(
+        let service_tier = resolve_session_service_tier(
             config.service_tier.clone(),
             config.notices.fast_default_opt_out.unwrap_or(false),
             uses_enterprise_default_service_tier,
@@ -778,6 +734,7 @@ impl Codex {
             openai_file_uploader,
             code_mode_service,
             code_mode_runtime_factory,
+            tool_router_factory,
             workflow_runs,
         )
         .await
@@ -945,29 +902,18 @@ async fn merge_plugin_agent_roles(config: &mut Config, plugin_outcome: &PluginLo
     config.startup_warnings.extend(warnings);
 }
 
-fn get_service_tier(
-    configured_service_tier: Option<String>,
-    fast_default_opt_out: bool,
-    uses_enterprise_default_service_tier: bool,
-    fast_mode_enabled: bool,
-) -> Option<String> {
-    if configured_service_tier.is_some() || fast_default_opt_out || !fast_mode_enabled {
-        return configured_service_tier;
-    }
-
-    uses_enterprise_default_service_tier.then_some(ServiceTier::Fast.request_value().to_string())
-}
-
 fn session_permission_profile_state_from_config(
     config: &Config,
 ) -> CodexResult<PermissionProfileState> {
     Ok(config.permissions.permission_profile_state().clone())
 }
 
-fn is_enterprise_default_service_tier_plan(plan_type: AccountPlanType) -> bool {
-    plan_type == AccountPlanType::Enterprise
-        || plan_type.is_business_like()
-        || plan_type.is_team_like()
+fn steerable_task_kind(kind: TaskKind) -> SteerableTaskKind {
+    match kind {
+        TaskKind::Regular => SteerableTaskKind::Regular,
+        TaskKind::Review => SteerableTaskKind::Review,
+        TaskKind::Compact => SteerableTaskKind::Compact,
+    }
 }
 
 #[cfg(test)]
@@ -2193,8 +2139,8 @@ impl Session {
             .acquire()
             .await
             .map_err(|_| anyhow::anyhow!("managed network proxy refresh semaphore closed"))?;
-        let host =
-            Self::validated_network_policy_amendment_host(amendment, network_approval_context)?;
+        let host = validate_network_policy_amendment_host(amendment, network_approval_context)
+            .map_err(anyhow::Error::msg)?;
         let codex_home = self
             .state
             .lock()
@@ -2234,22 +2180,6 @@ impl Session {
             })?;
 
         Ok(())
-    }
-
-    fn validated_network_policy_amendment_host(
-        amendment: &NetworkPolicyAmendment,
-        network_approval_context: &NetworkApprovalContext,
-    ) -> anyhow::Result<String> {
-        let approved_host = normalize_host(&network_approval_context.host);
-        let amendment_host = normalize_host(&amendment.host);
-        if amendment_host != approved_host {
-            return Err(anyhow::anyhow!(
-                "network policy amendment host '{}' does not match approved host '{}'",
-                amendment.host,
-                network_approval_context.host
-            ));
-        }
-        Ok(approved_host)
     }
 
     pub(crate) async fn record_network_policy_amendment_message(
@@ -2526,7 +2456,7 @@ impl Session {
                     }
                 }
             };
-            let response = Self::normalize_request_permissions_response(
+            let response = normalize_request_permissions_response(
                 requested_permissions,
                 response,
                 cwd.as_path(),
@@ -2675,7 +2605,7 @@ impl Session {
         };
         match entry {
             Some(entry) => {
-                let response = Self::normalize_request_permissions_response(
+                let response = normalize_request_permissions_response(
                     entry.requested_permissions,
                     response,
                     entry.cwd.as_path(),
@@ -2690,35 +2620,6 @@ impl Session {
             None => {
                 warn!("No pending request_permissions found for call_id: {call_id}");
             }
-        }
-    }
-
-    fn normalize_request_permissions_response(
-        requested_permissions: RequestPermissionProfile,
-        response: RequestPermissionsResponse,
-        cwd: &Path,
-    ) -> RequestPermissionsResponse {
-        if response.strict_auto_review && matches!(response.scope, PermissionGrantScope::Session) {
-            return RequestPermissionsResponse {
-                permissions: RequestPermissionProfile::default(),
-                scope: PermissionGrantScope::Turn,
-                strict_auto_review: false,
-            };
-        }
-
-        if response.permissions.is_empty() {
-            return response;
-        }
-
-        RequestPermissionsResponse {
-            permissions: intersect_permission_profiles(
-                requested_permissions.into(),
-                response.permissions.into(),
-                cwd,
-            )
-            .into(),
-            scope: response.scope,
-            strict_auto_review: response.strict_auto_review,
         }
     }
 
@@ -3557,58 +3458,41 @@ impl Session {
         expected_turn_id: Option<&str>,
         responsesapi_client_metadata: Option<HashMap<String, String>>,
     ) -> Result<String, SteerInputError> {
-        if input.is_empty() {
-            return Err(SteerInputError::EmptyInput);
-        }
-
         let mut active = self.active_turn.lock().await;
         let Some(active_turn) = active.as_mut() else {
-            return Err(SteerInputError::NoActiveTurn(input));
+            return validate_steer_input(input, expected_turn_id, None)
+                .map(|validated| validated.active_turn_id);
         };
 
-        let Some((active_turn_id, _)) = active_turn.tasks.first() else {
-            return Err(SteerInputError::NoActiveTurn(input));
+        let Some((active_turn_id, active_task)) = active_turn.tasks.first() else {
+            return validate_steer_input(input, expected_turn_id, None)
+                .map(|validated| validated.active_turn_id);
         };
 
-        if let Some(expected_turn_id) = expected_turn_id
-            && expected_turn_id != active_turn_id
-        {
-            return Err(SteerInputError::ExpectedTurnMismatch {
-                expected: expected_turn_id.to_string(),
-                actual: active_turn_id.clone(),
-            });
-        }
+        let active_turn_id = active_turn_id.clone();
+        let active_task_kind = active_task.kind;
+        let active_turn_context = Arc::clone(&active_task.turn_context);
+        let validated = validate_steer_input(
+            input,
+            expected_turn_id,
+            Some(ActiveSteerTurn {
+                turn_id: &active_turn_id,
+                task_kind: steerable_task_kind(active_task_kind),
+            }),
+        )?;
 
-        match active_turn.tasks.first().map(|(_, task)| task.kind) {
-            Some(crate::state::TaskKind::Regular) => {}
-            Some(crate::state::TaskKind::Review) => {
-                return Err(SteerInputError::ActiveTurnNotSteerable {
-                    turn_kind: NonSteerableTurnKind::Review,
-                });
-            }
-            Some(crate::state::TaskKind::Compact) => {
-                return Err(SteerInputError::ActiveTurnNotSteerable {
-                    turn_kind: NonSteerableTurnKind::Compact,
-                });
-            }
-            None => return Err(SteerInputError::NoActiveTurn(input)),
-        }
-
-        if let Some(responsesapi_client_metadata) = responsesapi_client_metadata
-            && let Some((_, active_task)) = active_turn.tasks.first()
-        {
-            active_task
-                .turn_context
+        if let Some(responsesapi_client_metadata) = responsesapi_client_metadata {
+            active_turn_context
                 .turn_metadata_state
                 .set_responsesapi_client_metadata(responsesapi_client_metadata);
         }
 
         let mut turn_state = active_turn.turn_state.lock().await;
         turn_state.push_pending_input(PendingInputItem::from(
-            codex_model_input::response_input_item_from_user_input(input),
+            codex_model_input::response_input_item_from_user_input(validated.input),
         ));
         turn_state.accept_mailbox_delivery_for_current_turn();
-        Ok(active_turn_id.clone())
+        Ok(validated.active_turn_id)
     }
 
     /// Returns the input if there was no task running to inject into.
@@ -3964,6 +3848,47 @@ pub(crate) fn emit_subagent_session_started(
         subagent_source,
         created_at,
     });
+}
+
+impl codex_session_api::SessionCommandHandle for Codex {
+    fn submit_op(
+        &self,
+        op: Op,
+    ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
+        self.submit(op)
+    }
+
+    fn submit_with_id(
+        &self,
+        submission: Submission,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        Codex::submit_with_id(self, submission)
+    }
+
+    fn shutdown(&self) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        self.shutdown_and_wait()
+    }
+
+    fn append_conversation_item(
+        &self,
+        item: ResponseItem,
+    ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
+        async move {
+            let submission_id = uuid::Uuid::new_v4().to_string();
+            self.session
+                .enqueue_async_input(PendingInputItem::from(item));
+            self.session.maybe_start_turn_for_pending_work().await;
+            Ok(submission_id)
+        }
+    }
+}
+
+impl codex_session_api::SessionStatusHandle for Codex {
+    fn agent_status(
+        &self,
+    ) -> impl std::future::Future<Output = codex_protocol::protocol::AgentStatus> + Send + '_ {
+        Codex::agent_status(self)
+    }
 }
 
 /// Builds the hook engine for one config snapshot, including any enabled plugin hooks.

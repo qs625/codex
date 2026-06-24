@@ -4,120 +4,51 @@ Module: runtimes
 Concrete ToolRuntime implementations for specific tools. Each runtime stays
 small and focused and reuses the orchestrator for approvals + sandbox + retry.
 */
-use crate::exec_env::CODEX_THREAD_ID_ENV_VAR;
-use crate::path_utils;
-use crate::sandboxing::SandboxPermissions;
 use crate::shell::Shell;
 use crate::shell::ShellType;
+use crate::tools::sandboxing::ApprovalCtx;
+use crate::tools::sandboxing::SandboxAttempt;
+use crate::tools::sandboxing::SandboxAttemptExt;
+use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
-#[cfg(target_os = "macos")]
-use codex_network_proxy_api::CODEX_PROXY_GIT_SSH_COMMAND_MARKER;
-use codex_network_proxy_api::PROXY_ACTIVE_ENV_KEY;
-use codex_network_proxy_api::PROXY_ENV_KEYS;
-#[cfg(target_os = "macos")]
-use codex_network_proxy_api::PROXY_GIT_SSH_COMMAND_ENV_KEY;
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::models::AdditionalPermissionProfile;
+use crate::tools::sandboxing::with_cached_approval;
+use crate::unified_exec::ExecServerEnvConfig;
+use crate::unified_exec::UnifiedExecError;
+use crate::unified_exec::UnifiedExecProcess;
+use crate::unified_exec::UnifiedExecProcessManager;
+use codex_command_runtime::ExecOptions;
+use codex_command_runtime::SpawnLifecycleHandle;
+use codex_exec_server_api::ExecEnvironment;
+use codex_network_proxy_api::SharedNetworkProxyRuntime;
+use codex_protocol::exec_output::ExecToolCallOutput;
+use codex_protocol::protocol::ReviewDecision;
 use codex_sandboxing_api::SandboxCommand;
-use codex_sandboxing_api::SandboxType;
+use codex_sandboxing_api::SandboxTransformError;
+use codex_tool_config::ToolUserShellType;
+use codex_tool_runtime_api::ApplyPatchApprovalKey;
+use codex_tool_runtime_api::ApplyPatchApprovalRequest;
+use codex_tool_runtime_api::ApplyPatchEnvironment;
+use codex_tool_runtime_api::ApplyPatchRequest;
+use codex_tool_runtime_api::ApplyPatchRuntimeHost;
+use codex_tool_runtime_api::PreparedUnifiedExecSpawn;
+use codex_tool_runtime_api::RuntimeShell;
+use codex_tool_runtime_api::RuntimeShellSnapshot;
+use codex_tool_runtime_api::ShellApprovalKey;
+use codex_tool_runtime_api::ShellRequest;
+use codex_tool_runtime_api::ShellRuntimeHost;
+use codex_tool_runtime_api::UnifiedExecApprovalKey;
+use codex_tool_runtime_api::UnifiedExecRequest;
+use codex_tool_runtime_api::UnifiedExecRuntimeHost;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use futures::future::BoxFuture;
 use std::collections::HashMap;
+use std::sync::Arc;
 
-pub(crate) mod apply_patch;
+pub(crate) use codex_tool_runtime::build_sandbox_command;
+pub(crate) use codex_tool_runtime::exec_env_for_sandbox_permissions;
+
 pub(crate) mod shell;
-pub(crate) mod unified_exec;
 
-/// Shared helper to construct sandbox transform inputs from a tokenized command line.
-/// Validates that at least a program is present.
-pub(crate) fn build_sandbox_command(
-    command: &[String],
-    cwd: &AbsolutePathBuf,
-    env: &HashMap<String, String>,
-    additional_permissions: Option<AdditionalPermissionProfile>,
-) -> Result<SandboxCommand, ToolError> {
-    let (program, args) = command
-        .split_first()
-        .ok_or_else(|| ToolError::Rejected("command args are empty".to_string()))?;
-    Ok(SandboxCommand {
-        program: program.clone().into(),
-        args: args.to_vec(),
-        cwd: cwd.clone(),
-        env: env.clone(),
-        additional_permissions,
-    })
-}
-
-pub(crate) fn exec_env_for_sandbox_permissions(
-    env: &HashMap<String, String>,
-    sandbox_permissions: SandboxPermissions,
-) -> HashMap<String, String> {
-    let mut env = env.clone();
-    if sandbox_permissions.requires_escalated_permissions()
-        && env.contains_key(PROXY_ACTIVE_ENV_KEY)
-    {
-        for key in PROXY_ENV_KEYS {
-            env.remove(*key);
-        }
-        // Only macOS injects a Codex-owned SSH wrapper for the managed SOCKS proxy.
-        #[cfg(target_os = "macos")]
-        if env
-            .get(PROXY_GIT_SSH_COMMAND_ENV_KEY)
-            .is_some_and(|command| command.starts_with(CODEX_PROXY_GIT_SSH_COMMAND_MARKER))
-        {
-            env.remove(PROXY_GIT_SSH_COMMAND_ENV_KEY);
-        }
-    }
-    env
-}
-
-pub(crate) fn disable_powershell_profile_for_elevated_windows_sandbox(
-    command: &[String],
-    shell_type: Option<&ShellType>,
-    sandbox: SandboxType,
-    windows_sandbox_level: WindowsSandboxLevel,
-) -> Vec<String> {
-    if shell_type != Some(&ShellType::PowerShell)
-        || sandbox != SandboxType::WindowsRestrictedToken
-        || windows_sandbox_level != WindowsSandboxLevel::Elevated
-        || command.is_empty()
-    {
-        return command.to_vec();
-    }
-
-    if command[1..]
-        .iter()
-        .any(|arg| arg.eq_ignore_ascii_case("-NoProfile"))
-    {
-        return command.to_vec();
-    }
-
-    // The elevated Windows sandbox runs as a dedicated sandbox account while
-    // HOME/USERPROFILE may still point at the real user profile. Loading
-    // PowerShell profiles in that mixed context is not a valid login shell.
-    let mut command = command.to_vec();
-    command.insert(1, "-NoProfile".to_string());
-    command
-}
-
-/// POSIX-only helper: for commands produced by `Shell::derive_exec_args`
-/// for Bash/Zsh/sh of the form `[shell_path, "-lc", "<script>"]`, and
-/// when a snapshot is configured on the session shell, rewrite the argv
-/// to a single non-login shell that sources the snapshot before running
-/// the original script:
-///
-///   shell -lc "<script>"
-///   => user_shell -c ". SNAPSHOT (best effort); exec shell -c <script>"
-///
-/// This wrapper script uses POSIX constructs (`if`, `.`, `exec`) so it can
-/// be run by Bash/Zsh/sh. On non-matching commands, or when command cwd does
-/// not match the snapshot cwd, this is a no-op.
-///
-/// `explicit_env_overrides` and `env` are intentionally separate inputs.
-/// `explicit_env_overrides` contains policy-driven shell env overrides that
-/// should win after the snapshot is sourced, while `env` is the full live exec
-/// environment. We need access to both so snapshot restore logic can preserve
-/// runtime-only vars like `CODEX_THREAD_ID` without pretending they came from
-/// the explicit override policy.
 pub(crate) fn maybe_wrap_shell_lc_with_snapshot(
     command: &[String],
     session_shell: &Shell,
@@ -125,298 +56,399 @@ pub(crate) fn maybe_wrap_shell_lc_with_snapshot(
     explicit_env_overrides: &HashMap<String, String>,
     env: &HashMap<String, String>,
 ) -> Vec<String> {
-    if cfg!(windows) {
-        return command.to_vec();
-    }
-
-    let Some(snapshot) = session_shell.shell_snapshot() else {
-        return command.to_vec();
-    };
-
-    if !snapshot.path.exists() {
-        return command.to_vec();
-    }
-
-    if !path_utils::paths_match_after_normalization(snapshot.cwd.as_path(), cwd) {
-        return command.to_vec();
-    }
-
-    if command.len() < 3 {
-        return command.to_vec();
-    }
-
-    let flag = command[1].as_str();
-    if flag != "-lc" {
-        return command.to_vec();
-    }
-
-    let snapshot_path = snapshot.path.to_string_lossy();
-    let shell_path = session_shell.shell_path.to_string_lossy();
-    let original_shell = shell_single_quote(&command[0]);
-    let original_script = shell_single_quote(&command[2]);
-    let snapshot_path = shell_single_quote(snapshot_path.as_ref());
-    let trailing_args = command[3..]
-        .iter()
-        .map(|arg| format!(" '{}'", shell_single_quote(arg)))
-        .collect::<String>();
-    let mut override_env = explicit_env_overrides.clone();
-    if let Some(thread_id) = env.get(CODEX_THREAD_ID_ENV_VAR) {
-        override_env.insert(CODEX_THREAD_ID_ENV_VAR.to_string(), thread_id.clone());
-    }
-    let (override_captures, override_exports) = build_override_exports(&override_env);
-    let (proxy_captures, proxy_exports) = build_proxy_env_exports();
-    let override_captures = join_shell_blocks([override_captures, proxy_captures]);
-    let override_exports = join_shell_blocks([override_exports, proxy_exports]);
-    let rewritten_script = if override_exports.is_empty() {
-        format!(
-            "if . '{snapshot_path}' >/dev/null 2>&1; then :; fi\n\nexec '{original_shell}' -c '{original_script}'{trailing_args}"
-        )
-    } else {
-        format!(
-            "{override_captures}\n\nif . '{snapshot_path}' >/dev/null 2>&1; then :; fi\n\n{override_exports}\n\nexec '{original_shell}' -c '{original_script}'{trailing_args}"
-        )
-    };
-
-    vec![shell_path.to_string(), "-c".to_string(), rewritten_script]
-}
-
-fn build_override_exports(explicit_env_overrides: &HashMap<String, String>) -> (String, String) {
-    let mut keys = explicit_env_overrides
-        .keys()
-        .map(String::as_str)
-        .filter(|key| is_valid_shell_variable_name(key))
-        .collect::<Vec<_>>();
-    keys.sort_unstable();
-
-    build_override_exports_for_keys("__CODEX_SNAPSHOT_OVERRIDE", &keys)
-}
-
-fn build_proxy_env_exports() -> (String, String) {
-    let mut keys = PROXY_ENV_KEYS
-        .iter()
-        .copied()
-        .filter(|key| is_valid_shell_variable_name(key))
-        .collect::<Vec<_>>();
-    keys.sort_unstable();
-    keys.dedup();
-
-    let (captures, restores) =
-        build_override_exports_for_keys("__CODEX_SNAPSHOT_PROXY_OVERRIDE", &keys);
-    let key = PROXY_ACTIVE_ENV_KEY;
-    let proxy_blocks = (
-        format!("{captures}\n__CODEX_SNAPSHOT_PROXY_ENV_SET=\"${{{key}+x}}\""),
-        format!(
-            "if [ -n \"$__CODEX_SNAPSHOT_PROXY_ENV_SET\" ] || [ -n \"${{{key}+x}}\" ]; then\n{restores}\nfi"
-        ),
-    );
-    let git_blocks = build_codex_proxy_git_ssh_command_exports();
-    (
-        join_shell_blocks([proxy_blocks.0, git_blocks.0]),
-        join_shell_blocks([proxy_blocks.1, git_blocks.1]),
+    codex_tool_runtime::maybe_wrap_shell_lc_with_snapshot(
+        command,
+        &runtime_shell(session_shell),
+        cwd,
+        explicit_env_overrides,
+        env,
     )
 }
 
-#[cfg(target_os = "macos")]
-fn build_codex_proxy_git_ssh_command_exports() -> (String, String) {
-    let key = PROXY_GIT_SSH_COMMAND_ENV_KEY;
-    let marker_pattern = format!("{}\\ *", CODEX_PROXY_GIT_SSH_COMMAND_MARKER.trim_end());
-    (
-        format!(
-            "__CODEX_SNAPSHOT_PROXY_GIT_SSH_COMMAND_SET=\"${{{key}+x}}\"\n__CODEX_SNAPSHOT_PROXY_GIT_SSH_COMMAND=\"${{{key}-}}\"\ncase \"$__CODEX_SNAPSHOT_PROXY_GIT_SSH_COMMAND\" in\n  {marker_pattern}) __CODEX_SNAPSHOT_PROXY_GIT_SSH_COMMAND_LIVE_MARKED=1 ;;\n  *) __CODEX_SNAPSHOT_PROXY_GIT_SSH_COMMAND_LIVE_MARKED= ;;\nesac"
-        ),
-        format!(
-            "case \"${{{key}-}}\" in\n  {marker_pattern}) __CODEX_SNAPSHOT_PROXY_GIT_SSH_COMMAND_AFTER_MARKED=1 ;;\n  *) __CODEX_SNAPSHOT_PROXY_GIT_SSH_COMMAND_AFTER_MARKED= ;;\nesac\nif [ -n \"$__CODEX_SNAPSHOT_PROXY_GIT_SSH_COMMAND_LIVE_MARKED\" ]; then\n  if [ -z \"${{{key}+x}}\" ] || [ -n \"$__CODEX_SNAPSHOT_PROXY_GIT_SSH_COMMAND_AFTER_MARKED\" ]; then\n    export {key}=\"$__CODEX_SNAPSHOT_PROXY_GIT_SSH_COMMAND\"\n  fi\nelif [ -n \"$__CODEX_SNAPSHOT_PROXY_GIT_SSH_COMMAND_AFTER_MARKED\" ]; then\n  if [ -n \"$__CODEX_SNAPSHOT_PROXY_GIT_SSH_COMMAND_SET\" ]; then\n    export {key}=\"$__CODEX_SNAPSHOT_PROXY_GIT_SSH_COMMAND\"\n  else\n    unset {key}\n  fi\nfi"
-        ),
-    )
+pub(crate) fn runtime_shell(session_shell: &Shell) -> RuntimeShell {
+    RuntimeShell {
+        shell_type: runtime_shell_type(&session_shell.shell_type),
+        shell_path: session_shell.shell_path.clone(),
+        shell_snapshot: session_shell
+            .shell_snapshot()
+            .map(|snapshot| RuntimeShellSnapshot {
+                path: snapshot.path.clone(),
+                cwd: snapshot.cwd.clone(),
+            }),
+    }
 }
 
-#[cfg(not(target_os = "macos"))]
-fn build_codex_proxy_git_ssh_command_exports() -> (String, String) {
-    (String::new(), String::new())
+pub(crate) fn runtime_shell_type(shell_type: &ShellType) -> ToolUserShellType {
+    match shell_type {
+        ShellType::Zsh => ToolUserShellType::Zsh,
+        ShellType::Bash => ToolUserShellType::Bash,
+        ShellType::PowerShell => ToolUserShellType::PowerShell,
+        ShellType::Sh => ToolUserShellType::Sh,
+        ShellType::Cmd => ToolUserShellType::Cmd,
+    }
 }
 
-fn build_override_exports_for_keys(variable_prefix: &str, keys: &[&str]) -> (String, String) {
-    if keys.is_empty() {
-        return (String::new(), String::new());
+#[derive(Clone, Copy)]
+pub struct CoreToolRuntimeHost;
+
+pub(crate) struct CoreUnifiedExecRuntimeHost<'a> {
+    pub(crate) manager: &'a UnifiedExecProcessManager,
+}
+
+pub(crate) struct CoreApplyPatchEnvironment {
+    turn_environment: crate::session::turn_context::TurnEnvironment,
+}
+
+impl CoreApplyPatchEnvironment {
+    pub(crate) fn new(
+        turn_environment: crate::session::turn_context::TurnEnvironment,
+    ) -> Arc<Self> {
+        Arc::new(Self { turn_environment })
+    }
+}
+
+impl ApplyPatchEnvironment for CoreApplyPatchEnvironment {
+    fn environment_id(&self) -> &str {
+        &self.turn_environment.environment_id
     }
 
-    let captures = keys
-        .iter()
-        .enumerate()
-        .map(|(idx, key)| {
-            let set_var = format!("{variable_prefix}_SET_{idx}");
-            let value_var = format!("{variable_prefix}_{idx}");
-            format!("{set_var}=\"${{{key}+x}}\"\n{value_var}=\"${{{key}-}}\"")
+    fn filesystem(&self) -> Arc<dyn codex_file_system::ExecutorFileSystem> {
+        self.turn_environment.environment.get_filesystem()
+    }
+}
+
+fn transform_sandbox_attempt(
+    attempt: &SandboxAttempt<'_>,
+    command: SandboxCommand,
+    options: ExecOptions,
+    network: Option<SharedNetworkProxyRuntime>,
+) -> Result<crate::sandboxing::ExecRequest, SandboxTransformError> {
+    attempt.env_for(command, options, network)
+}
+
+fn core_runtime_shell(session: &Arc<crate::session::session::Session>) -> RuntimeShell {
+    runtime_shell(session.user_shell().as_ref())
+}
+
+impl ShellRuntimeHost for CoreToolRuntimeHost {
+    type Session = Arc<crate::session::session::Session>;
+    type Turn = Arc<crate::session::turn_context::TurnContext>;
+    type ExecRequest = crate::sandboxing::ExecRequest;
+    type StdoutStream = crate::exec::StdoutStream;
+    type NetworkApprovalTrigger = crate::guardian::GuardianNetworkAccessTrigger;
+
+    fn user_shell(&self, session: &Self::Session) -> RuntimeShell {
+        core_runtime_shell(session)
+    }
+
+    fn stdout_stream(&self, ctx: &ToolCtx) -> Option<Self::StdoutStream> {
+        Some(crate::exec::StdoutStream {
+            sub_id: ctx.turn.sub_id.clone(),
+            call_id: ctx.call_id.clone(),
+            tx_event: ctx.session.get_tx_event(),
         })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let restores = keys
-        .iter()
-        .enumerate()
-        .map(|(idx, key)| {
-            let set_var = format!("{variable_prefix}_SET_{idx}");
-            let value_var = format!("{variable_prefix}_{idx}");
-            format!(
-                "if [ -n \"${{{set_var}}}\" ]; then export {key}=\"${{{value_var}}}\"; else unset {key}; fi"
+    }
+
+    fn network_approval_trigger(
+        &self,
+        req: &ShellRequest,
+        ctx: &ToolCtx,
+    ) -> Self::NetworkApprovalTrigger {
+        crate::guardian::GuardianNetworkAccessTrigger {
+            call_id: ctx.call_id.clone(),
+            tool_name: codex_tool_runtime::flat_tool_name(&ctx.tool_name).into_owned(),
+            command: req.command.clone(),
+            cwd: req.cwd.clone(),
+            sandbox_permissions: req.sandbox_permissions,
+            additional_permissions: req.additional_permissions.clone(),
+            justification: req.justification.clone(),
+            tty: None,
+        }
+    }
+
+    fn start_shell_approval_async<'a>(
+        &'a self,
+        req: &'a ShellRequest,
+        ctx: ApprovalCtx<'a>,
+        keys: Vec<ShellApprovalKey>,
+    ) -> BoxFuture<'a, ReviewDecision> {
+        let command = req.command.clone();
+        let cwd = req.cwd.clone();
+        let retry_reason = ctx.retry_reason.clone();
+        let reason = retry_reason.clone().or_else(|| req.justification.clone());
+        let session = ctx.session;
+        let turn = ctx.turn;
+        let call_id = ctx.call_id.to_string();
+        let guardian_review_id = ctx.guardian_review_id.clone();
+        Box::pin(async move {
+            if let Some(review_id) = guardian_review_id {
+                return crate::guardian::review_approval_request(
+                    session,
+                    turn,
+                    review_id,
+                    crate::guardian::GuardianApprovalRequest::Shell {
+                        id: call_id,
+                        command,
+                        cwd: cwd.clone(),
+                        sandbox_permissions: req.sandbox_permissions,
+                        additional_permissions: req.additional_permissions.clone(),
+                        justification: req.justification.clone(),
+                    },
+                    retry_reason,
+                )
+                .await;
+            }
+            with_cached_approval(&session.services, "shell", keys, move || async move {
+                let available_decisions = None;
+                session
+                    .request_command_approval(
+                        turn,
+                        call_id,
+                        /*approval_id*/ None,
+                        command,
+                        cwd,
+                        reason,
+                        ctx.network_approval_context.clone(),
+                        req.exec_approval_requirement
+                            .proposed_execpolicy_amendment()
+                            .cloned(),
+                        req.additional_permissions.clone(),
+                        available_decisions,
+                    )
+                    .await
+            })
+            .await
+        })
+    }
+
+    fn transform_sandbox_attempt(
+        &self,
+        attempt: &SandboxAttempt<'_>,
+        command: SandboxCommand,
+        options: ExecOptions,
+        network: Option<SharedNetworkProxyRuntime>,
+    ) -> Result<Self::ExecRequest, SandboxTransformError> {
+        transform_sandbox_attempt(attempt, command, options, network)
+    }
+
+    fn execute_env<'a>(
+        &'a self,
+        exec_request: Self::ExecRequest,
+        stdout_stream: Option<Self::StdoutStream>,
+    ) -> BoxFuture<'a, codex_protocol::error::Result<ExecToolCallOutput>> {
+        Box::pin(async move { crate::sandboxing::execute_env(exec_request, stdout_stream).await })
+    }
+
+    fn maybe_run_shell_command_zsh_fork<'a>(
+        &'a self,
+        req: &'a ShellRequest,
+        attempt: &'a SandboxAttempt<'_>,
+        ctx: &'a ToolCtx,
+        command: &'a [String],
+    ) -> BoxFuture<'a, Result<Option<ExecToolCallOutput>, ToolError>> {
+        Box::pin(async move {
+            shell::zsh_fork_backend::maybe_run_shell_command(req, attempt, ctx, command).await
+        })
+    }
+}
+
+impl ApplyPatchRuntimeHost for CoreToolRuntimeHost {
+    type Session = Arc<crate::session::session::Session>;
+    type Turn = Arc<crate::session::turn_context::TurnContext>;
+    type NetworkApprovalTrigger = crate::guardian::GuardianNetworkAccessTrigger;
+
+    fn start_apply_patch_approval_async<'a>(
+        &'a self,
+        req: &'a ApplyPatchRequest,
+        ctx: ApprovalCtx<'a>,
+        keys: Vec<ApplyPatchApprovalKey>,
+        approval_request: ApplyPatchApprovalRequest,
+    ) -> BoxFuture<'a, ReviewDecision> {
+        let session = ctx.session;
+        let turn = ctx.turn;
+        let call_id = ctx.call_id.to_string();
+        let retry_reason = ctx.retry_reason.clone();
+        let changes = req.changes.clone();
+        let guardian_review_id = ctx.guardian_review_id.clone();
+        Box::pin(async move {
+            if let Some(review_id) = guardian_review_id {
+                return crate::guardian::review_approval_request(
+                    session,
+                    turn,
+                    review_id,
+                    crate::guardian::GuardianApprovalRequest::ApplyPatch {
+                        id: call_id,
+                        cwd: approval_request.cwd,
+                        files: approval_request.files,
+                        patch: approval_request.patch,
+                    },
+                    retry_reason,
+                )
+                .await;
+            }
+            if req.permissions_preapproved && retry_reason.is_none() {
+                return ReviewDecision::Approved;
+            }
+            if let Some(reason) = retry_reason {
+                let rx_approve = session
+                    .request_patch_approval(
+                        turn,
+                        call_id,
+                        changes.clone(),
+                        Some(reason),
+                        /*grant_root*/ None,
+                    )
+                    .await;
+                return rx_approve.await.unwrap_or_default();
+            }
+
+            with_cached_approval(&session.services, "apply_patch", keys, || async move {
+                let rx_approve = session
+                    .request_patch_approval(
+                        turn, call_id, changes, /*reason*/ None, /*grant_root*/ None,
+                    )
+                    .await;
+                rx_approve.await.unwrap_or_default()
+            })
+            .await
+        })
+    }
+}
+
+impl UnifiedExecRuntimeHost for CoreUnifiedExecRuntimeHost<'_> {
+    type Session = Arc<crate::session::session::Session>;
+    type Turn = Arc<crate::session::turn_context::TurnContext>;
+    type ExecRequest = crate::sandboxing::ExecRequest;
+    type NetworkApprovalTrigger = crate::guardian::GuardianNetworkAccessTrigger;
+
+    fn user_shell(&self, session: &Self::Session) -> RuntimeShell {
+        core_runtime_shell(session)
+    }
+
+    fn network_approval_trigger(
+        &self,
+        req: &UnifiedExecRequest,
+        ctx: &ToolCtx,
+    ) -> Self::NetworkApprovalTrigger {
+        crate::guardian::GuardianNetworkAccessTrigger {
+            call_id: ctx.call_id.clone(),
+            tool_name: codex_tool_runtime::flat_tool_name(&ctx.tool_name).into_owned(),
+            command: req.command.clone(),
+            cwd: req.cwd.clone(),
+            sandbox_permissions: req.sandbox_permissions,
+            additional_permissions: req.additional_permissions.clone(),
+            justification: req.justification.clone(),
+            tty: Some(req.tty),
+        }
+    }
+
+    fn start_unified_exec_approval_async<'a>(
+        &'a self,
+        req: &'a UnifiedExecRequest,
+        ctx: ApprovalCtx<'a>,
+        keys: Vec<UnifiedExecApprovalKey>,
+    ) -> BoxFuture<'a, ReviewDecision> {
+        let session = ctx.session;
+        let turn = ctx.turn;
+        let call_id = ctx.call_id.to_string();
+        let command = req.command.clone();
+        let cwd = req.cwd.clone();
+        let retry_reason = ctx.retry_reason.clone();
+        let reason = retry_reason.clone().or_else(|| req.justification.clone());
+        let guardian_review_id = ctx.guardian_review_id.clone();
+        Box::pin(async move {
+            if let Some(review_id) = guardian_review_id {
+                return crate::guardian::review_approval_request(
+                    session,
+                    turn,
+                    review_id,
+                    crate::guardian::GuardianApprovalRequest::ExecCommand {
+                        id: call_id,
+                        command,
+                        cwd: cwd.clone(),
+                        sandbox_permissions: req.sandbox_permissions,
+                        additional_permissions: req.additional_permissions.clone(),
+                        justification: req.justification.clone(),
+                        tty: req.tty,
+                    },
+                    retry_reason,
+                )
+                .await;
+            }
+            with_cached_approval(&session.services, "unified_exec", keys, || async move {
+                let available_decisions = None;
+                session
+                    .request_command_approval(
+                        turn,
+                        call_id,
+                        /*approval_id*/ None,
+                        command,
+                        cwd.clone(),
+                        reason,
+                        ctx.network_approval_context.clone(),
+                        req.exec_approval_requirement
+                            .proposed_execpolicy_amendment()
+                            .cloned(),
+                        req.additional_permissions.clone(),
+                        available_decisions,
+                    )
+                    .await
+            })
+            .await
+        })
+    }
+
+    fn transform_sandbox_attempt(
+        &self,
+        attempt: &SandboxAttempt<'_>,
+        command: SandboxCommand,
+        options: ExecOptions,
+        network: Option<SharedNetworkProxyRuntime>,
+    ) -> Result<Self::ExecRequest, SandboxTransformError> {
+        transform_sandbox_attempt(attempt, command, options, network)
+    }
+
+    fn maybe_prepare_unified_exec_zsh_fork<'a>(
+        &'a self,
+        req: &'a UnifiedExecRequest,
+        attempt: &'a SandboxAttempt<'_>,
+        ctx: &'a ToolCtx,
+        exec_request: Self::ExecRequest,
+        zsh_fork_config: &'a codex_tool_config::ZshForkConfig,
+    ) -> BoxFuture<'a, Result<Option<PreparedUnifiedExecSpawn<Self::ExecRequest>>, ToolError>> {
+        Box::pin(async move {
+            shell::zsh_fork_backend::maybe_prepare_unified_exec(
+                req,
+                attempt,
+                ctx,
+                exec_request,
+                zsh_fork_config,
             )
+            .await
         })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    (captures, restores)
-}
-
-fn join_shell_blocks(blocks: impl IntoIterator<Item = String>) -> String {
-    blocks
-        .into_iter()
-        .filter(|block| !block.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn is_valid_shell_variable_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !(first == '_' || first.is_ascii_alphabetic()) {
-        return false;
-    }
-    chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
-}
-
-fn shell_single_quote(input: &str) -> String {
-    input.replace('\'', r#"'"'"'"#)
-}
-
-#[cfg(test)]
-mod disable_powershell_profile_tests {
-    use super::*;
-    use pretty_assertions::assert_eq;
-
-    #[test]
-    fn inserts_no_profile_for_elevated_windows_sandbox() {
-        let command = vec![
-            "powershell.exe".to_string(),
-            "-Command".to_string(),
-            "Write-Output ok".to_string(),
-        ];
-
-        let rewritten = disable_powershell_profile_for_elevated_windows_sandbox(
-            &command,
-            Some(&ShellType::PowerShell),
-            SandboxType::WindowsRestrictedToken,
-            WindowsSandboxLevel::Elevated,
-        );
-
-        assert_eq!(
-            rewritten,
-            vec![
-                "powershell.exe".to_string(),
-                "-NoProfile".to_string(),
-                "-Command".to_string(),
-                "Write-Output ok".to_string(),
-            ]
-        );
     }
 
-    #[test]
-    fn inserts_no_profile_before_encoded_command() {
-        let command = vec![
-            "powershell.exe".to_string(),
-            "-EncodedCommand".to_string(),
-            "VwByAGkAdABlAC0ATwB1AHQAcAB1AHQAIABvAGsA".to_string(),
-        ];
-
-        let rewritten = disable_powershell_profile_for_elevated_windows_sandbox(
-            &command,
-            Some(&ShellType::PowerShell),
-            SandboxType::WindowsRestrictedToken,
-            WindowsSandboxLevel::Elevated,
-        );
-
-        assert_eq!(
-            rewritten,
-            vec![
-                "powershell.exe".to_string(),
-                "-NoProfile".to_string(),
-                "-EncodedCommand".to_string(),
-                "VwByAGkAdABlAC0ATwB1AHQAcAB1AHQAIABvAGsA".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn preserves_existing_no_profile() {
-        let command = vec![
-            "pwsh.exe".to_string(),
-            "-NoProfile".to_string(),
-            "-Command".to_string(),
-            "Write-Output ok".to_string(),
-        ];
-
-        let rewritten = disable_powershell_profile_for_elevated_windows_sandbox(
-            &command,
-            Some(&ShellType::PowerShell),
-            SandboxType::WindowsRestrictedToken,
-            WindowsSandboxLevel::Elevated,
-        );
-
-        assert_eq!(rewritten, command);
-    }
-
-    #[test]
-    fn leaves_legacy_restricted_token_backend_alone() {
-        let command = vec![
-            "powershell.exe".to_string(),
-            "-Command".to_string(),
-            "Write-Output ok".to_string(),
-        ];
-
-        let rewritten = disable_powershell_profile_for_elevated_windows_sandbox(
-            &command,
-            Some(&ShellType::PowerShell),
-            SandboxType::WindowsRestrictedToken,
-            WindowsSandboxLevel::RestrictedToken,
-        );
-
-        assert_eq!(rewritten, command);
-    }
-
-    #[test]
-    fn leaves_unsandboxed_attempts_alone() {
-        let command = vec![
-            "powershell.exe".to_string(),
-            "-Command".to_string(),
-            "Write-Output ok".to_string(),
-        ];
-
-        let rewritten = disable_powershell_profile_for_elevated_windows_sandbox(
-            &command,
-            Some(&ShellType::PowerShell),
-            SandboxType::None,
-            WindowsSandboxLevel::Elevated,
-        );
-
-        assert_eq!(rewritten, command);
-    }
-
-    #[test]
-    fn leaves_non_powershell_alone() {
-        let command = vec![
-            "/bin/bash".to_string(),
-            "-lc".to_string(),
-            "echo ok".to_string(),
-        ];
-
-        let rewritten = disable_powershell_profile_for_elevated_windows_sandbox(
-            &command,
-            Some(&ShellType::Bash),
-            SandboxType::WindowsRestrictedToken,
-            WindowsSandboxLevel::Elevated,
-        );
-
-        assert_eq!(rewritten, command);
+    fn open_session_with_exec_env<'a>(
+        &'a self,
+        process_id: i32,
+        request: &'a Self::ExecRequest,
+        exec_server_env_config: Option<&'a ExecServerEnvConfig>,
+        tty: bool,
+        spawn_lifecycle: SpawnLifecycleHandle,
+        environment: &'a dyn ExecEnvironment,
+    ) -> BoxFuture<'a, Result<UnifiedExecProcess, UnifiedExecError>> {
+        Box::pin(async move {
+            self.manager
+                .open_session_with_exec_env(
+                    process_id,
+                    request,
+                    exec_server_env_config,
+                    tty,
+                    spawn_lifecycle,
+                    environment,
+                )
+                .await
+        })
     }
 }
 

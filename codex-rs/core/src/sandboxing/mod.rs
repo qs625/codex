@@ -7,13 +7,14 @@ the exec-only metadata and translates transformed sandbox commands back into
 ExecRequest for execution.
 */
 
-use crate::exec::ExecCapturePolicy;
-use crate::exec::ExecExpiration;
 use crate::exec::StdoutStream;
 use crate::exec::execute_exec_request;
 #[cfg(target_os = "macos")]
 use crate::spawn::CODEX_SANDBOX_ENV_VAR;
 use crate::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
+use codex_command_runtime::ExecCapturePolicy;
+use codex_command_runtime::ExecExpiration;
+pub(crate) use codex_command_runtime::ExecOptions;
 use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::exec_output::ExecToolCallOutput;
@@ -28,12 +29,6 @@ use codex_sandboxing_api::WindowsSandboxFilesystemOverrides;
 use codex_sandboxing_api::compatibility_sandbox_policy_for_permission_profile;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
-
-#[derive(Debug)]
-pub(crate) struct ExecOptions {
-    pub(crate) expiration: ExecExpiration,
-    pub(crate) capture_policy: ExecCapturePolicy,
-}
 
 #[derive(Debug)]
 pub struct ExecRequest {

@@ -8,6 +8,7 @@ use codex_command_runtime::ExecExpiration;
 use codex_command_runtime::ExecExpirationOutcome;
 use codex_command_runtime::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
 use codex_command_runtime::bytes_to_string_smart;
+pub use codex_command_runtime::is_likely_sandbox_denied;
 use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result;
@@ -257,57 +258,6 @@ fn decode_stream_output(output: CapturedStreamOutput) -> StreamOutput<String> {
         text: output.into_utf8_lossy(),
         truncated_after_lines,
     }
-}
-
-/// Conservatively detect output patterns that usually mean the sandbox blocked
-/// a command rather than the command itself failing.
-pub fn is_likely_sandbox_denied(
-    sandbox_type: SandboxType,
-    exec_output: &ExecToolCallOutput,
-) -> bool {
-    if sandbox_type == SandboxType::None || exec_output.exit_code == 0 {
-        return false;
-    }
-
-    const SANDBOX_DENIED_KEYWORDS: [&str; 7] = [
-        "operation not permitted",
-        "permission denied",
-        "read-only file system",
-        "seccomp",
-        "sandbox",
-        "landlock",
-        "failed to write file",
-    ];
-
-    let has_sandbox_keyword = [
-        &exec_output.stderr.text,
-        &exec_output.stdout.text,
-        &exec_output.aggregated_output.text,
-    ]
-    .into_iter()
-    .any(|section| {
-        let lower = section.to_lowercase();
-        SANDBOX_DENIED_KEYWORDS
-            .iter()
-            .any(|needle| lower.contains(needle))
-    });
-
-    if has_sandbox_keyword {
-        return true;
-    }
-
-    const QUICK_REJECT_EXIT_CODES: [i32; 3] = [2, 126, 127];
-    if QUICK_REJECT_EXIT_CODES.contains(&exec_output.exit_code) {
-        return false;
-    }
-
-    if sandbox_type == SandboxType::LinuxSeccomp
-        && exec_output.exit_code == EXIT_CODE_SIGNAL_BASE + LINUX_SIGSYS_CODE
-    {
-        return true;
-    }
-
-    false
 }
 
 pub async fn read_process_output<R: AsyncRead + Unpin + Send + 'static>(

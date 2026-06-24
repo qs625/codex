@@ -51,7 +51,7 @@ use tokio::time::timeout;
 use crate::ThreadAuthRuntimes;
 use crate::ThreadManager;
 use crate::config::Config;
-use crate::thread_manager;
+use crate::thread;
 use crate::unified_exec;
 
 static TEST_MODEL_PRESETS: LazyLock<Vec<ModelPreset>> = LazyLock::new(|| {
@@ -257,7 +257,7 @@ pub fn create_model_provider_for_tests_with_provider_auth(
 }
 
 pub fn set_thread_manager_test_mode(enabled: bool) {
-    thread_manager::set_thread_manager_test_mode_for_tests(enabled);
+    thread::set_thread_manager_test_mode_for_tests(enabled);
 }
 
 pub fn set_deterministic_process_ids(enabled: bool) {

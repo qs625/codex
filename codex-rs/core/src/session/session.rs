@@ -17,12 +17,14 @@ use codex_memories_read_api::SharedMemoryToolDeveloperInstructionsProvider;
 use codex_model_provider_api::SharedModelProviderAuthManager;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
-use codex_protocol::config_types::ServiceTier;
-use codex_protocol::permissions::FileSystemPath;
-use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::protocol::ThreadSkill;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TurnEnvironmentSelection;
+use codex_session_runtime::SessionPermissionProfileUpdate;
+use codex_session_runtime::SessionSettingsApplyCurrent;
+use codex_session_runtime::build_session_settings_apply_plan;
+use codex_session_runtime::initial_thread_skills;
+use codex_session_runtime::merge_thread_skills;
 use codex_session_telemetry_api::SessionTelemetryCreateParams;
 use codex_session_telemetry_api::SharedSessionTelemetryFactory;
 use std::sync::Arc;
@@ -31,7 +33,7 @@ use tokio::sync::Semaphore;
 /// Context for an initialized model agent
 ///
 /// A session has at most 1 running task at a time, and can be interrupted by user input.
-pub(crate) struct Session {
+pub struct Session {
     pub(crate) conversation_id: ThreadId,
     pub(crate) installation_id: String,
     pub(super) tx_event: Sender<Event>,
@@ -150,13 +152,6 @@ impl SessionConfiguration {
         self.permission_profile_state.profile_workspace_roots()
     }
 
-    pub(super) fn apply_permission_profile_to_permissions(
-        &self,
-        permissions: &mut crate::config::Permissions,
-    ) {
-        permissions.set_permission_profile_state(self.permission_profile_state.clone());
-    }
-
     #[cfg(test)]
     pub(super) fn set_permission_profile_for_tests(
         &mut self,
@@ -215,47 +210,48 @@ impl SessionConfiguration {
         let current_sandbox_policy = self.sandbox_policy();
         let current_file_system_sandbox_policy = self.file_system_sandbox_policy();
         let current_network_sandbox_policy = self.network_sandbox_policy();
-        let legacy_file_system_projection =
-            FileSystemSandboxPolicy::from_legacy_sandbox_policy_preserving_deny_entries(
-                &current_sandbox_policy,
-                &self.cwd,
-                &current_file_system_sandbox_policy,
-            );
-        let file_system_policy_matches_legacy = current_file_system_sandbox_policy
-            .is_semantically_equivalent_to(&legacy_file_system_projection, &self.cwd);
-        let file_system_policy_has_rebindable_project_root_write =
-            current_file_system_sandbox_policy
-                .entries
+        let current_permission_profile = self.permission_profile();
+
+        let absolute_cwd = updates
+            .cwd
+            .as_ref()
+            .map(|cwd| {
+                AbsolutePathBuf::relative_to_current_dir(normalize_for_native_workdir(
+                    cwd.as_path(),
+                ))
+                .unwrap_or_else(|e| {
+                    warn!("failed to normalize update cwd: {cwd:?}: {e}");
+                    self.cwd.clone()
+                })
+            })
+            .unwrap_or_else(|| self.cwd.clone());
+
+        let plan = build_session_settings_apply_plan(
+            updates,
+            SessionSettingsApplyCurrent {
+                collaboration_mode: &self.collaboration_mode,
+                service_tier: self.service_tier.clone(),
+                personality: self.personality,
+                cwd: &self.cwd,
+                workspace_roots: &self.workspace_roots,
+                permission_profile: &current_permission_profile,
+                active_permission_profile: self.active_permission_profile(),
+                sandbox_policy: &current_sandbox_policy,
+                file_system_sandbox_policy: &current_file_system_sandbox_policy,
+                network_sandbox_policy: current_network_sandbox_policy,
+                app_server_client_name: self.app_server_client_name.clone(),
+                app_server_client_version: self.app_server_client_version.clone(),
+            },
+            absolute_cwd,
+            next_configuration
+                .original_config_do_not_use
+                .model_options
                 .iter()
-                .any(|entry| {
-                    entry.access.can_write()
-                        && matches!(
-                            &entry.path,
-                            FileSystemPath::Special {
-                                value: FileSystemSpecialPath::ProjectRoots { subpath: None },
-                            }
-                        )
-                });
-        let collaboration_mode_updated = updates.collaboration_mode.is_some();
-        if let Some(collaboration_mode) = updates.collaboration_mode.clone() {
-            next_configuration.collaboration_mode = collaboration_mode;
-        }
-        let model_provider_update = updates.model_provider.clone().or_else(|| {
-            collaboration_mode_updated.then(|| {
-                let model = next_configuration.collaboration_mode.model();
-                let mut providers = next_configuration
-                    .original_config_do_not_use
-                    .model_options
-                    .iter()
-                    .filter(|model_option| model_option.model == model)
-                    .map(|model_option| model_option.provider.as_str());
-                let provider = providers.next()?;
-                providers
-                    .all(|other| other == provider)
-                    .then(|| provider.to_string())
-            })?
-        });
-        if let Some(model_provider_id) = model_provider_update {
+                .map(|model_option| (model_option.model.as_str(), model_option.provider.as_str())),
+        );
+
+        next_configuration.collaboration_mode = plan.collaboration_mode;
+        if let Some(model_provider_id) = plan.model_provider_update {
             let Some(model_provider) = next_configuration
                 .original_config_do_not_use
                 .model_providers
@@ -282,22 +278,11 @@ impl SessionConfiguration {
             next_configuration.original_config_do_not_use = Arc::new(config);
             next_configuration.provider = model_provider;
         }
-        if let Some(summary) = updates.reasoning_summary {
+        if let Some(summary) = plan.model_reasoning_summary {
             next_configuration.model_reasoning_summary = Some(summary);
         }
-        if let Some(service_tier) = updates.service_tier.clone() {
-            // TODO(aibrahim): Remove once v2 clients no longer send the legacy
-            // "fast" service tier value.
-            next_configuration.service_tier = service_tier.map(|service_tier| {
-                ServiceTier::from_request_value(&service_tier)
-                    .map_or(service_tier, |service_tier| {
-                        service_tier.request_value().to_string()
-                    })
-            });
-        }
-        if let Some(personality) = updates.personality {
-            next_configuration.personality = Some(personality);
-        }
+        next_configuration.service_tier = plan.service_tier;
+        next_configuration.personality = plan.personality;
         if let Some(approval_policy) = updates.approval_policy {
             next_configuration.approval_policy.set(approval_policy)?;
         }
@@ -308,155 +293,32 @@ impl SessionConfiguration {
             next_configuration.windows_sandbox_level = windows_sandbox_level;
         }
 
-        let absolute_cwd = updates
-            .cwd
-            .as_ref()
-            .map(|cwd| {
-                AbsolutePathBuf::relative_to_current_dir(normalize_for_native_workdir(
-                    cwd.as_path(),
-                ))
-                .unwrap_or_else(|e| {
-                    warn!("failed to normalize update cwd: {cwd:?}: {e}");
-                    self.cwd.clone()
-                })
-            })
-            .unwrap_or_else(|| self.cwd.clone());
-
-        let cwd_changed = absolute_cwd.as_path() != self.cwd.as_path();
-        next_configuration.cwd = absolute_cwd;
-        if let Some(workspace_roots) = updates.workspace_roots.clone() {
-            next_configuration.workspace_roots = workspace_roots;
-        } else if cwd_changed && self.workspace_roots.contains(&self.cwd) {
-            let mut retargeted_workspace_roots =
-                Vec::with_capacity(next_configuration.workspace_roots.len());
-            for root in &self.workspace_roots {
-                let root = if root == &self.cwd {
-                    next_configuration.cwd.clone()
-                } else {
-                    root.clone()
-                };
-                if !retargeted_workspace_roots.contains(&root) {
-                    retargeted_workspace_roots.push(root);
+        next_configuration.cwd = plan.cwd;
+        next_configuration.workspace_roots = plan.workspace_roots;
+        if let Some(permission_profile_update) = plan.permission_profile_update {
+            match permission_profile_update {
+                SessionPermissionProfileUpdate::ActiveProfile {
+                    permission_profile,
+                    active_permission_profile,
+                    profile_workspace_roots,
+                } => next_configuration
+                    .permission_profile_state
+                    .set_active_permission_profile(
+                        permission_profile,
+                        active_permission_profile,
+                        profile_workspace_roots,
+                    )?,
+                SessionPermissionProfileUpdate::LegacyProfile(permission_profile) => {
+                    next_configuration
+                        .permission_profile_state
+                        .set_legacy_permission_profile(permission_profile)?;
                 }
             }
-            next_configuration.workspace_roots = retargeted_workspace_roots;
         }
-
-        if let Some(permission_profile) = updates.permission_profile.clone() {
-            let active_permission_profile =
-                updates.active_permission_profile.clone().or_else(|| {
-                    if permission_profile == self.permission_profile() {
-                        self.active_permission_profile()
-                    } else {
-                        None
-                    }
-                });
-            next_configuration.set_permission_profile_projection(
-                permission_profile,
-                active_permission_profile,
-                updates.profile_workspace_roots.clone().unwrap_or_default(),
-                Some(&current_file_system_sandbox_policy),
-            )?;
-        } else if let Some(sandbox_policy) = updates.sandbox_policy.clone() {
-            let file_system_sandbox_policy =
-                FileSystemSandboxPolicy::from_legacy_sandbox_policy_preserving_deny_entries(
-                    &sandbox_policy,
-                    &next_configuration.cwd,
-                    &current_file_system_sandbox_policy,
-                );
-            let network_sandbox_policy = NetworkSandboxPolicy::from(&sandbox_policy);
-            next_configuration
-                .permission_profile_state
-                .set_legacy_permission_profile(
-                    PermissionProfile::from_runtime_permissions_with_enforcement(
-                        SandboxEnforcement::from_legacy_sandbox_policy(&sandbox_policy),
-                        &file_system_sandbox_policy,
-                        network_sandbox_policy,
-                    ),
-                )?;
-        } else if cwd_changed
-            && file_system_policy_matches_legacy
-            && file_system_policy_has_rebindable_project_root_write
-        {
-            // Preserve richer split policies across cwd-only updates; only
-            // rederive when the session is already using a structurally
-            // cwd-bound legacy bridge.
-            let file_system_sandbox_policy =
-                FileSystemSandboxPolicy::from_legacy_sandbox_policy_preserving_deny_entries(
-                    &current_sandbox_policy,
-                    &next_configuration.cwd,
-                    &current_file_system_sandbox_policy,
-                );
-            next_configuration
-                .permission_profile_state
-                .set_legacy_permission_profile(
-                    PermissionProfile::from_runtime_permissions_with_enforcement(
-                        SandboxEnforcement::from_legacy_sandbox_policy(&current_sandbox_policy),
-                        &file_system_sandbox_policy,
-                        current_network_sandbox_policy,
-                    ),
-                )?;
-        }
-        if let Some(app_server_client_name) = updates.app_server_client_name.clone() {
-            next_configuration.app_server_client_name = Some(app_server_client_name);
-        }
-        if let Some(app_server_client_version) = updates.app_server_client_version.clone() {
-            next_configuration.app_server_client_version = Some(app_server_client_version);
-        }
+        next_configuration.app_server_client_name = plan.app_server_client_name;
+        next_configuration.app_server_client_version = plan.app_server_client_version;
         Ok(next_configuration)
     }
-
-    fn set_permission_profile_projection(
-        &mut self,
-        permission_profile: PermissionProfile,
-        active_permission_profile: Option<ActivePermissionProfile>,
-        profile_workspace_roots: Vec<AbsolutePathBuf>,
-        preserve_deny_reads_from: Option<&FileSystemSandboxPolicy>,
-    ) -> ConstraintResult<()> {
-        let enforcement = permission_profile.enforcement();
-        let (mut file_system_sandbox_policy, network_sandbox_policy) =
-            permission_profile.to_runtime_permissions();
-        if let Some(existing_file_system_policy) = preserve_deny_reads_from {
-            file_system_sandbox_policy
-                .preserve_deny_read_restrictions_from(existing_file_system_policy);
-        }
-        let effective_permission_profile =
-            PermissionProfile::from_runtime_permissions_with_enforcement(
-                enforcement,
-                &file_system_sandbox_policy,
-                network_sandbox_policy,
-            );
-        self.permission_profile_state.set_active_permission_profile(
-            effective_permission_profile,
-            active_permission_profile,
-            profile_workspace_roots,
-        )
-    }
-}
-
-#[derive(Default, Clone)]
-pub(crate) struct SessionSettingsUpdate {
-    pub(crate) cwd: Option<PathBuf>,
-    pub(crate) workspace_roots: Option<Vec<AbsolutePathBuf>>,
-    pub(crate) profile_workspace_roots: Option<Vec<AbsolutePathBuf>>,
-    pub(crate) approval_policy: Option<AskForApproval>,
-    pub(crate) approvals_reviewer: Option<ApprovalsReviewer>,
-    pub(crate) sandbox_policy: Option<SandboxPolicy>,
-    pub(crate) permission_profile: Option<PermissionProfile>,
-    pub(crate) active_permission_profile: Option<ActivePermissionProfile>,
-    pub(crate) windows_sandbox_level: Option<WindowsSandboxLevel>,
-    pub(crate) model_provider: Option<String>,
-    pub(crate) collaboration_mode: Option<CollaborationMode>,
-    pub(crate) reasoning_summary: Option<ReasoningSummaryConfig>,
-    pub(crate) service_tier: Option<Option<String>>,
-    pub(crate) final_output_json_schema: Option<Option<Value>>,
-    /// Turn-local environment override. `None` inherits the sticky thread
-    /// environments stored on `SessionConfiguration`; `Some([])` explicitly
-    /// disables environments for this turn.
-    pub(crate) environments: Option<Vec<TurnEnvironmentSelection>>,
-    pub(crate) personality: Option<Personality>,
-    pub(crate) app_server_client_name: Option<String>,
-    pub(crate) app_server_client_version: Option<String>,
 }
 
 pub(crate) struct AppServerClientMetadata {
@@ -470,30 +332,9 @@ impl Session {
         additions: Vec<ThreadSkill>,
     ) -> Option<Vec<ThreadSkill>> {
         let mut state = self.state.lock().await;
-        let mut skills = state.thread_skills();
-        let mut changed = false;
-        for addition in additions {
-            if let Some(existing) = skills.iter_mut().find(|skill| skill.path == addition.path) {
-                let merged_kind = existing.kind.merge(addition.kind);
-                if existing.kind != merged_kind {
-                    existing.kind = merged_kind;
-                    changed = true;
-                }
-                if existing.name != addition.name {
-                    existing.name = addition.name;
-                    changed = true;
-                }
-            } else {
-                skills.push(addition);
-                changed = true;
-            }
-        }
-        if !changed {
-            None
-        } else {
-            state.set_thread_skills(skills.clone());
-            Some(skills)
-        }
+        let skills = merge_thread_skills(state.thread_skills(), additions)?;
+        state.set_thread_skills(skills.clone());
+        Some(skills)
     }
 
     /// Returns the concrete identity for this thread.
@@ -550,6 +391,7 @@ impl Session {
         openai_file_uploader: SharedOpenAiFileUploader,
         code_mode_service: Arc<dyn CodeModeRuntimeService>,
         code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+        tool_router_factory: Arc<dyn crate::tools::router::ToolRouterFactory>,
         workflow_runs: Arc<dyn WorkflowRunController>,
     ) -> anyhow::Result<Arc<Self>> {
         debug!(
@@ -1096,6 +938,7 @@ impl Session {
                 openai_file_uploader,
                 code_mode_service,
                 code_mode_runtime_factory,
+                tool_router_factory,
                 environment_manager,
             };
             services
@@ -1343,73 +1186,5 @@ fn emit_feature_metrics(
                 ],
             );
         }
-    }
-}
-
-fn initial_thread_skills(initial_history: &InitialHistory) -> Vec<ThreadSkill> {
-    initial_history
-        .get_rollout_items()
-        .into_iter()
-        .rev()
-        .find_map(|item| match item {
-            RolloutItem::EventMsg(codex_protocol::protocol::EventMsg::ThreadSkillsUpdated(
-                event,
-            )) => Some(event.skills),
-            RolloutItem::SessionMeta(_)
-            | RolloutItem::TurnContext(_)
-            | RolloutItem::ResponseItem(_)
-            | RolloutItem::Compacted(_)
-            | RolloutItem::EventMsg(_) => None,
-        })
-        .unwrap_or_default()
-}
-
-#[cfg(test)]
-mod thread_skills_tests {
-    use super::initial_thread_skills;
-    use codex_protocol::protocol::EventMsg;
-    use codex_protocol::protocol::InitialHistory;
-    use codex_protocol::protocol::ResumedHistory;
-    use codex_protocol::protocol::RolloutItem;
-    use codex_protocol::protocol::ThreadSkill;
-    use codex_protocol::protocol::ThreadSkillKind;
-    use codex_protocol::protocol::ThreadSkillsUpdatedEvent;
-    use pretty_assertions::assert_eq;
-
-    #[test]
-    fn initial_thread_skills_uses_latest_update() {
-        let conversation_id = codex_protocol::ThreadId::new();
-        let older = ThreadSkill {
-            name: "older".to_string(),
-            path: "/tmp/older/SKILL.md".to_string(),
-            kind: ThreadSkillKind::Explicit,
-        };
-        let newer = ThreadSkill {
-            name: "newer".to_string(),
-            path: "/tmp/newer/SKILL.md".to_string(),
-            kind: ThreadSkillKind::All,
-        };
-        let history = InitialHistory::Resumed(ResumedHistory {
-            conversation_id,
-            history: vec![
-                RolloutItem::EventMsg(EventMsg::ThreadSkillsUpdated(ThreadSkillsUpdatedEvent {
-                    skills: vec![older],
-                })),
-                RolloutItem::EventMsg(EventMsg::ThreadSkillsUpdated(ThreadSkillsUpdatedEvent {
-                    skills: vec![newer.clone()],
-                })),
-            ],
-            rollout_path: None,
-        });
-
-        assert_eq!(initial_thread_skills(&history), vec![newer]);
-    }
-
-    #[test]
-    fn initial_thread_skills_defaults_to_empty_without_updates() {
-        assert_eq!(
-            initial_thread_skills(&InitialHistory::New),
-            Vec::<ThreadSkill>::new()
-        );
     }
 }

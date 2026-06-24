@@ -26,6 +26,7 @@ test-support = [
     "codex-core-skills",
     "codex-state",
     "codex-thread-store",
+    "codex-tool-handlers",
 ]
 
 [dependencies]
@@ -98,6 +99,7 @@ codex-network-proxy-api = { workspace = true }
 codex-openai-files-api = { workspace = true }
 codex-permissions-runtime = { workspace = true }
 codex-process-exec = { workspace = true }
+codex-session-runtime = { workspace = true }
 codex-session-telemetry-api = { workspace = true }
 codex-plugin-types = { workspace = true }
 codex-protocol = { workspace = true }
@@ -105,12 +107,18 @@ codex-realtime = { workspace = true }
 codex-rollout-trace-api = { workspace = true }
 codex-rollout-api = { workspace = true }
 codex-sandboxing-api = { workspace = true }
+codex-session-api = { workspace = true }
 codex-state = { workspace = true, optional = true }
+codex-thread-api = { workspace = true }
 codex-thread-store-api = { workspace = true }
 codex-thread-store = { workspace = true, optional = true }
 codex-tool-config = { workspace = true }
+codex-tool-handlers = { workspace = true, optional = true }
 codex-tool-planning = { workspace = true }
+codex-tool-runtime = { workspace = true }
+codex-tool-runtime-api = { workspace = true }
 codex-turn-items = { workspace = true }
+codex-turn-metadata = { workspace = true }
 codex-trace-context = { workspace = true }
 codex-user-info = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
@@ -165,6 +173,7 @@ codex-core-plugins = { workspace = true }
 codex-core-skills = { workspace = true }
 codex-default-client = { workspace = true }
 codex-execpolicy = { workspace = true }
+codex-execpolicy-loader = { workspace = true }
 codex-exec-server = { workspace = true }
 codex-hooks = { workspace = true }
 codex-login = { workspace = true, features = ["model-provider-auth"] }
@@ -180,6 +189,7 @@ codex-rollout-trace = { workspace = true }
 codex-sandboxing = { workspace = true }
 codex-state = { workspace = true }
 codex-thread-store = { workspace = true }
+codex-tool-handlers = { workspace = true }
 codex-test-binary-support = { workspace = true }
 codex-workflow = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }

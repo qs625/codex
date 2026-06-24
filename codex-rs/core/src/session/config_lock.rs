@@ -1,20 +1,15 @@
 use anyhow::Context;
 use codex_config_toml::ConfigLockReplayOptions;
-use codex_config_toml::clear_config_lock_debug_controls;
-use codex_config_toml::config_lockfile;
 use codex_config_toml::config_toml::ConfigToml;
-use codex_config_toml::toml_round_trip;
 use codex_config_toml::validate_config_lock_replay;
 use codex_config_types::ConfigLockfileToml;
-use codex_config_types::MemoriesToml;
-use codex_features::AppsMcpPathOverrideConfigToml;
-use codex_features::Feature;
-use codex_features::FeatureToml;
-use codex_features::FeaturesToml;
-use codex_features::MultiAgentV2ConfigToml;
 use codex_protocol::ThreadId;
-
-use crate::config::Config;
+use codex_session_runtime::ConfigLockBuildInput;
+use codex_session_runtime::ConfigLockMultiAgentV2ResolvedConfig;
+use codex_session_runtime::ConfigLockResolvedConfigFields;
+use codex_session_runtime::ConfigLockSessionResolvedFields;
+use codex_session_runtime::build_config_lockfile_toml;
+use codex_session_runtime::config_lock_to_pretty_toml;
 
 use super::SessionConfiguration;
 
@@ -51,7 +46,7 @@ pub(crate) async fn export_config_lock_if_configured(
     };
 
     let lock = session_configuration.to_config_lockfile_toml()?;
-    let lock = toml::to_string_pretty(&lock).context("failed to serialize config lock")?;
+    let lock = config_lock_to_pretty_toml(&lock)?;
     let path = export_dir.join(format!("{conversation_id}.config.lock.toml"));
 
     tokio::fs::create_dir_all(export_dir)
@@ -71,139 +66,78 @@ pub(crate) async fn export_config_lock_if_configured(
 
 impl SessionConfiguration {
     pub(crate) fn to_config_lockfile_toml(&self) -> anyhow::Result<ConfigLockfileToml<ConfigToml>> {
-        Ok(config_lockfile(session_configuration_to_lock_config_toml(
-            self,
-        )?))
+        build_config_lockfile_toml(config_lock_build_input(self)?)
     }
 }
 
-fn session_configuration_to_lock_config_toml(
-    sc: &SessionConfiguration,
-) -> anyhow::Result<ConfigToml> {
+fn config_lock_build_input(sc: &SessionConfiguration) -> anyhow::Result<ConfigLockBuildInput> {
     let config = sc.original_config_do_not_use.as_ref();
-    // Start from the resolved layer stack, then patch in values that are only
-    // known after session setup. Export and replay validation both use this
-    // path, so every field here is part of the lockfile contract.
-    let mut lock_config: ConfigToml = config
+    let effective_config: ConfigToml = config
         .config_layer_stack
         .effective_config()
         .try_into()
         .context("failed to deserialize effective config for config lock")?;
 
-    if config.config_lock_save_fields_resolved_from_model_catalog {
-        save_session_resolved_fields(sc, &mut lock_config);
-    }
-
-    save_config_resolved_fields(config, &mut lock_config)?;
-    drop_lockfile_inputs(&mut lock_config);
-
-    Ok(lock_config)
-}
-
-/// Saves values chosen during session construction from the model catalog,
-/// collaboration mode, and resolved prompt setup.
-///
-/// These values are not always present in the raw layer stack, so copy them
-/// from the live session when the lockfile should be fully self-contained.
-fn save_session_resolved_fields(sc: &SessionConfiguration, lock_config: &mut ConfigToml) {
-    lock_config.model = Some(sc.collaboration_mode.model().to_string());
-    lock_config.model_reasoning_effort = sc.collaboration_mode.reasoning_effort();
-    lock_config.model_reasoning_summary = sc.model_reasoning_summary;
-    lock_config.service_tier = sc.service_tier.clone();
-    lock_config.instructions = Some(sc.base_instructions.clone());
-    lock_config.developer_instructions = sc.developer_instructions.clone();
-    lock_config.compact_prompt = sc.compact_prompt.clone();
-    lock_config.personality = sc.personality;
-    lock_config.approval_policy = Some(sc.approval_policy.value());
-    lock_config.approvals_reviewer = Some(sc.approvals_reviewer);
-}
-
-/// Saves values stored on `Config` after higher-level resolution,
-/// normalization, defaulting, or feature materialization.
-///
-/// Persist the resolved representation so replay compares against the behavior
-/// Codex actually ran with, not only the user-authored TOML inputs.
-fn save_config_resolved_fields(
-    config: &Config,
-    lock_config: &mut ConfigToml,
-) -> anyhow::Result<()> {
-    lock_config.web_search = Some(config.web_search_mode.value());
-    lock_config.model_provider = Some(config.model_provider_id.clone());
-    lock_config.plan_mode_reasoning_effort = config.plan_mode_reasoning_effort;
-    lock_config.model_verbosity = config.model_verbosity;
-    lock_config.include_permissions_instructions = Some(config.include_permissions_instructions);
-    lock_config.include_apps_instructions = Some(config.include_apps_instructions);
-    lock_config.include_collaboration_mode_instructions =
-        Some(config.include_collaboration_mode_instructions);
-    lock_config.include_environment_context = Some(config.include_environment_context);
-    lock_config.background_terminal_max_timeout = Some(config.background_terminal_max_timeout);
-
-    // Feature aliases and feature configs need to be written in their resolved
-    // form; otherwise replay can drift when a legacy key maps to the same
-    // runtime feature.
-    let features = lock_config
-        .features
-        .get_or_insert_with(FeaturesToml::default);
-    features.materialize_resolved_enabled(config.features.get());
-    let mut multi_agent_v2: MultiAgentV2ConfigToml =
-        resolved_config_to_toml(&config.multi_agent_v2, "features.multi_agent_v2")?;
-    multi_agent_v2.enabled = Some(config.features.enabled(Feature::MultiAgentV2));
-    features.multi_agent_v2 = Some(FeatureToml::Config(multi_agent_v2));
-    features.apps_mcp_path_override = Some(FeatureToml::Config(AppsMcpPathOverrideConfigToml {
-        enabled: Some(config.features.enabled(Feature::AppsMcpPathOverride)),
-        path: config.apps_mcp_path_override.clone(),
-    }));
-    lock_config.memories = Some(resolved_config_to_toml::<MemoriesToml>(
-        &config.memories,
-        "memories",
-    )?);
-
-    let agents = lock_config.agents.get_or_insert_with(Default::default);
-    // Persist the canonical v2 fanout config instead of the legacy alias.
-    agents.max_threads = None;
-    agents.max_depth = Some(config.agent_max_depth);
-    agents.job_max_runtime_seconds = config.agent_job_max_runtime_seconds;
-    agents.interrupt_message = Some(config.agent_interrupt_message_enabled);
-
-    lock_config
-        .skills
-        .get_or_insert_with(Default::default)
-        .include_instructions = Some(config.include_skill_instructions);
-
-    Ok(())
-}
-
-fn drop_lockfile_inputs(lock_config: &mut ConfigToml) {
-    // The lockfile should contain replayable values, not the profile,
-    // debug-control, file-include, and environment-specific inputs that
-    // produced those values in the original session.
-    lock_config.profile = None;
-    lock_config.profiles.clear();
-    clear_config_lock_debug_controls(lock_config);
-    lock_config.model_instructions_file = None;
-    lock_config.experimental_compact_prompt_file = None;
-    lock_config.model_catalog_json = None;
-    lock_config.sandbox_mode = None;
-    lock_config.sandbox_workspace_write = None;
-    lock_config.default_permissions = None;
-    lock_config.permissions = None;
-    lock_config.experimental_use_unified_exec_tool = None;
-}
-
-fn resolved_config_to_toml<Toml>(
-    value: &impl serde::Serialize,
-    label: &'static str,
-) -> anyhow::Result<Toml>
-where
-    Toml: serde::de::DeserializeOwned + serde::Serialize,
-{
-    toml_round_trip(value, label).map_err(anyhow::Error::from)
+    Ok(ConfigLockBuildInput {
+        effective_config,
+        save_fields_resolved_from_model_catalog: config
+            .config_lock_save_fields_resolved_from_model_catalog,
+        session: ConfigLockSessionResolvedFields {
+            model: sc.collaboration_mode.model().to_string(),
+            model_reasoning_effort: sc.collaboration_mode.reasoning_effort(),
+            model_reasoning_summary: sc.model_reasoning_summary,
+            service_tier: sc.service_tier.clone(),
+            instructions: sc.base_instructions.clone(),
+            developer_instructions: sc.developer_instructions.clone(),
+            compact_prompt: sc.compact_prompt.clone(),
+            personality: sc.personality,
+            approval_policy: sc.approval_policy.value(),
+            approvals_reviewer: sc.approvals_reviewer,
+        },
+        config: ConfigLockResolvedConfigFields {
+            web_search: config.web_search_mode.value(),
+            model_provider: config.model_provider_id.clone(),
+            plan_mode_reasoning_effort: config.plan_mode_reasoning_effort,
+            model_verbosity: config.model_verbosity,
+            include_permissions_instructions: config.include_permissions_instructions,
+            include_apps_instructions: config.include_apps_instructions,
+            include_collaboration_mode_instructions: config.include_collaboration_mode_instructions,
+            include_environment_context: config.include_environment_context,
+            background_terminal_max_timeout: config.background_terminal_max_timeout,
+            features: config.features.get().clone(),
+            multi_agent_v2: ConfigLockMultiAgentV2ResolvedConfig {
+                max_concurrent_threads_per_session: config
+                    .multi_agent_v2
+                    .max_concurrent_threads_per_session,
+                min_wait_timeout_ms: config.multi_agent_v2.min_wait_timeout_ms,
+                max_wait_timeout_ms: config.multi_agent_v2.max_wait_timeout_ms,
+                default_wait_timeout_ms: config.multi_agent_v2.default_wait_timeout_ms,
+                usage_hint_enabled: config.multi_agent_v2.usage_hint_enabled,
+                usage_hint_text: config.multi_agent_v2.usage_hint_text.clone(),
+                root_agent_usage_hint_text: config
+                    .multi_agent_v2
+                    .root_agent_usage_hint_text
+                    .clone(),
+                subagent_usage_hint_text: config.multi_agent_v2.subagent_usage_hint_text.clone(),
+                hide_spawn_agent_metadata: config.multi_agent_v2.hide_spawn_agent_metadata,
+                non_code_mode_only: config.multi_agent_v2.non_code_mode_only,
+            },
+            apps_mcp_path_override: config.apps_mcp_path_override.clone(),
+            memories: config.memories.clone(),
+            agent_max_depth: config.agent_max_depth,
+            agent_job_max_runtime_seconds: config.agent_job_max_runtime_seconds,
+            agent_interrupt_message_enabled: config.agent_interrupt_message_enabled,
+            include_skill_instructions: config.include_skill_instructions,
+        },
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use codex_config_toml::CONFIG_LOCK_VERSION;
+    use codex_features::FeatureToml;
+    use codex_features::MultiAgentV2ConfigToml;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
 

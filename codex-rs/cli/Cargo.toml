@@ -65,6 +65,8 @@ codex-state-api = { workspace = true }
 codex-stdio-to-uds = { workspace = true }
 codex-terminal-detection = { workspace = true }
 codex-thread-store = { workspace = true }
+codex-tool-config = { workspace = true }
+codex-tool-handlers = { workspace = true }
 codex-tui = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-path = { workspace = true }

@@ -1,3 +1,4 @@
+mod app_mentions;
 mod config_layers;
 pub mod config_rules;
 mod env_var_dependencies;
@@ -8,6 +9,13 @@ mod mention_counts;
 pub mod model;
 pub mod render;
 
+pub use app_mentions::CollectedToolMentions;
+pub use app_mentions::build_connector_slug_counts;
+pub use app_mentions::collect_explicit_app_ids_from_messages;
+pub use app_mentions::collect_explicit_app_ids_from_skill_items;
+pub use app_mentions::collect_tool_mentions_from_messages;
+pub use app_mentions::collect_tool_mentions_from_messages_with_sigil;
+pub use app_mentions::filter_connectors_for_user_messages;
 pub use config_layers::SkillConfigLayerEntry;
 pub use config_layers::SkillConfigLayerStack;
 pub use config_layers::SkillConfigLayerStackOrdering;

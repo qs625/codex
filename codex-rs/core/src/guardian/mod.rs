@@ -18,14 +18,20 @@ mod review_session;
 
 use std::time::Duration;
 
-use codex_protocol::protocol::GuardianAssessmentDecisionSource;
 pub(crate) use codex_protocol::protocol::GuardianAssessmentOutcome;
 
 pub(crate) use approval_request::GuardianApprovalRequest;
+#[cfg(test)]
 pub(crate) use approval_request::GuardianMcpAnnotations;
 pub(crate) use approval_request::GuardianNetworkAccessTrigger;
+#[cfg(test)]
 pub(crate) use approval_request::guardian_approval_request_to_json;
+pub(crate) use codex_guardian::AUTO_REVIEW_DENIAL_WINDOW_SIZE;
+pub(crate) use codex_guardian::AUTO_REVIEW_DENIED_ACTION_APPROVAL_DEVELOPER_PREFIX;
 pub(crate) use codex_guardian::GuardianAssessment;
+pub(crate) use codex_guardian::GuardianRejection;
+pub(crate) use codex_guardian::GuardianRejectionCircuitBreaker;
+pub(crate) use codex_guardian::GuardianRejectionCircuitBreakerAction;
 pub(crate) use review::guardian_rejection_message;
 pub(crate) use review::guardian_timeout_message;
 pub(crate) use review::is_guardian_reviewer_source;
@@ -41,77 +47,6 @@ pub(crate) use review_session::GuardianReviewSessionManager;
 
 pub(crate) const GUARDIAN_REVIEW_TIMEOUT: Duration = Duration::from_secs(90);
 pub(crate) const GUARDIAN_REVIEWER_NAME: &str = "guardian";
-pub(crate) const MAX_CONSECUTIVE_GUARDIAN_DENIALS_PER_TURN: u32 = 3;
-pub(crate) const MAX_RECENT_AUTO_REVIEW_DENIALS_PER_TURN: u32 = 10;
-pub(crate) const AUTO_REVIEW_DENIAL_WINDOW_SIZE: usize = 50;
-pub(crate) const AUTO_REVIEW_DENIED_ACTION_APPROVAL_DEVELOPER_PREFIX: &str =
-    "The user has manually approved a specific action that was previously `Rejected`.";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GuardianRejection {
-    pub(crate) rationale: String,
-    pub(crate) source: GuardianAssessmentDecisionSource,
-}
-
-#[derive(Debug, Default)]
-pub(crate) struct GuardianRejectionCircuitBreaker {
-    turns: std::collections::HashMap<String, GuardianRejectionCircuitBreakerTurn>,
-}
-
-#[derive(Debug, Default)]
-struct GuardianRejectionCircuitBreakerTurn {
-    consecutive_denials: u32,
-    recent_denials: std::collections::VecDeque<bool>,
-    interrupt_triggered: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GuardianRejectionCircuitBreakerAction {
-    Continue,
-    InterruptTurn {
-        consecutive_denials: u32,
-        recent_denials: u32,
-    },
-}
-
-impl GuardianRejectionCircuitBreaker {
-    pub(crate) fn clear_turn(&mut self, turn_id: &str) {
-        self.turns.remove(turn_id);
-    }
-
-    pub(crate) fn record_denial(&mut self, turn_id: &str) -> GuardianRejectionCircuitBreakerAction {
-        let turn = self.turns.entry(turn_id.to_string()).or_default();
-        turn.consecutive_denials = turn.consecutive_denials.saturating_add(1);
-        Self::record_recent_review(turn, /*denied*/ true);
-        let recent_denials = turn.recent_denials.iter().filter(|denied| **denied).count() as u32;
-        if !turn.interrupt_triggered
-            && (turn.consecutive_denials >= MAX_CONSECUTIVE_GUARDIAN_DENIALS_PER_TURN
-                || recent_denials >= MAX_RECENT_AUTO_REVIEW_DENIALS_PER_TURN)
-        {
-            turn.interrupt_triggered = true;
-            GuardianRejectionCircuitBreakerAction::InterruptTurn {
-                consecutive_denials: turn.consecutive_denials,
-                recent_denials,
-            }
-        } else {
-            GuardianRejectionCircuitBreakerAction::Continue
-        }
-    }
-
-    pub(crate) fn record_non_denial(&mut self, turn_id: &str) {
-        let turn = self.turns.entry(turn_id.to_string()).or_default();
-        turn.consecutive_denials = 0;
-        Self::record_recent_review(turn, /*denied*/ false);
-    }
-
-    fn record_recent_review(turn: &mut GuardianRejectionCircuitBreakerTurn, denied: bool) {
-        turn.recent_denials.push_back(denied);
-        if turn.recent_denials.len() > AUTO_REVIEW_DENIAL_WINDOW_SIZE {
-            turn.recent_denials.pop_front();
-        }
-    }
-}
-
 #[cfg(test)]
 use approval_request::format_guardian_action_pretty;
 #[cfg(test)]
@@ -123,13 +58,7 @@ use prompt::GuardianPromptMode;
 #[cfg(test)]
 use prompt::GuardianTranscriptCursor;
 #[cfg(test)]
-use prompt::GuardianTranscriptEntry;
-#[cfg(test)]
-use prompt::GuardianTranscriptEntryKind;
-#[cfg(test)]
 use prompt::build_guardian_prompt_items;
-#[cfg(test)]
-use prompt::collect_guardian_transcript_entries;
 #[cfg(test)]
 use prompt::guardian_output_schema;
 #[cfg(test)]

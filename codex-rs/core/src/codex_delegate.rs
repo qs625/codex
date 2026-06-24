@@ -35,12 +35,11 @@ use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::new_guardian_review_id;
 use crate::guardian::routes_approval_to_guardian;
 use crate::guardian::spawn_approval_request_review;
-use crate::mcp_tool_call::MCP_TOOL_APPROVAL_ACCEPT;
-use crate::mcp_tool_call::MCP_TOOL_APPROVAL_ACCEPT_FOR_SESSION;
-use crate::mcp_tool_call::MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC;
-use crate::mcp_tool_call::build_guardian_mcp_tool_review_request;
-use crate::mcp_tool_call::is_mcp_tool_approval_question_id;
-use crate::mcp_tool_call::lookup_mcp_tool_metadata;
+use crate::mcp::MCP_TOOL_APPROVAL_ACCEPT;
+use crate::mcp::MCP_TOOL_APPROVAL_ACCEPT_FOR_SESSION;
+use crate::mcp::MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC;
+use crate::mcp::is_mcp_tool_approval_question_id;
+use crate::mcp::lookup_mcp_tool_metadata;
 use crate::session::Codex;
 use crate::session::CodexSpawnArgs;
 use crate::session::CodexSpawnOk;
@@ -49,6 +48,7 @@ use crate::session::emit_subagent_session_started;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use codex_auth_types::SharedAuthRuntime;
+use codex_mcp_runtime::build_guardian_mcp_tool_review_request;
 use codex_model_provider_api::SharedModelProviderAuthManager;
 use codex_models_manager_api::SharedModelsManager;
 use codex_protocol::error::CodexErr;
@@ -132,6 +132,7 @@ pub(crate) async fn run_codex_thread_interactive(
             .code_mode_runtime_factory
             .create_service(),
         code_mode_runtime_factory: Arc::clone(&parent_session.services.code_mode_runtime_factory),
+        tool_router_factory: Arc::clone(&parent_session.services.tool_router_factory),
         workflow_runs: Arc::clone(&parent_session.workflow_runs),
     }))
     .or_cancel(&cancel_token)

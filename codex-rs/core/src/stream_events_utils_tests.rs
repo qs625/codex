@@ -1,16 +1,13 @@
 use super::HandleOutputCtx;
 use super::TurnItemContributorPolicy;
-use super::completed_item_defers_mailbox_delivery_to_next_turn;
 use super::finalize_non_tool_response_item;
 use super::handle_non_tool_response_item;
 use super::handle_output_item_done;
 use super::image_generation_artifact_path;
-use super::last_assistant_message_from_item;
-use super::response_item_may_include_external_context;
 use super::save_image_generation_result;
 use crate::session::tests::make_session_and_context;
+use crate::tools::ToolCallRuntime;
 use crate::tools::ToolRouter;
-use crate::tools::parallel::ToolCallRuntime;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_extension_api::ExtensionData;
 use codex_extension_api::TurnItemContributionFuture;
@@ -20,10 +17,6 @@ use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::TurnItem;
 use codex_protocol::memory_citation::MemoryCitation;
 use codex_protocol::models::ContentItem;
-use codex_protocol::models::FunctionCallOutputPayload;
-use codex_protocol::models::LocalShellAction;
-use codex_protocol::models::LocalShellExecAction;
-use codex_protocol::models::LocalShellStatus;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::ResponseItem;
 use codex_utils_absolute_path::test_support::PathExt;
@@ -44,84 +37,6 @@ fn assistant_output_text_with_phase(text: &str, phase: Option<MessagePhase>) -> 
         }],
         phase,
     }
-}
-
-#[test]
-fn external_context_pollution_items_include_web_search_and_tool_search() {
-    let polluting_items = [
-        ResponseItem::WebSearchCall {
-            id: None,
-            status: Some("completed".to_string()),
-            action: None,
-        },
-        ResponseItem::ToolSearchCall {
-            id: None,
-            call_id: Some("search-1".to_string()),
-            status: None,
-            execution: "client".to_string(),
-            arguments: serde_json::json!({"query": "calendar"}),
-        },
-        ResponseItem::ToolSearchOutput {
-            call_id: Some("search-1".to_string()),
-            status: "completed".to_string(),
-            execution: "client".to_string(),
-            tools: Vec::new(),
-        },
-    ];
-
-    assert!(
-        polluting_items
-            .iter()
-            .all(response_item_may_include_external_context)
-    );
-}
-
-#[test]
-fn external_context_pollution_items_exclude_local_tool_calls() {
-    let non_polluting_items = [
-        ResponseItem::LocalShellCall {
-            id: None,
-            call_id: Some("shell-1".to_string()),
-            status: LocalShellStatus::Completed,
-            action: LocalShellAction::Exec(LocalShellExecAction {
-                command: vec!["cat".to_string(), "README.md".to_string()],
-                timeout_ms: None,
-                working_directory: None,
-                env: None,
-                user: None,
-            }),
-        },
-        ResponseItem::FunctionCall {
-            id: None,
-            name: "shell".to_string(),
-            namespace: None,
-            arguments: "{}".to_string(),
-            call_id: "call-1".to_string(),
-        },
-        ResponseItem::FunctionCallOutput {
-            call_id: "call-1".to_string(),
-            output: FunctionCallOutputPayload::from_text("ok".to_string()),
-        },
-        ResponseItem::CustomToolCall {
-            id: None,
-            status: None,
-            call_id: "custom-1".to_string(),
-            name: "apply_patch".to_string(),
-            input: "*** Begin Patch\n*** End Patch\n".to_string(),
-        },
-        ResponseItem::CustomToolCallOutput {
-            call_id: "custom-1".to_string(),
-            name: Some("apply_patch".to_string()),
-            output: FunctionCallOutputPayload::from_text("ok".to_string()),
-        },
-        assistant_output_text("plain assistant text"),
-    ];
-
-    assert!(
-        !non_polluting_items
-            .iter()
-            .any(response_item_may_include_external_context)
-    );
 }
 
 #[tokio::test]
@@ -354,70 +269,6 @@ async fn finalized_turn_item_keeps_mailbox_open_for_commentary_text() {
         Some("contributed assistant text")
     );
     assert!(!finalized.facts.defers_mailbox_delivery_to_next_turn);
-}
-
-#[test]
-fn last_assistant_message_from_item_strips_citations_and_plan_blocks() {
-    let item = assistant_output_text(
-        "before<oai-mem-citation>doc1</oai-mem-citation>\n<proposed_plan>\n- x\n</proposed_plan>\nafter",
-    );
-
-    let message = last_assistant_message_from_item(&item, /*plan_mode*/ true)
-        .expect("assistant text should remain after stripping");
-
-    assert_eq!(message, "before\nafter");
-}
-
-#[test]
-fn last_assistant_message_from_item_returns_none_for_citation_only_message() {
-    let item = assistant_output_text("<oai-mem-citation>doc1</oai-mem-citation>");
-
-    assert_eq!(
-        last_assistant_message_from_item(&item, /*plan_mode*/ false),
-        None
-    );
-}
-
-#[test]
-fn last_assistant_message_from_item_returns_none_for_plan_only_hidden_message() {
-    let item = assistant_output_text("<proposed_plan>\n- x\n</proposed_plan>");
-
-    assert_eq!(
-        last_assistant_message_from_item(&item, /*plan_mode*/ true),
-        None
-    );
-}
-
-#[test]
-fn completed_item_defers_mailbox_delivery_for_unknown_phase_messages() {
-    let item = assistant_output_text("final answer");
-
-    assert!(completed_item_defers_mailbox_delivery_to_next_turn(
-        &item, /*plan_mode*/ false,
-    ));
-}
-
-#[test]
-fn completed_item_keeps_mailbox_delivery_open_for_commentary_messages() {
-    let item = assistant_output_text_with_phase("still working", Some(MessagePhase::Commentary));
-
-    assert!(!completed_item_defers_mailbox_delivery_to_next_turn(
-        &item, /*plan_mode*/ false,
-    ));
-}
-
-#[test]
-fn completed_item_defers_mailbox_delivery_for_image_generation_calls() {
-    let item = ResponseItem::ImageGenerationCall {
-        id: "ig-1".to_string(),
-        status: "completed".to_string(),
-        revised_prompt: None,
-        result: "Zm9v".to_string(),
-    };
-
-    assert!(completed_item_defers_mailbox_delivery_to_next_turn(
-        &item, /*plan_mode*/ false,
-    ));
 }
 
 #[tokio::test]

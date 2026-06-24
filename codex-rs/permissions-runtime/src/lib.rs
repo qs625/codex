@@ -4,6 +4,7 @@ use std::path::PathBuf;
 mod exec_policy;
 mod exec_policy_manager;
 mod network_approval;
+mod request_permissions;
 
 pub use exec_policy::ExecPolicyApprovalRequest;
 pub use exec_policy::ExecPolicyCommandOrigin;
@@ -44,6 +45,7 @@ pub use network_approval::PendingHostApproval;
 pub use network_approval::allows_network_approval_flow;
 pub use network_approval::denied_network_policy_message;
 pub use network_approval::permission_profile_allows_network_approval_flow;
+pub use request_permissions::validate_network_policy_amendment_host;
 
 use codex_protocol::approvals::ExecPolicyAmendment;
 use codex_protocol::permissions::FileSystemSandboxKind;

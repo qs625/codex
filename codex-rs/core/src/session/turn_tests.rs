@@ -3,6 +3,7 @@ use codex_extension_api::ExtensionData;
 use codex_extension_api::TurnItemContributionFuture;
 use codex_extension_api::TurnItemContributor;
 use codex_protocol::items::AgentMessageContent;
+use codex_protocol::models::ContentItem;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
 

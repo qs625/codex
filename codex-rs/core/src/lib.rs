@@ -6,7 +6,7 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 mod active_event_subscriptions;
-mod apply_patch;
+mod apply_patch_tool_host;
 mod apps;
 mod arc_monitor;
 mod client;
@@ -15,17 +15,13 @@ mod realtime_context;
 mod realtime_conversation;
 pub(crate) mod session;
 pub use session::SteerInputError;
-mod codex_thread;
 mod compact_remote;
 mod compact_remote_v2;
-pub use codex_thread::CodexThread;
-pub use codex_thread::CodexThreadTurnContextOverrides;
-pub use codex_thread::ThreadConfigSnapshot;
-pub use codex_thread::ThreadRuntimeStatus;
 pub use session::turn_context::TurnContext;
 mod agent;
 pub use active_event_subscriptions::ActiveEventSubscriptionTracker;
 mod attestation;
+pub(crate) mod code_mode_host;
 mod codex_delegate;
 pub mod config;
 pub mod connectors;
@@ -36,22 +32,17 @@ mod environment_selection;
 pub mod exec;
 pub mod exec_env;
 mod exec_policy;
-#[cfg(test)]
-mod git_info_tests;
-mod goals;
+mod goal;
 pub use codex_state_api::ExternalGoalPreviousStatus;
 pub use codex_state_api::ExternalGoalSet;
 mod guardian;
 mod hook_runtime;
 mod installation_id;
 pub(crate) mod mcp;
-mod mcp_skill_dependencies;
-mod mcp_tool_exposure;
 mod network_policy_decision;
 pub use codex_mcp_runtime::McpManager;
-mod mcp_openai_file;
-mod mcp_tool_call;
 pub(crate) mod mention_syntax;
+pub(crate) mod network_approval;
 mod original_image_detail;
 pub(crate) mod utils;
 pub use mention_syntax::PLUGIN_TEXT_MENTION_SIGIL;
@@ -69,7 +60,6 @@ pub(crate) mod mentions {
     pub(crate) use crate::plugins::build_skill_name_counts;
     pub(crate) use crate::plugins::collect_explicit_app_ids;
     pub(crate) use crate::plugins::collect_explicit_plugin_mentions;
-    pub(crate) use crate::plugins::collect_tool_mentions_from_messages;
 }
 pub mod sandboxing;
 mod session_prefix;
@@ -96,21 +86,26 @@ pub mod review_prompts;
 mod stream_events_utils;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
-mod thread_manager;
+mod thread;
 mod unified_exec;
 pub(crate) mod web_search;
 pub mod windows_sandbox;
 pub(crate) mod windows_sandbox_read_grants;
 pub mod workflow_runs;
+pub(crate) mod workflow_tool_host;
 pub mod workflows;
 pub use codex_rollout_api::ForkSnapshot;
-pub use thread_manager::NewThread;
-pub use thread_manager::StartThreadOptions;
-pub use thread_manager::ThreadAuthRuntimes;
-pub use thread_manager::ThreadCreatedEvent;
-pub use thread_manager::ThreadManager;
-pub use thread_manager::ThreadShutdownReport;
-pub use thread_manager::build_models_manager;
+pub use thread::CodexThread;
+pub use thread::CodexThreadTurnContextOverrides;
+pub use thread::NewThread;
+pub use thread::StartThreadOptions;
+pub use thread::ThreadAuthRuntimes;
+pub use thread::ThreadConfigSnapshot;
+pub use thread::ThreadCreatedEvent;
+pub use thread::ThreadManager;
+pub use thread::ThreadRuntimeStatus;
+pub use thread::ThreadShutdownReport;
+pub use thread::build_models_manager;
 pub use unified_exec::ProcessExitSubscription;
 pub use unified_exec::UnifiedExecManagerHandle;
 pub use unified_exec::UnifiedExecProcessManager;
@@ -128,10 +123,12 @@ pub use agents_md::AgentsMdManager;
 pub use agents_md::DEFAULT_AGENTS_MD_FILENAME;
 pub use agents_md::LOCAL_AGENTS_MD_FILENAME;
 mod rollout;
-pub(crate) mod safety;
 mod session_rollout_init_error;
 pub mod shell;
+#[cfg(unix)]
+pub(crate) mod shell_escalation_adapter;
 pub(crate) mod shell_snapshot;
+pub(crate) mod shell_tool_host;
 pub mod spawn;
 pub(crate) mod state_db_bridge;
 pub(crate) use state_db_bridge::StateDbHandle;
@@ -145,6 +142,8 @@ mod turn_timing;
 mod user_shell_command;
 pub mod util;
 
+#[doc(hidden)]
+pub use apply_patch_tool_host::CoreApplyPatchHandlerHost as CoreToolDomainHost;
 pub use attestation::AttestationContext;
 pub use attestation::AttestationProvider;
 pub use attestation::GenerateAttestationFuture;
@@ -159,6 +158,14 @@ pub use exec_policy::EmptyExecPolicyLoader;
 pub use exec_policy::ExecPolicyLoadResult;
 pub use exec_policy::ExecPolicyLoader;
 pub use installation_id::resolve_installation_id;
+#[doc(hidden)]
+pub use session::session::Session as CoreSession;
+#[doc(hidden)]
+pub use tools::router::CoreToolRuntimeRouter;
+#[doc(hidden)]
+pub use tools::router::ToolRouterBuildParams;
+#[doc(hidden)]
+pub use tools::router::ToolRouterFactory;
 pub use turn_metadata::build_turn_metadata_header;
 pub mod compact;
 mod memory_usage;

@@ -1,0 +1,953 @@
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::time::Duration;
+
+use codex_protocol::ThreadId;
+use codex_protocol::protocol::AgentStatus;
+use codex_state_api::AgentJob;
+use codex_state_api::AgentJobCreateParams;
+use codex_state_api::AgentJobItem;
+use codex_state_api::AgentJobItemCreateParams;
+use codex_state_api::AgentJobItemStatus;
+use codex_state_api::SharedStateDbRuntime;
+use codex_state_api::build_agent_job_worker_prompt;
+use codex_state_api::default_agent_job_output_csv_path;
+use codex_state_api::ensure_unique_agent_job_headers;
+use codex_state_api::parse_agent_job_csv;
+use codex_state_api::render_agent_job_csv;
+use codex_tool_planning::ToolName;
+use codex_tool_planning::ToolSpec;
+use codex_tool_planning::create_report_agent_job_result_tool;
+use codex_tool_planning::create_spawn_agents_on_csv_tool;
+use codex_tool_runtime_api::AgentJobRunnerOptions;
+use codex_tool_runtime_api::AgentJobSpawnWorkerError;
+use codex_tool_runtime_api::AgentJobToolHost;
+use codex_tool_runtime_api::ToolHandler;
+use codex_tool_types::FunctionCallError;
+use codex_tool_types::ToolExecutor;
+use codex_tool_types::ToolExecutorFuture;
+use codex_tool_types::ToolPayload;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use futures::StreamExt;
+use futures::stream::FuturesUnordered;
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::Value;
+use tokio::sync::watch;
+use tokio::time::Instant;
+use tokio::time::timeout;
+use uuid::Uuid;
+
+use codex_tool_runtime::FunctionToolOutput;
+use codex_tool_runtime::ToolInvocation;
+
+const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const DEFAULT_AGENT_JOB_ITEM_TIMEOUT: Duration = Duration::from_secs(60 * 30);
+
+pub struct SpawnAgentsOnCsvHandler<Host> {
+    host: Host,
+}
+
+impl<Host> SpawnAgentsOnCsvHandler<Host> {
+    pub fn new(host: Host) -> Self {
+        Self { host }
+    }
+}
+
+pub struct ReportAgentJobResultHandler<Host> {
+    host: Host,
+}
+
+impl<Host> ReportAgentJobResultHandler<Host> {
+    pub fn new(host: Host) -> Self {
+        Self { host }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SpawnAgentsOnCsvArgs {
+    csv_path: String,
+    instruction: String,
+    id_column: Option<String>,
+    output_csv_path: Option<String>,
+    output_schema: Option<Value>,
+    max_concurrency: Option<usize>,
+    max_workers: Option<usize>,
+    max_runtime_seconds: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReportAgentJobResultArgs {
+    job_id: String,
+    item_id: String,
+    result: Value,
+    stop: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+struct SpawnAgentsOnCsvResult {
+    job_id: String,
+    status: String,
+    output_csv_path: String,
+    total_items: usize,
+    completed_items: usize,
+    failed_items: usize,
+    job_error: Option<String>,
+    failed_item_errors: Option<Vec<AgentJobFailureSummary>>,
+}
+
+#[derive(Debug, Serialize)]
+struct AgentJobFailureSummary {
+    item_id: String,
+    source_id: Option<String>,
+    last_error: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ReportAgentJobResultToolResult {
+    accepted: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ActiveJobItem {
+    item_id: String,
+    started_at: Instant,
+    status_rx: Option<watch::Receiver<AgentStatus>>,
+}
+
+impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
+    for SpawnAgentsOnCsvHandler<Host>
+where
+    Host: AgentJobToolHost,
+{
+    type Output = FunctionToolOutput;
+
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain("spawn_agents_on_csv")
+    }
+
+    fn spec(&self) -> Option<ToolSpec> {
+        Some(create_spawn_agents_on_csv_tool())
+    }
+
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+    ) -> ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session,
+                turn,
+                metadata,
+                ..
+            } = invocation;
+            let arguments = function_arguments(metadata.payload, "agent jobs")?;
+            handle_spawn_agents_on_csv(&self.host, session, turn, arguments).await
+        })
+    }
+}
+
+impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
+    for SpawnAgentsOnCsvHandler<Host>
+where
+    Host: AgentJobToolHost,
+{
+    fn matches_kind(&self, payload: &ToolPayload) -> bool {
+        matches!(payload, ToolPayload::Function { .. })
+    }
+}
+
+impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
+    for ReportAgentJobResultHandler<Host>
+where
+    Host: AgentJobToolHost,
+{
+    type Output = FunctionToolOutput;
+
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain("report_agent_job_result")
+    }
+
+    fn spec(&self) -> Option<ToolSpec> {
+        Some(create_report_agent_job_result_tool())
+    }
+
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+    ) -> ToolExecutorFuture<'a, Self::Output>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let ToolInvocation {
+                session, metadata, ..
+            } = invocation;
+            let arguments = function_arguments(metadata.payload, "report_agent_job_result")?;
+            handle_report_agent_job_result(&self.host, session, arguments).await
+        })
+    }
+}
+
+impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
+    for ReportAgentJobResultHandler<Host>
+where
+    Host: AgentJobToolHost,
+{
+    fn matches_kind(&self, payload: &ToolPayload) -> bool {
+        matches!(payload, ToolPayload::Function { .. })
+    }
+}
+
+async fn handle_spawn_agents_on_csv<Host>(
+    host: &Host,
+    session: Host::Session,
+    turn: Host::Turn,
+    arguments: String,
+) -> Result<FunctionToolOutput, FunctionCallError>
+where
+    Host: AgentJobToolHost,
+{
+    let args: SpawnAgentsOnCsvArgs = parse_arguments(arguments.as_str())?;
+    if args.instruction.trim().is_empty() {
+        return Err(FunctionCallError::RespondToModel(
+            "instruction must be non-empty".to_string(),
+        ));
+    }
+
+    let cwd = host.single_local_environment_cwd(&turn)?;
+    let db = required_state_db(host, &session)?;
+    let input_path = cwd.join(args.csv_path);
+    let input_path_display = input_path.display().to_string();
+    let csv_content = tokio::fs::read_to_string(&input_path)
+        .await
+        .map_err(|err| {
+            FunctionCallError::RespondToModel(format!(
+                "failed to read csv input {input_path_display}: {err}"
+            ))
+        })?;
+    let (headers, rows) = parse_agent_job_csv(csv_content.as_str()).map_err(|err| {
+        FunctionCallError::RespondToModel(format!("failed to parse csv input: {err}"))
+    })?;
+    if headers.is_empty() {
+        return Err(FunctionCallError::RespondToModel(
+            "csv input must include a header row".to_string(),
+        ));
+    }
+    ensure_unique_agent_job_headers(headers.as_slice())
+        .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
+
+    let id_column_index = args.id_column.as_ref().map_or(Ok(None), |column_name| {
+        headers
+            .iter()
+            .position(|header| header == column_name)
+            .map(Some)
+            .ok_or_else(|| {
+                FunctionCallError::RespondToModel(format!(
+                    "id_column {column_name} was not found in csv headers"
+                ))
+            })
+    })?;
+
+    let mut items = Vec::with_capacity(rows.len());
+    let mut seen_ids = HashSet::new();
+    for (idx, row) in rows.into_iter().enumerate() {
+        if row.len() != headers.len() {
+            let row_index = idx + 2;
+            let row_len = row.len();
+            let header_len = headers.len();
+            return Err(FunctionCallError::RespondToModel(format!(
+                "csv row {row_index} has {row_len} fields but header has {header_len}"
+            )));
+        }
+
+        let source_id = id_column_index
+            .and_then(|index| row.get(index).cloned())
+            .filter(|value| !value.trim().is_empty());
+        let row_index = idx + 1;
+        let base_item_id = source_id
+            .clone()
+            .unwrap_or_else(|| format!("row-{row_index}"));
+        let mut item_id = base_item_id.clone();
+        let mut suffix = 2usize;
+        while !seen_ids.insert(item_id.clone()) {
+            item_id = format!("{base_item_id}-{suffix}");
+            suffix = suffix.saturating_add(1);
+        }
+
+        let row_object = headers
+            .iter()
+            .zip(row.iter())
+            .map(|(header, value)| (header.clone(), Value::String(value.clone())))
+            .collect::<serde_json::Map<_, _>>();
+        items.push(AgentJobItemCreateParams {
+            item_id,
+            row_index: idx as i64,
+            source_id,
+            row_json: Value::Object(row_object),
+        });
+    }
+
+    let job_id = Uuid::new_v4().to_string();
+    let output_csv_path = args.output_csv_path.map_or_else(
+        || {
+            AbsolutePathBuf::from_absolute_path(default_agent_job_output_csv_path(
+                input_path.as_path(),
+                job_id.as_str(),
+            ))
+            .map_err(|err| {
+                FunctionCallError::RespondToModel(format!(
+                    "failed to resolve default output csv path: {err}"
+                ))
+            })
+        },
+        |path| Ok(cwd.join(path)),
+    )?;
+    let job_suffix = &job_id[..8];
+    let job_name = format!("agent-job-{job_suffix}");
+    let max_runtime_seconds = normalize_max_runtime_seconds(
+        args.max_runtime_seconds
+            .or_else(|| host.default_agent_job_max_runtime_seconds(&turn)),
+    )?;
+    let _job = db
+        .create_agent_job(
+            &AgentJobCreateParams {
+                id: job_id.clone(),
+                name: job_name,
+                instruction: args.instruction,
+                auto_export: true,
+                max_runtime_seconds,
+                output_schema_json: args.output_schema,
+                input_headers: headers,
+                input_csv_path: input_path.display().to_string(),
+                output_csv_path: output_csv_path.display().to_string(),
+            },
+            items.as_slice(),
+        )
+        .await
+        .map_err(|err| {
+            FunctionCallError::RespondToModel(format!("failed to create agent job: {err}"))
+        })?;
+
+    let requested_concurrency = args.max_concurrency.or(args.max_workers);
+    let options = match host
+        .build_agent_job_runner_options(&session, &turn, requested_concurrency)
+        .await
+    {
+        Ok(options) => options,
+        Err(err) => {
+            let error_message = err.to_string();
+            let _ = db
+                .mark_agent_job_failed(job_id.as_str(), error_message.as_str())
+                .await;
+            return Err(err);
+        }
+    };
+    db.mark_agent_job_running(job_id.as_str())
+        .await
+        .map_err(|err| {
+            FunctionCallError::RespondToModel(format!(
+                "failed to transition agent job {job_id} to running: {err}"
+            ))
+        })?;
+    if let Err(err) = run_agent_job_loop(
+        host.clone(),
+        session.clone(),
+        turn.clone(),
+        db.clone(),
+        job_id.clone(),
+        options,
+    )
+    .await
+    {
+        let error_message = format!("job runner failed: {err}");
+        let _ = db
+            .mark_agent_job_failed(job_id.as_str(), error_message.as_str())
+            .await;
+        return Err(FunctionCallError::RespondToModel(format!(
+            "agent job {job_id} failed: {err}"
+        )));
+    }
+
+    let job = db
+        .get_agent_job(job_id.as_str())
+        .await
+        .map_err(|err| {
+            FunctionCallError::RespondToModel(format!("failed to load agent job {job_id}: {err}"))
+        })?
+        .ok_or_else(|| {
+            FunctionCallError::RespondToModel(format!("agent job {job_id} not found"))
+        })?;
+    let output_path = PathBuf::from(job.output_csv_path.clone());
+    if !tokio::fs::try_exists(&output_path).await.unwrap_or(false) {
+        export_job_csv_snapshot(db.clone(), &job)
+            .await
+            .map_err(|err| {
+                FunctionCallError::RespondToModel(format!(
+                    "failed to export output csv {job_id}: {err}"
+                ))
+            })?;
+    }
+    let progress = db
+        .get_agent_job_progress(job_id.as_str())
+        .await
+        .map_err(|err| {
+            FunctionCallError::RespondToModel(format!(
+                "failed to load agent job progress {job_id}: {err}"
+            ))
+        })?;
+    let mut job_error = job.last_error.clone().filter(|err| !err.trim().is_empty());
+    let failed_item_errors = if progress.failed_items > 0 {
+        let items = db
+            .list_agent_job_items(job_id.as_str(), Some(AgentJobItemStatus::Failed), Some(5))
+            .await
+            .unwrap_or_default();
+        let summaries: Vec<_> = items
+            .into_iter()
+            .filter_map(|item| {
+                let last_error = item.last_error.unwrap_or_default();
+                if last_error.trim().is_empty() {
+                    return None;
+                }
+                Some(AgentJobFailureSummary {
+                    item_id: item.item_id,
+                    source_id: item.source_id,
+                    last_error,
+                })
+            })
+            .collect();
+        if summaries.is_empty() {
+            if job_error.is_none() {
+                job_error = Some(
+                    "agent job has failed items but no error details were recorded".to_string(),
+                );
+            }
+            None
+        } else {
+            Some(summaries)
+        }
+    } else {
+        None
+    };
+    let content = serde_json::to_string(&SpawnAgentsOnCsvResult {
+        job_id,
+        status: job.status.as_str().to_string(),
+        output_csv_path: job.output_csv_path,
+        total_items: progress.total_items,
+        completed_items: progress.completed_items,
+        failed_items: progress.failed_items,
+        job_error,
+        failed_item_errors,
+    })
+    .map_err(|err| {
+        FunctionCallError::Fatal(format!(
+            "failed to serialize spawn_agents_on_csv result: {err}"
+        ))
+    })?;
+    Ok(FunctionToolOutput::from_text(content, Some(true)))
+}
+
+async fn handle_report_agent_job_result<Host>(
+    host: &Host,
+    session: Host::Session,
+    arguments: String,
+) -> Result<FunctionToolOutput, FunctionCallError>
+where
+    Host: AgentJobToolHost,
+{
+    let args: ReportAgentJobResultArgs = parse_arguments(arguments.as_str())?;
+    if !args.result.is_object() {
+        return Err(FunctionCallError::RespondToModel(
+            "result must be a JSON object".to_string(),
+        ));
+    }
+    let db = required_state_db(host, &session)?;
+    let reporting_thread_id = host.conversation_id_string(&session);
+    let accepted = db
+        .report_agent_job_item_result(
+            args.job_id.as_str(),
+            args.item_id.as_str(),
+            reporting_thread_id.as_str(),
+            &args.result,
+        )
+        .await
+        .map_err(|err| {
+            let job_id = args.job_id.as_str();
+            let item_id = args.item_id.as_str();
+            FunctionCallError::RespondToModel(format!(
+                "failed to record agent job result for {job_id} / {item_id}: {err}"
+            ))
+        })?;
+    if accepted && args.stop.unwrap_or(false) {
+        let message = "cancelled by worker request";
+        let _ = db
+            .mark_agent_job_cancelled(args.job_id.as_str(), message)
+            .await;
+    }
+    let content =
+        serde_json::to_string(&ReportAgentJobResultToolResult { accepted }).map_err(|err| {
+            FunctionCallError::Fatal(format!(
+                "failed to serialize report_agent_job_result result: {err}"
+            ))
+        })?;
+    Ok(FunctionToolOutput::from_text(content, Some(true)))
+}
+
+fn required_state_db<Host>(
+    host: &Host,
+    session: &Host::Session,
+) -> Result<SharedStateDbRuntime, FunctionCallError>
+where
+    Host: AgentJobToolHost,
+{
+    host.state_db(session).ok_or_else(|| {
+        FunctionCallError::Fatal("sqlite state db is unavailable for this session".to_string())
+    })
+}
+
+pub fn bounded_agent_job_concurrency(
+    requested: Option<usize>,
+    max_threads: Option<usize>,
+) -> usize {
+    codex_agent_runtime::bounded_agent_job_concurrency(requested, max_threads)
+}
+
+fn normalize_max_runtime_seconds(requested: Option<u64>) -> Result<Option<u64>, FunctionCallError> {
+    let Some(requested) = requested else {
+        return Ok(None);
+    };
+    if requested == 0 {
+        return Err(FunctionCallError::RespondToModel(
+            "max_runtime_seconds must be >= 1".to_string(),
+        ));
+    }
+    Ok(Some(requested))
+}
+
+async fn run_agent_job_loop<Host>(
+    host: Host,
+    session: Host::Session,
+    turn: Host::Turn,
+    db: SharedStateDbRuntime,
+    job_id: String,
+    options: AgentJobRunnerOptions<Host::SpawnConfig>,
+) -> anyhow::Result<()>
+where
+    Host: AgentJobToolHost,
+{
+    let job = db
+        .get_agent_job(job_id.as_str())
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("agent job {job_id} was not found"))?;
+    let runtime_timeout = job_runtime_timeout(&job);
+    let mut active_items: HashMap<ThreadId, ActiveJobItem> = HashMap::new();
+    recover_running_items(
+        host.clone(),
+        session.clone(),
+        db.clone(),
+        job_id.as_str(),
+        &mut active_items,
+        runtime_timeout,
+    )
+    .await?;
+
+    let mut cancel_requested = db.is_agent_job_cancelled(job_id.as_str()).await?;
+    loop {
+        let mut progressed = false;
+
+        if !cancel_requested && db.is_agent_job_cancelled(job_id.as_str()).await? {
+            cancel_requested = true;
+        }
+
+        if !cancel_requested && active_items.len() < options.max_concurrency {
+            let slots = options.max_concurrency - active_items.len();
+            let pending_items = db
+                .list_agent_job_items(
+                    job_id.as_str(),
+                    Some(AgentJobItemStatus::Pending),
+                    Some(slots),
+                )
+                .await?;
+            for item in pending_items {
+                let prompt = build_agent_job_worker_prompt(&job, &item)?;
+                let thread_id = match host
+                    .spawn_agent_job_worker(
+                        &session,
+                        &turn,
+                        options.spawn_config.clone(),
+                        job_id.as_str(),
+                        prompt,
+                    )
+                    .await
+                {
+                    Ok(thread_id) => thread_id,
+                    Err(AgentJobSpawnWorkerError::LimitReached) => {
+                        db.mark_agent_job_item_pending(
+                            job_id.as_str(),
+                            item.item_id.as_str(),
+                            /*error_message*/ None,
+                        )
+                        .await?;
+                        break;
+                    }
+                    Err(AgentJobSpawnWorkerError::Other(err)) => {
+                        let error_message = format!("failed to spawn worker: {err}");
+                        db.mark_agent_job_item_failed(
+                            job_id.as_str(),
+                            item.item_id.as_str(),
+                            error_message.as_str(),
+                        )
+                        .await?;
+                        progressed = true;
+                        continue;
+                    }
+                };
+                let assigned = db
+                    .mark_agent_job_item_running_with_thread(
+                        job_id.as_str(),
+                        item.item_id.as_str(),
+                        thread_id.to_string().as_str(),
+                    )
+                    .await?;
+                if !assigned {
+                    host.shutdown_agent_job_worker(&session, thread_id).await;
+                    continue;
+                }
+                active_items.insert(
+                    thread_id,
+                    ActiveJobItem {
+                        item_id: item.item_id.clone(),
+                        started_at: Instant::now(),
+                        status_rx: host
+                            .subscribe_agent_job_worker_status(&session, thread_id)
+                            .await,
+                    },
+                );
+                progressed = true;
+            }
+        }
+
+        if reap_stale_active_items(
+            host.clone(),
+            session.clone(),
+            db.clone(),
+            job_id.as_str(),
+            &mut active_items,
+            runtime_timeout,
+        )
+        .await?
+        {
+            progressed = true;
+        }
+
+        let finished = find_finished_threads(host.clone(), session.clone(), &active_items).await;
+        if finished.is_empty() {
+            let progress = db.get_agent_job_progress(job_id.as_str()).await?;
+            if cancel_requested {
+                if progress.running_items == 0 && active_items.is_empty() {
+                    break;
+                }
+            } else if progress.pending_items == 0
+                && progress.running_items == 0
+                && active_items.is_empty()
+            {
+                break;
+            }
+            if !progressed {
+                wait_for_status_change(&active_items).await;
+            }
+            continue;
+        }
+
+        for (thread_id, item_id) in finished {
+            finalize_finished_item(
+                host.clone(),
+                session.clone(),
+                db.clone(),
+                job_id.as_str(),
+                item_id.as_str(),
+                thread_id,
+            )
+            .await?;
+            active_items.remove(&thread_id);
+        }
+    }
+
+    if let Err(err) = export_job_csv_snapshot(db.clone(), &job).await {
+        let message = format!("auto-export failed: {err}");
+        db.mark_agent_job_failed(job_id.as_str(), message.as_str())
+            .await?;
+        return Ok(());
+    }
+    let cancelled = cancel_requested || db.is_agent_job_cancelled(job_id.as_str()).await?;
+    if cancelled {
+        return Ok(());
+    }
+    db.mark_agent_job_completed(job_id.as_str()).await?;
+    Ok(())
+}
+
+async fn export_job_csv_snapshot(db: SharedStateDbRuntime, job: &AgentJob) -> anyhow::Result<()> {
+    let items = db
+        .list_agent_job_items(job.id.as_str(), /*status*/ None, /*limit*/ None)
+        .await?;
+    let csv_content = render_agent_job_csv(job.input_headers.as_slice(), items.as_slice())
+        .map_err(|err| anyhow::anyhow!("failed to render job csv for auto-export: {err}"))?;
+    let output_path = PathBuf::from(job.output_csv_path.clone());
+    if let Some(parent) = output_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    tokio::fs::write(&output_path, csv_content).await?;
+    Ok(())
+}
+
+async fn recover_running_items<Host>(
+    host: Host,
+    session: Host::Session,
+    db: SharedStateDbRuntime,
+    job_id: &str,
+    active_items: &mut HashMap<ThreadId, ActiveJobItem>,
+    runtime_timeout: Duration,
+) -> anyhow::Result<()>
+where
+    Host: AgentJobToolHost,
+{
+    let running_items = db
+        .list_agent_job_items(
+            job_id,
+            Some(AgentJobItemStatus::Running),
+            /*limit*/ None,
+        )
+        .await?;
+    for item in running_items {
+        if is_item_stale(&item, runtime_timeout) {
+            let error_message = format!("worker exceeded max runtime of {runtime_timeout:?}");
+            db.mark_agent_job_item_failed(job_id, item.item_id.as_str(), error_message.as_str())
+                .await?;
+            if let Some(assigned_thread_id) = item.assigned_thread_id.as_ref()
+                && let Ok(thread_id) = ThreadId::from_string(assigned_thread_id.as_str())
+            {
+                host.shutdown_agent_job_worker(&session, thread_id).await;
+            }
+            continue;
+        }
+        let Some(assigned_thread_id) = item.assigned_thread_id.clone() else {
+            db.mark_agent_job_item_failed(
+                job_id,
+                item.item_id.as_str(),
+                "running item is missing assigned_thread_id",
+            )
+            .await?;
+            continue;
+        };
+        let thread_id = match ThreadId::from_string(assigned_thread_id.as_str()) {
+            Ok(thread_id) => thread_id,
+            Err(err) => {
+                let error_message = format!("invalid assigned_thread_id: {err:?}");
+                db.mark_agent_job_item_failed(
+                    job_id,
+                    item.item_id.as_str(),
+                    error_message.as_str(),
+                )
+                .await?;
+                continue;
+            }
+        };
+        if is_final(&host.get_agent_job_worker_status(&session, thread_id).await) {
+            finalize_finished_item(
+                host.clone(),
+                session.clone(),
+                db.clone(),
+                job_id,
+                item.item_id.as_str(),
+                thread_id,
+            )
+            .await?;
+        } else {
+            active_items.insert(
+                thread_id,
+                ActiveJobItem {
+                    item_id: item.item_id.clone(),
+                    started_at: started_at_from_item(&item),
+                    status_rx: host
+                        .subscribe_agent_job_worker_status(&session, thread_id)
+                        .await,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn find_finished_threads<Host>(
+    host: Host,
+    session: Host::Session,
+    active_items: &HashMap<ThreadId, ActiveJobItem>,
+) -> Vec<(ThreadId, String)>
+where
+    Host: AgentJobToolHost,
+{
+    let mut finished = Vec::new();
+    for (thread_id, item) in active_items {
+        let status = active_item_status(&host, &session, *thread_id, item).await;
+        if is_final(&status) {
+            finished.push((*thread_id, item.item_id.clone()));
+        }
+    }
+    finished
+}
+
+async fn active_item_status<Host>(
+    host: &Host,
+    session: &Host::Session,
+    thread_id: ThreadId,
+    item: &ActiveJobItem,
+) -> AgentStatus
+where
+    Host: AgentJobToolHost,
+{
+    if let Some(status_rx) = item.status_rx.as_ref()
+        && status_rx.has_changed().is_ok()
+    {
+        return status_rx.borrow().clone();
+    }
+    host.get_agent_job_worker_status(session, thread_id).await
+}
+
+async fn wait_for_status_change(active_items: &HashMap<ThreadId, ActiveJobItem>) {
+    let mut waiters = FuturesUnordered::new();
+    for item in active_items.values() {
+        if let Some(status_rx) = item.status_rx.as_ref() {
+            let mut status_rx = status_rx.clone();
+            waiters.push(async move {
+                let _ = status_rx.changed().await;
+            });
+        }
+    }
+    if waiters.is_empty() {
+        tokio::time::sleep(STATUS_POLL_INTERVAL).await;
+        return;
+    }
+    let _ = timeout(STATUS_POLL_INTERVAL, waiters.next()).await;
+}
+
+async fn reap_stale_active_items<Host>(
+    host: Host,
+    session: Host::Session,
+    db: SharedStateDbRuntime,
+    job_id: &str,
+    active_items: &mut HashMap<ThreadId, ActiveJobItem>,
+    runtime_timeout: Duration,
+) -> anyhow::Result<bool>
+where
+    Host: AgentJobToolHost,
+{
+    let mut stale = Vec::new();
+    for (thread_id, item) in active_items.iter() {
+        if item.started_at.elapsed() >= runtime_timeout {
+            stale.push((*thread_id, item.item_id.clone()));
+        }
+    }
+    if stale.is_empty() {
+        return Ok(false);
+    }
+    for (thread_id, item_id) in stale {
+        let error_message = format!("worker exceeded max runtime of {runtime_timeout:?}");
+        db.mark_agent_job_item_failed(job_id, item_id.as_str(), error_message.as_str())
+            .await?;
+        host.shutdown_agent_job_worker(&session, thread_id).await;
+        active_items.remove(&thread_id);
+    }
+    Ok(true)
+}
+
+async fn finalize_finished_item<Host>(
+    host: Host,
+    session: Host::Session,
+    db: SharedStateDbRuntime,
+    job_id: &str,
+    item_id: &str,
+    thread_id: ThreadId,
+) -> anyhow::Result<()>
+where
+    Host: AgentJobToolHost,
+{
+    let item = db
+        .get_agent_job_item(job_id, item_id)
+        .await?
+        .ok_or_else(|| {
+            anyhow::anyhow!("job item not found for finalization: {job_id}/{item_id}")
+        })?;
+    if matches!(item.status, AgentJobItemStatus::Running) {
+        if item.result_json.is_some() {
+            let _ = db.mark_agent_job_item_completed(job_id, item_id).await?;
+        } else {
+            let _ = db
+                .mark_agent_job_item_failed(
+                    job_id,
+                    item_id,
+                    "worker finished without calling report_agent_job_result",
+                )
+                .await?;
+        }
+    }
+    host.shutdown_agent_job_worker(&session, thread_id).await;
+    Ok(())
+}
+
+fn job_runtime_timeout(job: &AgentJob) -> Duration {
+    job.max_runtime_seconds
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_AGENT_JOB_ITEM_TIMEOUT)
+}
+
+fn started_at_from_item(item: &AgentJobItem) -> Instant {
+    let now = chrono::Utc::now();
+    let age = now.signed_duration_since(item.updated_at);
+    if let Ok(age) = age.to_std() {
+        Instant::now().checked_sub(age).unwrap_or_else(Instant::now)
+    } else {
+        Instant::now()
+    }
+}
+
+fn is_item_stale(item: &AgentJobItem, runtime_timeout: Duration) -> bool {
+    let now = chrono::Utc::now();
+    if let Ok(age) = now.signed_duration_since(item.updated_at).to_std() {
+        age >= runtime_timeout
+    } else {
+        false
+    }
+}
+
+fn is_final(status: &AgentStatus) -> bool {
+    matches!(
+        status,
+        AgentStatus::Completed(_)
+            | AgentStatus::Errored(_)
+            | AgentStatus::Shutdown
+            | AgentStatus::NotFound
+    )
+}
+
+fn function_arguments(payload: ToolPayload, tool_name: &str) -> Result<String, FunctionCallError> {
+    match payload {
+        ToolPayload::Function { arguments } => Ok(arguments),
+        _ => Err(FunctionCallError::RespondToModel(format!(
+            "{tool_name} handler received unsupported payload"
+        ))),
+    }
+}
+
+fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    serde_json::from_str(arguments).map_err(|err| {
+        FunctionCallError::RespondToModel(format!("failed to parse function arguments: {err}"))
+    })
+}

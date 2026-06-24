@@ -15,12 +15,12 @@ use crate::function_tool::FunctionCallError;
 use crate::session::session::Session;
 use crate::session::tests::make_session_and_context;
 use crate::session::turn_context::TurnContext;
-use crate::tools::code_mode::CodeModeWaitHandler;
-use crate::tools::code_mode::WAIT_TOOL_NAME;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolCallSource;
 use crate::tools::context::ToolInvocation;
+use crate::tools::context::ToolInvocationMetadata;
 use crate::tools::context::ToolPayload;
+use crate::tools::handlers::core_tool_domain_host;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolRegistry;
@@ -48,7 +48,10 @@ impl ToolExecutor<ToolInvocation> for TestHandler {
     }
 }
 
-impl ToolHandler for TestHandler {}
+impl ToolHandler<crate::tools::context::ToolInvocation, crate::session::turn_context::TurnContext>
+    for TestHandler
+{
+}
 
 #[tokio::test]
 async fn dispatch_lifecycle_trace_records_direct_and_code_mode_requesters() -> anyhow::Result<()> {
@@ -207,7 +210,9 @@ async fn missing_code_mode_wait_traces_only_the_wait_tool_call() -> anyhow::Resu
     let (mut session, turn) = make_session_and_context().await;
     attach_test_trace(&mut session, &turn, temp.path())?;
 
-    let registry = ToolRegistry::with_handler_for_test(Arc::new(CodeModeWaitHandler));
+    let registry = ToolRegistry::with_handler_for_test(Arc::new(
+        codex_tool_handlers::CodeModeWaitHandler::new(core_tool_domain_host()),
+    ));
     let session = Arc::new(session);
     let turn = Arc::new(turn);
 
@@ -216,7 +221,7 @@ async fn missing_code_mode_wait_traces_only_the_wait_tool_call() -> anyhow::Resu
             session,
             turn,
             "wait-call",
-            WAIT_TOOL_NAME,
+            codex_code_mode_api::WAIT_TOOL_NAME,
             ToolCallSource::Direct,
             r#"{"cell_id":"noop","terminate":true}"#,
         ))
@@ -266,10 +271,12 @@ fn test_invocation_with_payload(
         turn,
         cancellation_token: CancellationToken::new(),
         tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
-        call_id: call_id.to_string(),
-        tool_name,
-        source,
-        payload,
+        metadata: ToolInvocationMetadata {
+            call_id: call_id.to_string(),
+            tool_name,
+            source,
+            payload,
+        },
     }
 }
 

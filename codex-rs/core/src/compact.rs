@@ -11,7 +11,6 @@ use crate::hook_runtime::run_pre_compact_hooks;
 #[cfg(test)]
 use crate::session::PreviousTurnSettings;
 use crate::session::session::Session;
-use crate::session::turn::get_last_assistant_message_from_turn;
 use crate::session::turn_context::TurnContext;
 use crate::util::backoff;
 use codex_analytics_api::CodexCompactionEvent;
@@ -35,6 +34,7 @@ use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
 use codex_rollout_trace_api::InferenceTraceContext;
+use codex_turn_items::last_assistant_message_from_turn;
 use futures::prelude::*;
 use tracing::error;
 
@@ -256,7 +256,7 @@ async fn run_compact_task_inner_impl(
 
     let history_snapshot = sess.clone_history().await;
     let history_items = history_snapshot.raw_items();
-    let summary_suffix = get_last_assistant_message_from_turn(history_items).unwrap_or_default();
+    let summary_suffix = last_assistant_message_from_turn(history_items).unwrap_or_default();
     let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
     let user_messages = collect_user_messages(history_items);
 

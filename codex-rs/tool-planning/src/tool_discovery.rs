@@ -2,6 +2,11 @@ use codex_connectors_types::AppInfo;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::LoadableToolSpec;
+use crate::ResponsesApiNamespaceTool;
+use crate::ToolSpec;
+use crate::default_namespace_description;
+
 const TUI_CLIENT_NAME: &str = "codex-tui";
 pub const TOOL_SEARCH_TOOL_NAME: &str = "tool_search";
 pub const TOOL_SEARCH_DEFAULT_LIMIT: usize = 8;
@@ -11,6 +16,57 @@ pub const REQUEST_PLUGIN_INSTALL_TOOL_NAME: &str = "request_plugin_install";
 pub struct ToolSearchSourceInfo {
     pub name: String,
     pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolSearchEntry {
+    pub search_text: String,
+    pub output: LoadableToolSpec,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolSearchInfo {
+    pub entry: ToolSearchEntry,
+    pub source_info: Option<ToolSearchSourceInfo>,
+}
+
+impl ToolSearchInfo {
+    pub fn from_spec(
+        search_text: String,
+        spec: ToolSpec,
+        source_info: Option<ToolSearchSourceInfo>,
+    ) -> Option<Self> {
+        let output = match spec {
+            ToolSpec::Function(mut tool) => {
+                tool.defer_loading = Some(true);
+                tool.output_schema = None;
+                LoadableToolSpec::Function(tool)
+            }
+            ToolSpec::Namespace(mut namespace) => {
+                if namespace.description.trim().is_empty() {
+                    namespace.description = default_namespace_description(&namespace.name);
+                }
+                for tool in &mut namespace.tools {
+                    let ResponsesApiNamespaceTool::Function(tool) = tool;
+                    tool.defer_loading = Some(true);
+                    tool.output_schema = None;
+                }
+                LoadableToolSpec::Namespace(namespace)
+            }
+            ToolSpec::ToolSearch { .. }
+            | ToolSpec::ImageGeneration { .. }
+            | ToolSpec::WebSearch { .. }
+            | ToolSpec::Freeform(_) => return None,
+        };
+
+        Some(Self {
+            entry: ToolSearchEntry {
+                search_text,
+                output,
+            },
+            source_info,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
