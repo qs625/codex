@@ -1,22 +1,51 @@
-use std::sync::Arc;
-
 use codex_app_server_protocol::Model;
 use codex_app_server_protocol::ModelServiceTier;
 use codex_app_server_protocol::ModelUpgradeInfo;
 use codex_app_server_protocol::ReasoningEffortOption;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
+use codex_model_provider_info::ModelProviderInfo;
 use codex_models_manager::model_info;
 use codex_models_manager_api::RefreshStrategy;
 use codex_protocol::openai_models::ModelPreset;
+use codex_protocol::openai_models::ModelsResponse;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::openai_models::ReasoningEffortPreset;
+use futures::future::BoxFuture;
 
 const OPENAI_PROVIDER_ID: &str = "openai";
 const AMAZON_BEDROCK_PROVIDER_ID: &str = "amazon-bedrock";
 
+pub trait ModelCatalogRuntime: Send + Sync {
+    fn list_models_for_provider<'a>(
+        &'a self,
+        config: &'a Config,
+        provider_info: ModelProviderInfo,
+        model_catalog: Option<ModelsResponse>,
+        refresh_strategy: RefreshStrategy,
+    ) -> BoxFuture<'a, Vec<ModelPreset>>;
+}
+
+impl ModelCatalogRuntime for ThreadManager {
+    fn list_models_for_provider<'a>(
+        &'a self,
+        config: &'a Config,
+        provider_info: ModelProviderInfo,
+        model_catalog: Option<ModelsResponse>,
+        refresh_strategy: RefreshStrategy,
+    ) -> BoxFuture<'a, Vec<ModelPreset>> {
+        Box::pin(ThreadManager::list_models_for_provider(
+            self,
+            config,
+            provider_info,
+            model_catalog,
+            refresh_strategy,
+        ))
+    }
+}
+
 pub async fn supported_models(
-    thread_manager: Arc<ThreadManager>,
+    model_catalog_runtime: &(impl ModelCatalogRuntime + ?Sized),
     config: &Config,
     include_hidden: bool,
 ) -> Vec<Model> {
@@ -49,7 +78,7 @@ pub async fn supported_models(
             None
         };
         models.extend(
-            thread_manager
+            model_catalog_runtime
                 .list_models_for_provider(
                     config,
                     provider_info.clone(),

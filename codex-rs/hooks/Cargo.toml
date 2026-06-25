@@ -15,10 +15,14 @@ workspace = true
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
+codex-analytics-api = { workspace = true }
 codex-config-types = { workspace = true }
+codex-context-manager = { workspace = true }
 codex-hooks-api = { workspace = true }
 codex-plugin-types = { workspace = true }
 codex-protocol = { workspace = true }
+codex-session-api = { workspace = true }
+codex-turn-items = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-output-truncation = { workspace = true }
 futures = { workspace = true, features = ["alloc"] }

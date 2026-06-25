@@ -1,7 +1,12 @@
 use super::*;
 
+use codex_config_types::McpServerConfig;
 use codex_mcp_runtime_api::SharedMcpAuthHeaderProvider;
 use codex_mcp_runtime_api::StaticMcpAuthHeaderProvider;
+use codex_protocol::mcp::CallToolResult;
+use futures::future::BoxFuture;
+use std::collections::HashMap;
+use std::io;
 
 const MCP_TOOL_THREAD_ID_META_KEY: &str = "threadId";
 
@@ -37,10 +42,94 @@ fn codex_apps_auth_provider(auth: Option<&CodexAuth>) -> Option<SharedMcpAuthHea
         .map(|auth_provider| StaticMcpAuthHeaderProvider::shared(auth_provider.to_auth_headers()))
 }
 
+pub(crate) trait McpProcessorRuntime: Send + Sync {
+    fn queue_strict_mcp_refresh(
+        self: Arc<Self>,
+        config_manager: ConfigManager,
+    ) -> BoxFuture<'static, io::Result<()>>;
+
+    fn configured_mcp_servers<'a>(
+        &'a self,
+        config: &'a Config,
+    ) -> BoxFuture<'a, HashMap<String, McpServerConfig>>;
+
+    fn mcp_config<'a>(&'a self, config: &'a Config) -> BoxFuture<'a, codex_mcp_types::McpConfig>;
+
+    fn is_thread_loaded(&self, thread_id: ThreadId) -> BoxFuture<'_, bool>;
+
+    fn read_thread_mcp_resource<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        server: &'a str,
+        uri: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<serde_json::Value>>;
+
+    fn call_thread_mcp_tool<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        server: &'a str,
+        tool: &'a str,
+        arguments: Option<serde_json::Value>,
+        meta: Option<serde_json::Value>,
+    ) -> BoxFuture<'a, anyhow::Result<CallToolResult>>;
+}
+
+impl McpProcessorRuntime for ThreadManager {
+    fn queue_strict_mcp_refresh(
+        self: Arc<Self>,
+        config_manager: ConfigManager,
+    ) -> BoxFuture<'static, io::Result<()>> {
+        Box::pin(async move {
+            crate::mcp_refresh::queue_strict_refresh(self.as_ref(), &config_manager).await
+        })
+    }
+
+    fn configured_mcp_servers<'a>(
+        &'a self,
+        config: &'a Config,
+    ) -> BoxFuture<'a, HashMap<String, McpServerConfig>> {
+        Box::pin(async move { self.mcp_manager().configured_servers(config).await })
+    }
+
+    fn mcp_config<'a>(&'a self, config: &'a Config) -> BoxFuture<'a, codex_mcp_types::McpConfig> {
+        Box::pin(async move { config.to_mcp_config(self.plugin_runtime().as_ref()).await })
+    }
+
+    fn is_thread_loaded(&self, thread_id: ThreadId) -> BoxFuture<'_, bool> {
+        Box::pin(codex_thread_api::LiveThreadRegistry::is_thread_loaded(
+            self, thread_id,
+        ))
+    }
+
+    fn read_thread_mcp_resource<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        server: &'a str,
+        uri: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<serde_json::Value>> {
+        Box::pin(ThreadManager::read_thread_mcp_resource(
+            self, thread_id, server, uri,
+        ))
+    }
+
+    fn call_thread_mcp_tool<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        server: &'a str,
+        tool: &'a str,
+        arguments: Option<serde_json::Value>,
+        meta: Option<serde_json::Value>,
+    ) -> BoxFuture<'a, anyhow::Result<CallToolResult>> {
+        Box::pin(ThreadManager::call_thread_mcp_tool(
+            self, thread_id, server, tool, arguments, meta,
+        ))
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct McpRequestProcessor {
     auth_manager: Arc<AuthManager>,
-    thread_manager: Arc<ThreadManager>,
+    runtime: Arc<dyn McpProcessorRuntime>,
     outgoing: Arc<OutgoingMessageSender>,
     config_manager: ConfigManager,
     environment_manager: Arc<EnvironmentManager>,
@@ -49,14 +138,15 @@ pub(crate) struct McpRequestProcessor {
 impl McpRequestProcessor {
     pub(crate) fn new(
         auth_manager: Arc<AuthManager>,
-        thread_manager: Arc<ThreadManager>,
+        runtime: Arc<impl McpProcessorRuntime + 'static>,
         outgoing: Arc<OutgoingMessageSender>,
         config_manager: ConfigManager,
         environment_manager: Arc<EnvironmentManager>,
     ) -> Self {
+        let runtime: Arc<dyn McpProcessorRuntime> = runtime;
         Self {
             auth_manager,
-            thread_manager,
+            runtime,
             outgoing,
             config_manager,
             environment_manager,
@@ -115,7 +205,8 @@ impl McpRequestProcessor {
         &self,
         _params: Option<()>,
     ) -> Result<McpServerRefreshResponse, JSONRPCErrorError> {
-        crate::mcp_refresh::queue_strict_refresh(&self.thread_manager, &self.config_manager)
+        Arc::clone(&self.runtime)
+            .queue_strict_mcp_refresh(self.config_manager.clone())
             .await
             .map_err(|err| internal_error(format!("failed to refresh MCP servers: {err}")))?;
         Ok(McpServerRefreshResponse {})
@@ -131,20 +222,9 @@ impl McpRequestProcessor {
             .map_err(|err| internal_error(format!("failed to reload config: {err}")))
     }
 
-    async fn load_thread(
-        &self,
-        thread_id: &str,
-    ) -> Result<(ThreadId, Arc<CodexThread>), JSONRPCErrorError> {
-        let thread_id = ThreadId::from_string(thread_id)
-            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
-
-        let thread = self
-            .thread_manager
-            .get_thread(thread_id)
-            .await
-            .map_err(|_| invalid_request(format!("thread not found: {thread_id}")))?;
-
-        Ok((thread_id, thread))
+    fn parse_thread_id(thread_id: &str) -> Result<ThreadId, JSONRPCErrorError> {
+        ThreadId::from_string(thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))
     }
 
     async fn mcp_server_oauth_login_response(
@@ -158,11 +238,7 @@ impl McpRequestProcessor {
             timeout_secs,
         } = params;
 
-        let configured_servers = self
-            .thread_manager
-            .mcp_manager()
-            .configured_servers(&config)
-            .await;
+        let configured_servers = self.runtime.configured_mcp_servers(&config).await;
         let Some(server) = configured_servers.get(&name) else {
             return Err(invalid_request(format!(
                 "No MCP server named '{name}' found."
@@ -238,9 +314,7 @@ impl McpRequestProcessor {
 
         let outgoing = Arc::clone(&self.outgoing);
         let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
-        let mcp_config = config
-            .to_mcp_config(self.thread_manager.plugin_runtime().as_ref())
-            .await;
+        let mcp_config = self.runtime.mcp_config(&config).await;
         let auth = self.auth_manager.auth().await;
         let environment_manager = Arc::clone(&self.environment_manager);
         let runtime_environment = match environment_manager.default_environment() {
@@ -395,20 +469,24 @@ impl McpRequestProcessor {
         } = params;
 
         if let Some(thread_id) = thread_id {
-            let (_, thread) = self.load_thread(&thread_id).await?;
+            let thread_id = Self::parse_thread_id(&thread_id)?;
+            if !self.runtime.is_thread_loaded(thread_id).await {
+                return Err(invalid_request(format!("thread not found: {thread_id}")));
+            }
+            let runtime = Arc::clone(&self.runtime);
             let request_id = request_id.clone();
 
             tokio::spawn(async move {
-                let result = thread.read_mcp_resource(&server, &uri).await;
+                let result = runtime
+                    .read_thread_mcp_resource(thread_id, &server, &uri)
+                    .await;
                 Self::send_mcp_resource_read_response(outgoing, request_id, result).await;
             });
             return Ok(());
         }
 
         let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
-        let mcp_config = config
-            .to_mcp_config(self.thread_manager.plugin_runtime().as_ref())
-            .await;
+        let mcp_config = self.runtime.mcp_config(&config).await;
         let auth = self.auth_manager.auth().await;
         let runtime_environment = {
             let environment_manager = Arc::clone(&self.environment_manager);
@@ -464,13 +542,25 @@ impl McpRequestProcessor {
     ) -> Result<(), JSONRPCErrorError> {
         let outgoing = Arc::clone(&self.outgoing);
         let thread_id = params.thread_id.clone();
-        let (_, thread) = self.load_thread(&thread_id).await?;
+        let parsed_thread_id = Self::parse_thread_id(&thread_id)?;
+        if !self.runtime.is_thread_loaded(parsed_thread_id).await {
+            return Err(invalid_request(format!(
+                "thread not found: {parsed_thread_id}"
+            )));
+        }
+        let runtime = Arc::clone(&self.runtime);
         let meta = with_mcp_tool_call_thread_id_meta(params.meta, &thread_id);
         let request_id = request_id.clone();
 
         tokio::spawn(async move {
-            let result = thread
-                .call_mcp_tool(&params.server, &params.tool, params.arguments, meta)
+            let result = runtime
+                .call_thread_mcp_tool(
+                    parsed_thread_id,
+                    &params.server,
+                    &params.tool,
+                    params.arguments,
+                    meta,
+                )
                 .await
                 .map(McpServerToolCallResponse::from)
                 .map_err(|error| internal_error(format!("{error:#}")));

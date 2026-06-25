@@ -88,6 +88,7 @@ use codex_login::AuthManager;
 use codex_protocol::protocol::SessionSource;
 pub use codex_rollout::StateDbHandle;
 pub use codex_state::log_db::LogDbLayer;
+use codex_thread_api::ThreadCreatedEvent;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
@@ -505,7 +506,7 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
                                         connection_ids.clone(),
                                     )
                                     .await;
-                                if matches!(thread_created, codex_core::ThreadCreatedEvent::Started(_)) {
+                                if matches!(thread_created, ThreadCreatedEvent::Started(_)) {
                                     processor
                                         .emit_thread_started_notification_to_connections(
                                             thread_created.thread_id(),

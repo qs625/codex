@@ -1,9 +1,57 @@
 use super::*;
+use futures::future::BoxFuture;
+
+pub(crate) trait ThreadFeedbackRuntime: Send + Sync {
+    fn live_thread_info(&self, thread_id: ThreadId) -> BoxFuture<'_, CodexResult<LiveThreadInfo>>;
+
+    fn list_agent_subtree_thread_ids(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<Vec<ThreadId>>>;
+
+    fn thread_guardian_trunk_rollout_path(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<Option<PathBuf>>>;
+
+    fn session_source(&self) -> codex_protocol::protocol::SessionSource;
+}
+
+impl<T> ThreadFeedbackRuntime for T
+where
+    T: LiveThreadRegistry + Send + Sync,
+{
+    fn live_thread_info(&self, thread_id: ThreadId) -> BoxFuture<'_, CodexResult<LiveThreadInfo>> {
+        Box::pin(LiveThreadRegistry::live_thread_info(self, thread_id))
+    }
+
+    fn list_agent_subtree_thread_ids(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<Vec<ThreadId>>> {
+        Box::pin(LiveThreadRegistry::list_agent_subtree_thread_ids(
+            self, thread_id,
+        ))
+    }
+
+    fn thread_guardian_trunk_rollout_path(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<Option<PathBuf>>> {
+        Box::pin(LiveThreadRegistry::thread_guardian_trunk_rollout_path(
+            self, thread_id,
+        ))
+    }
+
+    fn session_source(&self) -> codex_protocol::protocol::SessionSource {
+        LiveThreadRegistry::session_source(self)
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct FeedbackRequestProcessor {
     auth_manager: Arc<AuthManager>,
-    thread_manager: Arc<ThreadManager>,
+    thread_runtime: Arc<dyn ThreadFeedbackRuntime>,
     config: Arc<Config>,
     feedback: CodexFeedback,
     log_db: Option<LogDbLayer>,
@@ -11,17 +59,21 @@ pub(crate) struct FeedbackRequestProcessor {
 }
 
 impl FeedbackRequestProcessor {
-    pub(crate) fn new(
+    pub(crate) fn new<R>(
         auth_manager: Arc<AuthManager>,
-        thread_manager: Arc<ThreadManager>,
+        thread_runtime: Arc<R>,
         config: Arc<Config>,
         feedback: CodexFeedback,
         log_db: Option<LogDbLayer>,
         state_db: Option<StateDbHandle>,
-    ) -> Self {
+    ) -> Self
+    where
+        R: ThreadFeedbackRuntime + 'static,
+    {
+        let thread_runtime: Arc<dyn ThreadFeedbackRuntime> = thread_runtime;
         Self {
             auth_manager,
-            thread_manager,
+            thread_runtime,
             config,
             feedback,
             log_db,
@@ -89,7 +141,7 @@ impl FeedbackRequestProcessor {
             let state_db_ctx = self.state_db.clone();
             let feedback_thread_ids = match conversation_id {
                 Some(conversation_id) => match self
-                    .thread_manager
+                    .thread_runtime
                     .list_agent_subtree_thread_ids(conversation_id)
                     .await
                 {
@@ -174,9 +226,12 @@ impl FeedbackRequestProcessor {
                 }
             }
             if let Some(conversation_id) = conversation_id
-                && let Ok(conversation) = self.thread_manager.get_thread(conversation_id).await
-                && let Some(guardian_rollout_path) =
-                    conversation.guardian_trunk_rollout_path().await
+                && let Some(guardian_rollout_path) = self
+                    .thread_runtime
+                    .thread_guardian_trunk_rollout_path(conversation_id)
+                    .await
+                    .ok()
+                    .flatten()
                 && seen_attachment_paths.insert(guardian_rollout_path.clone())
             {
                 attachment_paths.push(FeedbackAttachmentPath {
@@ -209,7 +264,7 @@ impl FeedbackRequestProcessor {
             }
         }
 
-        let session_source = self.thread_manager.session_source();
+        let session_source = self.thread_runtime.session_source();
 
         let upload_result = tokio::task::spawn_blocking(move || {
             let tags = (!upload_tags.is_empty()).then_some(&upload_tags);
@@ -244,7 +299,7 @@ impl FeedbackRequestProcessor {
         conversation_id: ThreadId,
         state_db_ctx: Option<&StateDbHandle>,
     ) -> Option<PathBuf> {
-        if let Ok(live_info) = self.thread_manager.live_thread_info(conversation_id).await
+        if let Ok(live_info) = self.thread_runtime.live_thread_info(conversation_id).await
             && let Some(rollout_path) = live_info.rollout_path
         {
             return Some(rollout_path);

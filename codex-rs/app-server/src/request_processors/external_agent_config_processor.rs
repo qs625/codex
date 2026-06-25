@@ -28,6 +28,7 @@ use codex_app_server_protocol::ServerNotification;
 use codex_arg0::Arg0DispatchPaths;
 use codex_core::StartThreadOptions;
 use codex_core::ThreadManager;
+use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core_plugins::PluginsManager;
 use codex_external_agent_sessions::ExternalAgentSessionMigration as CoreSessionMigration;
@@ -37,12 +38,74 @@ use codex_external_agent_sessions::prepare_validated_session_imports;
 use codex_external_agent_sessions::record_imported_session;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::InitialHistory;
+use codex_protocol::protocol::RolloutItem;
 use codex_thread_store::ThreadMetadataPatch;
+use futures::future::BoxFuture;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use tokio::sync::Semaphore;
 
 use super::ConfigRequestProcessor;
+
+pub(crate) trait ExternalAgentRuntime: Send + Sync {
+    fn clear_skills_cache(&self);
+
+    fn import_external_agent_thread<'a>(
+        &'a self,
+        config: Config,
+        rollout_items: Vec<RolloutItem>,
+        title: Option<String>,
+    ) -> BoxFuture<'a, Result<ThreadId, JSONRPCErrorError>>;
+}
+
+impl ExternalAgentRuntime for ThreadManager {
+    fn clear_skills_cache(&self) {
+        self.skills_manager().clear_cache();
+    }
+
+    fn import_external_agent_thread<'a>(
+        &'a self,
+        config: Config,
+        rollout_items: Vec<RolloutItem>,
+        title: Option<String>,
+    ) -> BoxFuture<'a, Result<ThreadId, JSONRPCErrorError>> {
+        Box::pin(async move {
+            let environments = self.default_environment_selections(&config.cwd);
+            let imported_thread = self
+                .start_thread_with_options(StartThreadOptions {
+                    config,
+                    initial_history: InitialHistory::Forked(rollout_items),
+                    session_source: None,
+                    thread_source: None,
+                    dynamic_tools: Vec::new(),
+                    persist_extended_history: false,
+                    metrics_service_name: None,
+                    parent_trace: None,
+                    environments,
+                })
+                .await
+                .map_err(|err| internal_error(format!("failed to import session: {err}")))?;
+            if let Some(title) = title
+                && let Some(name) = codex_core::util::normalize_thread_name(&title)
+            {
+                imported_thread
+                    .thread
+                    .update_thread_metadata(
+                        ThreadMetadataPatch {
+                            name: Some(Some(name)),
+                            ..Default::default()
+                        },
+                        /*include_archived*/ false,
+                    )
+                    .await
+                    .map_err(|err| {
+                        internal_error(format!("failed to name imported session: {err}"))
+                    })?;
+            }
+            Ok(imported_thread.thread_id)
+        })
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct ExternalAgentConfigRequestProcessor {
@@ -50,7 +113,7 @@ pub(crate) struct ExternalAgentConfigRequestProcessor {
     codex_home: PathBuf,
     migration_service: ExternalAgentConfigService,
     session_import_permits: Arc<Semaphore>,
-    thread_manager: Arc<ThreadManager>,
+    runtime: Arc<dyn ExternalAgentRuntime>,
     plugins_manager: Arc<PluginsManager>,
     config_manager: ConfigManager,
     config_processor: ConfigRequestProcessor,
@@ -60,19 +123,20 @@ pub(crate) struct ExternalAgentConfigRequestProcessor {
 impl ExternalAgentConfigRequestProcessor {
     pub(crate) fn new(
         outgoing: Arc<OutgoingMessageSender>,
-        thread_manager: Arc<ThreadManager>,
+        runtime: Arc<impl ExternalAgentRuntime + 'static>,
         plugins_manager: Arc<PluginsManager>,
         config_manager: ConfigManager,
         config_processor: ConfigRequestProcessor,
         arg0_paths: Arg0DispatchPaths,
         codex_home: PathBuf,
     ) -> Self {
+        let runtime: Arc<dyn ExternalAgentRuntime> = runtime;
         Self {
             outgoing,
             migration_service: ExternalAgentConfigService::new(codex_home.clone()),
             codex_home,
             session_import_permits: Arc::new(Semaphore::new(1)),
-            thread_manager,
+            runtime,
             plugins_manager,
             config_manager,
             config_processor,
@@ -215,7 +279,7 @@ impl ExternalAgentConfigRequestProcessor {
         let session_processor = self.clone();
         let plugin_processor = self.clone();
         let outgoing = Arc::clone(&self.outgoing);
-        let thread_manager = Arc::clone(&self.thread_manager);
+        let runtime = Arc::clone(&self.runtime);
         let plugins_manager = Arc::clone(&self.plugins_manager);
         tokio::spawn(async move {
             let session_imports = async move {
@@ -267,7 +331,7 @@ impl ExternalAgentConfigRequestProcessor {
             tokio::join!(session_imports, plugin_imports);
             if has_plugin_imports {
                 plugins_manager.clear_cache();
-                thread_manager.skills_manager().clear_cache();
+                runtime.clear_skills_cache();
             }
             outgoing
                 .send_server_notification(ServerNotification::ExternalAgentConfigImportCompleted(
@@ -303,40 +367,9 @@ impl ExternalAgentConfigRequestProcessor {
             .map_err(|err| {
                 internal_error(format!("failed to load imported session config: {err}"))
             })?;
-        let environments = self
-            .thread_manager
-            .default_environment_selections(&config.cwd);
-        let imported_thread = self
-            .thread_manager
-            .start_thread_with_options(StartThreadOptions {
-                config,
-                initial_history: InitialHistory::Forked(rollout_items),
-                session_source: None,
-                thread_source: None,
-                dynamic_tools: Vec::new(),
-                persist_extended_history: false,
-                metrics_service_name: None,
-                parent_trace: None,
-                environments,
-            })
+        self.runtime
+            .import_external_agent_thread(config, rollout_items, title)
             .await
-            .map_err(|err| internal_error(format!("failed to import session: {err}")))?;
-        if let Some(title) = title
-            && let Some(name) = codex_core::util::normalize_thread_name(&title)
-        {
-            imported_thread
-                .thread
-                .update_thread_metadata(
-                    ThreadMetadataPatch {
-                        name: Some(Some(name)),
-                        ..Default::default()
-                    },
-                    /*include_archived*/ false,
-                )
-                .await
-                .map_err(|err| internal_error(format!("failed to name imported session: {err}")))?;
-        }
-        Ok(imported_thread.thread_id)
     }
 
     fn validate_pending_session_imports(

@@ -1,13 +1,36 @@
 use super::*;
+use crate::models::ModelCatalogRuntime;
+use codex_core_skills_api::SharedSkillsRuntime;
 use codex_core_skills_api::SkillError;
 use codex_core_skills_api::SkillMetadata;
 use codex_core_skills_api::SkillsLoadInput;
+use codex_protocol::config_types::CollaborationModeMask;
 use futures::StreamExt;
+
+pub(crate) trait CatalogRuntime: ModelCatalogRuntime + Send + Sync {
+    fn list_collaboration_modes(&self) -> Vec<CollaborationModeMask>;
+
+    fn skills_manager(&self) -> SharedSkillsRuntime;
+
+    fn clear_skills_cache(&self) {
+        self.skills_manager().clear_cache();
+    }
+}
+
+impl CatalogRuntime for ThreadManager {
+    fn list_collaboration_modes(&self) -> Vec<CollaborationModeMask> {
+        ThreadManager::list_collaboration_modes(self)
+    }
+
+    fn skills_manager(&self) -> SharedSkillsRuntime {
+        ThreadManager::skills_manager(self)
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct CatalogRequestProcessor {
     pub(super) auth_manager: Arc<AuthManager>,
-    pub(super) thread_manager: Arc<ThreadManager>,
+    pub(super) catalog_runtime: Arc<dyn CatalogRuntime>,
     pub(super) plugins_manager: Arc<PluginsManager>,
     pub(super) config: Arc<Config>,
     pub(super) config_manager: ConfigManager,
@@ -97,18 +120,22 @@ fn errors_to_info(errors: &[SkillError]) -> Vec<codex_app_server_protocol::Skill
 }
 
 impl CatalogRequestProcessor {
-    pub(crate) fn new(
+    pub(crate) fn new<R>(
         auth_manager: Arc<AuthManager>,
-        thread_manager: Arc<ThreadManager>,
+        catalog_runtime: Arc<R>,
         plugins_manager: Arc<PluginsManager>,
         config: Arc<Config>,
         config_manager: ConfigManager,
         environment_manager: Arc<EnvironmentManager>,
         workspace_settings_cache: Arc<workspace_settings::WorkspaceSettingsCache>,
-    ) -> Self {
+    ) -> Self
+    where
+        R: CatalogRuntime + 'static,
+    {
+        let catalog_runtime: Arc<dyn CatalogRuntime> = catalog_runtime;
         Self {
             auth_manager,
-            thread_manager,
+            catalog_runtime,
             plugins_manager,
             config,
             config_manager,
@@ -166,7 +193,7 @@ impl CatalogRequestProcessor {
         &self,
         params: CollaborationModeListParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        Self::list_collaboration_modes(self.thread_manager.clone(), params)
+        self.list_collaboration_modes(params)
             .await
             .map(|response| Some(response.into()))
     }
@@ -238,7 +265,7 @@ impl CatalogRequestProcessor {
         } = params;
         let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
         let mut models = supported_models(
-            self.thread_manager.clone(),
+            self.catalog_runtime.as_ref(),
             &config,
             include_hidden.unwrap_or(false),
         )
@@ -282,11 +309,12 @@ impl CatalogRequestProcessor {
     }
 
     async fn list_collaboration_modes(
-        thread_manager: Arc<ThreadManager>,
+        &self,
         params: CollaborationModeListParams,
     ) -> Result<CollaborationModeListResponse, JSONRPCErrorError> {
         let CollaborationModeListParams {} = params;
-        let items = thread_manager
+        let items = self
+            .catalog_runtime
             .list_collaboration_modes()
             .into_iter()
             .map(Into::into)
@@ -408,7 +436,7 @@ impl CatalogRequestProcessor {
         let workspace_codex_plugins_enabled = self
             .workspace_codex_plugins_enabled(&config, auth.as_ref())
             .await;
-        let skills_manager = self.thread_manager.skills_manager();
+        let skills_manager = self.catalog_runtime.skills_manager();
         let plugins_manager = Arc::clone(&self.plugins_manager);
         let fs = Some(
             self.environment_manager
@@ -600,7 +628,7 @@ impl CatalogRequestProcessor {
             .await
             .map(|()| {
                 self.plugins_manager.clear_cache();
-                self.thread_manager.skills_manager().clear_cache();
+                self.catalog_runtime.clear_skills_cache();
                 SkillsConfigWriteResponse {
                     effective_enabled: enabled,
                 }

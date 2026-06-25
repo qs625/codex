@@ -43,10 +43,12 @@ codex-openai-files = { workspace = true }
 codex-otel = { workspace = true }
 codex-protocol = { workspace = true }
 codex-rollout = { workspace = true }
+codex-session-api = { workspace = true }
 codex-sandboxing = { workspace = true }
 codex-thread-store = { workspace = true }
 codex-tool-config = { workspace = true }
 codex-tool-handlers = { workspace = true }
+codex-tool-runtime-api = { workspace = true }
 codex-workflow = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }

@@ -2,12 +2,15 @@ use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::sync::Weak;
 use std::sync::atomic::AtomicBool;
 
 use crate::attestation::app_server_attestation_provider;
 use crate::config_manager::ConfigManager;
 use crate::connection_rpc_gate::ConnectionRpcGate;
 use crate::error_code::invalid_request;
+use crate::extensions::FileSubscriptionThreadHost;
+use crate::extensions::GuardianAgentSpawnHost;
 use crate::extensions::guardian_agent_spawner;
 use crate::extensions::thread_extensions;
 use crate::fs_watch::FsWatchManager;
@@ -367,67 +370,71 @@ impl MessageProcessor {
         ));
         let thread_manager_plugin_runtime: codex_core_plugins_api::SharedPluginRuntime =
             plugins_manager.clone();
-        let thread_manager = Arc::new_cyclic(|thread_manager| {
-            let runtime_environment_provider: Arc<dyn ExecEnvironmentProvider> =
-                environment_manager.clone();
-            #[cfg(test)]
-            let core_state_db = state_db.clone();
-            #[cfg(not(test))]
-            let core_state_db = state_db.clone().map(|state_db| {
-                let state_db: Arc<dyn codex_state_api::StateDbRuntime> = state_db;
-                state_db
-            });
-            let auth_runtimes = ThreadAuthRuntimes::from_auth_runtime(
-                auth_manager.clone(),
-                model_provider_auth_manager(Some(auth_manager.clone())),
-            );
-            ThreadManager::new_with_workflow_runs_and_openai_file_uploader(
-                config.as_ref(),
-                auth_runtimes,
-                session_source.clone(),
-                runtime_environment_provider,
-                thread_extensions(
-                    guardian_agent_spawner(thread_manager.clone()),
-                    shared_file_watcher,
-                    thread_manager.clone(),
-                    thread_watch_manager.clone(),
-                ),
-                Some(analytics_events_client.api_client()),
-                Arc::clone(&thread_store),
-                core_state_db,
-                Arc::new(codex_thread_store::DefaultLiveThreadFactory),
-                installation_id,
-                Some(app_server_attestation_provider(
-                    outgoing.clone(),
-                    thread_state_manager.clone(),
-                )),
-                Arc::new(codex_model_provider::DefaultModelProviderFactory),
-                Arc::new(codex_code_mode::V8CodeModeRuntimeFactory),
-                Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-                Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
-                Arc::new(codex_workflow::WorkflowRunManager::new(
-                    config.codex_home.clone(),
-                )),
-                Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
-                Arc::new(codex_execpolicy_loader::StarlarkExecPolicyLoader),
-                Arc::new(codex_api::DefaultApiRuntimeFactory),
-                Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
-                Arc::new(codex_sandboxing::SandboxManager::new()),
-                Arc::new(codex_otel::OtelSessionTelemetryFactory),
-                Arc::new(codex_hooks::HooksRuntimeFactory),
-                Arc::new(codex_memories_read::FsMemoryToolDeveloperInstructionsProvider),
-                Arc::new(
-                    codex_core_skills::SkillsManager::new_with_restriction_product(
-                        config.codex_home.clone(),
-                        config.bundled_skills_enabled(),
-                        session_source.restriction_product(),
+        let thread_manager: Arc<ThreadManager> =
+            Arc::new_cyclic(|thread_manager: &Weak<ThreadManager>| {
+                let runtime_environment_provider: Arc<dyn ExecEnvironmentProvider> =
+                    environment_manager.clone();
+                #[cfg(test)]
+                let core_state_db = state_db.clone();
+                #[cfg(not(test))]
+                let core_state_db = state_db.clone().map(|state_db| {
+                    let state_db: Arc<dyn codex_state_api::StateDbRuntime> = state_db;
+                    state_db
+                });
+                let auth_runtimes = ThreadAuthRuntimes::from_auth_runtime(
+                    auth_manager.clone(),
+                    model_provider_auth_manager(Some(auth_manager.clone())),
+                );
+                let guardian_agent_host: Weak<dyn GuardianAgentSpawnHost> = thread_manager.clone();
+                let file_subscription_host: Weak<dyn FileSubscriptionThreadHost> =
+                    thread_manager.clone();
+                ThreadManager::new_with_workflow_runs_and_openai_file_uploader(
+                    config.as_ref(),
+                    auth_runtimes,
+                    session_source.clone(),
+                    runtime_environment_provider,
+                    thread_extensions(
+                        guardian_agent_spawner(guardian_agent_host),
+                        shared_file_watcher,
+                        file_subscription_host,
+                        thread_watch_manager.clone(),
                     ),
-                ),
-                thread_manager_plugin_runtime.clone(),
-                Arc::new(AppServerToolRouterFactory),
-            )
-            .with_terminal_type(user_agent())
-        });
+                    Some(analytics_events_client.api_client()),
+                    Arc::clone(&thread_store),
+                    core_state_db,
+                    Arc::new(codex_thread_store::DefaultLiveThreadFactory),
+                    installation_id,
+                    Some(app_server_attestation_provider(
+                        outgoing.clone(),
+                        thread_state_manager.clone(),
+                    )),
+                    Arc::new(codex_model_provider::DefaultModelProviderFactory),
+                    Arc::new(codex_code_mode::V8CodeModeRuntimeFactory),
+                    Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+                    Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
+                    Arc::new(codex_workflow::WorkflowRunManager::new(
+                        config.codex_home.clone(),
+                    )),
+                    Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
+                    Arc::new(codex_execpolicy_loader::StarlarkExecPolicyLoader),
+                    Arc::new(codex_api::DefaultApiRuntimeFactory),
+                    Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
+                    Arc::new(codex_sandboxing::SandboxManager::new()),
+                    Arc::new(codex_otel::OtelSessionTelemetryFactory),
+                    Arc::new(codex_hooks::HooksRuntimeFactory),
+                    Arc::new(codex_memories_read::FsMemoryToolDeveloperInstructionsProvider),
+                    Arc::new(
+                        codex_core_skills::SkillsManager::new_with_restriction_product(
+                            config.codex_home.clone(),
+                            config.bundled_skills_enabled(),
+                            session_source.restriction_product(),
+                        ),
+                    ),
+                    thread_manager_plugin_runtime.clone(),
+                    Arc::new(AppServerToolRouterFactory),
+                )
+                .with_terminal_type(user_agent())
+            });
         plugins_manager.set_plugin_analytics_event_sink(Arc::new(
             AppServerPluginAnalyticsEventSink {
                 analytics_events_client: analytics_events_client.clone(),
@@ -490,7 +497,6 @@ impl MessageProcessor {
         let marketplace_processor = MarketplaceRequestProcessor::new(
             Arc::clone(&config),
             config_manager.clone(),
-            Arc::clone(&thread_manager),
             Arc::clone(&plugins_manager),
         );
         let mcp_processor = McpRequestProcessor::new(
@@ -765,7 +771,7 @@ impl MessageProcessor {
 
     pub(crate) fn thread_created_receiver(
         &self,
-    ) -> broadcast::Receiver<codex_core::ThreadCreatedEvent> {
+    ) -> broadcast::Receiver<codex_thread_api::ThreadCreatedEvent> {
         self.thread_processor.thread_created_receiver()
     }
 

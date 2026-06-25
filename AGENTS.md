@@ -58,7 +58,7 @@ In the codex-rs folder where the rust code lives:
 - root-worker prototype 的 conversation 搜索、过滤、定位或高亮能力只能基于已投影出的 `ConversationEntry` / `ConversationCell` 派生；搜索结果不得参与 `ThreadItem.id` 合并或去重，不得从 raw marker、assistant message JSON、legacy envelope 或 agent text 中反解 display item。
 - MultiAgent 运行时只保留 V2 工具和 typed child completion 路径；不要重新引入 V1 `send_input`/`resume_agent` 工具、legacy completion watcher、raw `inject_user_message_without_turn` child completion fallback，或通过配置在 V1/V2 之间切换。
 - MultiAgent V2 的 `wait_agent` 只能等待 canonical typed subagent 更新：调用开始必须先非消费式检查 parent pending input/mailbox 中已有的 typed `InterAgentCommunication` / child completion / status，然后再通过 status watch 与 mailbox sequence notify 进入 runtime backoff；不得 drain mailbox，不得从 raw marker、assistant text 或 legacy JSON envelope 反解唤醒条件。`features.multi_agent_v2.default_wait_timeout_ms` 表示 initial window，`max_wait_timeout_ms` 表示 hard cap。每次 `wait_agent` 调用只等待当前 backoff window，timeout 后返回给模型并推进同 sender/receiver target 的下一次窗口；pending mailbox、status/final 或 child completion 等相关事件命中时 reset。`CollabWaitingBegin/End.timeout_ms` 必须展示本次 current window，不能展示 hard cap。
-- Compact 当前用户可见和默认路径是 Local Compact：手动 `/compact`、`thread/compact/start` 和自动 context-limit compact 都应走 `codex-rs/core/src/compact.rs` 的本地 summarization 流程，并把 `CompactedItem.replacement_history` 持久化到 rollout 以便 thread/history 和 app-server 展示检查；compact 完成的 live `item/completed` 也必须携带同一份 replacement history，已 live/loaded 的 root-worker thread 不得依赖 `thread/read` 回填。Local Compact summary 在 active history 中是带 `SUMMARY_PREFIX` 的 user message，context usage 分类必须把它计入 compact 类别，不能当作普通 user message 导致 compact ratio 丢失。`compact_remote.rs` / `compact_remote_v2.rs` 只保留为未路由的历史兼容实现，不要重新接到默认入口、用户触发入口或模型请求 beta header。
+- Compact 当前用户可见和默认路径是 Local Compact：手动 `/compact`、`thread/compact/start` 和自动 context-limit compact 都应走 `codex-rs/session-runtime/src/compact.rs` 的本地 summarization 流程，并把 `CompactedItem.replacement_history` 持久化到 rollout 以便 thread/history 和 app-server 展示检查；compact 完成的 live `item/completed` 也必须携带同一份 replacement history，已 live/loaded 的 root-worker thread 不得依赖 `thread/read` 回填。Local Compact summary 在 active history 中是带 `SUMMARY_PREFIX` 的 user message，context usage 分类必须把它计入 compact 类别，不能当作普通 user message 导致 compact ratio 丢失。不要重新接回 remote compact 默认入口、用户触发入口或模型请求 beta header。
 - If you change Rust dependencies (`Cargo.toml` or `Cargo.lock`), update `MODULE.bazel.lock`
   when needed. Use `just bazel-lock-update` and `just bazel-lock-check` when the change requires
   Bazel lockfile validation, but these are not part of the default validation set.
@@ -95,9 +95,28 @@ Do not run full workspace `cargo test`, `just test`, broad `just fix`, or snapsh
 
 ## The `codex-core` crate
 
+`codex-core` 现在是旧包名兼容层：`codex-rs/core/src/lib.rs` 只 re-export `codex-session-runtime`。session/thread/turn/task/agent-control 及其强耦合 runtime implementation 的当前 owner crate 是 `codex-rs/session-runtime`（`codex-session-runtime`）。新增或迁移实现代码不要放回 `codex-rs/core/src`；旧规则中提到 `core/src/session`、`core/src/thread`、`core/src/tasks`、`core/src/agent`、`core/src/tools`、`core/src/mcp`、`core/src/compact` 等 runtime implementation 路径时，默认应理解为当前 `session-runtime/src/...` 的待继续拆分代码。
+
 Over time, the `codex-core` crate (defined in `codex-rs/core/`) has become bloated because it is the largest crate, so it is often easier to add something new to `codex-core` rather than refactor out the library code you need so your new code neither takes a dependency on, nor contributes to the size of, `codex-core`.
 
 To that end: **resist adding code to codex-core**!
+
+### Core 拆分硬规则
+
+- 拆分 `codex-core` / `codex-session-runtime` 时，目标是把 domain implementation 迁到对应 owner
+  crate，并让跨 domain 依赖只通过轻量 API trait/DTO contract 表达；composition root 负责把 concrete
+  implementation 显式注入。把代码复制到另一个 `*-runtime` / `*-hosts` crate、把大 crate 原样搬家，
+  或在新 crate 里继续保留同一批 concrete session/thread/tool/MCP/workflow/command 实现，都不算拆分。
+- session/thread 依赖 tool、MCP、workflow、guardian、command、goal、agent control 等能力时，只能消费
+  owner API trait/DTO 或注入后的 trait object。不要把 `Session`、`TurnContext`、`ThreadManager`、
+  service registry、`CoreToolDomainHost`、`CoreSessionToolRouter`、`session-tool-hosts` 或类似
+  concrete host/facade 当作长期边界；如果发现强耦合，先把所需能力抽成稳定 contract，再迁移实现。
+- 如果某个 domain 迁出后仍需要原 owner 的内部能力，不要把 direct dependency 改成 facade/re-export 形式的
+  indirect dependency。应把共享类型、请求/响应 DTO、runtime trait 下沉到 protocol-neutral 或 owner API
+  crate，并用 `cargo tree` 同时检查 normal 和 dev graph，证明测试代码也没有把 heavy runtime 拉回。
+- 只有 implementation、相关测试和依赖门禁都迁到 owner crate，且原 owner 不再保留该 domain 的
+  handler、host、adapter、router facade 或执行逻辑时，才能说该 domain 拆分完成。迁移期 wrapper 必须在
+  progress 中明确标为未完成项，不能作为完成状态交付。
 
 Particularly when introducing a new concept/feature/API, before adding to `codex-core`, consider whether:
 
@@ -115,12 +134,44 @@ Particularly when introducing a new concept/feature/API, before adding to `codex
   domain 真正需要的 API/trait/DTO boundary，并由 `codex-core` 或组合根实现和注入，不要把 concrete
   core 类型作为“方便的 IoC 容器”传入 owner crate，也不要只把 direct dependency 改成 indirect
   dependency。
+- `codex-core` 拆分的完成标准是 domain implementation 迁到 owner crate，而不是在 core 内留下
+  facade、adapter、re-export 或 wrapper 后声明完成。短期 host adapter 只能作为迁移阻塞记录，并且
+  必须继续收缩；所有 tool、MCP、guardian、goal、session/thread、command/exec、compact、hook 等
+  domain 都按同一规则处理。
+- 禁止把“拆分”实现成复制/整体搬迁大 crate：不要把 `codex-core` 或 `codex-session-runtime` 的大块
+  implementation 复制到另一个 `*-runtime` / `*-hosts` crate 后再声称后续慢慢拆。迁移前必须先写清楚
+  目标依赖方向和 API trait/DTO boundary；迁移后 owner crate 必须真正拥有该 domain implementation，
+  原 owner 不能继续保留同一 domain 的 handler、host、adapter、router facade 或执行逻辑。若某个
+  domain 仍需要 `Session` / `TurnContext` / `ThreadManager` 能力，先把这些能力抽象成稳定 API trait，
+  让 session/thread 依赖 trait 或由组合根注入实现；不要新建 `session-tool-hosts` 这类“把 host 实现
+  从一个 runtime 包搬到另一个 runtime 包”的中间 owner 来替代 dependency inversion。
 - 依赖倒置（dependency inversion）是 core 拆分的默认规则：当低层 domain/runtime 需要调用
   `codex-core`、app-server 或其他组合根能力时，把稳定的 trait/DTO contract 放到 owner API crate
   或 protocol-neutral API crate；core/app-server 只实现并通过 constructor/service registry 显式注入该
   contract，domain/runtime crate 只依赖 contract，不依赖 concrete implementation。不要为了实现 trait
   让 core 依赖完整 implementation crate，也不要通过 facade/re-export 把 direct dependency 伪装成
   indirect dependency；依赖门禁必须证明 contract crate 没有拉回 implementation graph。
+- domain runtime 之间也遵守同一规则：MCP、tool、session/turn、thread、goal、guardian、agent control
+  等 runtime 互相调用时，应依赖对方 owner API crate 中的 trait/DTO，并由组合根装配 concrete
+  implementation；不要把 concrete `Session`、`TurnContext`、`ThreadManager` 或 service registry
+  当作跨 crate IoC 容器传入新 runtime crate。迁移 `core/src/mcp` 这类 adapter 前，先把所需的
+  session/turn host capability 抽成稳定 trait，再让 MCP adapter 依赖 trait。
+- 对 session/core 拆分而言，host 实现不是可接受的边界：不要创建或保留
+  `session-tool-hosts`、`CoreToolDomainHost`、`CoreSessionToolRouter` 这类把 concrete
+  session 能力转交给外部 domain 的长期结构。若 tool/MCP/workflow/guardian/command 等 domain
+  需要 session/turn 能力，先把能力定义成 owner API trait/DTO，由组合根注入 implementation；
+  session-runtime 只能持有并调用这些 trait object，不能继续拥有该 domain 的 handler、host、
+  adapter、router facade 或执行逻辑。短期迁移 wrapper 必须在 progress 中标成未完成项，不能算
+  “已拆分”。
+- session 依赖的全部 tool 能力必须抽象为 API trait/DTO，而不是把 `Session` / `TurnContext` 包装成
+  `*ToolHost`、`*ToolRouter`、service registry 或其他 concrete host 后交给 tool domain。tool domain
+  implementation 自己属于 tool owner crate；session/thread 只能消费 tool API contract，具体 tool
+  implementation 由组合根装配并注入。
+- API crate 只用于跨 owner crate 的稳定边界；不要因为同一 owner runtime 内部成员之间相互调用就把
+  private 协作抽到 public API crate。若 `ThreadManager`、`AgentControl`、session/turn loop 属于同一个
+  thread/session runtime owner crate，它们之间的协作应保持 crate-private module/trait/helper；只有
+  app-server、tool runtime、MCP adapter、workflow bridge 或其他外部 crate 需要消费的能力，才进入
+  `codex-session-api` / `codex-thread-api` 这类 contract crate。
 - 新 owner crate 的依赖门禁必须同时覆盖生产代码和测试代码：除了 `cargo tree -p <crate>
   --edges normal`，还要检查 `cargo tree -p <crate> --edges normal,dev`，确保 dev-dependency、测试
   fixture、test-support helper 也没有通过 indirect dependency 拉回 `codex-core`、app-server v2、
@@ -148,14 +199,20 @@ Particularly when introducing a new concept/feature/API, before adding to `codex
   `core/src/tasks`、`pending_input`、`state::ActiveTurn` / `RunningTask`、`core/src/thread` 时，先扩展这些
   API 的稳定 trait/DTO，再整块迁实现；不要让新的 runtime crate 反向依赖 concrete `Codex`、
   `CodexThread` 或 `ThreadManager`。
-- 不依赖 `codex-core` 内部实现的稳定 MultiAgent runtime 基础层，例如 agent registry、status helper、
+- app-server 在过渡期需要消费 RPITIT contract trait 时，优先在 app-server 边界定义本地 object-safe
+  facade，把 future boxing 限制在 listener/display/request processor 边界；不要为了传 `Arc<dyn ...>`
+  把 `codex-thread-api` / `codex-session-api` 的 native RPITIT trait 改回 `async_trait`，也不要让
+  listener/display 结构重新持有 concrete `Arc<CodexThread>` 或 `Arc<ThreadManager>`。线程创建、环境选择、
+  runtime service 装配这类 composition root 能力可以显式保留在 manager/factory facade，但不能伪装成
+  普通 domain runtime 依赖继续向下游扩散。
+- 不依赖 concrete session/thread runtime 内部实现的稳定 MultiAgent runtime 基础层，例如 agent registry、status helper、
   agent fork history selector（`SpawnAgentForkMode` / `select_forked_rollout_items`）、
   spawn/list control-plane DTO（`SpawnAgentOptions` / `LiveAgent` / `ListedAgent`）、agent path prefix
   matcher、spawn input preview 和 post-turn scheduler outcome（`ThreadPostTurnState` /
   `ThreadIdleReason`），应放在
   `codex-rs/agent-runtime`（`codex-agent-runtime`）。`AgentControl`、session/turn loop、绑定
   `PendingInputItem` 的 mailbox 状态、tool dispatch adapter 等偏编排的代码，在边界被明确拆分前继续留在
-  `codex-core`。
+  `codex-session-runtime`，不得回流到 `codex-core` 兼容层。
 - Agent role declaration runtime owner 是 `codex-rs/agent-roles`（`codex-agent-roles`）：包括
   `AgentRoleConfig` / `AgentRoleSource` / `AgentCapabilityAllowlist`、`agents` TOML layer 合并、
   `.agent.md` / `.agent.toml` discovery、Markdown frontmatter parser、role description/nickname/config
@@ -198,11 +255,15 @@ Particularly when introducing a new concept/feature/API, before adding to `codex
   `ToolError`、network approval spec、`ToolSandboxContext`、`ToolOrchestratorHost` 和
   `OrchestratorRunResult`、`ToolEventHost`、apply_patch/shell/unified-exec request、approval key、
   environment、runtime host trait、handler host trait、command interaction host trait、
-  `RunExecLikeArgs`、registry assembly host trait 和粗粒度 `ToolDomainHost` facade。新增 tool handler
-  需要 core/session 能力时，先把能力抽象进 `codex-tool-runtime-api` 的 host/service contract，再由
-  core 注入实现；不要让 handler implementation 直接依赖 `Session` / `TurnContext`。`codex-core` 需要实现
-  tool host/dispatch/adapter trait 时应直接依赖该 API crate，不要为了 trait contract 依赖完整
-  implementation crate。`codex-tool-runtime-api` 只能依赖 protocol/tool-types/planning/telemetry、
+  `RunExecLikeArgs` 和 narrow registry assembly contract。不要把粗粒度 `ToolDomainHost` /
+  `CoreToolDomainHost` / `CoreSessionToolRouter` 继续当作拆分边界；它们只能作为待删除的迁移遗留。
+  新增或迁移 tool handler 需要 session/thread 能力时，必须先把能力抽象进
+  `codex-tool-runtime-api`、`codex-session-api` 或对应 owner API crate 的窄 trait/DTO contract，
+  再由组合根显式注入 implementation；不要让 handler implementation 直接依赖 `Session` /
+  `TurnContext`，也不要把 `Session` / `TurnContext` 包装成 `*ToolHost`、`*ToolRouter`、service
+  registry 或 facade 后传给 tool domain。`codex-core` / `codex-session-runtime` 需要消费
+  tool 能力时应依赖 API contract，不要为了 trait contract 依赖完整 implementation crate。
+  `codex-tool-runtime-api` 只能依赖 protocol/tool-types/planning/telemetry、
   sandboxing/permissions/hooks、已拆出的 command/process/apply-patch primitive 和 filesystem/exec-server
   API 这类 contract/DTO crate，normal/dev graph 不能拉回 `codex-tool-runtime`、`codex-core` 或 app-server。
   不依赖 `codex-core` 的 tool runtime implementation 属于 `codex-rs/tool-runtime`
@@ -214,21 +275,21 @@ Particularly when introducing a new concept/feature/API, before adding to `codex
   runtime 主体、Response item 到 tool call 后的 registry/router/dispatch 运行时、model-visible spec
   planning 后的 handler collection ordering、extension-owned tool handler adapter、tool-search/test-sync
   host-neutral handler、plan/goal/request-permissions/request-user-input/view-image/MCP-resource/agent-job 等
-  已抽象为 `ToolDomainHost` capability 的 handler，以及 runtime-only output/planning DTO。request、
+  已抽象到窄 API trait/DTO capability 的 handler，以及 runtime-only output/planning DTO。request、
   approval key、host trait 和 handler host
   contract 归属 `codex-tool-runtime-api`。`codex-tool-runtime` 可以 re-export
   `codex-tool-runtime-api` 的 contract 保持旧路径兼容，但 contract owner 仍是 API crate；
-  `codex-core`
-  只实现 `Session` / `TurnContext` host adapter、approval/hook/Guardian bridge、trace/telemetry/goal
-  bridge、process manager / stdout stream / filesystem environment 注入和真实 handler 编排。新增
-  tool event、runtime helper、runtime 状态机或 turn diff 状态机不要重新放回 `core/src/tools` 或
-  `core/src/turn_diff_tracker.rs`。如果 runtime 需要 core 能力，优先通过 `ToolDomainHost` /
-  `CoreToolDomainHost` 这种粗粒度 service facade 暴露一组 typed capability，再由 core adapter
-  注入实现；tool domain 的 assembly ownership（router/registry/spec planning、handler collection、
-  dispatch host 注入）应在 `codex-tool-runtime`。core 只允许通过 coarse external phase 临时注入尚未迁出的
-  code-mode、MCP tool call、workflow、多 agent 或 request-plugin-install handler；不要让 core 按
-  `append_*` 为每个已迁 handler 逐项组装 registry。避免继续为每个小 handler 发散独立 core-facing trait，
-  除非该 subtrait 会被 `ToolDomainHost` 组合并服务于整体 `core/src/tools` domain 迁移。不要让 owner crate direct 或
+  `codex-core` / `codex-session-runtime` 不应继续拥有 tool handler、tool host、router facade 或真实
+  handler 编排。新增 tool event、runtime helper、runtime 状态机或 turn diff 状态机不要重新放回
+  `core/src/tools`、`session-runtime/src/tools` 或 `core/src/turn_diff_tracker.rs`。如果 tool runtime
+  需要 session/thread 能力，必须拆成窄 trait/DTO，由组合根或 owner implementation 注入；禁止通过
+  `ToolDomainHost` / `CoreToolDomainHost` 这类粗粒度 service facade 暴露一组 session typed
+  capability。tool domain 的 assembly ownership（router/registry/spec planning、handler collection、
+  dispatch host 注入）应在 `codex-tool-runtime` 或更合适的 tool owner crate；core/session 只消费
+  `exec_tool` / router trait 这类稳定 contract。core 只允许通过明确标记为未完成的迁移边界临时连接
+  尚未迁出的 code-mode、MCP tool call、workflow、多 agent 或 request-plugin-install handler；
+  不要让 core 按 `append_*` 为每个已迁 handler 逐项组装 registry。新增 subtrait 必须对应真实
+  owner API boundary，不能再为了把它们组合回 `ToolDomainHost` 而发散。不要让 owner crate direct 或
   indirect 依赖 `codex-core`。`codex-tool-runtime`
   的 normal/dev graph 都不能拉回 `codex-core`、app-server v2、V8/code-mode implementation、
   network proxy implementation、exec-server、sqlx/state、codex-api/openai-files/core-skills。
@@ -238,9 +299,9 @@ Particularly when introducing a new concept/feature/API, before adding to `codex
   默认 `codex-core` graph 不应为了 `spawn_agents_on_csv` 重新 direct 或 indirect 依赖 `csv` crate。需要
   支持更完整的 CSV dialect 时，先评估 `codex-state-api` 是否仍能保持无 tokio/sqlx/core/runtime 依赖；
   不能满足时再抽出可注入 parser，不要把通用 CSV runtime 拉回 core default graph。
-  `Session`、`TurnContext`、hooks、approval、
-  telemetry、真实 tool handler 执行、`dispatch_any` 和 turn loop 编排继续留在 `codex-core`，
-  除非先拆出稳定共享接口。
+  `Session`、`TurnContext`、hooks、approval、telemetry、真实 tool handler 执行、`dispatch_any` 和
+  turn loop 编排如果仍留在 `codex-core`，只能视为当前迁移阻塞；后续应随 session/thread runtime
+  owner 或对应 domain owner 整体迁出，不能作为最终架构。
 - code-mode 的描述层、工具定义、tool namespace description、exec/wait public tool name、
   exec prompt builder、pragma parser 和 JSON schema 到 TypeScript 的渲染属于轻量 API 边界，
   owner crate 是 `codex-rs/code-mode-api`（`codex-code-mode-api`）。`codex-tools` 这类只做

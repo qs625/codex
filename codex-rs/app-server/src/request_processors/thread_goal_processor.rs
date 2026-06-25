@@ -1,12 +1,79 @@
 use super::*;
+use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use codex_protocol::protocol::validate_thread_goal_objective;
 use codex_state_api::protocol_goal_from_state;
 use codex_state_api::state_goal_status_from_protocol;
 use codex_state_api::validate_thread_goal_budget;
+use futures::future::BoxFuture;
+
+pub(crate) trait ThreadGoalRuntime: Send + Sync {
+    fn live_thread_info(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, codex_protocol::error::Result<LiveThreadInfo>>;
+
+    fn prepare_thread_external_goal_mutation(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, codex_protocol::error::Result<()>>;
+
+    fn apply_thread_external_goal_set(
+        &self,
+        thread_id: ThreadId,
+        external_set: ExternalGoalSet,
+    ) -> BoxFuture<'_, codex_protocol::error::Result<()>>;
+
+    fn apply_thread_external_goal_clear(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, codex_protocol::error::Result<()>>;
+}
+
+impl<T> ThreadGoalRuntime for T
+where
+    T: LiveThreadRegistry + Send + Sync,
+{
+    fn live_thread_info(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, codex_protocol::error::Result<LiveThreadInfo>> {
+        Box::pin(LiveThreadRegistry::live_thread_info(self, thread_id))
+    }
+
+    fn prepare_thread_external_goal_mutation(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, codex_protocol::error::Result<()>> {
+        Box::pin(LiveThreadRegistry::prepare_thread_external_goal_mutation(
+            self, thread_id,
+        ))
+    }
+
+    fn apply_thread_external_goal_set(
+        &self,
+        thread_id: ThreadId,
+        external_set: ExternalGoalSet,
+    ) -> BoxFuture<'_, codex_protocol::error::Result<()>> {
+        Box::pin(LiveThreadRegistry::apply_thread_external_goal_set(
+            self,
+            thread_id,
+            external_set,
+        ))
+    }
+
+    fn apply_thread_external_goal_clear(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, codex_protocol::error::Result<()>> {
+        Box::pin(LiveThreadRegistry::apply_thread_external_goal_clear(
+            self, thread_id,
+        ))
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct ThreadGoalRequestProcessor {
-    thread_manager: Arc<ThreadManager>,
+    thread_runtime: Arc<dyn ThreadGoalRuntime>,
     outgoing: Arc<OutgoingMessageSender>,
     config: Arc<Config>,
     thread_state_manager: ThreadStateManager,
@@ -14,15 +81,19 @@ pub(crate) struct ThreadGoalRequestProcessor {
 }
 
 impl ThreadGoalRequestProcessor {
-    pub(crate) fn new(
-        thread_manager: Arc<ThreadManager>,
+    pub(crate) fn new<R>(
+        thread_runtime: Arc<R>,
         outgoing: Arc<OutgoingMessageSender>,
         config: Arc<Config>,
         thread_state_manager: ThreadStateManager,
         state_db: Option<StateDbHandle>,
-    ) -> Self {
+    ) -> Self
+    where
+        R: ThreadGoalRuntime + 'static,
+    {
+        let thread_runtime: Arc<dyn ThreadGoalRuntime> = thread_runtime;
         Self {
-            thread_manager,
+            thread_runtime,
             outgoing,
             config,
             thread_state_manager,
@@ -62,7 +133,7 @@ impl ThreadGoalRequestProcessor {
     pub(crate) async fn emit_resume_goal_snapshot_and_continue(
         &self,
         thread_id: ThreadId,
-        thread: &CodexThread,
+        thread: &dyn AppServerLiveThreadHandle,
     ) {
         if !self.config.features.enabled(Feature::Goals) {
             return;
@@ -75,10 +146,7 @@ impl ThreadGoalRequestProcessor {
         }
     }
 
-    pub(crate) async fn pending_resume_goal_state(
-        &self,
-        _thread: &CodexThread,
-    ) -> (bool, Option<StateDbHandle>) {
+    pub(crate) async fn pending_resume_goal_state(&self) -> (bool, Option<StateDbHandle>) {
         let emit_thread_goal_update = self.config.features.enabled(Feature::Goals);
         let thread_goal_state_db = if emit_thread_goal_update {
             self.state_db.clone()
@@ -99,9 +167,9 @@ impl ThreadGoalRequestProcessor {
 
         let thread_id = parse_thread_id_for_request(params.thread_id.as_str())?;
         let state_db = self.state_db_for_materialized_thread(thread_id).await?;
-        let running_thread = self.thread_manager.get_thread(thread_id).await.ok();
-        let rollout_path = match running_thread.as_ref() {
-            Some(thread) => thread.rollout_path().ok_or_else(|| {
+        let live_thread_info = self.thread_runtime.live_thread_info(thread_id).await.ok();
+        let rollout_path = match live_thread_info.as_ref() {
+            Some(info) => info.rollout_path.clone().ok_or_else(|| {
                 invalid_request(format!(
                     "ephemeral thread does not support goals: {thread_id}"
                 ))
@@ -146,8 +214,13 @@ impl ThreadGoalRequestProcessor {
                 .map_err(|err| invalid_request(err.to_string()))?;
         }
 
-        if let Some(thread) = running_thread.as_ref() {
-            thread.prepare_external_goal_mutation().await;
+        if live_thread_info.is_some()
+            && let Err(err) = self
+                .thread_runtime
+                .prepare_thread_external_goal_mutation(thread_id)
+                .await
+        {
+            tracing::warn!("failed to prepare external goal mutation: {err}");
         }
 
         let (goal, previous_status) = (if let Some(objective) = objective {
@@ -231,8 +304,13 @@ impl ThreadGoalRequestProcessor {
             .await;
         self.emit_thread_goal_updated_ordered(thread_id, goal, listener_command_tx)
             .await;
-        if let Some(thread) = running_thread.as_ref() {
-            thread.apply_external_goal_set(external_goal_set).await;
+        if live_thread_info.is_some()
+            && let Err(err) = self
+                .thread_runtime
+                .apply_thread_external_goal_set(thread_id, external_goal_set)
+                .await
+        {
+            tracing::warn!("failed to apply external goal set runtime effects: {err}");
         }
         Ok(())
     }
@@ -266,9 +344,9 @@ impl ThreadGoalRequestProcessor {
 
         let thread_id = parse_thread_id_for_request(params.thread_id.as_str())?;
         let state_db = self.state_db_for_materialized_thread(thread_id).await?;
-        let running_thread = self.thread_manager.get_thread(thread_id).await.ok();
-        let rollout_path = match running_thread.as_ref() {
-            Some(thread) => thread.rollout_path().ok_or_else(|| {
+        let live_thread_info = self.thread_runtime.live_thread_info(thread_id).await.ok();
+        let rollout_path = match live_thread_info.as_ref() {
+            Some(info) => info.rollout_path.clone().ok_or_else(|| {
                 invalid_request(format!(
                     "ephemeral thread does not support goals: {thread_id}"
                 ))
@@ -295,8 +373,13 @@ impl ThreadGoalRequestProcessor {
         )
         .await;
 
-        if let Some(thread) = running_thread.as_ref() {
-            thread.prepare_external_goal_mutation().await;
+        if live_thread_info.is_some()
+            && let Err(err) = self
+                .thread_runtime
+                .prepare_thread_external_goal_mutation(thread_id)
+                .await
+        {
+            tracing::warn!("failed to prepare external goal clear mutation: {err}");
         }
 
         let listener_command_tx = {
@@ -309,8 +392,14 @@ impl ThreadGoalRequestProcessor {
             .await
             .map_err(|err| internal_error(format!("failed to clear thread goal: {err}")))?;
 
-        if cleared && let Some(thread) = running_thread.as_ref() {
-            thread.apply_external_goal_clear().await;
+        if cleared
+            && live_thread_info.is_some()
+            && let Err(err) = self
+                .thread_runtime
+                .apply_thread_external_goal_clear(thread_id)
+                .await
+        {
+            tracing::warn!("failed to apply external goal clear runtime effects: {err}");
         }
 
         self.outgoing
@@ -327,8 +416,8 @@ impl ThreadGoalRequestProcessor {
         &self,
         thread_id: ThreadId,
     ) -> Result<StateDbHandle, JSONRPCErrorError> {
-        if let Ok(thread) = self.thread_manager.get_thread(thread_id).await {
-            if thread.rollout_path().is_none() {
+        if let Ok(live_info) = self.thread_runtime.live_thread_info(thread_id).await {
+            if live_info.rollout_path.is_none() {
                 return Err(invalid_request(format!(
                     "ephemeral thread does not support goals: {thread_id}"
                 )));

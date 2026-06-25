@@ -31,7 +31,8 @@ use codex_tool_planning::request_permissions_tool_description;
 use codex_tool_planning::request_user_input_tool_description;
 use codex_tool_planning::request_user_input_unavailable_message;
 use codex_tool_runtime_api::ApplyPatchHandlerHost;
-use codex_tool_runtime_api::FunctionToolHost;
+use codex_tool_runtime_api::FunctionToolSession;
+use codex_tool_runtime_api::FunctionToolTurn;
 use codex_tool_runtime_api::ToolHandler;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolExecutor;
@@ -49,42 +50,33 @@ use serde_json::Value as JsonValue;
 use crate::FunctionToolOutput;
 use codex_tool_runtime::ToolInvocation;
 
-pub struct PlanHandler<Host> {
-    host: Host,
-}
+pub struct PlanHandler;
 
-impl<Host> PlanHandler<Host> {
-    pub fn new(host: Host) -> Self {
-        Self { host }
+impl PlanHandler {
+    pub fn new() -> Self {
+        Self
     }
 }
 
-pub struct RequestPermissionsHandler<Host> {
-    host: Host,
-}
+pub struct RequestPermissionsHandler;
 
-impl<Host> RequestPermissionsHandler<Host> {
-    pub fn new(host: Host) -> Self {
-        Self { host }
+impl RequestPermissionsHandler {
+    pub fn new() -> Self {
+        Self
     }
 }
 
-pub struct RequestUserInputHandler<Host> {
-    host: Host,
+pub struct RequestUserInputHandler {
     available_modes: Vec<ModeKind>,
 }
 
-impl<Host> RequestUserInputHandler<Host> {
-    pub fn new(host: Host, available_modes: Vec<ModeKind>) -> Self {
-        Self {
-            host,
-            available_modes,
-        }
+impl RequestUserInputHandler {
+    pub fn new(available_modes: Vec<ModeKind>) -> Self {
+        Self { available_modes }
     }
 }
 
-pub struct DynamicToolHandler<Host> {
-    host: Host,
+pub struct DynamicToolHandler {
     tool_name: ToolName,
     spec: Option<ToolSpec>,
     exposure: ToolExposure,
@@ -117,8 +109,8 @@ impl<Host> ViewImageHandler<Host> {
     }
 }
 
-impl<Host> DynamicToolHandler<Host> {
-    pub fn new(host: Host, tool: &DynamicToolSpec) -> Option<Self> {
+impl DynamicToolHandler {
+    pub fn new(tool: &DynamicToolSpec) -> Option<Self> {
         let tool_name = ToolName::new(tool.namespace.clone(), tool.name.clone());
         let output_tool = dynamic_tool_to_responses_api_tool(tool).ok()?;
         let spec = match tool.namespace.as_ref() {
@@ -130,7 +122,6 @@ impl<Host> DynamicToolHandler<Host> {
             None => ToolSpec::Function(output_tool),
         };
         Some(Self {
-            host,
             tool_name,
             spec: Some(spec),
             exposure: if tool.defer_loading {
@@ -192,10 +183,11 @@ impl ToolOutput for PlanToolOutput {
     }
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for PlanHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>> for PlanHandler
 where
-    Host: FunctionToolHost,
+    Session: FunctionToolSession<Turn>,
+    Turn: FunctionToolTurn,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = PlanToolOutput;
 
@@ -209,7 +201,7 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
@@ -223,7 +215,7 @@ where
             } = invocation;
             let arguments = function_arguments(metadata.payload, "update_plan")?;
 
-            if self.host.turn_collaboration_mode(&turn) == ModeKind::Plan {
+            if turn.function_tool_collaboration_mode() == ModeKind::Plan {
                 return Err(FunctionCallError::RespondToModel(
                     "update_plan is a TODO/checklist tool and is not allowed in Plan mode"
                         .to_string(),
@@ -231,24 +223,29 @@ where
             }
 
             let args: UpdatePlanArgs = parse_arguments(&arguments)?;
-            self.host.emit_plan_update(&session, &turn, args).await;
+            session.function_tool_emit_plan_update(&turn, args).await;
 
             Ok(PlanToolOutput)
         })
     }
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for PlanHandler<Host>
+impl<Session, Turn, Tracker, DiffContext>
+    ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext> for PlanHandler
 where
-    Host: FunctionToolHost,
+    Session: FunctionToolSession<Turn>,
+    Turn: FunctionToolTurn,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for RequestPermissionsHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for RequestPermissionsHandler
 where
-    Host: FunctionToolHost,
+    Session: FunctionToolSession<Turn>,
+    Turn: FunctionToolTurn,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = FunctionToolOutput;
 
@@ -264,7 +261,7 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
@@ -280,7 +277,7 @@ where
             let call_id = metadata.call_id;
             let arguments = function_arguments(metadata.payload, "request_permissions")?;
 
-            let cwd = self.host.turn_cwd(&turn);
+            let cwd = turn.function_tool_cwd();
             #[allow(deprecated)]
             let mut args: RequestPermissionsArgs =
                 parse_arguments_with_base_path(&arguments, &cwd)?;
@@ -293,9 +290,8 @@ where
                 ));
             }
 
-            let response = self
-                .host
-                .request_permissions(&session, &turn, call_id, args, cancellation_token)
+            let response = session
+                .function_tool_request_permissions(&turn, call_id, args, cancellation_token)
                 .await
                 .ok_or_else(|| {
                     FunctionCallError::RespondToModel(
@@ -314,17 +310,22 @@ where
     }
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for RequestPermissionsHandler<Host>
+impl<Session, Turn, Tracker, DiffContext>
+    ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext> for RequestPermissionsHandler
 where
-    Host: FunctionToolHost,
+    Session: FunctionToolSession<Turn>,
+    Turn: FunctionToolTurn,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for RequestUserInputHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for RequestUserInputHandler
 where
-    Host: FunctionToolHost,
+    Session: FunctionToolSession<Turn>,
+    Turn: FunctionToolTurn,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = FunctionToolOutput;
 
@@ -340,7 +341,7 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
@@ -355,13 +356,13 @@ where
             let call_id = metadata.call_id;
             let arguments = function_arguments(metadata.payload, REQUEST_USER_INPUT_TOOL_NAME)?;
 
-            if self.host.turn_is_non_root_agent(&turn) {
+            if turn.function_tool_is_non_root_agent() {
                 return Err(FunctionCallError::RespondToModel(
                     "request_user_input can only be used by the root thread".to_string(),
                 ));
             }
 
-            let mode = self.host.session_collaboration_mode(&session).await;
+            let mode = session.function_tool_session_collaboration_mode().await;
             if let Some(message) =
                 request_user_input_unavailable_message(mode, &self.available_modes)
             {
@@ -371,9 +372,8 @@ where
             let args: RequestUserInputArgs = parse_arguments(&arguments)?;
             let args = normalize_request_user_input_args(args)
                 .map_err(FunctionCallError::RespondToModel)?;
-            let response = self
-                .host
-                .request_user_input(&session, &turn, call_id, args)
+            let response = session
+                .function_tool_request_user_input(&turn, call_id, args)
                 .await
                 .ok_or_else(|| {
                     FunctionCallError::RespondToModel(format!(
@@ -392,17 +392,22 @@ where
     }
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for RequestUserInputHandler<Host>
+impl<Session, Turn, Tracker, DiffContext>
+    ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext> for RequestUserInputHandler
 where
-    Host: FunctionToolHost,
+    Session: FunctionToolSession<Turn>,
+    Turn: FunctionToolTurn,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for DynamicToolHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for DynamicToolHandler
 where
-    Host: FunctionToolHost,
+    Session: FunctionToolSession<Turn>,
+    Turn: FunctionToolTurn,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = FunctionToolOutput;
 
@@ -420,7 +425,7 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
@@ -436,9 +441,8 @@ where
             let arguments = function_arguments(metadata.payload, "dynamic tool")?;
 
             let args: Value = parse_arguments(&arguments)?;
-            let response = self
-                .host
-                .request_dynamic_tool(&session, &turn, call_id, self.tool_name.clone(), args)
+            let response = session
+                .function_tool_request_dynamic_tool(&turn, call_id, self.tool_name.clone(), args)
                 .await
                 .ok_or_else(|| {
                     FunctionCallError::RespondToModel(
@@ -459,15 +463,18 @@ where
     }
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for DynamicToolHandler<Host>
+impl<Session, Turn, Tracker, DiffContext>
+    ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext> for DynamicToolHandler
 where
-    Host: FunctionToolHost,
+    Session: FunctionToolSession<Turn>,
+    Turn: FunctionToolTurn,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
     fn search_info(&self) -> Option<ToolSearchInfo> {
         ToolSearchInfo::from_spec(
             self.search_text.clone(),
-            self.spec()?,
+            self.spec.clone()?,
             Some(ToolSearchSourceInfo {
                 name: "Dynamic tools".to_string(),
                 description: Some("Tools provided by the current Codex thread.".to_string()),
@@ -479,19 +486,16 @@ where
 impl<Host>
     ToolExecutor<
         ToolInvocation<
-            <Host as FunctionToolHost>::Session,
-            <Host as FunctionToolHost>::Turn,
-            <Host as FunctionToolHost>::Tracker,
+            <Host as ApplyPatchHandlerHost>::Session,
+            <Host as ApplyPatchHandlerHost>::Turn,
+            <Host as ApplyPatchHandlerHost>::Tracker,
         >,
     > for ViewImageHandler<Host>
 where
-    Host: FunctionToolHost
-        + ApplyPatchHandlerHost<
-            Session = <Host as FunctionToolHost>::Session,
-            Turn = <Host as FunctionToolHost>::Turn,
-            Tracker = <Host as FunctionToolHost>::Tracker,
-            DiffContext = <Host as FunctionToolHost>::DiffContext,
-        >,
+    Host: ApplyPatchHandlerHost,
+    <Host as ApplyPatchHandlerHost>::Session:
+        FunctionToolSession<<Host as ApplyPatchHandlerHost>::Turn>,
+    <Host as ApplyPatchHandlerHost>::Turn: FunctionToolTurn,
 {
     type Output = ViewImageOutput;
 
@@ -510,9 +514,9 @@ where
     fn handle<'a>(
         &'a self,
         invocation: ToolInvocation<
-            <Host as FunctionToolHost>::Session,
-            <Host as FunctionToolHost>::Turn,
-            <Host as FunctionToolHost>::Tracker,
+            <Host as ApplyPatchHandlerHost>::Session,
+            <Host as ApplyPatchHandlerHost>::Turn,
+            <Host as ApplyPatchHandlerHost>::Tracker,
         >,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
@@ -525,7 +529,7 @@ where
                 metadata,
                 ..
             } = invocation;
-            if !self.host.turn_supports_image_input(&turn) {
+            if !turn.function_tool_supports_image_input() {
                 return Err(FunctionCallError::RespondToModel(
                     VIEW_IMAGE_UNSUPPORTED_MESSAGE.to_string(),
                 ));
@@ -591,7 +595,7 @@ where
             let event_path = abs_path.clone();
 
             let can_request_original_detail =
-                self.host.turn_can_request_original_image_detail(&turn);
+                turn.function_tool_can_request_original_image_detail();
             let use_original_detail =
                 can_request_original_detail && matches!(detail, Some(ViewImageDetail::Original));
             let image_mode = if use_original_detail {
@@ -615,8 +619,8 @@ where
             )?;
             let image_url = image.into_data_url();
 
-            self.host
-                .emit_image_view(&session, &turn, call_id, event_path)
+            session
+                .function_tool_emit_image_view(&turn, call_id, event_path)
                 .await;
 
             Ok(ViewImageOutput {
@@ -630,20 +634,17 @@ where
 impl<Host>
     ToolHandler<
         ToolInvocation<
-            <Host as FunctionToolHost>::Session,
-            <Host as FunctionToolHost>::Turn,
-            <Host as FunctionToolHost>::Tracker,
+            <Host as ApplyPatchHandlerHost>::Session,
+            <Host as ApplyPatchHandlerHost>::Turn,
+            <Host as ApplyPatchHandlerHost>::Tracker,
         >,
-        <Host as FunctionToolHost>::DiffContext,
+        <Host as ApplyPatchHandlerHost>::DiffContext,
     > for ViewImageHandler<Host>
 where
-    Host: FunctionToolHost
-        + ApplyPatchHandlerHost<
-            Session = <Host as FunctionToolHost>::Session,
-            Turn = <Host as FunctionToolHost>::Turn,
-            Tracker = <Host as FunctionToolHost>::Tracker,
-            DiffContext = <Host as FunctionToolHost>::DiffContext,
-        >,
+    Host: ApplyPatchHandlerHost,
+    <Host as ApplyPatchHandlerHost>::Session:
+        FunctionToolSession<<Host as ApplyPatchHandlerHost>::Turn>,
+    <Host as ApplyPatchHandlerHost>::Turn: FunctionToolTurn,
 {
 }
 
@@ -733,66 +734,54 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     #[derive(Clone, Copy)]
-    struct StubFunctionToolHost {
+    struct StubSession;
+
+    #[derive(Clone, Copy)]
+    struct StubTurn {
         non_root_agent: bool,
     }
 
-    impl FunctionToolHost for StubFunctionToolHost {
-        type Session = ();
-        type Turn = ();
-        type Tracker = ();
-        type DiffContext = ();
-
-        fn turn_collaboration_mode(&self, _turn: &Self::Turn) -> ModeKind {
+    impl FunctionToolTurn for StubTurn {
+        fn function_tool_collaboration_mode(&self) -> ModeKind {
             ModeKind::Default
         }
 
-        fn turn_cwd(&self, _turn: &Self::Turn) -> codex_utils_absolute_path::AbsolutePathBuf {
+        fn function_tool_cwd(&self) -> codex_utils_absolute_path::AbsolutePathBuf {
             codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path("/tmp")
                 .expect("absolute path")
         }
 
-        fn turn_id(&self, _turn: &Self::Turn) -> String {
-            "turn-test".to_string()
-        }
-
-        fn turn_is_non_root_agent(&self, _turn: &Self::Turn) -> bool {
+        fn function_tool_is_non_root_agent(&self) -> bool {
             self.non_root_agent
         }
 
-        fn turn_supports_image_input(&self, _turn: &Self::Turn) -> bool {
+        fn function_tool_supports_image_input(&self) -> bool {
             false
         }
 
-        fn turn_can_request_original_image_detail(&self, _turn: &Self::Turn) -> bool {
+        fn function_tool_can_request_original_image_detail(&self) -> bool {
             false
         }
+    }
 
-        async fn session_collaboration_mode(&self, _session: &Self::Session) -> ModeKind {
+    impl FunctionToolSession<StubTurn> for StubSession {
+        async fn function_tool_session_collaboration_mode(&self) -> ModeKind {
             ModeKind::Default
         }
 
-        async fn emit_plan_update(
-            &self,
-            _session: &Self::Session,
-            _turn: &Self::Turn,
-            _args: UpdatePlanArgs,
-        ) {
-        }
+        async fn function_tool_emit_plan_update(&self, _turn: &StubTurn, _args: UpdatePlanArgs) {}
 
-        async fn emit_image_view(
+        async fn function_tool_emit_image_view(
             &self,
-            _session: &Self::Session,
-            _turn: &Self::Turn,
+            _turn: &StubTurn,
             _call_id: String,
             _path: codex_utils_absolute_path::AbsolutePathBuf,
         ) {
         }
 
-        async fn request_permissions(
+        async fn function_tool_request_permissions(
             &self,
-            _session: &Self::Session,
-            _turn: &Self::Turn,
+            _turn: &StubTurn,
             _call_id: String,
             _args: RequestPermissionsArgs,
             _cancellation_token: CancellationToken,
@@ -800,20 +789,18 @@ mod tests {
             None
         }
 
-        async fn request_user_input(
+        async fn function_tool_request_user_input(
             &self,
-            _session: &Self::Session,
-            _turn: &Self::Turn,
+            _turn: &StubTurn,
             _call_id: String,
             _args: RequestUserInputArgs,
         ) -> Option<RequestUserInputResponse> {
             None
         }
 
-        async fn request_dynamic_tool(
+        async fn function_tool_request_dynamic_tool(
             &self,
-            _session: &Self::Session,
-            _turn: &Self::Turn,
+            _turn: &StubTurn,
             _call_id: String,
             _tool_name: ToolName,
             _arguments: serde_json::Value,
@@ -829,24 +816,19 @@ mod tests {
 
     #[test]
     fn dynamic_search_info_uses_tool_metadata_and_parameter_names() {
-        let handler = DynamicToolHandler::new(
-            StubFunctionToolHost {
-                non_root_agent: false,
-            },
-            &DynamicToolSpec {
-                namespace: Some("codex_app".to_string()),
-                name: "automation_update".to_string(),
-                description: "Create or update automations.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "timezone": { "type": "string" },
-                        "mode": { "type": "string" }
-                    }
-                }),
-                defer_loading: true,
-            },
-        )
+        let handler = DynamicToolHandler::new(&DynamicToolSpec {
+            namespace: Some("codex_app".to_string()),
+            name: "automation_update".to_string(),
+            description: "Create or update automations.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "timezone": { "type": "string" },
+                    "mode": { "type": "string" }
+                }
+            }),
+            defer_loading: true,
+        })
         .expect("dynamic handler should be created");
 
         let search_info = handler.search_info().expect("dynamic search info");
@@ -898,17 +880,14 @@ mod tests {
 
     #[tokio::test]
     async fn request_user_input_rejects_non_root_agent_threads() {
-        let handler = RequestUserInputHandler::new(
-            StubFunctionToolHost {
-                non_root_agent: true,
-            },
-            Vec::new(),
-        );
+        let handler = RequestUserInputHandler::new(Vec::new());
 
         let result = handler
             .handle(ToolInvocation {
-                session: (),
-                turn: (),
+                session: StubSession,
+                turn: StubTurn {
+                    non_root_agent: true,
+                },
                 cancellation_token: CancellationToken::new(),
                 tracker: (),
                 metadata: ToolInvocationMetadata {

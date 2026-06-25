@@ -1,5 +1,7 @@
 use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
+use crate::live_thread_runtime::AppServerLiveThreadHandle;
+use crate::live_thread_runtime::AppServerLiveThreadRegistry;
 use crate::outgoing_message::ClientRequestResult;
 use crate::outgoing_message::ThreadScopedOutgoingMessageSender;
 use crate::request_processors::populate_thread_turns_from_history;
@@ -82,8 +84,6 @@ use codex_app_server_protocol::WarningNotification;
 use codex_app_server_protocol::build_item_from_guardian_event;
 use codex_app_server_protocol::guardian_auto_approval_review_notification;
 use codex_app_server_protocol::item_event_to_server_notification;
-use codex_core::CodexThread;
-use codex_core::ThreadManager;
 use codex_core::review_format::format_review_findings_block;
 use codex_core::review_prompts;
 use codex_protocol::ThreadId;
@@ -111,7 +111,6 @@ use codex_protocol::request_permissions::RequestPermissionsResponse as CoreReque
 use codex_protocol::request_user_input::RequestUserInputAnswer as CoreRequestUserInputAnswer;
 use codex_protocol::request_user_input::RequestUserInputResponse as CoreRequestUserInputResponse;
 use codex_sandboxing_api::policy_transforms::intersect_permission_profiles;
-use codex_session_api::SessionCommandHandle;
 use codex_shell_utils::shlex_join;
 use codex_thread_api::ThreadRuntimeStatus;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -163,8 +162,8 @@ fn collab_wait_completed_agent(
 pub(crate) async fn apply_bespoke_event_handling(
     event: Event,
     conversation_id: ThreadId,
-    conversation: Arc<CodexThread>,
-    thread_manager: Arc<ThreadManager>,
+    conversation: Arc<dyn AppServerLiveThreadHandle>,
+    live_threads: Arc<dyn AppServerLiveThreadRegistry>,
     outgoing: ThreadScopedOutgoingMessageSender,
     thread_state: Arc<tokio::sync::Mutex<ThreadState>>,
     thread_watch_manager: ThreadWatchManager,
@@ -914,10 +913,9 @@ pub(crate) async fn apply_bespoke_event_handling(
             outgoing.send_server_notification(notification).await;
         }
         EventMsg::CollabCloseEnd(end_event) => {
-            if thread_manager
-                .get_thread(end_event.receiver_thread_id)
+            if !live_threads
+                .is_thread_loaded(end_event.receiver_thread_id)
                 .await
-                .is_err()
             {
                 thread_watch_manager
                     .remove_thread(&end_event.receiver_thread_id.to_string())
@@ -1687,16 +1685,14 @@ async fn handle_error(
     state.turn_summary.last_error = Some(error);
 }
 
-async fn on_request_user_input_response<H>(
+async fn on_request_user_input_response(
     event_turn_id: String,
     pending_request_id: RequestId,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    conversation: Arc<H>,
+    conversation: Arc<dyn AppServerLiveThreadHandle>,
     thread_state: Arc<Mutex<ThreadState>>,
     user_input_guard: ThreadWatchActiveGuard,
-) where
-    H: SessionCommandHandle + 'static,
-{
+) {
     let response = receiver.await;
     resolve_server_request_on_thread_listener(&thread_state, pending_request_id).await;
     drop(user_input_guard);
@@ -1770,17 +1766,15 @@ async fn on_request_user_input_response<H>(
     }
 }
 
-async fn on_mcp_server_elicitation_response<H>(
+async fn on_mcp_server_elicitation_response(
     server_name: String,
     request_id: codex_protocol::mcp::RequestId,
     pending_request_id: RequestId,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    conversation: Arc<H>,
+    conversation: Arc<dyn AppServerLiveThreadHandle>,
     thread_state: Arc<Mutex<ThreadState>>,
     permission_guard: ThreadWatchActiveGuard,
-) where
-    H: SessionCommandHandle + 'static,
-{
+) {
     let response = receiver.await;
     resolve_server_request_on_thread_listener(&thread_state, pending_request_id).await;
     drop(permission_guard);
@@ -1839,13 +1833,11 @@ fn mcp_server_elicitation_response_from_client_result(
     }
 }
 
-async fn on_request_permissions_response<H>(
+async fn on_request_permissions_response(
     pending_response: PendingRequestPermissionsResponse,
-    conversation: Arc<H>,
+    conversation: Arc<dyn AppServerLiveThreadHandle>,
     thread_state: Arc<Mutex<ThreadState>>,
-) where
-    H: SessionCommandHandle + 'static,
-{
+) {
     let PendingRequestPermissionsResponse {
         call_id,
         requested_permissions,
@@ -1986,7 +1978,7 @@ async fn on_file_change_request_approval_response(
     item_id: String,
     pending_request_id: RequestId,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    codex: Arc<impl SessionCommandHandle + 'static>,
+    codex: Arc<dyn AppServerLiveThreadHandle>,
     thread_state: Arc<Mutex<ThreadState>>,
     permission_guard: ThreadWatchActiveGuard,
 ) {
@@ -2028,7 +2020,7 @@ async fn on_file_change_request_approval_response(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn on_command_execution_request_approval_response<H>(
+async fn on_command_execution_request_approval_response(
     event_turn_id: String,
     conversation_id: ThreadId,
     approval_id: Option<String>,
@@ -2036,13 +2028,11 @@ async fn on_command_execution_request_approval_response<H>(
     completion_item: Option<CommandExecutionCompletionItem>,
     pending_request_id: RequestId,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    conversation: Arc<H>,
+    conversation: Arc<dyn AppServerLiveThreadHandle>,
     outgoing: ThreadScopedOutgoingMessageSender,
     thread_state: Arc<Mutex<ThreadState>>,
     permission_guard: ThreadWatchActiveGuard,
-) where
-    H: SessionCommandHandle + 'static,
-{
+) {
     let response = receiver.await;
     resolve_server_request_on_thread_listener(&thread_state, pending_request_id).await;
     drop(permission_guard);
@@ -2177,6 +2167,8 @@ mod tests {
     use codex_app_server_protocol::GuardianApprovalReviewStatus;
     use codex_app_server_protocol::JSONRPCErrorError;
     use codex_app_server_protocol::TurnPlanStepStatus;
+    use codex_core::CodexThread;
+    use codex_core::ThreadManager;
     use codex_login::CodexAuth;
     use codex_protocol::items::HookPromptFragment;
     use codex_protocol::items::build_hook_prompt_message;

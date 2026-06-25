@@ -192,8 +192,8 @@ with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
             ..ConfigRequirementsToml::default()
         },
     )
-    .expect("config layer stack")
-    .into();
+    .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+    .expect("config layer stack");
 
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
@@ -294,8 +294,8 @@ async fn requirements_managed_hooks_execute_windows_command_override() {
             ..ConfigRequirementsToml::default()
         },
     )
-    .expect("config layer stack")
-    .into();
+    .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+    .expect("config layer stack");
 
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
@@ -373,8 +373,8 @@ fn unknown_requirement_source_hooks_stay_managed() {
             ..ConfigRequirementsToml::default()
         },
     )
-    .expect("config layer stack")
-    .into();
+    .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+    .expect("config layer stack");
 
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
@@ -456,8 +456,8 @@ fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
             ..ConfigRequirementsToml::default()
         },
     )
-    .expect("config layer stack")
-    .into();
+    .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+    .expect("config layer stack");
 
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
@@ -520,8 +520,8 @@ fn user_disablement_does_not_filter_managed_layer_hooks() {
         ConfigRequirements::default(),
         ConfigRequirementsToml::default(),
     )
-    .expect("config layer stack")
-    .into();
+    .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+    .expect("config layer stack");
 
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
@@ -645,8 +645,8 @@ fn trusted_plugin_hook_stack(
         ConfigRequirements::default(),
         ConfigRequirementsToml::default(),
     )
+    .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
     .expect("config layer stack")
-    .into()
 }
 
 #[test]
@@ -683,8 +683,8 @@ fn requirements_managed_hooks_load_when_managed_dir_is_missing() {
             ..ConfigRequirementsToml::default()
         },
     )
-    .expect("config layer stack")
-    .into();
+    .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+    .expect("config layer stack");
 
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
@@ -739,8 +739,8 @@ fn allow_managed_hooks_only_false_keeps_unmanaged_hooks() {
         requirements,
         requirements_toml,
     )
-    .expect("config layer stack")
-    .into();
+    .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+    .expect("config layer stack");
 
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
@@ -794,8 +794,8 @@ fn allow_managed_hooks_only_in_config_toml_does_not_enable_policy() {
         ConfigRequirements::default(),
         ConfigRequirementsToml::default(),
     )
-    .expect("config layer stack")
-    .into();
+    .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+    .expect("config layer stack");
 
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
@@ -865,8 +865,8 @@ fn allow_managed_hooks_only_skips_unmanaged_json_and_toml_hooks() {
         requirements,
         requirements_toml,
     )
-    .expect("config layer stack")
-    .into();
+    .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+    .expect("config layer stack");
 
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
@@ -905,8 +905,8 @@ fn allow_managed_hooks_only_skips_unmanaged_plugin_hooks() {
         /*allow_managed_hooks_only*/ true, /*managed_hooks*/ None,
     );
     let config_layer_stack = ConfigLayerStack::new(Vec::new(), requirements, requirements_toml)
-        .expect("config layer stack")
-        .into();
+        .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+        .expect("config layer stack");
 
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
@@ -978,8 +978,8 @@ fn allow_managed_hooks_only_keeps_managed_requirement_and_config_layer_hooks() {
         requirements,
         requirements_toml,
     )
-    .expect("config layer stack")
-    .into();
+    .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+    .expect("config layer stack");
 
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
@@ -1089,8 +1089,8 @@ fn discovers_hooks_from_json_and_toml_in_the_same_layer() {
         ConfigRequirements::default(),
         ConfigRequirementsToml::default(),
     )
-    .expect("config layer stack")
-    .into();
+    .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+    .expect("config layer stack");
 
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,

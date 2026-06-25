@@ -1,0 +1,200 @@
+use std::collections::VecDeque;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+
+use tokio::sync::mpsc;
+use tokio::sync::watch;
+
+use crate::PendingInputItem;
+
+#[cfg(test)]
+use codex_protocol::AgentPath;
+#[cfg(test)]
+use codex_protocol::protocol::InterAgentCommunication;
+
+pub struct Mailbox {
+    tx: mpsc::UnboundedSender<PendingInputItem>,
+    next_seq: AtomicU64,
+    seq_tx: watch::Sender<u64>,
+}
+
+pub struct MailboxReceiver {
+    rx: mpsc::UnboundedReceiver<PendingInputItem>,
+    pending_mails: VecDeque<PendingInputItem>,
+}
+
+/// Whether mailbox deliveries should still be folded into the current turn.
+///
+/// State machine:
+/// - A turn starts in `CurrentTurn`, so queued child mail can join the next
+///   model request for that turn.
+/// - After user-visible terminal output is recorded, we switch to `NextTurn`
+///   to leave late child mail queued instead of extending an already shown
+///   answer.
+/// - If the same task later gets explicit same-turn work again (a steered user
+///   prompt or a tool call after an untagged preamble), we reopen `CurrentTurn`
+///   so that pending child mail is drained into that follow-up request.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MailboxDeliveryPhase {
+    /// Incoming mailbox messages can still be consumed by the current turn.
+    #[default]
+    CurrentTurn,
+    /// The current turn already emitted visible final answer text; mailbox
+    /// messages should remain queued for a later turn.
+    NextTurn,
+}
+
+impl Mailbox {
+    pub fn new() -> (Self, MailboxReceiver) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (seq_tx, _) = watch::channel(0);
+        (
+            Self {
+                tx,
+                next_seq: AtomicU64::new(0),
+                seq_tx,
+            },
+            MailboxReceiver {
+                rx,
+                pending_mails: VecDeque::new(),
+            },
+        )
+    }
+
+    pub fn subscribe(&self) -> watch::Receiver<u64> {
+        self.seq_tx.subscribe()
+    }
+
+    pub fn send(&self, input: PendingInputItem) -> u64 {
+        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed) + 1;
+        let _ = self.tx.send(input);
+        self.seq_tx.send_replace(seq);
+        seq
+    }
+}
+
+impl MailboxReceiver {
+    fn sync_pending_mails(&mut self) {
+        while let Ok(mail) = self.rx.try_recv() {
+            self.pending_mails.push_back(mail);
+        }
+    }
+
+    pub fn has_pending(&mut self) -> bool {
+        self.sync_pending_mails();
+        !self.pending_mails.is_empty()
+    }
+
+    pub fn has_pending_trigger_turn(&mut self) -> bool {
+        self.sync_pending_mails();
+        self.pending_mails
+            .iter()
+            .any(PendingInputItem::trigger_turn)
+    }
+
+    pub fn pending(&mut self) -> impl Iterator<Item = &PendingInputItem> {
+        self.sync_pending_mails();
+        self.pending_mails.iter()
+    }
+
+    pub fn drain(&mut self) -> Vec<PendingInputItem> {
+        self.sync_pending_mails();
+        self.pending_mails.drain(..).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    fn make_mail(
+        author: AgentPath,
+        recipient: AgentPath,
+        content: &str,
+        trigger_turn: bool,
+    ) -> InterAgentCommunication {
+        InterAgentCommunication::new(
+            author,
+            recipient,
+            Vec::new(),
+            content.to_string(),
+            codex_protocol::protocol::InterAgentOperation::Unknown,
+        )
+        .with_trigger_turn(trigger_turn)
+    }
+
+    #[tokio::test]
+    async fn mailbox_assigns_monotonic_sequence_numbers() {
+        let (mailbox, _receiver) = Mailbox::new();
+        let mut seq_rx = mailbox.subscribe();
+
+        let seq_a = mailbox.send(PendingInputItem::from(make_mail(
+            AgentPath::root(),
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            "one",
+            /*trigger_turn*/ false,
+        )));
+        let seq_b = mailbox.send(PendingInputItem::from(make_mail(
+            AgentPath::root(),
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            "two",
+            /*trigger_turn*/ false,
+        )));
+
+        seq_rx.changed().await.expect("first seq update");
+        assert_eq!(*seq_rx.borrow(), seq_b);
+        assert_eq!(seq_a, 1);
+        assert_eq!(seq_b, 2);
+    }
+
+    #[tokio::test]
+    async fn mailbox_drains_in_delivery_order() {
+        let (mailbox, mut receiver) = Mailbox::new();
+        let mail_one = make_mail(
+            AgentPath::root(),
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            "one",
+            /*trigger_turn*/ false,
+        );
+        let mail_two = make_mail(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            "two",
+            /*trigger_turn*/ false,
+        );
+
+        mailbox.send(PendingInputItem::from(mail_one.clone()));
+        mailbox.send(PendingInputItem::from(mail_two.clone()));
+
+        assert_eq!(
+            receiver.drain(),
+            vec![
+                PendingInputItem::from(mail_one),
+                PendingInputItem::from(mail_two),
+            ],
+        );
+        assert!(!receiver.has_pending());
+    }
+
+    #[tokio::test]
+    async fn mailbox_tracks_pending_trigger_turn_mail() {
+        let (mailbox, mut receiver) = Mailbox::new();
+
+        mailbox.send(PendingInputItem::from(make_mail(
+            AgentPath::root(),
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            "queued",
+            /*trigger_turn*/ false,
+        )));
+        assert!(!receiver.has_pending_trigger_turn());
+
+        mailbox.send(PendingInputItem::from(make_mail(
+            AgentPath::root(),
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            "wake",
+            /*trigger_turn*/ true,
+        )));
+        assert!(receiver.has_pending_trigger_turn());
+    }
+}

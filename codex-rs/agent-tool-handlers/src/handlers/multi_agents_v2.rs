@@ -1,10 +1,13 @@
-use codex_protocol::AgentPath;
+use codex_agent_runtime::AgentMode;
+use codex_agent_runtime::CloseAgentToolResult;
+use codex_agent_runtime::ListAgentsToolResult;
+use codex_agent_runtime::MultiAgentToolSession;
+use codex_agent_runtime::SpawnAgentForkMode;
+use codex_agent_runtime::SpawnAgentToolRequest;
+use codex_agent_runtime::SpawnAgentToolResult;
+use codex_agent_runtime::WaitAgentToolResult;
 use codex_protocol::models::ResponseInputItem;
-use codex_protocol::protocol::CollabCloseBeginEvent;
-use codex_protocol::protocol::CollabCloseEndEvent;
-use codex_protocol::protocol::CollabListAgentsBeginEvent;
-use codex_protocol::protocol::CollabListAgentsEndEvent;
-use codex_protocol::protocol::CollabListedAgent;
+use codex_protocol::openai_models::ReasoningEffort;
 use codex_tool_planning::SpawnAgentToolOptions;
 use codex_tool_planning::ToolName;
 use codex_tool_planning::ToolSpec;
@@ -15,47 +18,117 @@ use codex_tool_planning::create_spawn_agent_tool_v2;
 use codex_tool_planning::create_wait_agent_tool_v2;
 use codex_tool_runtime::FunctionToolOutput;
 use codex_tool_runtime::ToolInvocation;
-use codex_tool_runtime_api::CloseAgentToolResult;
-use codex_tool_runtime_api::ListAgentsToolResult;
-use codex_tool_runtime_api::MultiAgentToolHost;
-use codex_tool_runtime_api::SpawnAgentToolResult;
 use codex_tool_runtime_api::ToolHandler;
 use codex_tool_runtime_api::ToolInvocationView;
-use codex_tool_runtime_api::WaitAgentToolResult;
-use codex_tool_runtime_api::followup_task_from_arguments;
-use codex_tool_runtime_api::function_arguments_from_payload;
-use codex_tool_runtime_api::run_followup_task_tool;
-use codex_tool_runtime_api::run_spawn_agent_tool;
-use codex_tool_runtime_api::run_wait_agent_tool;
-use codex_tool_runtime_api::spawn_agent_request_from_arguments;
-use codex_tool_runtime_api::wait_agent_target_from_arguments;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolExecutor;
 use codex_tool_types::ToolExecutorFuture;
 use codex_tool_types::ToolOutput;
 use codex_tool_types::ToolPayload;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_absolute_path::AbsolutePathBufGuard;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
+use std::sync::Arc;
 
-#[derive(Default)]
-pub struct SpawnAgentHandler<Host> {
-    host: Host,
-    options: SpawnAgentToolOptions,
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpawnAgentArgs {
+    message: String,
+    task_name: String,
+    agent_type: Option<String>,
+    cwd: Option<AbsolutePathBuf>,
+    model: Option<String>,
+    reasoning_effort: Option<ReasoningEffort>,
+    service_tier: Option<String>,
+    agent_mode: Option<AgentMode>,
+    fork_turns: Option<String>,
+    fork_context: Option<bool>,
 }
 
-impl<Host> SpawnAgentHandler<Host> {
-    pub fn new(host: Host, options: SpawnAgentToolOptions) -> Self {
-        Self { host, options }
+impl SpawnAgentArgs {
+    fn into_request(self) -> Result<SpawnAgentToolRequest, FunctionCallError> {
+        let fork_mode = self.fork_mode()?;
+        Ok(SpawnAgentToolRequest {
+            message: self.message,
+            task_name: self.task_name,
+            agent_type: self.agent_type,
+            cwd: self.cwd,
+            model: self.model,
+            reasoning_effort: self.reasoning_effort,
+            service_tier: self.service_tier,
+            agent_mode: self.agent_mode,
+            fork_mode,
+        })
+    }
+
+    fn fork_mode(&self) -> Result<Option<SpawnAgentForkMode>, FunctionCallError> {
+        if self.fork_context.is_some() {
+            return Err(FunctionCallError::RespondToModel(
+                "fork_context is not supported in MultiAgentV2; use fork_turns instead".to_string(),
+            ));
+        }
+
+        let fork_turns = self
+            .fork_turns
+            .as_deref()
+            .map(str::trim)
+            .filter(|fork_turns| !fork_turns.is_empty())
+            .unwrap_or("all");
+
+        if fork_turns.eq_ignore_ascii_case("none") {
+            return Ok(None);
+        }
+        if fork_turns.eq_ignore_ascii_case("all") {
+            return Ok(Some(SpawnAgentForkMode::FullHistory));
+        }
+
+        let last_n_turns = fork_turns.parse::<usize>().map_err(|_| {
+            FunctionCallError::RespondToModel(
+                "fork_turns must be `none`, `all`, or a positive integer string".to_string(),
+            )
+        })?;
+        if last_n_turns == 0 {
+            return Err(FunctionCallError::RespondToModel(
+                "fork_turns must be `none`, `all`, or a positive integer string".to_string(),
+            ));
+        }
+
+        Ok(Some(SpawnAgentForkMode::LastNTurns(last_n_turns)))
     }
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for SpawnAgentHandler<Host>
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FollowupTaskArgs {
+    target: String,
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WaitAgentArgs {
+    target: String,
+}
+
+#[derive(Default)]
+pub struct SpawnAgentHandler {
+    options: SpawnAgentToolOptions,
+}
+
+impl SpawnAgentHandler {
+    pub fn new(options: SpawnAgentToolOptions) -> Self {
+        Self { options }
+    }
+}
+
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for SpawnAgentHandler
 where
-    Host: MultiAgentToolHost,
+    Session: MultiAgentToolSession<Turn>,
+    Turn: Clone + Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = SpawnAgentOutput;
 
@@ -69,39 +142,41 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
     {
-        Box::pin(async move { handle_spawn_agent(&self.host, invocation).await })
+        Box::pin(async move { handle_spawn_agent(invocation).await })
     }
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for SpawnAgentHandler<Host>
+impl<Session, Turn, Tracker, DiffContext>
+    ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext> for SpawnAgentHandler
 where
-    Host: MultiAgentToolHost,
+    Session: MultiAgentToolSession<Turn>,
+    Turn: Clone + Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
         matches!(payload, ToolPayload::Function { .. })
     }
 }
 
-pub struct FollowupTaskHandler<Host> {
-    host: Host,
-}
+pub struct FollowupTaskHandler;
 
-impl<Host> FollowupTaskHandler<Host> {
-    pub fn new(host: Host) -> Self {
-        Self { host }
+impl FollowupTaskHandler {
+    pub fn new() -> Self {
+        Self
     }
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for FollowupTaskHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for FollowupTaskHandler
 where
-    Host: MultiAgentToolHost,
+    Session: MultiAgentToolSession<Turn>,
+    Turn: Clone + Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = FunctionToolOutput;
 
@@ -115,43 +190,45 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
     {
         Box::pin(async move {
-            let arguments = function_arguments_from_payload(invocation.payload().clone())?;
+            let arguments = function_arguments(invocation.payload().clone())?;
             let (target, message) = followup_task_from_arguments(&arguments)?;
-            handle_message_string_tool(&self.host, invocation, target, message).await
+            handle_message_string_tool(invocation, target, message).await
         })
     }
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for FollowupTaskHandler<Host>
+impl<Session, Turn, Tracker, DiffContext>
+    ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext> for FollowupTaskHandler
 where
-    Host: MultiAgentToolHost,
+    Session: MultiAgentToolSession<Turn>,
+    Turn: Clone + Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
         matches!(payload, ToolPayload::Function { .. })
     }
 }
 
-pub struct WaitAgentHandler<Host> {
-    host: Host,
-}
+pub struct WaitAgentHandler;
 
-impl<Host> WaitAgentHandler<Host> {
-    pub fn new(host: Host) -> Self {
-        Self { host }
+impl WaitAgentHandler {
+    pub fn new() -> Self {
+        Self
     }
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for WaitAgentHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for WaitAgentHandler
 where
-    Host: MultiAgentToolHost,
+    Session: MultiAgentToolSession<Turn>,
+    Turn: Clone + Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = WaitAgentOutput;
 
@@ -165,39 +242,41 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
     {
-        Box::pin(async move { handle_wait_agent(&self.host, invocation).await })
+        Box::pin(async move { handle_wait_agent(invocation).await })
     }
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for WaitAgentHandler<Host>
+impl<Session, Turn, Tracker, DiffContext>
+    ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext> for WaitAgentHandler
 where
-    Host: MultiAgentToolHost,
+    Session: MultiAgentToolSession<Turn>,
+    Turn: Clone + Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
         matches!(payload, ToolPayload::Function { .. })
     }
 }
 
-pub struct CloseAgentHandler<Host> {
-    host: Host,
-}
+pub struct CloseAgentHandler;
 
-impl<Host> CloseAgentHandler<Host> {
-    pub fn new(host: Host) -> Self {
-        Self { host }
+impl CloseAgentHandler {
+    pub fn new() -> Self {
+        Self
     }
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for CloseAgentHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for CloseAgentHandler
 where
-    Host: MultiAgentToolHost,
+    Session: MultiAgentToolSession<Turn>,
+    Turn: Clone + Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = CloseAgentOutput;
 
@@ -211,39 +290,41 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
     {
-        Box::pin(async move { handle_close_agent(&self.host, invocation).await })
+        Box::pin(async move { handle_close_agent(invocation).await })
     }
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for CloseAgentHandler<Host>
+impl<Session, Turn, Tracker, DiffContext>
+    ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext> for CloseAgentHandler
 where
-    Host: MultiAgentToolHost,
+    Session: MultiAgentToolSession<Turn>,
+    Turn: Clone + Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
         matches!(payload, ToolPayload::Function { .. })
     }
 }
 
-pub struct ListAgentsHandler<Host> {
-    host: Host,
-}
+pub struct ListAgentsHandler;
 
-impl<Host> ListAgentsHandler<Host> {
-    pub fn new(host: Host) -> Self {
-        Self { host }
+impl ListAgentsHandler {
+    pub fn new() -> Self {
+        Self
     }
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for ListAgentsHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for ListAgentsHandler
 where
-    Host: MultiAgentToolHost,
+    Session: MultiAgentToolSession<Turn>,
+    Turn: Clone + Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = ListAgentsOutput;
 
@@ -257,70 +338,76 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
     {
-        Box::pin(async move { handle_list_agents(&self.host, invocation).await })
+        Box::pin(async move { handle_list_agents(invocation).await })
     }
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for ListAgentsHandler<Host>
+impl<Session, Turn, Tracker, DiffContext>
+    ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext> for ListAgentsHandler
 where
-    Host: MultiAgentToolHost,
+    Session: MultiAgentToolSession<Turn>,
+    Turn: Clone + Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
         matches!(payload, ToolPayload::Function { .. })
     }
 }
 
-pub async fn handle_workflow_spawn_agent<Host>(
-    host: &Host,
-    invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+pub async fn handle_workflow_spawn_agent<Session, Turn, Tracker>(
+    invocation: ToolInvocation<Session, Turn, Tracker>,
 ) -> Result<JsonValue, FunctionCallError>
 where
-    Host: MultiAgentToolHost,
+    Session: MultiAgentToolSession<Turn>,
+    Turn: Clone + Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
-    let result = handle_spawn_agent(host, invocation).await?;
+    let result = handle_spawn_agent(invocation).await?;
     serde_json::to_value(result.0).map_err(|err| {
         FunctionCallError::Fatal(format!("failed to serialize workflow spawn result: {err}"))
     })
 }
 
-pub async fn handle_workflow_followup_task<Host>(
-    host: &Host,
-    invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+pub async fn handle_workflow_followup_task<Session, Turn, Tracker>(
+    invocation: ToolInvocation<Session, Turn, Tracker>,
     target: String,
     message: String,
 ) -> Result<JsonValue, FunctionCallError>
 where
-    Host: MultiAgentToolHost,
+    Session: MultiAgentToolSession<Turn>,
+    Turn: Clone + Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
-    handle_message_string_tool(host, invocation, target, message).await?;
+    handle_message_string_tool(invocation, target, message).await?;
     Ok(serde_json::json!({ "ok": true }))
 }
 
-pub async fn handle_workflow_wait_agent<Host>(
-    host: &Host,
-    invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+pub async fn handle_workflow_wait_agent<Session, Turn, Tracker>(
+    invocation: ToolInvocation<Session, Turn, Tracker>,
 ) -> Result<JsonValue, FunctionCallError>
 where
-    Host: MultiAgentToolHost,
+    Session: MultiAgentToolSession<Turn>,
+    Turn: Clone + Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
-    let result = handle_wait_agent(host, invocation).await?;
+    let result = handle_wait_agent(invocation).await?;
     serde_json::to_value(result.0).map_err(|err| {
         FunctionCallError::Fatal(format!("failed to serialize workflow wait result: {err}"))
     })
 }
 
-async fn handle_spawn_agent<Host>(
-    host: &Host,
-    invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+async fn handle_spawn_agent<Session, Turn, Tracker>(
+    invocation: ToolInvocation<Session, Turn, Tracker>,
 ) -> Result<SpawnAgentOutput, FunctionCallError>
 where
-    Host: MultiAgentToolHost,
+    Session: MultiAgentToolSession<Turn>,
+    Turn: Clone + Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     let ToolInvocation {
         session,
@@ -329,20 +416,23 @@ where
         ..
     } = invocation;
     let call_id = metadata.call_id;
-    let arguments = function_arguments_from_payload(metadata.payload)?;
+    let arguments = function_arguments(metadata.payload)?;
     let request = spawn_agent_request_from_arguments(&arguments)?;
-    let result = run_spawn_agent_tool(host, session, turn, call_id, request).await?;
+    let result = Arc::new(session)
+        .spawn_agent_tool(&turn, call_id, request)
+        .await?;
     Ok(SpawnAgentOutput(result))
 }
 
-async fn handle_message_string_tool<Host>(
-    host: &Host,
-    invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+async fn handle_message_string_tool<Session, Turn, Tracker>(
+    invocation: ToolInvocation<Session, Turn, Tracker>,
     target: String,
     message: String,
 ) -> Result<FunctionToolOutput, FunctionCallError>
 where
-    Host: MultiAgentToolHost,
+    Session: MultiAgentToolSession<Turn>,
+    Turn: Clone + Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     let ToolInvocation {
         session,
@@ -351,16 +441,19 @@ where
         ..
     } = invocation;
     let call_id = metadata.call_id;
-    run_followup_task_tool(host, session, turn, call_id, target, message).await?;
+    Arc::new(session)
+        .followup_task_tool(&turn, call_id, target, message)
+        .await?;
     Ok(FunctionToolOutput::from_text(String::new(), Some(true)))
 }
 
-async fn handle_close_agent<Host>(
-    host: &Host,
-    invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+async fn handle_close_agent<Session, Turn, Tracker>(
+    invocation: ToolInvocation<Session, Turn, Tracker>,
 ) -> Result<CloseAgentOutput, FunctionCallError>
 where
-    Host: MultiAgentToolHost,
+    Session: MultiAgentToolSession<Turn>,
+    Turn: Clone + Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     let ToolInvocation {
         session,
@@ -371,73 +464,19 @@ where
     let call_id = metadata.call_id;
     let arguments = function_arguments(metadata.payload)?;
     let args: CloseAgentArgs = parse_arguments(&arguments)?;
-    let sender_thread_id = host.thread_id(&session);
-    let sender_agent_path = host.sender_agent_path(&session, &turn);
-    let agent_id = host
-        .resolve_agent_target(&session, &turn, &args.target)
+    let result = Arc::new(session)
+        .close_agent_tool(&turn, call_id, args.target)
         .await?;
-    let receiver_agent = host.agent_metadata(&session, agent_id);
-    reject_root_agent(
-        receiver_agent.agent_path.as_ref(),
-        "root is not a spawned agent",
-    )?;
-    let receiver_agent_path = receiver_agent.agent_path.clone().ok_or_else(|| {
-        FunctionCallError::RespondToModel("target agent is missing an agent_path".to_string())
-    })?;
-    let receiver_is_direct_child = is_direct_child(&sender_agent_path, &receiver_agent_path);
-    host.send_collab_event(
-        &session,
-        &turn,
-        CollabCloseBeginEvent {
-            call_id: call_id.clone(),
-            started_at_ms: now_unix_timestamp_ms(),
-            sender_thread_id,
-            sender_agent_path: sender_agent_path.to_string(),
-            receiver_thread_id: agent_id,
-            receiver_agent_path: receiver_agent_path.to_string(),
-        }
-        .into(),
-    )
-    .await;
-    let status = host.agent_status(&session, agent_id).await;
-    let result = host.close_agent(&session, agent_id).await;
-    host.send_collab_event(
-        &session,
-        &turn,
-        CollabCloseEndEvent {
-            call_id,
-            completed_at_ms: now_unix_timestamp_ms(),
-            sender_thread_id,
-            sender_agent_path: sender_agent_path.to_string(),
-            receiver_thread_id: agent_id,
-            receiver_agent_path: receiver_agent_path.to_string(),
-            receiver_agent_nickname: receiver_agent.agent_nickname,
-            receiver_agent_role: receiver_agent.agent_role,
-            status: status.clone(),
-        }
-        .into(),
-    )
-    .await;
-    result?;
-    if receiver_is_direct_child
-        && host
-            .clear_direct_child_completion_pending(&session, agent_id)
-            .await
-    {
-        host.maybe_notify_parent_of_final_status(&session).await;
-    }
-
-    Ok(CloseAgentOutput(CloseAgentToolResult {
-        previous_status: status,
-    }))
+    Ok(CloseAgentOutput(result))
 }
 
-async fn handle_list_agents<Host>(
-    host: &Host,
-    invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+async fn handle_list_agents<Session, Turn, Tracker>(
+    invocation: ToolInvocation<Session, Turn, Tracker>,
 ) -> Result<ListAgentsOutput, FunctionCallError>
 where
-    Host: MultiAgentToolHost,
+    Session: MultiAgentToolSession<Turn>,
+    Turn: Clone + Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     let ToolInvocation {
         session,
@@ -448,63 +487,19 @@ where
     let call_id = metadata.call_id;
     let arguments = function_arguments(metadata.payload)?;
     let args: ListAgentsArgs = parse_arguments(&arguments)?;
-    let sender_thread_id = host.thread_id(&session);
-    let sender_agent_path = host.sender_agent_path(&session, &turn).to_string();
-    host.send_collab_event(
-        &session,
-        &turn,
-        CollabListAgentsBeginEvent {
-            call_id: call_id.clone(),
-            started_at_ms: now_unix_timestamp_ms(),
-            sender_thread_id,
-            sender_agent_path: sender_agent_path.clone(),
-            path_prefix: args.path_prefix.clone(),
-        }
-        .into(),
-    )
-    .await;
-    host.register_session_root(&session, &turn);
-    let agents = host
-        .list_agents(&session, &turn, args.path_prefix.as_deref())
-        .await;
-    let listed_agents = agents.as_ref().map_or_else(
-        |_| Vec::new(),
-        |agents| {
-            agents
-                .iter()
-                .map(|agent| CollabListedAgent {
-                    agent_path: agent.agent_name.clone(),
-                    status: agent.agent_status.clone(),
-                    last_task_message: agent.last_task_message.clone(),
-                })
-                .collect()
-        },
-    );
-    host.send_collab_event(
-        &session,
-        &turn,
-        CollabListAgentsEndEvent {
-            call_id,
-            completed_at_ms: now_unix_timestamp_ms(),
-            sender_thread_id,
-            sender_agent_path,
-            path_prefix: args.path_prefix,
-            success: agents.is_ok(),
-            agents: listed_agents,
-        }
-        .into(),
-    )
-    .await;
-
-    Ok(ListAgentsOutput(ListAgentsToolResult { agents: agents? }))
+    let result = Arc::new(session)
+        .list_agents_tool(&turn, call_id, args.path_prefix)
+        .await?;
+    Ok(ListAgentsOutput(result))
 }
 
-async fn handle_wait_agent<Host>(
-    host: &Host,
-    invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+async fn handle_wait_agent<Session, Turn, Tracker>(
+    invocation: ToolInvocation<Session, Turn, Tracker>,
 ) -> Result<WaitAgentOutput, FunctionCallError>
 where
-    Host: MultiAgentToolHost,
+    Session: MultiAgentToolSession<Turn>,
+    Turn: Clone + Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     let ToolInvocation {
         session,
@@ -513,28 +508,13 @@ where
         ..
     } = invocation;
     let call_id = metadata.call_id;
-    let arguments = function_arguments_from_payload(metadata.payload)?;
+    let arguments = function_arguments(metadata.payload)?;
     let target = wait_agent_target_from_arguments(&arguments)?;
-    let result = run_wait_agent_tool(host, session, turn, call_id, target).await?;
+    let result = Arc::new(session)
+        .wait_agent_tool(&turn, call_id, target)
+        .await?;
 
     Ok(WaitAgentOutput(result))
-}
-
-fn reject_root_agent(
-    agent_path: Option<&AgentPath>,
-    message: &str,
-) -> Result<(), FunctionCallError> {
-    if agent_path.is_some_and(AgentPath::is_root) {
-        return Err(FunctionCallError::RespondToModel(message.to_string()));
-    }
-    Ok(())
-}
-
-fn is_direct_child(sender_agent_path: &AgentPath, receiver_agent_path: &AgentPath) -> bool {
-    receiver_agent_path
-        .as_str()
-        .rsplit_once('/')
-        .is_some_and(|(parent, _)| parent == sender_agent_path.as_str())
 }
 
 fn function_arguments(payload: ToolPayload) -> Result<String, FunctionCallError> {
@@ -546,6 +526,23 @@ fn function_arguments(payload: ToolPayload) -> Result<String, FunctionCallError>
     }
 }
 
+fn spawn_agent_request_from_arguments(
+    arguments: &str,
+) -> Result<SpawnAgentToolRequest, FunctionCallError> {
+    let args: SpawnAgentArgs = parse_arguments_with_base_path(arguments, None)?;
+    args.into_request()
+}
+
+fn followup_task_from_arguments(arguments: &str) -> Result<(String, String), FunctionCallError> {
+    let args: FollowupTaskArgs = parse_arguments(arguments)?;
+    Ok((args.target, args.message))
+}
+
+fn wait_agent_target_from_arguments(arguments: &str) -> Result<String, FunctionCallError> {
+    let args: WaitAgentArgs = parse_arguments(arguments)?;
+    Ok(args.target)
+}
+
 fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
 where
     T: for<'de> Deserialize<'de>,
@@ -555,11 +552,15 @@ where
     })
 }
 
-fn now_unix_timestamp_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64
+fn parse_arguments_with_base_path<T>(
+    arguments: &str,
+    base_path: Option<&AbsolutePathBuf>,
+) -> Result<T, FunctionCallError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let _guard = base_path.map(|path| AbsolutePathBufGuard::new(path.as_path()));
+    parse_arguments(arguments)
 }
 
 #[derive(Debug, Deserialize)]

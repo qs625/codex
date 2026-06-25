@@ -1,9 +1,215 @@
 use super::*;
+use crate::live_thread_runtime::AppServerLiveThreadHandle;
+use crate::live_thread_runtime::AppServerLiveThreadRegistry;
+use crate::memories_runtime::MemoryStartupHost;
+use crate::request_processors::thread_processor::thread_processor_new_thread;
+use codex_thread_api::AppServerClientInfo;
+use codex_thread_api::LiveThreadRegistry;
+use futures::future::BoxFuture;
+
+pub(crate) trait TurnProcessorRuntime: Send + Sync {
+    fn validate_environment_selections(
+        &self,
+        environments: &[TurnEnvironmentSelection],
+    ) -> CodexResult<()>;
+
+    fn live_thread_snapshot<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'a, CodexResult<LiveThreadSnapshot>>;
+
+    fn live_thread_config<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'a, CodexResult<Arc<Config>>>;
+
+    fn validate_thread_turn_context_overrides<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        overrides: CodexThreadTurnContextOverrides,
+    ) -> BoxFuture<'a, CodexResult<()>>;
+
+    fn send_op_with_trace<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        op: Op,
+        trace: Option<codex_protocol::protocol::W3cTraceContext>,
+    ) -> BoxFuture<'a, CodexResult<String>>;
+
+    fn inject_thread_conversation_items<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        items: Vec<ResponseItem>,
+    ) -> BoxFuture<'a, CodexResult<()>>;
+
+    fn set_thread_app_server_client_info<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        info: AppServerClientInfo,
+    ) -> BoxFuture<'a, CodexResult<()>>;
+
+    fn steer_thread_input<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        input: Vec<CoreInputItem>,
+        expected_turn_id: Option<String>,
+        responsesapi_client_metadata: Option<HashMap<String, String>>,
+    ) -> BoxFuture<'a, CodexResult<Result<String, SteerInputError>>>;
+
+    fn thread_feature_enabled<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        feature: Feature,
+    ) -> BoxFuture<'a, CodexResult<bool>>;
+
+    fn thread_agent_status<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'a, CodexResult<AgentStatus>>;
+
+    fn fork_detached_review_thread<'a>(
+        &'a self,
+        parent_thread_id: ThreadId,
+        config: Config,
+        trace: Option<codex_protocol::protocol::W3cTraceContext>,
+    ) -> BoxFuture<'a, CodexResult<DetachedReviewThread>>;
+}
+
+pub(crate) struct DetachedReviewThread {
+    thread_id: ThreadId,
+    thread: Arc<dyn AppServerLiveThreadHandle>,
+}
+
+impl TurnProcessorRuntime for ThreadManager {
+    fn validate_environment_selections(
+        &self,
+        environments: &[TurnEnvironmentSelection],
+    ) -> CodexResult<()> {
+        ThreadManager::validate_environment_selections(self, environments)
+    }
+
+    fn live_thread_snapshot<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'a, CodexResult<LiveThreadSnapshot>> {
+        Box::pin(LiveThreadRegistry::live_thread_snapshot(self, thread_id))
+    }
+
+    fn live_thread_config<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'a, CodexResult<Arc<Config>>> {
+        Box::pin(ThreadManager::live_thread_config(self, thread_id))
+    }
+
+    fn validate_thread_turn_context_overrides<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        overrides: CodexThreadTurnContextOverrides,
+    ) -> BoxFuture<'a, CodexResult<()>> {
+        Box::pin(LiveThreadRegistry::validate_thread_turn_context_overrides(
+            self, thread_id, overrides,
+        ))
+    }
+
+    fn send_op_with_trace<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        op: Op,
+        trace: Option<codex_protocol::protocol::W3cTraceContext>,
+    ) -> BoxFuture<'a, CodexResult<String>> {
+        Box::pin(LiveThreadRegistry::send_op_with_trace(
+            self, thread_id, op, trace,
+        ))
+    }
+
+    fn inject_thread_conversation_items<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        items: Vec<ResponseItem>,
+    ) -> BoxFuture<'a, CodexResult<()>> {
+        Box::pin(ThreadManager::inject_thread_conversation_items(
+            self, thread_id, items,
+        ))
+    }
+
+    fn set_thread_app_server_client_info<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        info: AppServerClientInfo,
+    ) -> BoxFuture<'a, CodexResult<()>> {
+        Box::pin(LiveThreadRegistry::set_thread_app_server_client_info(
+            self, thread_id, info,
+        ))
+    }
+
+    fn steer_thread_input<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        input: Vec<CoreInputItem>,
+        expected_turn_id: Option<String>,
+        responsesapi_client_metadata: Option<HashMap<String, String>>,
+    ) -> BoxFuture<'a, CodexResult<Result<String, SteerInputError>>> {
+        Box::pin(async move {
+            ThreadManager::steer_thread_input(
+                self,
+                thread_id,
+                input,
+                expected_turn_id.as_deref(),
+                responsesapi_client_metadata,
+            )
+            .await
+        })
+    }
+
+    fn thread_feature_enabled<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        feature: Feature,
+    ) -> BoxFuture<'a, CodexResult<bool>> {
+        Box::pin(LiveThreadRegistry::thread_feature_enabled(
+            self, thread_id, feature,
+        ))
+    }
+
+    fn thread_agent_status<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'a, CodexResult<AgentStatus>> {
+        Box::pin(LiveThreadRegistry::thread_agent_status(self, thread_id))
+    }
+
+    fn fork_detached_review_thread<'a>(
+        &'a self,
+        parent_thread_id: ThreadId,
+        config: Config,
+        trace: Option<codex_protocol::protocol::W3cTraceContext>,
+    ) -> BoxFuture<'a, CodexResult<DetachedReviewThread>> {
+        Box::pin(async move {
+            let new_thread = ThreadManager::fork_live_thread_from_current_history(
+                self,
+                parent_thread_id,
+                ForkSnapshot::Interrupted,
+                config,
+                /*thread_source*/ None,
+                /*persist_extended_history*/ false,
+                trace,
+            )
+            .await?;
+            let new_thread = thread_processor_new_thread(new_thread);
+            let thread_id = new_thread.thread_id;
+            let thread: Arc<dyn AppServerLiveThreadHandle> = new_thread.thread;
+            Ok(DetachedReviewThread { thread_id, thread })
+        })
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct TurnRequestProcessor {
     auth_manager: Arc<AuthManager>,
-    thread_manager: Arc<ThreadManager>,
+    turn_runtime: Arc<dyn TurnProcessorRuntime>,
+    live_threads: Arc<dyn AppServerLiveThreadRegistry>,
+    memory_startup_host: Arc<dyn MemoryStartupHost>,
     outgoing: Arc<OutgoingMessageSender>,
     analytics_events_client: AnalyticsEventsClient,
     arg0_paths: Arg0DispatchPaths,
@@ -50,7 +256,9 @@ impl TurnRequestProcessor {
     ) -> Self {
         Self {
             auth_manager,
-            thread_manager,
+            turn_runtime: thread_manager.clone(),
+            live_threads: thread_manager.clone(),
+            memory_startup_host: thread_manager,
             outgoing,
             analytics_events_client,
             arg0_paths,
@@ -186,22 +394,6 @@ impl TurnRequestProcessor {
         );
     }
 
-    async fn load_thread(
-        &self,
-        thread_id: &str,
-    ) -> Result<(ThreadId, Arc<CodexThread>), JSONRPCErrorError> {
-        // Resolve the core conversation handle from a v2 thread id string.
-        let thread_id = ThreadId::from_string(thread_id)
-            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
-
-        let thread = self
-            .thread_manager
-            .get_thread(thread_id)
-            .await
-            .map_err(|_| invalid_request(format!("thread not found: {thread_id}")))?;
-
-        Ok((thread_id, thread))
-    }
     fn normalize_turn_start_collaboration_mode(
         &self,
         mut collaboration_mode: CollaborationMode,
@@ -284,7 +476,7 @@ impl TurnRequestProcessor {
                 .collect::<Vec<_>>()
         });
         if let Some(environment_selections) = environment_selections.as_ref() {
-            self.thread_manager
+            self.turn_runtime
                 .validate_environment_selections(environment_selections)
                 .map_err(|err| invalid_request(environment_selection_error_message(err)))?;
         }
@@ -296,17 +488,6 @@ impl TurnRequestProcessor {
         request_id: &ConnectionRequestId,
     ) -> Option<codex_protocol::protocol::W3cTraceContext> {
         self.outgoing.request_trace_context(request_id).await
-    }
-
-    async fn submit_core_op(
-        &self,
-        request_id: &ConnectionRequestId,
-        thread: &CodexThread,
-        op: Op,
-    ) -> CodexResult<String> {
-        thread
-            .submit_with_trace(op, self.request_trace_context(request_id).await)
-            .await
     }
 
     fn input_too_large_error(actual_chars: usize) -> JSONRPCErrorError {
@@ -344,14 +525,13 @@ impl TurnRequestProcessor {
             );
             return Err(error);
         }
-        let (thread_id, thread) =
-            self.load_thread(&params.thread_id)
-                .await
-                .inspect_err(|error| {
-                    self.track_error_response(&request_id, error, /*error_type*/ None);
-                })?;
-        Self::set_app_server_client_info(
-            thread.as_ref(),
+        let thread_id = ThreadId::from_string(&params.thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))
+            .inspect_err(|error| {
+                self.track_error_response(&request_id, error, /*error_type*/ None);
+            })?;
+        self.set_app_server_client_info(
+            thread_id,
             app_server_client_name,
             app_server_client_version,
         )
@@ -375,7 +555,18 @@ impl TurnRequestProcessor {
         let runtime_workspace_roots_request = params.runtime_workspace_roots.clone();
         let snapshot = if params.permissions.is_some() || runtime_workspace_roots_request.is_some()
         {
-            Some(thread.config_snapshot().await)
+            Some(
+                self.turn_runtime
+                    .live_thread_snapshot(thread_id)
+                    .await
+                    .map_err(|err| match err {
+                        CodexErr::ThreadNotFound(thread_id) => {
+                            invalid_request(format!("thread not found: {thread_id}"))
+                        }
+                        err => internal_error(format!("failed to load thread snapshot: {err}")),
+                    })?
+                    .config_snapshot,
+            )
         } else {
             None
         };
@@ -486,27 +677,38 @@ impl TurnRequestProcessor {
         // request can fail before accepting user input. The actual update is
         // still queued together with the input below to preserve submission order.
         if has_any_overrides {
-            thread
-                .validate_turn_context_overrides(CodexThreadTurnContextOverrides {
-                    cwd: cwd.clone(),
-                    workspace_roots: runtime_workspace_roots.clone(),
-                    approval_policy,
-                    approvals_reviewer,
-                    sandbox_policy: sandbox_policy.clone(),
-                    permission_profile: permission_profile.clone(),
-                    active_permission_profile: active_permission_profile.clone(),
-                    profile_workspace_roots: profile_workspace_roots.clone(),
-                    windows_sandbox_level: None,
-                    model_provider: model_provider.clone(),
-                    model: model.clone(),
-                    effort,
-                    summary,
-                    service_tier: service_tier.clone(),
-                    collaboration_mode: collaboration_mode.clone(),
-                    personality,
-                })
+            self.turn_runtime
+                .validate_thread_turn_context_overrides(
+                    thread_id,
+                    CodexThreadTurnContextOverrides {
+                        cwd: cwd.clone(),
+                        workspace_roots: runtime_workspace_roots.clone(),
+                        approval_policy,
+                        approvals_reviewer,
+                        sandbox_policy: sandbox_policy.clone(),
+                        permission_profile: permission_profile.clone(),
+                        active_permission_profile: active_permission_profile.clone(),
+                        profile_workspace_roots: profile_workspace_roots.clone(),
+                        windows_sandbox_level: None,
+                        model_provider: model_provider.clone(),
+                        model: model.clone(),
+                        effort,
+                        summary,
+                        service_tier: service_tier.clone(),
+                        collaboration_mode: collaboration_mode.clone(),
+                        personality,
+                    },
+                )
                 .await
-                .map_err(|err| invalid_request(format!("invalid turn context override: {err}")))?;
+                .map_err(|err| match err {
+                    CodexErr::ThreadNotFound(thread_id) => {
+                        invalid_request(format!("thread not found: {thread_id}"))
+                    }
+                    CodexErr::InvalidRequest(message) => invalid_request(message),
+                    err => {
+                        internal_error(format!("failed to validate turn context override: {err}"))
+                    }
+                })?;
         }
 
         // Start the turn by submitting the user input. Return its submission id as turn_id.
@@ -542,25 +744,53 @@ impl TurnRequestProcessor {
             }
         };
         let turn_id = self
-            .submit_core_op(&request_id, thread.as_ref(), turn_op)
+            .turn_runtime
+            .send_op_with_trace(
+                thread_id,
+                turn_op,
+                self.request_trace_context(&request_id).await,
+            )
             .await
             .map_err(|err| {
-                let error = internal_error(format!("failed to start turn: {err}"));
+                let error = match err {
+                    CodexErr::ThreadNotFound(thread_id) => {
+                        invalid_request(format!("thread not found: {thread_id}"))
+                    }
+                    err => internal_error(format!("failed to start turn: {err}")),
+                };
                 self.track_error_response(&request_id, &error, /*error_type*/ None);
                 error
             })?;
 
         if turn_has_input {
-            let config_snapshot = thread.config_snapshot().await;
-            let thread_config = thread.config().await;
+            let config_snapshot = self
+                .turn_runtime
+                .live_thread_snapshot(thread_id)
+                .await
+                .map_err(|err| match err {
+                    CodexErr::ThreadNotFound(thread_id) => {
+                        invalid_request(format!("thread not found: {thread_id}"))
+                    }
+                    err => internal_error(format!("failed to load thread snapshot: {err}")),
+                })?
+                .config_snapshot;
+            let thread_config = self
+                .turn_runtime
+                .live_thread_config(thread_id)
+                .await
+                .map_err(|err| match err {
+                    CodexErr::ThreadNotFound(thread_id) => {
+                        invalid_request(format!("thread not found: {thread_id}"))
+                    }
+                    err => internal_error(format!("failed to load thread config: {err}")),
+                })?;
             let runtime = Arc::new(crate::memories_runtime::CoreMemoryStartupRuntime::new(
-                Arc::clone(&self.thread_manager),
+                self.memory_startup_host.clone(),
                 Arc::clone(&self.auth_manager),
                 thread_id,
-                Arc::clone(&thread),
+                config_snapshot.clone(),
                 Arc::clone(&thread_config),
                 self.state_db.clone(),
-                config_snapshot.session_source.clone(),
             ));
             let settings = crate::memories_runtime::memory_startup_settings(
                 thread_config.as_ref(),
@@ -595,7 +825,8 @@ impl TurnRequestProcessor {
         &self,
         params: ThreadInjectItemsParams,
     ) -> Result<ThreadInjectItemsResponse, JSONRPCErrorError> {
-        let (_, thread) = self.load_thread(&params.thread_id).await?;
+        let thread_id = ThreadId::from_string(&params.thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
 
         let items = params
             .items
@@ -608,10 +839,13 @@ impl TurnRequestProcessor {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(invalid_request)?;
 
-        thread
-            .inject_conversation_items(items)
+        self.turn_runtime
+            .inject_thread_conversation_items(thread_id, items)
             .await
             .map_err(|err| match err {
+                CodexErr::ThreadNotFound(thread_id) => {
+                    invalid_request(format!("thread not found: {thread_id}"))
+                }
                 CodexErr::InvalidRequest(message) => invalid_request(message),
                 err => internal_error(format!("failed to inject response items: {err}")),
             })?;
@@ -619,7 +853,8 @@ impl TurnRequestProcessor {
     }
 
     async fn set_app_server_client_info(
-        thread: &CodexThread,
+        &self,
+        thread_id: ThreadId,
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
     ) -> Result<(), JSONRPCErrorError> {
@@ -627,14 +862,22 @@ impl TurnRequestProcessor {
             app_server_client_name.as_deref(),
             app_server_client_version.as_deref(),
         );
-        thread
-            .set_app_server_client_info(
-                app_server_client_name,
-                app_server_client_version,
-                mcp_elicitations_auto_deny,
+        self.turn_runtime
+            .set_thread_app_server_client_info(
+                thread_id,
+                AppServerClientInfo {
+                    app_server_client_name,
+                    app_server_client_version,
+                    mcp_elicitations_auto_deny,
+                },
             )
             .await
-            .map_err(|err| internal_error(format!("failed to set app server client info: {err}")))
+            .map_err(|err| match err {
+                CodexErr::ThreadNotFound(thread_id) => {
+                    invalid_request(format!("thread not found: {thread_id}"))
+                }
+                err => internal_error(format!("failed to set app server client info: {err}")),
+            })
     }
 
     async fn turn_steer_inner(
@@ -642,9 +885,8 @@ impl TurnRequestProcessor {
         request_id: &ConnectionRequestId,
         params: TurnSteerParams,
     ) -> Result<TurnSteerResponse, JSONRPCErrorError> {
-        let (_, thread) = self
-            .load_thread(&params.thread_id)
-            .await
+        let thread_id = ThreadId::from_string(&params.thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))
             .inspect_err(|error| {
                 self.track_error_response(request_id, error, /*error_type*/ None);
             })?;
@@ -670,13 +912,21 @@ impl TurnRequestProcessor {
             .map(V2UserInput::into_core)
             .collect();
 
-        let turn_id = thread
-            .steer_input(
+        let turn_id = self
+            .turn_runtime
+            .steer_thread_input(
+                thread_id,
                 mapped_items,
-                Some(&params.expected_turn_id),
+                Some(params.expected_turn_id.clone()),
                 params.responsesapi_client_metadata,
             )
             .await
+            .map_err(|err| match err {
+                CodexErr::ThreadNotFound(thread_id) => {
+                    invalid_request(format!("thread not found: {thread_id}"))
+                }
+                err => internal_error(format!("failed to steer turn: {err}")),
+            })?
             .map_err(|err| {
                 let (message, data, error_type) = match err {
                     SteerInputError::NoActiveTurn(_) => (
@@ -745,8 +995,9 @@ impl TurnRequestProcessor {
         &self,
         request_id: &ConnectionRequestId,
         thread_id: &str,
-    ) -> Result<Option<(ThreadId, Arc<CodexThread>)>, JSONRPCErrorError> {
-        let (thread_id, thread) = self.load_thread(thread_id).await?;
+    ) -> Result<Option<ThreadId>, JSONRPCErrorError> {
+        let thread_id = ThreadId::from_string(thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
 
         match self
             .ensure_conversation_listener(thread_id, request_id.connection_id)
@@ -759,13 +1010,23 @@ impl TurnRequestProcessor {
             Err(error) => return Err(error),
         }
 
-        if !thread.enabled(Feature::RealtimeConversation) {
+        let realtime_enabled = self
+            .turn_runtime
+            .thread_feature_enabled(thread_id, Feature::RealtimeConversation)
+            .await
+            .map_err(|err| match err {
+                CodexErr::ThreadNotFound(thread_id) => {
+                    invalid_request(format!("thread not found: {thread_id}"))
+                }
+                err => internal_error(format!("failed to read thread feature state: {err}")),
+            })?;
+        if !realtime_enabled {
             return Err(invalid_request(format!(
                 "thread {thread_id} does not support realtime conversation"
             )));
         }
 
-        Ok(Some((thread_id, thread)))
+        Ok(Some(thread_id))
     }
 
     async fn thread_realtime_start_inner(
@@ -773,32 +1034,35 @@ impl TurnRequestProcessor {
         request_id: &ConnectionRequestId,
         params: ThreadRealtimeStartParams,
     ) -> Result<Option<ThreadRealtimeStartResponse>, JSONRPCErrorError> {
-        let Some((_, thread)) = self
+        let Some(thread_id) = self
             .prepare_realtime_conversation_thread(request_id, &params.thread_id)
             .await?
         else {
             return Ok(None);
         };
-        self.submit_core_op(
-            request_id,
-            thread.as_ref(),
-            Op::RealtimeConversationStart(ConversationStartParams {
-                output_modality: params.output_modality,
-                prompt: params.prompt,
-                realtime_session_id: params.realtime_session_id,
-                transport: params.transport.map(|transport| match transport {
-                    ThreadRealtimeStartTransport::Websocket => {
-                        ConversationStartTransport::Websocket
-                    }
-                    ThreadRealtimeStartTransport::Webrtc { sdp } => {
-                        ConversationStartTransport::Webrtc { sdp }
-                    }
+        self.turn_runtime
+            .send_op_with_trace(
+                thread_id,
+                Op::RealtimeConversationStart(ConversationStartParams {
+                    output_modality: params.output_modality,
+                    prompt: params.prompt,
+                    realtime_session_id: params.realtime_session_id,
+                    transport: params.transport.map(|transport| match transport {
+                        ThreadRealtimeStartTransport::Websocket => {
+                            ConversationStartTransport::Websocket
+                        }
+                        ThreadRealtimeStartTransport::Webrtc { sdp } => {
+                            ConversationStartTransport::Webrtc { sdp }
+                        }
+                    }),
+                    voice: params.voice,
                 }),
-                voice: params.voice,
-            }),
-        )
-        .await
-        .map_err(|err| internal_error(format!("failed to start realtime conversation: {err}")))?;
+                self.request_trace_context(request_id).await,
+            )
+            .await
+            .map_err(|err| {
+                internal_error(format!("failed to start realtime conversation: {err}"))
+            })?;
         Ok(Some(ThreadRealtimeStartResponse::default()))
     }
 
@@ -807,25 +1071,26 @@ impl TurnRequestProcessor {
         request_id: &ConnectionRequestId,
         params: ThreadRealtimeAppendAudioParams,
     ) -> Result<Option<ThreadRealtimeAppendAudioResponse>, JSONRPCErrorError> {
-        let Some((_, thread)) = self
+        let Some(thread_id) = self
             .prepare_realtime_conversation_thread(request_id, &params.thread_id)
             .await?
         else {
             return Ok(None);
         };
-        self.submit_core_op(
-            request_id,
-            thread.as_ref(),
-            Op::RealtimeConversationAudio(ConversationAudioParams {
-                frame: params.audio.into(),
-            }),
-        )
-        .await
-        .map_err(|err| {
-            internal_error(format!(
-                "failed to append realtime conversation audio: {err}"
-            ))
-        })?;
+        self.turn_runtime
+            .send_op_with_trace(
+                thread_id,
+                Op::RealtimeConversationAudio(ConversationAudioParams {
+                    frame: params.audio.into(),
+                }),
+                self.request_trace_context(request_id).await,
+            )
+            .await
+            .map_err(|err| {
+                internal_error(format!(
+                    "failed to append realtime conversation audio: {err}"
+                ))
+            })?;
         Ok(Some(ThreadRealtimeAppendAudioResponse::default()))
     }
 
@@ -834,23 +1099,24 @@ impl TurnRequestProcessor {
         request_id: &ConnectionRequestId,
         params: ThreadRealtimeAppendTextParams,
     ) -> Result<Option<ThreadRealtimeAppendTextResponse>, JSONRPCErrorError> {
-        let Some((_, thread)) = self
+        let Some(thread_id) = self
             .prepare_realtime_conversation_thread(request_id, &params.thread_id)
             .await?
         else {
             return Ok(None);
         };
-        self.submit_core_op(
-            request_id,
-            thread.as_ref(),
-            Op::RealtimeConversationText(ConversationTextParams { text: params.text }),
-        )
-        .await
-        .map_err(|err| {
-            internal_error(format!(
-                "failed to append realtime conversation text: {err}"
-            ))
-        })?;
+        self.turn_runtime
+            .send_op_with_trace(
+                thread_id,
+                Op::RealtimeConversationText(ConversationTextParams { text: params.text }),
+                self.request_trace_context(request_id).await,
+            )
+            .await
+            .map_err(|err| {
+                internal_error(format!(
+                    "failed to append realtime conversation text: {err}"
+                ))
+            })?;
         Ok(Some(ThreadRealtimeAppendTextResponse::default()))
     }
 
@@ -859,13 +1125,18 @@ impl TurnRequestProcessor {
         request_id: &ConnectionRequestId,
         params: ThreadRealtimeStopParams,
     ) -> Result<Option<ThreadRealtimeStopResponse>, JSONRPCErrorError> {
-        let Some((_, thread)) = self
+        let Some(thread_id) = self
             .prepare_realtime_conversation_thread(request_id, &params.thread_id)
             .await?
         else {
             return Ok(None);
         };
-        self.submit_core_op(request_id, thread.as_ref(), Op::RealtimeConversationClose)
+        self.turn_runtime
+            .send_op_with_trace(
+                thread_id,
+                Op::RealtimeConversationClose,
+                self.request_trace_context(request_id).await,
+            )
             .await
             .map_err(|err| {
                 internal_error(format!("failed to stop realtime conversation: {err}"))
@@ -917,21 +1188,26 @@ impl TurnRequestProcessor {
     async fn start_inline_review(
         &self,
         request_id: &ConnectionRequestId,
-        parent_thread: Arc<CodexThread>,
+        parent_thread_id: ThreadId,
         review_request: ReviewRequest,
         display_text: &str,
-        parent_thread_id: String,
     ) -> std::result::Result<(), JSONRPCErrorError> {
         let turn_id = self
-            .submit_core_op(
-                request_id,
-                parent_thread.as_ref(),
+            .turn_runtime
+            .send_op_with_trace(
+                parent_thread_id,
                 Op::Review { review_request },
+                self.request_trace_context(request_id).await,
             )
             .await
-            .map_err(|err| internal_error(format!("failed to start review: {err}")))?;
+            .map_err(|err| match err {
+                CodexErr::ThreadNotFound(thread_id) => {
+                    invalid_request(format!("thread not found: {thread_id}"))
+                }
+                err => internal_error(format!("failed to start review: {err}")),
+            })?;
         let turn = Self::build_review_turn(turn_id, display_text);
-        self.emit_review_started(request_id, turn, parent_thread_id)
+        self.emit_review_started(request_id, turn, parent_thread_id.to_string())
             .await;
         Ok(())
     }
@@ -940,51 +1216,30 @@ impl TurnRequestProcessor {
         &self,
         request_id: &ConnectionRequestId,
         parent_thread_id: ThreadId,
-        parent_thread: Arc<CodexThread>,
         review_request: ReviewRequest,
         display_text: &str,
     ) -> std::result::Result<(), JSONRPCErrorError> {
-        parent_thread.ensure_rollout_materialized().await;
-        parent_thread.flush_rollout().await.map_err(|err| {
-            internal_error(format!(
-                "failed to flush parent thread {parent_thread_id}: {err}"
-            ))
-        })?;
-        let parent_history = parent_thread
-            .load_history(/*include_archived*/ true)
-            .await
-            .map_err(|err| {
-                internal_error(format!(
-                    "failed to load parent thread {parent_thread_id}: {err}"
-                ))
-            })?;
-
         let mut config = self.config.as_ref().clone();
         if let Some(review_model) = &config.review_model {
             config.model = Some(review_model.clone());
         }
 
-        let NewThread {
+        let DetachedReviewThread {
             thread_id,
             thread: review_thread,
-            ..
         } = self
-            .thread_manager
-            .fork_thread_from_history(
-                ForkSnapshot::Interrupted,
-                config.clone(),
-                InitialHistory::Resumed(ResumedHistory {
-                    conversation_id: parent_thread_id,
-                    history: parent_history.items,
-                    rollout_path: parent_thread.rollout_path(),
-                }),
-                /*thread_source*/ None,
-                /*persist_extended_history*/ false,
+            .turn_runtime
+            .fork_detached_review_thread(
+                parent_thread_id,
+                config,
                 self.request_trace_context(request_id).await,
             )
             .await
-            .map_err(|err| {
-                internal_error(format!("error creating detached review thread: {err}"))
+            .map_err(|err| match err {
+                CodexErr::ThreadNotFound(thread_id) => {
+                    invalid_request(format!("thread not found: {thread_id}"))
+                }
+                err => internal_error(format!("error creating detached review thread: {err}")),
             })?;
 
         log_listener_attach_result(
@@ -1026,10 +1281,11 @@ impl TurnRequestProcessor {
         }
 
         let turn_id = self
-            .submit_core_op(
-                request_id,
-                review_thread.as_ref(),
+            .turn_runtime
+            .send_op_with_trace(
+                thread_id,
                 Op::Review { review_request },
+                self.request_trace_context(request_id).await,
             )
             .await
             .map_err(|err| {
@@ -1055,16 +1311,16 @@ impl TurnRequestProcessor {
             delivery,
         } = params;
 
-        let (parent_thread_id, parent_thread) = self.load_thread(&thread_id).await?;
+        let parent_thread_id = ThreadId::from_string(&thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
         let (review_request, display_text) = Self::review_request_from_target(target)?;
         match delivery.unwrap_or(ApiReviewDelivery::Inline).to_core() {
             CoreReviewDelivery::Inline => {
                 self.start_inline_review(
                     request_id,
-                    parent_thread,
+                    parent_thread_id,
                     review_request,
                     &display_text,
-                    thread_id,
                 )
                 .await?;
             }
@@ -1072,7 +1328,6 @@ impl TurnRequestProcessor {
                 self.start_detached_review(
                     request_id,
                     parent_thread_id,
-                    parent_thread,
                     review_request,
                     &display_text,
                 )
@@ -1090,13 +1345,25 @@ impl TurnRequestProcessor {
         let TurnInterruptParams { thread_id, turn_id } = params;
         let is_startup_interrupt = turn_id.is_empty();
 
-        let (thread_uuid, thread) = self.load_thread(&thread_id).await?;
+        let thread_uuid = ThreadId::from_string(&thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
 
         // Record turn interrupts so we can reply when TurnAborted arrives. Startup
         // interrupts do not have a turn and are acknowledged after submission.
         if !is_startup_interrupt {
             let thread_state = self.thread_state_manager.thread_state(thread_uuid).await;
-            let is_running = matches!(thread.agent_status().await, AgentStatus::Running);
+            let is_running = matches!(
+                self.turn_runtime
+                    .thread_agent_status(thread_uuid)
+                    .await
+                    .map_err(|err| match err {
+                        CodexErr::ThreadNotFound(thread_id) => {
+                            invalid_request(format!("thread not found: {thread_id}"))
+                        }
+                        err => internal_error(format!("failed to read thread status: {err}")),
+                    })?,
+                AgentStatus::Running
+            );
             {
                 let mut thread_state = thread_state.lock().await;
                 if let Some(active_turn) = thread_state.active_turn_snapshot() {
@@ -1122,11 +1389,26 @@ impl TurnRequestProcessor {
         // Submit the interrupt. Turn interrupts respond upon TurnAborted; startup
         // interrupts respond here because startup cancellation has no turn event.
         match self
-            .submit_core_op(request_id, thread.as_ref(), Op::Interrupt)
+            .turn_runtime
+            .send_op_with_trace(
+                thread_uuid,
+                Op::Interrupt,
+                self.request_trace_context(request_id).await,
+            )
             .await
         {
             Ok(_) if is_startup_interrupt => Ok(Some(TurnInterruptResponse {})),
             Ok(_) => Ok(None),
+            Err(CodexErr::ThreadNotFound(thread_id)) => {
+                if !is_startup_interrupt {
+                    let thread_state = self.thread_state_manager.thread_state(thread_uuid).await;
+                    let mut thread_state = thread_state.lock().await;
+                    thread_state
+                        .pending_interrupts
+                        .retain(|pending_request_id| pending_request_id != request_id);
+                }
+                Err(invalid_request(format!("thread not found: {thread_id}")))
+            }
             Err(err) => {
                 if !is_startup_interrupt {
                     let thread_state = self.thread_state_manager.thread_state(thread_uuid).await;
@@ -1149,7 +1431,7 @@ impl TurnRequestProcessor {
 
     fn listener_task_context(&self) -> ListenerTaskContext {
         ListenerTaskContext {
-            thread_manager: Arc::clone(&self.thread_manager),
+            live_threads: self.live_threads.clone(),
             thread_store: None,
             thread_state_manager: self.thread_state_manager.clone(),
             outgoing: Arc::clone(&self.outgoing),

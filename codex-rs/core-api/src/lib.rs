@@ -31,8 +31,6 @@ pub use codex_core::StartThreadOptions;
 pub use codex_core::ThreadAuthRuntimes;
 pub use codex_core::ThreadManager;
 pub use codex_core::ThreadShutdownReport;
-pub use codex_core::ToolRouterBuildParams;
-pub use codex_core::ToolRouterFactory;
 pub use codex_core::config::Config;
 pub use codex_core::config::ConfigLayerStack;
 pub use codex_core::config::Constrained;
@@ -89,24 +87,71 @@ pub use codex_utils_absolute_path::AbsolutePathBuf;
 #[derive(Default)]
 pub struct DefaultCoreToolRouterFactory;
 
-impl ToolRouterFactory for DefaultCoreToolRouterFactory {
+type CoreApiMcpToolCallHost = codex_session_api::SessionMcpToolCallHost<
+    codex_core::Session,
+    Arc<codex_core::TurnContext>,
+    codex_core::SharedTurnDiffTracker,
+    codex_core::TurnContext,
+>;
+type CoreApiMcpResourceHost = codex_session_api::SessionMcpResourceHost<
+    codex_core::Session,
+    Arc<codex_core::TurnContext>,
+    codex_core::SharedTurnDiffTracker,
+    codex_core::TurnContext,
+>;
+type CoreApiGoalHost = codex_session_api::SessionGoalHost<
+    codex_core::Session,
+    Arc<codex_core::TurnContext>,
+    codex_core::SharedTurnDiffTracker,
+    codex_core::TurnContext,
+>;
+type CoreApiWorkflowHost = codex_session_api::SessionWorkflowHost<
+    codex_core::Session,
+    Arc<codex_core::TurnContext>,
+    codex_core::SharedTurnDiffTracker,
+    codex_core::TurnContext,
+>;
+type CoreApiAgentJobHost = codex_session_api::SessionAgentJobHost<
+    codex_core::Session,
+    Arc<codex_core::TurnContext>,
+    codex_core::SharedTurnDiffTracker,
+    codex_core::TurnContext,
+    codex_core::config::Config,
+>;
+
+impl
+    codex_session_api::SessionToolRouterFactory<
+        Arc<codex_core::Session>,
+        Arc<codex_core::TurnContext>,
+        codex_core::SharedTurnDiffTracker,
+        codex_core::TurnContext,
+    > for DefaultCoreToolRouterFactory
+{
     fn build_tool_router(
         &self,
         config: &codex_tool_config::ToolsConfig,
-        params: ToolRouterBuildParams<'_>,
-    ) -> codex_core::CoreToolRuntimeRouter {
-        codex_tool_handlers::build_tool_router(
-            config,
-            &codex_core::CoreToolDomainHost,
-            codex_tool_handlers::ToolRuntimeBuildParams {
-                mcp_tools: params.mcp_tools,
-                deferred_mcp_tools: params.deferred_mcp_tools,
-                discoverable_tools: params.discoverable_tools,
-                extension_tool_executors: params.extension_tool_executors,
-                dynamic_tools: params.dynamic_tools,
-                default_agent_type_description: params.default_agent_type_description,
-            },
-        )
+        params: codex_tool_runtime_api::ToolRouterBuildParams<'_>,
+    ) -> Arc<codex_core::CoreToolRuntimeRouter> {
+        Arc::new(codex_tool_handlers::SessionToolRouterAdapter::new(
+            codex_tool_handlers::build_tool_router(
+                config,
+                &codex_core::CoreApplyPatchHandlerHost,
+                codex_tool_handlers::ToolRuntimeBuildParams {
+                    mcp_tools: params.mcp_tools,
+                    deferred_mcp_tools: params.deferred_mcp_tools,
+                    discoverable_tools: params.discoverable_tools,
+                    extension_tool_executors: params.extension_tool_executors,
+                    dynamic_tools: params.dynamic_tools,
+                    default_agent_type_description: params.default_agent_type_description,
+                    mcp_tool_call_host: CoreApiMcpToolCallHost::default(),
+                    mcp_resource_host: CoreApiMcpResourceHost::default(),
+                    goal_host: CoreApiGoalHost::default(),
+                    workflow_host: CoreApiWorkflowHost::default(),
+                    agent_job_host: CoreApiAgentJobHost::default(),
+                },
+            ),
+            codex_core::CoreToolDispatchHost,
+        ))
     }
 }
 

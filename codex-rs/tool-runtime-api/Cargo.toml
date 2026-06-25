@@ -17,8 +17,10 @@ codex-agent-runtime = { workspace = true }
 codex-command-runtime = { workspace = true }
 codex-code-mode-api = { workspace = true }
 codex-exec-server-api = { workspace = true }
+codex-extension-api = { workspace = true }
 codex-file-system = { workspace = true }
 codex-hooks-api = { workspace = true }
+codex-mcp-tool-types = { workspace = true }
 codex-network-proxy-api = { workspace = true }
 codex-permissions-runtime = { workspace = true }
 codex-process-exec = { workspace = true }

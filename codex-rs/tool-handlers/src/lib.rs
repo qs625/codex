@@ -1,5 +1,6 @@
 mod assembly;
 pub mod handlers;
+mod session_router;
 
 pub use assembly::RuntimeToolAssemblyHost;
 pub use assembly::ToolRuntimeBuildParams;
@@ -68,3 +69,4 @@ pub use handlers::workflow::WorkflowListHandler;
 pub use handlers::workflow::WorkflowResumeHandler;
 pub use handlers::workflow::WorkflowStartHandler;
 pub use handlers::workflow::WorkflowStatusHandler;
+pub use session_router::SessionToolRouterAdapter;

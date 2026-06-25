@@ -1,9 +1,36 @@
 use super::*;
+use futures::future::BoxFuture;
+
+pub(crate) trait AppsRuntime: Send + Sync {
+    fn thread_feature_enabled(
+        &self,
+        thread_id: ThreadId,
+        feature: Feature,
+    ) -> BoxFuture<'_, CodexResult<bool>>;
+
+    fn plugin_runtime(&self) -> codex_core_plugins_api::SharedPluginRuntime;
+}
+
+impl AppsRuntime for ThreadManager {
+    fn thread_feature_enabled(
+        &self,
+        thread_id: ThreadId,
+        feature: Feature,
+    ) -> BoxFuture<'_, CodexResult<bool>> {
+        Box::pin(LiveThreadRegistry::thread_feature_enabled(
+            self, thread_id, feature,
+        ))
+    }
+
+    fn plugin_runtime(&self) -> codex_core_plugins_api::SharedPluginRuntime {
+        ThreadManager::plugin_runtime(self)
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct AppsRequestProcessor {
     auth_manager: Arc<AuthManager>,
-    thread_manager: Arc<ThreadManager>,
+    apps_runtime: Arc<dyn AppsRuntime>,
     outgoing: Arc<OutgoingMessageSender>,
     config_manager: ConfigManager,
     environment_manager: Arc<EnvironmentManager>,
@@ -11,17 +38,21 @@ pub(crate) struct AppsRequestProcessor {
 }
 
 impl AppsRequestProcessor {
-    pub(crate) fn new(
+    pub(crate) fn new<R>(
         auth_manager: Arc<AuthManager>,
-        thread_manager: Arc<ThreadManager>,
+        apps_runtime: Arc<R>,
         outgoing: Arc<OutgoingMessageSender>,
         config_manager: ConfigManager,
         environment_manager: Arc<EnvironmentManager>,
         workspace_settings_cache: Arc<workspace_settings::WorkspaceSettingsCache>,
-    ) -> Self {
+    ) -> Self
+    where
+        R: AppsRuntime + 'static,
+    {
+        let apps_runtime: Arc<dyn AppsRuntime> = apps_runtime;
         Self {
             auth_manager,
-            thread_manager,
+            apps_runtime,
             outgoing,
             config_manager,
             environment_manager,
@@ -47,11 +78,15 @@ impl AppsRequestProcessor {
         let mut config = self.load_latest_config(/*fallback_cwd*/ None).await?;
 
         if let Some(thread_id) = params.thread_id.as_deref() {
-            let (_, thread) = self.load_thread(thread_id).await?;
+            let thread_id = ThreadId::from_string(thread_id)
+                .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+            let apps_enabled = self
+                .apps_runtime
+                .thread_feature_enabled(thread_id, Feature::Apps)
+                .await
+                .map_err(|_| invalid_request(format!("thread not found: {thread_id}")))?;
 
-            let _ = config
-                .features
-                .set_enabled(Feature::Apps, thread.enabled(Feature::Apps));
+            let _ = config.features.set_enabled(Feature::Apps, apps_enabled);
         }
 
         let auth = self.auth_manager.auth().await;
@@ -79,7 +114,7 @@ impl AppsRequestProcessor {
         let request = request_id.clone();
         let outgoing = Arc::clone(&self.outgoing);
         let environment_manager = Arc::clone(&self.environment_manager);
-        let plugin_runtime = self.thread_manager.plugin_runtime();
+        let plugin_runtime = self.apps_runtime.plugin_runtime();
         tokio::spawn(async move {
             Self::apps_list_task(
                 outgoing,
@@ -261,22 +296,6 @@ impl AppsRequestProcessor {
                 return paginate_apps(merged.as_slice(), start, limit);
             }
         }
-    }
-
-    async fn load_thread(
-        &self,
-        thread_id: &str,
-    ) -> Result<(ThreadId, Arc<CodexThread>), JSONRPCErrorError> {
-        let thread_id = ThreadId::from_string(thread_id)
-            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
-
-        let thread = self
-            .thread_manager
-            .get_thread(thread_id)
-            .await
-            .map_err(|_| invalid_request(format!("thread not found: {thread_id}")))?;
-
-        Ok((thread_id, thread))
     }
 
     async fn load_latest_config(

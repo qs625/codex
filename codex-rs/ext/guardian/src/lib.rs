@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 mod approval_request;
 mod prompt;
+mod review_session;
 
 pub use approval_request::FormattedGuardianAction;
 pub use approval_request::GuardianApprovalRequest;
@@ -32,6 +33,14 @@ pub use prompt::guardian_policy_prompt;
 pub use prompt::guardian_policy_prompt_with_config;
 pub use prompt::parse_guardian_assessment;
 pub use prompt::render_guardian_transcript_entries;
+pub use review_session::GUARDIAN_REVIEW_TIMEOUT;
+pub use review_session::GuardianReviewForkSnapshot;
+pub use review_session::GuardianReviewModelInfo;
+pub use review_session::GuardianReviewSessionHost;
+pub use review_session::GuardianReviewSessionManager;
+pub use review_session::GuardianReviewSessionOutcome;
+pub use review_session::GuardianReviewSessionParams;
+pub use review_session::GuardianReviewSpawnKind;
 
 const GUARDIAN_MAX_ACTION_STRING_TOKENS: usize = 16_000;
 const TRUNCATION_TAG: &str = "truncated";

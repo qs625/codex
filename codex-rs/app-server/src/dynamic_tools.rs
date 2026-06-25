@@ -3,18 +3,18 @@ use codex_app_server_protocol::DynamicToolCallResponse;
 use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
 use codex_protocol::dynamic_tools::DynamicToolResponse as CoreDynamicToolResponse;
 use codex_protocol::protocol::Op;
-use codex_session_api::SessionCommandHandle;
 use std::sync::Arc;
 use tokio::sync::oneshot;
 use tracing::error;
 
+use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::outgoing_message::ClientRequestResult;
 use crate::server_request_error::is_turn_transition_server_request_error;
 
 pub(crate) async fn on_call_response(
     call_id: String,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    conversation: Arc<impl SessionCommandHandle>,
+    conversation: Arc<dyn AppServerLiveThreadHandle>,
 ) {
     let response = receiver.await;
     let (response, _error) = match response {

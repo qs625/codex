@@ -101,8 +101,8 @@ mod tests {
             Default::default(),
             Default::default(),
         )
-        .expect("config layer stack")
-        .into();
+        .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+        .expect("config layer stack");
 
         assert_eq!(
             hook_states_from_stack(Some(&stack)),
@@ -148,8 +148,8 @@ mod tests {
             Default::default(),
             Default::default(),
         )
-        .expect("config layer stack")
-        .into();
+        .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+        .expect("config layer stack");
 
         assert_eq!(
             hook_states_from_stack(Some(&stack)),
@@ -188,8 +188,8 @@ mod tests {
             Default::default(),
             Default::default(),
         )
-        .expect("config layer stack")
-        .into();
+        .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+        .expect("config layer stack");
 
         assert_eq!(
             hook_states_from_stack(Some(&stack)),
@@ -230,8 +230,8 @@ mod tests {
             Default::default(),
             Default::default(),
         )
-        .expect("config layer stack")
-        .into();
+        .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+        .expect("config layer stack");
 
         assert_eq!(
             hook_states_from_stack(Some(&stack)),

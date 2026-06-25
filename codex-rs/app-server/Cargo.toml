@@ -80,6 +80,7 @@ codex-mcp-runtime-api = { workspace = true }
 codex-mcp-types = { workspace = true }
 codex-model-provider = { workspace = true }
 codex-model-provider-api = { workspace = true }
+codex-model-provider-info = { workspace = true }
 codex-models-manager-api = { workspace = true }
 codex-models-manager = { workspace = true }
 codex-network-proxy = { workspace = true }
@@ -100,8 +101,10 @@ codex-state-api = { workspace = true }
 codex-state = { workspace = true }
 codex-thread-api = { workspace = true }
 codex-thread-store = { workspace = true }
+codex-thread-store-api = { workspace = true }
 codex-tool-config = { workspace = true }
 codex-tool-handlers = { workspace = true }
+codex-tool-runtime-api = { workspace = true }
 codex-tools = { workspace = true }
 codex-turn-metadata = { workspace = true }
 codex-terminal-detection = { workspace = true }
@@ -141,7 +144,6 @@ axum = { workspace = true, default-features = false, features = [
 base64 = { workspace = true }
 codex-config = { workspace = true }
 codex-core = { workspace = true, features = ["test-support"] }
-codex-model-provider-info = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }
 core_test_support = { workspace = true }
 flate2 = { workspace = true }

@@ -30,8 +30,10 @@ codex-model-provider-info = { workspace = true }
 codex-models-manager-api = { workspace = true }
 codex-protocol = { workspace = true }
 codex-rollout = { workspace = true }
+codex-session-api = { workspace = true }
 codex-state-api = { workspace = true }
 codex-thread-store = { workspace = true }
 codex-tool-config = { workspace = true }
 codex-tool-handlers = { workspace = true }
+codex-tool-runtime-api = { workspace = true }
 codex-utils-absolute-path = { workspace = true }

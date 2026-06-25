@@ -33,6 +33,7 @@ use crate::handlers::workflow::WorkflowListHandler;
 use crate::handlers::workflow::WorkflowResumeHandler;
 use crate::handlers::workflow::WorkflowStartHandler;
 use crate::handlers::workflow::WorkflowStatusHandler;
+use codex_agent_runtime::MultiAgentToolSession;
 use codex_agent_tool_handlers::CloseAgentHandler;
 use codex_agent_tool_handlers::FollowupTaskHandler;
 use codex_agent_tool_handlers::ListAgentsHandler;
@@ -60,10 +61,17 @@ use codex_tool_runtime::ToolInvocation;
 use codex_tool_runtime::ToolRegistry;
 use codex_tool_runtime::ToolRegistryBuilder;
 use codex_tool_runtime::ToolRouter;
+use codex_tool_runtime_api::AgentJobToolHost;
 use codex_tool_runtime_api::ApplyPatchHandlerHost;
+use codex_tool_runtime_api::FunctionToolSession;
+use codex_tool_runtime_api::FunctionToolTurn;
+use codex_tool_runtime_api::GoalToolHost;
+use codex_tool_runtime_api::McpResourceHost;
+use codex_tool_runtime_api::McpToolCallHost;
 use codex_tool_runtime_api::RegisteredTool;
 use codex_tool_runtime_api::ToolDomainHost;
 use codex_tool_runtime_api::ToolHandler;
+use codex_tool_runtime_api::WorkflowToolHost;
 use codex_tool_types::ToolExposure;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -79,13 +87,19 @@ pub type DomainRegisteredTool<Host> =
     dyn RegisteredTool<DomainInvocation<Host>, <Host as ApplyPatchHandlerHost>::DiffContext>;
 
 #[derive(Clone, Copy)]
-pub struct ToolRuntimeBuildParams<'a> {
+pub struct ToolRuntimeBuildParams<'a, McpCallHost, McpResHost, GoalHost, WorkflowHost, AgentJobHost>
+{
     pub mcp_tools: Option<&'a [ToolInfo]>,
     pub deferred_mcp_tools: Option<&'a [ToolInfo]>,
     pub discoverable_tools: Option<&'a [DiscoverableTool]>,
     pub extension_tool_executors: &'a [Arc<dyn ExtensionToolExecutor>],
     pub dynamic_tools: &'a [DynamicToolSpec],
     pub default_agent_type_description: &'a str,
+    pub mcp_tool_call_host: McpCallHost,
+    pub mcp_resource_host: McpResHost,
+    pub goal_host: GoalHost,
+    pub workflow_host: WorkflowHost,
+    pub agent_job_host: AgentJobHost,
 }
 
 pub trait RuntimeToolAssemblyHost: ToolDomainHost
@@ -108,13 +122,60 @@ where
 {
 }
 
-pub fn collect_tool_executors<Host>(
+pub fn collect_tool_executors<Host, McpCallHost, McpResHost, GoalHost, WorkflowHost, AgentJobHost>(
     config: &ToolsConfig,
     host: &Host,
-    params: ToolRuntimeBuildParams<'_>,
+    params: ToolRuntimeBuildParams<
+        '_,
+        McpCallHost,
+        McpResHost,
+        GoalHost,
+        WorkflowHost,
+        AgentJobHost,
+    >,
 ) -> Vec<Arc<DomainRegisteredTool<Host>>>
 where
     Host: RuntimeToolAssemblyHost,
+    McpCallHost: McpToolCallHost<
+            Session = <Host as ApplyPatchHandlerHost>::Session,
+            Turn = <Host as ApplyPatchHandlerHost>::Turn,
+            Tracker = <Host as ApplyPatchHandlerHost>::Tracker,
+            DiffContext = <Host as ApplyPatchHandlerHost>::DiffContext,
+        > + 'static,
+    McpCallHost: Clone,
+    McpResHost: McpResourceHost<
+            Session = <Host as ApplyPatchHandlerHost>::Session,
+            Turn = <Host as ApplyPatchHandlerHost>::Turn,
+            Tracker = <Host as ApplyPatchHandlerHost>::Tracker,
+            DiffContext = <Host as ApplyPatchHandlerHost>::DiffContext,
+        > + 'static,
+    McpResHost: Clone,
+    GoalHost: GoalToolHost<
+            Session = <Host as ApplyPatchHandlerHost>::Session,
+            Turn = <Host as ApplyPatchHandlerHost>::Turn,
+            Tracker = <Host as ApplyPatchHandlerHost>::Tracker,
+            DiffContext = <Host as ApplyPatchHandlerHost>::DiffContext,
+        > + 'static,
+    GoalHost: Clone,
+    WorkflowHost: WorkflowToolHost<
+            Session = <Host as ApplyPatchHandlerHost>::Session,
+            Turn = <Host as ApplyPatchHandlerHost>::Turn,
+            Tracker = <Host as ApplyPatchHandlerHost>::Tracker,
+            DiffContext = <Host as ApplyPatchHandlerHost>::DiffContext,
+        > + 'static,
+    WorkflowHost: Clone,
+    AgentJobHost: AgentJobToolHost<
+            Session = <Host as ApplyPatchHandlerHost>::Session,
+            Turn = <Host as ApplyPatchHandlerHost>::Turn,
+            Tracker = <Host as ApplyPatchHandlerHost>::Tracker,
+            DiffContext = <Host as ApplyPatchHandlerHost>::DiffContext,
+        > + 'static,
+    AgentJobHost: Clone,
+    <Host as ApplyPatchHandlerHost>::Session:
+        MultiAgentToolSession<<Host as ApplyPatchHandlerHost>::Turn>,
+    <Host as ApplyPatchHandlerHost>::Session:
+        FunctionToolSession<<Host as ApplyPatchHandlerHost>::Turn>,
+    <Host as ApplyPatchHandlerHost>::Turn: FunctionToolTurn,
     ApplyPatchActiveNetworkApproval<Host>: Send,
     ApplyPatchDeferredNetworkApproval<Host>: Send,
     ShellActiveNetworkApproval<Host>: Send,
@@ -173,37 +234,67 @@ where
     }
 
     if params.mcp_tools.is_some() {
-        push_domain_tool::<Host, _>(&mut executors, ListMcpResourcesHandler::new(host.clone()));
         push_domain_tool::<Host, _>(
             &mut executors,
-            ListMcpResourceTemplatesHandler::new(host.clone()),
+            ListMcpResourcesHandler::new(params.mcp_resource_host.clone()),
         );
-        push_domain_tool::<Host, _>(&mut executors, ReadMcpResourceHandler::new(host.clone()));
+        push_domain_tool::<Host, _>(
+            &mut executors,
+            ListMcpResourceTemplatesHandler::new(params.mcp_resource_host.clone()),
+        );
+        push_domain_tool::<Host, _>(
+            &mut executors,
+            ReadMcpResourceHandler::new(params.mcp_resource_host.clone()),
+        );
     }
 
-    push_domain_tool::<Host, _>(&mut executors, PlanHandler::new(host.clone()));
+    push_domain_tool::<Host, _>(&mut executors, PlanHandler::new());
     if config.goal_tools {
-        push_domain_tool::<Host, _>(&mut executors, GetGoalHandler::new(host.clone()));
-        push_domain_tool::<Host, _>(&mut executors, CreateGoalHandler::new(host.clone()));
-        push_domain_tool::<Host, _>(&mut executors, UpdateGoalHandler::new(host.clone()));
+        push_domain_tool::<Host, _>(
+            &mut executors,
+            GetGoalHandler::new(params.goal_host.clone()),
+        );
+        push_domain_tool::<Host, _>(
+            &mut executors,
+            CreateGoalHandler::new(params.goal_host.clone()),
+        );
+        push_domain_tool::<Host, _>(
+            &mut executors,
+            UpdateGoalHandler::new(params.goal_host.clone()),
+        );
     }
 
     push_domain_tool::<Host, _>(
         &mut executors,
-        RequestUserInputHandler::new(
-            host.clone(),
-            config.request_user_input_available_modes.clone(),
-        ),
+        RequestUserInputHandler::new(config.request_user_input_available_modes.clone()),
     );
-    push_domain_tool::<Host, _>(&mut executors, WorkflowListHandler::new(host.clone()));
-    push_domain_tool::<Host, _>(&mut executors, WorkflowDescribeHandler::new(host.clone()));
-    push_domain_tool::<Host, _>(&mut executors, WorkflowStartHandler::new(host.clone()));
-    push_domain_tool::<Host, _>(&mut executors, WorkflowStatusHandler::new(host.clone()));
-    push_domain_tool::<Host, _>(&mut executors, WorkflowResumeHandler::new(host.clone()));
-    push_domain_tool::<Host, _>(&mut executors, WorkflowAbortHandler::new(host.clone()));
+    push_domain_tool::<Host, _>(
+        &mut executors,
+        WorkflowListHandler::new(params.workflow_host.clone()),
+    );
+    push_domain_tool::<Host, _>(
+        &mut executors,
+        WorkflowDescribeHandler::new(params.workflow_host.clone()),
+    );
+    push_domain_tool::<Host, _>(
+        &mut executors,
+        WorkflowStartHandler::new(params.workflow_host.clone()),
+    );
+    push_domain_tool::<Host, _>(
+        &mut executors,
+        WorkflowStatusHandler::new(params.workflow_host.clone()),
+    );
+    push_domain_tool::<Host, _>(
+        &mut executors,
+        WorkflowResumeHandler::new(params.workflow_host.clone()),
+    );
+    push_domain_tool::<Host, _>(
+        &mut executors,
+        WorkflowAbortHandler::new(params.workflow_host.clone()),
+    );
 
     if config.request_permissions_tool_enabled {
-        push_domain_tool::<Host, _>(&mut executors, RequestPermissionsHandler::new(host.clone()));
+        push_domain_tool::<Host, _>(&mut executors, RequestPermissionsHandler::new());
     }
 
     if config.tool_suggest
@@ -263,47 +354,31 @@ where
             agent_type_description(config, params.default_agent_type_description);
         push_exposed_domain_tool::<Host, _>(
             &mut executors,
-            SpawnAgentHandler::new(
-                host.clone(),
-                SpawnAgentToolOptions {
-                    available_models: config.available_models.clone(),
-                    agent_type_description: agent_type_description.to_string(),
-                    hide_agent_type_model_reasoning: config.hide_spawn_agent_metadata,
-                    include_usage_hint: config.spawn_agent_usage_hint,
-                    usage_hint_text: config.spawn_agent_usage_hint_text.clone(),
-                    max_concurrent_threads_per_session: config.max_concurrent_threads_per_session,
-                },
-            ),
+            SpawnAgentHandler::new(SpawnAgentToolOptions {
+                available_models: config.available_models.clone(),
+                agent_type_description: agent_type_description.to_string(),
+                hide_agent_type_model_reasoning: config.hide_spawn_agent_metadata,
+                include_usage_hint: config.spawn_agent_usage_hint,
+                usage_hint_text: config.spawn_agent_usage_hint_text.clone(),
+                max_concurrent_threads_per_session: config.max_concurrent_threads_per_session,
+            }),
             exposure,
         );
-        push_exposed_domain_tool::<Host, _>(
-            &mut executors,
-            FollowupTaskHandler::new(host.clone()),
-            exposure,
-        );
-        push_exposed_domain_tool::<Host, _>(
-            &mut executors,
-            WaitAgentHandler::new(host.clone()),
-            exposure,
-        );
-        push_exposed_domain_tool::<Host, _>(
-            &mut executors,
-            CloseAgentHandler::new(host.clone()),
-            exposure,
-        );
-        push_exposed_domain_tool::<Host, _>(
-            &mut executors,
-            ListAgentsHandler::new(host.clone()),
-            exposure,
-        );
+        push_exposed_domain_tool::<Host, _>(&mut executors, FollowupTaskHandler::new(), exposure);
+        push_exposed_domain_tool::<Host, _>(&mut executors, WaitAgentHandler::new(), exposure);
+        push_exposed_domain_tool::<Host, _>(&mut executors, CloseAgentHandler::new(), exposure);
+        push_exposed_domain_tool::<Host, _>(&mut executors, ListAgentsHandler::new(), exposure);
     }
 
     if config.agent_jobs_tools {
-        push_domain_tool::<Host, _>(&mut executors, SpawnAgentsOnCsvHandler::new(host.clone()));
+        push_domain_tool::<Host, _>(
+            &mut executors,
+            SpawnAgentsOnCsvHandler::new(params.agent_job_host.clone()),
+        );
         if config.agent_jobs_worker_tools {
             push_domain_tool::<Host, _>(
                 &mut executors,
-                ReportAgentJobResultHandler::new(host.clone()),
+                ReportAgentJobResultHandler::new(params.agent_job_host.clone()),
             );
         }
     }
@@ -312,7 +387,7 @@ where
         for tool in mcp_tools {
             push_domain_tool::<Host, _>(
                 &mut executors,
-                McpHandler::new(host.clone(), tool.clone()),
+                McpHandler::new(params.mcp_tool_call_host.clone(), tool.clone()),
             );
         }
     }
@@ -320,13 +395,17 @@ where
         for tool in deferred_mcp_tools {
             push_domain_tool::<Host, _>(
                 &mut executors,
-                McpHandler::with_exposure(host.clone(), tool.clone(), ToolExposure::Deferred),
+                McpHandler::with_exposure(
+                    params.mcp_tool_call_host.clone(),
+                    tool.clone(),
+                    ToolExposure::Deferred,
+                ),
             );
         }
     }
 
     for dynamic_tool in params.dynamic_tools {
-        let Some(handler) = DynamicToolHandler::new(host.clone(), dynamic_tool) else {
+        let Some(handler) = DynamicToolHandler::new(dynamic_tool) else {
             tracing::error!(
                 "Failed to convert dynamic tool {:?} to OpenAI tool",
                 dynamic_tool.name
@@ -401,16 +480,63 @@ where
     builder
 }
 
-pub fn build_tool_router<Host>(
+pub fn build_tool_router<Host, McpCallHost, McpResHost, GoalHost, WorkflowHost, AgentJobHost>(
     config: &ToolsConfig,
     host: &Host,
-    params: ToolRuntimeBuildParams<'_>,
+    params: ToolRuntimeBuildParams<
+        '_,
+        McpCallHost,
+        McpResHost,
+        GoalHost,
+        WorkflowHost,
+        AgentJobHost,
+    >,
 ) -> ToolRouter<
     ToolRegistry<DomainInvocation<Host>, <Host as ApplyPatchHandlerHost>::DiffContext>,
     <Host as ApplyPatchHandlerHost>::DiffContext,
 >
 where
     Host: RuntimeToolAssemblyHost,
+    McpCallHost: McpToolCallHost<
+            Session = <Host as ApplyPatchHandlerHost>::Session,
+            Turn = <Host as ApplyPatchHandlerHost>::Turn,
+            Tracker = <Host as ApplyPatchHandlerHost>::Tracker,
+            DiffContext = <Host as ApplyPatchHandlerHost>::DiffContext,
+        > + 'static,
+    McpCallHost: Clone,
+    McpResHost: McpResourceHost<
+            Session = <Host as ApplyPatchHandlerHost>::Session,
+            Turn = <Host as ApplyPatchHandlerHost>::Turn,
+            Tracker = <Host as ApplyPatchHandlerHost>::Tracker,
+            DiffContext = <Host as ApplyPatchHandlerHost>::DiffContext,
+        > + 'static,
+    McpResHost: Clone,
+    GoalHost: GoalToolHost<
+            Session = <Host as ApplyPatchHandlerHost>::Session,
+            Turn = <Host as ApplyPatchHandlerHost>::Turn,
+            Tracker = <Host as ApplyPatchHandlerHost>::Tracker,
+            DiffContext = <Host as ApplyPatchHandlerHost>::DiffContext,
+        > + 'static,
+    GoalHost: Clone,
+    WorkflowHost: WorkflowToolHost<
+            Session = <Host as ApplyPatchHandlerHost>::Session,
+            Turn = <Host as ApplyPatchHandlerHost>::Turn,
+            Tracker = <Host as ApplyPatchHandlerHost>::Tracker,
+            DiffContext = <Host as ApplyPatchHandlerHost>::DiffContext,
+        > + 'static,
+    WorkflowHost: Clone,
+    AgentJobHost: AgentJobToolHost<
+            Session = <Host as ApplyPatchHandlerHost>::Session,
+            Turn = <Host as ApplyPatchHandlerHost>::Turn,
+            Tracker = <Host as ApplyPatchHandlerHost>::Tracker,
+            DiffContext = <Host as ApplyPatchHandlerHost>::DiffContext,
+        > + 'static,
+    AgentJobHost: Clone,
+    <Host as ApplyPatchHandlerHost>::Session:
+        MultiAgentToolSession<<Host as ApplyPatchHandlerHost>::Turn>,
+    <Host as ApplyPatchHandlerHost>::Session:
+        FunctionToolSession<<Host as ApplyPatchHandlerHost>::Turn>,
+    <Host as ApplyPatchHandlerHost>::Turn: FunctionToolTurn,
     ApplyPatchActiveNetworkApproval<Host>: Send,
     ApplyPatchDeferredNetworkApproval<Host>: Send,
     ShellActiveNetworkApproval<Host>: Send,

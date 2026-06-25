@@ -1,6 +1,12 @@
 use super::*;
 use codex_agent_runtime::AgentMetadata;
+use codex_agent_runtime::CloseAgentToolResult;
+use codex_agent_runtime::ListAgentsToolResult;
 use codex_agent_runtime::ListedAgent;
+use codex_agent_runtime::MultiAgentToolSession;
+use codex_agent_runtime::SpawnAgentToolRequest;
+use codex_agent_runtime::SpawnAgentToolResult;
+use codex_agent_runtime::WaitAgentToolResult;
 use codex_code_mode_api::ExecuteRequest;
 use codex_code_mode_api::RuntimeResponse;
 use codex_code_mode_api::WaitOutcome;
@@ -145,20 +151,18 @@ use codex_tool_runtime_api::ApplyPatchHandlerHost;
 use codex_tool_runtime_api::ApplyPatchRequest;
 use codex_tool_runtime_api::ApplyPatchRuntimeHost;
 use codex_tool_runtime_api::ApprovalCtx;
-use codex_tool_runtime_api::CloseAgentToolResult;
 use codex_tool_runtime_api::CodeModeToolHost;
 use codex_tool_runtime_api::CommandInteractionHost;
 use codex_tool_runtime_api::ExecApprovalRequirement;
 use codex_tool_runtime_api::ExecCommandHandlerHost;
 use codex_tool_runtime_api::ExecCommandRunOutput;
 use codex_tool_runtime_api::ExecCommandRunRequest;
-use codex_tool_runtime_api::FunctionToolHost;
+use codex_tool_runtime_api::FunctionToolSession;
+use codex_tool_runtime_api::FunctionToolTurn;
 use codex_tool_runtime_api::GoalToolHost;
-use codex_tool_runtime_api::ListAgentsToolResult;
 use codex_tool_runtime_api::McpResourceHost;
 use codex_tool_runtime_api::McpToolCallHost;
 use codex_tool_runtime_api::McpToolCallOutcome;
-use codex_tool_runtime_api::MultiAgentToolHost;
 use codex_tool_runtime_api::NetworkApprovalMode;
 use codex_tool_runtime_api::NetworkApprovalSpec;
 use codex_tool_runtime_api::OrchestratorRunResult;
@@ -176,8 +180,6 @@ use codex_tool_runtime_api::ShellCommandHandlerHost;
 use codex_tool_runtime_api::ShellExecutionHost;
 use codex_tool_runtime_api::ShellRuntimeBackend;
 use codex_tool_runtime_api::ShellRuntimeHost;
-use codex_tool_runtime_api::SpawnAgentToolRequest;
-use codex_tool_runtime_api::SpawnAgentToolResult;
 use codex_tool_runtime_api::ToolError;
 use codex_tool_runtime_api::ToolEventHost;
 use codex_tool_runtime_api::ToolOrchestratorHost;
@@ -185,7 +187,6 @@ use codex_tool_runtime_api::ToolPatchTrackerUpdate;
 use codex_tool_runtime_api::ToolPermissionGrants;
 use codex_tool_runtime_api::ToolSandboxContext;
 use codex_tool_runtime_api::UnifiedExecRuntimeHost;
-use codex_tool_runtime_api::WaitAgentToolResult;
 use codex_tool_runtime_api::WorkflowToolHost;
 use codex_tool_types::FunctionCallError;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -740,61 +741,46 @@ impl McpResourceHost for SpecOnlyToolDomainHost {
     }
 }
 
-impl FunctionToolHost for SpecOnlyToolDomainHost {
-    type DiffContext = SpecDiffContext;
-    type Session = SpecSession;
-    type Tracker = SpecTracker;
-    type Turn = SpecTurn;
-
-    fn turn_collaboration_mode(&self, _turn: &Self::Turn) -> ModeKind {
+impl FunctionToolTurn for SpecTurn {
+    fn function_tool_collaboration_mode(&self) -> ModeKind {
         ModeKind::Default
     }
 
-    fn turn_cwd(&self, _turn: &Self::Turn) -> AbsolutePathBuf {
+    fn function_tool_cwd(&self) -> AbsolutePathBuf {
         spec_cwd()
     }
 
-    fn turn_id(&self, _turn: &Self::Turn) -> String {
-        "spec-turn".to_string()
-    }
-
-    fn turn_is_non_root_agent(&self, _turn: &Self::Turn) -> bool {
+    fn function_tool_is_non_root_agent(&self) -> bool {
         false
     }
 
-    fn turn_supports_image_input(&self, _turn: &Self::Turn) -> bool {
+    fn function_tool_supports_image_input(&self) -> bool {
         true
     }
 
-    fn turn_can_request_original_image_detail(&self, _turn: &Self::Turn) -> bool {
+    fn function_tool_can_request_original_image_detail(&self) -> bool {
         false
     }
+}
 
-    async fn session_collaboration_mode(&self, _session: &Self::Session) -> ModeKind {
+impl FunctionToolSession<SpecTurn> for SpecSession {
+    async fn function_tool_session_collaboration_mode(&self) -> ModeKind {
         ModeKind::Default
     }
 
-    async fn emit_plan_update(
-        &self,
-        _session: &Self::Session,
-        _turn: &Self::Turn,
-        _args: UpdatePlanArgs,
-    ) {
-    }
+    async fn function_tool_emit_plan_update(&self, _turn: &SpecTurn, _args: UpdatePlanArgs) {}
 
-    async fn emit_image_view(
+    async fn function_tool_emit_image_view(
         &self,
-        _session: &Self::Session,
-        _turn: &Self::Turn,
+        _turn: &SpecTurn,
         _call_id: String,
         _path: AbsolutePathBuf,
     ) {
     }
 
-    async fn request_permissions(
+    async fn function_tool_request_permissions(
         &self,
-        _session: &Self::Session,
-        _turn: &Self::Turn,
+        _turn: &SpecTurn,
         _call_id: String,
         _args: RequestPermissionsArgs,
         _cancellation_token: CancellationToken,
@@ -802,20 +788,18 @@ impl FunctionToolHost for SpecOnlyToolDomainHost {
         spec_only()
     }
 
-    async fn request_user_input(
+    async fn function_tool_request_user_input(
         &self,
-        _session: &Self::Session,
-        _turn: &Self::Turn,
+        _turn: &SpecTurn,
         _call_id: String,
         _args: RequestUserInputArgs,
     ) -> Option<RequestUserInputResponse> {
         spec_only()
     }
 
-    async fn request_dynamic_tool(
+    async fn function_tool_request_dynamic_tool(
         &self,
-        _session: &Self::Session,
-        _turn: &Self::Turn,
+        _turn: &SpecTurn,
         _call_id: String,
         _tool_name: ToolName,
         _arguments: serde_json::Value,
@@ -1011,159 +995,50 @@ impl ExecCommandHandlerHost for SpecOnlyToolDomainHost {
     fn emit_unified_exec_tty_metric(&self, _turn: &Self::Turn, _tty: bool) {}
 }
 
-impl MultiAgentToolHost for SpecOnlyToolDomainHost {
-    type DiffContext = SpecDiffContext;
-    type Session = SpecSession;
-    type Tracker = SpecTracker;
-    type Turn = SpecTurn;
-
-    fn thread_id(&self, _session: &Self::Session) -> ThreadId {
-        spec_only()
-    }
-
-    fn sender_agent_path(&self, _session: &Self::Session, _turn: &Self::Turn) -> AgentPath {
-        spec_only()
-    }
-
-    async fn send_collab_event(
-        &self,
-        _session: &Self::Session,
-        _turn: &Self::Turn,
-        _event: EventMsg,
-    ) {
-    }
-
-    async fn resolve_agent_target(
-        &self,
-        _session: &Self::Session,
-        _turn: &Self::Turn,
-        _target: &str,
-    ) -> Result<ThreadId, FunctionCallError> {
-        spec_only()
-    }
-
-    fn agent_metadata(&self, _session: &Self::Session, _thread_id: ThreadId) -> AgentMetadata {
-        spec_only()
-    }
-
-    async fn agent_status(&self, _session: &Self::Session, _thread_id: ThreadId) -> AgentStatus {
-        spec_only()
-    }
-
-    async fn subscribe_agent_status(
-        &self,
-        _session: &Self::Session,
-        _thread_id: ThreadId,
-    ) -> Result<watch::Receiver<AgentStatus>, FunctionCallError> {
-        spec_only()
-    }
-
-    fn subscribe_mailbox_seq(&self, _session: &Self::Session) -> watch::Receiver<u64> {
-        spec_only()
-    }
-
-    async fn find_pending_inter_agent_communication(
-        &self,
-        _session: &Self::Session,
-        _receiver_thread_id: ThreadId,
-        _receiver_agent_path: &AgentPath,
-    ) -> Option<InterAgentCommunication> {
-        spec_only()
-    }
-
-    async fn wait_agent_current_window(
-        &self,
-        _session: &Self::Session,
-        _sender_thread_id: ThreadId,
-        _receiver_thread_id: ThreadId,
-        _initial_timeout_ms: i64,
-        _hard_cap_timeout_ms: i64,
-    ) -> Duration {
-        spec_only()
-    }
-
-    async fn advance_wait_agent_backoff(
-        &self,
-        _session: &Self::Session,
-        _sender_thread_id: ThreadId,
-        _receiver_thread_id: ThreadId,
-    ) {
-    }
-
-    async fn reset_wait_agent_backoff(
-        &self,
-        _session: &Self::Session,
-        _sender_thread_id: ThreadId,
-        _receiver_thread_id: ThreadId,
-    ) {
-    }
-
-    fn wait_agent_timeouts(&self, _turn: &Self::Turn) -> (i64, i64) {
-        (1, 1)
-    }
-
-    fn register_session_root(&self, _session: &Self::Session, _turn: &Self::Turn) {}
-
-    async fn list_agents(
-        &self,
-        _session: &Self::Session,
-        _turn: &Self::Turn,
-        _path_prefix: Option<&str>,
-    ) -> Result<Vec<ListedAgent>, FunctionCallError> {
-        spec_only()
-    }
-
-    async fn send_followup_task(
-        &self,
-        _session: &Self::Session,
-        _sender_agent_path: AgentPath,
-        _receiver_thread_id: ThreadId,
-        _receiver_agent_path: AgentPath,
-        _prompt: String,
-    ) -> Result<(), FunctionCallError> {
-        spec_only()
-    }
-
-    async fn mark_direct_child_completion_pending(
-        &self,
-        _session: &Self::Session,
-        _receiver_thread_id: ThreadId,
-    ) {
-    }
-
-    async fn mark_direct_child_completion_received(
-        &self,
-        _session: &Self::Session,
-        _receiver_thread_id: ThreadId,
-    ) -> bool {
-        spec_only()
-    }
-
-    async fn clear_direct_child_completion_pending(
-        &self,
-        _session: &Self::Session,
-        _receiver_thread_id: ThreadId,
-    ) -> bool {
-        spec_only()
-    }
-
-    async fn maybe_notify_parent_of_final_status(&self, _session: &Self::Session) {}
-
-    async fn close_agent(
-        &self,
-        _session: &Self::Session,
-        _thread_id: ThreadId,
-    ) -> Result<(), FunctionCallError> {
-        spec_only()
-    }
-
-    async fn spawn_agent(
-        &self,
-        _session: &Self::Session,
-        _turn: &Self::Turn,
-        _call_id: &str,
+impl MultiAgentToolSession<SpecTurn> for SpecSession {
+    async fn spawn_agent_tool(
+        self: Arc<Self>,
+        _turn: &SpecTurn,
+        _call_id: String,
         _request: SpawnAgentToolRequest,
     ) -> Result<SpawnAgentToolResult, FunctionCallError> {
+        spec_only()
+    }
+
+    async fn followup_task_tool(
+        self: Arc<Self>,
+        _turn: &SpecTurn,
+        _call_id: String,
+        _target: String,
+        _message: String,
+    ) -> Result<(), FunctionCallError> {
+        spec_only()
+    }
+
+    async fn wait_agent_tool(
+        self: Arc<Self>,
+        _turn: &SpecTurn,
+        _call_id: String,
+        _target: String,
+    ) -> Result<WaitAgentToolResult, FunctionCallError> {
+        spec_only()
+    }
+
+    async fn close_agent_tool(
+        self: Arc<Self>,
+        _turn: &SpecTurn,
+        _call_id: String,
+        _target: String,
+    ) -> Result<CloseAgentToolResult, FunctionCallError> {
+        spec_only()
+    }
+
+    async fn list_agents_tool(
+        self: Arc<Self>,
+        _turn: &SpecTurn,
+        _call_id: String,
+        _path_prefix: Option<String>,
+    ) -> Result<ListAgentsToolResult, FunctionCallError> {
         spec_only()
     }
 }
@@ -4239,6 +4114,11 @@ fn build_specs_with_inputs_for_test(
         extension_tool_executors,
         dynamic_tools,
         default_agent_type_description: DEFAULT_AGENT_TYPE_DESCRIPTION,
+        mcp_tool_call_host: SpecOnlyToolDomainHost,
+        mcp_resource_host: SpecOnlyToolDomainHost,
+        goal_host: SpecOnlyToolDomainHost,
+        workflow_host: SpecOnlyToolDomainHost,
+        agent_job_host: SpecOnlyToolDomainHost,
     };
     let host = SpecOnlyToolDomainHost;
     let executors = collect_tool_executors(config, &host, params);

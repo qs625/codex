@@ -1,10 +1,12 @@
 use super::*;
+use crate::live_thread_runtime::AppServerLiveThreadHandle;
+use crate::live_thread_runtime::AppServerLiveThreadRegistry;
 
 pub(super) const THREAD_UNLOADING_DELAY: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Clone)]
 pub(super) struct ListenerTaskContext {
-    pub(super) thread_manager: Arc<ThreadManager>,
+    pub(super) live_threads: Arc<dyn AppServerLiveThreadRegistry>,
     pub(super) thread_store: Option<Arc<dyn ThreadStore>>,
     pub(super) thread_state_manager: ThreadStateManager,
     pub(super) outgoing: Arc<OutgoingMessageSender>,
@@ -141,8 +143,8 @@ pub(super) async fn ensure_conversation_listener(
     connection_id: ConnectionId,
 ) -> Result<EnsureConversationListenerResult, JSONRPCErrorError> {
     let conversation = match listener_task_context
-        .thread_manager
-        .get_thread(conversation_id)
+        .live_threads
+        .live_thread_handle(conversation_id)
         .await
     {
         Ok(conv) => conv,
@@ -212,7 +214,7 @@ pub(super) fn log_listener_attach_result(
 pub(super) async fn ensure_listener_task_running(
     listener_task_context: ListenerTaskContext,
     conversation_id: ThreadId,
-    conversation: Arc<CodexThread>,
+    conversation: Arc<dyn AppServerLiveThreadHandle>,
     thread_state: Arc<Mutex<ThreadState>>,
 ) -> Result<(), JSONRPCErrorError> {
     let (cancel_tx, mut cancel_rx) = oneshot::channel();
@@ -227,26 +229,34 @@ pub(super) async fn ensure_listener_task_running(
             "thread {conversation_id} is closing; retry after the thread is closed"
         )));
     };
-    let config = conversation.config().await;
-    let environments = conversation.environment_selections().await;
+    let skill_watch_paths = match listener_task_context
+        .live_threads
+        .thread_skill_watch_paths(conversation_id)
+        .await
+    {
+        Ok(paths) => paths,
+        Err(err) => {
+            tracing::warn!(
+                thread_id = %conversation_id,
+                "failed to resolve thread skill watch paths: {err}"
+            );
+            Vec::new()
+        }
+    };
     let watch_registration = listener_task_context
         .skills_watcher
-        .register_thread_config(
-            config.as_ref(),
-            listener_task_context.thread_manager.as_ref(),
-            &environments,
-        )
-        .await;
+        .register_thread_skill_watch_paths(skill_watch_paths);
+    let session_id = conversation.session_configured().session_id;
     let (mut listener_command_rx, listener_generation) = {
         let mut thread_state = thread_state.lock().await;
-        if thread_state.listener_matches(&conversation) {
+        if thread_state.listener_matches(session_id) {
             return Ok(());
         }
-        thread_state.set_listener(cancel_tx, &conversation, watch_registration)
+        thread_state.set_listener(cancel_tx, session_id, watch_registration)
     };
     let ListenerTaskContext {
         outgoing,
-        thread_manager,
+        live_threads,
         thread_state_manager,
         pending_thread_unloads,
         thread_watch_manager,
@@ -309,7 +319,7 @@ pub(super) async fn ensure_listener_task_running(
                         event.clone(),
                         conversation_id,
                         conversation.clone(),
-                        thread_manager.clone(),
+                        live_threads.clone(),
                         thread_outgoing,
                         thread_state.clone(),
                         thread_watch_manager.clone(),
@@ -340,7 +350,7 @@ pub(super) async fn ensure_listener_task_running(
                         pending_thread_unloads.insert(conversation_id);
                     }
                     unload_thread_without_subscribers(
-                        thread_manager.clone(),
+                        live_threads.clone(),
                         outgoing_for_task.clone(),
                         pending_thread_unloads.clone(),
                         thread_state_manager.clone(),
@@ -362,10 +372,9 @@ pub(super) async fn ensure_listener_task_running(
     Ok(())
 }
 
-pub(super) async fn wait_for_thread_shutdown<H>(thread: &Arc<H>) -> ThreadShutdownResult
-where
-    H: LiveThreadHandle,
-{
+pub(super) async fn wait_for_thread_shutdown(
+    thread: &Arc<dyn AppServerLiveThreadHandle>,
+) -> ThreadShutdownResult {
     match tokio::time::timeout(Duration::from_secs(10), thread.shutdown_and_wait()).await {
         Ok(Ok(())) => ThreadShutdownResult::Complete,
         Ok(Err(_)) => ThreadShutdownResult::SubmitFailed,
@@ -373,17 +382,15 @@ where
     }
 }
 
-pub(super) async fn unload_thread_without_subscribers<H>(
-    thread_manager: Arc<ThreadManager>,
+pub(super) async fn unload_thread_without_subscribers(
+    live_threads: Arc<dyn AppServerLiveThreadRegistry>,
     outgoing: Arc<OutgoingMessageSender>,
     pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
     thread_state_manager: ThreadStateManager,
     thread_watch_manager: ThreadWatchManager,
     thread_id: ThreadId,
-    thread: Arc<H>,
-) where
-    H: LiveThreadHandle + 'static,
-{
+    thread: Arc<dyn AppServerLiveThreadHandle>,
+) {
     info!("thread {thread_id} has no subscribers and is idle; shutting down");
 
     // Any pending app-server -> client requests for this thread can no longer be
@@ -396,7 +403,7 @@ pub(super) async fn unload_thread_without_subscribers<H>(
     tokio::spawn(async move {
         match wait_for_thread_shutdown(&thread).await {
             ThreadShutdownResult::Complete => {
-                if thread_manager.remove_thread(&thread_id).await.is_none() {
+                if !live_threads.remove_loaded_thread(thread_id).await {
                     info!("thread {thread_id} was already removed before teardown finalized");
                     thread_watch_manager
                         .remove_thread(&thread_id.to_string())
@@ -430,7 +437,7 @@ pub(super) async fn unload_thread_without_subscribers<H>(
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_thread_listener_command(
     conversation_id: ThreadId,
-    conversation: &Arc<CodexThread>,
+    conversation: &Arc<dyn AppServerLiveThreadHandle>,
     codex_home: &Path,
     thread_state_manager: &ThreadStateManager,
     thread_state: &Arc<Mutex<ThreadState>>,
@@ -500,7 +507,7 @@ pub(super) async fn handle_thread_listener_command(
 )]
 pub(super) async fn handle_pending_thread_resume_request(
     conversation_id: ThreadId,
-    conversation: &Arc<CodexThread>,
+    conversation: &Arc<dyn AppServerLiveThreadHandle>,
     _codex_home: &Path,
     thread_state_manager: &ThreadStateManager,
     thread_state: &Arc<Mutex<ThreadState>>,
@@ -544,7 +551,7 @@ pub(super) async fn handle_pending_thread_resume_request(
     if thread.context_usage.is_none() {
         thread.context_usage = Some(
             super::context_usage_replay::thread_context_usage_from_rollout_or_conversation(
-                conversation,
+                conversation.as_ref(),
                 pending.history_items.as_slice(),
             )
             .await

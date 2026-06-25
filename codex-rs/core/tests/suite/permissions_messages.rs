@@ -1,9 +1,9 @@
 use anyhow::Result;
 use codex_config::ConfigLayerStack;
+use codex_context_manager::ContextualUserFragment;
+use codex_context_manager::PermissionsInstructions;
 use codex_core::ForkSnapshot;
 use codex_core::config::Constrained;
-use codex_core::context::ContextualUserFragment;
-use codex_core::context::PermissionsInstructions;
 use codex_execpolicy_api::Policy;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::NetworkSandboxPolicy;
@@ -31,6 +31,31 @@ fn permissions_texts(request: &ResponsesRequest) -> Vec<String> {
         .into_iter()
         .filter(|text| text.contains("<permissions instructions>"))
         .collect()
+}
+
+fn run_async_test_on_large_stack<Fut>(
+    name: &'static str,
+    test: impl FnOnce() -> Fut + Send + 'static,
+) -> Result<()>
+where
+    Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+{
+    let handle = std::thread::Builder::new()
+        .name(name.to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("test runtime")
+                .block_on(test())
+        })?;
+
+    match handle.join() {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -377,8 +402,14 @@ async fn resume_replays_permissions_messages() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn resume_and_fork_append_permissions_messages() -> Result<()> {
+#[test]
+fn resume_and_fork_append_permissions_messages() -> Result<()> {
+    run_async_test_on_large_stack("resume_and_fork_append_permissions_messages", || async {
+        resume_and_fork_append_permissions_messages_body().await
+    })
+}
+
+async fn resume_and_fork_append_permissions_messages_body() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;

@@ -14,11 +14,13 @@ use anyhow::Result;
 use anyhow::anyhow;
 use codex_config_requirements::CloudRequirementsLoader;
 use codex_core::CodexThread;
-use codex_core::CoreToolDomainHost;
+use codex_core::CoreApplyPatchHandlerHost;
+use codex_core::CoreToolDispatchHost;
 use codex_core::CoreToolRuntimeRouter;
+use codex_core::Session;
+use codex_core::SharedTurnDiffTracker;
 use codex_core::ThreadManager;
-use codex_core::ToolRouterBuildParams;
-use codex_core::ToolRouterFactory;
+use codex_core::TurnContext;
 use codex_core::config::Config;
 use codex_core::resolve_installation_id;
 use codex_core::shell::Shell;
@@ -44,6 +46,7 @@ use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::user_input::UserInput;
+use codex_tool_runtime_api::ToolRouterBuildParams;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::future::BoxFuture;
 use serde_json::Value;
@@ -76,24 +79,71 @@ const SUBMIT_TURN_COMPLETE_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct TestToolRouterFactory;
 
-impl ToolRouterFactory for TestToolRouterFactory {
+type TestMcpToolCallHost = codex_session_api::SessionMcpToolCallHost<
+    Session,
+    Arc<TurnContext>,
+    SharedTurnDiffTracker,
+    TurnContext,
+>;
+type TestMcpResourceHost = codex_session_api::SessionMcpResourceHost<
+    Session,
+    Arc<TurnContext>,
+    SharedTurnDiffTracker,
+    TurnContext,
+>;
+type TestGoalHost = codex_session_api::SessionGoalHost<
+    Session,
+    Arc<TurnContext>,
+    SharedTurnDiffTracker,
+    TurnContext,
+>;
+type TestWorkflowHost = codex_session_api::SessionWorkflowHost<
+    Session,
+    Arc<TurnContext>,
+    SharedTurnDiffTracker,
+    TurnContext,
+>;
+type TestAgentJobHost = codex_session_api::SessionAgentJobHost<
+    Session,
+    Arc<TurnContext>,
+    SharedTurnDiffTracker,
+    TurnContext,
+    Config,
+>;
+
+impl
+    codex_session_api::SessionToolRouterFactory<
+        Arc<Session>,
+        Arc<TurnContext>,
+        SharedTurnDiffTracker,
+        TurnContext,
+    > for TestToolRouterFactory
+{
     fn build_tool_router(
         &self,
         config: &codex_tool_config::ToolsConfig,
         params: ToolRouterBuildParams<'_>,
-    ) -> CoreToolRuntimeRouter {
-        codex_tool_handlers::build_tool_router(
-            config,
-            &CoreToolDomainHost,
-            codex_tool_handlers::ToolRuntimeBuildParams {
-                mcp_tools: params.mcp_tools,
-                deferred_mcp_tools: params.deferred_mcp_tools,
-                discoverable_tools: params.discoverable_tools,
-                extension_tool_executors: params.extension_tool_executors,
-                dynamic_tools: params.dynamic_tools,
-                default_agent_type_description: params.default_agent_type_description,
-            },
-        )
+    ) -> Arc<CoreToolRuntimeRouter> {
+        Arc::new(codex_tool_handlers::SessionToolRouterAdapter::new(
+            codex_tool_handlers::build_tool_router(
+                config,
+                &CoreApplyPatchHandlerHost,
+                codex_tool_handlers::ToolRuntimeBuildParams {
+                    mcp_tools: params.mcp_tools,
+                    deferred_mcp_tools: params.deferred_mcp_tools,
+                    discoverable_tools: params.discoverable_tools,
+                    extension_tool_executors: params.extension_tool_executors,
+                    dynamic_tools: params.dynamic_tools,
+                    default_agent_type_description: params.default_agent_type_description,
+                    mcp_tool_call_host: TestMcpToolCallHost::default(),
+                    mcp_resource_host: TestMcpResourceHost::default(),
+                    goal_host: TestGoalHost::default(),
+                    workflow_host: TestWorkflowHost::default(),
+                    agent_job_host: TestAgentJobHost::default(),
+                },
+            ),
+            CoreToolDispatchHost,
+        ))
     }
 }
 

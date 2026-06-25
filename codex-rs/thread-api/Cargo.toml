@@ -13,6 +13,11 @@ doctest = false
 workspace = true
 
 [dependencies]
+codex-config-types = { workspace = true }
+codex-features = { workspace = true }
 codex-protocol = { workspace = true }
 codex-session-api = { workspace = true }
+codex-state-api = { workspace = true }
 codex-thread-store-api = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }

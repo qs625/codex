@@ -14,3 +14,12 @@ workspace = true
 
 [dependencies]
 codex-protocol = { workspace = true }
+codex-state-api = { workspace = true }
+codex-tool-config = { workspace = true }
+codex-tool-runtime-api = { workspace = true }
+codex-tool-types = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+codex-utils-output-truncation = { workspace = true }
+codex-workflow-api = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+tokio-util = { workspace = true, features = ["rt"] }

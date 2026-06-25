@@ -7,7 +7,6 @@ use codex_app_server_protocol::ThreadHistoryBuilder;
 use codex_app_server_protocol::ThreadTokenUsage;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnStatus;
-use codex_core::CodexThread;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::RolloutItem;
@@ -15,16 +14,37 @@ use codex_protocol::protocol::ThreadContextUsage;
 use codex_protocol::protocol::ThreadContextUsageCategoryBreakdown;
 use codex_protocol::protocol::ThreadContextUsageLoadedSkills;
 use codex_protocol::protocol::TokenUsageInfo;
+use futures::future::BoxFuture;
 
+use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::OutgoingMessageSender;
+
+pub(super) trait ThreadUsageSource: Send + Sync {
+    fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>>;
+
+    fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage>;
+}
+
+impl<T> ThreadUsageSource for T
+where
+    T: AppServerLiveThreadHandle + ?Sized,
+{
+    fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>> {
+        AppServerLiveThreadHandle::token_usage_info(self)
+    }
+
+    fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage> {
+        AppServerLiveThreadHandle::thread_context_usage(self)
+    }
+}
 
 pub(super) async fn send_thread_context_usage_update_to_connection(
     outgoing: &Arc<OutgoingMessageSender>,
     connection_id: ConnectionId,
     thread_id: ThreadId,
     thread: &Thread,
-    conversation: &CodexThread,
+    conversation: &(impl ThreadUsageSource + ?Sized),
     rollout_items: &[RolloutItem],
 ) {
     let Some(token_usage) = conversation
@@ -55,7 +75,7 @@ pub(super) async fn send_thread_context_usage_update_to_connection(
 }
 
 pub(super) async fn thread_context_usage_from_rollout_or_conversation(
-    conversation: &CodexThread,
+    conversation: &(impl ThreadUsageSource + ?Sized),
     rollout_items: &[RolloutItem],
 ) -> ThreadContextUsage {
     if let Some(usage) = latest_nonzero_thread_context_usage_from_rollout_items(rollout_items) {

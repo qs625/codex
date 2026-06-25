@@ -4,18 +4,14 @@ use std::time::Duration;
 use crate::outgoing_message::OutgoingMessageSender;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::SkillsChangedNotification;
-use codex_core::ThreadManager;
-use codex_core::config::Config;
-use codex_core::config::skill_config_layer_stack_from_config_layer_stack;
 use codex_core_skills_api::SharedSkillsRuntime;
-use codex_core_skills_api::SkillsLoadInput;
 use codex_file_watcher::FileWatcher;
 use codex_file_watcher::FileWatcherSubscriber;
 use codex_file_watcher::Receiver;
 use codex_file_watcher::ThrottledWatchReceiver;
 use codex_file_watcher::WatchPath;
 use codex_file_watcher::WatchRegistration;
-use codex_protocol::protocol::TurnEnvironmentSelection;
+use codex_thread_api::ThreadSkillWatchPath;
 use tracing::warn;
 
 #[cfg(not(test))]
@@ -44,49 +40,19 @@ impl SkillsWatcher {
         Arc::new(Self { subscriber })
     }
 
-    pub(crate) async fn register_thread_config(
+    pub(crate) fn register_thread_skill_watch_paths(
         &self,
-        config: &Config,
-        thread_manager: &ThreadManager,
-        environments: &[TurnEnvironmentSelection],
+        paths: Vec<ThreadSkillWatchPath>,
     ) -> WatchRegistration {
-        let Some(environment_selection) = environments.first() else {
-            return WatchRegistration::default();
-        };
-        let Some(environment) = thread_manager
-            .environment_provider()
-            .get_environment(&environment_selection.environment_id)
-        else {
-            warn!(
-                "failed to register skills watcher for unknown environment `{}`",
-                environment_selection.environment_id
-            );
-            return WatchRegistration::default();
-        };
-        if environment.is_remote() {
-            return WatchRegistration::default();
-        }
-
-        let plugins_input = config.plugins_config_input();
-        let plugin_runtime = thread_manager.plugin_runtime();
-        let plugin_outcome = plugin_runtime.plugins_for_config(&plugins_input).await;
-        let skills_input = SkillsLoadInput::new(
-            config.cwd.clone(),
-            plugin_outcome.effective_plugin_skill_roots(),
-            skill_config_layer_stack_from_config_layer_stack(&config.config_layer_stack),
-            config.bundled_skills_enabled(),
-        );
-        let roots = thread_manager
-            .skills_manager()
-            .skill_root_paths_for_config(&skills_input, Some(environment.get_filesystem()))
-            .await
-            .into_iter()
-            .map(|root| WatchPath {
-                path: root.into_path_buf(),
-                recursive: true,
-            })
-            .collect();
-        self.subscriber.register_paths(roots)
+        self.subscriber.register_paths(
+            paths
+                .into_iter()
+                .map(|path| WatchPath {
+                    path: path.path,
+                    recursive: path.recursive,
+                })
+                .collect(),
+        )
     }
 
     fn spawn_event_loop(

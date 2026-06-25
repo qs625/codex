@@ -14,6 +14,7 @@ use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::resolve_installation_id;
 use codex_login::AuthManager;
+use codex_thread_api::ThreadCreatedEvent;
 use codex_utils_cli::CliConfigOverrides;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -94,6 +95,7 @@ mod filters;
 mod fs_watch;
 mod fuzzy_file_search;
 pub mod in_process;
+mod live_thread_runtime;
 mod mcp_refresh;
 mod memories_runtime;
 mod message_processor;
@@ -1047,7 +1049,7 @@ pub async fn run_main_with_transport_options(
                                         initialized_connection_ids.clone(),
                                     )
                                     .await;
-                                if matches!(thread_created, codex_core::ThreadCreatedEvent::Started(_)) {
+                                if matches!(thread_created, ThreadCreatedEvent::Started(_)) {
                                     processor
                                         .emit_thread_started_notification_to_connections(
                                             thread_created.thread_id(),

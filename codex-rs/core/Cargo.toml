@@ -13,30 +13,19 @@ workspace = true
 
 [features]
 default = []
-test-support = [
-    "codex-api",
-    "codex-config/test-support",
-    "codex-config-local-loader",
-    "codex-default-client",
-    "codex-exec-server",
-    "codex-login",
-    "codex-mcp",
-    "codex-models-manager",
-    "codex-network-proxy",
-    "codex-core-skills",
-    "codex-state",
-    "codex-thread-store",
-    "codex-tool-handlers",
-]
+test-support = ["codex-session-runtime/test-support"]
 
 [dependencies]
+codex-session-runtime = { workspace = true }
+
+[dev-dependencies]
 anyhow = { workspace = true }
-async-channel = { workspace = true }
+assert_cmd = { workspace = true }
+assert_matches = { workspace = true }
+async-trait = { workspace = true }
+base64 = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
-codex-analytics-api = { workspace = true }
-codex-agent-runtime = { workspace = true }
-codex-agent-roles = { workspace = true }
-codex-api = { workspace = true, optional = true }
+codex-api = { workspace = true }
 codex-api-auth = { workspace = true }
 codex-api-provider = { workspace = true }
 codex-api-runtime-api = { workspace = true }
@@ -48,94 +37,130 @@ codex-code-mode-api = { workspace = true }
 codex-client-identity = { workspace = true }
 codex-client-types = { workspace = true }
 codex-command-runtime = { workspace = true }
-codex-config = { workspace = true }
-codex-connectors-api = { workspace = true }
-codex-connectors-types = { workspace = true }
+codex-config = { workspace = true, features = ["test-support"] }
 codex-config-diagnostics = { workspace = true }
 codex-config-edit = { workspace = true }
-codex-config-local-loader = { workspace = true, optional = true }
 codex-config-loader = { workspace = true }
+codex-config-local-loader = { workspace = true }
 codex-config-permissions = { workspace = true }
 codex-config-requirements = { workspace = true }
 codex-config-state = { workspace = true }
 codex-config-toml = { workspace = true }
 codex-config-types = { workspace = true }
+codex-connectors-api = { workspace = true }
+codex-connectors-types = { workspace = true }
 codex-context-manager = { workspace = true }
 codex-context-usage = { workspace = true }
+codex-core-plugins = { workspace = true }
 codex-core-plugins-api = { workspace = true }
+codex-core-skills = { workspace = true }
 codex-core-skills-api = { workspace = true }
-codex-core-skills = { workspace = true, optional = true }
-codex-default-client = { workspace = true, optional = true }
-codex-exec-server-protocol = { workspace = true }
+codex-default-client = { workspace = true }
+codex-exec-server = { workspace = true }
 codex-exec-server-api = { workspace = true }
-codex-exec-server = { workspace = true, optional = true }
+codex-exec-server-protocol = { workspace = true }
+codex-execpolicy = { workspace = true }
+codex-execpolicy-api = { workspace = true }
+codex-execpolicy-loader = { workspace = true }
 codex-extension-api = { workspace = true }
 codex-features = { workspace = true }
 codex-feedback-api = { workspace = true }
-codex-login = { workspace = true, optional = true, features = ["model-provider-auth"] }
-codex-memories-read-api = { workspace = true }
-codex-mcp = { workspace = true, optional = true }
-codex-mcp-runtime = { workspace = true }
+codex-file-system = { workspace = true }
+codex-git-info = { workspace = true }
+codex-guardian = { workspace = true }
+codex-hooks = { workspace = true }
+codex-hooks-api = { workspace = true }
+codex-login = { workspace = true, features = ["model-provider-auth"] }
+codex-mcp = { workspace = true }
+codex-mcp-runtime = { workspace = true, features = ["test-support"] }
 codex-mcp-runtime-api = { workspace = true }
 codex-mcp-tool-types = { workspace = true }
 codex-mcp-types = { workspace = true }
+codex-memories-read-api = { workspace = true }
 codex-metrics-api = { workspace = true }
 codex-model-client = { workspace = true }
 codex-model-input = { workspace = true }
 codex-model-provider-api = { workspace = true }
 codex-model-provider-info = { workspace = true }
+codex-models-manager = { workspace = true }
 codex-models-manager-api = { workspace = true }
-codex-models-manager = { workspace = true, optional = true }
-codex-shell-command = { workspace = true }
-codex-shell-utils = { workspace = true }
-codex-execpolicy-api = { workspace = true }
-codex-file-system = { workspace = true }
-codex-git-info = { workspace = true }
-codex-guardian = { workspace = true }
-codex-hooks-api = { workspace = true }
-codex-state-api = { workspace = true }
-codex-network-proxy = { workspace = true, optional = true }
+codex-network-proxy = { workspace = true }
 codex-network-proxy-api = { workspace = true }
+codex-openai-files = { workspace = true }
 codex-openai-files-api = { workspace = true }
+codex-otel = { workspace = true }
 codex-permissions-runtime = { workspace = true }
-codex-process-exec = { workspace = true }
-codex-session-runtime = { workspace = true }
-codex-session-telemetry-api = { workspace = true }
+codex-plugin = { workspace = true }
 codex-plugin-types = { workspace = true }
+codex-process-exec = { workspace = true }
 codex-protocol = { workspace = true }
 codex-realtime = { workspace = true }
-codex-rollout-trace-api = { workspace = true }
+codex-rollout = { workspace = true }
 codex-rollout-api = { workspace = true }
+codex-rollout-trace = { workspace = true }
+codex-rollout-trace-api = { workspace = true }
+codex-sandboxing = { workspace = true }
 codex-sandboxing-api = { workspace = true }
 codex-session-api = { workspace = true }
-codex-state = { workspace = true, optional = true }
+codex-session-runtime = { workspace = true, features = ["test-support"] }
+codex-session-telemetry-api = { workspace = true }
+codex-shell-command = { workspace = true }
+codex-shell-utils = { workspace = true }
+codex-state = { workspace = true }
+codex-state-api = { workspace = true }
+codex-test-binary-support = { workspace = true }
 codex-thread-api = { workspace = true }
+codex-thread-store = { workspace = true }
 codex-thread-store-api = { workspace = true }
-codex-thread-store = { workspace = true, optional = true }
 codex-tool-config = { workspace = true }
-codex-tool-handlers = { workspace = true, optional = true }
+codex-tool-handlers = { workspace = true }
 codex-tool-planning = { workspace = true }
 codex-tool-runtime = { workspace = true }
 codex-tool-runtime-api = { workspace = true }
+codex-trace-context = { workspace = true }
 codex-turn-items = { workspace = true }
 codex-turn-metadata = { workspace = true }
-codex-trace-context = { workspace = true }
 codex-user-info = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-backoff = { workspace = true }
-codex-utils-image = { workspace = true }
+codex-utils-cargo-bin = { workspace = true }
 codex-utils-home-dir = { workspace = true }
+codex-utils-image = { workspace = true }
 codex-utils-output-truncation = { workspace = true }
 codex-utils-path = { workspace = true }
 codex-utils-pty = { workspace = true }
-codex-utils-string = { workspace = true }
 codex-utils-stream-parser = { workspace = true }
+codex-utils-string = { workspace = true }
 codex-utils-template = { workspace = true }
+codex-workflow = { workspace = true }
 codex-workflow-api = { workspace = true }
+core_test_support = { workspace = true }
+ctor = { workspace = true }
+dirs = { workspace = true }
+dunce = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
+image = { workspace = true, features = ["jpeg", "png", "webp"] }
+insta = { workspace = true }
+libc = { workspace = true }
+maplit = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true, features = [
+    "experimental_metrics_custom_reader",
+    "metrics",
+] }
+predicates = { workspace = true }
+pretty_assertions = { workspace = true }
+regex-lite = { workspace = true }
+reqwest = { workspace = true, features = ["json", "stream"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+serial_test = { workspace = true }
+shlex = { workspace = true }
+similar = { workspace = true }
+tempfile = { workspace = true }
+test-case = "3.3.1"
+test-log = { workspace = true }
 tokio = { workspace = true, features = [
     "io-std",
     "macros",
@@ -143,88 +168,16 @@ tokio = { workspace = true, features = [
     "rt-multi-thread",
     "signal",
 ] }
+tokio-tungstenite = { workspace = true }
 tokio-util = { workspace = true, features = ["rt"] }
 toml = { workspace = true }
-tracing = { workspace = true, features = ["log"] }
-uuid = { workspace = true, features = ["serde", "v4", "v5"] }
-
-# Build OpenSSL from source for musl builds.
-[target.x86_64-unknown-linux-musl.dependencies]
-openssl-sys = { workspace = true, features = ["vendored"] }
-
-# Build OpenSSL from source for musl builds.
-[target.aarch64-unknown-linux-musl.dependencies]
-openssl-sys = { workspace = true, features = ["vendored"] }
-
-[target.'cfg(unix)'.dependencies]
-codex-shell-escalation = { workspace = true }
-
-[target.'cfg(windows)'.dependencies]
-codex-windows-sandbox = { package = "codex-windows-sandbox", path = "../windows-sandbox-rs", default-features = false }
-
-[dev-dependencies]
-assert_cmd = { workspace = true }
-assert_matches = { workspace = true }
-async-trait = { workspace = true }
-base64 = { workspace = true }
-codex-api = { workspace = true }
-codex-config = { workspace = true, features = ["test-support"] }
-codex-core-plugins = { workspace = true }
-codex-core-skills = { workspace = true }
-codex-default-client = { workspace = true }
-codex-execpolicy = { workspace = true }
-codex-execpolicy-loader = { workspace = true }
-codex-exec-server = { workspace = true }
-codex-hooks = { workspace = true }
-codex-login = { workspace = true, features = ["model-provider-auth"] }
-codex-mcp-runtime = { workspace = true, features = ["test-support"] }
-codex-mcp = { workspace = true }
-codex-models-manager = { workspace = true }
-codex-network-proxy = { workspace = true }
-codex-openai-files = { workspace = true }
-codex-otel = { workspace = true }
-codex-plugin = { workspace = true }
-codex-rollout = { workspace = true }
-codex-rollout-trace = { workspace = true }
-codex-sandboxing = { workspace = true }
-codex-state = { workspace = true }
-codex-thread-store = { workspace = true }
-codex-tool-handlers = { workspace = true }
-codex-test-binary-support = { workspace = true }
-codex-workflow = { workspace = true }
-codex-utils-cargo-bin = { workspace = true }
-core_test_support = { workspace = true }
-ctor = { workspace = true }
-dirs = { workspace = true }
-dunce = { workspace = true }
-insta = { workspace = true }
-image = { workspace = true, features = ["jpeg", "png", "webp"] }
-libc = { workspace = true }
-maplit = { workspace = true }
-opentelemetry = { workspace = true }
-predicates = { workspace = true }
-pretty_assertions = { workspace = true }
-regex-lite = { workspace = true }
-reqwest = { workspace = true, features = ["json", "stream"] }
-test-case = "3.3.1"
-opentelemetry_sdk = { workspace = true, features = [
-    "experimental_metrics_custom_reader",
-    "metrics",
-] }
-serial_test = { workspace = true }
-shlex = { workspace = true }
-similar = { workspace = true }
-tempfile = { workspace = true }
-test-log = { workspace = true }
 toml_edit = { workspace = true }
+tracing = { workspace = true, features = ["log"] }
 tracing-opentelemetry = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-test = { workspace = true, features = ["no-env-filter"] }
-tokio-tungstenite = { workspace = true }
+uuid = { workspace = true, features = ["serde", "v4", "v5"] }
 walkdir = { workspace = true }
 which = { workspace = true }
 wiremock = { workspace = true }
 zstd = { workspace = true }
-
-[package.metadata.cargo-shear]
-ignored = ["openssl-sys"]

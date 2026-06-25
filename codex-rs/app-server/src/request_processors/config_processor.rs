@@ -53,6 +53,7 @@ use codex_login::AuthManager;
 use codex_model_provider::create_model_provider;
 use codex_plugin::PluginId;
 use codex_protocol::config_types::WebSearchMode;
+use futures::future::BoxFuture;
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -67,32 +68,67 @@ const SUPPORTED_EXPERIMENTAL_FEATURE_ENABLEMENT: &[&str] = &[
     "tool_call_mcp_elicitation",
 ];
 
+pub(crate) trait ConfigRuntime: Send + Sync {
+    fn clear_skills_cache(&self);
+
+    fn plugin_runtime(&self) -> codex_core_plugins_api::SharedPluginRuntime;
+
+    fn refresh_live_threads_runtime_config(
+        &self,
+        next_config: codex_core::config::Config,
+    ) -> BoxFuture<'_, ()>;
+}
+
+impl ConfigRuntime for ThreadManager {
+    fn clear_skills_cache(&self) {
+        self.skills_manager().clear_cache();
+    }
+
+    fn plugin_runtime(&self) -> codex_core_plugins_api::SharedPluginRuntime {
+        ThreadManager::plugin_runtime(self)
+    }
+
+    fn refresh_live_threads_runtime_config(
+        &self,
+        next_config: codex_core::config::Config,
+    ) -> BoxFuture<'_, ()> {
+        Box::pin(ThreadManager::refresh_live_threads_runtime_config(
+            self,
+            next_config,
+        ))
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct ConfigRequestProcessor {
     outgoing: Arc<OutgoingMessageSender>,
     config_manager: ConfigManager,
     auth_manager: Arc<AuthManager>,
-    thread_manager: Arc<ThreadManager>,
+    runtime: Arc<dyn ConfigRuntime>,
     plugins_manager: Arc<PluginsManager>,
     environment_manager: Arc<EnvironmentManager>,
     analytics_events_client: AnalyticsEventsClient,
 }
 
 impl ConfigRequestProcessor {
-    pub(crate) fn new(
+    pub(crate) fn new<R>(
         outgoing: Arc<OutgoingMessageSender>,
         config_manager: ConfigManager,
         auth_manager: Arc<AuthManager>,
-        thread_manager: Arc<ThreadManager>,
+        runtime: Arc<R>,
         plugins_manager: Arc<PluginsManager>,
         environment_manager: Arc<EnvironmentManager>,
         analytics_events_client: AnalyticsEventsClient,
-    ) -> Self {
+    ) -> Self
+    where
+        R: ConfigRuntime + 'static,
+    {
+        let runtime: Arc<dyn ConfigRuntime> = runtime;
         Self {
             outgoing,
             config_manager,
             auth_manager,
-            thread_manager,
+            runtime,
             plugins_manager,
             environment_manager,
             analytics_events_client,
@@ -196,7 +232,7 @@ impl ConfigRequestProcessor {
 
     pub(crate) async fn handle_config_mutation(&self) {
         self.plugins_manager.clear_cache();
-        self.thread_manager.skills_manager().clear_cache();
+        self.runtime.clear_skills_cache();
     }
 
     async fn handle_config_mutation_result<T>(
@@ -232,7 +268,7 @@ impl ConfigRequestProcessor {
 
         let outgoing = Arc::clone(&self.outgoing);
         let environment_manager = Arc::clone(&self.environment_manager);
-        let plugin_runtime = self.thread_manager.plugin_runtime();
+        let plugin_runtime = self.runtime.plugin_runtime();
         tokio::spawn(async move {
             let chatgpt_config = chatgpt_config_from_core(&config);
             let mcp_auth_runtime = codex_mcp::DefaultMcpAuthRuntime;
@@ -397,13 +433,9 @@ impl ConfigRequestProcessor {
                 return;
             }
         };
-        let thread_ids = self.thread_manager.list_thread_ids().await;
-        for thread_id in thread_ids {
-            let Ok(thread) = self.thread_manager.get_thread(thread_id).await else {
-                continue;
-            };
-            thread.refresh_runtime_config(next_config.clone()).await;
-        }
+        self.runtime
+            .refresh_live_threads_runtime_config(next_config)
+            .await;
     }
 
     async fn emit_plugin_toggle_events(

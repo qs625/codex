@@ -3,10 +3,6 @@ use crate::ShellRuntimeHost;
 use crate::ToolEventHost;
 use crate::ToolOrchestratorHost;
 use crate::ToolSandboxContext;
-use codex_agent_runtime::AgentMetadata;
-use codex_agent_runtime::AgentMode;
-use codex_agent_runtime::ListedAgent;
-use codex_agent_runtime::SpawnAgentForkMode;
 use codex_code_mode_api::ExecuteRequest;
 use codex_code_mode_api::RuntimeResponse;
 use codex_code_mode_api::WaitOutcome;
@@ -22,7 +18,6 @@ use codex_exec_server_api::ExecEnvironment;
 use codex_file_system::FileSystemSandboxContext;
 use codex_permissions_runtime::ExecPolicyApprovalRequest;
 use codex_process_exec::ExecParams;
-use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::WindowsSandboxLevel;
@@ -41,13 +36,10 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::models::SandboxPermissions;
 use codex_protocol::models::ShellCommandToolCallParams;
 use codex_protocol::models::WorkflowRunProgressKind;
-use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::plan_tool::UpdatePlanArgs;
 use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::McpInvocation;
 use codex_protocol::protocol::TerminalInteractionEvent;
 use codex_protocol::protocol::ThreadGoal;
@@ -68,6 +60,7 @@ use codex_workflow_api::WorkflowRegistry;
 use codex_workflow_api::WorkflowRun;
 use codex_workflow_api::WorkflowRunController;
 use codex_workflow_api::WorkflowRuntimeBridge;
+use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
@@ -503,74 +496,191 @@ pub trait McpResourceHost: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = ()> + Send + 'a;
 }
 
-/// Host capabilities required by regular function-style tool handlers.
+/// Session-side capability required by regular function-style tools.
 ///
-/// These methods keep session/turn state, event sinks, and external client
-/// request/response wiring in the embedding crate while `codex-tool-runtime`
-/// owns argument parsing, model-visible output shaping, and tool specs.
-pub trait FunctionToolHost: Clone + Send + Sync + 'static {
-    type Session: Clone + Send + Sync + 'static;
-    type Turn: Clone + Send + Sync + 'static;
-    type Tracker: Clone + Send + Sync + 'static;
-    type DiffContext: 'static;
+/// The unified tool router passes the invocation session through to handlers;
+/// handlers depend on this runtime API rather than a concrete session type or a
+/// broad host facade.
+pub trait FunctionToolSession<Turn>: Send + Sync + 'static {
+    fn function_tool_session_collaboration_mode(
+        &self,
+    ) -> impl Future<Output = ModeKind> + Send + '_;
 
-    fn turn_collaboration_mode(&self, turn: &Self::Turn) -> ModeKind;
-
-    fn turn_cwd(&self, turn: &Self::Turn) -> AbsolutePathBuf;
-
-    fn turn_id(&self, turn: &Self::Turn) -> String;
-
-    fn turn_is_non_root_agent(&self, turn: &Self::Turn) -> bool;
-
-    fn turn_supports_image_input(&self, turn: &Self::Turn) -> bool;
-
-    fn turn_can_request_original_image_detail(&self, turn: &Self::Turn) -> bool;
-
-    fn session_collaboration_mode<'a>(
+    fn function_tool_emit_plan_update<'a>(
         &'a self,
-        session: &'a Self::Session,
-    ) -> impl Future<Output = ModeKind> + Send + 'a;
-
-    fn emit_plan_update<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        turn: &'a Self::Turn,
+        turn: &'a Turn,
         args: UpdatePlanArgs,
     ) -> impl Future<Output = ()> + Send + 'a;
 
-    fn emit_image_view<'a>(
+    fn function_tool_emit_image_view<'a>(
         &'a self,
-        session: &'a Self::Session,
-        turn: &'a Self::Turn,
+        turn: &'a Turn,
         call_id: String,
         path: AbsolutePathBuf,
     ) -> impl Future<Output = ()> + Send + 'a;
 
-    fn request_permissions<'a>(
+    fn function_tool_request_permissions<'a>(
         &'a self,
-        session: &'a Self::Session,
-        turn: &'a Self::Turn,
+        turn: &'a Turn,
         call_id: String,
         args: RequestPermissionsArgs,
         cancellation_token: CancellationToken,
     ) -> impl Future<Output = Option<RequestPermissionsResponse>> + Send + 'a;
 
-    fn request_user_input<'a>(
+    fn function_tool_request_user_input<'a>(
         &'a self,
-        session: &'a Self::Session,
-        turn: &'a Self::Turn,
+        turn: &'a Turn,
         call_id: String,
         args: RequestUserInputArgs,
     ) -> impl Future<Output = Option<RequestUserInputResponse>> + Send + 'a;
 
-    fn request_dynamic_tool<'a>(
+    fn function_tool_request_dynamic_tool<'a>(
         &'a self,
-        session: &'a Self::Session,
-        turn: &'a Self::Turn,
+        turn: &'a Turn,
         call_id: String,
         tool_name: ToolName,
         arguments: serde_json::Value,
     ) -> impl Future<Output = Option<DynamicToolResponse>> + Send + 'a;
+}
+
+/// Runtime-owned implementation contract behind [`FunctionToolSession`].
+pub trait FunctionToolSessionRuntime<Turn>: Send + Sync + 'static {
+    fn function_tool_session_collaboration_mode(
+        session: &Arc<Self>,
+    ) -> impl Future<Output = ModeKind> + Send + '_;
+
+    fn function_tool_emit_plan_update<'a>(
+        session: &'a Arc<Self>,
+        turn: &'a Turn,
+        args: UpdatePlanArgs,
+    ) -> impl Future<Output = ()> + Send + 'a;
+
+    fn function_tool_emit_image_view<'a>(
+        session: &'a Arc<Self>,
+        turn: &'a Turn,
+        call_id: String,
+        path: AbsolutePathBuf,
+    ) -> impl Future<Output = ()> + Send + 'a;
+
+    fn function_tool_request_permissions<'a>(
+        session: &'a Arc<Self>,
+        turn: &'a Turn,
+        call_id: String,
+        args: RequestPermissionsArgs,
+        cancellation_token: CancellationToken,
+    ) -> impl Future<Output = Option<RequestPermissionsResponse>> + Send + 'a;
+
+    fn function_tool_request_user_input<'a>(
+        session: &'a Arc<Self>,
+        turn: &'a Turn,
+        call_id: String,
+        args: RequestUserInputArgs,
+    ) -> impl Future<Output = Option<RequestUserInputResponse>> + Send + 'a;
+
+    fn function_tool_request_dynamic_tool<'a>(
+        session: &'a Arc<Self>,
+        turn: &'a Turn,
+        call_id: String,
+        tool_name: ToolName,
+        arguments: serde_json::Value,
+    ) -> impl Future<Output = Option<DynamicToolResponse>> + Send + 'a;
+}
+
+/// Turn-side metadata required by regular function-style tools.
+pub trait FunctionToolTurn: Send + Sync + 'static {
+    fn function_tool_collaboration_mode(&self) -> ModeKind;
+
+    fn function_tool_cwd(&self) -> AbsolutePathBuf;
+
+    fn function_tool_is_non_root_agent(&self) -> bool;
+
+    fn function_tool_supports_image_input(&self) -> bool;
+
+    fn function_tool_can_request_original_image_detail(&self) -> bool;
+}
+
+impl<Session, Turn> FunctionToolSession<Turn> for Arc<Session>
+where
+    Session: FunctionToolSessionRuntime<Turn>,
+    Turn: Send + Sync + 'static,
+{
+    fn function_tool_session_collaboration_mode(
+        &self,
+    ) -> impl Future<Output = ModeKind> + Send + '_ {
+        Session::function_tool_session_collaboration_mode(self)
+    }
+
+    fn function_tool_emit_plan_update<'a>(
+        &'a self,
+        turn: &'a Turn,
+        args: UpdatePlanArgs,
+    ) -> impl Future<Output = ()> + Send + 'a {
+        Session::function_tool_emit_plan_update(self, turn, args)
+    }
+
+    fn function_tool_emit_image_view<'a>(
+        &'a self,
+        turn: &'a Turn,
+        call_id: String,
+        path: AbsolutePathBuf,
+    ) -> impl Future<Output = ()> + Send + 'a {
+        Session::function_tool_emit_image_view(self, turn, call_id, path)
+    }
+
+    fn function_tool_request_permissions<'a>(
+        &'a self,
+        turn: &'a Turn,
+        call_id: String,
+        args: RequestPermissionsArgs,
+        cancellation_token: CancellationToken,
+    ) -> impl Future<Output = Option<RequestPermissionsResponse>> + Send + 'a {
+        Session::function_tool_request_permissions(self, turn, call_id, args, cancellation_token)
+    }
+
+    fn function_tool_request_user_input<'a>(
+        &'a self,
+        turn: &'a Turn,
+        call_id: String,
+        args: RequestUserInputArgs,
+    ) -> impl Future<Output = Option<RequestUserInputResponse>> + Send + 'a {
+        Session::function_tool_request_user_input(self, turn, call_id, args)
+    }
+
+    fn function_tool_request_dynamic_tool<'a>(
+        &'a self,
+        turn: &'a Turn,
+        call_id: String,
+        tool_name: ToolName,
+        arguments: serde_json::Value,
+    ) -> impl Future<Output = Option<DynamicToolResponse>> + Send + 'a {
+        Session::function_tool_request_dynamic_tool(self, turn, call_id, tool_name, arguments)
+    }
+}
+
+impl<Turn> FunctionToolTurn for Arc<Turn>
+where
+    Turn: FunctionToolTurn,
+{
+    fn function_tool_collaboration_mode(&self) -> ModeKind {
+        self.as_ref().function_tool_collaboration_mode()
+    }
+
+    fn function_tool_cwd(&self) -> AbsolutePathBuf {
+        self.as_ref().function_tool_cwd()
+    }
+
+    fn function_tool_is_non_root_agent(&self) -> bool {
+        self.as_ref().function_tool_is_non_root_agent()
+    }
+
+    fn function_tool_supports_image_input(&self) -> bool {
+        self.as_ref().function_tool_supports_image_input()
+    }
+
+    fn function_tool_can_request_original_image_detail(&self) -> bool {
+        self.as_ref()
+            .function_tool_can_request_original_image_detail()
+    }
 }
 
 /// Host capabilities required by persisted goal model tools.
@@ -706,198 +816,37 @@ pub trait WorkflowToolHost: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = ()> + Send + 'a;
 }
 
-#[derive(Clone, Debug)]
-pub struct SpawnAgentToolRequest {
-    pub message: String,
-    pub task_name: String,
-    pub agent_type: Option<String>,
-    pub cwd: Option<AbsolutePathBuf>,
-    pub model: Option<String>,
-    pub reasoning_effort: Option<ReasoningEffort>,
-    pub service_tier: Option<String>,
-    pub agent_mode: Option<AgentMode>,
-    pub fork_mode: Option<SpawnAgentForkMode>,
-}
+pub use codex_agent_runtime::CloseAgentToolResult;
+pub use codex_agent_runtime::ListAgentsToolResult;
+pub use codex_agent_runtime::SpawnAgentToolRequest;
+pub use codex_agent_runtime::SpawnAgentToolResult;
+pub use codex_agent_runtime::WaitAgentReason;
+pub use codex_agent_runtime::WaitAgentToolResult;
 
-#[derive(Debug, serde::Serialize)]
-#[serde(untagged)]
-pub enum SpawnAgentToolResult {
-    WithNickname {
-        task_name: String,
-        nickname: Option<String>,
-    },
-    HiddenMetadata {
-        task_name: String,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WaitAgentReason {
-    PendingMessage,
-    MailboxMessage,
-    StatusUpdate,
-    FinalStatus,
-    Timeout,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct WaitAgentToolResult {
-    pub target: String,
-    pub agent_name: String,
-    pub reason: WaitAgentReason,
-    pub timed_out: bool,
-    pub status: AgentStatus,
-    pub message_operation: Option<String>,
-    pub message_author: Option<String>,
-    pub message_excerpt: Option<String>,
-    pub waited_ms: i64,
-    pub initial_timeout_ms: i64,
-    pub current_timeout_ms: i64,
-    pub hard_cap_timeout_ms: i64,
-}
-
-#[derive(Debug, serde::Serialize)]
-pub struct CloseAgentToolResult {
-    pub previous_status: AgentStatus,
-}
-
-#[derive(Debug, serde::Serialize)]
-pub struct ListAgentsToolResult {
-    pub agents: Vec<ListedAgent>,
-}
-
-/// Host capabilities required by MultiAgent V2 collaboration tools.
+/// Runtime capability used by workflow SDK agent operations.
 ///
-/// The tool runtime owns tool specs, argument parsing, result shaping, and
-/// wait/backoff/event sequencing. The embedding host owns concrete
-/// AgentControl, Session/Turn state, and spawn config construction.
-pub trait MultiAgentToolHost: Clone + Send + Sync + 'static {
-    type Session: Clone + Send + Sync + 'static;
-    type Turn: Clone + Send + Sync + 'static;
-    type Tracker: Clone + Send + Sync + 'static;
-    type DiffContext: 'static;
-
-    fn thread_id(&self, session: &Self::Session) -> ThreadId;
-
-    fn sender_agent_path(&self, session: &Self::Session, turn: &Self::Turn) -> AgentPath;
-
-    fn send_collab_event<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        turn: &'a Self::Turn,
-        event: EventMsg,
-    ) -> impl Future<Output = ()> + Send + 'a;
-
-    fn resolve_agent_target<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        turn: &'a Self::Turn,
-        target: &'a str,
-    ) -> impl Future<Output = Result<ThreadId, FunctionCallError>> + Send + 'a;
-
-    fn agent_metadata(&self, session: &Self::Session, thread_id: ThreadId) -> AgentMetadata;
-
-    fn agent_status<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = AgentStatus> + Send + 'a;
-
-    fn subscribe_agent_status<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = Result<watch::Receiver<AgentStatus>, FunctionCallError>> + Send + 'a;
-
-    fn subscribe_mailbox_seq(&self, session: &Self::Session) -> watch::Receiver<u64>;
-
-    fn find_pending_inter_agent_communication<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        receiver_thread_id: ThreadId,
-        receiver_agent_path: &'a AgentPath,
-    ) -> impl Future<Output = Option<InterAgentCommunication>> + Send + 'a;
-
-    fn wait_agent_current_window<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        sender_thread_id: ThreadId,
-        receiver_thread_id: ThreadId,
-        initial_timeout_ms: i64,
-        hard_cap_timeout_ms: i64,
-    ) -> impl Future<Output = Duration> + Send + 'a;
-
-    fn advance_wait_agent_backoff<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        sender_thread_id: ThreadId,
-        receiver_thread_id: ThreadId,
-    ) -> impl Future<Output = ()> + Send + 'a;
-
-    fn reset_wait_agent_backoff<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        sender_thread_id: ThreadId,
-        receiver_thread_id: ThreadId,
-    ) -> impl Future<Output = ()> + Send + 'a;
-
-    fn wait_agent_timeouts(&self, turn: &Self::Turn) -> (i64, i64);
-
-    fn register_session_root(&self, session: &Self::Session, turn: &Self::Turn);
-
-    fn list_agents<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        turn: &'a Self::Turn,
-        path_prefix: Option<&'a str>,
-    ) -> impl Future<Output = Result<Vec<ListedAgent>, FunctionCallError>> + Send + 'a;
-
-    fn send_followup_task<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        sender_agent_path: AgentPath,
-        receiver_thread_id: ThreadId,
-        receiver_agent_path: AgentPath,
-        prompt: String,
-    ) -> impl Future<Output = Result<(), FunctionCallError>> + Send + 'a;
-
-    fn mark_direct_child_completion_pending<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        receiver_thread_id: ThreadId,
-    ) -> impl Future<Output = ()> + Send + 'a;
-
-    fn mark_direct_child_completion_received<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        receiver_thread_id: ThreadId,
-    ) -> impl Future<Output = bool> + Send + 'a;
-
-    fn clear_direct_child_completion_pending<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        receiver_thread_id: ThreadId,
-    ) -> impl Future<Output = bool> + Send + 'a;
-
-    fn maybe_notify_parent_of_final_status<'a>(
-        &'a self,
-        session: &'a Self::Session,
-    ) -> impl Future<Output = ()> + Send + 'a;
-
-    fn close_agent<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = Result<(), FunctionCallError>> + Send + 'a;
-
-    fn spawn_agent<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        turn: &'a Self::Turn,
-        call_id: &'a str,
+/// Implementations own how workflow runtime requests are mapped onto concrete
+/// agent tools and session/turn state. Workflow bridges depend on this object
+/// safe interface instead of knowing the concrete multi-agent tool host shape.
+pub trait WorkflowAgentToolRuntime: Send + Sync {
+    fn spawn_agent(
+        &self,
+        call_id: String,
         request: SpawnAgentToolRequest,
-    ) -> impl Future<Output = Result<SpawnAgentToolResult, FunctionCallError>> + Send + 'a;
+    ) -> BoxFuture<'_, Result<SpawnAgentToolResult, FunctionCallError>>;
+
+    fn followup_agent(
+        &self,
+        call_id: String,
+        target: String,
+        message: String,
+    ) -> BoxFuture<'_, Result<(), FunctionCallError>>;
+
+    fn wait_agent(
+        &self,
+        call_id: String,
+        target: String,
+    ) -> BoxFuture<'_, Result<WaitAgentToolResult, FunctionCallError>>;
 }
 
 pub struct RequestPluginInstallContext {
@@ -1009,14 +958,11 @@ pub trait CodeModeToolHost: ApplyPatchHandlerHost {
     );
 }
 
-/// Coarse host facade for the tool domain.
+/// Legacy coarse host facade for tool handlers that have not yet moved to
+/// explicit owner API contracts.
 ///
-/// This is the migration target for moving `core/src/tools` as a domain: tool
-/// runtime code should depend on this typed service facade, while `codex-core`
-/// implements it with `Session` / `TurnContext` adapters. Narrow subtraits may
-/// still exist to document focused capability sets, but new tool-domain moves
-/// should compose through this facade instead of growing one-off core-facing
-/// adapter traits.
+/// New or migrated handlers should use narrow injected hosts instead of adding
+/// more capabilities to this facade.
 pub trait ToolDomainHost:
     ShellCommandHandlerHost
     + CommandInteractionHost<
@@ -1024,43 +970,8 @@ pub trait ToolDomainHost:
         Turn = <Self as ApplyPatchHandlerHost>::Turn,
         Tracker = <Self as ApplyPatchHandlerHost>::Tracker,
         DiffContext = <Self as ApplyPatchHandlerHost>::DiffContext,
-    > + McpResourceHost<
-        Session = <Self as ApplyPatchHandlerHost>::Session,
-        Turn = <Self as ApplyPatchHandlerHost>::Turn,
-        Tracker = <Self as ApplyPatchHandlerHost>::Tracker,
-        DiffContext = <Self as ApplyPatchHandlerHost>::DiffContext,
-    > + McpToolCallHost<
-        Session = <Self as ApplyPatchHandlerHost>::Session,
-        Turn = <Self as ApplyPatchHandlerHost>::Turn,
-        Tracker = <Self as ApplyPatchHandlerHost>::Tracker,
-        DiffContext = <Self as ApplyPatchHandlerHost>::DiffContext,
-    > + FunctionToolHost<
-        Session = <Self as ApplyPatchHandlerHost>::Session,
-        Turn = <Self as ApplyPatchHandlerHost>::Turn,
-        Tracker = <Self as ApplyPatchHandlerHost>::Tracker,
-        DiffContext = <Self as ApplyPatchHandlerHost>::DiffContext,
-    > + GoalToolHost<
-        Session = <Self as ApplyPatchHandlerHost>::Session,
-        Turn = <Self as ApplyPatchHandlerHost>::Turn,
-        Tracker = <Self as ApplyPatchHandlerHost>::Tracker,
-        DiffContext = <Self as ApplyPatchHandlerHost>::DiffContext,
-    > + AgentJobToolHost<
-        Session = <Self as ApplyPatchHandlerHost>::Session,
-        Turn = <Self as ApplyPatchHandlerHost>::Turn,
-        Tracker = <Self as ApplyPatchHandlerHost>::Tracker,
-        DiffContext = <Self as ApplyPatchHandlerHost>::DiffContext,
-    > + WorkflowToolHost<
-        Session = <Self as ApplyPatchHandlerHost>::Session,
-        Turn = <Self as ApplyPatchHandlerHost>::Turn,
-        Tracker = <Self as ApplyPatchHandlerHost>::Tracker,
-        DiffContext = <Self as ApplyPatchHandlerHost>::DiffContext,
-    > + ExecCommandHandlerHost
-    + MultiAgentToolHost<
-        Session = <Self as ApplyPatchHandlerHost>::Session,
-        Turn = <Self as ApplyPatchHandlerHost>::Turn,
-        Tracker = <Self as ApplyPatchHandlerHost>::Tracker,
-        DiffContext = <Self as ApplyPatchHandlerHost>::DiffContext,
     > + RequestPluginInstallHost
+    + ExecCommandHandlerHost
     + CodeModeToolHost
 {
 }
@@ -1072,43 +983,8 @@ impl<T> ToolDomainHost for T where
             Turn = <T as ApplyPatchHandlerHost>::Turn,
             Tracker = <T as ApplyPatchHandlerHost>::Tracker,
             DiffContext = <T as ApplyPatchHandlerHost>::DiffContext,
-        > + McpResourceHost<
-            Session = <T as ApplyPatchHandlerHost>::Session,
-            Turn = <T as ApplyPatchHandlerHost>::Turn,
-            Tracker = <T as ApplyPatchHandlerHost>::Tracker,
-            DiffContext = <T as ApplyPatchHandlerHost>::DiffContext,
-        > + McpToolCallHost<
-            Session = <T as ApplyPatchHandlerHost>::Session,
-            Turn = <T as ApplyPatchHandlerHost>::Turn,
-            Tracker = <T as ApplyPatchHandlerHost>::Tracker,
-            DiffContext = <T as ApplyPatchHandlerHost>::DiffContext,
-        > + FunctionToolHost<
-            Session = <T as ApplyPatchHandlerHost>::Session,
-            Turn = <T as ApplyPatchHandlerHost>::Turn,
-            Tracker = <T as ApplyPatchHandlerHost>::Tracker,
-            DiffContext = <T as ApplyPatchHandlerHost>::DiffContext,
-        > + GoalToolHost<
-            Session = <T as ApplyPatchHandlerHost>::Session,
-            Turn = <T as ApplyPatchHandlerHost>::Turn,
-            Tracker = <T as ApplyPatchHandlerHost>::Tracker,
-            DiffContext = <T as ApplyPatchHandlerHost>::DiffContext,
-        > + AgentJobToolHost<
-            Session = <T as ApplyPatchHandlerHost>::Session,
-            Turn = <T as ApplyPatchHandlerHost>::Turn,
-            Tracker = <T as ApplyPatchHandlerHost>::Tracker,
-            DiffContext = <T as ApplyPatchHandlerHost>::DiffContext,
-        > + WorkflowToolHost<
-            Session = <T as ApplyPatchHandlerHost>::Session,
-            Turn = <T as ApplyPatchHandlerHost>::Turn,
-            Tracker = <T as ApplyPatchHandlerHost>::Tracker,
-            DiffContext = <T as ApplyPatchHandlerHost>::DiffContext,
-        > + ExecCommandHandlerHost
-        + MultiAgentToolHost<
-            Session = <T as ApplyPatchHandlerHost>::Session,
-            Turn = <T as ApplyPatchHandlerHost>::Turn,
-            Tracker = <T as ApplyPatchHandlerHost>::Tracker,
-            DiffContext = <T as ApplyPatchHandlerHost>::DiffContext,
         > + RequestPluginInstallHost
+        + ExecCommandHandlerHost
         + CodeModeToolHost
 {
 }

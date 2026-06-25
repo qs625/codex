@@ -5,18 +5,17 @@ use codex_app_server_protocol::ThreadGoal;
 use codex_app_server_protocol::ThreadHistoryBuilder;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnError;
-use codex_core::CodexThread;
-use codex_core::ThreadConfigSnapshot;
 use codex_file_watcher::WatchRegistration;
+use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::RolloutItem;
 use codex_rollout::state_db::StateDbHandle;
+use codex_thread_api::ThreadConfigSnapshot;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::sync::Weak;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -120,22 +119,19 @@ pub(crate) struct ThreadState {
     pub(crate) listener_generation: u64,
     listener_command_tx: Option<mpsc::UnboundedSender<ThreadListenerCommand>>,
     current_turn_history: ThreadHistoryBuilder,
-    listener_thread: Option<Weak<CodexThread>>,
+    listener_session_id: Option<SessionId>,
     watch_registration: WatchRegistration,
 }
 
 impl ThreadState {
-    pub(crate) fn listener_matches(&self, conversation: &Arc<CodexThread>) -> bool {
-        self.listener_thread
-            .as_ref()
-            .and_then(Weak::upgrade)
-            .is_some_and(|existing| Arc::ptr_eq(&existing, conversation))
+    pub(crate) fn listener_matches(&self, session_id: SessionId) -> bool {
+        self.listener_session_id == Some(session_id)
     }
 
     pub(crate) fn set_listener(
         &mut self,
         cancel_tx: oneshot::Sender<()>,
-        conversation: &Arc<CodexThread>,
+        session_id: SessionId,
         watch_registration: WatchRegistration,
     ) -> (mpsc::UnboundedReceiver<ThreadListenerCommand>, u64) {
         if let Some(previous) = self.cancel_tx.replace(cancel_tx) {
@@ -144,7 +140,7 @@ impl ThreadState {
         self.listener_generation = self.listener_generation.wrapping_add(1);
         let (listener_command_tx, listener_command_rx) = mpsc::unbounded_channel();
         self.listener_command_tx = Some(listener_command_tx);
-        self.listener_thread = Some(Arc::downgrade(conversation));
+        self.listener_session_id = Some(session_id);
         self.watch_registration = watch_registration;
         (listener_command_rx, self.listener_generation)
     }
@@ -155,7 +151,7 @@ impl ThreadState {
         }
         self.listener_command_tx = None;
         self.current_turn_history.reset();
-        self.listener_thread = None;
+        self.listener_session_id = None;
         self.watch_registration = WatchRegistration::default();
     }
 

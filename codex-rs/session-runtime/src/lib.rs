@@ -1,12 +1,12 @@
-use std::path::PathBuf;
+//! Session, thread, and turn runtime implementation.
 
-mod config_lock;
-mod session_settings;
-mod steer_input;
-mod thread_skills;
-mod turn_context_item;
-mod turn_resolved_config;
-mod user_turn_input;
+// Prevent accidental direct writes to stdout/stderr in library code. All
+// user-visible output must go through the appropriate abstraction.
+#![deny(clippy::print_stdout, clippy::print_stderr)]
+
+extern crate self as codex_session_runtime;
+
+use std::path::PathBuf;
 
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::CollaborationMode;
@@ -21,12 +21,187 @@ use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde_json::Value;
 
+mod apply_patch_tool_host;
+mod apps;
+mod arc_monitor;
+mod client;
+mod client_common;
+mod config_lock;
+mod realtime_context;
+mod realtime_conversation;
+pub mod session;
+pub use session::session::Session;
+pub use session::turn_context::TurnContext;
+mod agent;
+pub use codex_thread_api::ActiveEventSubscriptionTracker;
+mod attestation;
+pub(crate) mod code_mode_host;
+mod codex_delegate;
+pub mod config;
+pub mod connectors;
+mod context;
+mod context_usage;
+mod environment_selection;
+pub mod exec;
+pub mod exec_env;
+mod exec_policy;
+mod goal;
+pub use codex_state_api::ExternalGoalPreviousStatus;
+pub use codex_state_api::ExternalGoalSet;
+mod guardian;
+mod hook_runtime;
+mod installation_id;
+mod mailbox;
+pub(crate) mod mcp;
+mod network_policy_decision;
+pub use codex_mcp_runtime::McpManager;
+pub(crate) mod mention_syntax;
+pub(crate) mod network_approval;
+mod original_image_detail;
+pub(crate) mod utils;
+pub use mention_syntax::PLUGIN_TEXT_MENTION_SIGIL;
+pub use mention_syntax::TOOL_MENTION_SIGIL;
+pub use utils::path_utils;
+pub mod personality_migration;
+pub(crate) mod plugins;
+#[doc(hidden)]
+pub(crate) mod prompt_debug;
+#[doc(hidden)]
+pub use prompt_debug::build_prompt_input;
+pub(crate) mod mentions {
+    pub(crate) use crate::plugins::build_connector_slug_counts;
+    pub(crate) use crate::plugins::build_skill_name_counts;
+    pub(crate) use crate::plugins::collect_explicit_app_ids;
+    pub(crate) use crate::plugins::collect_explicit_plugin_mentions;
+}
+pub mod sandboxing;
+mod session_prefix;
+mod session_rollout_init_error;
+mod session_settings;
+mod session_startup_prewarm;
+mod shell_detect;
+pub mod skills;
+pub(crate) use skills::SkillInjections;
+pub(crate) use skills::SkillLoadOutcome;
+pub(crate) use skills::SkillMetadata;
+pub(crate) use skills::build_available_skills;
+pub(crate) use skills::build_skill_injections;
+pub(crate) use skills::build_skill_name_counts;
+pub(crate) use skills::collect_env_var_dependencies;
+pub(crate) use skills::collect_explicit_skill_mentions;
+pub(crate) use skills::default_skill_metadata_budget;
+pub(crate) use skills::emit_thread_skills_update;
+pub(crate) use skills::injection;
+pub(crate) use skills::maybe_emit_implicit_skill_invocation;
+pub(crate) use skills::resolve_skill_dependencies_for_turn;
+pub(crate) use skills::skills_load_input_from_config;
+mod event_mapping;
+pub mod review_format;
+pub mod review_prompts;
+mod stream_events_utils;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+pub mod thread;
+mod thread_skills;
+mod unified_exec;
+pub(crate) mod web_search;
+pub mod windows_sandbox;
+pub(crate) mod windows_sandbox_read_grants;
+pub mod workflow_runs;
+pub(crate) mod workflow_tool_host;
+pub mod workflows;
+pub use codex_rollout_api::ForkSnapshot;
+pub use thread::CodexThread;
+pub use thread::CodexThreadTurnContextOverrides;
+pub use thread::NewThread;
+pub use thread::StartThreadOptions;
+pub use thread::ThreadAuthRuntimes;
+pub use thread::ThreadConfigSnapshot;
+pub use thread::ThreadCreatedEvent;
+pub use thread::ThreadManager;
+pub use thread::ThreadRuntimeStatus;
+pub use thread::ThreadShutdownReport;
+pub use thread::build_models_manager;
+pub use unified_exec::ProcessExitSubscription;
+pub use unified_exec::UnifiedExecManagerHandle;
+pub use unified_exec::UnifiedExecProcessManager;
+pub use web_search::web_search_action_detail;
+pub use web_search::web_search_detail;
+pub use windows_sandbox_read_grants::grant_read_root_non_elevated;
+#[deprecated(note = "use ThreadManager")]
+pub type ConversationManager = ThreadManager;
+#[deprecated(note = "use NewThread")]
+pub type NewConversation = NewThread;
+#[deprecated(note = "use CodexThread")]
+pub type CodexConversation = CodexThread;
+pub(crate) mod agents_md;
+pub use agents_md::AgentsMdManager;
+pub use agents_md::DEFAULT_AGENTS_MD_FILENAME;
+pub use agents_md::LOCAL_AGENTS_MD_FILENAME;
+mod rollout;
+pub mod shell;
+#[cfg(unix)]
+pub(crate) mod shell_escalation_adapter;
+pub(crate) mod shell_snapshot;
+pub(crate) mod shell_tool_host;
+pub mod spawn;
+pub(crate) mod state_db_bridge;
+pub(crate) use state_db_bridge::StateDbHandle;
+mod function_tool;
+mod function_tool_runtime;
+mod state;
+mod tasks;
+mod tools;
+mod turn_context_item;
+mod turn_metadata;
+mod turn_resolved_config;
+mod turn_state;
+mod turn_timing;
+mod user_shell_command;
+mod user_turn_input;
+pub mod util;
+
+#[doc(hidden)]
+pub use apply_patch_tool_host::CoreApplyPatchHandlerHost;
+pub use attestation::AttestationContext;
+pub use attestation::AttestationProvider;
+pub use attestation::GenerateAttestationFuture;
+pub use client::ModelClient;
+pub use client::ModelClientSession;
+pub use client_common::Prompt;
+pub use client_common::REVIEW_PROMPT;
+pub use client_common::ResponseStream;
+pub use codex_session_api::PendingInputItem;
 pub use config_lock::ConfigLockBuildInput;
 pub use config_lock::ConfigLockMultiAgentV2ResolvedConfig;
 pub use config_lock::ConfigLockResolvedConfigFields;
 pub use config_lock::ConfigLockSessionResolvedFields;
 pub use config_lock::build_config_lockfile_toml;
 pub use config_lock::config_lock_to_pretty_toml;
+pub use event_mapping::parse_turn_item;
+pub use exec_policy::EmptyExecPolicyLoader;
+pub use exec_policy::ExecPolicyLoadResult;
+pub use exec_policy::ExecPolicyLoader;
+pub use installation_id::resolve_installation_id;
+pub use mailbox::Mailbox;
+pub use mailbox::MailboxDeliveryPhase;
+pub use mailbox::MailboxReceiver;
+#[doc(hidden)]
+pub use tools::registry::CoreToolDispatchHost;
+pub type SharedTurnDiffTracker =
+    std::sync::Arc<tokio::sync::Mutex<codex_tool_runtime::TurnDiffTracker>>;
+pub type CoreToolRuntimeRouter = dyn codex_session_api::SessionToolRouter<
+        std::sync::Arc<session::session::Session>,
+        std::sync::Arc<session::turn_context::TurnContext>,
+        SharedTurnDiffTracker,
+        session::turn_context::TurnContext,
+    >;
+pub type CoreToolRouterFactory = dyn codex_session_api::SessionToolRouterFactory<
+        std::sync::Arc<session::session::Session>,
+        std::sync::Arc<session::turn_context::TurnContext>,
+        SharedTurnDiffTracker,
+        session::turn_context::TurnContext,
+    >;
 pub use session_settings::SessionPermissionProfileUpdate;
 pub use session_settings::SessionSettingsApplyCurrent;
 pub use session_settings::SessionSettingsApplyPlan;
@@ -44,14 +219,22 @@ pub use steer_input::SteerInputError;
 pub use steer_input::SteerableTaskKind;
 pub use steer_input::ValidatedSteerInput;
 pub use steer_input::validate_steer_input;
+pub use task_kind::TaskKind;
 pub use thread_skills::initial_thread_skills;
 pub use thread_skills::merge_thread_skills;
 pub use turn_context_item::TurnContextItemBuildInput;
 pub use turn_context_item::build_turn_context_item;
+pub use turn_metadata::build_turn_metadata_header;
 pub use turn_resolved_config::TurnResolvedConfigFactInput;
 pub use turn_resolved_config::build_turn_resolved_config_fact;
+pub use turn_state::PendingRequestPermissions;
+pub use turn_state::TurnState;
 pub use user_turn_input::UserTurnSubmission;
 pub use user_turn_input::user_turn_submission_from_op;
+pub mod compact;
+mod memory_usage;
+mod steer_input;
+mod task_kind;
 
 /// Session configuration overrides supplied by thread resume, turn override,
 /// or app-server settings update paths.

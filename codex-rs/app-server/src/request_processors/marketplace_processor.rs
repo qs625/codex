@@ -4,7 +4,6 @@ use super::*;
 pub(crate) struct MarketplaceRequestProcessor {
     config: Arc<Config>,
     config_manager: ConfigManager,
-    thread_manager: Arc<ThreadManager>,
     plugins_manager: Arc<PluginsManager>,
 }
 
@@ -12,13 +11,11 @@ impl MarketplaceRequestProcessor {
     pub(crate) fn new(
         config: Arc<Config>,
         config_manager: ConfigManager,
-        thread_manager: Arc<ThreadManager>,
         plugins_manager: Arc<PluginsManager>,
     ) -> Self {
         Self {
             config,
             config_manager,
-            thread_manager,
             plugins_manager,
         }
     }

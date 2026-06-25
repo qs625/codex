@@ -14,12 +14,50 @@ use codex_core_skills_api::SkillMetadata;
 use codex_mcp::oauth_login_support;
 use codex_mcp::should_retry_without_scopes;
 use codex_mcp_types::McpOAuthLoginSupport;
+use codex_protocol::protocol::Product;
 use codex_rmcp_client::perform_oauth_login_silent;
+
+pub(crate) trait PluginProcessorRuntime: Send + Sync {
+    fn spawn_effective_plugins_changed_task(
+        self: Arc<Self>,
+        plugins_manager: Arc<PluginsManager>,
+        config_manager: ConfigManager,
+    );
+
+    fn clear_skills_cache(&self);
+
+    fn restriction_product(&self) -> Option<Product>;
+}
+
+impl PluginProcessorRuntime for ThreadManager {
+    fn spawn_effective_plugins_changed_task(
+        self: Arc<Self>,
+        plugins_manager: Arc<PluginsManager>,
+        config_manager: ConfigManager,
+    ) {
+        tokio::spawn(async move {
+            plugins_manager.clear_cache();
+            self.skills_manager().clear_cache();
+            if self.list_thread_ids().await.is_empty() {
+                return;
+            }
+            crate::mcp_refresh::queue_best_effort_refresh(self.as_ref(), &config_manager).await;
+        });
+    }
+
+    fn clear_skills_cache(&self) {
+        self.skills_manager().clear_cache();
+    }
+
+    fn restriction_product(&self) -> Option<Product> {
+        self.session_source().restriction_product()
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct PluginRequestProcessor {
     auth_manager: Arc<AuthManager>,
-    thread_manager: Arc<ThreadManager>,
+    runtime: Arc<dyn PluginProcessorRuntime>,
     plugins_manager: Arc<PluginsManager>,
     outgoing: Arc<OutgoingMessageSender>,
     analytics_events_client: AnalyticsEventsClient,
@@ -261,19 +299,23 @@ fn plugin_share_principal_from_remote(
 }
 
 impl PluginRequestProcessor {
-    pub(crate) fn new(
+    pub(crate) fn new<R>(
         auth_manager: Arc<AuthManager>,
-        thread_manager: Arc<ThreadManager>,
+        runtime: Arc<R>,
         plugins_manager: Arc<PluginsManager>,
         outgoing: Arc<OutgoingMessageSender>,
         analytics_events_client: AnalyticsEventsClient,
         config_manager: ConfigManager,
         environment_manager: Arc<EnvironmentManager>,
         workspace_settings_cache: Arc<workspace_settings::WorkspaceSettingsCache>,
-    ) -> Self {
+    ) -> Self
+    where
+        R: PluginProcessorRuntime + 'static,
+    {
+        let runtime: Arc<dyn PluginProcessorRuntime> = runtime;
         Self {
             auth_manager,
-            thread_manager,
+            runtime,
             plugins_manager,
             outgoing,
             analytics_events_client,
@@ -374,12 +416,11 @@ impl PluginRequestProcessor {
     }
 
     pub(crate) fn effective_plugins_changed_callback(&self) -> Arc<dyn Fn() + Send + Sync> {
-        let thread_manager = Arc::clone(&self.thread_manager);
+        let runtime = Arc::clone(&self.runtime);
         let plugins_manager = Arc::clone(&self.plugins_manager);
         let config_manager = self.config_manager.clone();
         Arc::new(move || {
-            Self::spawn_effective_plugins_changed_task(
-                Arc::clone(&thread_manager),
+            Arc::clone(&runtime).spawn_effective_plugins_changed_task(
                 Arc::clone(&plugins_manager),
                 config_manager.clone(),
             );
@@ -387,31 +428,15 @@ impl PluginRequestProcessor {
     }
 
     fn on_effective_plugins_changed(&self) {
-        Self::spawn_effective_plugins_changed_task(
-            Arc::clone(&self.thread_manager),
+        Arc::clone(&self.runtime).spawn_effective_plugins_changed_task(
             Arc::clone(&self.plugins_manager),
             self.config_manager.clone(),
         );
     }
 
-    fn spawn_effective_plugins_changed_task(
-        thread_manager: Arc<ThreadManager>,
-        plugins_manager: Arc<PluginsManager>,
-        config_manager: ConfigManager,
-    ) {
-        tokio::spawn(async move {
-            plugins_manager.clear_cache();
-            thread_manager.skills_manager().clear_cache();
-            if thread_manager.list_thread_ids().await.is_empty() {
-                return;
-            }
-            crate::mcp_refresh::queue_best_effort_refresh(&thread_manager, &config_manager).await;
-        });
-    }
-
     fn clear_plugin_related_caches(&self) {
         self.plugins_manager.clear_cache();
-        self.thread_manager.skills_manager().clear_cache();
+        self.runtime.clear_skills_cache();
     }
 
     async fn load_latest_config(
@@ -773,7 +798,7 @@ impl PluginRequestProcessor {
                     .iter()
                     .filter(|skill| {
                         skill.matches_product_restriction_for_product(
-                            self.thread_manager.session_source().restriction_product(),
+                            self.runtime.restriction_product(),
                         )
                     })
                     .cloned()

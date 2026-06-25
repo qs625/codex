@@ -1,76 +1,123 @@
 use crate::config_manager::ConfigManager;
+use codex_config_types::McpServerConfig;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::Op;
-use codex_session_api::SessionCommandHandle;
+use codex_thread_api::LiveThreadRegistry;
+use futures::future::BoxFuture;
+use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
 use tracing::warn;
 
+/// Runtime capability needed to plan and queue MCP refreshes for live threads.
+///
+/// Implementations own concrete thread lookup, config snapshots, MCP server
+/// planning, and op submission. The refresh helper stays generic so app-server
+/// request processors do not need to depend on a concrete `ThreadManager`.
+pub(crate) trait McpRefreshRuntime: Send + Sync {
+    fn list_thread_ids(&self) -> BoxFuture<'_, Vec<ThreadId>>;
+
+    fn live_thread_config(&self, thread_id: ThreadId) -> BoxFuture<'_, io::Result<Arc<Config>>>;
+
+    fn configured_mcp_servers<'a>(
+        &'a self,
+        config: &'a Config,
+    ) -> BoxFuture<'a, HashMap<String, McpServerConfig>>;
+
+    fn queue_mcp_refresh(
+        &self,
+        thread_id: ThreadId,
+        config: McpServerRefreshConfig,
+    ) -> BoxFuture<'_, io::Result<()>>;
+}
+
+impl McpRefreshRuntime for ThreadManager {
+    fn list_thread_ids(&self) -> BoxFuture<'_, Vec<ThreadId>> {
+        Box::pin(ThreadManager::list_thread_ids(self))
+    }
+
+    fn live_thread_config(&self, thread_id: ThreadId) -> BoxFuture<'_, io::Result<Arc<Config>>> {
+        Box::pin(async move {
+            ThreadManager::live_thread_config(self, thread_id)
+                .await
+                .map_err(|err| {
+                    io::Error::other(format!("failed to load thread {thread_id}: {err}"))
+                })
+        })
+    }
+
+    fn configured_mcp_servers<'a>(
+        &'a self,
+        config: &'a Config,
+    ) -> BoxFuture<'a, HashMap<String, McpServerConfig>> {
+        Box::pin(async move { self.mcp_manager().configured_servers(config).await })
+    }
+
+    fn queue_mcp_refresh(
+        &self,
+        thread_id: ThreadId,
+        config: McpServerRefreshConfig,
+    ) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(queue_refresh(thread_id, self, config))
+    }
+}
+
 pub(crate) async fn queue_strict_refresh(
-    thread_manager: &Arc<ThreadManager>,
+    runtime: &(impl McpRefreshRuntime + ?Sized),
     config_manager: &ConfigManager,
 ) -> io::Result<()> {
     config_manager
         .load_latest_config(/*fallback_cwd*/ None)
         .await?;
     let mut refreshes = Vec::new();
-    for thread_id in thread_manager.list_thread_ids().await {
-        let thread = thread_manager
-            .get_thread(thread_id)
-            .await
-            .map_err(|err| io::Error::other(format!("failed to load thread {thread_id}: {err}")))?;
-        let config =
-            build_refresh_config(thread_manager, config_manager, thread.config().await).await?;
-        refreshes.push((thread_id, thread, config));
+    for thread_id in runtime.list_thread_ids().await {
+        let thread_config = runtime.live_thread_config(thread_id).await?;
+        let config = build_refresh_config(runtime, config_manager, thread_config).await?;
+        refreshes.push((thread_id, config));
     }
-    for (thread_id, thread, config) in refreshes {
-        queue_refresh(thread_id, thread, config).await?;
+    for (thread_id, config) in refreshes {
+        runtime.queue_mcp_refresh(thread_id, config).await?;
     }
     Ok(())
 }
 
 pub(crate) async fn queue_best_effort_refresh(
-    thread_manager: &Arc<ThreadManager>,
+    runtime: &(impl McpRefreshRuntime + ?Sized),
     config_manager: &ConfigManager,
 ) {
-    for thread_id in thread_manager.list_thread_ids().await {
-        let thread = match thread_manager.get_thread(thread_id).await {
-            Ok(thread) => thread,
+    for thread_id in runtime.list_thread_ids().await {
+        let thread_config = match runtime.live_thread_config(thread_id).await {
+            Ok(thread_config) => thread_config,
             Err(err) => {
                 warn!("failed to load thread {thread_id} for MCP refresh: {err}");
                 continue;
             }
         };
-        let config =
-            match build_refresh_config(thread_manager, config_manager, thread.config().await).await
-            {
-                Ok(config) => config,
-                Err(err) => {
-                    warn!("failed to build MCP refresh config for thread {thread_id}: {err}");
-                    continue;
-                }
-            };
-        if let Err(err) = queue_refresh(thread_id, thread, config).await {
+        let config = match build_refresh_config(runtime, config_manager, thread_config).await {
+            Ok(config) => config,
+            Err(err) => {
+                warn!("failed to build MCP refresh config for thread {thread_id}: {err}");
+                continue;
+            }
+        };
+        if let Err(err) = runtime.queue_mcp_refresh(thread_id, config).await {
             warn!("{err}");
         }
     }
 }
 
 async fn build_refresh_config(
-    thread_manager: &ThreadManager,
+    runtime: &(impl McpRefreshRuntime + ?Sized),
     config_manager: &ConfigManager,
     thread_config: Arc<Config>,
 ) -> io::Result<McpServerRefreshConfig> {
     let config = config_manager
         .load_latest_config_for_thread(thread_config.as_ref())
         .await?;
-    let mcp_servers = thread_manager
-        .mcp_manager()
-        .configured_servers(&config)
-        .await;
+    let mcp_servers = runtime.configured_mcp_servers(&config).await;
     Ok(McpServerRefreshConfig {
         mcp_servers: serde_json::to_value(mcp_servers).map_err(io::Error::other)?,
         mcp_oauth_credentials_store_mode: serde_json::to_value(
@@ -82,14 +129,14 @@ async fn build_refresh_config(
 
 async fn queue_refresh<H>(
     thread_id: ThreadId,
-    thread: Arc<H>,
+    thread_registry: &H,
     config: McpServerRefreshConfig,
 ) -> io::Result<()>
 where
-    H: SessionCommandHandle,
+    H: LiveThreadRegistry + ?Sized,
 {
-    thread
-        .submit_op(Op::RefreshMcpServers { config })
+    thread_registry
+        .send_op(thread_id, Op::RefreshMcpServers { config })
         .await
         .map(|_| ())
         .map_err(|err| {
@@ -102,6 +149,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extensions::FileSubscriptionThreadHost;
+    use crate::extensions::GuardianAgentSpawnHost;
     use crate::extensions::guardian_agent_spawner;
     use crate::extensions::thread_extensions;
     use crate::tool_router_factory::AppServerToolRouterFactory;
@@ -132,7 +181,7 @@ mod tests {
     async fn strict_refresh_reports_thread_planning_failures() -> anyhow::Result<()> {
         let (_temp_dir, thread_manager, config_manager, _loader) = refresh_test_state().await?;
 
-        let err = queue_strict_refresh(&thread_manager, &config_manager)
+        let err = queue_strict_refresh(thread_manager.as_ref(), &config_manager)
             .await
             .expect_err("strict refresh should fail");
 
@@ -144,7 +193,7 @@ mod tests {
     async fn best_effort_refresh_attempts_every_loaded_thread() -> anyhow::Result<()> {
         let (_temp_dir, thread_manager, config_manager, loader) = refresh_test_state().await?;
 
-        queue_best_effort_refresh(&thread_manager, &config_manager).await;
+        queue_best_effort_refresh(thread_manager.as_ref(), &config_manager).await;
 
         assert_eq!(loader.good_loads.load(Ordering::Relaxed), 1);
         assert_eq!(loader.bad_loads.load(Ordering::Relaxed), 1);
@@ -189,59 +238,63 @@ mod tests {
             Some(state_db.clone()),
         );
         let thread_watch_manager = crate::thread_status::ThreadWatchManager::new();
-        let thread_manager = Arc::new_cyclic(|thread_manager| {
-            let auth_runtimes = codex_core::ThreadAuthRuntimes::from_auth_runtime(
-                auth_manager.clone(),
-                codex_login::model_provider_auth_manager(Some(auth_manager.clone())),
-            );
-            ThreadManager::new_with_workflow_runs_and_openai_file_uploader(
-                &good_config,
-                auth_runtimes,
-                SessionSource::Exec,
-                Arc::new(EnvironmentManager::default_for_tests()),
-                thread_extensions(
-                    guardian_agent_spawner(thread_manager.clone()),
-                    Arc::new(FileWatcher::noop()),
-                    Weak::<ThreadManager>::clone(thread_manager),
-                    thread_watch_manager.clone(),
-                ),
-                /*analytics_events_client*/ None,
-                thread_store,
-                Some(state_db.clone()),
-                Arc::new(codex_thread_store::DefaultLiveThreadFactory),
-                "11111111-1111-4111-8111-111111111111".to_string(),
-                /*attestation_provider*/ None,
-                Arc::new(codex_model_provider::DefaultModelProviderFactory),
-                Arc::new(codex_code_mode::V8CodeModeRuntimeFactory),
-                Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-                Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
-                Arc::new(codex_workflow::WorkflowRunManager::new(
-                    good_config.codex_home.clone(),
-                )),
-                Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
-                Arc::new(codex_execpolicy_loader::StarlarkExecPolicyLoader),
-                Arc::new(codex_api::DefaultApiRuntimeFactory),
-                Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
-                Arc::new(codex_sandboxing::SandboxManager::new()),
-                Arc::new(codex_otel::OtelSessionTelemetryFactory),
-                Arc::new(codex_hooks::HooksRuntimeFactory),
-                Arc::new(codex_memories_read::FsMemoryToolDeveloperInstructionsProvider),
-                Arc::new(
-                    codex_core_skills::SkillsManager::new_with_restriction_product(
+        let thread_manager: Arc<ThreadManager> =
+            Arc::new_cyclic(|thread_manager: &Weak<ThreadManager>| {
+                let auth_runtimes = codex_core::ThreadAuthRuntimes::from_auth_runtime(
+                    auth_manager.clone(),
+                    codex_login::model_provider_auth_manager(Some(auth_manager.clone())),
+                );
+                let guardian_agent_host: Weak<dyn GuardianAgentSpawnHost> = thread_manager.clone();
+                let file_subscription_host: Weak<dyn FileSubscriptionThreadHost> =
+                    Weak::<ThreadManager>::clone(thread_manager);
+                ThreadManager::new_with_workflow_runs_and_openai_file_uploader(
+                    &good_config,
+                    auth_runtimes,
+                    SessionSource::Exec,
+                    Arc::new(EnvironmentManager::default_for_tests()),
+                    thread_extensions(
+                        guardian_agent_spawner(guardian_agent_host),
+                        Arc::new(FileWatcher::noop()),
+                        file_subscription_host,
+                        thread_watch_manager.clone(),
+                    ),
+                    /*analytics_events_client*/ None,
+                    thread_store,
+                    Some(state_db.clone()),
+                    Arc::new(codex_thread_store::DefaultLiveThreadFactory),
+                    "11111111-1111-4111-8111-111111111111".to_string(),
+                    /*attestation_provider*/ None,
+                    Arc::new(codex_model_provider::DefaultModelProviderFactory),
+                    Arc::new(codex_code_mode::V8CodeModeRuntimeFactory),
+                    Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+                    Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
+                    Arc::new(codex_workflow::WorkflowRunManager::new(
                         good_config.codex_home.clone(),
-                        good_config.bundled_skills_enabled(),
-                        SessionSource::Exec.restriction_product(),
+                    )),
+                    Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
+                    Arc::new(codex_execpolicy_loader::StarlarkExecPolicyLoader),
+                    Arc::new(codex_api::DefaultApiRuntimeFactory),
+                    Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
+                    Arc::new(codex_sandboxing::SandboxManager::new()),
+                    Arc::new(codex_otel::OtelSessionTelemetryFactory),
+                    Arc::new(codex_hooks::HooksRuntimeFactory),
+                    Arc::new(codex_memories_read::FsMemoryToolDeveloperInstructionsProvider),
+                    Arc::new(
+                        codex_core_skills::SkillsManager::new_with_restriction_product(
+                            good_config.codex_home.clone(),
+                            good_config.bundled_skills_enabled(),
+                            SessionSource::Exec.restriction_product(),
+                        ),
                     ),
-                ),
-                Arc::new(
-                    codex_core_plugins::PluginsManager::new_with_restriction_product(
-                        good_config.codex_home.to_path_buf(),
-                        SessionSource::Exec.restriction_product(),
+                    Arc::new(
+                        codex_core_plugins::PluginsManager::new_with_restriction_product(
+                            good_config.codex_home.to_path_buf(),
+                            SessionSource::Exec.restriction_product(),
+                        ),
                     ),
-                ),
-                Arc::new(AppServerToolRouterFactory),
-            )
-        });
+                    Arc::new(AppServerToolRouterFactory),
+                )
+            });
         thread_manager.start_thread(good_config).await?;
         thread_manager.start_thread(bad_config).await?;
 

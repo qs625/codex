@@ -5,7 +5,6 @@ use std::time::Duration;
 use codex_api::ResponseEvent;
 use codex_auth_types::TelemetryAuthMode;
 use codex_config_types::Constrained;
-use codex_core::CodexThread;
 use codex_core::ModelClient;
 use codex_core::NewThread;
 use codex_core::Prompt;
@@ -43,16 +42,111 @@ use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::user_input::UserInput;
 use codex_rollout_trace::InferenceTraceContext;
-use codex_session_api::SessionCommandHandle;
 use codex_state::StateRuntime;
 use codex_terminal_detection::user_agent;
+use codex_thread_api::ThreadConfigSnapshot;
 use futures::StreamExt;
 
+use crate::live_thread_runtime::AppServerLiveThreadHandle;
+
+/// Composition-root capability needed by memory startup/consolidation.
+///
+/// The memory runtime should not keep concrete `ThreadManager` or
+/// `CodexThread` handles. Implementations own model catalog lookup and
+/// consolidation thread lifecycle, while memory code consumes only this
+/// app-server boundary trait.
+pub(crate) trait MemoryStartupHost: Send + Sync {
+    fn stage_one_request_context<'a>(
+        &'a self,
+        model_name: &'a str,
+        config: &'a Config,
+        reasoning_effort: ReasoningEffort,
+        service_tier: Option<String>,
+    ) -> MemoryRuntimeFuture<'a, StageOneRequestContext>;
+
+    fn start_consolidation_thread<'a>(
+        &'a self,
+        config: Config,
+    ) -> MemoryRuntimeFuture<'a, anyhow::Result<MemoryConsolidationThread>>;
+
+    fn remove_consolidation_thread<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> MemoryRuntimeFuture<'a, Option<Arc<dyn AppServerLiveThreadHandle>>>;
+}
+
+pub(crate) struct MemoryConsolidationThread {
+    thread_id: ThreadId,
+    thread: Arc<dyn AppServerLiveThreadHandle>,
+}
+
+impl MemoryStartupHost for ThreadManager {
+    fn stage_one_request_context<'a>(
+        &'a self,
+        model_name: &'a str,
+        config: &'a Config,
+        reasoning_effort: ReasoningEffort,
+        service_tier: Option<String>,
+    ) -> MemoryRuntimeFuture<'a, StageOneRequestContext> {
+        Box::pin(async move {
+            let model_info = self
+                .get_models_manager()
+                .get_model_info(model_name, &config.to_models_manager_config())
+                .await;
+
+            StageOneRequestContext {
+                model_info,
+                reasoning_effort: Some(reasoning_effort),
+                service_tier,
+            }
+        })
+    }
+
+    fn start_consolidation_thread<'a>(
+        &'a self,
+        config: Config,
+    ) -> MemoryRuntimeFuture<'a, anyhow::Result<MemoryConsolidationThread>> {
+        Box::pin(async move {
+            let environments = self.default_environment_selections(&config.cwd);
+            let NewThread {
+                thread_id, thread, ..
+            } = self
+                .start_thread_with_options(StartThreadOptions {
+                    config,
+                    initial_history: InitialHistory::New,
+                    session_source: Some(SessionSource::Internal(
+                        InternalSessionSource::MemoryConsolidation,
+                    )),
+                    thread_source: Some(ThreadSource::MemoryConsolidation),
+                    dynamic_tools: Vec::new(),
+                    persist_extended_history: false,
+                    metrics_service_name: None,
+                    parent_trace: None,
+                    environments,
+                })
+                .await?;
+            let thread: Arc<dyn AppServerLiveThreadHandle> = thread;
+            Ok(MemoryConsolidationThread { thread_id, thread })
+        })
+    }
+
+    fn remove_consolidation_thread<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> MemoryRuntimeFuture<'a, Option<Arc<dyn AppServerLiveThreadHandle>>> {
+        Box::pin(async move {
+            self.remove_thread(&thread_id)
+                .await
+                .map(|thread| -> Arc<dyn AppServerLiveThreadHandle> { thread })
+        })
+    }
+}
+
 pub(crate) struct CoreMemoryStartupRuntime {
-    thread_manager: Arc<ThreadManager>,
+    host: Arc<dyn MemoryStartupHost>,
     auth_manager: Arc<AuthManager>,
     thread_id: ThreadId,
-    thread: Arc<CodexThread>,
+    config_snapshot: ThreadConfigSnapshot,
     config: Arc<Config>,
     state_db: Option<Arc<StateRuntime>>,
     session_telemetry: SessionTelemetry,
@@ -60,13 +154,12 @@ pub(crate) struct CoreMemoryStartupRuntime {
 
 impl CoreMemoryStartupRuntime {
     pub(crate) fn new(
-        thread_manager: Arc<ThreadManager>,
+        host: Arc<dyn MemoryStartupHost>,
         auth_manager: Arc<AuthManager>,
         thread_id: ThreadId,
-        thread: Arc<CodexThread>,
+        config_snapshot: ThreadConfigSnapshot,
         config: Arc<Config>,
         state_db: Option<Arc<StateRuntime>>,
-        source: SessionSource,
     ) -> Self {
         let auth = auth_manager.auth_cached();
         let auth = auth.as_ref();
@@ -88,15 +181,15 @@ impl CoreMemoryStartupRuntime {
             originator().value,
             config.otel.log_user_prompt,
             user_agent(),
-            source,
+            config_snapshot.session_source.clone(),
         )
         .with_auth_env(auth_env_telemetry.to_otel_metadata());
 
         Self {
-            thread_manager,
+            host,
             auth_manager,
             thread_id,
-            thread,
+            config_snapshot,
             config,
             state_db,
             session_telemetry,
@@ -127,18 +220,14 @@ impl MemoryStartupRuntime for CoreMemoryStartupRuntime {
         reasoning_effort: ReasoningEffort,
     ) -> MemoryRuntimeFuture<'a, StageOneRequestContext> {
         Box::pin(async move {
-            let config_snapshot = self.thread.config_snapshot().await;
-            let model_info = self
-                .thread_manager
-                .get_models_manager()
-                .get_model_info(model_name, &self.config.to_models_manager_config())
-                .await;
-
-            StageOneRequestContext {
-                model_info,
-                reasoning_effort: Some(reasoning_effort),
-                service_tier: config_snapshot.service_tier,
-            }
+            self.host
+                .stage_one_request_context(
+                    model_name,
+                    self.config.as_ref(),
+                    reasoning_effort,
+                    self.config_snapshot.service_tier.clone(),
+                )
+                .await
         })
     }
 
@@ -155,7 +244,6 @@ impl MemoryStartupRuntime for CoreMemoryStartupRuntime {
             prompt.output_schema_strict = request.output_schema_strict;
 
             let installation_id = resolve_installation_id(&self.config.codex_home).await?;
-            let session_source = self.thread.config_snapshot().await.session_source;
             let model_client = ModelClient::new(
                 model_provider_auth_manager(Some(Arc::clone(&self.auth_manager))),
                 SessionId::from(self.thread_id),
@@ -164,7 +252,7 @@ impl MemoryStartupRuntime for CoreMemoryStartupRuntime {
                 Arc::new(codex_api::DefaultApiRuntimeFactory),
                 Arc::new(codex_model_provider::DefaultModelProviderFactory),
                 self.config.model_provider.clone(),
-                session_source,
+                self.config_snapshot.session_source.clone(),
                 self.config.model_verbosity,
                 self.config
                     .model_options
@@ -285,27 +373,8 @@ impl MemoryStartupRuntime for CoreMemoryStartupRuntime {
             config.model = Some(model);
             config.model_reasoning_effort = Some(reasoning_effort);
 
-            let environments = self
-                .thread_manager
-                .default_environment_selections(&config.cwd);
-            let NewThread {
-                thread_id, thread, ..
-            } = self
-                .thread_manager
-                .start_thread_with_options(StartThreadOptions {
-                    config,
-                    initial_history: InitialHistory::New,
-                    session_source: Some(SessionSource::Internal(
-                        InternalSessionSource::MemoryConsolidation,
-                    )),
-                    thread_source: Some(ThreadSource::MemoryConsolidation),
-                    dynamic_tools: Vec::new(),
-                    persist_extended_history: false,
-                    metrics_service_name: None,
-                    parent_trace: None,
-                    environments,
-                })
-                .await?;
+            let MemoryConsolidationThread { thread_id, thread } =
+                self.host.start_consolidation_thread(config).await?;
 
             if let Err(err) = thread
                 .submit_op(Op::UserInput {
@@ -316,13 +385,12 @@ impl MemoryStartupRuntime for CoreMemoryStartupRuntime {
                 })
                 .await
             {
-                shutdown_consolidation_thread(thread_id, Arc::clone(&self.thread_manager), thread)
-                    .await?;
+                shutdown_consolidation_thread(thread_id, Arc::clone(&self.host), thread).await?;
                 return Err(err.into());
             }
 
             let agent: Box<dyn MemoryConsolidationAgent> = Box::new(CoreMemoryConsolidationAgent {
-                thread_manager: Arc::clone(&self.thread_manager),
+                host: Arc::clone(&self.host),
                 thread_id,
                 thread,
             });
@@ -332,9 +400,9 @@ impl MemoryStartupRuntime for CoreMemoryStartupRuntime {
 }
 
 struct CoreMemoryConsolidationAgent {
-    thread_manager: Arc<ThreadManager>,
+    host: Arc<dyn MemoryStartupHost>,
     thread_id: ThreadId,
-    thread: Arc<CodexThread>,
+    thread: Arc<dyn AppServerLiveThreadHandle>,
 }
 
 impl MemoryConsolidationAgent for CoreMemoryConsolidationAgent {
@@ -363,7 +431,7 @@ impl MemoryConsolidationAgent for CoreMemoryConsolidationAgent {
 
     fn shutdown<'a>(self: Box<Self>) -> MemoryRuntimeFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
-            shutdown_consolidation_thread(self.thread_id, self.thread_manager, self.thread).await
+            shutdown_consolidation_thread(self.thread_id, self.host, self.thread).await
         })
     }
 }
@@ -384,11 +452,11 @@ pub(crate) fn memory_startup_settings(
 
 async fn shutdown_consolidation_thread(
     thread_id: ThreadId,
-    thread_manager: Arc<ThreadManager>,
-    thread: Arc<CodexThread>,
+    host: Arc<dyn MemoryStartupHost>,
+    thread: Arc<dyn AppServerLiveThreadHandle>,
 ) -> anyhow::Result<()> {
-    let thread = thread_manager
-        .remove_thread(&thread_id)
+    let thread = host
+        .remove_consolidation_thread(thread_id)
         .await
         .unwrap_or(thread);
 

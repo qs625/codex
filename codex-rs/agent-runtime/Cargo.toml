@@ -19,6 +19,8 @@ codex-metrics-api = { workspace = true }
 codex-protocol = { workspace = true }
 codex-rollout-api = { workspace = true }
 codex-state-api = { workspace = true }
+codex-tool-types = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
 codex-utils-template = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
