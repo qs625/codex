@@ -45,11 +45,10 @@ use codex_app_server_protocol::ServerRequest;
 use codex_arg0::Arg0DispatchPaths;
 use codex_config_loader::LoaderOverrides;
 use codex_config_loader::NoopThreadConfigLoader;
-use codex_config_loader::ThreadConfigLoadErrorCode;
 use codex_config_loader::ThreadConfigLoader;
 use codex_config_loader_remote::RemoteThreadConfigLoader;
 use codex_config_requirements::CloudRequirementsLoader;
-use codex_core::config::Config;
+use codex_thread_runtime::config::Config;
 pub use codex_exec_server::EnvironmentManager;
 pub use codex_exec_server::ExecServerRuntimePaths;
 use codex_feedback::CodexFeedback;
@@ -65,30 +64,30 @@ pub use crate::remote::RemoteAppServerClient;
 pub use crate::remote::RemoteAppServerConnectArgs;
 pub use crate::remote::RemoteAppServerEndpoint;
 
-/// Transitional access to core-only embedded app-server types.
+/// Transitional access to embedded thread runtime types.
 ///
 /// New TUI behavior should prefer the app-server protocol methods. This
-/// module exists so clients can remove a direct `codex-core` dependency
+/// module exists so clients can remove a direct legacy runtime dependency
 /// while legacy startup/config paths are migrated to RPCs.
 pub mod legacy_core {
-    pub use codex_core::DEFAULT_AGENTS_MD_FILENAME;
-    pub use codex_core::LOCAL_AGENTS_MD_FILENAME;
-    pub use codex_core::McpManager;
-    pub use codex_core::grant_read_root_non_elevated;
-    pub use codex_core::web_search_detail;
+    pub use codex_thread_runtime::DEFAULT_AGENTS_MD_FILENAME;
+    pub use codex_thread_runtime::LOCAL_AGENTS_MD_FILENAME;
+    pub use codex_thread_runtime::McpManager;
+    pub use codex_thread_runtime::grant_read_root_non_elevated;
+    pub use codex_thread_runtime::web_search_detail;
     pub use codex_execpolicy_loader::check_execpolicy_for_warnings;
     pub use codex_execpolicy_loader::format_exec_policy_error_with_source;
 
     pub mod config {
-        pub use codex_core::config::*;
+        pub use codex_thread_runtime::config::*;
 
         pub mod edit {
-            pub use codex_core::config::edit::*;
+            pub use codex_thread_runtime::config::edit::*;
         }
     }
 
     pub mod connectors {
-        pub use codex_core::connectors::*;
+        pub use codex_thread_runtime::connectors::*;
     }
 
     pub mod otel_init {
@@ -96,28 +95,28 @@ pub mod legacy_core {
     }
 
     pub mod personality_migration {
-        pub use codex_core::personality_migration::*;
+        pub use codex_thread_runtime::personality_migration::*;
     }
 
     pub mod review_format {
-        pub use codex_core::review_format::*;
+        pub use codex_thread_runtime::review_format::*;
     }
 
     pub mod review_prompts {
-        pub use codex_core::review_prompts::*;
+        pub use codex_thread_runtime::review_prompts::*;
     }
 
     #[cfg(feature = "test-support")]
     pub mod test_support {
-        pub use codex_core::test_support::*;
+        pub use codex_thread_runtime::test_support::*;
     }
 
     pub mod util {
-        pub use codex_core::util::*;
+        pub use codex_thread_runtime::util::*;
     }
 
     pub mod windows_sandbox {
-        pub use codex_core::windows_sandbox::*;
+        pub use codex_thread_runtime::windows_sandbox::*;
     }
 }
 
@@ -957,7 +956,8 @@ mod tests {
     use codex_app_server_protocol::ThreadStartResponse;
     use codex_app_server_protocol::ToolRequestUserInputParams;
     use codex_app_server_protocol::ToolRequestUserInputQuestion;
-    use codex_core::config::ConfigBuilder;
+    use codex_config_loader::ThreadConfigLoadErrorCode;
+    use codex_thread_runtime::config::ConfigBuilder;
     use codex_rollout::state_db::init as init_state_db;
     use codex_uds::UnixListener;
     use codex_utils_absolute_path::AbsolutePathBuf;

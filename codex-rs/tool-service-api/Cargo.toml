@@ -1,0 +1,20 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-tool-service-api"
+version.workspace = true
+
+[lib]
+doctest = false
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-protocol = { workspace = true }
+codex-thread-api = { workspace = true }
+codex-tool-config = { workspace = true }
+codex-tool-runtime-api = { workspace = true }
+codex-tool-types = { workspace = true }
+tokio-util = { workspace = true }

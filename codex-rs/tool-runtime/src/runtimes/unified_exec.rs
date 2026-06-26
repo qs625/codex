@@ -29,6 +29,7 @@ use codex_shell_command::canonicalize_command_for_approval;
 use codex_shell_command::powershell::prefix_powershell_script_with_utf8;
 use codex_tool_config::ToolUserShellType;
 use codex_tool_config::UnifiedExecShellMode;
+use codex_tool_runtime_api::ExecCommandApprovalMode;
 pub use codex_tool_runtime_api::PreparedUnifiedExecSpawn;
 pub use codex_tool_runtime_api::UnifiedExecApprovalKey;
 pub use codex_tool_runtime_api::UnifiedExecRequest;
@@ -122,6 +123,10 @@ where
 
     fn sandbox_permissions(&self, req: &UnifiedExecRequest) -> SandboxPermissions {
         req.sandbox_permissions
+    }
+
+    fn approval_preapproved(&self, req: &UnifiedExecRequest) -> bool {
+        matches!(req.approval_mode, ExecCommandApprovalMode::AlreadyApproved)
     }
 }
 

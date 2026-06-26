@@ -84,8 +84,8 @@ use codex_app_server_protocol::WarningNotification;
 use codex_app_server_protocol::build_item_from_guardian_event;
 use codex_app_server_protocol::guardian_auto_approval_review_notification;
 use codex_app_server_protocol::item_event_to_server_notification;
-use codex_core::review_format::format_review_findings_block;
-use codex_core::review_prompts;
+use codex_thread_runtime::review_format::format_review_findings_block;
+use codex_thread_runtime::review_prompts;
 use codex_protocol::ThreadId;
 use codex_protocol::items::TurnItem as CoreTurnItem;
 use codex_protocol::items::parse_hook_prompt_message;
@@ -2167,8 +2167,8 @@ mod tests {
     use codex_app_server_protocol::GuardianApprovalReviewStatus;
     use codex_app_server_protocol::JSONRPCErrorError;
     use codex_app_server_protocol::TurnPlanStepStatus;
-    use codex_core::CodexThread;
-    use codex_core::ThreadManager;
+    use codex_thread_runtime::CodexThread;
+    use codex_thread_runtime::ThreadService;
     use codex_login::CodexAuth;
     use codex_protocol::items::HookPromptFragment;
     use codex_protocol::items::build_hook_prompt_message;
@@ -2386,7 +2386,7 @@ mod tests {
     struct GuardianAssessmentTestContext {
         conversation_id: ThreadId,
         conversation: Arc<CodexThread>,
-        thread_manager: Arc<ThreadManager>,
+        thread_service: Arc<ThreadService>,
         outgoing: ThreadScopedOutgoingMessageSender,
         thread_state: Arc<Mutex<ThreadState>>,
         thread_watch_manager: ThreadWatchManager,
@@ -2402,7 +2402,7 @@ mod tests {
                 },
                 self.conversation_id,
                 self.conversation.clone(),
-                self.thread_manager.clone(),
+                self.thread_service.clone(),
                 self.outgoing.clone(),
                 self.thread_state.clone(),
                 self.thread_watch_manager.clone(),
@@ -2714,19 +2714,19 @@ mod tests {
     async fn guardian_command_execution_notifications_wrap_review_lifecycle() -> Result<()> {
         let codex_home = TempDir::new()?;
         let config = load_default_config_for_test(&codex_home).await;
-        let thread_manager = Arc::new(
-            codex_core::test_support::thread_manager_with_models_provider_and_home(
+        let thread_service = Arc::new(
+            codex_thread_runtime::test_support::thread_service_with_models_provider_and_home(
                 CodexAuth::create_dummy_chatgpt_auth_for_testing(),
                 config.model_provider.clone(),
                 config.codex_home.to_path_buf(),
                 Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
             ),
         );
-        let codex_core::NewThread {
+        let codex_thread_runtime::NewThread {
             thread_id: conversation_id,
             thread: conversation,
             ..
-        } = thread_manager.start_thread(config.clone()).await?;
+        } = thread_service.start_thread(config.clone()).await?;
         let thread_state = new_thread_state();
         let thread_watch_manager = ThreadWatchManager::new();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
@@ -2742,7 +2742,7 @@ mod tests {
         let guardian_context = GuardianAssessmentTestContext {
             conversation_id,
             conversation: conversation.clone(),
-            thread_manager: thread_manager.clone(),
+            thread_service: thread_service.clone(),
             outgoing: outgoing.clone(),
             thread_state: thread_state.clone(),
             thread_watch_manager: thread_watch_manager.clone(),
@@ -3292,19 +3292,19 @@ mod tests {
     async fn turn_started_omits_active_snapshot_items() -> Result<()> {
         let codex_home = TempDir::new()?;
         let config = load_default_config_for_test(&codex_home).await;
-        let thread_manager = Arc::new(
-            codex_core::test_support::thread_manager_with_models_provider_and_home(
+        let thread_service = Arc::new(
+            codex_thread_runtime::test_support::thread_service_with_models_provider_and_home(
                 CodexAuth::create_dummy_chatgpt_auth_for_testing(),
                 config.model_provider.clone(),
                 config.codex_home.to_path_buf(),
                 Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
             ),
         );
-        let codex_core::NewThread {
+        let codex_thread_runtime::NewThread {
             thread_id: conversation_id,
             thread: conversation,
             ..
-        } = thread_manager.start_thread(config.clone()).await?;
+        } = thread_service.start_thread(config.clone()).await?;
         let thread_state = new_thread_state();
         {
             let mut state = thread_state.lock().await;
@@ -3352,7 +3352,7 @@ mod tests {
             },
             conversation_id,
             conversation,
-            thread_manager,
+            thread_service,
             outgoing,
             thread_state,
             thread_watch_manager,
@@ -3377,19 +3377,19 @@ mod tests {
     async fn command_wait_completed_emits_command_wait_thread_item() -> Result<()> {
         let codex_home = TempDir::new()?;
         let config = load_default_config_for_test(&codex_home).await;
-        let thread_manager = Arc::new(
-            codex_core::test_support::thread_manager_with_models_provider_and_home(
+        let thread_service = Arc::new(
+            codex_thread_runtime::test_support::thread_service_with_models_provider_and_home(
                 CodexAuth::create_dummy_chatgpt_auth_for_testing(),
                 config.model_provider.clone(),
                 config.codex_home.to_path_buf(),
                 Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
             ),
         );
-        let codex_core::NewThread {
+        let codex_thread_runtime::NewThread {
             thread_id: conversation_id,
             thread: conversation,
             ..
-        } = thread_manager.start_thread(config).await?;
+        } = thread_service.start_thread(config).await?;
         let thread_state = new_thread_state();
         let thread_watch_manager = ThreadWatchManager::new();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
@@ -3418,7 +3418,7 @@ mod tests {
             },
             conversation_id,
             conversation,
-            thread_manager,
+            thread_service,
             outgoing,
             thread_state,
             thread_watch_manager,
@@ -3458,19 +3458,19 @@ mod tests {
     async fn thread_skills_updated_emits_thread_scoped_notification() -> Result<()> {
         let codex_home = TempDir::new()?;
         let config = load_default_config_for_test(&codex_home).await;
-        let thread_manager = Arc::new(
-            codex_core::test_support::thread_manager_with_models_provider_and_home(
+        let thread_service = Arc::new(
+            codex_thread_runtime::test_support::thread_service_with_models_provider_and_home(
                 CodexAuth::create_dummy_chatgpt_auth_for_testing(),
                 config.model_provider.clone(),
                 config.codex_home.to_path_buf(),
                 Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
             ),
         );
-        let codex_core::NewThread {
+        let codex_thread_runtime::NewThread {
             thread_id: conversation_id,
             thread: conversation,
             ..
-        } = thread_manager.start_thread(config.clone()).await?;
+        } = thread_service.start_thread(config.clone()).await?;
         let thread_state = new_thread_state();
         let thread_watch_manager = ThreadWatchManager::new();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
@@ -3497,7 +3497,7 @@ mod tests {
             },
             conversation_id,
             conversation,
-            thread_manager,
+            thread_service,
             outgoing,
             thread_state,
             thread_watch_manager,

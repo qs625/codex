@@ -1,0 +1,52 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-command-service"
+version.workspace = true
+
+[lib]
+name = "codex_command_service"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+async-channel = { workspace = true }
+codex-command-runtime = { workspace = true }
+codex-command-service-api = { workspace = true }
+codex-exec-server-api = { workspace = true }
+codex-exec-server-protocol = { workspace = true }
+codex-features = { workspace = true }
+codex-file-system = { workspace = true }
+codex-hooks = { workspace = true }
+codex-hooks-api = { workspace = true }
+codex-network-proxy-api = { workspace = true }
+codex-permissions-runtime = { workspace = true }
+codex-process-exec = { workspace = true }
+codex-protocol = { workspace = true }
+codex-sandboxing-api = { workspace = true }
+codex-session-telemetry-api = { workspace = true }
+codex-shell-command = { workspace = true }
+codex-shell-escalation = { workspace = true }
+codex-shell-utils = { workspace = true }
+codex-thread-api = { workspace = true }
+codex-tool-config = { workspace = true }
+codex-tool-handlers = { workspace = true }
+codex-tool-planning = { workspace = true }
+codex-tool-runtime = { workspace = true }
+codex-tool-runtime-api = { workspace = true }
+codex-tool-types = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+codex-utils-output-truncation = { workspace = true }
+codex-utils-pty = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process", "signal"] }
+tokio-util = { workspace = true, features = ["rt"] }
+tracing = { workspace = true, features = ["log"] }
+uuid = { workspace = true, features = ["serde", "v4"] }
+
+[target.'cfg(unix)'.dependencies]
+codex-shell-escalation = { workspace = true }

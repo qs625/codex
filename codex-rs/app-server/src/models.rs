@@ -2,8 +2,8 @@ use codex_app_server_protocol::Model;
 use codex_app_server_protocol::ModelServiceTier;
 use codex_app_server_protocol::ModelUpgradeInfo;
 use codex_app_server_protocol::ReasoningEffortOption;
-use codex_core::ThreadManager;
-use codex_core::config::Config;
+use codex_thread_runtime::ThreadService;
+use codex_thread_runtime::config::Config;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_models_manager::model_info;
 use codex_models_manager_api::RefreshStrategy;
@@ -26,7 +26,7 @@ pub trait ModelCatalogRuntime: Send + Sync {
     ) -> BoxFuture<'a, Vec<ModelPreset>>;
 }
 
-impl ModelCatalogRuntime for ThreadManager {
+impl ModelCatalogRuntime for ThreadService {
     fn list_models_for_provider<'a>(
         &'a self,
         config: &'a Config,
@@ -34,7 +34,7 @@ impl ModelCatalogRuntime for ThreadManager {
         model_catalog: Option<ModelsResponse>,
         refresh_strategy: RefreshStrategy,
     ) -> BoxFuture<'a, Vec<ModelPreset>> {
-        Box::pin(ThreadManager::list_models_for_provider(
+        Box::pin(ThreadService::list_models_for_provider(
             self,
             config,
             provider_info,

@@ -30,7 +30,7 @@ use codex_tool_planning::normalize_request_user_input_args;
 use codex_tool_planning::request_permissions_tool_description;
 use codex_tool_planning::request_user_input_tool_description;
 use codex_tool_planning::request_user_input_unavailable_message;
-use codex_tool_runtime_api::ApplyPatchHandlerHost;
+use codex_thread_api::ThreadRuntimeCapability;
 use codex_tool_runtime_api::FunctionToolSession;
 use codex_tool_runtime_api::FunctionToolTurn;
 use codex_tool_runtime_api::ToolHandler;
@@ -83,18 +83,15 @@ pub struct DynamicToolHandler {
     search_text: String,
 }
 
-pub struct ViewImageHandler<Host> {
-    host: Host,
+pub struct ViewImageHandler<Turn> {
+    _turn: std::marker::PhantomData<fn() -> Turn>,
     options: ViewImageToolOptions,
 }
 
-impl<Host> Default for ViewImageHandler<Host>
-where
-    Host: Default,
-{
+impl<Turn> Default for ViewImageHandler<Turn> {
     fn default() -> Self {
         Self {
-            host: Host::default(),
+            _turn: std::marker::PhantomData,
             options: ViewImageToolOptions {
                 can_request_original_image_detail: false,
                 include_environment_id: false,
@@ -103,9 +100,12 @@ where
     }
 }
 
-impl<Host> ViewImageHandler<Host> {
-    pub fn new(host: Host, options: ViewImageToolOptions) -> Self {
-        Self { host, options }
+impl<Turn> ViewImageHandler<Turn> {
+    pub fn new(options: ViewImageToolOptions) -> Self {
+        Self {
+            _turn: std::marker::PhantomData,
+            options,
+        }
     }
 }
 
@@ -483,19 +483,12 @@ where
     }
 }
 
-impl<Host>
-    ToolExecutor<
-        ToolInvocation<
-            <Host as ApplyPatchHandlerHost>::Session,
-            <Host as ApplyPatchHandlerHost>::Turn,
-            <Host as ApplyPatchHandlerHost>::Tracker,
-        >,
-    > for ViewImageHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for ViewImageHandler<Turn>
 where
-    Host: ApplyPatchHandlerHost,
-    <Host as ApplyPatchHandlerHost>::Session:
-        FunctionToolSession<<Host as ApplyPatchHandlerHost>::Turn>,
-    <Host as ApplyPatchHandlerHost>::Turn: FunctionToolTurn,
+    Session: FunctionToolSession<Turn>,
+    Turn: FunctionToolTurn + ThreadRuntimeCapability,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = ViewImageOutput;
 
@@ -513,11 +506,7 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<
-            <Host as ApplyPatchHandlerHost>::Session,
-            <Host as ApplyPatchHandlerHost>::Turn,
-            <Host as ApplyPatchHandlerHost>::Tracker,
-        >,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
@@ -552,9 +541,7 @@ where
                 }
             };
 
-            let Some(turn_environment) = self
-                .host
-                .resolve_environment(&turn, environment_id.as_deref())?
+            let Some(turn_environment) = turn.resolve_environment(environment_id.as_deref())?
             else {
                 return Err(FunctionCallError::RespondToModel(
                     "view_image is unavailable in this session".to_string(),
@@ -562,9 +549,7 @@ where
             };
             let cwd = turn_environment.cwd.clone();
             let abs_path = cwd.join(path);
-            let sandbox = self
-                .host
-                .file_system_sandbox_context(&turn, /*additional_permissions*/ None, &cwd);
+            let sandbox = turn.file_system_sandbox_context(/*additional_permissions*/ None, &cwd);
             let fs = turn_environment.environment.filesystem();
 
             let metadata = fs
@@ -631,20 +616,13 @@ where
     }
 }
 
-impl<Host>
-    ToolHandler<
-        ToolInvocation<
-            <Host as ApplyPatchHandlerHost>::Session,
-            <Host as ApplyPatchHandlerHost>::Turn,
-            <Host as ApplyPatchHandlerHost>::Tracker,
-        >,
-        <Host as ApplyPatchHandlerHost>::DiffContext,
-    > for ViewImageHandler<Host>
+impl<Session, Turn, Tracker, DiffContext> ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext>
+    for ViewImageHandler<Turn>
 where
-    Host: ApplyPatchHandlerHost,
-    <Host as ApplyPatchHandlerHost>::Session:
-        FunctionToolSession<<Host as ApplyPatchHandlerHost>::Turn>,
-    <Host as ApplyPatchHandlerHost>::Turn: FunctionToolTurn,
+    Session: FunctionToolSession<Turn>,
+    Turn: FunctionToolTurn + ThreadRuntimeCapability,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
 }
 
@@ -831,7 +809,11 @@ mod tests {
         })
         .expect("dynamic handler should be created");
 
-        let search_info = handler.search_info().expect("dynamic search info");
+        let search_info = <DynamicToolHandler as ToolHandler<
+            ToolInvocation<StubSession, StubTurn, ()>,
+            (),
+        >>::search_info(&handler)
+        .expect("dynamic search info");
 
         assert!(
             search_info.entry.search_text.contains("codex_app"),

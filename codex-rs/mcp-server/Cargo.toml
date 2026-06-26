@@ -21,7 +21,6 @@ anyhow = { workspace = true }
 codex-api = { workspace = true }
 codex-arg0 = { workspace = true }
 codex-code-mode = { workspace = true }
-codex-core = { workspace = true }
 codex-core-plugins = { workspace = true }
 codex-core-skills = { workspace = true }
 codex-exec-server = { workspace = true }
@@ -40,13 +39,14 @@ codex-otel-init = { workspace = true }
 codex-protocol = { workspace = true }
 codex-rollout = { workspace = true }
 codex-sandboxing = { workspace = true }
-codex-session-api = { workspace = true }
 codex-state-api = { workspace = true }
+codex-command-service = { workspace = true }
+codex-thread-api = { workspace = true }
+codex-thread-runtime = { workspace = true }
 codex-terminal-detection = { workspace = true }
 codex-thread-store = { workspace = true }
 codex-tool-config = { workspace = true }
-codex-tool-handlers = { workspace = true }
-codex-tool-runtime-api = { workspace = true }
+codex-tool-service = { workspace = true }
 codex-workflow = { workspace = true }
 codex-utils-cli = { workspace = true }
 codex-utils-json-to-toml = { workspace = true }

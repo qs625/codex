@@ -18,6 +18,7 @@ use codex_sandboxing_api::SandboxCommand;
 use codex_sandboxing_api::SandboxTransformError;
 use codex_tool_config::ToolUserShellType;
 use codex_tool_config::ZshForkConfig;
+use crate::handler_hosts::ExecCommandApprovalMode;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::future::BoxFuture;
 use std::collections::HashMap;
@@ -45,6 +46,7 @@ pub struct UnifiedExecRequest {
     pub additional_permissions_preapproved: bool,
     pub justification: Option<String>,
     pub exec_approval_requirement: ExecApprovalRequirement,
+    pub approval_mode: ExecCommandApprovalMode,
 }
 
 /// Cache key for approval decisions that can be reused across equivalent

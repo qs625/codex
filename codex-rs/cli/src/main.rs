@@ -66,15 +66,15 @@ use state_db_recovery as local_state_db;
 use codex_config_loader::LoaderOverrides;
 use codex_config_local_loader::LocalConfigLayerLoader;
 use codex_config_types::CONFIG_TOML_FILE;
-use codex_core::ThreadAuthRuntimes;
-use codex_core::build_models_manager;
-use codex_core::config::Config;
-use codex_core::config::ConfigBuilder;
-use codex_core::config::ConfigOverrides;
-use codex_core::config::ThreadStoreConfig;
-use codex_core::config::edit::ConfigEditsBuilder;
-use codex_core::config::find_codex_home;
-use codex_core::config::resolve_profile_v2_config_path;
+use codex_thread_runtime::ThreadAuthRuntimes;
+use codex_thread_runtime::build_models_manager;
+use codex_thread_runtime::config::Config;
+use codex_thread_runtime::config::ConfigBuilder;
+use codex_thread_runtime::config::ConfigOverrides;
+use codex_thread_runtime::config::ThreadStoreConfig;
+use codex_thread_runtime::config::edit::ConfigEditsBuilder;
+use codex_thread_runtime::config::find_codex_home;
+use codex_thread_runtime::config::resolve_profile_v2_config_path;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server_api::ExecServerRuntimePaths;
 use codex_features::FEATURES;
@@ -87,78 +87,7 @@ use codex_models_manager_api::RefreshStrategy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::user_input::UserInput;
 use codex_rollout::StateDbHandle;
-use codex_state_api::SharedStateDbRuntime;
 use codex_terminal_detection::TerminalName;
-
-struct CliToolRouterFactory;
-
-type CliMcpToolCallHost = codex_session_api::SessionMcpToolCallHost<
-    codex_core::Session,
-    Arc<codex_core::TurnContext>,
-    codex_core::SharedTurnDiffTracker,
-    codex_core::TurnContext,
->;
-type CliMcpResourceHost = codex_session_api::SessionMcpResourceHost<
-    codex_core::Session,
-    Arc<codex_core::TurnContext>,
-    codex_core::SharedTurnDiffTracker,
-    codex_core::TurnContext,
->;
-type CliGoalHost = codex_session_api::SessionGoalHost<
-    codex_core::Session,
-    Arc<codex_core::TurnContext>,
-    codex_core::SharedTurnDiffTracker,
-    codex_core::TurnContext,
->;
-type CliWorkflowHost = codex_session_api::SessionWorkflowHost<
-    codex_core::Session,
-    Arc<codex_core::TurnContext>,
-    codex_core::SharedTurnDiffTracker,
-    codex_core::TurnContext,
->;
-type CliAgentJobHost = codex_session_api::SessionAgentJobHost<
-    codex_core::Session,
-    Arc<codex_core::TurnContext>,
-    codex_core::SharedTurnDiffTracker,
-    codex_core::TurnContext,
-    codex_core::config::Config,
->;
-
-impl
-    codex_session_api::SessionToolRouterFactory<
-        Arc<codex_core::Session>,
-        Arc<codex_core::TurnContext>,
-        codex_core::SharedTurnDiffTracker,
-        codex_core::TurnContext,
-    > for CliToolRouterFactory
-{
-    fn build_tool_router(
-        &self,
-        config: &codex_tool_config::ToolsConfig,
-        params: codex_tool_runtime_api::ToolRouterBuildParams<'_>,
-    ) -> Arc<codex_core::CoreToolRuntimeRouter> {
-        Arc::new(codex_tool_handlers::SessionToolRouterAdapter::new(
-            codex_tool_handlers::build_tool_router(
-                config,
-                &codex_core::CoreApplyPatchHandlerHost,
-                codex_tool_handlers::ToolRuntimeBuildParams {
-                    mcp_tools: params.mcp_tools,
-                    deferred_mcp_tools: params.deferred_mcp_tools,
-                    discoverable_tools: params.discoverable_tools,
-                    extension_tool_executors: params.extension_tool_executors,
-                    dynamic_tools: params.dynamic_tools,
-                    default_agent_type_description: params.default_agent_type_description,
-                    mcp_tool_call_host: CliMcpToolCallHost::default(),
-                    mcp_resource_host: CliMcpResourceHost::default(),
-                    goal_host: CliGoalHost::default(),
-                    workflow_host: CliWorkflowHost::default(),
-                    agent_job_host: CliAgentJobHost::default(),
-                },
-            ),
-            codex_core::CoreToolDispatchHost,
-        ))
-    }
-}
 
 pub(crate) fn config_builder() -> ConfigBuilder {
     ConfigBuilder::default().config_layer_loader(Arc::new(LocalConfigLayerLoader::default()))
@@ -1747,25 +1676,30 @@ async fn run_debug_prompt_input_command(
 
     let state_db: Option<StateDbHandle> = None;
     let thread_store = thread_store_from_config(&config, state_db.clone());
-    let prompt_state_db: Option<SharedStateDbRuntime> = state_db
-        .clone()
-        .map(|state_db| -> SharedStateDbRuntime { state_db });
     let auth_manager =
         AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false).await;
     let auth_runtimes = ThreadAuthRuntimes::from_auth_runtime(
         auth_manager.clone(),
         codex_login::model_provider_auth_manager(Some(auth_manager)),
     );
-    let prompt_input = codex_core::build_prompt_input(
+    let shared_state_db = state_db.clone();
+    let prompt_input = codex_thread_runtime::build_prompt_input(
         config,
         input,
-        prompt_state_db,
+        shared_state_db,
         environment_provider,
         thread_store,
         Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         auth_runtimes,
         Arc::new(codex_model_provider::DefaultModelProviderFactory),
-        Arc::new(CliToolRouterFactory),
+        Arc::new(codex_tool_service::ToolService::new(
+            Arc::new(codex_thread_runtime::ThreadApprovalService),
+            Arc::new(codex_command_service::CommandService::new()),
+            Arc::new(codex_thread_runtime::GoalService),
+            Arc::new(codex_thread_runtime::McpResourceService),
+            Arc::new(codex_thread_runtime::RequestPluginInstallService),
+            Arc::new(codex_workflow::WorkflowService::new()),
+        )),
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     )

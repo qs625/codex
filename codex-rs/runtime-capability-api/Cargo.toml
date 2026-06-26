@@ -1,0 +1,11 @@
+[package]
+name = "codex-runtime-capability-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true

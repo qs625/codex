@@ -1,0 +1,275 @@
+//! Thread runtime implementation.
+
+// Prevent accidental direct writes to stdout/stderr in library code. All
+// user-visible output must go through the appropriate abstraction.
+#![deny(clippy::print_stdout, clippy::print_stderr)]
+
+use std::path::PathBuf;
+
+use codex_protocol::config_types::ApprovalsReviewer;
+use codex_protocol::config_types::CollaborationMode;
+use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use codex_protocol::config_types::WindowsSandboxLevel;
+use codex_protocol::models::ActivePermissionProfile;
+use codex_protocol::models::PermissionProfile;
+use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::SandboxPolicy;
+use codex_protocol::protocol::TurnEnvironmentSelection;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use serde_json::Value;
+
+mod apps;
+mod apply_patch_environment;
+mod arc_monitor;
+mod client;
+mod client_common;
+mod command_interaction_capability;
+mod command_service_capability;
+mod config_lock;
+mod realtime_context;
+mod realtime_conversation;
+pub mod session;
+pub use session::session::Session as ThreadRuntimeSession;
+pub(crate) use session::turn_context::TurnContext;
+pub use session::turn_context::TurnContext as ThreadTurnContext;
+mod agent;
+mod approval_service;
+pub use codex_thread_api::ActiveEventSubscriptionTracker;
+mod attestation;
+mod code_mode_capability;
+pub(crate) mod code_mode_runtime;
+mod codex_delegate;
+pub mod config;
+pub mod connectors;
+mod context;
+mod context_usage;
+mod environment_selection;
+pub mod exec;
+pub mod exec_env;
+mod exec_policy;
+mod goal;
+pub use goal::GoalService;
+pub use codex_state_api::ExternalGoalPreviousStatus;
+pub use codex_state_api::ExternalGoalSet;
+mod guardian;
+mod hook_runtime;
+mod installation_id;
+mod mailbox;
+pub(crate) mod mcp;
+pub use mcp::McpResourceService;
+mod network_policy_decision;
+pub use codex_mcp_runtime::McpManager;
+pub(crate) mod mention_syntax;
+pub(crate) mod network_approval;
+mod original_image_detail;
+mod runtime_shell;
+pub(crate) mod utils;
+pub use mention_syntax::PLUGIN_TEXT_MENTION_SIGIL;
+pub use mention_syntax::TOOL_MENTION_SIGIL;
+pub use utils::path_utils;
+pub mod personality_migration;
+pub(crate) mod plugins;
+pub use plugins::RequestPluginInstallService;
+#[doc(hidden)]
+pub(crate) mod prompt_debug;
+#[doc(hidden)]
+pub use prompt_debug::build_prompt_input;
+pub(crate) mod mentions {
+    pub(crate) use crate::plugins::build_connector_slug_counts;
+    pub(crate) use crate::plugins::build_skill_name_counts;
+    pub(crate) use crate::plugins::collect_explicit_app_ids;
+    pub(crate) use crate::plugins::collect_explicit_plugin_mentions;
+}
+pub mod sandboxing;
+mod session_prefix;
+mod session_rollout_init_error;
+mod session_settings;
+mod session_startup_prewarm;
+mod runtime_shell_detect;
+pub mod skills;
+pub(crate) use skills::SkillInjections;
+pub(crate) use skills::SkillLoadOutcome;
+pub(crate) use skills::SkillMetadata;
+pub(crate) use skills::build_available_skills;
+pub(crate) use skills::build_skill_injections;
+pub(crate) use skills::build_skill_name_counts;
+pub(crate) use skills::collect_env_var_dependencies;
+pub(crate) use skills::collect_explicit_skill_mentions;
+pub(crate) use skills::default_skill_metadata_budget;
+pub(crate) use skills::emit_thread_skills_update;
+pub(crate) use skills::injection;
+pub(crate) use skills::maybe_emit_implicit_skill_invocation;
+pub(crate) use skills::resolve_skill_dependencies_for_turn;
+pub(crate) use skills::skills_load_input_from_config;
+mod event_mapping;
+pub mod review_format;
+pub mod review_prompts;
+mod stream_events_utils;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+pub mod thread;
+mod thread_skills;
+#[cfg(any(test, feature = "test-support"))]
+mod unified_exec;
+pub(crate) mod web_search;
+pub mod windows_sandbox;
+pub(crate) mod windows_sandbox_read_grants;
+pub mod workflow_runs;
+pub(crate) mod workflow_capability;
+pub mod workflows;
+pub use codex_rollout_api::ForkSnapshot;
+pub use thread::CodexThread;
+pub use thread::CodexThreadTurnContextOverrides;
+pub use thread::NewThread;
+pub use thread::StartThreadOptions;
+pub use thread::ThreadAuthRuntimes;
+pub use thread::ThreadConfigSnapshot;
+pub use thread::ThreadCreatedEvent;
+pub use thread::ThreadService;
+pub use thread::ThreadRuntimeStatus;
+pub use thread::ThreadShutdownReport;
+pub use thread::build_models_manager;
+pub use web_search::web_search_action_detail;
+pub use web_search::web_search_detail;
+pub use windows_sandbox_read_grants::grant_read_root_non_elevated;
+pub(crate) mod agents_md;
+pub use agents_md::AgentsMdManager;
+pub use agents_md::DEFAULT_AGENTS_MD_FILENAME;
+pub use agents_md::LOCAL_AGENTS_MD_FILENAME;
+pub use approval_service::ThreadApprovalService;
+mod rollout;
+pub mod runtime_shell_model;
+#[cfg(unix)]
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) mod shell_escalation_adapter;
+pub(crate) mod runtime_shell_snapshot;
+pub mod spawn;
+pub(crate) mod state_db_bridge;
+pub(crate) use state_db_bridge::StateDbHandle;
+mod function_tool_runtime;
+mod state;
+mod tasks;
+mod tool_dispatch_trace;
+mod tool_approval_support;
+#[cfg(any(test, feature = "test-support"))]
+mod tool_runtime_support;
+mod tool_session_capability;
+#[cfg(any(test, feature = "test-support"))]
+mod tool_test_runtime_host;
+#[cfg(test)]
+mod tool_test_registry;
+mod turn_context_item;
+mod turn_metadata;
+mod turn_resolved_config;
+mod turn_state;
+mod turn_timing;
+mod user_shell_command;
+mod user_turn_input;
+pub mod util;
+
+pub use attestation::AttestationContext;
+pub use attestation::AttestationProvider;
+pub use attestation::GenerateAttestationFuture;
+pub use client::ModelClient;
+pub use client::ModelClientSession;
+pub use client_common::Prompt;
+pub use client_common::REVIEW_PROMPT;
+pub use client_common::ResponseStream;
+pub use codex_thread_api::PendingInputItem;
+pub use config_lock::ConfigLockBuildInput;
+pub use config_lock::ConfigLockMultiAgentV2ResolvedConfig;
+pub use config_lock::ConfigLockResolvedConfigFields;
+pub use config_lock::ConfigLockSessionResolvedFields;
+pub use config_lock::build_config_lockfile_toml;
+pub use config_lock::config_lock_to_pretty_toml;
+pub use event_mapping::parse_turn_item;
+pub use exec_policy::EmptyExecPolicyLoader;
+pub use exec_policy::ExecPolicyLoadResult;
+pub use exec_policy::ExecPolicyLoader;
+pub use installation_id::resolve_installation_id;
+pub use mailbox::Mailbox;
+pub use mailbox::MailboxDeliveryPhase;
+pub use mailbox::MailboxReceiver;
+#[doc(hidden)]
+#[cfg(any(test, feature = "test-support"))]
+pub use tool_test_runtime_host::CoreToolRuntimeHost;
+#[doc(hidden)]
+pub type SharedTurnDiffTracker =
+    std::sync::Arc<tokio::sync::Mutex<codex_tool_runtime::TurnDiffTracker>>;
+pub(crate) type CoreToolServiceApi = dyn codex_tool_service_api::ToolServiceApi;
+pub type ThreadToolServiceApi = dyn codex_tool_service_api::ToolServiceApi;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) type ThreadCapabilityToolHost = codex_tool_handlers::CapabilityToolHost<
+    session::session::Session,
+    std::sync::Arc<session::turn_context::TurnContext>,
+    session::turn_context::TurnContext,
+    tool_test_runtime_host::CoreToolRuntimeHost,
+>;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn thread_capability_tool_host() -> ThreadCapabilityToolHost {
+    codex_tool_handlers::CapabilityToolHost::new(tool_test_runtime_host::CoreToolRuntimeHost)
+}
+pub use session_settings::SessionPermissionProfileUpdate;
+pub use session_settings::SessionSettingsApplyCurrent;
+pub use session_settings::SessionSettingsApplyPlan;
+pub use session_settings::build_session_settings_apply_plan;
+pub use session_settings::is_enterprise_default_service_tier_plan;
+pub use session_settings::legacy_permission_profile_for_cwd;
+pub use session_settings::legacy_permission_profile_needs_cwd_rebind;
+pub use session_settings::model_provider_update_for_collaboration_mode;
+pub use session_settings::normalize_service_tier_update;
+pub use session_settings::permission_profile_preserving_deny_reads;
+pub use session_settings::resolve_session_service_tier;
+pub use session_settings::retarget_workspace_roots_for_cwd_update;
+pub use steer_input::ActiveSteerTurn;
+pub use steer_input::SteerInputError;
+pub use steer_input::SteerableTaskKind;
+pub use steer_input::ValidatedSteerInput;
+pub use steer_input::validate_steer_input;
+pub use task_kind::TaskKind;
+pub use thread_skills::initial_thread_skills;
+pub use thread_skills::merge_thread_skills;
+pub use turn_context_item::TurnContextItemBuildInput;
+pub use turn_context_item::build_turn_context_item;
+pub use turn_metadata::build_turn_metadata_header;
+pub use turn_resolved_config::TurnResolvedConfigFactInput;
+pub use turn_resolved_config::build_turn_resolved_config_fact;
+pub use turn_state::PendingRequestPermissions;
+pub use turn_state::TurnState;
+pub use user_turn_input::UserTurnSubmission;
+pub use user_turn_input::user_turn_submission_from_op;
+pub mod compact;
+mod memory_usage;
+mod steer_input;
+mod task_kind;
+#[cfg(test)]
+#[path = "session_tool_domain_host_apply_patch_tests.rs"]
+mod thread_capability_tool_host_apply_patch_tests;
+
+/// Session configuration overrides supplied by thread resume, turn override,
+/// or app-server settings update paths.
+#[derive(Default, Clone)]
+pub struct SessionSettingsUpdate {
+    pub cwd: Option<PathBuf>,
+    pub workspace_roots: Option<Vec<AbsolutePathBuf>>,
+    pub profile_workspace_roots: Option<Vec<AbsolutePathBuf>>,
+    pub approval_policy: Option<AskForApproval>,
+    pub approvals_reviewer: Option<ApprovalsReviewer>,
+    pub sandbox_policy: Option<SandboxPolicy>,
+    pub permission_profile: Option<PermissionProfile>,
+    pub active_permission_profile: Option<ActivePermissionProfile>,
+    pub windows_sandbox_level: Option<WindowsSandboxLevel>,
+    pub model_provider: Option<String>,
+    pub collaboration_mode: Option<CollaborationMode>,
+    pub reasoning_summary: Option<ReasoningSummaryConfig>,
+    pub service_tier: Option<Option<String>>,
+    pub final_output_json_schema: Option<Option<Value>>,
+    /// Turn-local environment override. `None` inherits the sticky thread
+    /// environments stored on the session configuration; `Some([])` explicitly
+    /// disables environments for this turn.
+    pub environments: Option<Vec<TurnEnvironmentSelection>>,
+    pub personality: Option<Personality>,
+    pub app_server_client_name: Option<String>,
+    pub app_server_client_version: Option<String>,
+}

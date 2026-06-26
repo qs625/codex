@@ -2,7 +2,7 @@ use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnStatus;
-use codex_core::config::ConfigBuilder;
+use codex_thread_runtime::config::ConfigBuilder;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::models::PermissionProfile;

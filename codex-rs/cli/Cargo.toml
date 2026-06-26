@@ -31,11 +31,12 @@ codex-api = { workspace = true }
 codex-chatgpt = { workspace = true, features = ["apply-command"] }
 codex-cloud-tasks = { path = "../cloud-tasks" }
 codex-utils-cli = { workspace = true }
+codex-command-service = { workspace = true }
 codex-config-edit = { workspace = true }
 codex-config-local-loader = { workspace = true }
 codex-config-loader = { workspace = true }
 codex-config-types = { workspace = true }
-codex-core = { workspace = true }
+codex-thread-runtime = { workspace = true }
 codex-core-plugins = { workspace = true }
 codex-exec = { workspace = true }
 codex-exec-server-api = { workspace = true }
@@ -60,18 +61,18 @@ codex-rmcp-client = { workspace = true }
 codex-rollout = { workspace = true }
 codex-rollout-trace = { workspace = true }
 codex-sandboxing = { workspace = true }
-codex-session-api = { workspace = true }
 codex-state = { workspace = true }
 codex-state-api = { workspace = true }
 codex-stdio-to-uds = { workspace = true }
 codex-terminal-detection = { workspace = true }
+codex-thread-api = { workspace = true }
 codex-thread-store = { workspace = true }
 codex-tool-config = { workspace = true }
-codex-tool-handlers = { workspace = true }
-codex-tool-runtime-api = { workspace = true }
+codex-tool-service = { workspace = true }
 codex-tui = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-path = { workspace = true }
+codex-workflow = { workspace = true }
 crossterm = { workspace = true }
 http = { workspace = true }
 libc = { workspace = true }

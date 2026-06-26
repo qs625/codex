@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::AgentStatus;
+use codex_thread_api::SessionAgentJobCaller;
+use codex_thread_api::ThreadRuntimeCapability;
 use codex_state_api::AgentJob;
 use codex_state_api::AgentJobCreateParams;
 use codex_state_api::AgentJobItem;
@@ -22,7 +24,6 @@ use codex_tool_planning::create_report_agent_job_result_tool;
 use codex_tool_planning::create_spawn_agents_on_csv_tool;
 use codex_tool_runtime_api::AgentJobRunnerOptions;
 use codex_tool_runtime_api::AgentJobSpawnWorkerError;
-use codex_tool_runtime_api::AgentJobToolHost;
 use codex_tool_runtime_api::ToolHandler;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolExecutor;
@@ -34,6 +35,7 @@ use futures::stream::FuturesUnordered;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
+use std::sync::Arc;
 use tokio::sync::watch;
 use tokio::time::Instant;
 use tokio::time::timeout;
@@ -45,23 +47,19 @@ use codex_tool_runtime::ToolInvocation;
 const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const DEFAULT_AGENT_JOB_ITEM_TIMEOUT: Duration = Duration::from_secs(60 * 30);
 
-pub struct SpawnAgentsOnCsvHandler<Host> {
-    host: Host,
-}
+pub struct SpawnAgentsOnCsvHandler;
 
-impl<Host> SpawnAgentsOnCsvHandler<Host> {
-    pub fn new(host: Host) -> Self {
-        Self { host }
+impl SpawnAgentsOnCsvHandler {
+    pub fn new() -> Self {
+        Self
     }
 }
 
-pub struct ReportAgentJobResultHandler<Host> {
-    host: Host,
-}
+pub struct ReportAgentJobResultHandler;
 
-impl<Host> ReportAgentJobResultHandler<Host> {
-    pub fn new(host: Host) -> Self {
-        Self { host }
+impl ReportAgentJobResultHandler {
+    pub fn new() -> Self {
+        Self
     }
 }
 
@@ -116,10 +114,12 @@ struct ActiveJobItem {
     status_rx: Option<watch::Receiver<AgentStatus>>,
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for SpawnAgentsOnCsvHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for SpawnAgentsOnCsvHandler
 where
-    Host: AgentJobToolHost,
+    Session: SessionAgentJobCaller + Clone,
+    Turn: ThreadRuntimeCapability,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = FunctionToolOutput;
 
@@ -133,7 +133,7 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
@@ -146,25 +146,30 @@ where
                 ..
             } = invocation;
             let arguments = function_arguments(metadata.payload, "agent jobs")?;
-            handle_spawn_agents_on_csv(&self.host, session, turn, arguments).await
+            handle_spawn_agents_on_csv(session, turn, arguments).await
         })
     }
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for SpawnAgentsOnCsvHandler<Host>
+impl<Session, Turn, Tracker, DiffContext>
+    ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext> for SpawnAgentsOnCsvHandler
 where
-    Host: AgentJobToolHost,
+    Session: SessionAgentJobCaller + Clone,
+    Turn: ThreadRuntimeCapability,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
         matches!(payload, ToolPayload::Function { .. })
     }
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for ReportAgentJobResultHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for ReportAgentJobResultHandler
 where
-    Host: AgentJobToolHost,
+    Session: SessionAgentJobCaller + Clone,
+    Turn: ThreadRuntimeCapability,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = FunctionToolOutput;
 
@@ -178,7 +183,7 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
@@ -188,29 +193,34 @@ where
                 session, metadata, ..
             } = invocation;
             let arguments = function_arguments(metadata.payload, "report_agent_job_result")?;
-            handle_report_agent_job_result(&self.host, session, arguments).await
+            handle_report_agent_job_result(session, arguments).await
         })
     }
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for ReportAgentJobResultHandler<Host>
+impl<Session, Turn, Tracker, DiffContext>
+    ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext>
+    for ReportAgentJobResultHandler
 where
-    Host: AgentJobToolHost,
+    Session: SessionAgentJobCaller + Clone,
+    Turn: ThreadRuntimeCapability,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
         matches!(payload, ToolPayload::Function { .. })
     }
 }
 
-async fn handle_spawn_agents_on_csv<Host>(
-    host: &Host,
-    session: Host::Session,
-    turn: Host::Turn,
+async fn handle_spawn_agents_on_csv<Session, Turn, SpawnConfig>(
+    session: Session,
+    turn: Turn,
     arguments: String,
 ) -> Result<FunctionToolOutput, FunctionCallError>
 where
-    Host: AgentJobToolHost,
+    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig> + Clone,
+    Turn: ThreadRuntimeCapability,
+    SpawnConfig: Clone + Send + Sync + 'static,
 {
     let args: SpawnAgentsOnCsvArgs = parse_arguments(arguments.as_str())?;
     if args.instruction.trim().is_empty() {
@@ -219,8 +229,8 @@ where
         ));
     }
 
-    let cwd = host.single_local_environment_cwd(&turn)?;
-    let db = required_state_db(host, &session)?;
+    let cwd = turn.single_local_environment_cwd()?;
+    let db = required_state_db(&session)?;
     let input_path = cwd.join(args.csv_path);
     let input_path_display = input_path.display().to_string();
     let csv_content = tokio::fs::read_to_string(&input_path)
@@ -311,7 +321,7 @@ where
     let job_name = format!("agent-job-{job_suffix}");
     let max_runtime_seconds = normalize_max_runtime_seconds(
         args.max_runtime_seconds
-            .or_else(|| host.default_agent_job_max_runtime_seconds(&turn)),
+            .or_else(|| turn.default_agent_job_max_runtime_seconds()),
     )?;
     let _job = db
         .create_agent_job(
@@ -334,8 +344,8 @@ where
         })?;
 
     let requested_concurrency = args.max_concurrency.or(args.max_workers);
-    let options = match host
-        .build_agent_job_runner_options(&session, &turn, requested_concurrency)
+    let options = match shared_agent_job_session(&session)
+        .build_agent_job_runner_options(&turn, requested_concurrency)
         .await
     {
         Ok(options) => options,
@@ -354,14 +364,7 @@ where
                 "failed to transition agent job {job_id} to running: {err}"
             ))
         })?;
-    if let Err(err) = run_agent_job_loop(
-        host.clone(),
-        session.clone(),
-        turn.clone(),
-        db.clone(),
-        job_id.clone(),
-        options,
-    )
+    if let Err(err) = run_agent_job_loop(session.clone(), turn, db.clone(), job_id.clone(), options)
     .await
     {
         let error_message = format!("job runner failed: {err}");
@@ -451,13 +454,13 @@ where
     Ok(FunctionToolOutput::from_text(content, Some(true)))
 }
 
-async fn handle_report_agent_job_result<Host>(
-    host: &Host,
-    session: Host::Session,
+async fn handle_report_agent_job_result<Session, SpawnConfig>(
+    session: Session,
     arguments: String,
 ) -> Result<FunctionToolOutput, FunctionCallError>
 where
-    Host: AgentJobToolHost,
+    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig> + Clone,
+    SpawnConfig: Clone + Send + Sync + 'static,
 {
     let args: ReportAgentJobResultArgs = parse_arguments(arguments.as_str())?;
     if !args.result.is_object() {
@@ -465,8 +468,8 @@ where
             "result must be a JSON object".to_string(),
         ));
     }
-    let db = required_state_db(host, &session)?;
-    let reporting_thread_id = host.conversation_id_string(&session);
+    let db = required_state_db(&session)?;
+    let reporting_thread_id = session.agent_job_conversation_id_string();
     let accepted = db
         .report_agent_job_item_result(
             args.job_id.as_str(),
@@ -497,14 +500,14 @@ where
     Ok(FunctionToolOutput::from_text(content, Some(true)))
 }
 
-fn required_state_db<Host>(
-    host: &Host,
-    session: &Host::Session,
+fn required_state_db<Session, SpawnConfig>(
+    session: &Session,
 ) -> Result<SharedStateDbRuntime, FunctionCallError>
 where
-    Host: AgentJobToolHost,
+    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig> + Clone,
+    SpawnConfig: Clone + Send + Sync + 'static,
 {
-    host.state_db(session).ok_or_else(|| {
+    session.agent_job_state_db().ok_or_else(|| {
         FunctionCallError::Fatal("sqlite state db is unavailable for this session".to_string())
     })
 }
@@ -528,16 +531,24 @@ fn normalize_max_runtime_seconds(requested: Option<u64>) -> Result<Option<u64>, 
     Ok(Some(requested))
 }
 
-async fn run_agent_job_loop<Host>(
-    host: Host,
-    session: Host::Session,
-    turn: Host::Turn,
+fn shared_agent_job_session<Session>(session: &Session) -> Arc<Session>
+where
+    Session: Clone,
+{
+    Arc::new(session.clone())
+}
+
+async fn run_agent_job_loop<Session, Turn, SpawnConfig>(
+    session: Session,
+    turn: Turn,
     db: SharedStateDbRuntime,
     job_id: String,
-    options: AgentJobRunnerOptions<Host::SpawnConfig>,
+    options: AgentJobRunnerOptions<SpawnConfig>,
 ) -> anyhow::Result<()>
 where
-    Host: AgentJobToolHost,
+    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig> + Clone,
+    Turn: ThreadRuntimeCapability,
+    SpawnConfig: Clone + Send + Sync + 'static,
 {
     let job = db
         .get_agent_job(job_id.as_str())
@@ -546,7 +557,6 @@ where
     let runtime_timeout = job_runtime_timeout(&job);
     let mut active_items: HashMap<ThreadId, ActiveJobItem> = HashMap::new();
     recover_running_items(
-        host.clone(),
         session.clone(),
         db.clone(),
         job_id.as_str(),
@@ -574,14 +584,8 @@ where
                 .await?;
             for item in pending_items {
                 let prompt = build_agent_job_worker_prompt(&job, &item)?;
-                let thread_id = match host
-                    .spawn_agent_job_worker(
-                        &session,
-                        &turn,
-                        options.spawn_config.clone(),
-                        job_id.as_str(),
-                        prompt,
-                    )
+                let thread_id = match shared_agent_job_session(&session)
+                    .spawn_agent_job_worker(&turn, options.spawn_config.clone(), job_id.as_str(), prompt)
                     .await
                 {
                     Ok(thread_id) => thread_id,
@@ -614,7 +618,9 @@ where
                     )
                     .await?;
                 if !assigned {
-                    host.shutdown_agent_job_worker(&session, thread_id).await;
+                    shared_agent_job_session(&session)
+                        .shutdown_agent_job_worker(thread_id)
+                        .await;
                     continue;
                 }
                 active_items.insert(
@@ -622,8 +628,8 @@ where
                     ActiveJobItem {
                         item_id: item.item_id.clone(),
                         started_at: Instant::now(),
-                        status_rx: host
-                            .subscribe_agent_job_worker_status(&session, thread_id)
+                        status_rx: shared_agent_job_session(&session)
+                            .subscribe_agent_job_worker_status(thread_id)
                             .await,
                     },
                 );
@@ -632,7 +638,6 @@ where
         }
 
         if reap_stale_active_items(
-            host.clone(),
             session.clone(),
             db.clone(),
             job_id.as_str(),
@@ -644,7 +649,7 @@ where
             progressed = true;
         }
 
-        let finished = find_finished_threads(host.clone(), session.clone(), &active_items).await;
+        let finished = find_finished_threads(session.clone(), &active_items).await;
         if finished.is_empty() {
             let progress = db.get_agent_job_progress(job_id.as_str()).await?;
             if cancel_requested {
@@ -665,7 +670,6 @@ where
 
         for (thread_id, item_id) in finished {
             finalize_finished_item(
-                host.clone(),
                 session.clone(),
                 db.clone(),
                 job_id.as_str(),
@@ -705,16 +709,16 @@ async fn export_job_csv_snapshot(db: SharedStateDbRuntime, job: &AgentJob) -> an
     Ok(())
 }
 
-async fn recover_running_items<Host>(
-    host: Host,
-    session: Host::Session,
+async fn recover_running_items<Session, SpawnConfig>(
+    session: Session,
     db: SharedStateDbRuntime,
     job_id: &str,
     active_items: &mut HashMap<ThreadId, ActiveJobItem>,
     runtime_timeout: Duration,
 ) -> anyhow::Result<()>
 where
-    Host: AgentJobToolHost,
+    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig> + Clone,
+    SpawnConfig: Clone + Send + Sync + 'static,
 {
     let running_items = db
         .list_agent_job_items(
@@ -731,7 +735,9 @@ where
             if let Some(assigned_thread_id) = item.assigned_thread_id.as_ref()
                 && let Ok(thread_id) = ThreadId::from_string(assigned_thread_id.as_str())
             {
-                host.shutdown_agent_job_worker(&session, thread_id).await;
+                shared_agent_job_session(&session)
+                    .shutdown_agent_job_worker(thread_id)
+                    .await;
             }
             continue;
         }
@@ -757,9 +763,12 @@ where
                 continue;
             }
         };
-        if is_final(&host.get_agent_job_worker_status(&session, thread_id).await) {
+        if is_final(
+            &shared_agent_job_session(&session)
+                .get_agent_job_worker_status(thread_id)
+                .await,
+        ) {
             finalize_finished_item(
-                host.clone(),
                 session.clone(),
                 db.clone(),
                 job_id,
@@ -773,8 +782,8 @@ where
                 ActiveJobItem {
                     item_id: item.item_id.clone(),
                     started_at: started_at_from_item(&item),
-                    status_rx: host
-                        .subscribe_agent_job_worker_status(&session, thread_id)
+                    status_rx: shared_agent_job_session(&session)
+                        .subscribe_agent_job_worker_status(thread_id)
                         .await,
                 },
             );
@@ -783,17 +792,17 @@ where
     Ok(())
 }
 
-async fn find_finished_threads<Host>(
-    host: Host,
-    session: Host::Session,
+async fn find_finished_threads<Session, SpawnConfig>(
+    session: Session,
     active_items: &HashMap<ThreadId, ActiveJobItem>,
 ) -> Vec<(ThreadId, String)>
 where
-    Host: AgentJobToolHost,
+    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig> + Clone,
+    SpawnConfig: Clone + Send + Sync + 'static,
 {
     let mut finished = Vec::new();
     for (thread_id, item) in active_items {
-        let status = active_item_status(&host, &session, *thread_id, item).await;
+        let status = active_item_status(&session, *thread_id, item).await;
         if is_final(&status) {
             finished.push((*thread_id, item.item_id.clone()));
         }
@@ -801,21 +810,23 @@ where
     finished
 }
 
-async fn active_item_status<Host>(
-    host: &Host,
-    session: &Host::Session,
+async fn active_item_status<Session, SpawnConfig>(
+    session: &Session,
     thread_id: ThreadId,
     item: &ActiveJobItem,
 ) -> AgentStatus
 where
-    Host: AgentJobToolHost,
+    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig> + Clone,
+    SpawnConfig: Clone + Send + Sync + 'static,
 {
     if let Some(status_rx) = item.status_rx.as_ref()
         && status_rx.has_changed().is_ok()
     {
         return status_rx.borrow().clone();
     }
-    host.get_agent_job_worker_status(session, thread_id).await
+    shared_agent_job_session(session)
+        .get_agent_job_worker_status(thread_id)
+        .await
 }
 
 async fn wait_for_status_change(active_items: &HashMap<ThreadId, ActiveJobItem>) {
@@ -835,16 +846,16 @@ async fn wait_for_status_change(active_items: &HashMap<ThreadId, ActiveJobItem>)
     let _ = timeout(STATUS_POLL_INTERVAL, waiters.next()).await;
 }
 
-async fn reap_stale_active_items<Host>(
-    host: Host,
-    session: Host::Session,
+async fn reap_stale_active_items<Session, SpawnConfig>(
+    session: Session,
     db: SharedStateDbRuntime,
     job_id: &str,
     active_items: &mut HashMap<ThreadId, ActiveJobItem>,
     runtime_timeout: Duration,
 ) -> anyhow::Result<bool>
 where
-    Host: AgentJobToolHost,
+    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig> + Clone,
+    SpawnConfig: Clone + Send + Sync + 'static,
 {
     let mut stale = Vec::new();
     for (thread_id, item) in active_items.iter() {
@@ -859,22 +870,24 @@ where
         let error_message = format!("worker exceeded max runtime of {runtime_timeout:?}");
         db.mark_agent_job_item_failed(job_id, item_id.as_str(), error_message.as_str())
             .await?;
-        host.shutdown_agent_job_worker(&session, thread_id).await;
+        shared_agent_job_session(&session)
+            .shutdown_agent_job_worker(thread_id)
+            .await;
         active_items.remove(&thread_id);
     }
     Ok(true)
 }
 
-async fn finalize_finished_item<Host>(
-    host: Host,
-    session: Host::Session,
+async fn finalize_finished_item<Session, SpawnConfig>(
+    session: Session,
     db: SharedStateDbRuntime,
     job_id: &str,
     item_id: &str,
     thread_id: ThreadId,
 ) -> anyhow::Result<()>
 where
-    Host: AgentJobToolHost,
+    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig> + Clone,
+    SpawnConfig: Clone + Send + Sync + 'static,
 {
     let item = db
         .get_agent_job_item(job_id, item_id)
@@ -895,7 +908,9 @@ where
                 .await?;
         }
     }
-    host.shutdown_agent_job_worker(&session, thread_id).await;
+    shared_agent_job_session(&session)
+        .shutdown_agent_job_worker(thread_id)
+        .await;
     Ok(())
 }
 

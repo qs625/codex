@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use codex_core::CodexThread;
+use codex_thread_runtime::CodexThread;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::Op;

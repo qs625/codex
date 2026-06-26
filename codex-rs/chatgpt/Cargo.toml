@@ -14,7 +14,7 @@ codex-auth-types = { workspace = true }
 codex-config-types = { workspace = true }
 codex-connectors = { workspace = true }
 codex-connectors-types = { workspace = true }
-codex-core = { workspace = true, optional = true }
+codex-thread-runtime = { workspace = true, optional = true }
 codex-core-plugins = { workspace = true }
 codex-core-plugins-api = { workspace = true }
 codex-git-utils = { workspace = true, optional = true }
@@ -27,7 +27,7 @@ tokio = { workspace = true, features = ["full"] }
 
 [features]
 default = []
-apply-command = ["clap", "codex-core", "codex-git-utils", "codex-utils-cli"]
+apply-command = ["clap", "codex-thread-runtime", "codex-git-utils", "codex-utils-cli"]
 
 [[test]]
 name = "all"

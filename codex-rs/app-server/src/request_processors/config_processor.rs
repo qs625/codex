@@ -43,8 +43,8 @@ use codex_config_types::HookHandlerConfig as CoreHookHandlerConfig;
 use codex_config_types::ManagedHooksRequirementsToml;
 use codex_config_types::MatcherGroup as CoreMatcherGroup;
 use codex_config_types::ResidencyRequirement as CoreResidencyRequirement;
-use codex_core::ThreadManager;
-use codex_core::connectors as core_connectors;
+use codex_thread_runtime::ThreadService;
+use codex_thread_runtime::connectors as core_connectors;
 use codex_core_plugins::PluginsManager;
 use codex_exec_server::EnvironmentManager;
 use codex_features::canonical_feature_for_key;
@@ -75,24 +75,24 @@ pub(crate) trait ConfigRuntime: Send + Sync {
 
     fn refresh_live_threads_runtime_config(
         &self,
-        next_config: codex_core::config::Config,
+        next_config: codex_thread_runtime::config::Config,
     ) -> BoxFuture<'_, ()>;
 }
 
-impl ConfigRuntime for ThreadManager {
+impl ConfigRuntime for ThreadService {
     fn clear_skills_cache(&self) {
         self.skills_manager().clear_cache();
     }
 
     fn plugin_runtime(&self) -> codex_core_plugins_api::SharedPluginRuntime {
-        ThreadManager::plugin_runtime(self)
+        ThreadService::plugin_runtime(self)
     }
 
     fn refresh_live_threads_runtime_config(
         &self,
-        next_config: codex_core::config::Config,
+        next_config: codex_thread_runtime::config::Config,
     ) -> BoxFuture<'_, ()> {
-        Box::pin(ThreadManager::refresh_live_threads_runtime_config(
+        Box::pin(ThreadService::refresh_live_threads_runtime_config(
             self,
             next_config,
         ))
@@ -326,7 +326,7 @@ impl ConfigRequestProcessor {
     async fn load_latest_config(
         &self,
         fallback_cwd: Option<PathBuf>,
-    ) -> Result<codex_core::config::Config, JSONRPCErrorError> {
+    ) -> Result<codex_thread_runtime::config::Config, JSONRPCErrorError> {
         self.config_manager
             .load_latest_config(fallback_cwd)
             .await

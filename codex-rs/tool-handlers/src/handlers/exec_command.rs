@@ -227,6 +227,26 @@ where
 
             self.host.emit_unified_exec_tty_metric(&turn, tty);
             let process_id = self.host.allocate_exec_process_id(&session).await;
+            let exec_approval_requirement = self
+                .host
+                .create_exec_approval_requirement(
+                    &session,
+                    codex_permissions_runtime::ExecPolicyApprovalRequest {
+                        command: &command,
+                        approval_policy: self.host.approval_policy(&turn),
+                        permission_profile: self.host.permission_profile(&turn),
+                        file_system_sandbox_policy: &self.host.file_system_sandbox_policy(&turn),
+                        sandbox_cwd: turn_environment.sandbox_cwd.as_path(),
+                        sandbox_permissions: if effective_additional_permissions.permissions_preapproved
+                        {
+                            codex_protocol::models::SandboxPermissions::UseDefault
+                        } else {
+                            effective_additional_permissions.sandbox_permissions
+                        },
+                        prefix_rule: prefix_rule.clone(),
+                    },
+                )
+                .await;
             let run_request = ExecCommandRunRequest {
                 command,
                 shell_type: resolved_command.shell_type,
@@ -245,6 +265,8 @@ where
                 justification,
                 prefix_rule,
                 notify_on: notify_on.into(),
+                approval_mode: codex_tool_runtime_api::ExecCommandApprovalMode::ContinueInRuntime,
+                exec_approval_requirement,
             };
             match self
                 .host

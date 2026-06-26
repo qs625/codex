@@ -46,7 +46,6 @@ pub use shell::create_command_wait_tool;
 pub use shell::create_exec_command_tool;
 pub use shell::create_exec_command_tool_with_environment_id;
 pub use shell::create_request_permissions_tool;
-pub use shell::create_shell_command_tool;
 pub use shell::create_write_stdin_tool;
 pub use shell::request_permissions_tool_description;
 pub use test_sync::create_test_sync_tool;

@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use codex_core::config::Config;
+use codex_thread_runtime::config::Config;
 use codex_feedback::DOCTOR_REPORT_ATTACHMENT_FILENAME;
 use codex_feedback::FeedbackAttachment;
 use serde_json::Value;

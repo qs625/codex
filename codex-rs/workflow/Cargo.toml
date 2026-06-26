@@ -8,6 +8,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+codex-protocol = { workspace = true }
 codex-workflow-api = { workspace = true }
 once_cell = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

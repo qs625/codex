@@ -176,7 +176,7 @@ impl WorkflowRequestProcessor {
             .load_latest_config(fallback_cwd)
             .await
             .map_err(|err| internal_error(format!("failed to load workflow config: {err}")))?;
-        Ok(codex_core::workflows::load_workflow_registry(&config))
+        Ok(codex_thread_runtime::workflows::load_workflow_registry(&config))
     }
 
     async fn send_run_updated(&self, run: WorkflowRun) {

@@ -1,5 +1,5 @@
 #![cfg(unix)]
-use codex_core::spawn::StdioPolicy;
+use codex_thread_runtime::spawn::StdioPolicy;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::test_support::PathBufExt;
@@ -19,10 +19,10 @@ async fn spawn_command_under_sandbox(
     stdio_policy: StdioPolicy,
     env: HashMap<String, String>,
 ) -> std::io::Result<Child> {
-    use codex_core::exec::ExecCapturePolicy;
-    use codex_core::exec::ExecParams;
-    use codex_core::exec::build_exec_request;
-    use codex_core::sandboxing::SandboxPermissions;
+    use codex_thread_runtime::exec::ExecCapturePolicy;
+    use codex_thread_runtime::exec::ExecParams;
+    use codex_thread_runtime::exec::build_exec_request;
+    use codex_thread_runtime::sandboxing::SandboxPermissions;
     use codex_protocol::config_types::WindowsSandboxLevel;
     use codex_protocol::models::PermissionProfile;
     use std::process::Stdio;

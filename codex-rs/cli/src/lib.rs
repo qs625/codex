@@ -4,7 +4,7 @@ pub(crate) mod login;
 
 use clap::Parser;
 use codex_config_local_loader::LocalConfigLayerLoader;
-use codex_core::config::ConfigBuilder;
+use codex_thread_runtime::config::ConfigBuilder;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
 use std::path::PathBuf;

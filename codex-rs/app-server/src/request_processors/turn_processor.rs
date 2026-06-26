@@ -80,12 +80,12 @@ pub(crate) struct DetachedReviewThread {
     thread: Arc<dyn AppServerLiveThreadHandle>,
 }
 
-impl TurnProcessorRuntime for ThreadManager {
+impl TurnProcessorRuntime for ThreadService {
     fn validate_environment_selections(
         &self,
         environments: &[TurnEnvironmentSelection],
     ) -> CodexResult<()> {
-        ThreadManager::validate_environment_selections(self, environments)
+        ThreadService::validate_environment_selections(self, environments)
     }
 
     fn live_thread_snapshot<'a>(
@@ -99,7 +99,7 @@ impl TurnProcessorRuntime for ThreadManager {
         &'a self,
         thread_id: ThreadId,
     ) -> BoxFuture<'a, CodexResult<Arc<Config>>> {
-        Box::pin(ThreadManager::live_thread_config(self, thread_id))
+        Box::pin(ThreadService::live_thread_config(self, thread_id))
     }
 
     fn validate_thread_turn_context_overrides<'a>(
@@ -128,7 +128,7 @@ impl TurnProcessorRuntime for ThreadManager {
         thread_id: ThreadId,
         items: Vec<ResponseItem>,
     ) -> BoxFuture<'a, CodexResult<()>> {
-        Box::pin(ThreadManager::inject_thread_conversation_items(
+        Box::pin(ThreadService::inject_thread_conversation_items(
             self, thread_id, items,
         ))
     }
@@ -151,7 +151,7 @@ impl TurnProcessorRuntime for ThreadManager {
         responsesapi_client_metadata: Option<HashMap<String, String>>,
     ) -> BoxFuture<'a, CodexResult<Result<String, SteerInputError>>> {
         Box::pin(async move {
-            ThreadManager::steer_thread_input(
+            ThreadService::steer_thread_input(
                 self,
                 thread_id,
                 input,
@@ -186,7 +186,7 @@ impl TurnProcessorRuntime for ThreadManager {
         trace: Option<codex_protocol::protocol::W3cTraceContext>,
     ) -> BoxFuture<'a, CodexResult<DetachedReviewThread>> {
         Box::pin(async move {
-            let new_thread = ThreadManager::fork_live_thread_from_current_history(
+            let new_thread = ThreadService::fork_live_thread_from_current_history(
                 self,
                 parent_thread_id,
                 ForkSnapshot::Interrupted,
@@ -241,7 +241,7 @@ impl TurnRequestProcessor {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         auth_manager: Arc<AuthManager>,
-        thread_manager: Arc<ThreadManager>,
+        thread_service: Arc<ThreadService>,
         outgoing: Arc<OutgoingMessageSender>,
         analytics_events_client: AnalyticsEventsClient,
         arg0_paths: Arg0DispatchPaths,
@@ -256,9 +256,9 @@ impl TurnRequestProcessor {
     ) -> Self {
         Self {
             auth_manager,
-            turn_runtime: thread_manager.clone(),
-            live_threads: thread_manager.clone(),
-            memory_startup_host: thread_manager,
+            turn_runtime: thread_service.clone(),
+            live_threads: thread_service.clone(),
+            memory_startup_host: thread_service,
             outgoing,
             analytics_events_client,
             arg0_paths,
@@ -453,7 +453,7 @@ impl TurnRequestProcessor {
             ApiReviewTarget::Custom { instructions } => CoreReviewTarget::Custom { instructions },
         };
 
-        let hint = codex_core::review_prompts::user_facing_hint(&core_target);
+        let hint = codex_thread_runtime::review_prompts::user_facing_hint(&core_target);
         let review_request = ReviewRequest {
             target: core_target,
             user_facing_hint: Some(hint.clone()),

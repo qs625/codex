@@ -267,10 +267,12 @@ mod tests {
     // Happy-path tests using a mock HTTP server; skip if sandbox network is disabled.
     #[tokio::test]
     async fn test_fetch_models_happy_path() {
-        if std::env::var(codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
+        if std::env::var(codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
+            .is_ok()
+        {
             tracing::info!(
                 "{} is set; skipping test_fetch_models_happy_path",
-                codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
+                codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
             );
             return;
         }
@@ -298,10 +300,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_version() {
-        if std::env::var(codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
+        if std::env::var(codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
+            .is_ok()
+        {
             tracing::info!(
                 "{} is set; skipping test_fetch_version",
-                codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
+                codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
             );
             return;
         }
@@ -334,10 +338,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_probe_server_happy_path_openai_compat_and_native() {
-        if std::env::var(codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
+        if std::env::var(codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
+            .is_ok()
+        {
             tracing::info!(
                 "{} set; skipping test_probe_server_happy_path_openai_compat_and_native",
-                codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
+                codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
             );
             return;
         }
@@ -371,10 +377,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_try_from_oss_provider_ok_when_server_running() {
-        if std::env::var(codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
+        if std::env::var(codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
+            .is_ok()
+        {
             tracing::info!(
                 "{} set; skipping test_try_from_oss_provider_ok_when_server_running",
-                codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
+                codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
             );
             return;
         }
@@ -395,10 +403,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_try_from_oss_provider_err_when_server_missing() {
-        if std::env::var(codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
+        if std::env::var(codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
+            .is_ok()
+        {
             tracing::info!(
                 "{} set; skipping test_try_from_oss_provider_err_when_server_missing",
-                codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
+                codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
             );
             return;
         }

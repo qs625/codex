@@ -31,7 +31,7 @@ use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::UserInput as V2UserInput;
-use codex_core::shell::default_user_shell;
+use codex_thread_runtime::runtime_shell_model::default_user_shell;
 use codex_features::FEATURES;
 use codex_features::Feature;
 use pretty_assertions::assert_eq;

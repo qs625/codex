@@ -74,7 +74,7 @@ pub(crate) trait McpProcessorRuntime: Send + Sync {
     ) -> BoxFuture<'a, anyhow::Result<CallToolResult>>;
 }
 
-impl McpProcessorRuntime for ThreadManager {
+impl McpProcessorRuntime for ThreadService {
     fn queue_strict_mcp_refresh(
         self: Arc<Self>,
         config_manager: ConfigManager,
@@ -107,7 +107,7 @@ impl McpProcessorRuntime for ThreadManager {
         server: &'a str,
         uri: &'a str,
     ) -> BoxFuture<'a, anyhow::Result<serde_json::Value>> {
-        Box::pin(ThreadManager::read_thread_mcp_resource(
+        Box::pin(ThreadService::read_thread_mcp_resource(
             self, thread_id, server, uri,
         ))
     }
@@ -120,7 +120,7 @@ impl McpProcessorRuntime for ThreadManager {
         arguments: Option<serde_json::Value>,
         meta: Option<serde_json::Value>,
     ) -> BoxFuture<'a, anyhow::Result<CallToolResult>> {
-        Box::pin(ThreadManager::call_thread_mcp_tool(
+        Box::pin(ThreadService::call_thread_mcp_tool(
             self, thread_id, server, tool, arguments, meta,
         ))
     }

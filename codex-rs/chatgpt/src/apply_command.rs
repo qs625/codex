@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use codex_core::config::Config;
+use codex_thread_runtime::config::Config;
 use codex_git_utils::ApplyGitRequest;
 use codex_git_utils::apply_git_patch;
 use codex_utils_cli::CliConfigOverrides;

@@ -1,10 +1,10 @@
 use std::sync::Arc;
 use std::sync::Weak;
 
-use codex_core::NewThread;
-use codex_core::StartThreadOptions;
-use codex_core::ThreadManager;
-use codex_core::config::Config;
+use codex_thread_runtime::NewThread;
+use codex_thread_runtime::StartThreadOptions;
+use codex_thread_runtime::ThreadService;
+use codex_thread_runtime::config::Config;
 use codex_extension_api::AgentSpawnFuture;
 use codex_extension_api::AgentSpawner;
 use codex_extension_api::ExtensionRegistry;
@@ -84,13 +84,13 @@ pub(crate) trait GuardianAgentSpawnHost: Send + Sync {
     ) -> BoxFuture<'a, CodexResult<NewThread>>;
 }
 
-impl GuardianAgentSpawnHost for ThreadManager {
+impl GuardianAgentSpawnHost for ThreadService {
     fn spawn_guardian_agent<'a>(
         &'a self,
         forked_from_thread_id: ThreadId,
         options: StartThreadOptions,
     ) -> BoxFuture<'a, CodexResult<NewThread>> {
-        Box::pin(ThreadManager::spawn_subagent(
+        Box::pin(ThreadService::spawn_subagent(
             self,
             forked_from_thread_id,
             options,
@@ -98,7 +98,7 @@ impl GuardianAgentSpawnHost for ThreadManager {
     }
 }
 
-impl FileSubscriptionThreadHost for ThreadManager {
+impl FileSubscriptionThreadHost for ThreadService {
     fn update_active_subscription_count<'a>(
         &'a self,
         thread_id: ThreadId,

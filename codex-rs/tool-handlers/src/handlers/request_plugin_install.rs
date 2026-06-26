@@ -10,8 +10,8 @@ use codex_tool_planning::build_request_plugin_install_elicitation_request;
 use codex_tool_planning::collect_request_plugin_install_entries;
 use codex_tool_planning::create_request_plugin_install_tool;
 use codex_tool_planning::filter_request_plugin_install_discoverable_tools_for_client;
-use codex_tool_runtime_api::ApplyPatchHandlerHost;
-use codex_tool_runtime_api::RequestPluginInstallHost;
+use codex_thread_api::RequestPluginInstallApi;
+use codex_thread_api::ThreadCapability;
 use codex_tool_runtime_api::ToolHandler;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolExecutor;
@@ -22,31 +22,29 @@ use serde::Deserialize;
 use crate::FunctionToolOutput;
 use codex_tool_runtime::ToolInvocation;
 
-#[derive(Default)]
-pub struct RequestPluginInstallHandler<Host> {
-    host: Host,
+pub struct RequestPluginInstallHandler {
+    service: std::sync::Arc<dyn RequestPluginInstallApi>,
     discoverable_tools: Vec<RequestPluginInstallEntry>,
 }
 
-impl<Host> RequestPluginInstallHandler<Host> {
-    pub fn new(host: Host, discoverable_tools: &[codex_tool_planning::DiscoverableTool]) -> Self {
+impl RequestPluginInstallHandler {
+    pub fn new(
+        service: std::sync::Arc<dyn RequestPluginInstallApi>,
+        discoverable_tools: &[codex_tool_planning::DiscoverableTool],
+    ) -> Self {
         Self {
-            host,
+            service,
             discoverable_tools: collect_request_plugin_install_entries(discoverable_tools),
         }
     }
 }
 
-impl<Host>
-    ToolExecutor<
-        ToolInvocation<
-            <Host as ApplyPatchHandlerHost>::Session,
-            <Host as ApplyPatchHandlerHost>::Turn,
-            <Host as ApplyPatchHandlerHost>::Tracker,
-        >,
-    > for RequestPluginInstallHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for RequestPluginInstallHandler
 where
-    Host: RequestPluginInstallHost,
+    Turn: ThreadCapability,
+    Session: Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = FunctionToolOutput;
 
@@ -64,18 +62,14 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<
-            <Host as ApplyPatchHandlerHost>::Session,
-            <Host as ApplyPatchHandlerHost>::Turn,
-            <Host as ApplyPatchHandlerHost>::Tracker,
-        >,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
     {
         Box::pin(async move {
+            let service = std::sync::Arc::clone(&self.service);
             let ToolInvocation {
-                session,
                 turn,
                 metadata,
                 ..
@@ -93,15 +87,14 @@ where
             };
 
             let args: RequestPluginInstallArgs = parse_arguments(&arguments)?;
-            let context = self.host.request_plugin_install_context(&session, &turn);
+            let context = service.request_plugin_install_context(&turn);
             let suggest_reason = validate_request_plugin_install_args(
                 &args,
                 context.app_server_client_name.as_deref(),
             )?;
 
-            let discoverable_tools = self
-                .host
-                .list_request_plugin_install_discoverable_tools(&session, &turn)
+            let discoverable_tools = service
+                .list_request_plugin_install_discoverable_tools(&turn)
                 .await
                 .map(|discoverable_tools| {
                     filter_request_plugin_install_discoverable_tools_for_client(
@@ -132,14 +125,13 @@ where
                 suggest_reason,
                 &tool,
             );
-            let outcome = self
-                .host
-                .request_plugin_install_elicitation(&session, &turn, &call_id, request, &tool)
+            let outcome = service
+                .request_plugin_install_elicitation(&turn, &call_id, request, &tool)
                 .await;
 
             let completed = if outcome.user_confirmed {
-                self.host
-                    .complete_request_plugin_install_if_ready(&session, &turn, &tool)
+                service
+                    .complete_request_plugin_install_if_ready(&turn, &tool)
                     .await
             } else {
                 false
@@ -165,17 +157,13 @@ where
     }
 }
 
-impl<Host>
-    ToolHandler<
-        ToolInvocation<
-            <Host as ApplyPatchHandlerHost>::Session,
-            <Host as ApplyPatchHandlerHost>::Turn,
-            <Host as ApplyPatchHandlerHost>::Tracker,
-        >,
-        <Host as ApplyPatchHandlerHost>::DiffContext,
-    > for RequestPluginInstallHandler<Host>
+impl<Session, Turn, Tracker, DiffContext> ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext>
+    for RequestPluginInstallHandler
 where
-    Host: RequestPluginInstallHost + ApplyPatchHandlerHost,
+    Turn: ThreadCapability,
+    Session: Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
 }
 

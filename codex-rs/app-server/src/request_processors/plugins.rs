@@ -29,7 +29,7 @@ pub(crate) trait PluginProcessorRuntime: Send + Sync {
     fn restriction_product(&self) -> Option<Product>;
 }
 
-impl PluginProcessorRuntime for ThreadManager {
+impl PluginProcessorRuntime for ThreadService {
     fn spawn_effective_plugins_changed_task(
         self: Arc<Self>,
         plugins_manager: Arc<PluginsManager>,

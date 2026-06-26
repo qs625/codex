@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use codex_core::config::Config;
-use codex_core::config::ThreadStoreConfig;
+use codex_thread_runtime::config::Config;
+use codex_thread_runtime::config::ThreadStoreConfig;
 use codex_rollout::StateDbHandle;
 use codex_thread_store::InMemoryThreadStore;
 use codex_thread_store::LocalThreadStore;

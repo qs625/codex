@@ -1,0 +1,45 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-tool-service"
+version.workspace = true
+
+[lib]
+doctest = false
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-approval-service-api = { workspace = true }
+codex-apply-patch = { workspace = true }
+codex-code-mode-api = { workspace = true }
+codex-command-service-api = { workspace = true }
+codex-command-runtime = { workspace = true }
+codex-file-system = { workspace = true }
+codex-hooks-api = { workspace = true }
+codex-permissions-runtime = { workspace = true }
+codex-mcp-tool-types = { workspace = true }
+codex-network-proxy-api = { workspace = true }
+codex-process-exec = { workspace = true }
+codex-protocol = { workspace = true }
+codex-sandboxing-api = { workspace = true }
+codex-shell-command = { workspace = true }
+codex-thread-api = { workspace = true }
+codex-thread-runtime = { workspace = true }
+codex-tool-config = { workspace = true }
+codex-tool-planning = { workspace = true }
+codex-tool-runtime = { workspace = true }
+codex-tool-service-api = { workspace = true }
+codex-tool-runtime-api = { workspace = true }
+codex-tool-types = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+codex-utils-image = { workspace = true }
+codex-utils-output-truncation = { workspace = true }
+codex-workflow-api = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+uuid = { workspace = true }

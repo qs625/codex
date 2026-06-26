@@ -1,9 +1,9 @@
 //! Configuration object accepted by the `codex` MCP tool-call.
 
 use codex_arg0::Arg0DispatchPaths;
-use codex_core::config::Config;
-use codex_core::config::ConfigBuilder;
-use codex_core::config::ConfigOverrides;
+use codex_thread_runtime::config::Config;
+use codex_thread_runtime::config::ConfigBuilder;
+use codex_thread_runtime::config::ConfigOverrides;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::protocol::AskForApproval;

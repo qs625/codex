@@ -178,6 +178,10 @@ pub trait Approvable<Req> {
         SandboxPermissions::UseDefault
     }
 
+    fn approval_preapproved(&self, _req: &Req) -> bool {
+        false
+    }
+
     fn should_bypass_approval(&self, policy: AskForApproval, already_approved: bool) -> bool {
         should_bypass_approval(policy, already_approved)
     }

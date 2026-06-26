@@ -8,7 +8,5 @@ pub mod goal;
 pub mod mcp_resource;
 pub mod mcp_tool_call;
 pub mod request_plugin_install;
-pub mod shell;
 pub mod test_sync;
 pub mod tool_search;
-pub mod workflow;

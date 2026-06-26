@@ -1,5 +1,5 @@
 use codex_config_types::PluginConfig;
-use codex_core::config::Config;
+use codex_thread_runtime::config::Config;
 use codex_core_plugins::PluginInstallRequest;
 use codex_core_plugins::PluginsManager;
 use codex_core_plugins::marketplace::MarketplacePluginInstallPolicy;

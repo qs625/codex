@@ -39,7 +39,7 @@ use codex_arg0::Arg0DispatchPaths;
 use codex_config::CloudRequirementsLoader;
 use codex_config::LoaderOverrides;
 use codex_config::NoopThreadConfigLoader;
-use codex_core::config::ConfigBuilder;
+use codex_thread_runtime::config::ConfigBuilder;
 use codex_exec_server::EnvironmentManager;
 use codex_feedback::CodexFeedback;
 use codex_protocol::protocol::SessionSource;

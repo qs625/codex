@@ -145,7 +145,6 @@ pub use tool_specs::create_report_agent_job_result_tool;
 pub use tool_specs::create_request_permissions_tool;
 pub use tool_specs::create_request_plugin_install_tool;
 pub use tool_specs::create_request_user_input_tool;
-pub use tool_specs::create_shell_command_tool;
 pub use tool_specs::create_spawn_agent_tool_v2;
 pub use tool_specs::create_spawn_agents_on_csv_tool;
 pub use tool_specs::create_test_sync_tool;

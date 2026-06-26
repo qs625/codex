@@ -21,7 +21,7 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::HookCompletedEvent;
 use codex_protocol::protocol::HookRunSummary;
 use codex_protocol::user_input::UserInput;
-use codex_session_api::PendingInputItem;
+use codex_thread_api::PendingInputItem;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde_json::Value;
 

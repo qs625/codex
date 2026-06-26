@@ -1,7 +1,7 @@
 use crate::config_manager::ConfigManager;
 use codex_config_types::McpServerConfig;
-use codex_core::ThreadManager;
-use codex_core::config::Config;
+use codex_thread_runtime::ThreadService;
+use codex_thread_runtime::config::Config;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::Op;
@@ -16,7 +16,7 @@ use tracing::warn;
 ///
 /// Implementations own concrete thread lookup, config snapshots, MCP server
 /// planning, and op submission. The refresh helper stays generic so app-server
-/// request processors do not need to depend on a concrete `ThreadManager`.
+/// request processors do not need to depend on a concrete `ThreadService`.
 pub(crate) trait McpRefreshRuntime: Send + Sync {
     fn list_thread_ids(&self) -> BoxFuture<'_, Vec<ThreadId>>;
 
@@ -34,14 +34,14 @@ pub(crate) trait McpRefreshRuntime: Send + Sync {
     ) -> BoxFuture<'_, io::Result<()>>;
 }
 
-impl McpRefreshRuntime for ThreadManager {
+impl McpRefreshRuntime for ThreadService {
     fn list_thread_ids(&self) -> BoxFuture<'_, Vec<ThreadId>> {
-        Box::pin(ThreadManager::list_thread_ids(self))
+        Box::pin(ThreadService::list_thread_ids(self))
     }
 
     fn live_thread_config(&self, thread_id: ThreadId) -> BoxFuture<'_, io::Result<Arc<Config>>> {
         Box::pin(async move {
-            ThreadManager::live_thread_config(self, thread_id)
+            ThreadService::live_thread_config(self, thread_id)
                 .await
                 .map_err(|err| {
                     io::Error::other(format!("failed to load thread {thread_id}: {err}"))
@@ -153,7 +153,6 @@ mod tests {
     use crate::extensions::GuardianAgentSpawnHost;
     use crate::extensions::guardian_agent_spawner;
     use crate::extensions::thread_extensions;
-    use crate::tool_router_factory::AppServerToolRouterFactory;
     use codex_arg0::Arg0DispatchPaths;
     use codex_config_loader::LoaderOverrides;
     use codex_config_loader::ThreadConfigContext;
@@ -162,7 +161,7 @@ mod tests {
     use codex_config_loader::ThreadConfigLoader;
     use codex_config_loader::ThreadConfigSource;
     use codex_config_requirements::CloudRequirementsLoader;
-    use codex_core::config::ConfigOverrides;
+    use codex_thread_runtime::config::ConfigOverrides;
     use codex_exec_server::EnvironmentManager;
     use codex_file_watcher::FileWatcher;
     use codex_login::AuthManager;
@@ -179,9 +178,9 @@ mod tests {
 
     #[tokio::test]
     async fn strict_refresh_reports_thread_planning_failures() -> anyhow::Result<()> {
-        let (_temp_dir, thread_manager, config_manager, _loader) = refresh_test_state().await?;
+        let (_temp_dir, thread_service, config_manager, _loader) = refresh_test_state().await?;
 
-        let err = queue_strict_refresh(thread_manager.as_ref(), &config_manager)
+        let err = queue_strict_refresh(thread_service.as_ref(), &config_manager)
             .await
             .expect_err("strict refresh should fail");
 
@@ -191,9 +190,9 @@ mod tests {
 
     #[tokio::test]
     async fn best_effort_refresh_attempts_every_loaded_thread() -> anyhow::Result<()> {
-        let (_temp_dir, thread_manager, config_manager, loader) = refresh_test_state().await?;
+        let (_temp_dir, thread_service, config_manager, loader) = refresh_test_state().await?;
 
-        queue_best_effort_refresh(thread_manager.as_ref(), &config_manager).await;
+        queue_best_effort_refresh(thread_service.as_ref(), &config_manager).await;
 
         assert_eq!(loader.good_loads.load(Ordering::Relaxed), 1);
         assert_eq!(loader.bad_loads.load(Ordering::Relaxed), 1);
@@ -202,7 +201,7 @@ mod tests {
 
     async fn refresh_test_state() -> anyhow::Result<(
         TempDir,
-        Arc<ThreadManager>,
+        Arc<ThreadService>,
         ConfigManager,
         Arc<CountingThreadConfigLoader>,
     )> {
@@ -233,21 +232,22 @@ mod tests {
         let state_db = codex_rollout::state_db::init(&good_config)
             .await
             .expect("refresh tests require state db");
+        let shared_state_db = Some(state_db.clone());
         let thread_store = crate::thread_store_factory::thread_store_from_config(
             &good_config,
             Some(state_db.clone()),
         );
         let thread_watch_manager = crate::thread_status::ThreadWatchManager::new();
-        let thread_manager: Arc<ThreadManager> =
-            Arc::new_cyclic(|thread_manager: &Weak<ThreadManager>| {
-                let auth_runtimes = codex_core::ThreadAuthRuntimes::from_auth_runtime(
+        let thread_service: Arc<ThreadService> =
+            Arc::new_cyclic(|thread_service: &Weak<ThreadService>| {
+                let auth_runtimes = codex_thread_runtime::ThreadAuthRuntimes::from_auth_runtime(
                     auth_manager.clone(),
                     codex_login::model_provider_auth_manager(Some(auth_manager.clone())),
                 );
-                let guardian_agent_host: Weak<dyn GuardianAgentSpawnHost> = thread_manager.clone();
+                let guardian_agent_host: Weak<dyn GuardianAgentSpawnHost> = thread_service.clone();
                 let file_subscription_host: Weak<dyn FileSubscriptionThreadHost> =
-                    Weak::<ThreadManager>::clone(thread_manager);
-                ThreadManager::new_with_workflow_runs_and_openai_file_uploader(
+                    Weak::<ThreadService>::clone(thread_service);
+                ThreadService::new_with_workflow_runs_and_openai_file_uploader(
                     &good_config,
                     auth_runtimes,
                     SessionSource::Exec,
@@ -260,7 +260,7 @@ mod tests {
                     ),
                     /*analytics_events_client*/ None,
                     thread_store,
-                    Some(state_db.clone()),
+                    shared_state_db,
                     Arc::new(codex_thread_store::DefaultLiveThreadFactory),
                     "11111111-1111-4111-8111-111111111111".to_string(),
                     /*attestation_provider*/ None,
@@ -292,11 +292,18 @@ mod tests {
                             SessionSource::Exec.restriction_product(),
                         ),
                     ),
-                    Arc::new(AppServerToolRouterFactory),
+                    Arc::new(codex_tool_service::ToolService::new(
+                        Arc::new(codex_thread_runtime::ThreadApprovalService),
+                        Arc::new(codex_command_service::CommandService::new()),
+                        Arc::new(codex_thread_runtime::GoalService),
+                        Arc::new(codex_thread_runtime::McpResourceService),
+                        Arc::new(codex_thread_runtime::RequestPluginInstallService),
+                        Arc::new(codex_workflow::WorkflowService::new()),
+                    )),
                 )
             });
-        thread_manager.start_thread(good_config).await?;
-        thread_manager.start_thread(bad_config).await?;
+        thread_service.start_thread(good_config).await?;
+        thread_service.start_thread(bad_config).await?;
 
         let loader = Arc::new(CountingThreadConfigLoader {
             good_cwd: AbsolutePathBuf::try_from(good_cwd)?,
@@ -314,7 +321,7 @@ mod tests {
             loader.clone(),
         );
 
-        Ok((temp_dir, thread_manager, config_manager, loader))
+        Ok((temp_dir, thread_service, config_manager, loader))
     }
 
     struct CountingThreadConfigLoader {

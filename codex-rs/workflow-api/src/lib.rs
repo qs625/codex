@@ -3,6 +3,7 @@ mod tool_contract;
 
 pub use runtime::DisabledWorkflowRunController;
 pub use runtime::WorkflowAgentBinding;
+pub use runtime::WorkflowCapability;
 pub use runtime::WorkflowRun;
 pub use runtime::WorkflowRunController;
 pub use runtime::WorkflowRunFuture;
@@ -11,6 +12,9 @@ pub use runtime::WorkflowRunStatus;
 pub use runtime::WorkflowRunUpdateError;
 pub use runtime::WorkflowRunUpdateFuture;
 pub use runtime::WorkflowRunUpdateReceiver;
+pub use runtime::WorkflowProgressFuture;
+pub use runtime::WorkflowProgressSink;
+pub use runtime::WorkflowApi;
 pub use runtime::WorkflowRuntimeBridge;
 pub use runtime::WorkflowRuntimeError;
 pub use runtime::WorkflowRuntimeRequest;

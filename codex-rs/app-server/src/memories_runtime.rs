@@ -5,13 +5,13 @@ use std::time::Duration;
 use codex_api::ResponseEvent;
 use codex_auth_types::TelemetryAuthMode;
 use codex_config_types::Constrained;
-use codex_core::ModelClient;
-use codex_core::NewThread;
-use codex_core::Prompt;
-use codex_core::StartThreadOptions;
-use codex_core::ThreadManager;
-use codex_core::config::Config;
-use codex_core::resolve_installation_id;
+use codex_thread_runtime::ModelClient;
+use codex_thread_runtime::NewThread;
+use codex_thread_runtime::Prompt;
+use codex_thread_runtime::StartThreadOptions;
+use codex_thread_runtime::ThreadService;
+use codex_thread_runtime::config::Config;
+use codex_thread_runtime::resolve_installation_id;
 use codex_features::Feature;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
@@ -51,7 +51,7 @@ use crate::live_thread_runtime::AppServerLiveThreadHandle;
 
 /// Composition-root capability needed by memory startup/consolidation.
 ///
-/// The memory runtime should not keep concrete `ThreadManager` or
+/// The memory runtime should not keep concrete `ThreadService` or
 /// `CodexThread` handles. Implementations own model catalog lookup and
 /// consolidation thread lifecycle, while memory code consumes only this
 /// app-server boundary trait.
@@ -80,7 +80,7 @@ pub(crate) struct MemoryConsolidationThread {
     thread: Arc<dyn AppServerLiveThreadHandle>,
 }
 
-impl MemoryStartupHost for ThreadManager {
+impl MemoryStartupHost for ThreadService {
     fn stage_one_request_context<'a>(
         &'a self,
         model_name: &'a str,

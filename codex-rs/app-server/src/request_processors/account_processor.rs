@@ -76,7 +76,7 @@ pub(crate) trait AccountRuntime: Send + Sync {
     );
 }
 
-impl AccountRuntime for ThreadManager {
+impl AccountRuntime for ThreadService {
     fn maybe_refresh_remote_installed_plugins_cache_for_current_config(
         self: Arc<Self>,
         config_manager: ConfigManager,

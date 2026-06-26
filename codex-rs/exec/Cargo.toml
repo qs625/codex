@@ -31,7 +31,7 @@ codex-cloud-requirements = { workspace = true }
 codex-config-diagnostics = { workspace = true }
 codex-config-local-loader = { workspace = true }
 codex-config-loader = { workspace = true }
-codex-core = { workspace = true }
+codex-thread-runtime = { workspace = true }
 codex-execpolicy-loader = { workspace = true }
 codex-feedback = { workspace = true }
 codex-features = { workspace = true }

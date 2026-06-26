@@ -18,7 +18,7 @@ use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
 use codex_config::LoaderOverrides;
 use codex_config::types::AuthCredentialsStoreMode;
-use codex_core::config::ConfigBuilder;
+use codex_thread_runtime::config::ConfigBuilder;
 use codex_features::FEATURES;
 use codex_features::Stage;
 use pretty_assertions::assert_eq;

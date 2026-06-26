@@ -16,7 +16,7 @@ implementations may live outside this repository.
   per-thread metadata sync helper, applies the rollout persistence policy,
   appends canonical history, and then sends metadata patches through
   `ThreadStore::update_thread_metadata`.
-- `ThreadManager` routes metadata mutations for loaded and cold threads through
+- `ThreadService` routes metadata mutations for loaded and cold threads through
   one entrypoint. Loaded threads use their `LiveThread`; cold threads go
   directly to the store.
 - `LocalThreadStore` persists history through `codex-rollout` JSONL files and

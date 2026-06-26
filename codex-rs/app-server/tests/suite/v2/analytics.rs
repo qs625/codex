@@ -5,7 +5,7 @@ use app_test_support::write_chatgpt_auth;
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_config::types::OtelExporterKind;
 use codex_config::types::OtelHttpProtocol;
-use codex_core::config::ConfigBuilder;
+use codex_thread_runtime::config::ConfigBuilder;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -21,7 +21,7 @@ use wiremock::matchers::path;
 
 const SERVICE_VERSION: &str = "0.0.0-test";
 
-fn set_metrics_exporter(config: &mut codex_core::config::Config) {
+fn set_metrics_exporter(config: &mut codex_thread_runtime::config::Config) {
     config.otel.metrics_exporter = OtelExporterKind::OtlpHttp {
         endpoint: "http://localhost:4318".to_string(),
         headers: HashMap::new(),

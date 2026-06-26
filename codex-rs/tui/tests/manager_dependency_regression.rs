@@ -29,9 +29,9 @@ fn tui_runtime_source_does_not_depend_on_manager_escape_hatches() {
     let sources = rust_sources_under(src_dir);
     let forbidden = [
         "AuthManager",
-        "ThreadManager",
+        "ThreadService",
         "auth_manager(",
-        "thread_manager(",
+        "thread_service(",
     ];
 
     let violations: Vec<String> = sources
@@ -49,7 +49,7 @@ fn tui_runtime_source_does_not_depend_on_manager_escape_hatches() {
 
     assert!(
         violations.is_empty(),
-        "unexpected manager dependency regression(s):\n{}",
+        "unexpected service dependency regression(s):\n{}",
         violations.join("\n")
     );
 }

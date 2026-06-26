@@ -11,7 +11,7 @@ pub(crate) trait AppsRuntime: Send + Sync {
     fn plugin_runtime(&self) -> codex_core_plugins_api::SharedPluginRuntime;
 }
 
-impl AppsRuntime for ThreadManager {
+impl AppsRuntime for ThreadService {
     fn thread_feature_enabled(
         &self,
         thread_id: ThreadId,
@@ -23,7 +23,7 @@ impl AppsRuntime for ThreadManager {
     }
 
     fn plugin_runtime(&self) -> codex_core_plugins_api::SharedPluginRuntime {
-        ThreadManager::plugin_runtime(self)
+        ThreadService::plugin_runtime(self)
     }
 }
 

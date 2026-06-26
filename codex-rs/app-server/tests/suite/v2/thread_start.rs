@@ -25,7 +25,7 @@ use codex_app_server_protocol::ThreadStatusChangedNotification;
 use codex_app_server_protocol::TurnEnvironmentParams;
 use codex_config::loader::project_trust_key;
 use codex_config::types::AuthCredentialsStoreMode;
-use codex_core::config::set_project_trust_level;
+use codex_thread_runtime::config::set_project_trust_level;
 use codex_exec_server::LOCAL_FS;
 use codex_git_info::resolve_root_git_project_for_trust;
 use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;

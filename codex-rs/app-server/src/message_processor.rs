@@ -47,7 +47,6 @@ use crate::skills_watcher::SkillsWatcher;
 use crate::thread_state::ConnectionCapabilities;
 use crate::thread_state::ThreadStateManager;
 use crate::thread_store_factory::thread_store_from_config;
-use crate::tool_router_factory::AppServerToolRouterFactory;
 use crate::transport::AppServerTransport;
 use crate::transport::RemoteControlHandle;
 use async_trait::async_trait;
@@ -71,9 +70,9 @@ use codex_app_server_protocol::experimental_required_message;
 use codex_arg0::Arg0DispatchPaths;
 use codex_auth_types::AuthMode as LoginAuthMode;
 use codex_chatgpt::workspace_settings;
-use codex_core::ThreadAuthRuntimes;
-use codex_core::ThreadManager;
-use codex_core::config::Config;
+use codex_thread_runtime::ThreadAuthRuntimes;
+use codex_thread_runtime::ThreadService;
+use codex_thread_runtime::config::Config;
 use codex_core_plugins::PluginAnalyticsEventSink;
 use codex_core_plugins::PluginsManager;
 use codex_core_plugins_remote::RemotePluginAuth;
@@ -368,27 +367,21 @@ impl MessageProcessor {
             config.codex_home.to_path_buf(),
             session_source.restriction_product(),
         ));
-        let thread_manager_plugin_runtime: codex_core_plugins_api::SharedPluginRuntime =
+        let thread_service_plugin_runtime: codex_core_plugins_api::SharedPluginRuntime =
             plugins_manager.clone();
-        let thread_manager: Arc<ThreadManager> =
-            Arc::new_cyclic(|thread_manager: &Weak<ThreadManager>| {
+        let thread_service: Arc<ThreadService> =
+            Arc::new_cyclic(|thread_service: &Weak<ThreadService>| {
                 let runtime_environment_provider: Arc<dyn ExecEnvironmentProvider> =
                     environment_manager.clone();
-                #[cfg(test)]
                 let core_state_db = state_db.clone();
-                #[cfg(not(test))]
-                let core_state_db = state_db.clone().map(|state_db| {
-                    let state_db: Arc<dyn codex_state_api::StateDbRuntime> = state_db;
-                    state_db
-                });
                 let auth_runtimes = ThreadAuthRuntimes::from_auth_runtime(
                     auth_manager.clone(),
                     model_provider_auth_manager(Some(auth_manager.clone())),
                 );
-                let guardian_agent_host: Weak<dyn GuardianAgentSpawnHost> = thread_manager.clone();
+                let guardian_agent_host: Weak<dyn GuardianAgentSpawnHost> = thread_service.clone();
                 let file_subscription_host: Weak<dyn FileSubscriptionThreadHost> =
-                    thread_manager.clone();
-                ThreadManager::new_with_workflow_runs_and_openai_file_uploader(
+                    thread_service.clone();
+                ThreadService::new_with_workflow_runs_and_openai_file_uploader(
                     config.as_ref(),
                     auth_runtimes,
                     session_source.clone(),
@@ -430,8 +423,15 @@ impl MessageProcessor {
                             session_source.restriction_product(),
                         ),
                     ),
-                    thread_manager_plugin_runtime.clone(),
-                    Arc::new(AppServerToolRouterFactory),
+                    thread_service_plugin_runtime.clone(),
+        Arc::new(codex_tool_service::ToolService::new(
+            Arc::new(codex_thread_runtime::ThreadApprovalService),
+            Arc::new(codex_command_service::CommandService::new()),
+            Arc::new(codex_thread_runtime::GoalService),
+            Arc::new(codex_thread_runtime::McpResourceService),
+            Arc::new(codex_thread_runtime::RequestPluginInstallService),
+            Arc::new(codex_workflow::WorkflowService::new()),
+        )),
                 )
                 .with_terminal_type(user_agent())
             });
@@ -440,7 +440,7 @@ impl MessageProcessor {
                 analytics_events_client: analytics_events_client.clone(),
             },
         ));
-        let skills_watcher = SkillsWatcher::new(thread_manager.skills_manager(), outgoing.clone());
+        let skills_watcher = SkillsWatcher::new(thread_service.skills_manager(), outgoing.clone());
 
         let pending_thread_unloads = Arc::new(Mutex::new(HashSet::new()));
         let thread_list_state_permit = Arc::new(Semaphore::new(/*permits*/ 1));
@@ -448,7 +448,7 @@ impl MessageProcessor {
             Arc::new(workspace_settings::WorkspaceSettingsCache::default());
         let account_processor = AccountRequestProcessor::new(
             auth_manager.clone(),
-            Arc::clone(&thread_manager),
+            Arc::clone(&thread_service),
             Arc::clone(&plugins_manager),
             outgoing.clone(),
             Arc::clone(&config),
@@ -456,7 +456,7 @@ impl MessageProcessor {
         );
         let apps_processor = AppsRequestProcessor::new(
             auth_manager.clone(),
-            Arc::clone(&thread_manager),
+            Arc::clone(&thread_service),
             outgoing.clone(),
             config_manager.clone(),
             Arc::clone(&environment_manager),
@@ -464,7 +464,7 @@ impl MessageProcessor {
         );
         let catalog_processor = CatalogRequestProcessor::new(
             auth_manager.clone(),
-            Arc::clone(&thread_manager),
+            Arc::clone(&thread_service),
             Arc::clone(&plugins_manager),
             Arc::clone(&config),
             config_manager.clone(),
@@ -480,7 +480,7 @@ impl MessageProcessor {
         let process_exec_processor = ProcessExecRequestProcessor::new(outgoing.clone());
         let feedback_processor = FeedbackRequestProcessor::new(
             auth_manager.clone(),
-            Arc::clone(&thread_manager),
+            Arc::clone(&thread_service),
             Arc::clone(&config),
             feedback,
             log_db,
@@ -501,14 +501,14 @@ impl MessageProcessor {
         );
         let mcp_processor = McpRequestProcessor::new(
             auth_manager.clone(),
-            Arc::clone(&thread_manager),
+            Arc::clone(&thread_service),
             outgoing.clone(),
             config_manager.clone(),
             Arc::clone(&environment_manager),
         );
         let plugin_processor = PluginRequestProcessor::new(
             auth_manager.clone(),
-            Arc::clone(&thread_manager),
+            Arc::clone(&thread_service),
             Arc::clone(&plugins_manager),
             outgoing.clone(),
             analytics_events_client.clone(),
@@ -519,7 +519,7 @@ impl MessageProcessor {
         let remote_control_processor = RemoteControlRequestProcessor::new(remote_control_handle);
         let search_processor = SearchRequestProcessor::new(outgoing.clone());
         let thread_goal_processor = ThreadGoalRequestProcessor::new(
-            Arc::clone(&thread_manager),
+            Arc::clone(&thread_service),
             outgoing.clone(),
             Arc::clone(&config),
             thread_state_manager.clone(),
@@ -527,7 +527,7 @@ impl MessageProcessor {
         );
         let thread_processor = ThreadRequestProcessor::new(
             auth_manager.clone(),
-            Arc::clone(&thread_manager),
+            Arc::clone(&thread_service),
             outgoing.clone(),
             arg0_paths.clone(),
             Arc::clone(&config),
@@ -543,7 +543,7 @@ impl MessageProcessor {
         );
         let turn_processor = TurnRequestProcessor::new(
             auth_manager.clone(),
-            Arc::clone(&thread_manager),
+            Arc::clone(&thread_service),
             outgoing.clone(),
             analytics_events_client.clone(),
             arg0_paths.clone(),
@@ -573,14 +573,14 @@ impl MessageProcessor {
             outgoing.clone(),
             config_manager.clone(),
             auth_manager,
-            thread_manager.clone(),
+            thread_service.clone(),
             Arc::clone(&plugins_manager),
             Arc::clone(&environment_manager),
             analytics_events_client,
         );
         let external_agent_config_processor = ExternalAgentConfigRequestProcessor::new(
             outgoing.clone(),
-            Arc::clone(&thread_manager),
+            Arc::clone(&thread_service),
             Arc::clone(&plugins_manager),
             config_manager.clone(),
             config_processor.clone(),

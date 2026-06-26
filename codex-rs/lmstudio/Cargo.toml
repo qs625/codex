@@ -19,7 +19,7 @@ tracing = { version = "0.1.44", features = ["log"] }
 which = "8.0"
 
 [dev-dependencies]
-codex-core = { path = "../core" }
+codex-thread-runtime = { workspace = true }
 wiremock = "0.6"
 tokio = { version = "1", features = ["full"] }
 

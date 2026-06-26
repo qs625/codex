@@ -16,6 +16,7 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 codex-agent-runtime = { workspace = true }
 codex-protocol = { workspace = true }
+codex-thread-api = { workspace = true }
 codex-state-api = { workspace = true }
 codex-tool-planning = { workspace = true }
 codex-tool-runtime = { workspace = true }

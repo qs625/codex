@@ -3,10 +3,6 @@ use crate::ShellRuntimeHost;
 use crate::ToolEventHost;
 use crate::ToolOrchestratorHost;
 use crate::ToolSandboxContext;
-use codex_code_mode_api::ExecuteRequest;
-use codex_code_mode_api::RuntimeResponse;
-use codex_code_mode_api::WaitOutcome;
-use codex_code_mode_api::WaitRequest;
 use codex_command_runtime::CommandNotificationFilter;
 use codex_command_runtime::CommandSessionError;
 use codex_command_runtime::CommandWaitOperation;
@@ -16,8 +12,8 @@ use codex_command_runtime::WriteStdinOutput;
 use codex_command_runtime::WriteStdinRequest;
 use codex_exec_server_api::ExecEnvironment;
 use codex_file_system::FileSystemSandboxContext;
+use codex_permissions_runtime::ExecApprovalRequirement;
 use codex_permissions_runtime::ExecPolicyApprovalRequest;
-use codex_process_exec::ExecParams;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::WindowsSandboxLevel;
@@ -34,8 +30,6 @@ use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::models::SandboxPermissions;
-use codex_protocol::models::ShellCommandToolCallParams;
-use codex_protocol::models::WorkflowRunProgressKind;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::plan_tool::UpdatePlanArgs;
 use codex_protocol::protocol::AgentStatus;
@@ -56,11 +50,6 @@ use codex_tool_planning::ToolName;
 use codex_tool_types::FunctionCallError;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::TruncationPolicy;
-use codex_workflow_api::WorkflowRegistry;
-use codex_workflow_api::WorkflowRun;
-use codex_workflow_api::WorkflowRunController;
-use codex_workflow_api::WorkflowRuntimeBridge;
-use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
@@ -71,7 +60,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::ApplyPatchEnvironment;
 use crate::RuntimeShell;
-use crate::ShellRuntimeBackend;
 
 pub trait ApplyPatchDiffContext {
     fn apply_patch_streaming_events_enabled(&self) -> bool;
@@ -158,21 +146,6 @@ pub trait ApplyPatchHandlerHost: Clone + Send + Sync + 'static {
     ) -> Self::EventHost<'a>;
 }
 
-pub struct RunExecLikeArgs<Session, Turn, Tracker> {
-    pub tool_name: ToolName,
-    pub exec_params: ExecParams,
-    pub hook_command: String,
-    pub shell_type: Option<ToolUserShellType>,
-    pub additional_permissions: Option<AdditionalPermissionProfile>,
-    pub prefix_rule: Option<Vec<String>>,
-    pub session: Session,
-    pub turn: Turn,
-    pub tracker: Tracker,
-    pub call_id: String,
-    pub freeform: bool,
-    pub shell_runtime_backend: ShellRuntimeBackend,
-}
-
 pub struct ResolvedExecCommandEnvironment {
     pub cwd: AbsolutePathBuf,
     pub sandbox_cwd: AbsolutePathBuf,
@@ -184,6 +157,13 @@ pub struct ResolvedExecCommandEnvironment {
 pub struct ResolvedExecCommand {
     pub command: Vec<String>,
     pub shell_type: ToolUserShellType,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ExecCommandApprovalMode {
+    #[default]
+    ContinueInRuntime,
+    AlreadyApproved,
 }
 
 #[derive(Clone)]
@@ -204,6 +184,8 @@ pub struct ExecCommandRunRequest {
     pub justification: Option<String>,
     pub prefix_rule: Option<Vec<String>>,
     pub notify_on: CommandNotificationFilter,
+    pub approval_mode: ExecCommandApprovalMode,
+    pub exec_approval_requirement: ExecApprovalRequirement,
 }
 
 pub struct ExecCommandRunOutput {
@@ -315,44 +297,6 @@ pub trait ShellExecutionHost: ApplyPatchHandlerHost {
     ) -> impl Future<Output = crate::ExecApprovalRequirement> + Send + 'a;
 
     fn truncation_policy(&self, turn: &Self::Turn) -> TruncationPolicy;
-}
-
-/// Host capabilities required by the model-visible `shell_command` handler.
-///
-/// The handler owns hook integration and shell-runtime dispatch, while the host
-/// keeps session/turn-specific path resolution, environment construction, and
-/// implicit skill invocation logic outside the runtime implementation crate.
-pub trait ShellCommandHandlerHost: ShellExecutionHost {
-    fn resolve_workdir_base_path(
-        &self,
-        turn: &Self::Turn,
-        arguments: &str,
-    ) -> Result<AbsolutePathBuf, FunctionCallError>;
-
-    fn parse_shell_command_params(
-        &self,
-        arguments: &str,
-        base_path: &AbsolutePathBuf,
-    ) -> Result<ShellCommandToolCallParams, FunctionCallError>;
-
-    fn resolve_shell_workdir(&self, turn: &Self::Turn, workdir: Option<String>) -> AbsolutePathBuf;
-
-    fn maybe_emit_implicit_skill_invocation<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        turn: &'a Self::Turn,
-        command: &'a str,
-        workdir: &'a AbsolutePathBuf,
-    ) -> impl Future<Output = ()> + Send + 'a;
-
-    fn shell_command_exec_params(
-        &self,
-        params: &ShellCommandToolCallParams,
-        session: &Self::Session,
-        turn: &Self::Turn,
-    ) -> Result<ExecParams, FunctionCallError>;
-
-    fn shell_type(&self, session: &Self::Session) -> Option<ToolUserShellType>;
 }
 
 /// Host capabilities required by command-session interaction handlers.
@@ -783,39 +727,6 @@ pub trait AgentJobToolHost: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = Option<watch::Receiver<AgentStatus>>> + Send + 'a;
 }
 
-/// Host capabilities required by workflow tools.
-///
-/// The tool runtime owns argument parsing, tool specs, workflow progress item
-/// shaping, and handler ordering. The embedding host owns workflow registry
-/// roots, run controller persistence/runner wiring, and the bridge from
-/// workflow SDK runtime calls back into Codex primitives.
-pub trait WorkflowToolHost: Clone + Send + Sync + 'static {
-    type Session: Clone + Send + Sync + 'static;
-    type Turn: Clone + Send + Sync + 'static;
-    type Tracker: Clone + Send + Sync + 'static;
-    type DiffContext: 'static;
-
-    fn load_workflow_registry(&self, turn: &Self::Turn) -> WorkflowRegistry;
-
-    fn workflow_run_controller(&self, session: &Self::Session) -> Arc<dyn WorkflowRunController>;
-
-    fn create_workflow_runtime_bridge(
-        &self,
-        session: Self::Session,
-        turn: Self::Turn,
-        cancellation_token: CancellationToken,
-        tracker: Self::Tracker,
-    ) -> Arc<dyn WorkflowRuntimeBridge>;
-
-    fn record_workflow_progress<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        turn: &'a Self::Turn,
-        run: &'a WorkflowRun,
-        kind: WorkflowRunProgressKind,
-    ) -> impl Future<Output = ()> + Send + 'a;
-}
-
 pub use codex_agent_runtime::CloseAgentToolResult;
 pub use codex_agent_runtime::ListAgentsToolResult;
 pub use codex_agent_runtime::SpawnAgentToolRequest;
@@ -823,31 +734,6 @@ pub use codex_agent_runtime::SpawnAgentToolResult;
 pub use codex_agent_runtime::WaitAgentReason;
 pub use codex_agent_runtime::WaitAgentToolResult;
 
-/// Runtime capability used by workflow SDK agent operations.
-///
-/// Implementations own how workflow runtime requests are mapped onto concrete
-/// agent tools and session/turn state. Workflow bridges depend on this object
-/// safe interface instead of knowing the concrete multi-agent tool host shape.
-pub trait WorkflowAgentToolRuntime: Send + Sync {
-    fn spawn_agent(
-        &self,
-        call_id: String,
-        request: SpawnAgentToolRequest,
-    ) -> BoxFuture<'_, Result<SpawnAgentToolResult, FunctionCallError>>;
-
-    fn followup_agent(
-        &self,
-        call_id: String,
-        target: String,
-        message: String,
-    ) -> BoxFuture<'_, Result<(), FunctionCallError>>;
-
-    fn wait_agent(
-        &self,
-        call_id: String,
-        target: String,
-    ) -> BoxFuture<'_, Result<WaitAgentToolResult, FunctionCallError>>;
-}
 
 pub struct RequestPluginInstallContext {
     pub server_name: String,
@@ -866,7 +752,12 @@ pub struct RequestPluginInstallElicitationOutcome {
 /// validation, elicitation request construction, and model output shaping. The
 /// host owns concrete connector/plugin discovery, MCP elicitation dispatch,
 /// persistence side effects, and completion verification.
-pub trait RequestPluginInstallHost: ApplyPatchHandlerHost {
+pub trait RequestPluginInstallHost: Clone + Send + Sync + 'static {
+    type Session: Clone + Send + Sync + 'static;
+    type Turn: Clone + Send + Sync + 'static;
+    type Tracker: Clone + Send + Sync + 'static;
+    type DiffContext: 'static;
+
     fn request_plugin_install_context(
         &self,
         session: &Self::Session,
@@ -894,97 +785,4 @@ pub trait RequestPluginInstallHost: ApplyPatchHandlerHost {
         turn: &'a Self::Turn,
         tool: &'a DiscoverableTool,
     ) -> impl Future<Output = bool> + Send + 'a;
-}
-
-/// Host capabilities required by code-mode execute/wait tools.
-///
-/// The runtime handler owns the model-visible tool contract, argument parsing,
-/// response shaping, and code-mode wait/execute sequencing. The host owns the
-/// concrete code-mode runtime service, rollout trace lifecycle, image detail
-/// policy, and stored value persistence.
-pub trait CodeModeToolHost: ApplyPatchHandlerHost {
-    fn code_mode_turn_id(&self, turn: &Self::Turn) -> String;
-
-    fn can_request_original_image_detail(&self, turn: &Self::Turn) -> bool;
-
-    fn code_mode_stored_values<'a>(
-        &'a self,
-        session: &'a Self::Session,
-    ) -> impl Future<Output = HashMap<String, serde_json::Value>> + Send + 'a;
-
-    fn code_mode_replace_stored_values<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        values: HashMap<String, serde_json::Value>,
-    ) -> impl Future<Output = ()> + Send + 'a;
-
-    fn code_mode_allocate_cell_id(&self, session: &Self::Session) -> String;
-
-    fn code_mode_execute<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        request: ExecuteRequest,
-    ) -> impl Future<Output = Result<RuntimeResponse, String>> + Send + 'a;
-
-    fn code_mode_wait<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        request: WaitRequest,
-    ) -> impl Future<Output = Result<WaitOutcome, String>> + Send + 'a;
-
-    fn record_code_mode_cell_started(
-        &self,
-        session: &Self::Session,
-        turn: &Self::Turn,
-        runtime_cell_id: &str,
-        model_visible_call_id: &str,
-        source_js: &str,
-    );
-
-    fn record_code_mode_cell_initial_response(
-        &self,
-        session: &Self::Session,
-        turn: &Self::Turn,
-        runtime_cell_id: &str,
-        response: &RuntimeResponse,
-    );
-
-    fn record_code_mode_cell_ended(
-        &self,
-        session: &Self::Session,
-        turn: &Self::Turn,
-        runtime_cell_id: &str,
-        response: &RuntimeResponse,
-    );
-}
-
-/// Legacy coarse host facade for tool handlers that have not yet moved to
-/// explicit owner API contracts.
-///
-/// New or migrated handlers should use narrow injected hosts instead of adding
-/// more capabilities to this facade.
-pub trait ToolDomainHost:
-    ShellCommandHandlerHost
-    + CommandInteractionHost<
-        Session = <Self as ApplyPatchHandlerHost>::Session,
-        Turn = <Self as ApplyPatchHandlerHost>::Turn,
-        Tracker = <Self as ApplyPatchHandlerHost>::Tracker,
-        DiffContext = <Self as ApplyPatchHandlerHost>::DiffContext,
-    > + RequestPluginInstallHost
-    + ExecCommandHandlerHost
-    + CodeModeToolHost
-{
-}
-
-impl<T> ToolDomainHost for T where
-    T: ShellCommandHandlerHost
-        + CommandInteractionHost<
-            Session = <T as ApplyPatchHandlerHost>::Session,
-            Turn = <T as ApplyPatchHandlerHost>::Turn,
-            Tracker = <T as ApplyPatchHandlerHost>::Tracker,
-            DiffContext = <T as ApplyPatchHandlerHost>::DiffContext,
-        > + RequestPluginInstallHost
-        + ExecCommandHandlerHost
-        + CodeModeToolHost
-{
 }

@@ -11,12 +11,13 @@ use codex_protocol::mcp::Resource;
 use codex_protocol::mcp::ResourceTemplate;
 use codex_protocol::models::function_call_output_content_items_to_text;
 use codex_protocol::protocol::McpInvocation;
+use codex_thread_api::McpResourceApi;
+use codex_thread_api::ThreadCapability;
 use codex_tool_planning::ToolName;
 use codex_tool_planning::ToolSpec;
 use codex_tool_planning::create_list_mcp_resource_templates_tool;
 use codex_tool_planning::create_list_mcp_resources_tool;
 use codex_tool_planning::create_read_mcp_resource_tool;
-use codex_tool_runtime_api::McpResourceHost;
 use codex_tool_runtime_api::ToolHandler;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolExecutor;
@@ -30,33 +31,33 @@ use serde_json::Value;
 use crate::FunctionToolOutput;
 use codex_tool_runtime::ToolInvocation;
 
-pub struct ListMcpResourcesHandler<Host> {
-    host: Host,
+pub struct ListMcpResourcesHandler {
+    service: std::sync::Arc<dyn McpResourceApi>,
 }
 
-impl<Host> ListMcpResourcesHandler<Host> {
-    pub fn new(host: Host) -> Self {
-        Self { host }
+impl ListMcpResourcesHandler {
+    pub fn new(service: std::sync::Arc<dyn McpResourceApi>) -> Self {
+        Self { service }
     }
 }
 
-pub struct ListMcpResourceTemplatesHandler<Host> {
-    host: Host,
+pub struct ListMcpResourceTemplatesHandler {
+    service: std::sync::Arc<dyn McpResourceApi>,
 }
 
-impl<Host> ListMcpResourceTemplatesHandler<Host> {
-    pub fn new(host: Host) -> Self {
-        Self { host }
+impl ListMcpResourceTemplatesHandler {
+    pub fn new(service: std::sync::Arc<dyn McpResourceApi>) -> Self {
+        Self { service }
     }
 }
 
-pub struct ReadMcpResourceHandler<Host> {
-    host: Host,
+pub struct ReadMcpResourceHandler {
+    service: std::sync::Arc<dyn McpResourceApi>,
 }
 
-impl<Host> ReadMcpResourceHandler<Host> {
-    pub fn new(host: Host) -> Self {
-        Self { host }
+impl ReadMcpResourceHandler {
+    pub fn new(service: std::sync::Arc<dyn McpResourceApi>) -> Self {
+        Self { service }
     }
 }
 
@@ -203,10 +204,12 @@ struct ReadResourcePayload {
     result: ReadResourceResult,
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for ListMcpResourcesHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for ListMcpResourcesHandler
 where
-    Host: McpResourceHost,
+    Turn: ThreadCapability,
+    Session: Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = FunctionToolOutput;
 
@@ -224,14 +227,14 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
     {
         Box::pin(async move {
+            let service = std::sync::Arc::clone(&self.service);
             let ToolInvocation {
-                session,
                 turn,
                 metadata,
                 ..
@@ -248,8 +251,8 @@ where
                 arguments: arguments.clone(),
             };
 
-            self.host
-                .emit_mcp_tool_call_begin(&session, &turn, &call_id, invocation.clone())
+            service
+                .emit_mcp_resource_tool_call_begin(&turn, &call_id, invocation.clone())
                 .await;
             let start = Instant::now();
             let payload_result: Result<ListResourcesPayload, FunctionCallError> = async {
@@ -257,9 +260,8 @@ where
                     let params = cursor.clone().map(|value| PaginatedRequestParams {
                         cursor: Some(value),
                     });
-                    let result = self
-                        .host
-                        .list_resources(&session, &server_name, params)
+                    let result = service
+                        .list_resources(&turn, &server_name, params)
                         .await
                         .map_err(|err| {
                             FunctionCallError::RespondToModel(format!(
@@ -277,15 +279,14 @@ where
                         ));
                     }
                     Ok(ListResourcesPayload::from_all_servers(
-                        self.host.list_all_resources(&session).await,
+                        service.list_all_resources(&turn).await,
                     ))
                 }
             }
             .await;
 
             finish_mcp_resource_call(
-                &self.host,
-                &session,
+                service.as_ref(),
                 &turn,
                 &call_id,
                 invocation,
@@ -297,10 +298,12 @@ where
     }
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for ListMcpResourceTemplatesHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for ListMcpResourceTemplatesHandler
 where
-    Host: McpResourceHost,
+    Turn: ThreadCapability,
+    Session: Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = FunctionToolOutput;
 
@@ -318,14 +321,14 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
     {
         Box::pin(async move {
+            let service = std::sync::Arc::clone(&self.service);
             let ToolInvocation {
-                session,
                 turn,
                 metadata,
                 ..
@@ -342,8 +345,8 @@ where
                 arguments: arguments.clone(),
             };
 
-            self.host
-                .emit_mcp_tool_call_begin(&session, &turn, &call_id, invocation.clone())
+            service
+                .emit_mcp_resource_tool_call_begin(&turn, &call_id, invocation.clone())
                 .await;
             let start = Instant::now();
             let payload_result: Result<ListResourceTemplatesPayload, FunctionCallError> = async {
@@ -351,9 +354,8 @@ where
                     let params = cursor.clone().map(|value| PaginatedRequestParams {
                         cursor: Some(value),
                     });
-                    let result = self
-                        .host
-                        .list_resource_templates(&session, &server_name, params)
+                    let result = service
+                        .list_resource_templates(&turn, &server_name, params)
                         .await
                         .map_err(|err| {
                             FunctionCallError::RespondToModel(format!(
@@ -371,15 +373,14 @@ where
                         ));
                     }
                     Ok(ListResourceTemplatesPayload::from_all_servers(
-                        self.host.list_all_resource_templates(&session).await,
+                        service.list_all_resource_templates(&turn).await,
                     ))
                 }
             }
             .await;
 
             finish_mcp_resource_call(
-                &self.host,
-                &session,
+                service.as_ref(),
                 &turn,
                 &call_id,
                 invocation,
@@ -391,10 +392,12 @@ where
     }
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for ReadMcpResourceHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for ReadMcpResourceHandler
 where
-    Host: McpResourceHost,
+    Turn: ThreadCapability,
+    Session: Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = FunctionToolOutput;
 
@@ -412,14 +415,14 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
     {
         Box::pin(async move {
+            let service = std::sync::Arc::clone(&self.service);
             let ToolInvocation {
-                session,
                 turn,
                 metadata,
                 ..
@@ -436,18 +439,13 @@ where
                 arguments: arguments.clone(),
             };
 
-            self.host
-                .emit_mcp_tool_call_begin(&session, &turn, &call_id, invocation.clone())
+            service
+                .emit_mcp_resource_tool_call_begin(&turn, &call_id, invocation.clone())
                 .await;
             let start = Instant::now();
             let payload_result: Result<ReadResourcePayload, FunctionCallError> = async {
-                let result = self
-                    .host
-                    .read_resource(
-                        &session,
-                        &server,
-                        ReadResourceRequestParams { uri: uri.clone() },
-                    )
+                let result = service
+                    .read_resource(&turn, &server, ReadResourceRequestParams { uri: uri.clone() })
                     .await
                     .map_err(|err| {
                         FunctionCallError::RespondToModel(format!("resources/read failed: {err}"))
@@ -461,8 +459,7 @@ where
             .await;
 
             finish_mcp_resource_call(
-                &self.host,
-                &session,
+                service.as_ref(),
                 &turn,
                 &call_id,
                 invocation,
@@ -474,38 +471,46 @@ where
     }
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for ListMcpResourcesHandler<Host>
+impl<Session, Turn, Tracker, DiffContext> ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext>
+    for ListMcpResourcesHandler
 where
-    Host: McpResourceHost,
+    Turn: ThreadCapability,
+    Session: Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for ListMcpResourceTemplatesHandler<Host>
+impl<Session, Turn, Tracker, DiffContext> ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext>
+    for ListMcpResourceTemplatesHandler
 where
-    Host: McpResourceHost,
+    Turn: ThreadCapability,
+    Session: Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for ReadMcpResourceHandler<Host>
+impl<Session, Turn, Tracker, DiffContext> ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext>
+    for ReadMcpResourceHandler
 where
-    Host: McpResourceHost,
+    Turn: ThreadCapability,
+    Session: Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
 }
 
-async fn finish_mcp_resource_call<Host, Payload>(
-    host: &Host,
-    session: &Host::Session,
-    turn: &Host::Turn,
+async fn finish_mcp_resource_call<Turn, Payload>(
+    service: &dyn McpResourceApi,
+    turn: &Turn,
     call_id: &str,
     invocation: McpInvocation,
     start: Instant,
     payload_result: Result<Payload, FunctionCallError>,
 ) -> Result<FunctionToolOutput, FunctionCallError>
 where
-    Host: McpResourceHost,
+    Turn: ThreadCapability,
     Payload: Serialize,
 {
     match payload_result {
@@ -513,8 +518,8 @@ where
             Ok(output) => {
                 let content =
                     function_call_output_content_items_to_text(&output.body).unwrap_or_default();
-                host.emit_mcp_tool_call_end(
-                    session,
+                service
+                    .emit_mcp_resource_tool_call_end(
                     turn,
                     call_id,
                     invocation,
@@ -526,8 +531,8 @@ where
             }
             Err(err) => {
                 let message = err.to_string();
-                host.emit_mcp_tool_call_end(
-                    session,
+                service
+                    .emit_mcp_resource_tool_call_end(
                     turn,
                     call_id,
                     invocation,
@@ -540,8 +545,8 @@ where
         },
         Err(err) => {
             let message = err.to_string();
-            host.emit_mcp_tool_call_end(
-                session,
+            service
+                .emit_mcp_resource_tool_call_end(
                 turn,
                 call_id,
                 invocation,

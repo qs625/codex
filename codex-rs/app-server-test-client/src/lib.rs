@@ -67,7 +67,7 @@ use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput as V2UserInput;
-use codex_core::config::Config;
+use codex_thread_runtime::config::Config;
 use codex_otel::OtelProvider;
 use codex_otel::current_span_w3c_trace_context;
 use codex_protocol::openai_models::ReasoningEffort;

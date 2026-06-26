@@ -22,7 +22,7 @@ use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::UserInput as V2UserInput;
-use codex_core::config::set_project_trust_level;
+use codex_thread_runtime::config::set_project_trust_level;
 use codex_protocol::config_types::TrustLevel;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::skip_if_windows;

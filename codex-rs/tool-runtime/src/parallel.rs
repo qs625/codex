@@ -29,9 +29,7 @@ pub use codex_tool_planning::ToolName;
 /// hook/telemetry accounting. The generic runtime only coordinates
 /// cancellation, per-tool parallelism, and conversion of dispatch errors into
 /// model-visible responses.
-pub trait ToolCallRuntimeRouter<Session, Turn, Tracker, DiffContext>:
-    Send + Sync + 'static
-{
+pub trait ToolCallRuntimeRouter<Tracker, DiffContext>: Send + Sync + 'static {
     fn create_diff_consumer(
         &self,
         tool_name: &ToolName,
@@ -41,8 +39,6 @@ pub trait ToolCallRuntimeRouter<Session, Turn, Tracker, DiffContext>:
 
     fn dispatch_tool_call_with_code_mode_result(
         &self,
-        session: Session,
-        turn: Turn,
         cancellation_token: CancellationToken,
         tracker: Tracker,
         call: ToolCall,
@@ -50,27 +46,20 @@ pub trait ToolCallRuntimeRouter<Session, Turn, Tracker, DiffContext>:
     ) -> impl Future<Output = Result<AnyToolResult, FunctionCallError>> + Send;
 }
 
-pub struct ToolCallRuntime<Router, Session, Turn, Tracker, DiffContext> {
+pub struct ToolCallRuntime<Router, Tracker, DiffContext> {
     router: Arc<Router>,
-    session: Session,
-    turn_context: Turn,
     tracker: Tracker,
     parallel_execution: Arc<RwLock<()>>,
     _marker: PhantomData<fn(DiffContext)>,
 }
 
-impl<Router, Session, Turn, Tracker, DiffContext> Clone
-    for ToolCallRuntime<Router, Session, Turn, Tracker, DiffContext>
+impl<Router, Tracker, DiffContext> Clone for ToolCallRuntime<Router, Tracker, DiffContext>
 where
-    Session: Clone,
-    Turn: Clone,
     Tracker: Clone,
 {
     fn clone(&self) -> Self {
         Self {
             router: Arc::clone(&self.router),
-            session: self.session.clone(),
-            turn_context: self.turn_context.clone(),
             tracker: self.tracker.clone(),
             parallel_execution: Arc::clone(&self.parallel_execution),
             _marker: PhantomData,
@@ -78,25 +67,15 @@ where
     }
 }
 
-impl<Router, Session, Turn, Tracker, DiffContext>
-    ToolCallRuntime<Router, Session, Turn, Tracker, DiffContext>
+impl<Router, Tracker, DiffContext> ToolCallRuntime<Router, Tracker, DiffContext>
 where
-    Router: ToolCallRuntimeRouter<Session, Turn, Tracker, DiffContext>,
-    Session: Clone + Send + Sync + 'static,
-    Turn: Clone + Send + Sync + 'static,
+    Router: ToolCallRuntimeRouter<Tracker, DiffContext>,
     Tracker: Clone + Send + Sync + 'static,
     DiffContext: 'static,
 {
-    pub fn new(
-        router: Arc<Router>,
-        session: Session,
-        turn_context: Turn,
-        tracker: Tracker,
-    ) -> Self {
+    pub fn new(router: Arc<Router>, tracker: Tracker) -> Self {
         Self {
             router,
-            session,
-            turn_context,
             tracker,
             parallel_execution: Arc::new(RwLock::new(())),
             _marker: PhantomData,
@@ -138,8 +117,6 @@ where
     ) -> impl Future<Output = Result<AnyToolResult, FunctionCallError>> {
         let supports_parallel = self.router.tool_supports_parallel(&call);
         let router = Arc::clone(&self.router);
-        let session = self.session.clone();
-        let turn = self.turn_context.clone();
         let tracker = self.tracker.clone();
         let lock = Arc::clone(&self.parallel_execution);
         let invocation_cancellation_token = cancellation_token.clone();
@@ -170,8 +147,6 @@ where
 
                         router
                             .dispatch_tool_call_with_code_mode_result(
-                                session,
-                                turn,
                                 invocation_cancellation_token,
                                 tracker,
                                 call.clone(),
@@ -231,10 +206,7 @@ where
 
     fn abort_message(call: &ToolCall, secs: f32) -> String {
         if call.tool_name.namespace.is_none()
-            && matches!(
-                call.tool_name.name.as_str(),
-                "shell_command" | "unified_exec"
-            )
+            && matches!(call.tool_name.name.as_str(), "unified_exec" | "exec_command")
         {
             format!("Wall time: {secs:.1} seconds\naborted by user")
         } else {

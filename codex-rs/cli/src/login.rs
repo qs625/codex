@@ -9,7 +9,7 @@
 
 use codex_auth_types::AuthMode;
 use codex_config_types::AuthCredentialsStoreMode;
-use codex_core::config::Config;
+use codex_thread_runtime::config::Config;
 use codex_login::CLIENT_ID;
 use codex_login::CodexAuth;
 use codex_login::ServerOptions;
@@ -47,7 +47,7 @@ const LOGIN_SUCCESS_MESSAGE: &str = "Successfully logged in";
 /// command produce a durable `codex-login.log` artifact without coupling it to the TUI's broader
 /// telemetry and feedback initialization.
 fn init_login_file_logging(config: &Config) -> Option<WorkerGuard> {
-    let log_dir = match codex_core::config::log_dir(config) {
+    let log_dir = match codex_thread_runtime::config::log_dir(config) {
         Ok(log_dir) => log_dir,
         Err(err) => {
             eprintln!("Warning: failed to resolve login log directory: {err}");

@@ -22,8 +22,8 @@ use codex_command_runtime::ExecExpiration;
 use codex_command_runtime::ExecExpirationOutcome;
 use codex_command_runtime::IO_DRAIN_TIMEOUT_MS;
 use codex_command_runtime::bytes_to_string_smart;
-use codex_core::config::StartedNetworkProxy;
-use codex_core::sandboxing::ExecRequest;
+use codex_thread_runtime::config::StartedNetworkProxy;
+use codex_thread_runtime::sandboxing::ExecRequest;
 use codex_sandboxing_api::SandboxType;
 use codex_utils_pty::DEFAULT_OUTPUT_BYTES_CAP;
 use codex_utils_pty::ProcessHandle;
@@ -202,7 +202,7 @@ impl CommandExecManager {
             let sessions = Arc::clone(&self.sessions);
             tokio::spawn(async move {
                 let _started_network_proxy = started_network_proxy;
-                match codex_core::sandboxing::execute_env(exec_request, /*stdout_stream*/ None)
+                match codex_thread_runtime::sandboxing::execute_env(exec_request, /*stdout_stream*/ None)
                     .await
                 {
                     Ok(output) => {

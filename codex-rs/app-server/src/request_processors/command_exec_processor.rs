@@ -286,7 +286,7 @@ impl CommandExecRequestProcessor {
             None => None,
         };
 
-        let exec_request = codex_core::exec::build_exec_request(
+        let exec_request = codex_thread_runtime::exec::build_exec_request(
             exec_params,
             &effective_permission_profile,
             &sandbox_cwd,

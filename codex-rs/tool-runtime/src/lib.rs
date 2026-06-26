@@ -21,7 +21,6 @@ pub use codex_tool_runtime_api::ApplyPatchHandlerHost;
 pub use codex_tool_runtime_api::HookToolName;
 pub use codex_tool_runtime_api::McpResourceHost;
 pub use codex_tool_runtime_api::ResolvedApplyPatchEnvironment;
-pub use codex_tool_runtime_api::RunExecLikeArgs;
 pub use codex_tool_runtime_api::RuntimeShell;
 pub use codex_tool_runtime_api::RuntimeShellSnapshot;
 pub use codex_tool_runtime_api::ShellExecutionHost;

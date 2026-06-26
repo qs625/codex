@@ -22,7 +22,7 @@ use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SandboxMode;
 use codex_app_server_protocol::ToolsV2;
 use codex_app_server_protocol::WriteStatus;
-use codex_core::config::set_project_trust_level;
+use codex_thread_runtime::config::set_project_trust_level;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::WebSearchContextSize;
 use codex_protocol::config_types::WebSearchLocation;

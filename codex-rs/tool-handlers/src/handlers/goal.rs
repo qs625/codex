@@ -6,6 +6,8 @@
 
 use codex_protocol::protocol::ThreadGoal;
 use codex_protocol::protocol::ThreadGoalStatus;
+use codex_thread_api::GoalApi;
+use codex_thread_api::ThreadCapability;
 use codex_tool_planning::CREATE_GOAL_TOOL_NAME;
 use codex_tool_planning::GET_GOAL_TOOL_NAME;
 use codex_tool_planning::ToolName;
@@ -14,7 +16,6 @@ use codex_tool_planning::UPDATE_GOAL_TOOL_NAME;
 use codex_tool_planning::create_create_goal_tool;
 use codex_tool_planning::create_get_goal_tool;
 use codex_tool_planning::create_update_goal_tool;
-use codex_tool_runtime_api::GoalToolHost;
 use codex_tool_runtime_api::ToolHandler;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolExecutor;
@@ -26,33 +27,33 @@ use serde::Serialize;
 use crate::FunctionToolOutput;
 use codex_tool_runtime::ToolInvocation;
 
-pub struct GetGoalHandler<Host> {
-    host: Host,
+pub struct GetGoalHandler {
+    service: std::sync::Arc<dyn GoalApi>,
 }
 
-impl<Host> GetGoalHandler<Host> {
-    pub fn new(host: Host) -> Self {
-        Self { host }
+impl GetGoalHandler {
+    pub fn new(service: std::sync::Arc<dyn GoalApi>) -> Self {
+        Self { service }
     }
 }
 
-pub struct CreateGoalHandler<Host> {
-    host: Host,
+pub struct CreateGoalHandler {
+    service: std::sync::Arc<dyn GoalApi>,
 }
 
-impl<Host> CreateGoalHandler<Host> {
-    pub fn new(host: Host) -> Self {
-        Self { host }
+impl CreateGoalHandler {
+    pub fn new(service: std::sync::Arc<dyn GoalApi>) -> Self {
+        Self { service }
     }
 }
 
-pub struct UpdateGoalHandler<Host> {
-    host: Host,
+pub struct UpdateGoalHandler {
+    service: std::sync::Arc<dyn GoalApi>,
 }
 
-impl<Host> UpdateGoalHandler<Host> {
-    pub fn new(host: Host) -> Self {
-        Self { host }
+impl UpdateGoalHandler {
+    pub fn new(service: std::sync::Arc<dyn GoalApi>) -> Self {
+        Self { service }
     }
 }
 
@@ -104,10 +105,12 @@ impl GoalToolResponse {
     }
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for GetGoalHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for GetGoalHandler
 where
-    Host: GoalToolHost,
+    Turn: ThreadCapability,
+    Session: Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = FunctionToolOutput;
 
@@ -121,7 +124,7 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
@@ -129,8 +132,8 @@ where
         Box::pin(async move {
             function_arguments(invocation.metadata.payload, "get_goal")?;
             let goal = self
-                .host
-                .get_thread_goal(&invocation.session)
+                .service
+                .get_thread_goal(&invocation.turn)
                 .await
                 .map_err(FunctionCallError::RespondToModel)?;
             goal_response(goal, CompletionBudgetReport::Omit)
@@ -138,17 +141,22 @@ where
     }
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for GetGoalHandler<Host>
+impl<Session, Turn, Tracker, DiffContext> ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext>
+    for GetGoalHandler
 where
-    Host: GoalToolHost,
+    Turn: ThreadCapability,
+    Session: Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for CreateGoalHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for CreateGoalHandler
 where
-    Host: GoalToolHost,
+    Turn: ThreadCapability,
+    Session: Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = FunctionToolOutput;
 
@@ -162,14 +170,13 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
     {
         Box::pin(async move {
             let ToolInvocation {
-                session,
                 turn,
                 metadata,
                 ..
@@ -177,8 +184,8 @@ where
             let arguments = function_arguments(metadata.payload, "goal")?;
             let args: CreateGoalArgs = parse_arguments(&arguments)?;
             let goal = self
-                .host
-                .create_thread_goal(&session, &turn, args.objective, args.token_budget)
+                .service
+                .create_thread_goal(&turn, args.objective, args.token_budget)
                 .await
                 .map_err(|err| {
                     if err.contains("already has a goal") {
@@ -195,17 +202,22 @@ where
     }
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for CreateGoalHandler<Host>
+impl<Session, Turn, Tracker, DiffContext> ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext>
+    for CreateGoalHandler
 where
-    Host: GoalToolHost,
+    Turn: ThreadCapability,
+    Session: Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for UpdateGoalHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for UpdateGoalHandler
 where
-    Host: GoalToolHost,
+    Turn: ThreadCapability,
+    Session: Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = FunctionToolOutput;
 
@@ -219,14 +231,13 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
     {
         Box::pin(async move {
             let ToolInvocation {
-                session,
                 turn,
                 metadata,
                 ..
@@ -241,8 +252,8 @@ where
                 ));
             }
             let goal = self
-                .host
-                .complete_thread_goal(&session, &turn)
+                .service
+                .complete_thread_goal(&turn)
                 .await
                 .map_err(FunctionCallError::RespondToModel)?;
             goal_response(Some(goal), CompletionBudgetReport::Include)
@@ -250,10 +261,13 @@ where
     }
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for UpdateGoalHandler<Host>
+impl<Session, Turn, Tracker, DiffContext> ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext>
+    for UpdateGoalHandler
 where
-    Host: GoalToolHost,
+    Turn: ThreadCapability,
+    Session: Send + Sync + 'static,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
 }
 

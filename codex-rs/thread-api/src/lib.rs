@@ -1,8 +1,11 @@
 //! Core-independent live thread operation API.
 //!
-//! `codex-thread-store-api` owns persisted thread storage. This crate owns the
-//! live runtime handle traits used to drive, inspect, and shut down active
-//! threads without depending on `codex-core`.
+//! `codex-thread-store-api` owns persisted thread storage. This crate is the
+//! unified public API surface for live thread runtime access, including the
+//! previous session-facing traits that are now treated as part of the thread
+//! runtime boundary.
+
+mod session_contracts;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -36,7 +39,6 @@ use codex_protocol::protocol::ThreadContextUsage;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TokenUsageInfo;
 use codex_protocol::protocol::W3cTraceContext;
-use codex_session_api::SessionCommandHandle;
 use codex_state_api::ExternalGoalSet;
 use codex_state_api::SharedStateDbRuntime;
 use codex_thread_store_api::StoredThread;
@@ -44,6 +46,8 @@ use codex_thread_store_api::StoredThreadHistory;
 use codex_thread_store_api::ThreadStoreResult;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use tokio::sync::watch;
+
+pub use session_contracts::*;
 
 /// Live thread configuration data needed by clients and persisted metadata paths.
 ///

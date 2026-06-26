@@ -9,10 +9,10 @@ use crate::exec_approval::handle_exec_approval_request;
 use crate::outgoing_message::OutgoingMessageSender;
 use crate::outgoing_message::OutgoingNotificationMeta;
 use crate::patch_approval::handle_patch_approval_request;
-use codex_core::CodexThread;
-use codex_core::NewThread;
-use codex_core::ThreadManager;
-use codex_core::config::Config as CodexConfig;
+use codex_thread_runtime::CodexThread;
+use codex_thread_runtime::NewThread;
+use codex_thread_runtime::ThreadService;
+use codex_thread_runtime::config::Config as CodexConfig;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::AgentMessageEvent;
 use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
@@ -61,14 +61,14 @@ pub async fn run_codex_tool_session(
     initial_prompt: String,
     config: CodexConfig,
     outgoing: Arc<OutgoingMessageSender>,
-    thread_manager: Arc<ThreadManager>,
+    thread_service: Arc<ThreadService>,
     running_requests_id_to_codex_uuid: Arc<Mutex<HashMap<RequestId, ThreadId>>>,
 ) {
     let NewThread {
         thread_id,
         thread,
         session_configured,
-    } = match thread_manager.start_thread(config.clone()).await {
+    } = match thread_service.start_thread(config.clone()).await {
         Ok(res) => res,
         Err(e) => {
             let result = CallToolResult {

@@ -7,14 +7,13 @@ use std::path::PathBuf;
 use std::process::Stdio;
 
 use codex_config_loader::LoaderOverrides;
-use codex_core::config::Config;
-use codex_core::config::ConfigBuilder;
-use codex_core::config::ConfigOverrides;
-use codex_core::config::NetworkProxyAuditMetadata;
-use codex_core::exec_env::create_env;
+use codex_thread_runtime::config::Config;
+use codex_thread_runtime::config::ConfigOverrides;
+use codex_thread_runtime::config::NetworkProxyAuditMetadata;
+use codex_thread_runtime::exec_env::create_env;
 #[cfg(target_os = "macos")]
-use codex_core::spawn::CODEX_SANDBOX_ENV_VAR;
-use codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
+use codex_thread_runtime::spawn::CODEX_SANDBOX_ENV_VAR;
+use codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_sandboxing::landlock::allow_network_for_proxy;
@@ -344,7 +343,7 @@ async fn run_command_under_windows_session(
     sandbox_policy_cwd: AbsolutePathBuf,
     env: std::collections::HashMap<String, String>,
 ) -> ! {
-    use codex_core::windows_sandbox::WindowsSandboxLevelExt;
+    use codex_thread_runtime::windows_sandbox::WindowsSandboxLevelExt;
     use codex_protocol::config_types::WindowsSandboxLevel;
     use codex_windows_sandbox::spawn_windows_sandbox_session_elevated;
     use codex_windows_sandbox::spawn_windows_sandbox_session_legacy;

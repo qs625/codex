@@ -3,8 +3,8 @@ use chrono::Local;
 use chrono::Utc;
 use reqwest::header::HeaderMap;
 
-use codex_core::config::Config;
 use codex_login::AuthManager;
+use codex_thread_runtime::config::Config;
 
 pub fn set_user_agent_suffix(suffix: &str) {
     if let Ok(mut guard) = codex_login::default_client::USER_AGENT_SUFFIX.lock() {

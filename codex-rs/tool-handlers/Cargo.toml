@@ -32,10 +32,10 @@ codex-permissions-runtime = { workspace = true }
 codex-process-exec = { workspace = true }
 codex-protocol = { workspace = true }
 codex-sandboxing-api = { workspace = true }
-codex-session-api = { workspace = true }
 codex-session-telemetry-api = { workspace = true }
 codex-shell-command = { workspace = true }
 codex-state-api = { workspace = true }
+codex-thread-api = { workspace = true }
 codex-tool-planning = { workspace = true }
 codex-tool-config = { workspace = true }
 codex-tool-runtime = { workspace = true }

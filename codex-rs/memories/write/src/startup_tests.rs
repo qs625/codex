@@ -6,12 +6,6 @@ use crate::StageOnePromptRequest;
 use crate::StageOneRequestContext;
 use crate::start_memories_startup_task;
 use codex_api::ResponseEvent;
-use codex_core::CodexThread;
-use codex_core::ModelClient;
-use codex_core::Prompt;
-use codex_core::ThreadManager;
-use codex_core::config::Config;
-use codex_core::resolve_installation_id;
 use codex_features::Feature;
 use codex_git_baseline::diff_since_latest_init;
 use codex_git_baseline::reset_git_repository;
@@ -32,6 +26,13 @@ use codex_protocol::protocol::TokenUsage;
 use codex_protocol::user_input::UserInput;
 use codex_rollout_trace::InferenceTraceContext;
 use codex_session_telemetry_api::SessionTelemetry as SessionTelemetryTrait;
+use codex_thread_runtime::CodexThread;
+use codex_thread_runtime::ModelClient;
+use codex_thread_runtime::Prompt;
+use codex_thread_runtime::ThreadConfigSnapshot;
+use codex_thread_runtime::ThreadService;
+use codex_thread_runtime::config::Config;
+use codex_thread_runtime::resolve_installation_id;
 use core_test_support::responses::ResponseMock;
 use core_test_support::responses::ResponsesRequest;
 use core_test_support::responses::ev_assistant_message;
@@ -404,7 +405,7 @@ fn memory_runtime_for_config(
     session_source: SessionSource,
 ) -> Arc<dyn MemoryStartupRuntime> {
     Arc::new(TestMemoryStartupRuntime::new(
-        Arc::clone(&test.thread_manager),
+        Arc::clone(&test.thread_service),
         Arc::clone(&test.auth_manager),
         test.session_configured.thread_id,
         Arc::clone(&test.codex),
@@ -428,7 +429,7 @@ fn memory_startup_settings_for_test(
 }
 
 struct TestMemoryStartupRuntime {
-    thread_manager: Arc<ThreadManager>,
+    thread_service: Arc<ThreadService>,
     auth_manager: Arc<AuthManager>,
     thread_id: ThreadId,
     thread: Arc<CodexThread>,
@@ -438,7 +439,7 @@ struct TestMemoryStartupRuntime {
 
 impl TestMemoryStartupRuntime {
     fn new(
-        thread_manager: Arc<ThreadManager>,
+        thread_service: Arc<ThreadService>,
         auth_manager: Arc<AuthManager>,
         thread_id: ThreadId,
         thread: Arc<CodexThread>,
@@ -460,7 +461,7 @@ impl TestMemoryStartupRuntime {
         );
 
         Self {
-            thread_manager,
+            thread_service,
             auth_manager,
             thread_id,
             thread,
@@ -495,7 +496,7 @@ impl MemoryStartupRuntime for TestMemoryStartupRuntime {
         Box::pin(async move {
             let config_snapshot = self.thread.config_snapshot().await;
             let model_info = self
-                .thread_manager
+                .thread_service
                 .get_models_manager()
                 .get_model_info(model_name, &self.config.to_models_manager_config())
                 .await;
@@ -528,7 +529,7 @@ impl MemoryStartupRuntime for TestMemoryStartupRuntime {
                 self.thread_id,
                 installation_id,
                 Arc::new(codex_api::DefaultApiRuntimeFactory),
-                codex_core::test_support::model_provider_factory_for_tests(),
+                codex_thread_runtime::test_support::model_provider_factory_for_tests(),
                 self.config.model_provider.clone(),
                 session_source,
                 self.config.model_verbosity,
@@ -629,11 +630,11 @@ impl MemoryStartupRuntime for TestMemoryStartupRuntime {
             let auth_manager = Arc::clone(&self.auth_manager);
             let session_telemetry = self.session_telemetry.clone();
             let thread = Arc::clone(&self.thread);
-            let thread_manager = Arc::clone(&self.thread_manager);
+            let thread_service = Arc::clone(&self.thread_service);
 
             tokio::spawn(async move {
                 let result = stream_consolidation_prompt(
-                    thread_manager,
+                    thread_service,
                     thread,
                     auth_manager,
                     config,
@@ -706,7 +707,7 @@ impl MemoryConsolidationAgent for TestMemoryConsolidationAgent {
 
 #[allow(clippy::too_many_arguments)]
 async fn stream_consolidation_prompt(
-    thread_manager: Arc<ThreadManager>,
+    thread_service: Arc<ThreadService>,
     thread: Arc<CodexThread>,
     auth_manager: Arc<AuthManager>,
     config: Arc<Config>,
@@ -716,7 +717,7 @@ async fn stream_consolidation_prompt(
     reasoning_effort: ReasoningEffort,
     session_telemetry: SessionTelemetry,
 ) -> anyhow::Result<(Option<String>, Option<TokenUsage>)> {
-    let model_info = thread_manager
+    let model_info = thread_service
         .get_models_manager()
         .get_model_info(&model, &config.to_models_manager_config())
         .await;
@@ -732,7 +733,7 @@ async fn stream_consolidation_prompt(
         thread_id,
         installation_id,
         Arc::new(codex_api::DefaultApiRuntimeFactory),
-        codex_core::test_support::model_provider_factory_for_tests(),
+        codex_thread_runtime::test_support::model_provider_factory_for_tests(),
         config.model_provider.clone(),
         session_source,
         config.model_verbosity,
@@ -903,7 +904,7 @@ async fn wait_for_request(mock: &ResponseMock, expected_count: usize) -> Vec<Res
 async fn wait_for_service_tier(
     test: &TestCodex,
     expected_service_tier: Option<String>,
-) -> anyhow::Result<codex_core::ThreadConfigSnapshot> {
+) -> anyhow::Result<ThreadConfigSnapshot> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let config_snapshot = test.codex.config_snapshot().await;

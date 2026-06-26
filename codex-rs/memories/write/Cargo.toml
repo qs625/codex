@@ -37,7 +37,7 @@ uuid = { workspace = true, features = ["v4", "v5"] }
 
 [dev-dependencies]
 codex-api = { workspace = true }
-codex-core = { workspace = true }
+codex-thread-runtime = { workspace = true }
 codex-models-manager = { workspace = true }
 codex-rollout-trace = { workspace = true }
 codex-session-telemetry-api = { workspace = true }

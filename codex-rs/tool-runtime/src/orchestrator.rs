@@ -181,6 +181,7 @@ impl<Host> ToolOrchestrator<Host> {
                         .await?;
                     already_approved = true;
                 } else {
+                    already_approved = tool.approval_preapproved(req);
                     telemetry.tool_decision(
                         &otel_tn,
                         otel_ci,

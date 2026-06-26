@@ -1,5 +1,5 @@
-use codex_session_api::SessionToolDispatchFuture;
-use codex_session_api::SessionToolRouter;
+use codex_thread_api::SessionToolDispatchFuture;
+use codex_thread_api::SessionToolRouter;
 use codex_tool_runtime::ToolArgumentDiffConsumer;
 use codex_tool_runtime::ToolInvocation;
 use codex_tool_runtime::ToolRegistry;
@@ -20,6 +20,8 @@ pub struct SessionToolRouterAdapter<Session, Turn, Tracker, DiffContext, Dispatc
     inner:
         ToolRouter<ToolRegistry<ToolInvocation<Session, Turn, Tracker>, DiffContext>, DiffContext>,
     dispatch_host: DispatchHost,
+    session: Session,
+    turn: Turn,
 }
 
 impl<Session, Turn, Tracker, DiffContext, DispatchHost>
@@ -31,16 +33,20 @@ impl<Session, Turn, Tracker, DiffContext, DispatchHost>
             DiffContext,
         >,
         dispatch_host: DispatchHost,
+        session: Session,
+        turn: Turn,
     ) -> Self {
         Self {
             inner,
             dispatch_host,
+            session,
+            turn,
         }
     }
 }
 
 impl<Session, Turn, Tracker, DiffContext, DispatchHost>
-    SessionToolRouter<Session, Turn, Tracker, DiffContext>
+    SessionToolRouter<Tracker, DiffContext>
     for SessionToolRouterAdapter<Session, Turn, Tracker, DiffContext, DispatchHost>
 where
     Session: Clone + Send + Sync + 'static,
@@ -66,8 +72,6 @@ where
 
     fn dispatch_tool_call_with_code_mode_result(
         &self,
-        session: Session,
-        turn: Turn,
         cancellation_token: CancellationToken,
         tracker: Tracker,
         call: ToolCall,
@@ -75,8 +79,8 @@ where
     ) -> SessionToolDispatchFuture<'_> {
         Box::pin(async move {
             let invocation = ToolInvocation {
-                session,
-                turn,
+                session: self.session.clone(),
+                turn: self.turn.clone(),
                 cancellation_token,
                 tracker,
                 metadata: call.into_invocation_metadata(source),

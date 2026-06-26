@@ -14,10 +14,29 @@ workspace = true
 
 [dependencies]
 codex-config-types = { workspace = true }
+codex-code-mode-api = { workspace = true }
+codex-command-runtime = { workspace = true }
+codex-exec-server-api = { workspace = true }
 codex-features = { workspace = true }
+codex-file-system = { workspace = true }
+codex-hooks-api = { workspace = true }
+codex-permissions-runtime = { workspace = true }
+codex-process-exec = { workspace = true }
 codex-protocol = { workspace = true }
-codex-session-api = { workspace = true }
+codex-runtime-capability-api = { workspace = true }
+codex-sandboxing-api = { workspace = true }
+codex-session-telemetry-api = { workspace = true }
 codex-state-api = { workspace = true }
 codex-thread-store-api = { workspace = true }
+codex-tool-config = { workspace = true }
+codex-tool-runtime = { workspace = true }
+codex-tool-planning = { workspace = true }
+codex-tool-runtime-api = { workspace = true }
+codex-tool-types = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
+codex-utils-output-truncation = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["sync"] }
+tokio-util = { workspace = true, features = ["rt"] }
+uuid = { workspace = true, features = ["v4"] }

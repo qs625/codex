@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use codex_arg0::Arg0DispatchPaths;
-use codex_core::ThreadAuthRuntimes;
-use codex_core::ThreadManager;
-use codex_core::config::Config;
-use codex_core::config::ThreadStoreConfig;
+use codex_thread_runtime::ThreadAuthRuntimes;
+use codex_thread_runtime::ThreadService;
+use codex_thread_runtime::config::Config;
+use codex_thread_runtime::config::ThreadStoreConfig;
 use codex_exec_server::EnvironmentManager;
 use codex_extension_api::empty_extension_registry;
 use codex_login::AuthManager;
@@ -41,7 +41,6 @@ use crate::codex_tool_config::CodexToolCallReplyParam;
 use crate::codex_tool_config::create_tool_for_codex_tool_call_param;
 use crate::codex_tool_config::create_tool_for_codex_tool_call_reply_param;
 use crate::outgoing_message::OutgoingMessageSender;
-use crate::tool_router_factory::McpServerToolRouterFactory;
 
 fn thread_store_from_config(
     config: &Config,
@@ -60,7 +59,7 @@ pub(crate) struct MessageProcessor {
     outgoing: Arc<OutgoingMessageSender>,
     initialized: bool,
     arg0_paths: Arg0DispatchPaths,
-    thread_manager: Arc<ThreadManager>,
+    thread_service: Arc<ThreadService>,
     running_requests_id_to_codex_uuid: Arc<Mutex<HashMap<RequestId, ThreadId>>>,
 }
 
@@ -85,12 +84,9 @@ impl MessageProcessor {
             auth_manager.clone(),
             model_provider_auth_manager(Some(auth_manager)),
         );
-        let core_state_db = state_db.clone().map(|state_db| {
-            let state_db: Arc<dyn codex_state_api::StateDbRuntime> = state_db;
-            state_db
-        });
-        let thread_manager = Arc::new(
-            ThreadManager::new_with_workflow_runs_and_openai_file_uploader(
+        let shared_state_db = state_db.clone();
+        let thread_service = Arc::new(
+            ThreadService::new_with_workflow_runs_and_openai_file_uploader(
                 config.as_ref(),
                 auth_runtimes,
                 SessionSource::Mcp,
@@ -98,7 +94,7 @@ impl MessageProcessor {
                 empty_extension_registry(),
                 /*analytics_events_client*/ None,
                 thread_store_from_config(config.as_ref(), state_db.clone()),
-                core_state_db,
+                shared_state_db,
                 Arc::new(codex_thread_store::DefaultLiveThreadFactory),
                 installation_id,
                 /*attestation_provider*/ None,
@@ -130,7 +126,14 @@ impl MessageProcessor {
                         SessionSource::Mcp.restriction_product(),
                     ),
                 ),
-                Arc::new(McpServerToolRouterFactory),
+                Arc::new(codex_tool_service::ToolService::new(
+                    Arc::new(codex_thread_runtime::ThreadApprovalService),
+                    Arc::new(codex_command_service::CommandService::new()),
+                    Arc::new(codex_thread_runtime::GoalService),
+                    Arc::new(codex_thread_runtime::McpResourceService),
+                    Arc::new(codex_thread_runtime::RequestPluginInstallService),
+                    Arc::new(codex_workflow::WorkflowService::new()),
+                )),
             )
             .with_terminal_type(user_agent()),
         );
@@ -138,7 +141,7 @@ impl MessageProcessor {
             outgoing,
             initialized: false,
             arg0_paths,
-            thread_manager,
+            thread_service,
             running_requests_id_to_codex_uuid: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -467,7 +470,7 @@ impl MessageProcessor {
 
         // Clone outgoing and server to move into async task.
         let outgoing = self.outgoing.clone();
-        let thread_manager = self.thread_manager.clone();
+        let thread_service = self.thread_service.clone();
         let running_requests_id_to_codex_uuid = self.running_requests_id_to_codex_uuid.clone();
 
         // Spawn an async task to handle the Codex session so that we do not
@@ -479,7 +482,7 @@ impl MessageProcessor {
                 initial_prompt,
                 config,
                 outgoing,
-                thread_manager,
+                thread_service,
                 running_requests_id_to_codex_uuid,
             )
             .await;
@@ -550,7 +553,7 @@ impl MessageProcessor {
         let outgoing = self.outgoing.clone();
         let running_requests_id_to_codex_uuid = self.running_requests_id_to_codex_uuid.clone();
 
-        let codex = match self.thread_manager.get_thread(thread_id).await {
+        let codex = match self.thread_service.get_thread(thread_id).await {
             Ok(c) => c,
             Err(_) => {
                 tracing::warn!("Session not found for thread_id: {thread_id}");
@@ -628,7 +631,7 @@ impl MessageProcessor {
         tracing::info!("thread_id: {thread_id}");
 
         // Obtain the Codex thread from the server.
-        let codex_arc = match self.thread_manager.get_thread(thread_id).await {
+        let codex_arc = match self.thread_service.get_thread(thread_id).await {
             Ok(c) => c,
             Err(_) => {
                 tracing::warn!("Session not found for thread_id: {thread_id}");

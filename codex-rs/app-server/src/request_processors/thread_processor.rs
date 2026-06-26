@@ -20,12 +20,12 @@ pub(crate) trait FinalStatusNotifier: Send + Sync {
     ) -> futures::future::BoxFuture<'a, ()>;
 }
 
-impl FinalStatusNotifier for ThreadManager {
+impl FinalStatusNotifier for ThreadService {
     fn maybe_notify_parent_of_final_status<'a>(
         &'a self,
         thread_id: ThreadId,
     ) -> futures::future::BoxFuture<'a, ()> {
-        Box::pin(ThreadManager::maybe_notify_parent_of_final_status(
+        Box::pin(ThreadService::maybe_notify_parent_of_final_status(
             self, thread_id,
         ))
     }
@@ -40,14 +40,14 @@ pub(crate) trait ThreadProcessorMetadataRuntime: Send + Sync {
     ) -> futures::future::BoxFuture<'a, CodexResult<StoredThread>>;
 }
 
-impl ThreadProcessorMetadataRuntime for ThreadManager {
+impl ThreadProcessorMetadataRuntime for ThreadService {
     fn update_thread_metadata<'a>(
         &'a self,
         thread_id: ThreadId,
         patch: StoreThreadMetadataPatch,
         include_archived: bool,
     ) -> futures::future::BoxFuture<'a, CodexResult<StoredThread>> {
-        Box::pin(ThreadManager::update_thread_metadata(
+        Box::pin(ThreadService::update_thread_metadata(
             self,
             thread_id,
             patch,
@@ -67,20 +67,20 @@ pub(crate) trait ThreadProcessorLifecycleRuntime: FinalStatusNotifier {
     fn active_event_subscriptions(&self) -> Arc<ActiveEventSubscriptionTracker>;
 }
 
-impl ThreadProcessorLifecycleRuntime for ThreadManager {
+impl ThreadProcessorLifecycleRuntime for ThreadService {
     fn shutdown_all_threads_bounded<'a>(
         &'a self,
         timeout: Duration,
     ) -> futures::future::BoxFuture<'a, codex_thread_api::ThreadShutdownReport> {
-        Box::pin(ThreadManager::shutdown_all_threads_bounded(self, timeout))
+        Box::pin(ThreadService::shutdown_all_threads_bounded(self, timeout))
     }
 
     fn subscribe_thread_created(&self) -> broadcast::Receiver<ThreadCreatedEvent> {
-        ThreadManager::subscribe_thread_created(self)
+        ThreadService::subscribe_thread_created(self)
     }
 
     fn active_event_subscriptions(&self) -> Arc<ActiveEventSubscriptionTracker> {
-        ThreadManager::active_event_subscriptions(self)
+        ThreadService::active_event_subscriptions(self)
     }
 }
 
@@ -93,7 +93,7 @@ pub(crate) trait ThreadProcessorCreatedThread: AppServerLiveThreadHandle {
     );
 }
 
-impl ThreadProcessorCreatedThread for codex_core::CodexThread {
+impl ThreadProcessorCreatedThread for codex_thread_runtime::CodexThread {
     fn record_startup_phase(
         &self,
         phase: &'static str,
@@ -168,19 +168,19 @@ pub(crate) trait ThreadProcessorThreadRuntime: Send + Sync {
     ) -> futures::future::BoxFuture<'a, CodexResult<ThreadProcessorNewThread>>;
 }
 
-impl ThreadProcessorThreadRuntime for ThreadManager {
+impl ThreadProcessorThreadRuntime for ThreadService {
     fn default_environment_selections(
         &self,
         cwd: &AbsolutePathBuf,
     ) -> Vec<TurnEnvironmentSelection> {
-        ThreadManager::default_environment_selections(self, cwd)
+        ThreadService::default_environment_selections(self, cwd)
     }
 
     fn validate_environment_selections(
         &self,
         environments: &[TurnEnvironmentSelection],
     ) -> CodexResult<()> {
-        ThreadManager::validate_environment_selections(self, environments)
+        ThreadService::validate_environment_selections(self, environments)
     }
 
     fn start_thread_with_options<'a>(
@@ -188,7 +188,7 @@ impl ThreadProcessorThreadRuntime for ThreadManager {
         options: StartThreadOptions,
     ) -> futures::future::BoxFuture<'a, CodexResult<ThreadProcessorNewThread>> {
         Box::pin(async move {
-            ThreadManager::start_thread_with_options(self, options)
+            ThreadService::start_thread_with_options(self, options)
                 .await
                 .map(thread_processor_new_thread)
         })
@@ -202,7 +202,7 @@ impl ThreadProcessorThreadRuntime for ThreadManager {
         parent_trace: Option<W3cTraceContext>,
     ) -> futures::future::BoxFuture<'a, CodexResult<ThreadProcessorNewThread>> {
         Box::pin(async move {
-            ThreadManager::resume_thread_with_history(
+            ThreadService::resume_thread_with_history(
                 self,
                 config,
                 initial_history,
@@ -222,7 +222,7 @@ impl ThreadProcessorThreadRuntime for ThreadManager {
         parent_trace: Option<W3cTraceContext>,
     ) -> futures::future::BoxFuture<'a, CodexResult<ThreadProcessorNewThread>> {
         Box::pin(async move {
-            ThreadManager::resume_thread_with_history_and_source(
+            ThreadService::resume_thread_with_history_and_source(
                 self,
                 config,
                 initial_history,
@@ -244,7 +244,7 @@ impl ThreadProcessorThreadRuntime for ThreadManager {
         parent_trace: Option<W3cTraceContext>,
     ) -> futures::future::BoxFuture<'a, CodexResult<ThreadProcessorNewThread>> {
         Box::pin(async move {
-            ThreadManager::fork_thread_from_history(
+            ThreadService::fork_thread_from_history(
                 self,
                 snapshot,
                 config,
@@ -655,7 +655,7 @@ impl ThreadRequestProcessor {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         auth_manager: Arc<AuthManager>,
-        thread_manager: Arc<ThreadManager>,
+        thread_service: Arc<ThreadService>,
         outgoing: Arc<OutgoingMessageSender>,
         arg0_paths: Arg0DispatchPaths,
         config: Arc<Config>,
@@ -671,10 +671,10 @@ impl ThreadRequestProcessor {
     ) -> Self {
         Self {
             auth_manager,
-            thread_runtime: thread_manager.clone(),
-            live_threads: thread_manager.clone(),
-            thread_metadata_runtime: thread_manager.clone(),
-            thread_lifecycle_runtime: thread_manager,
+            thread_runtime: thread_service.clone(),
+            live_threads: thread_service.clone(),
+            thread_metadata_runtime: thread_service.clone(),
+            thread_lifecycle_runtime: thread_service,
             outgoing,
             arg0_paths,
             config,
@@ -969,7 +969,7 @@ impl ThreadRequestProcessor {
     }
 
     async fn instruction_sources_from_config(config: &Config) -> Vec<AbsolutePathBuf> {
-        codex_core::AgentsMdManager::new(config)
+        codex_thread_runtime::AgentsMdManager::new(config)
             .instruction_sources(LOCAL_FS.as_ref())
             .await
     }
@@ -1349,7 +1349,7 @@ impl ThreadRequestProcessor {
             let current_cli_overrides = config_manager.current_cli_overrides();
             let cli_overrides_with_trust;
             let cli_overrides_for_reload = if let Err(err) =
-                codex_core::config::set_project_trust_level(
+                codex_thread_runtime::config::set_project_trust_level(
                     &listener_task_context.codex_home,
                     trust_target.as_path(),
                     TrustLevel::Trusted,
@@ -1834,7 +1834,7 @@ impl ThreadRequestProcessor {
         let ThreadSetNameParams { thread_id, name } = params;
         let thread_id = ThreadId::from_string(&thread_id)
             .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
-        let Some(name) = codex_core::util::normalize_thread_name(&name) else {
+        let Some(name) = codex_thread_runtime::util::normalize_thread_name(&name) else {
             return Err(invalid_request("thread name must not be empty"));
         };
 

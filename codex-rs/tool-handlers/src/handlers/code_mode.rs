@@ -1,5 +1,6 @@
 use std::time::Duration;
 use std::time::Instant;
+use std::marker::PhantomData;
 
 use codex_code_mode_api::DEFAULT_WAIT_YIELD_TIME_MS;
 use codex_code_mode_api::ExecuteRequest;
@@ -13,12 +14,12 @@ use codex_command_runtime::resolve_max_tokens;
 use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::ImageDetail;
+use codex_thread_api::SessionCodeModeCaller;
+use codex_thread_api::ThreadRuntimeCapability;
 use codex_tool_planning::ToolName;
 use codex_tool_planning::ToolSpec;
 use codex_tool_planning::collect_code_mode_tool_definitions;
 use codex_tool_planning::create_code_mode_wait_tool;
-use codex_tool_runtime_api::ApplyPatchHandlerHost;
-use codex_tool_runtime_api::CodeModeToolHost;
 use codex_tool_runtime_api::ToolHandler;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolExecutor;
@@ -32,39 +33,40 @@ use serde::Deserialize;
 use crate::FunctionToolOutput;
 use codex_tool_runtime::ToolInvocation;
 
-pub struct CodeModeExecuteHandler<Host> {
-    host: Host,
+pub struct CodeModeExecuteHandler<Session, Turn, Tracker, DiffContext> {
+    _marker: PhantomData<fn() -> (Session, Turn, Tracker, DiffContext)>,
     spec: ToolSpec,
     nested_tool_specs: Vec<ToolSpec>,
 }
 
-impl<Host> CodeModeExecuteHandler<Host> {
-    pub fn new(host: Host, spec: ToolSpec, nested_tool_specs: Vec<ToolSpec>) -> Self {
+impl<Session, Turn, Tracker, DiffContext> CodeModeExecuteHandler<Session, Turn, Tracker, DiffContext> {
+    pub fn new(spec: ToolSpec, nested_tool_specs: Vec<ToolSpec>) -> Self {
         Self {
-            host,
+            _marker: PhantomData,
             spec,
             nested_tool_specs,
         }
     }
 }
 
-pub struct CodeModeWaitHandler<Host> {
-    host: Host,
+pub struct CodeModeWaitHandler<Session, Turn, Tracker, DiffContext> {
+    _marker: PhantomData<fn() -> (Session, Turn, Tracker, DiffContext)>,
 }
 
-impl<Host> CodeModeWaitHandler<Host> {
-    pub fn new(host: Host) -> Self {
-        Self { host }
+impl<Session, Turn, Tracker, DiffContext> CodeModeWaitHandler<Session, Turn, Tracker, DiffContext> {
+    pub fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
     }
 }
 
-impl<Host> Default for CodeModeWaitHandler<Host>
-where
-    Host: Default,
+impl<Session, Turn, Tracker, DiffContext> Default
+    for CodeModeWaitHandler<Session, Turn, Tracker, DiffContext>
 {
     fn default() -> Self {
         Self {
-            host: Host::default(),
+            _marker: PhantomData,
         }
     }
 }
@@ -84,16 +86,14 @@ fn default_wait_yield_time_ms() -> u64 {
     DEFAULT_WAIT_YIELD_TIME_MS
 }
 
-impl<Host>
-    ToolExecutor<
-        ToolInvocation<
-            <Host as ApplyPatchHandlerHost>::Session,
-            <Host as ApplyPatchHandlerHost>::Turn,
-            <Host as ApplyPatchHandlerHost>::Tracker,
-        >,
-    > for CodeModeExecuteHandler<Host>
+impl<Session, Turn, Tracker, DiffContext>
+    ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for CodeModeExecuteHandler<Session, Turn, Tracker, DiffContext>
 where
-    Host: CodeModeToolHost,
+    Session: SessionCodeModeCaller,
+    Turn: ThreadRuntimeCapability,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
     type Output = FunctionToolOutput;
 
@@ -107,11 +107,7 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<
-            <Host as ApplyPatchHandlerHost>::Session,
-            <Host as ApplyPatchHandlerHost>::Turn,
-            <Host as ApplyPatchHandlerHost>::Tracker,
-        >,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
@@ -140,69 +136,64 @@ where
     }
 }
 
-impl<Host>
-    ToolHandler<
-        ToolInvocation<
-            <Host as ApplyPatchHandlerHost>::Session,
-            <Host as ApplyPatchHandlerHost>::Turn,
-            <Host as ApplyPatchHandlerHost>::Tracker,
-        >,
-        <Host as ApplyPatchHandlerHost>::DiffContext,
-    > for CodeModeExecuteHandler<Host>
+impl<Session, Turn, Tracker, DiffContext>
+    ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext>
+    for CodeModeExecuteHandler<Session, Turn, Tracker, DiffContext>
 where
-    Host: CodeModeToolHost + ApplyPatchHandlerHost,
+    Session: SessionCodeModeCaller,
+    Turn: ThreadRuntimeCapability,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
         matches!(payload, ToolPayload::Custom { .. })
     }
 }
 
-impl<Host> CodeModeExecuteHandler<Host>
+impl<Session, Turn, Tracker, DiffContext>
+    CodeModeExecuteHandler<Session, Turn, Tracker, DiffContext>
 where
-    Host: CodeModeToolHost,
+    Session: SessionCodeModeCaller,
+    Turn: ThreadRuntimeCapability,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
     async fn execute(
         &self,
-        session: <Host as ApplyPatchHandlerHost>::Session,
-        turn: <Host as ApplyPatchHandlerHost>::Turn,
+        session: Session,
+        turn: Turn,
         call_id: String,
         code: String,
     ) -> Result<FunctionToolOutput, FunctionCallError> {
         let args = parse_exec_source(&code).map_err(FunctionCallError::RespondToModel)?;
         let enabled_tools = collect_code_mode_tool_definitions(&self.nested_tool_specs);
-        let stored_values = self.host.code_mode_stored_values(&session).await;
+        let stored_values = session.code_mode_stored_values().await;
         // Allocate before starting V8 so the trace can create the parent
         // CodeCell before model-authored JavaScript issues nested tool calls.
-        let runtime_cell_id = self.host.code_mode_allocate_cell_id(&session);
-        self.host.record_code_mode_cell_started(
-            &session,
+        let runtime_cell_id = session.code_mode_allocate_cell_id();
+        session.record_code_mode_cell_started(
             &turn,
             runtime_cell_id.as_str(),
             call_id.as_str(),
             args.code.as_str(),
         );
         let started_at = Instant::now();
-        let response = self
-            .host
-            .code_mode_execute(
-                &session,
-                ExecuteRequest {
-                    cell_id: runtime_cell_id.clone(),
-                    tool_call_id: call_id,
-                    enabled_tools,
-                    source: args.code,
-                    stored_values,
-                    yield_time_ms: args.yield_time_ms,
-                    max_output_tokens: args.max_output_tokens,
-                },
-            )
+        let response = session
+            .code_mode_execute(ExecuteRequest {
+                cell_id: runtime_cell_id.clone(),
+                tool_call_id: call_id,
+                enabled_tools,
+                source: args.code,
+                stored_values,
+                yield_time_ms: args.yield_time_ms,
+                max_output_tokens: args.max_output_tokens,
+            })
             .await
             .map_err(FunctionCallError::RespondToModel)?;
         // Record the raw runtime boundary. The model-visible custom-tool output
         // is produced by `handle_runtime_response` and later linked through
         // `CodeCell.output_item_ids` in the reduced trace.
-        self.host.record_code_mode_cell_initial_response(
-            &session,
+        session.record_code_mode_cell_initial_response(
             &turn,
             runtime_cell_id.as_str(),
             &response,
@@ -210,15 +201,13 @@ where
         // Yielded cells keep running, so terminal lifecycle is only emitted
         // here when the first response also ended the runtime.
         if !matches!(response, RuntimeResponse::Yielded { .. }) {
-            self.host.record_code_mode_cell_ended(
-                &session,
+            session.record_code_mode_cell_ended(
                 &turn,
                 runtime_cell_id.as_str(),
                 &response,
             );
         }
         handle_runtime_response(
-            &self.host,
             &session,
             &turn,
             response,
@@ -230,16 +219,14 @@ where
     }
 }
 
-impl<Host>
-    ToolExecutor<
-        ToolInvocation<
-            <Host as ApplyPatchHandlerHost>::Session,
-            <Host as ApplyPatchHandlerHost>::Turn,
-            <Host as ApplyPatchHandlerHost>::Tracker,
-        >,
-    > for CodeModeWaitHandler<Host>
+impl<Session, Turn, Tracker, DiffContext>
+    ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for CodeModeWaitHandler<Session, Turn, Tracker, DiffContext>
 where
-    Host: CodeModeToolHost,
+    Session: SessionCodeModeCaller,
+    Turn: ThreadRuntimeCapability,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
     type Output = FunctionToolOutput;
 
@@ -253,11 +240,7 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<
-            <Host as ApplyPatchHandlerHost>::Session,
-            <Host as ApplyPatchHandlerHost>::Turn,
-            <Host as ApplyPatchHandlerHost>::Tracker,
-        >,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
@@ -279,16 +262,12 @@ where
                 {
                     let args: ExecWaitArgs = parse_arguments(&arguments)?;
                     let started_at = Instant::now();
-                    let wait_response = self
-                        .host
-                        .code_mode_wait(
-                            &session,
-                            WaitRequest {
-                                cell_id: args.cell_id,
-                                yield_time_ms: args.yield_time_ms,
-                                terminate: args.terminate,
-                            },
-                        )
+                    let wait_response = session
+                        .code_mode_wait(WaitRequest {
+                            cell_id: args.cell_id,
+                            yield_time_ms: args.yield_time_ms,
+                            terminate: args.terminate,
+                        })
                         .await
                         .map_err(FunctionCallError::RespondToModel)?;
                     if let WaitOutcome::LiveCell(response) = &wait_response
@@ -297,15 +276,9 @@ where
                         // Only a live-cell wait can close a CodeCell. A missing
                         // cell is still an ordinary `wait` tool result, but there
                         // is no runtime object for the reducer to complete.
-                        self.host.record_code_mode_cell_ended(
-                            &session,
-                            &turn,
-                            runtime_cell_id(response),
-                            response,
-                        );
+                        session.record_code_mode_cell_ended(&turn, runtime_cell_id(response), response);
                     }
                     handle_runtime_response(
-                        &self.host,
                         &session,
                         &turn,
                         wait_response.into(),
@@ -324,44 +297,41 @@ where
     }
 }
 
-impl<Host>
-    ToolHandler<
-        ToolInvocation<
-            <Host as ApplyPatchHandlerHost>::Session,
-            <Host as ApplyPatchHandlerHost>::Turn,
-            <Host as ApplyPatchHandlerHost>::Tracker,
-        >,
-        <Host as ApplyPatchHandlerHost>::DiffContext,
-    > for CodeModeWaitHandler<Host>
+impl<Session, Turn, Tracker, DiffContext>
+    ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext>
+    for CodeModeWaitHandler<Session, Turn, Tracker, DiffContext>
 where
-    Host: CodeModeToolHost + ApplyPatchHandlerHost,
+    Session: SessionCodeModeCaller,
+    Turn: ThreadRuntimeCapability,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
 }
 
-async fn handle_runtime_response<Host>(
-    host: &Host,
-    session: &<Host as ApplyPatchHandlerHost>::Session,
-    turn: &<Host as ApplyPatchHandlerHost>::Turn,
+async fn handle_runtime_response<Session, Turn>(
+    session: &Session,
+    turn: &Turn,
     response: RuntimeResponse,
     max_output_tokens: Option<usize>,
     started_at: Instant,
 ) -> Result<FunctionToolOutput, String>
 where
-    Host: CodeModeToolHost,
+    Session: SessionCodeModeCaller,
+    Turn: ThreadRuntimeCapability,
 {
     let script_status = format_script_status(&response);
 
     match response {
         RuntimeResponse::Yielded { content_items, .. } => {
             let mut content_items = into_function_call_output_content_items(content_items);
-            sanitize_runtime_image_detail(host, turn, &mut content_items);
+            sanitize_runtime_image_detail(turn, &mut content_items);
             content_items = truncate_code_mode_result(content_items, max_output_tokens);
             prepend_script_status(&mut content_items, &script_status, started_at.elapsed());
             Ok(FunctionToolOutput::from_content(content_items, Some(true)))
         }
         RuntimeResponse::Terminated { content_items, .. } => {
             let mut content_items = into_function_call_output_content_items(content_items);
-            sanitize_runtime_image_detail(host, turn, &mut content_items);
+            sanitize_runtime_image_detail(turn, &mut content_items);
             content_items = truncate_code_mode_result(content_items, max_output_tokens);
             prepend_script_status(&mut content_items, &script_status, started_at.elapsed());
             Ok(FunctionToolOutput::from_content(content_items, Some(true)))
@@ -373,9 +343,8 @@ where
             ..
         } => {
             let mut content_items = into_function_call_output_content_items(content_items);
-            sanitize_runtime_image_detail(host, turn, &mut content_items);
-            host.code_mode_replace_stored_values(session, stored_values)
-                .await;
+            sanitize_runtime_image_detail(turn, &mut content_items);
+            session.code_mode_replace_stored_values(stored_values).await;
             let success = error_text.is_none();
             if let Some(error_text) = error_text {
                 content_items.push(FunctionCallOutputContentItem::InputText {
@@ -392,17 +361,11 @@ where
     }
 }
 
-fn sanitize_runtime_image_detail<Host>(
-    host: &Host,
-    turn: &<Host as ApplyPatchHandlerHost>::Turn,
-    items: &mut [FunctionCallOutputContentItem],
-) where
-    Host: CodeModeToolHost,
+fn sanitize_runtime_image_detail<Turn>(turn: &Turn, items: &mut [FunctionCallOutputContentItem])
+where
+    Turn: ThreadRuntimeCapability,
 {
-    codex_tool_config::sanitize_original_image_detail(
-        host.can_request_original_image_detail(turn),
-        items,
-    );
+    codex_tool_config::sanitize_original_image_detail(turn.can_request_original_image_detail(), items);
 }
 
 fn format_script_status(response: &RuntimeResponse) -> String {

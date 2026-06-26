@@ -3,6 +3,7 @@ members = [
     "aws-auth",
     "analytics",
     "analytics-api",
+    "approval-service-api",
     "agent-graph-store",
     "agent-identity",
     "agent-identity-api",
@@ -44,6 +45,8 @@ members = [
     "cli",
     "collaboration-mode-templates",
     "command-display",
+    "command-service",
+    "command-service-api",
     "command-runtime",
     "connectors",
     "connectors-api",
@@ -71,8 +74,6 @@ members = [
     "skills",
     "state-cli",
     "state-api",
-    "core",
-    "core-api",
     "core-plugins",
     "core-plugins-api",
     "core-plugins-remote",
@@ -144,14 +145,15 @@ members = [
     "response-debug-context",
     "sandboxing-api",
     "sandboxing",
-    "session-runtime",
-    "session-api",
+    "thread-runtime",
     "session-telemetry-api",
     "stdio-to-uds",
     "otel",
     "otel-init",
     "tui",
     "tool-config",
+    "tool-service-api",
+    "tool-service",
     "tool-handlers",
     "tool-planning",
     "tool-runtime",
@@ -191,7 +193,8 @@ members = [
     "terminal-detection",
     "trace-context",
     "test-binary-support",
-    "thread-manager-sample",
+    "thread-service-sample",
+    "runtime-capability-api",
     "thread-api",
     "thread-store-api",
     "thread-store",
@@ -219,6 +222,7 @@ license = "Apache-2.0"
 app_test_support = { path = "app-server/tests/common" }
 codex-analytics = { path = "analytics" }
 codex-analytics-api = { path = "analytics-api" }
+codex-approval-service-api = { path = "approval-service-api" }
 codex-agent-graph-store = { path = "agent-graph-store" }
 codex-agent-identity = { path = "agent-identity" }
 codex-agent-identity-api = { path = "agent-identity-api" }
@@ -255,6 +259,8 @@ codex-code-mode = { path = "code-mode" }
 codex-code-mode-api = { path = "code-mode-api" }
 codex-client-identity = { path = "client-identity" }
 codex-command-display = { path = "command-display" }
+codex-command-service = { path = "command-service" }
+codex-command-service-api = { path = "command-service-api" }
 codex-command-runtime = { path = "command-runtime" }
 codex-config = { path = "config" }
 codex-config-diagnostics = { path = "config-diagnostics" }
@@ -275,8 +281,6 @@ codex-default-client-api = { path = "default-client-api" }
 codex-connectors = { path = "connectors" }
 codex-connectors-api = { path = "connectors-api" }
 codex-connectors-types = { path = "connectors-types" }
-codex-core = { path = "core" }
-codex-core-api = { path = "core-api" }
 codex-core-plugins = { path = "core-plugins" }
 codex-core-plugins-api = { path = "core-plugins-api" }
 codex-core-plugins-remote = { path = "core-plugins-remote" }
@@ -351,6 +355,7 @@ codex-realtime = { path = "realtime" }
 codex-realtime-webrtc = { path = "realtime-webrtc" }
 codex-responses-api-proxy = { path = "responses-api-proxy" }
 codex-response-debug-context = { path = "response-debug-context" }
+codex-runtime-capability-api = { path = "runtime-capability-api" }
 codex-rmcp-client = { path = "rmcp-client" }
 codex-rollout = { path = "rollout" }
 codex-rollout-api = { path = "rollout-api" }
@@ -364,8 +369,7 @@ codex-shell-command = { path = "shell-command" }
 codex-state-api = { path = "state-api" }
 codex-shell-escalation = { path = "shell-escalation" }
 codex-shell-escalation-cli = { path = "shell-escalation-cli" }
-codex-session-api = { path = "session-api" }
-codex-session-runtime = { path = "session-runtime" }
+codex-thread-runtime = { path = "thread-runtime" }
 codex-session-telemetry-api = { path = "session-telemetry-api" }
 codex-skills = { path = "skills" }
 codex-state = { path = "state" }
@@ -378,6 +382,8 @@ codex-thread-api = { path = "thread-api" }
 codex-thread-store-api = { path = "thread-store-api" }
 codex-thread-store = { path = "thread-store" }
 codex-tool-config = { path = "tool-config" }
+codex-tool-service-api = { path = "tool-service-api" }
+codex-tool-service = { path = "tool-service" }
 codex-tool-handlers = { path = "tool-handlers" }
 codex-tool-planning = { path = "tool-planning" }
 codex-tool-runtime = { path = "tool-runtime" }
@@ -414,7 +420,7 @@ codex-utils-template = { path = "utils/template" }
 codex-v8-poc = { path = "v8-poc" }
 codex-windows-sandbox = { path = "windows-sandbox-rs" }
 codex-workflow = { path = "workflow" }
-core_test_support = { path = "core/tests/common" }
+core_test_support = { path = "core-test-support" }
 mcp_test_support = { path = "mcp-server/tests/common" }
 
 # External

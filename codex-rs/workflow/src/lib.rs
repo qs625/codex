@@ -1,4 +1,5 @@
 pub mod runner_bridge;
+pub mod service;
 pub mod workflow_runs;
 
 pub use codex_workflow_api::WorkflowAgentBinding;
@@ -16,4 +17,5 @@ pub use codex_workflow_api::WorkflowSource;
 pub use codex_workflow_api::WorkflowSummary;
 pub use codex_workflow_api::load_workflow_registry_from_roots;
 pub use codex_workflow_api::render_available_workflows_body;
+pub use service::WorkflowService;
 pub use workflow_runs::WorkflowRunManager;

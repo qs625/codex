@@ -10,9 +10,9 @@ use codex_config_loader_remote::RemoteThreadConfigLoader;
 use codex_config_local_loader::LocalConfigLayerLoader;
 use codex_config_state::ConfigLayerStackOrdering;
 use codex_config_types::ConfigLayerSource;
-use codex_core::config::Config;
-use codex_core::config::ConfigBuilder;
-use codex_core::resolve_installation_id;
+use codex_thread_runtime::config::Config;
+use codex_thread_runtime::config::ConfigBuilder;
+use codex_thread_runtime::resolve_installation_id;
 use codex_login::AuthManager;
 use codex_thread_api::ThreadCreatedEvent;
 use codex_utils_cli::CliConfigOverrides;
@@ -50,7 +50,7 @@ use codex_app_server_protocol::RemoteControlStatusChangedNotification;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::TextPosition as AppTextPosition;
 use codex_app_server_protocol::TextRange as AppTextRange;
-use codex_core::config::find_codex_home;
+use codex_thread_runtime::config::find_codex_home;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server_api::ExecServerRuntimePaths;
 use codex_execpolicy_loader::ExecPolicyError;
@@ -108,7 +108,6 @@ mod skills_watcher;
 mod thread_state;
 mod thread_status;
 mod thread_store_factory;
-mod tool_router_factory;
 mod transport;
 
 pub use crate::error_code::INPUT_TOO_LARGE_ERROR_CODE;
@@ -551,14 +550,14 @@ pub async fn run_main_with_transport_options(
             Ok(config_toml) => {
                 let personality_migration_thread_store =
                     thread_store_factory::thread_store_from_config(&config, state_db.clone());
-                match codex_core::personality_migration::maybe_migrate_personality(
+                match codex_thread_runtime::personality_migration::maybe_migrate_personality(
                     &config.codex_home,
                     &config_toml,
                     personality_migration_thread_store.as_ref(),
                 )
                 .await
                 {
-                    Ok(codex_core::personality_migration::PersonalityMigrationStatus::Applied) => {
+                    Ok(codex_thread_runtime::personality_migration::PersonalityMigrationStatus::Applied) => {
                         config = config_manager
                             .load_latest_config(/*fallback_cwd*/ None)
                             .await
@@ -572,9 +571,9 @@ pub async fn run_main_with_transport_options(
                             })?;
                     }
                     Ok(
-                        codex_core::personality_migration::PersonalityMigrationStatus::SkippedMarker
-                        | codex_core::personality_migration::PersonalityMigrationStatus::SkippedExplicitPersonality
-                        | codex_core::personality_migration::PersonalityMigrationStatus::SkippedNoSessions,
+                        codex_thread_runtime::personality_migration::PersonalityMigrationStatus::SkippedMarker
+                        | codex_thread_runtime::personality_migration::PersonalityMigrationStatus::SkippedExplicitPersonality
+                        | codex_thread_runtime::personality_migration::PersonalityMigrationStatus::SkippedNoSessions,
                     ) => {}
                     Err(err) => {
                         warn!(error = %err, "Failed to run personality migration");

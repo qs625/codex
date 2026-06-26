@@ -44,8 +44,9 @@ codex-config-requirements = { workspace = true }
 codex-config-state = { workspace = true }
 codex-config-toml = { workspace = true }
 codex-config-types = { workspace = true }
+codex-command-service = { workspace = true }
 codex-command-runtime = { workspace = true }
-codex-core = { workspace = true }
+codex-thread-runtime = { workspace = true }
 codex-core-plugins = { workspace = true }
 codex-core-plugins-api = { workspace = true }
 codex-core-plugins-remote = { workspace = true }
@@ -96,15 +97,14 @@ codex-rollout = { workspace = true }
 codex-rollout-trace = { workspace = true }
 codex-sandboxing-api = { workspace = true }
 codex-sandboxing = { workspace = true }
-codex-session-api = { workspace = true }
 codex-state-api = { workspace = true }
 codex-state = { workspace = true }
 codex-thread-api = { workspace = true }
 codex-thread-store = { workspace = true }
 codex-thread-store-api = { workspace = true }
 codex-tool-config = { workspace = true }
-codex-tool-handlers = { workspace = true }
 codex-tool-runtime-api = { workspace = true }
+codex-tool-service = { workspace = true }
 codex-tools = { workspace = true }
 codex-turn-metadata = { workspace = true }
 codex-terminal-detection = { workspace = true }
@@ -143,7 +143,7 @@ axum = { workspace = true, default-features = false, features = [
 ] }
 base64 = { workspace = true }
 codex-config = { workspace = true }
-codex-core = { workspace = true, features = ["test-support"] }
+codex-thread-runtime = { workspace = true, features = ["test-support"] }
 codex-utils-cargo-bin = { workspace = true }
 core_test_support = { workspace = true }
 flate2 = { workspace = true }

@@ -1246,13 +1246,13 @@ mod tests {
     use codex_app_server_protocol::ServerNotification;
     use codex_auth_types::AuthMode;
     use codex_config_types::AuthCredentialsStoreMode;
-    use codex_core::test_support::auth_manager_from_auth;
     use codex_login::AuthDotJson;
     use codex_login::CodexAuth;
     use codex_login::save_auth;
     use codex_login::token_data::TokenData;
     use codex_login::token_data::parse_chatgpt_jwt_claims;
     use codex_state::StateRuntime;
+    use codex_thread_runtime::test_support::auth_manager_from_auth;
     use futures::StreamExt;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;

@@ -14,7 +14,7 @@ workspace = true
 
 [features]
 default = []
-test-support = ["codex-core/test-support"]
+test-support = ["codex-thread-runtime/test-support"]
 
 [dependencies]
 codex-app-server = { workspace = true }
@@ -23,7 +23,7 @@ codex-arg0 = { workspace = true }
 codex-config-loader = { workspace = true }
 codex-config-loader-remote = { workspace = true }
 codex-config-requirements = { workspace = true }
-codex-core = { workspace = true }
+codex-thread-runtime = { workspace = true }
 codex-execpolicy-loader = { workspace = true }
 codex-exec-server = { workspace = true }
 codex-feedback = { workspace = true }

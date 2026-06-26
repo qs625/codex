@@ -8,12 +8,13 @@ use codex_protocol::models::CommandWaitStatus as ResponseCommandWaitStatus;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::TerminalInteractionEvent;
+use codex_thread_api::SessionCommandInteractionCaller;
+use codex_thread_api::ThreadCapability;
 use codex_tool_planning::ToolName;
 use codex_tool_planning::ToolSpec;
 use codex_tool_planning::create_command_wait_tool;
 use codex_tool_planning::create_write_stdin_tool;
 use codex_tool_runtime::ToolInvocation;
-use codex_tool_runtime_api::CommandInteractionHost;
 use codex_tool_runtime_api::ToolHandler;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolExecutor;
@@ -32,20 +33,20 @@ struct CommandWaitArgs {
     command_id: i32,
 }
 
-pub struct CommandWaitHandler<Host> {
-    host: Host,
-}
+pub struct CommandWaitHandler;
 
-impl<Host> CommandWaitHandler<Host> {
-    pub fn new(host: Host) -> Self {
-        Self { host }
+impl CommandWaitHandler {
+    pub fn new() -> Self {
+        Self
     }
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for CommandWaitHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for CommandWaitHandler
 where
-    Host: CommandInteractionHost,
+    Session: SessionCommandInteractionCaller,
+    Turn: ThreadCapability,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = FunctionToolOutput;
 
@@ -59,7 +60,7 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
@@ -83,16 +84,12 @@ where
             };
 
             let args: CommandWaitArgs = parse_arguments(&arguments)?;
-            let item_id = self.host.new_response_item_id();
+            let item_id = format!("response-item-{}", uuid::Uuid::new_v4());
             let created_at_ms = now_unix_timestamp_ms();
-            let command_wait = self
-                .host
-                .begin_command_wait(
-                    &session,
-                    CommandWaitRequest {
-                        process_id: args.command_id,
-                    },
-                )
+            let command_wait = session
+                .begin_command_wait(CommandWaitRequest {
+                    process_id: args.command_id,
+                })
                 .await
                 .map_err(|err| {
                     FunctionCallError::RespondToModel(format!("command_wait failed: {err}"))
@@ -108,8 +105,8 @@ where
                 wait_timeout,
                 created_at_ms,
             });
-            self.host
-                .emit_model_item_started_display_event(&session, &turn, &started_item)
+            session
+                .emit_model_item_started_display_event(&turn, &started_item)
                 .await;
 
             let output = command_wait.finish().await.map_err(|err| {
@@ -126,9 +123,8 @@ where
                 wait_timeout: output.wait_timeout,
                 created_at_ms,
             });
-            self.host
+            session
                 .record_model_items_and_emit_display_events(
-                    &session,
                     &turn,
                     std::slice::from_ref(&response_item),
                 )
@@ -159,10 +155,13 @@ where
     }
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for CommandWaitHandler<Host>
+impl<Session, Turn, Tracker, DiffContext> ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext>
+    for CommandWaitHandler
 where
-    Host: CommandInteractionHost,
+    Session: SessionCommandInteractionCaller,
+    Turn: ThreadCapability,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
         matches!(payload, ToolPayload::Function { .. })
@@ -218,20 +217,20 @@ struct WriteStdinArgs {
     chars: Option<String>,
 }
 
-pub struct WriteStdinHandler<Host> {
-    host: Host,
-}
+pub struct WriteStdinHandler;
 
-impl<Host> WriteStdinHandler<Host> {
-    pub fn new(host: Host) -> Self {
-        Self { host }
+impl WriteStdinHandler {
+    pub fn new() -> Self {
+        Self
     }
 }
 
-impl<Host> ToolExecutor<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>>
-    for WriteStdinHandler<Host>
+impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
+    for WriteStdinHandler
 where
-    Host: CommandInteractionHost,
+    Session: SessionCommandInteractionCaller,
+    Turn: ThreadCapability,
+    Tracker: Clone + Send + Sync + 'static,
 {
     type Output = FunctionToolOutput;
 
@@ -245,7 +244,7 @@ where
 
     fn handle<'a>(
         &'a self,
-        invocation: ToolInvocation<Host::Session, Host::Turn, Host::Tracker>,
+        invocation: ToolInvocation<Session, Turn, Tracker>,
     ) -> ToolExecutorFuture<'a, Self::Output>
     where
         Self: 'a,
@@ -280,23 +279,18 @@ where
                 ));
             }
 
-            let response = self
-                .host
-                .write_command_stdin(
-                    &session,
-                    WriteStdinRequest {
-                        process_id: args.command_id,
-                        input: &chars,
-                    },
-                )
+            let response = session
+                .write_command_stdin(WriteStdinRequest {
+                    process_id: args.command_id,
+                    input: &chars,
+                })
                 .await
                 .map_err(|err| {
                     FunctionCallError::RespondToModel(format!("command_write_stdin failed: {err}"))
                 })?;
 
-            self.host
+            session
                 .send_terminal_interaction(
-                    &session,
                     &turn,
                     TerminalInteractionEvent {
                         call_id: response.call_id.clone(),
@@ -313,9 +307,8 @@ where
                 contains_newline: chars.contains('\n'),
                 created_at_ms: now_unix_timestamp_ms(),
             };
-            self.host
+            session
                 .record_model_items_and_emit_display_events(
-                    &session,
                     &turn,
                     std::slice::from_ref(&response_item),
                 )
@@ -335,10 +328,13 @@ where
     }
 }
 
-impl<Host> ToolHandler<ToolInvocation<Host::Session, Host::Turn, Host::Tracker>, Host::DiffContext>
-    for WriteStdinHandler<Host>
+impl<Session, Turn, Tracker, DiffContext> ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext>
+    for WriteStdinHandler
 where
-    Host: CommandInteractionHost,
+    Session: SessionCommandInteractionCaller,
+    Turn: ThreadCapability,
+    Tracker: Clone + Send + Sync + 'static,
+    DiffContext: 'static,
 {
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
         matches!(payload, ToolPayload::Function { .. })
@@ -373,14 +369,28 @@ mod tests {
     use codex_command_runtime::CommandSessionError;
     use codex_command_runtime::CommandWaitOperation;
     use codex_command_runtime::WriteStdinOutput;
+    use codex_thread_api::SessionCommandInteractionCaller;
+    use codex_tool_runtime_api::CommandInteractionHost;
     use pretty_assertions::assert_eq;
     use tokio_util::sync::CancellationToken;
 
     #[derive(Clone, Copy)]
     struct StubCommandInteractionHost;
 
+    #[derive(Clone, Copy)]
+    struct StubCommandInteractionSession;
+
+    #[derive(Clone, Copy)]
+    struct StubCommandInteractionTurn;
+
+    impl ThreadCapability for StubCommandInteractionTurn {
+        fn as_any(&self) -> &(dyn std::any::Any + Send + Sync) {
+            self
+        }
+    }
+
     impl CommandInteractionHost for StubCommandInteractionHost {
-        type Session = ();
+        type Session = StubCommandInteractionSession;
         type Turn = ();
         type Tracker = ();
         type DiffContext = ();
@@ -427,6 +437,53 @@ mod tests {
             _turn: &Self::Turn,
             _event: TerminalInteractionEvent,
         ) {
+        }
+    }
+
+    impl SessionCommandInteractionCaller for StubCommandInteractionSession {
+        fn begin_command_wait(
+            &self,
+            _request: CommandWaitRequest,
+        ) -> impl std::future::Future<
+            Output = Result<Box<dyn CommandWaitOperation>, CommandSessionError>,
+        > + Send {
+            async {
+                panic!("begin_command_wait should not be called by argument validation tests")
+            }
+        }
+
+        fn write_command_stdin<'a>(
+            &'a self,
+            _request: WriteStdinRequest<'a>,
+        ) -> impl std::future::Future<Output = Result<WriteStdinOutput, CommandSessionError>> + Send + 'a
+        {
+            async {
+                panic!("write_command_stdin should not be called by argument validation tests")
+            }
+        }
+
+        fn emit_model_item_started_display_event<'a>(
+            &'a self,
+            _turn: &'a dyn ThreadCapability,
+            _item: &'a ResponseItem,
+        ) -> impl std::future::Future<Output = ()> + Send + 'a {
+            async {}
+        }
+
+        fn record_model_items_and_emit_display_events<'a>(
+            &'a self,
+            _turn: &'a dyn ThreadCapability,
+            _items: &'a [ResponseItem],
+        ) -> impl std::future::Future<Output = ()> + Send + 'a {
+            async {}
+        }
+
+        fn send_terminal_interaction<'a>(
+            &'a self,
+            _turn: &'a dyn ThreadCapability,
+            _event: TerminalInteractionEvent,
+        ) -> impl std::future::Future<Output = ()> + Send + 'a {
+            async {}
         }
     }
 
@@ -517,11 +574,11 @@ mod tests {
     async fn write_stdin_result_for_arguments(
         arguments: serde_json::Value,
     ) -> Result<FunctionToolOutput, FunctionCallError> {
-        let handler = WriteStdinHandler::new(StubCommandInteractionHost);
+        let handler = WriteStdinHandler::new();
         handler
             .handle(ToolInvocation {
-                session: (),
-                turn: (),
+                session: StubCommandInteractionSession,
+                turn: StubCommandInteractionTurn,
                 cancellation_token: CancellationToken::new(),
                 tracker: (),
                 metadata: codex_tool_types::ToolInvocationMetadata {
