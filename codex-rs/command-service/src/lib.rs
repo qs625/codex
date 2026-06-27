@@ -1,14 +1,12 @@
-mod adapters;
 mod exec_env;
 mod exec_request;
 mod runtime_support;
+mod shell_support;
 mod time_utils;
 mod unified_exec;
 
 use std::sync::Arc;
 
-use adapters::SessionCapabilityAdapter;
-use adapters::TurnCapabilityAdapter;
 use codex_command_runtime::CommandSessionError;
 use codex_command_runtime::CommandWaitOperation;
 use codex_command_runtime::CommandWaitRequest;
@@ -17,11 +15,11 @@ use codex_command_runtime::WriteStdinOutput;
 use codex_command_runtime::WriteStdinRequest;
 use codex_command_service_api::CommandServiceApi;
 use codex_command_service_api::CommandServiceFuture;
+use codex_command_service_api::ExecCommandRunOutput;
+use codex_command_service_api::ExecCommandRunRequest;
 use codex_command_service_api::CommandServiceSessionCapability;
 use codex_command_service_api::CommandServiceSessionState;
 use codex_command_service_api::CommandServiceTurnCapability;
-use codex_tool_runtime_api::ExecCommandRunOutput;
-use codex_tool_runtime_api::ExecCommandRunRequest;
 use unified_exec::UnifiedExecProcessManager;
 
 pub use unified_exec::UnifiedExecManagerHandle;
@@ -137,26 +135,13 @@ impl CommandServiceSessionState for CommandSessionState {
         request: ExecCommandRunRequest,
     ) -> CommandServiceFuture<'a, Result<ExecCommandRunOutput, UnifiedExecError>> {
         Box::pin(async move {
-            let session = Arc::new(SessionCapabilityAdapter::new(session));
-            let turn = Arc::new(TurnCapabilityAdapter::new(turn));
             let context = unified_exec::UnifiedExecContext::new(session, turn, call_id);
             self.unified_exec_manager
-                .exec_command(
-                    unified_exec::ExecCommandRequest::from_run_request(request, context.turn.active_network()),
-                    &context,
-                )
+                .exec_command(unified_exec::ExecCommandRequest::from_run_request(
+                    request,
+                    context.turn.active_network(),
+                ), &context)
                 .await
-                .map(|response| ExecCommandRunOutput {
-                    event_call_id: response.event_call_id,
-                    chunk_id: response.chunk_id,
-                    wall_time: response.wall_time,
-                    raw_output: response.raw_output,
-                    max_output_tokens: response.max_output_tokens,
-                    process_id: response.process_id,
-                    exit_code: response.exit_code,
-                    original_token_count: response.original_token_count,
-                    hook_command: response.hook_command,
-                })
         })
     }
 

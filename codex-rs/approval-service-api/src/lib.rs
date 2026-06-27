@@ -4,8 +4,9 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use codex_command_service_api::ExecApprovalRequirement;
+use codex_command_service_api::UnifiedExecApprovalKey;
 use codex_protocol::protocol::FileChange;
-use codex_tool_runtime_api::ExecApprovalRequirement;
 use codex_thread_api::ToolServiceSessionRef;
 use codex_thread_api::ToolServiceTurnRef;
 use codex_tool_runtime_api::ApplyPatchApprovalKey;
@@ -45,7 +46,7 @@ pub struct ExecCommandApprovalDispatch {
     pub additional_permissions: Option<codex_protocol::models::AdditionalPermissionProfile>,
     pub tty: bool,
     pub exec_approval_requirement: ExecApprovalRequirement,
-    pub approval_keys: Vec<codex_tool_runtime_api::UnifiedExecApprovalKey>,
+    pub approval_keys: Vec<UnifiedExecApprovalKey>,
     pub network_approval_context: Option<codex_protocol::approvals::NetworkApprovalContext>,
 }
 

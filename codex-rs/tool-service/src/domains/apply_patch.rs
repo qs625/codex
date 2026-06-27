@@ -46,16 +46,17 @@ use codex_tool_runtime::ToolEmitter;
 use codex_tool_runtime::ToolEventCtx;
 use codex_tool_runtime::convert_apply_patch_to_protocol;
 use codex_tool_runtime::plan_apply_patch;
-use codex_tool_runtime_api::AnyToolResult;
 use codex_tool_runtime_api::ApplyPatchDiffContext;
 use codex_tool_runtime_api::ApplyPatchRequest;
-use codex_tool_runtime_api::PostToolUsePayload;
 use codex_tool_runtime_api::ResolvedApplyPatchEnvironment;
 use codex_tool_runtime_api::ToolError;
 use codex_tool_runtime_api::sandbox_override_for_first_attempt;
 use codex_tool_runtime_api::should_bypass_approval;
 use codex_tool_runtime_api::wants_no_sandbox_approval;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
+use codex_tool_service_api::AnyToolResult;
+use codex_tool_service_api::HookToolName;
+use codex_tool_service_api::PostToolUsePayload;
 use codex_tool_planning::ToolEnvironmentMode;
 use codex_tool_planning::ToolSpec;
 use codex_tool_planning::create_apply_patch_freeform_tool;
@@ -103,7 +104,7 @@ pub(crate) async fn dispatch(
     let output =
         dispatch_apply_patch(approval_api, session.clone(), turn.clone(), tracker, &call).await?;
     let post_tool_use_payload = Some(PostToolUsePayload {
-        tool_name: codex_tool_runtime::HookToolName::apply_patch(),
+        tool_name: HookToolName::apply_patch(),
         tool_use_id: call.call_id.clone(),
         tool_input: serde_json::json!({
             "command": apply_patch_payload_command(&call.payload)?,
@@ -402,7 +403,7 @@ async fn run_apply_patch_request(
                         turn.as_ref(),
                         call_id,
                         codex_tool_runtime_api::PermissionRequestPayload {
-                            tool_name: codex_tool_runtime::HookToolName::apply_patch(),
+                            tool_name: codex_tool_runtime_api::HookToolName::apply_patch(),
                             tool_input: serde_json::json!({ "command": req.action.patch }),
                         },
                     )

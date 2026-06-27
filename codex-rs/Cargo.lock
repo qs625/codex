@@ -2252,6 +2252,7 @@ dependencies = [
 name = "codex-approval-service-api"
 version = "0.0.0"
 dependencies = [
+ "codex-command-service-api",
  "codex-protocol",
  "codex-thread-api",
  "codex-tool-runtime-api",
@@ -2687,11 +2688,10 @@ dependencies = [
  "codex-thread-api",
  "codex-tool-config",
  "codex-tool-planning",
- "codex-tool-runtime",
- "codex-tool-runtime-api",
  "codex-tool-types",
  "codex-utils-absolute-path",
  "codex-utils-output-truncation",
+ "codex-utils-path",
  "codex-utils-pty",
  "futures",
  "serde",
@@ -2706,18 +2706,21 @@ name = "codex-command-service-api"
 version = "0.0.0"
 dependencies = [
  "codex-command-runtime",
+ "codex-exec-server-api",
  "codex-file-system",
  "codex-hooks-api",
  "codex-network-proxy-api",
  "codex-permissions-runtime",
  "codex-protocol",
  "codex-sandboxing-api",
+ "codex-session-telemetry-api",
  "codex-thread-api",
  "codex-tool-config",
- "codex-tool-runtime-api",
  "codex-tool-types",
  "codex-utils-absolute-path",
  "codex-utils-output-truncation",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 
@@ -5244,8 +5247,8 @@ dependencies = [
  "codex-thread-api",
  "codex-tool-config",
  "codex-tool-planning",
- "codex-tool-runtime-api",
  "codex-tool-types",
+ "serde_json",
  "tokio-util",
 ]
 

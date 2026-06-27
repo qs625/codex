@@ -8,8 +8,17 @@ use tokio_util::sync::CancellationToken;
 use crate::exec_env::CODEX_THREAD_ID_ENV_VAR;
 use crate::exec_env::create_env;
 use crate::exec_request::ExecRequest;
-use crate::runtime_support::ToolCtx;
+use crate::runtime_support::SandboxAttempt;
+use crate::runtime_support::SandboxAttemptExt;
+use crate::runtime_support::SandboxOverride;
 use crate::runtime_support::ToolError;
+use crate::runtime_support::managed_network_for_sandbox_permissions;
+use crate::runtime_support::sandbox_override_for_first_attempt;
+use crate::runtime_support::wants_no_sandbox_approval;
+use crate::shell_support::build_sandbox_command;
+use crate::shell_support::disable_powershell_profile_for_elevated_windows_sandbox;
+use crate::shell_support::exec_env_for_sandbox_permissions;
+use crate::shell_support::maybe_wrap_shell_lc_with_snapshot;
 use crate::unified_exec::CommandNotificationFilter;
 use crate::unified_exec::CommandNotificationKind;
 use crate::unified_exec::CommandNotificationState;
@@ -30,13 +39,10 @@ use crate::unified_exec::UnifiedExecProcess;
 use crate::unified_exec::UnifiedExecProcessManager;
 use crate::unified_exec::WaitBackoffState;
 use crate::unified_exec::WriteStdinOutput;
-use crate::unified_exec::orchestrator_host::CommandServiceToolOrchestratorHost;
-use crate::unified_exec::runtime_host::ThreadUnifiedExecRuntimeHost;
+use crate::unified_exec::events::emit_unified_exec_begin;
+use codex_command_service_api::CommandServiceSessionCapability;
 use codex_thread_api::ToolRuntimeNetworkApprovalHandle;
-use codex_thread_api::SessionToolEventHost;
-use codex_tool_runtime::ToolEmitter;
-use codex_tool_runtime::ToolEventCtx;
-use codex_tool_runtime::ToolEventStage;
+use codex_thread_api::ToolRuntimeNetworkApprovalTrigger;
 use crate::unified_exec::WriteStdinRequest;
 use crate::unified_exec::async_watcher::emit_exec_end_for_unified_exec;
 use crate::unified_exec::async_watcher::emit_failed_exec_end_for_unified_exec;
@@ -57,14 +63,18 @@ use codex_command_runtime::collect_output_until_deadline;
 use codex_command_runtime::command_process_id_to_prune;
 use codex_command_runtime::exec_env_policy_from_shell_policy;
 use codex_command_runtime::exec_server_spawn_params;
+use codex_hooks_api::PermissionRequestDecision;
 use codex_protocol::ThreadId;
+use codex_protocol::approvals::NetworkApprovalContext;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
+use codex_protocol::network_policy::NetworkPolicyDecisionPayload;
+use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::ExecCommandSource;
-use codex_tool_planning::ToolName;
-use codex_tool_runtime::ExecCommandToolOutput;
-use codex_tool_runtime::runtimes::unified_exec::UnifiedExecRuntime;
-use codex_tool_runtime_api::UnifiedExecRequest as UnifiedExecToolRequest;
+use codex_protocol::protocol::NetworkPolicyRuleAction;
+use codex_protocol::protocol::ReviewDecision;
+use codex_command_service_api::ExecApprovalRequirement;
+use codex_command_service_api::ExecCommandRunOutput;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::approx_token_count;
 
@@ -204,7 +214,7 @@ async fn unregister_network_approval_for_entry(entry: &ProcessEntry) {
         && let Some(registration_id) = network_approval.registration_id()
         && let Some(session) = entry.session.upgrade()
     {
-        session.inner.unregister_network_approval(&registration_id).await;
+        session.unregister_network_approval(&registration_id).await;
     }
 }
 
@@ -214,13 +224,18 @@ async fn finish_network_approval(
     let Some(approval) = approval else {
         return Ok(());
     };
-    approval.finish().await.map_err(network_approval_error_message)
+    approval
+        .finish()
+        .await
+        .map_err(network_approval_error_message_from_runtime)
 }
 
-fn network_approval_error_message(err: ToolError) -> String {
+fn network_approval_error_message_from_runtime(
+    err: codex_thread_api::ToolRuntimeNetworkApprovalError,
+) -> String {
     match err {
-        ToolError::Rejected(message) => message,
-        ToolError::Codex(err) => err.to_string(),
+        codex_thread_api::ToolRuntimeNetworkApprovalError::Rejected(message) => message,
+        codex_thread_api::ToolRuntimeNetworkApprovalError::Codex(err) => err.to_string(),
     }
 }
 
@@ -232,7 +247,7 @@ async fn network_denial_message_for_session(
     };
     match approval.finish().await {
         Ok(()) => NETWORK_ACCESS_DENIED_MESSAGE.to_string(),
-        Err(err) => network_approval_error_message(err),
+        Err(err) => network_approval_error_message_from_runtime(err),
     }
 }
 
@@ -258,6 +273,142 @@ async fn finish_deferred_network_approval_after_process_exit_for_session(
     finish_network_approval(approval).await
 }
 
+fn unified_exec_approval_keys(
+    request: &ExecCommandRequest,
+) -> Vec<codex_command_service_api::UnifiedExecApprovalKey> {
+    vec![codex_command_service_api::UnifiedExecApprovalKey {
+        command: request.command.clone(),
+        cwd: request.cwd.clone(),
+        tty: request.tty,
+        sandbox_permissions: request.sandbox_permissions,
+        additional_permissions: request.additional_permissions.clone(),
+    }]
+}
+
+fn unified_exec_network_trigger(
+    request: &ExecCommandRequest,
+    context: &UnifiedExecContext,
+) -> ToolRuntimeNetworkApprovalTrigger {
+    ToolRuntimeNetworkApprovalTrigger {
+        call_id: context.call_id.clone(),
+        tool_name: "exec_command".to_string(),
+        command: request.command.clone(),
+        cwd: request.cwd.clone(),
+        sandbox_permissions: request.sandbox_permissions,
+        additional_permissions: request.additional_permissions.clone(),
+        justification: request.justification.clone(),
+        tty: Some(request.tty),
+    }
+}
+
+fn network_approval_context_from_payload(
+    payload: &NetworkPolicyDecisionPayload,
+) -> Option<NetworkApprovalContext> {
+    if !payload.is_ask_from_decider() {
+        return None;
+    }
+
+    let protocol = payload.protocol?;
+    let host = payload.host.as_deref()?.trim();
+    if host.is_empty() {
+        return None;
+    }
+
+    Some(NetworkApprovalContext {
+        host: host.to_string(),
+        protocol,
+    })
+}
+
+fn sandbox_denial_reason(_output: &codex_protocol::exec_output::ExecToolCallOutput) -> String {
+    "command failed; retry without sandbox?".to_string()
+}
+
+async fn reject_unapproved_decision(
+    session: &dyn CommandServiceSessionCapability,
+    review_id: Option<&str>,
+    decision: ReviewDecision,
+) -> Result<(), ToolError> {
+    match decision {
+        ReviewDecision::Denied | ReviewDecision::Abort => {
+            let reason = if let Some(review_id) = review_id {
+                session.guardian_rejection_message(review_id).await
+            } else {
+                "rejected by user".to_string()
+            };
+            Err(ToolError::Rejected(reason))
+        }
+        ReviewDecision::TimedOut => Err(ToolError::Rejected(
+            session.guardian_timeout_message(),
+        )),
+        ReviewDecision::Approved
+        | ReviewDecision::ApprovedExecpolicyAmendment { .. }
+        | ReviewDecision::ApprovedForSession => Ok(()),
+        ReviewDecision::NetworkPolicyAmendment {
+            network_policy_amendment,
+        } => match network_policy_amendment.action {
+            NetworkPolicyRuleAction::Allow => Ok(()),
+            NetworkPolicyRuleAction::Deny => {
+                Err(ToolError::Rejected("rejected by user".to_string()))
+            }
+        },
+    }
+}
+
+async fn request_unified_exec_approval(
+    request: &ExecCommandRequest,
+    context: &UnifiedExecContext,
+    permission_request_run_id: &str,
+    reason: Option<String>,
+    network_approval_context: Option<NetworkApprovalContext>,
+    use_guardian: bool,
+    evaluate_permission_request_hooks: bool,
+) -> Result<(), ToolError> {
+    if evaluate_permission_request_hooks
+        && let Some(decision) = context
+            .session
+            .run_permission_request_hooks(
+                context.turn.as_ref(),
+                permission_request_run_id,
+                codex_command_service_api::PermissionRequestPayload::bash(
+                    request.hook_command.clone(),
+                    request.justification.clone(),
+                ),
+            )
+            .await
+    {
+        match decision {
+            PermissionRequestDecision::Allow => return Ok(()),
+            PermissionRequestDecision::Deny { message } => {
+                return Err(ToolError::Rejected(message));
+            }
+        }
+    }
+
+    let review_id = use_guardian.then(|| uuid::Uuid::new_v4().to_string());
+    let decision = context
+        .session
+        .request_unified_exec_approval(
+            context.turn.as_ref(),
+            context.call_id.clone(),
+            request.command.clone(),
+            request.cwd.clone(),
+            reason.clone().or_else(|| request.justification.clone()),
+            request.sandbox_permissions,
+            request.tty,
+            network_approval_context,
+            request
+                .exec_approval_requirement
+                .proposed_execpolicy_amendment()
+                .cloned(),
+            request.additional_permissions.clone(),
+            unified_exec_approval_keys(request),
+        )
+        .await;
+
+    reject_unapproved_decision(context.session.as_ref(), review_id.as_deref(), decision).await
+}
+
 fn fail_process_with_message(process: &UnifiedExecProcess, message: String) -> UnifiedExecError {
     if let Some(message) = process.failure_message() {
         process.terminate();
@@ -266,6 +417,175 @@ fn fail_process_with_message(process: &UnifiedExecProcess, message: String) -> U
 
     process.fail_and_terminate(message.clone());
     UnifiedExecError::process_failed(process.failure_message().unwrap_or(message))
+}
+
+fn unified_exec_options(
+    network_denial_cancellation_token: Option<CancellationToken>,
+) -> codex_command_runtime::ExecOptions {
+    let mut expiration = codex_command_runtime::ExecExpiration::DefaultTimeout;
+    if let Some(cancellation) = network_denial_cancellation_token {
+        expiration = expiration.with_cancellation(cancellation);
+    }
+    codex_command_runtime::ExecOptions {
+        expiration,
+        capture_policy: codex_command_runtime::ExecCapturePolicy::ShellTool,
+    }
+}
+
+async fn spawn_unified_exec_process(
+    manager: &UnifiedExecProcessManager,
+    request: &ExecCommandRequest,
+    base_env: std::collections::HashMap<String, String>,
+    exec_server_env_config: &ExecServerEnvConfig,
+    attempt: &SandboxAttempt<'_>,
+    context: &UnifiedExecContext,
+) -> Result<UnifiedExecProcess, ToolError> {
+    let session_shell = context.session.runtime_shell();
+    let managed_network =
+        managed_network_for_sandbox_permissions(request.network.as_ref(), request.sandbox_permissions);
+    let mut env = exec_env_for_sandbox_permissions(&base_env, request.sandbox_permissions);
+    if let Some(network) = managed_network.as_ref() {
+        network.apply_to_env(&mut env);
+    }
+
+    let command = if request.environment.is_remote() {
+        request.command.clone()
+    } else {
+        maybe_wrap_shell_lc_with_snapshot(
+            &request.command,
+            &session_shell,
+            &request.cwd,
+            &context.turn.shell_environment_policy().r#set,
+            &env,
+        )
+    };
+    let command = disable_powershell_profile_for_elevated_windows_sandbox(
+        &command,
+        Some(request.shell_type),
+        attempt.sandbox,
+        attempt.windows_sandbox_level,
+    );
+    let command = if matches!(session_shell.shell_type, codex_tool_config::ToolUserShellType::PowerShell)
+    {
+        codex_shell_command::powershell::prefix_powershell_script_with_utf8(&command)
+    } else {
+        command
+    };
+    let command = build_sandbox_command(
+        &command,
+        &request.cwd,
+        &env,
+        request.additional_permissions.clone(),
+    )
+    .map_err(|_| ToolError::Rejected("missing command line for PTY".to_string()))?;
+    let exec_request = attempt
+        .env_for(
+            command,
+            unified_exec_options(attempt.network_denial_cancellation_token.clone()),
+            managed_network,
+        )
+        .map_err(|err: codex_sandboxing_api::SandboxTransformError| ToolError::Codex(err.into()))?;
+
+    manager
+        .open_session_with_exec_env(
+            request.process_id,
+            &exec_request,
+            Some(exec_server_env_config),
+            request.tty,
+            Box::new(codex_command_runtime::NoopSpawnLifecycle),
+            request.environment.as_ref(),
+        )
+        .await
+        .map_err(|err| match err {
+            UnifiedExecError::SandboxDenied { output, .. } => {
+                ToolError::Codex(CodexErr::Sandbox(SandboxErr::Denied {
+                    output: Box::new(output),
+                    network_policy_decision: None,
+                }))
+            }
+            other => ToolError::Rejected(other.to_string()),
+        })
+}
+
+async fn run_unified_exec_attempt(
+    manager: &UnifiedExecProcessManager,
+    request: &ExecCommandRequest,
+    base_env: std::collections::HashMap<String, String>,
+    exec_server_env_config: &ExecServerEnvConfig,
+    attempt: &SandboxAttempt<'_>,
+    context: &UnifiedExecContext,
+    turn_id: &str,
+    managed_network_active: bool,
+) -> (
+    Result<UnifiedExecProcess, ToolError>,
+    Option<Arc<dyn ToolRuntimeNetworkApprovalHandle>>,
+) {
+    let network_approval: Option<Arc<dyn ToolRuntimeNetworkApprovalHandle>> = context
+        .session
+        .begin_tool_network_approval(
+            turn_id,
+            managed_network_active,
+            managed_network_for_sandbox_permissions(
+                request.network.as_ref(),
+                request.sandbox_permissions,
+            )
+            .map(|network| codex_command_service_api::NetworkApprovalSpec {
+                network: Some(network),
+                mode: codex_command_service_api::NetworkApprovalMode::Deferred,
+                trigger: unified_exec_network_trigger(request, context),
+                command: request.hook_command.clone(),
+            }),
+        )
+        .await;
+
+    let attempt = SandboxAttempt {
+        network_denial_cancellation_token: network_approval
+            .as_ref()
+            .map(|approval| approval.cancellation_token()),
+        ..*attempt
+    };
+    let run_result = spawn_unified_exec_process(
+        manager,
+        request,
+        base_env,
+        exec_server_env_config,
+        &attempt,
+        context,
+    )
+    .await;
+
+    let Some(network_approval) = network_approval else {
+        return (run_result, None);
+    };
+
+    match network_approval.mode() {
+        codex_thread_api::NetworkApprovalMode::Immediate => {
+            let finalize = network_approval.finish().await;
+            match finalize {
+                Ok(()) => (run_result, None),
+                Err(err) => (Err(map_runtime_tool_error(err)), None),
+            }
+        }
+        codex_thread_api::NetworkApprovalMode::Deferred => {
+            if run_result.is_err() {
+                match network_approval.finish().await {
+                    Ok(()) => (run_result, None),
+                    Err(err) => (Err(map_runtime_tool_error(err)), None),
+                }
+            } else {
+                (run_result, Some(network_approval))
+            }
+        }
+    }
+}
+
+fn map_runtime_tool_error(err: codex_thread_api::ToolRuntimeNetworkApprovalError) -> ToolError {
+    match err {
+        codex_thread_api::ToolRuntimeNetworkApprovalError::Rejected(message) => {
+            ToolError::Rejected(message)
+        }
+        codex_thread_api::ToolRuntimeNetworkApprovalError::Codex(err) => ToolError::Codex(err),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -329,7 +649,7 @@ impl UnifiedExecProcessManager {
                 && entry
                     .session
                     .upgrade()
-                    .is_some_and(|session| session.inner.conversation_id() == thread_id)
+                    .is_some_and(|session| session.conversation_id() == thread_id)
         })
     }
 
@@ -423,7 +743,7 @@ impl UnifiedExecProcessManager {
         &self,
         request: ExecCommandRequest,
         context: &UnifiedExecContext,
-    ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
+    ) -> Result<ExecCommandRunOutput, UnifiedExecError> {
         let cwd = request.cwd.clone();
         let process = self
             .open_session_with_sandbox(&request, cwd.clone(), context)
@@ -446,23 +766,18 @@ impl UnifiedExecProcessManager {
         }
 
         let transcript = Arc::new(tokio::sync::Mutex::new(HeadTailBuffer::default()));
-        let event_ctx = ToolEventCtx::new(
-            SessionToolEventHost::new(
-                context.session.as_ref(),
-                context.turn.as_ref(),
-                /*turn_diff_tracker*/ None,
-            ),
+        emit_unified_exec_begin(
+            Arc::clone(&context.session),
+            Arc::clone(&context.turn),
             &context.call_id,
-        );
-        let emitter = ToolEmitter::unified_exec(
             &request.command,
-            cwd.clone(),
+            &cwd,
             ExecCommandSource::UnifiedExecStartup,
             Some(request.process_id.to_string()),
             request.yield_time_ms,
             command_notification_filter_to_protocol(request.notify_on),
-        );
-        emitter.emit(event_ctx, ToolEventStage::Begin).await;
+        )
+        .await;
 
         let notification_state = Arc::new(CommandNotificationState::default());
         start_streaming_output(
@@ -502,12 +817,7 @@ impl UnifiedExecProcessManager {
         let deadline = start + Duration::from_millis(yield_time_ms);
         let collected = collect_output_until_deadline(
             &output_handles,
-            Some(
-                context
-                    .session
-                    .inner
-                    .subscribe_out_of_band_elicitation_pause_state(),
-            ),
+            Some(context.session.subscribe_out_of_band_elicitation_pause_state()),
             deadline,
         )
         .await;
@@ -624,7 +934,7 @@ impl UnifiedExecProcessManager {
         };
 
         let original_token_count = approx_token_count(&text);
-        let response = ExecCommandToolOutput {
+        let response = ExecCommandRunOutput {
             event_call_id: context.call_id.clone(),
             chunk_id,
             wall_time,
@@ -1033,7 +1343,7 @@ impl UnifiedExecProcessManager {
     pub(super) async fn open_session_with_sandbox(
         &self,
         request: &ExecCommandRequest,
-        cwd: AbsolutePathBuf,
+        _cwd: AbsolutePathBuf,
         context: &UnifiedExecContext,
     ) -> Result<
         (
@@ -1043,78 +1353,202 @@ impl UnifiedExecProcessManager {
         UnifiedExecError,
     > {
         let local_policy_env = create_env(
-            &context.turn.inner.shell_environment_policy(),
+            &context.turn.shell_environment_policy(),
             /*thread_id*/ None,
         );
         let mut env = local_policy_env.clone();
         env.insert(
             CODEX_THREAD_ID_ENV_VAR.to_string(),
-            context.session.inner.conversation_id().to_string(),
+            context.session.conversation_id().to_string(),
         );
         let env = apply_unified_exec_env(env);
         let exec_server_env_config = ExecServerEnvConfig {
-            policy: exec_env_policy_from_shell_policy(&context.turn.inner.shell_environment_policy()),
+            policy: exec_env_policy_from_shell_policy(&context.turn.shell_environment_policy()),
             local_policy_env,
         };
-        let mut orchestrator = codex_tool_runtime::ToolOrchestrator::new(
-            CommandServiceToolOrchestratorHost,
-            context.session.inner.sandbox_runtime(),
-        );
-        let mut runtime = UnifiedExecRuntime::new(
-            ThreadUnifiedExecRuntimeHost { manager: self },
-            context.turn.inner.unified_exec_shell_mode(),
-        );
-        let req = UnifiedExecToolRequest {
-            command: request.command.clone(),
-            shell_type: request.shell_type,
-            hook_command: request.hook_command.clone(),
-            process_id: request.process_id,
-            cwd,
-            sandbox_cwd: request.sandbox_cwd.clone(),
-            environment: Arc::clone(&request.environment),
-            env,
-            exec_server_env_config: Some(exec_server_env_config),
-            explicit_env_overrides: context.turn.inner.shell_environment_policy().r#set,
-            network: request.network.clone(),
-            tty: request.tty,
-            sandbox_permissions: request.sandbox_permissions,
-            additional_permissions: request.additional_permissions.clone(),
-            #[cfg(unix)]
-            additional_permissions_preapproved: request.additional_permissions_preapproved,
-            justification: request.justification.clone(),
-            exec_approval_requirement: request.exec_approval_requirement.clone(),
-            approval_mode: request.approval_mode,
-        };
-        let tool_ctx = ToolCtx {
-            session: context.session.clone(),
-            turn: context.turn.clone(),
-            call_id: context.call_id.clone(),
-            tool_name: ToolName::plain("exec_command"),
-        };
-        let sandbox_context = context.turn.inner.tool_sandbox_context();
-        orchestrator
-            .run(
-                &mut runtime,
-                &req,
-                &tool_ctx,
-                &sandbox_context,
-                context.turn.inner.approval_policy(),
-            )
-            .await
-            .map(|result| (result.output, result.deferred_network_approval))
-            .map_err(|err| match err {
-                ToolError::Codex(CodexErr::Sandbox(SandboxErr::Denied { output, .. })) => {
-                    let output = *output;
-                    let message = if output.aggregated_output.text.is_empty() {
-                        let exit_code = output.exit_code;
-                        format!("Process exited with code {exit_code}")
-                    } else {
-                        output.aggregated_output.text.clone()
-                    };
-                    UnifiedExecError::sandbox_denied(message, output)
+        let sandbox_context = context.turn.tool_sandbox_context();
+        let sandbox_runtime = context.session.sandbox_runtime();
+        let strict_auto_review = context.session.strict_auto_review_enabled_for_turn().await;
+        let use_guardian = strict_auto_review || context.turn.routes_approval_to_guardian();
+        let approval_policy = context.turn.approval_policy();
+        let requirement = request.exec_approval_requirement.clone();
+        let mut already_approved = false;
+
+        match &requirement {
+            ExecApprovalRequirement::Skip { .. } => {
+                if strict_auto_review {
+                    request_unified_exec_approval(
+                        request,
+                        context,
+                        &context.call_id,
+                        None,
+                        None,
+                        use_guardian,
+                        /*evaluate_permission_request_hooks*/ false,
+                    )
+                    .await
+                    .map_err(|err| UnifiedExecError::create_process(format!("{err:?}")))?;
+                    already_approved = true;
+                } else {
+                    already_approved = matches!(
+                        request.approval_mode,
+                        crate::unified_exec::ExecCommandApprovalMode::AlreadyApproved
+                    );
                 }
-                other => UnifiedExecError::create_process(format!("{other:?}")),
-            })
+            }
+            ExecApprovalRequirement::Forbidden { reason } => {
+                return Err(UnifiedExecError::create_process(reason.clone()));
+            }
+            ExecApprovalRequirement::NeedsApproval { reason, .. } => {
+                request_unified_exec_approval(
+                    request,
+                    context,
+                    &context.call_id,
+                    reason.clone(),
+                    None,
+                    use_guardian,
+                    /*evaluate_permission_request_hooks*/ !strict_auto_review,
+                )
+                .await
+                .map_err(|err| UnifiedExecError::create_process(format!("{err:?}")))?;
+                already_approved = true;
+            }
+        }
+
+        let sandbox_override = sandbox_override_for_first_attempt(
+            request.sandbox_permissions,
+            &requirement,
+            &sandbox_context.file_system_sandbox_policy,
+        );
+        let managed_network_active = sandbox_context.managed_network_active;
+        let initial_sandbox = match sandbox_override {
+            SandboxOverride::BypassSandboxFirstAttempt => codex_sandboxing_api::SandboxType::None,
+            SandboxOverride::NoOverride => sandbox_runtime.select_initial(
+                &sandbox_context.file_system_sandbox_policy,
+                sandbox_context.network_sandbox_policy,
+                codex_sandboxing_api::SandboxablePreference::Auto,
+                sandbox_context.windows_sandbox_level,
+                managed_network_active,
+            ),
+        };
+        let initial_attempt = SandboxAttempt {
+            sandbox: initial_sandbox,
+            permissions: &sandbox_context.permission_profile,
+            enforce_managed_network: managed_network_active,
+            sandbox_runtime: sandbox_runtime.as_ref(),
+            sandbox_cwd: &sandbox_context.cwd,
+            codex_linux_sandbox_exe: sandbox_context.codex_linux_sandbox_exe.as_ref(),
+            use_legacy_landlock: sandbox_context.use_legacy_landlock,
+            windows_sandbox_level: sandbox_context.windows_sandbox_level,
+            windows_sandbox_private_desktop: sandbox_context.windows_sandbox_private_desktop,
+            network_denial_cancellation_token: None,
+        };
+        let (first_result, first_deferred_network_approval) = run_unified_exec_attempt(
+            self,
+            request,
+            env.clone(),
+            &exec_server_env_config,
+            &initial_attempt,
+            context,
+            &sandbox_context.turn_id,
+            managed_network_active,
+        )
+        .await;
+
+        match first_result {
+            Ok(output) => Ok((output, first_deferred_network_approval)),
+            Err(ToolError::Codex(CodexErr::Sandbox(SandboxErr::Denied {
+                output,
+                network_policy_decision,
+            }))) => {
+                let network_approval_context = if managed_network_active {
+                    network_policy_decision
+                        .as_ref()
+                        .and_then(network_approval_context_from_payload)
+                } else {
+                    None
+                };
+                if network_policy_decision.is_some() && network_approval_context.is_none() {
+                    return Err(UnifiedExecError::sandbox_denied(
+                        output.aggregated_output.text.clone(),
+                        *output,
+                    ));
+                }
+                if !wants_no_sandbox_approval(approval_policy) {
+                    let allow_on_request_network_prompt =
+                        matches!(approval_policy, AskForApproval::OnRequest)
+                            && network_approval_context.is_some()
+                            && matches!(
+                                codex_permissions_runtime::default_exec_approval_requirement(
+                                    approval_policy,
+                                    &sandbox_context.file_system_sandbox_policy,
+                                ),
+                                ExecApprovalRequirement::NeedsApproval { .. }
+                            );
+                    if !allow_on_request_network_prompt {
+                        return Err(UnifiedExecError::sandbox_denied(
+                            output.aggregated_output.text.clone(),
+                            *output,
+                        ));
+                    }
+                }
+
+                let retry_reason = if let Some(network_approval_context) =
+                    network_approval_context.as_ref()
+                {
+                    format!(
+                        "Network access to \"{}\" is blocked by policy.",
+                        network_approval_context.host
+                    )
+                } else {
+                    sandbox_denial_reason(output.as_ref())
+                };
+                let bypass_retry_approval = !strict_auto_review
+                    && (already_approved || matches!(approval_policy, AskForApproval::Never))
+                    && network_approval_context.is_none();
+                if !bypass_retry_approval {
+                    request_unified_exec_approval(
+                        request,
+                        context,
+                        &format!("{}:retry", context.call_id),
+                        Some(retry_reason),
+                        network_approval_context,
+                        use_guardian,
+                        /*evaluate_permission_request_hooks*/ !strict_auto_review,
+                    )
+                    .await
+                    .map_err(|err| UnifiedExecError::create_process(format!("{err:?}")))?;
+                }
+
+                let retry_attempt = SandboxAttempt {
+                    sandbox: codex_sandboxing_api::SandboxType::None,
+                    permissions: &sandbox_context.permission_profile,
+                    enforce_managed_network: managed_network_active,
+                    sandbox_runtime: sandbox_runtime.as_ref(),
+                    sandbox_cwd: &sandbox_context.cwd,
+                    codex_linux_sandbox_exe: None,
+                    use_legacy_landlock: sandbox_context.use_legacy_landlock,
+                    windows_sandbox_level: sandbox_context.windows_sandbox_level,
+                    windows_sandbox_private_desktop: sandbox_context.windows_sandbox_private_desktop,
+                    network_denial_cancellation_token: None,
+                };
+                run_unified_exec_attempt(
+                    self,
+                    request,
+                    env,
+                    &exec_server_env_config,
+                    &retry_attempt,
+                    context,
+                    &sandbox_context.turn_id,
+                    managed_network_active,
+                )
+                .await
+                .0
+                .map(|output| (output, None))
+                .map_err(|err| UnifiedExecError::create_process(format!("{err:?}")))
+            }
+            Err(err) => Err(UnifiedExecError::create_process(format!("{err:?}"))),
+        }
     }
 
     fn prune_processes_if_needed(store: &mut ProcessStore) -> Option<ProcessEntry> {

@@ -370,8 +370,8 @@ use codex_session_telemetry_api::SharedSessionTelemetryFactory;
 use codex_tool_config::ToolEnvironmentMode;
 use codex_tool_config::ToolsConfig;
 use codex_tool_config::ToolsConfigParams;
-use codex_tool_runtime_api::ExecCommandRunOutput;
-use codex_tool_runtime_api::ExecCommandRunRequest;
+use codex_command_service_api::ExecCommandRunOutput;
+use codex_command_service_api::ExecCommandRunRequest;
 use codex_trace_context::context_from_w3c_trace_context;
 use codex_trace_context::current_span_trace_id;
 use codex_trace_context::current_span_w3c_trace_context;
@@ -1042,14 +1042,24 @@ impl Session {
         crate::runtime_shell::runtime_shell_type(&self.user_shell().shell_type)
     }
 
-    pub(crate) fn runtime_shell(&self) -> codex_tool_runtime_api::RuntimeShell {
-        crate::runtime_shell::runtime_shell(self.user_shell().as_ref())
+    pub(crate) fn runtime_shell(&self) -> codex_command_service_api::RuntimeShell {
+        let shell = crate::runtime_shell::runtime_shell(self.user_shell().as_ref());
+        codex_command_service_api::RuntimeShell {
+            shell_type: shell.shell_type,
+            shell_path: shell.shell_path,
+            shell_snapshot: shell
+                .shell_snapshot
+                .map(|snapshot| codex_command_service_api::RuntimeShellSnapshot {
+                    path: snapshot.path,
+                    cwd: snapshot.cwd,
+                }),
+        }
     }
 
     pub(crate) async fn create_exec_approval_requirement(
         &self,
         request: codex_permissions_runtime::ExecPolicyApprovalRequest<'_>,
-    ) -> codex_tool_runtime_api::ExecApprovalRequirement {
+    ) -> codex_command_service_api::ExecApprovalRequirement {
         self.services
             .exec_policy
             .create_exec_approval_requirement_for_command(request)

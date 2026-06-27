@@ -65,7 +65,7 @@ use codex_thread_store::LocalThreadStore;
 #[cfg(any(test, feature = "test-support"))]
 use codex_thread_store::LocalThreadStoreConfig;
 #[cfg(any(test, feature = "test-support"))]
-use codex_tool_runtime_api::AnyToolResult;
+use codex_tool_service_api::AnyToolResult;
 #[cfg(any(test, feature = "test-support"))]
 use codex_tool_service_api::ToolDispatchRequest;
 #[cfg(any(test, feature = "test-support"))]

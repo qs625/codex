@@ -5,7 +5,7 @@ use codex_protocol::protocol::ThreadGoalStatus;
 use codex_thread_api::GoalApi;
 use codex_thread_api::ThreadCapability;
 use codex_tool_runtime::FunctionToolOutput;
-use codex_tool_runtime_api::AnyToolResult;
+use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_planning::CREATE_GOAL_TOOL_NAME;
 use codex_tool_planning::GET_GOAL_TOOL_NAME;

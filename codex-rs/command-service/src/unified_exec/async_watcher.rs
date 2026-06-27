@@ -1,6 +1,8 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
+use codex_command_service_api::CommandServiceSessionCapability;
+use codex_command_service_api::CommandServiceTurnCapability;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
 use tokio::time::Instant;
@@ -13,8 +15,8 @@ use super::HeadTailBuffer;
 use super::UnifiedExecContext;
 use super::UnifiedExecProcess;
 use super::command_notification_filter_to_protocol;
-use crate::adapters::SessionCapabilityAdapter;
-use crate::adapters::TurnCapabilityAdapter;
+use super::events::emit_unified_exec_end;
+use super::events::emit_unified_exec_end_with_output;
 use crate::time_utils::now_unix_timestamp_ms;
 use codex_command_runtime::resolve_aggregated_output;
 use codex_command_runtime::split_valid_utf8_prefix;
@@ -26,13 +28,8 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandNotifyOn;
 use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
-use codex_protocol::protocol::ExecCommandSource;
+use codex_protocol::protocol::ExecCommandStatus;
 use codex_protocol::protocol::ExecOutputStream;
-use codex_thread_api::SessionToolEventHost;
-use codex_tool_runtime::ToolEmitter;
-use codex_tool_runtime::ToolEventCtx;
-use codex_tool_runtime::ToolEventFailure;
-use codex_tool_runtime::ToolEventStage;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 pub(crate) const TRAILING_OUTPUT_GRACE: Duration = Duration::from_millis(100);
@@ -113,8 +110,8 @@ pub(crate) fn start_streaming_output(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_exit_watcher(
     process: Arc<UnifiedExecProcess>,
-    session_ref: Arc<SessionCapabilityAdapter>,
-    turn_ref: Arc<TurnCapabilityAdapter>,
+    session_ref: Arc<dyn CommandServiceSessionCapability>,
+    turn_ref: Arc<dyn CommandServiceTurnCapability>,
     call_id: String,
     command: Vec<String>,
     cwd: AbsolutePathBuf,
@@ -182,8 +179,8 @@ async fn process_chunk(
     pending: &mut Vec<u8>,
     transcript: &Arc<Mutex<HeadTailBuffer>>,
     call_id: &str,
-    session_ref: &Arc<SessionCapabilityAdapter>,
-    turn_ref: &Arc<TurnCapabilityAdapter>,
+    session_ref: &Arc<dyn CommandServiceSessionCapability>,
+    turn_ref: &Arc<dyn CommandServiceTurnCapability>,
     emitted_deltas: &mut usize,
     notify_on: CommandNotificationFilter,
     notification_state: &Arc<CommandNotificationState>,
@@ -212,8 +209,7 @@ async fn process_chunk(
             chunk: prefix.clone(),
         };
         session_ref
-            .inner
-            .send_event(turn_ref.inner.as_ref(), EventMsg::ExecCommandOutputDelta(event))
+            .send_event(turn_ref.as_ref(), EventMsg::ExecCommandOutputDelta(event))
             .await;
         *emitted_deltas += 1;
         if generates_notification {
@@ -228,8 +224,7 @@ async fn process_chunk(
                 created_at_ms: now_unix_timestamp_ms(),
             };
             session_ref
-                .inner
-                .record_model_items_and_emit_display_events(turn_ref.inner.as_ref(), &[item])
+                .record_model_items_and_emit_display_events(turn_ref.as_ref(), &[item])
                 .await;
             notification_state
                 .notify(CommandNotificationKind::Output)
@@ -243,8 +238,8 @@ async fn process_chunk(
 /// text when the transcript is empty.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn emit_exec_end_for_unified_exec(
-    session_ref: Arc<SessionCapabilityAdapter>,
-    turn_ref: Arc<TurnCapabilityAdapter>,
+    session_ref: Arc<dyn CommandServiceSessionCapability>,
+    turn_ref: Arc<dyn CommandServiceTurnCapability>,
     call_id: String,
     command: Vec<String>,
     cwd: AbsolutePathBuf,
@@ -256,46 +251,28 @@ pub(crate) async fn emit_exec_end_for_unified_exec(
     initial_wait_ms: u64,
     notify_on: ExecCommandNotifyOn,
 ) {
-    let aggregated_output = resolve_aggregated_output(&transcript, fallback_output).await;
-    let output = ExecToolCallOutput {
-        exit_code,
-        stdout: StreamOutput::new(aggregated_output.clone()),
-        stderr: StreamOutput::new(String::new()),
-        aggregated_output: StreamOutput::new(aggregated_output),
-        duration,
-        timed_out: false,
-    };
-    let event_ctx = ToolEventCtx::new(
-        SessionToolEventHost::new(
-            session_ref.as_ref(),
-            turn_ref.as_ref(),
-            /*turn_diff_tracker*/ None,
-        ),
-        &call_id,
-    );
-    let emitter = ToolEmitter::unified_exec(
-        &command,
+    emit_unified_exec_end(
+        session_ref,
+        turn_ref,
+        call_id,
+        command,
         cwd,
-        ExecCommandSource::UnifiedExecStartup,
         process_id,
+        transcript,
+        fallback_output,
+        exit_code,
+        duration,
         initial_wait_ms,
         notify_on,
-    );
-    emitter
-        .emit(
-            event_ctx,
-            ToolEventStage::Success {
-                output,
-                applied_patch_delta: None,
-            },
-        )
-        .await;
+        ExecCommandStatus::Completed,
+    )
+    .await;
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn emit_failed_exec_end_for_unified_exec(
-    session_ref: Arc<SessionCapabilityAdapter>,
-    turn_ref: Arc<TurnCapabilityAdapter>,
+    session_ref: Arc<dyn CommandServiceSessionCapability>,
+    turn_ref: Arc<dyn CommandServiceTurnCapability>,
     call_id: String,
     command: Vec<String>,
     cwd: AbsolutePathBuf,
@@ -325,28 +302,19 @@ pub(crate) async fn emit_failed_exec_end_for_unified_exec(
         duration,
         timed_out: false,
     };
-    let event_ctx = ToolEventCtx::new(
-        SessionToolEventHost::new(
-            session_ref.as_ref(),
-            turn_ref.as_ref(),
-            /*turn_diff_tracker*/ None,
-        ),
-        &call_id,
-    );
-    let emitter = ToolEmitter::unified_exec(
-        &command,
+    emit_unified_exec_end_with_output(
+        session_ref,
+        turn_ref,
+        call_id,
+        command,
         cwd,
-        ExecCommandSource::UnifiedExecStartup,
         process_id,
+        output,
         initial_wait_ms,
         notify_on,
-    );
-    emitter
-        .emit(
-            event_ctx,
-            ToolEventStage::Failure(ToolEventFailure::Output(output)),
-        )
-        .await;
+        ExecCommandStatus::Failed,
+    )
+    .await;
 }
 
 #[cfg(test)]

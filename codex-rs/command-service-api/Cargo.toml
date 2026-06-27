@@ -13,16 +13,19 @@ workspace = true
 
 [dependencies]
 codex-command-runtime = { workspace = true }
+codex-exec-server-api = { workspace = true }
 codex-file-system = { workspace = true }
 codex-hooks-api = { workspace = true }
 codex-network-proxy-api = { workspace = true }
 codex-permissions-runtime = { workspace = true }
 codex-protocol = { workspace = true }
 codex-sandboxing-api = { workspace = true }
+codex-session-telemetry-api = { workspace = true }
 codex-thread-api = { workspace = true }
 codex-tool-config = { workspace = true }
-codex-tool-runtime-api = { workspace = true }
 codex-tool-types = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-output-truncation = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }

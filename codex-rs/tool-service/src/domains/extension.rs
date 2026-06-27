@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use codex_extension_api::ExtensionToolExecutor;
 use codex_extension_api::ToolOutput;
-use codex_tool_runtime::HookToolName;
-use codex_tool_runtime::PostToolUsePayload;
 use codex_tool_runtime::flat_tool_name;
-use codex_tool_runtime_api::AnyToolResult;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
+use codex_tool_service_api::AnyToolResult;
+use codex_tool_service_api::HookToolName;
+use codex_tool_service_api::PostToolUsePayload;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolName;

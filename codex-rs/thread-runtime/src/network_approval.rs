@@ -39,9 +39,14 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 use uuid::Uuid;
 
-pub(crate) use codex_tool_runtime_api::NetworkApprovalMode;
-pub(crate) type NetworkApprovalSpec =
-    codex_tool_runtime_api::NetworkApprovalSpec<GuardianNetworkAccessTrigger>;
+pub(crate) use codex_thread_api::NetworkApprovalMode;
+#[derive(Clone, Debug)]
+pub(crate) struct NetworkApprovalSpec {
+    pub(crate) network: Option<codex_network_proxy_api::SharedNetworkProxyRuntime>,
+    pub(crate) mode: NetworkApprovalMode,
+    pub(crate) trigger: GuardianNetworkAccessTrigger,
+    pub(crate) command: String,
+}
 
 #[derive(Clone, Debug)]
 pub struct DeferredNetworkApproval {

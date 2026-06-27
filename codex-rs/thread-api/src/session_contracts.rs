@@ -20,6 +20,7 @@ use codex_code_mode_api::WaitRequest;
 use codex_permissions_runtime::ExecPolicyApprovalRequest;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::WindowsSandboxLevel;
+use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_file_system::FileSystemSandboxContext;
 use codex_protocol::items::FileChangeItem;
@@ -53,7 +54,6 @@ use codex_tool_runtime_api::AgentJobRunnerOptions;
 use codex_tool_runtime_api::AgentJobSpawnWorkerError;
 use codex_tool_runtime_api::AgentJobToolHost;
 use codex_tool_runtime_api::AnyToolResult;
-use codex_tool_runtime_api::NetworkApprovalMode;
 use codex_tool_runtime_api::NetworkApprovalSpec;
 use codex_tool_runtime_api::PermissionRequestPayload;
 use codex_tool_runtime_api::McpToolCallHost;
@@ -1346,6 +1346,18 @@ pub struct ToolRuntimeNetworkApprovalTrigger {
     pub tty: Option<bool>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NetworkApprovalMode {
+    Immediate,
+    Deferred,
+}
+
+#[derive(Debug)]
+pub enum ToolRuntimeNetworkApprovalError {
+    Rejected(String),
+    Codex(CodexErr),
+}
+
 pub trait ToolRuntimeNetworkApprovalHandle: Send + Sync + 'static {
     fn mode(&self) -> NetworkApprovalMode;
 
@@ -1355,7 +1367,7 @@ pub trait ToolRuntimeNetworkApprovalHandle: Send + Sync + 'static {
 
     fn finish<'a>(
         &'a self,
-    ) -> Pin<Box<dyn Future<Output = Result<(), codex_tool_runtime_api::ToolError>> + Send + 'a>>;
+    ) -> Pin<Box<dyn Future<Output = Result<(), ToolRuntimeNetworkApprovalError>> + Send + 'a>>;
 }
 
 pub struct SessionToolEventHost<'a, Session, Turn> {

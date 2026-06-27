@@ -17,7 +17,7 @@ use codex_protocol::protocol::TerminalInteractionEvent;
 use codex_thread_runtime::ThreadRuntimeSession;
 use codex_thread_runtime::ThreadTurnContext;
 use codex_tool_runtime::FunctionToolOutput;
-use codex_tool_runtime_api::AnyToolResult;
+use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_planning::ToolSpec;
 use codex_tool_planning::create_command_wait_tool;

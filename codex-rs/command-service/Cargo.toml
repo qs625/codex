@@ -34,11 +34,10 @@ codex-shell-utils = { workspace = true }
 codex-thread-api = { workspace = true }
 codex-tool-config = { workspace = true }
 codex-tool-planning = { workspace = true }
-codex-tool-runtime = { workspace = true }
-codex-tool-runtime-api = { workspace = true }
 codex-tool-types = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-output-truncation = { workspace = true }
+codex-utils-path = { workspace = true }
 codex-utils-pty = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

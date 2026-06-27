@@ -1187,7 +1187,7 @@ pub(crate) async fn dispatch_tool_call(
     call: codex_tool_planning::ToolCall,
     source: codex_tool_planning::ToolCallSource,
     cancellation_token: CancellationToken,
-) -> Result<codex_tool_runtime_api::AnyToolResult, FunctionCallError> {
+) -> Result<codex_tool_service_api::AnyToolResult, FunctionCallError> {
     tool_service
         .dispatch_tool(codex_tool_service_api::ToolDispatchRequest {
             tool: tool_service_request(&sess, &turn_context, &tool_inputs),

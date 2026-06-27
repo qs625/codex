@@ -11,7 +11,7 @@ use codex_tool_planning::create_workflow_resume_tool;
 use codex_tool_planning::create_workflow_start_tool;
 use codex_tool_planning::create_workflow_status_tool;
 use codex_tool_runtime::FunctionToolOutput;
-use codex_tool_runtime_api::AnyToolResult;
+use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_thread_runtime::ThreadTurnContext;
 use codex_tool_types::FunctionCallError;

@@ -176,7 +176,7 @@ impl TurnContext {
         &self,
         environment_id: Option<&str>,
         workdir: Option<&str>,
-    ) -> Result<Option<codex_tool_runtime_api::ResolvedExecCommandEnvironment>, FunctionCallError>
+    ) -> Result<Option<codex_command_service_api::ResolvedExecCommandEnvironment>, FunctionCallError>
     {
         let environment = environment_id.map_or_else(
             || Ok(self.environments.primary()),
@@ -202,7 +202,7 @@ impl TurnContext {
             |workdir| turn_environment.cwd.join(workdir),
         );
         Ok(Some(
-            codex_tool_runtime_api::ResolvedExecCommandEnvironment {
+            codex_command_service_api::ResolvedExecCommandEnvironment {
                 cwd,
                 sandbox_cwd: turn_environment.cwd.clone(),
                 environment: turn_environment.environment.clone(),
@@ -214,8 +214,8 @@ impl TurnContext {
         ))
     }
 
-    pub(crate) fn tool_sandbox_context(&self) -> codex_tool_runtime_api::ToolSandboxContext {
-        codex_tool_runtime_api::ToolSandboxContext {
+    pub(crate) fn tool_sandbox_context(&self) -> codex_command_service_api::ToolSandboxContext {
+        codex_command_service_api::ToolSandboxContext {
             turn_id: self.sub_id.clone(),
             telemetry: self.session_telemetry.clone(),
             file_system_sandbox_policy: self.file_system_sandbox_policy(),

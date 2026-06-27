@@ -5,6 +5,8 @@ use std::sync::Weak;
 
 use codex_extension_api::ExtensionData;
 use codex_extension_api::ToolContributor;
+use codex_protocol::models::ResponseInputItem;
+use codex_protocol::protocol::EventMsg;
 use codex_mcp_tool_types::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_thread_api::SharedToolTurnDiffTracker;
@@ -12,13 +14,13 @@ use codex_thread_api::ToolServiceSessionRef;
 use codex_thread_api::ToolServiceTurnRef;
 use codex_thread_api::ToolSessionCapability;
 use codex_tool_config::ToolsConfig;
-use codex_tool_runtime_api::AnyToolResult;
-use codex_tool_runtime_api::ToolArgumentDiffConsumer;
 use codex_tool_planning::DiscoverableTool;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolCallSource;
 use codex_tool_types::ToolName;
+use codex_tool_types::ToolOutput;
+use codex_tool_types::ToolPayload;
 use codex_tool_types::ToolSpec;
 use tokio_util::sync::CancellationToken;
 
@@ -43,16 +45,107 @@ pub struct ToolServiceParams<'a> {
     pub default_agent_type_description: &'a str,
 }
 
+/// Hook-facing tool names and matcher aliases.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HookToolName {
+    name: String,
+    matcher_aliases: Vec<String>,
+}
+
+impl HookToolName {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            matcher_aliases: Vec::new(),
+        }
+    }
+
+    pub fn apply_patch() -> Self {
+        Self {
+            name: "apply_patch".to_string(),
+            matcher_aliases: vec!["Write".to_string(), "Edit".to_string()],
+        }
+    }
+
+    pub fn bash() -> Self {
+        Self::new("Bash")
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn matcher_aliases(&self) -> &[String] {
+        &self.matcher_aliases
+    }
+}
+
+pub type ToolTelemetryTags = Vec<(&'static str, String)>;
+
 pub trait ErasedToolArgumentDiffConsumer: Send {
     fn consume_diff(
         &mut self,
         turn: &dyn ToolServiceTurnRef,
         call_id: String,
         diff: &str,
-    ) -> Option<codex_protocol::protocol::EventMsg>;
+    ) -> Option<EventMsg>;
 
-    fn finish(&mut self) -> Result<Option<codex_protocol::protocol::EventMsg>, FunctionCallError> {
+    fn finish(&mut self) -> Result<Option<EventMsg>, FunctionCallError> {
         Ok(None)
+    }
+}
+
+/// Consumes streamed argument diffs for one tool call.
+pub trait ToolArgumentDiffConsumer<DiffContext>: Send {
+    fn consume_diff(
+        &mut self,
+        turn: &DiffContext,
+        call_id: String,
+        diff: &str,
+    ) -> Option<EventMsg>;
+
+    fn finish(&mut self) -> Result<Option<EventMsg>, FunctionCallError> {
+        Ok(None)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreToolUsePayload {
+    pub tool_name: HookToolName,
+    pub tool_input: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PostToolUsePayload {
+    pub tool_name: HookToolName,
+    pub tool_use_id: String,
+    pub tool_input: serde_json::Value,
+    pub tool_response: serde_json::Value,
+}
+
+pub struct AnyToolResult {
+    pub call_id: String,
+    pub payload: ToolPayload,
+    pub result: Box<dyn ToolOutput>,
+    pub post_tool_use_payload: Option<PostToolUsePayload>,
+}
+
+impl AnyToolResult {
+    pub fn into_response(self) -> ResponseInputItem {
+        let Self {
+            call_id,
+            payload,
+            result,
+            ..
+        } = self;
+        result.to_response_item(&call_id, &payload)
+    }
+
+    pub fn code_mode_result(self) -> serde_json::Value {
+        let Self {
+            payload, result, ..
+        } = self;
+        result.code_mode_result(&payload)
     }
 }
 

@@ -18,6 +18,6 @@ codex-protocol = { workspace = true }
 codex-thread-api = { workspace = true }
 codex-tool-config = { workspace = true }
 codex-tool-planning = { workspace = true }
-codex-tool-runtime-api = { workspace = true }
 codex-tool-types = { workspace = true }
+serde_json = { workspace = true }
 tokio-util = { workspace = true }

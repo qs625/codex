@@ -13,6 +13,7 @@ doctest = false
 workspace = true
 
 [dependencies]
+codex-command-service-api = { workspace = true }
 codex-protocol = { workspace = true }
 codex-thread-api = { workspace = true }
 codex-tool-runtime-api = { workspace = true }

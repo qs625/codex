@@ -17,6 +17,7 @@ use codex_thread_api::ToolSessionDispatchTrace;
 use codex_thread_api::ToolEventSessionCapability;
 use codex_thread_api::ToolEventTurnCapability;
 use codex_thread_api::ToolRuntimeNetworkApprovalHandle;
+use codex_thread_api::ToolRuntimeNetworkApprovalError;
 use codex_thread_api::ToolRuntimeNetworkApprovalTrigger;
 use codex_thread_api::ToolRuntimeSessionCapability;
 use codex_thread_api::ToolRuntimeTurnCapability;
@@ -32,6 +33,8 @@ use codex_protocol::protocol::ExecCommandEndEvent;
 use codex_protocol::protocol::TurnDiffEvent;
 use codex_sandboxing_api::SharedSandboxRuntime;
 use codex_session_telemetry_api::SharedSessionTelemetry;
+use codex_command_service_api::ExecCommandRunOutput as CommandExecCommandRunOutput;
+use codex_command_service_api::ExecCommandRunRequest as CommandExecCommandRunRequest;
 use codex_tool_planning::ToolCallSource;
 use codex_tool_planning::ToolName;
 use codex_tool_planning::ToolPayload;
@@ -44,7 +47,6 @@ use codex_tool_runtime_api::ResolvedExecCommand;
 use codex_tool_runtime_api::ResolvedApplyPatchEnvironment;
 use codex_tool_runtime_api::ResolvedExecCommandEnvironment;
 use codex_tool_runtime_api::RuntimeShell;
-use codex_tool_runtime_api::ToolError;
 use codex_tool_runtime_api::ToolPermissionGrants;
 use codex_tool_runtime_api::PostToolUseHookOutcome;
 use codex_tool_runtime_api::PostToolUsePayload;
@@ -60,6 +62,95 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+
+struct RuntimeApplyPatchEnvironmentAdapter {
+    inner: Arc<dyn codex_command_service_api::ApplyPatchEnvironment>,
+}
+
+impl codex_tool_runtime_api::ApplyPatchEnvironment for RuntimeApplyPatchEnvironmentAdapter {
+    fn environment_id(&self) -> &str {
+        self.inner.environment_id()
+    }
+
+    fn filesystem(&self) -> Arc<dyn codex_file_system::ExecutorFileSystem> {
+        self.inner.filesystem()
+    }
+}
+
+fn to_command_exec_request(request: ExecCommandRunRequest) -> CommandExecCommandRunRequest {
+    CommandExecCommandRunRequest {
+        command: request.command,
+        shell_type: request.shell_type,
+        hook_command: request.hook_command,
+        process_id: request.process_id,
+        yield_time_ms: request.yield_time_ms,
+        max_output_tokens: request.max_output_tokens,
+        cwd: request.cwd,
+        sandbox_cwd: request.sandbox_cwd,
+        environment: request.environment,
+        tty: request.tty,
+        sandbox_permissions: request.sandbox_permissions,
+        additional_permissions: request.additional_permissions,
+        additional_permissions_preapproved: request.additional_permissions_preapproved,
+        justification: request.justification,
+        prefix_rule: request.prefix_rule,
+        notify_on: request.notify_on,
+        approval_mode: match request.approval_mode {
+            codex_tool_runtime_api::ExecCommandApprovalMode::ContinueInRuntime => {
+                codex_command_service_api::ExecCommandApprovalMode::ContinueInRuntime
+            }
+            codex_tool_runtime_api::ExecCommandApprovalMode::AlreadyApproved => {
+                codex_command_service_api::ExecCommandApprovalMode::AlreadyApproved
+            }
+        },
+        exec_approval_requirement: request.exec_approval_requirement,
+    }
+}
+
+fn from_command_exec_output(output: CommandExecCommandRunOutput) -> ExecCommandRunOutput {
+    ExecCommandRunOutput {
+        event_call_id: output.event_call_id,
+        chunk_id: output.chunk_id,
+        wall_time: output.wall_time,
+        raw_output: output.raw_output,
+        max_output_tokens: output.max_output_tokens,
+        process_id: output.process_id,
+        exit_code: output.exit_code,
+        original_token_count: output.original_token_count,
+        hook_command: output.hook_command,
+    }
+}
+
+fn to_runtime_tool_sandbox_context(
+    value: codex_command_service_api::ToolSandboxContext,
+) -> codex_tool_runtime_api::ToolSandboxContext {
+    codex_tool_runtime_api::ToolSandboxContext {
+        turn_id: value.turn_id,
+        telemetry: value.telemetry,
+        file_system_sandbox_policy: value.file_system_sandbox_policy,
+        network_sandbox_policy: value.network_sandbox_policy,
+        permission_profile: value.permission_profile,
+        managed_network_active: value.managed_network_active,
+        cwd: value.cwd,
+        codex_linux_sandbox_exe: value.codex_linux_sandbox_exe,
+        use_legacy_landlock: value.use_legacy_landlock,
+        windows_sandbox_level: value.windows_sandbox_level,
+        windows_sandbox_private_desktop: value.windows_sandbox_private_desktop,
+    }
+}
+
+fn to_runtime_resolved_exec_command_environment(
+    value: codex_command_service_api::ResolvedExecCommandEnvironment,
+) -> ResolvedExecCommandEnvironment {
+    ResolvedExecCommandEnvironment {
+        cwd: value.cwd,
+        sandbox_cwd: value.sandbox_cwd,
+        environment: value.environment,
+        apply_patch_environment: Arc::new(RuntimeApplyPatchEnvironmentAdapter {
+            inner: value.apply_patch_environment,
+        }),
+    }
+}
 
 impl ToolTurnCapability for TurnContext {
     fn as_any(&self) -> &(dyn std::any::Any + Send + Sync) {
@@ -113,7 +204,7 @@ impl ApplyPatchTurnCapability for TurnContext {
     }
 
     fn tool_sandbox_context(&self) -> codex_tool_runtime_api::ToolSandboxContext {
-        self.tool_sandbox_context()
+        to_runtime_tool_sandbox_context(self.tool_sandbox_context())
     }
 
     fn resolve_apply_patch_environment(
@@ -134,7 +225,7 @@ impl ToolRuntimeTurnCapability for TurnContext {
     }
 
     fn tool_sandbox_context(&self) -> codex_tool_runtime_api::ToolSandboxContext {
-        self.tool_sandbox_context()
+        to_runtime_tool_sandbox_context(self.tool_sandbox_context())
     }
 
     fn approval_policy(&self) -> AskForApproval {
@@ -190,6 +281,7 @@ impl ToolRuntimeTurnCapability for TurnContext {
         workdir: Option<&str>,
     ) -> Result<Option<ResolvedExecCommandEnvironment>, codex_tool_types::FunctionCallError> {
         self.resolve_exec_command_environment(environment_id, workdir)
+            .map(|value| value.map(to_runtime_resolved_exec_command_environment))
     }
 
     fn truncation_policy(&self) -> TruncationPolicy {
@@ -334,13 +426,13 @@ enum SessionToolNetworkApprovalState {
 
 struct SessionToolNetworkApprovalHandle {
     service: Arc<crate::network_approval::NetworkApprovalService>,
-    mode: codex_tool_runtime_api::NetworkApprovalMode,
+    mode: codex_thread_api::NetworkApprovalMode,
     cancellation_token: tokio_util::sync::CancellationToken,
     state: SessionToolNetworkApprovalState,
 }
 
 impl ToolRuntimeNetworkApprovalHandle for SessionToolNetworkApprovalHandle {
-    fn mode(&self) -> codex_tool_runtime_api::NetworkApprovalMode {
+    fn mode(&self) -> codex_thread_api::NetworkApprovalMode {
         self.mode
     }
 
@@ -360,7 +452,7 @@ impl ToolRuntimeNetworkApprovalHandle for SessionToolNetworkApprovalHandle {
         self.cancellation_token.clone()
     }
 
-    fn finish<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<(), ToolError>> + Send + 'a>> {
+    fn finish<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<(), ToolRuntimeNetworkApprovalError>> + Send + 'a>> {
         Box::pin(async move {
             match &self.state {
                 SessionToolNetworkApprovalState::Immediate(registration_id) => {
@@ -371,13 +463,32 @@ impl ToolRuntimeNetworkApprovalHandle for SessionToolNetworkApprovalHandle {
                     else {
                         return Ok(());
                     };
-                    self.service.finish_call(&registration_id).await
+                    self.service
+                        .finish_call(&registration_id)
+                        .await
+                        .map_err(map_network_approval_error)
                 }
                 SessionToolNetworkApprovalState::Deferred(deferred) => {
-                    deferred.finish(&self.service).await
+                    deferred
+                        .finish(&self.service)
+                        .await
+                        .map_err(map_network_approval_error)
                 }
             }
         })
+    }
+}
+
+fn map_network_approval_error(
+    err: codex_tool_runtime_api::ToolError,
+) -> ToolRuntimeNetworkApprovalError {
+    match err {
+        codex_tool_runtime_api::ToolError::Rejected(message) => {
+            ToolRuntimeNetworkApprovalError::Rejected(message)
+        }
+        codex_tool_runtime_api::ToolError::Codex(err) => {
+            ToolRuntimeNetworkApprovalError::Codex(err)
+        }
     }
 }
 
@@ -536,10 +647,12 @@ impl ExecCommandSessionRuntime<TurnContext> for Session {
         login: Option<bool>,
         model_shell: Option<&RuntimeShell>,
     ) -> Result<ResolvedExecCommand, String> {
+        let session_shell =
+            crate::runtime_shell::runtime_shell(self.user_shell().as_ref());
         codex_tool_runtime_api::resolve_exec_command_for_parts(
             command,
             login,
-            &self.runtime_shell(),
+            &session_shell,
             model_shell,
             &turn.unified_exec_shell_mode(),
             turn.allow_login_shell(),
@@ -575,7 +688,13 @@ impl ExecCommandSessionRuntime<TurnContext> for Session {
         let session = turn.session_arc();
         let turn = turn.self_arc();
         let call_id = call_id.to_string();
-        async move { session.run_unified_exec_command(turn, call_id, request).await }
+        let request = to_command_exec_request(request);
+        async move {
+            session
+                .run_unified_exec_command(turn, call_id, request)
+                .await
+                .map(from_command_exec_output)
+        }
     }
 }
 
@@ -720,9 +839,16 @@ impl ToolRuntimeSessionCapability for Session {
         spec: Option<NetworkApprovalSpec<ToolRuntimeNetworkApprovalTrigger>>,
     ) -> impl Future<Output = Option<Arc<dyn ToolRuntimeNetworkApprovalHandle>>> + Send + 'a {
         async move {
-            let spec = spec.map(|spec| NetworkApprovalSpec {
+            let spec = spec.map(|spec| crate::network_approval::NetworkApprovalSpec {
                 network: spec.network,
-                mode: spec.mode,
+                mode: match spec.mode {
+                    codex_tool_runtime_api::NetworkApprovalMode::Immediate => {
+                        codex_thread_api::NetworkApprovalMode::Immediate
+                    }
+                    codex_tool_runtime_api::NetworkApprovalMode::Deferred => {
+                        codex_thread_api::NetworkApprovalMode::Deferred
+                    }
+                },
                 trigger: map_network_trigger(spec.trigger),
                 command: spec.command,
             });
@@ -731,14 +857,14 @@ impl ToolRuntimeSessionCapability for Session {
             let mode = active.mode();
             let cancellation_token = active.cancellation_token();
             let state = match mode {
-                codex_tool_runtime_api::NetworkApprovalMode::Deferred => {
+                codex_thread_api::NetworkApprovalMode::Deferred => {
                     SessionToolNetworkApprovalState::Deferred(
                         active
                             .into_deferred()
                             .expect("deferred network approval should convert to deferred state"),
                     )
                 }
-                codex_tool_runtime_api::NetworkApprovalMode::Immediate => {
+                codex_thread_api::NetworkApprovalMode::Immediate => {
                     SessionToolNetworkApprovalState::Immediate(Mutex::new(
                         active.registration_id().map(ToString::to_string),
                     ))

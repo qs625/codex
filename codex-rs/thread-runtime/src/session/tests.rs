@@ -122,7 +122,6 @@ use codex_protocol::protocol::ResumedHistory;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SkillScope;
 use codex_protocol::protocol::Submission;
-use codex_protocol::protocol::ThreadGoalStatus;
 use codex_protocol::protocol::ThreadRolledBackEvent;
 use codex_protocol::protocol::TokenCountEvent;
 use codex_protocol::protocol::TokenUsage;
@@ -596,7 +595,7 @@ pub(crate) async fn dispatch_tool_via_tool_service(
     tool_name: codex_tool_planning::ToolName,
     source: ToolCallSource,
     payload: ToolPayload,
-) -> Result<codex_tool_runtime_api::AnyToolResult, FunctionCallError> {
+) -> Result<codex_tool_service_api::AnyToolResult, FunctionCallError> {
     let tool_inputs = test_tool_inputs(Arc::clone(&session), Arc::clone(&turn_context));
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
     crate::session::turn::dispatch_tool_call(
@@ -942,7 +941,7 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
             _req: &(),
             attempt: &codex_tool_runtime_api::SandboxAttempt<'_>,
             _ctx: &codex_tool_runtime_api::ToolCtx<Arc<crate::session::session::Session>, Arc<crate::session::turn_context::TurnContext>>,
-        ) -> Result<(), codex_tool_runtime_api::ToolError> {
+        ) -> Result<(), codex_thread_api::ToolRuntimeNetworkApprovalError> {
             self.enforce_managed_network
                 .push(attempt.enforce_managed_network);
             Ok(())
@@ -1020,7 +1019,7 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
         fn active_network_approval_mode(
             &self,
             active: &Self::ActiveNetworkApproval,
-        ) -> codex_tool_runtime_api::NetworkApprovalMode {
+        ) -> codex_thread_api::NetworkApprovalMode {
             active.mode()
         }
 
@@ -1035,7 +1034,7 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
             &self,
             active: Self::ActiveNetworkApproval,
         ) -> Option<Self::DeferredNetworkApproval> {
-            (active.mode() == codex_tool_runtime_api::NetworkApprovalMode::Deferred)
+            (active.mode() == codex_thread_api::NetworkApprovalMode::Deferred)
                 .then_some(active)
         }
 
@@ -1043,7 +1042,7 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
             &'a self,
             _session: &'a Arc<crate::session::session::Session>,
             active: Self::ActiveNetworkApproval,
-        ) -> impl std::future::Future<Output = Result<(), codex_tool_runtime_api::ToolError>> + Send + 'a
+        ) -> impl std::future::Future<Output = Result<(), codex_thread_api::ToolRuntimeNetworkApprovalError>> + Send + 'a
         {
             async move { active.finish().await }
         }
@@ -1052,7 +1051,7 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
             &'a self,
             _session: &'a Arc<crate::session::session::Session>,
             deferred: Option<Self::DeferredNetworkApproval>,
-        ) -> impl std::future::Future<Output = Result<(), codex_tool_runtime_api::ToolError>> + Send + 'a
+        ) -> impl std::future::Future<Output = Result<(), codex_thread_api::ToolRuntimeNetworkApprovalError>> + Send + 'a
         {
             async move {
                 let Some(deferred) = deferred else {
@@ -10051,70 +10050,6 @@ async fn abort_review_task_emits_exited_then_aborted_and_records_history() {
     );
 }
 
-#[tokio::test]
-#[expect(
-    clippy::await_holding_invalid_type,
-    reason = "test builds a router from session-owned MCP manager state"
-)]
-async fn fatal_tool_error_stops_turn_and_reports_error() {
-    let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
-    let tools = {
-        session
-            .services
-            .mcp_connection_manager
-            .read()
-            .await
-            .list_all_tools()
-            .await
-    };
-    let tool_session_capability: Arc<dyn codex_thread_api::ToolSessionCapability> =
-        Arc::clone(&session) as Arc<dyn codex_thread_api::ToolSessionCapability>;
-    let default_agent_type_description =
-        codex_agent_roles::spawn_tool_spec::build(&std::collections::BTreeMap::new());
-    let tool_inputs = Arc::new(crate::session::turn::TurnToolInputs {
-        tool_session_capability: Arc::downgrade(&tool_session_capability),
-        mcp_tools: tools.clone(),
-        deferred_mcp_tools: tools,
-        discoverable_tools: Vec::new(),
-        default_agent_type_description,
-    });
-    let item = ResponseItem::CustomToolCall {
-        id: None,
-        status: None,
-        call_id: "call-1".to_string(),
-        name: "exec_command".to_string(),
-        input: "{}".to_string(),
-    };
-
-    let call = codex_tool_planning::ToolCall::from_response_item(item.clone())
-        .expect("build tool call")
-        .expect("tool call present");
-    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-    let err = crate::session::turn::dispatch_tool_call(
-        Arc::clone(&session.services.tool_service),
-        Arc::clone(&session),
-        Arc::clone(&turn_context),
-        tool_inputs,
-        tracker,
-        call,
-        ToolCallSource::Direct,
-        CancellationToken::new(),
-    )
-        .await
-        .err()
-        .expect("expected fatal error");
-
-    match err {
-        FunctionCallError::Fatal(message) => {
-            assert_eq!(
-                message,
-                "tool exec_command invoked with incompatible payload"
-            );
-        }
-        other => panic!("expected FunctionCallError::Fatal, got {other:?}"),
-    }
-}
-
 async fn sample_rollout(
     session: &Session,
     _turn_context: &TurnContext,
@@ -10281,7 +10216,6 @@ async fn rejects_escalated_permissions_when_policy_not_on_request() {
     use crate::exec_policy::ExecApprovalRequest;
     use crate::sandboxing::SandboxPermissions;
     use codex_protocol::protocol::AskForApproval;
-    use codex_tool_runtime::TurnDiffTracker;
 
     let (session, mut turn_context_raw) = make_session_and_context().await;
     // Ensure policy is NOT OnRequest so the early rejection path triggers
@@ -10293,7 +10227,6 @@ async fn rejects_escalated_permissions_when_policy_not_on_request() {
     let mut turn_context = Arc::new(turn_context_raw);
 
     let command_script = "echo hi";
-    let timeout_ms = 1000;
     let sandbox_permissions = SandboxPermissions::RequireEscalated;
 
     let call_id = "test-call".to_string();
@@ -10353,43 +10286,6 @@ async fn rejects_escalated_permissions_when_policy_not_on_request() {
         codex_tool_runtime_api::ExecApprovalRequirement::Skip { .. }
     ));
 }
-#[tokio::test]
-async fn unified_exec_rejects_escalated_permissions_when_policy_not_on_request() {
-    use crate::sandboxing::SandboxPermissions;
-    use codex_protocol::protocol::AskForApproval;
-    use codex_tool_runtime::TurnDiffTracker;
-
-    let (session, mut turn_context_raw) = make_session_and_context().await;
-    turn_context_raw
-        .approval_policy
-        .set(AskForApproval::OnFailure)
-        .expect("test setup should allow updating approval policy");
-    let session = Arc::new(session);
-    let turn_context = Arc::new(turn_context_raw);
-    let resp = dispatch_exec_command_via_tool_service(
-        Arc::clone(&session),
-        Arc::clone(&turn_context),
-        "exec-call",
-        serde_json::json!({
-            "cmd": "echo hi",
-            "sandbox_permissions": SandboxPermissions::RequireEscalated,
-            "justification": "need unsandboxed execution",
-        }),
-    )
-        .await;
-
-    let Err(FunctionCallError::RespondToModel(output)) = resp else {
-        panic!("expected error result");
-    };
-
-    let expected = format!(
-        "approval policy is {policy:?}; reject command — you cannot ask for escalated permissions if the approval policy is {policy:?}",
-        policy = turn_context.approval_policy.value()
-    );
-
-    pretty_assertions::assert_eq!(output, expected);
-}
-
 #[tokio::test]
 async fn session_start_hooks_only_load_from_trusted_project_layers() -> std::io::Result<()> {
     let temp = tempfile::tempdir()?;

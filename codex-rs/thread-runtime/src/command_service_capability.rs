@@ -4,6 +4,17 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use codex_command_service_api::CommandServiceFuture;
+use codex_command_service_api::ExecApprovalRequirement;
+use codex_command_service_api::NetworkApprovalMode as CommandNetworkApprovalMode;
+use codex_command_service_api::NetworkApprovalSpec;
+use codex_command_service_api::PermissionRequestPayload;
+use codex_command_service_api::ResolvedApplyPatchEnvironment;
+use codex_command_service_api::ResolvedExecCommand;
+use codex_command_service_api::ResolvedExecCommandEnvironment;
+use codex_command_service_api::RuntimeShell;
+use codex_command_service_api::ToolPermissionGrants;
+use codex_command_service_api::ToolSandboxContext;
+use codex_command_service_api::UnifiedExecApprovalKey;
 use codex_command_service_api::CommandServiceSessionCapability;
 use codex_command_service_api::CommandServiceSessionState;
 use codex_command_service_api::CommandServiceTurnCapability;
@@ -20,11 +31,8 @@ use codex_protocol::protocol::ExecCommandEndEvent;
 use codex_protocol::protocol::NetworkApprovalContext;
 use codex_protocol::protocol::ReviewDecision;
 use codex_thread_api::ToolRuntimeNetworkApprovalHandle;
+use codex_thread_api::ToolRuntimeNetworkApprovalError;
 use codex_thread_api::ToolRuntimeNetworkApprovalTrigger;
-use codex_tool_runtime_api::NetworkApprovalSpec;
-use codex_tool_runtime_api::PermissionRequestPayload;
-use codex_tool_runtime_api::ResolvedExecCommand;
-use codex_tool_runtime_api::ResolvedExecCommandEnvironment;
 use crate::network_approval::DeferredNetworkApproval;
 use crate::network_approval::begin_network_approval;
 use crate::session::session::Session;
@@ -39,13 +47,13 @@ enum SessionToolNetworkApprovalState {
 
 struct SessionToolNetworkApprovalHandle {
     service: Arc<crate::network_approval::NetworkApprovalService>,
-    mode: codex_tool_runtime_api::NetworkApprovalMode,
+    mode: codex_thread_api::NetworkApprovalMode,
     cancellation_token: tokio_util::sync::CancellationToken,
     state: SessionToolNetworkApprovalState,
 }
 
 impl codex_thread_api::ToolRuntimeNetworkApprovalHandle for SessionToolNetworkApprovalHandle {
-    fn mode(&self) -> codex_tool_runtime_api::NetworkApprovalMode {
+    fn mode(&self) -> codex_thread_api::NetworkApprovalMode {
         self.mode
     }
 
@@ -65,7 +73,7 @@ impl codex_thread_api::ToolRuntimeNetworkApprovalHandle for SessionToolNetworkAp
         self.cancellation_token.clone()
     }
 
-    fn finish<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<(), codex_tool_runtime_api::ToolError>> + Send + 'a>> {
+    fn finish<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<(), ToolRuntimeNetworkApprovalError>> + Send + 'a>> {
         Box::pin(async move {
             match &self.state {
                 SessionToolNetworkApprovalState::Immediate(registration_id) => {
@@ -76,13 +84,46 @@ impl codex_thread_api::ToolRuntimeNetworkApprovalHandle for SessionToolNetworkAp
                     else {
                         return Ok(());
                     };
-                    self.service.finish_call(&registration_id).await
+                    self.service
+                        .finish_call(&registration_id)
+                        .await
+                        .map_err(map_network_approval_error)
                 }
                 SessionToolNetworkApprovalState::Deferred(deferred) => {
-                    deferred.finish(&self.service).await
+                    deferred
+                        .finish(&self.service)
+                        .await
+                        .map_err(map_network_approval_error)
                 }
             }
         })
+    }
+}
+
+fn map_network_approval_error(
+    err: codex_tool_runtime_api::ToolError,
+) -> ToolRuntimeNetworkApprovalError {
+    match err {
+        codex_tool_runtime_api::ToolError::Rejected(message) => {
+            ToolRuntimeNetworkApprovalError::Rejected(message)
+        }
+        codex_tool_runtime_api::ToolError::Codex(err) => {
+            ToolRuntimeNetworkApprovalError::Codex(err)
+        }
+    }
+}
+
+struct CommandApplyPatchEnvironmentAdapter {
+    inner: Arc<dyn codex_tool_runtime_api::ApplyPatchEnvironment>,
+}
+
+impl codex_command_service_api::ApplyPatchEnvironment for CommandApplyPatchEnvironmentAdapter {
+    fn environment_id(&self) -> &str {
+        self.inner.environment_id()
+    }
+
+    fn filesystem(&self) -> Arc<dyn codex_file_system::ExecutorFileSystem> {
+        self.inner.filesystem()
     }
 }
 
@@ -98,6 +139,37 @@ fn map_network_trigger(
         additional_permissions: trigger.additional_permissions,
         justification: trigger.justification,
         tty: trigger.tty,
+    }
+}
+
+fn to_command_apply_patch_environment(
+    value: codex_tool_runtime_api::ResolvedApplyPatchEnvironment,
+) -> ResolvedApplyPatchEnvironment {
+    ResolvedApplyPatchEnvironment {
+        cwd: value.cwd,
+        environment: Arc::new(CommandApplyPatchEnvironmentAdapter {
+            inner: value.environment,
+        }),
+    }
+}
+
+fn to_command_runtime_shell(value: codex_tool_runtime_api::RuntimeShell) -> RuntimeShell {
+    RuntimeShell {
+        shell_type: value.shell_type,
+        shell_path: value.shell_path,
+        shell_snapshot: value
+            .shell_snapshot
+            .map(|snapshot| codex_command_service_api::RuntimeShellSnapshot {
+                path: snapshot.path,
+                cwd: snapshot.cwd,
+            }),
+    }
+}
+
+fn to_command_resolved_exec_command(value: codex_tool_runtime_api::ResolvedExecCommand) -> ResolvedExecCommand {
+    ResolvedExecCommand {
+        command: value.command,
+        shell_type: value.shell_type,
     }
 }
 
@@ -129,8 +201,9 @@ impl CommandServiceTurnCapability for TurnContext {
     fn resolve_environment(
         &self,
         environment_id: Option<&str>,
-    ) -> Result<Option<codex_tool_runtime_api::ResolvedApplyPatchEnvironment>, codex_tool_types::FunctionCallError> {
+    ) -> Result<Option<ResolvedApplyPatchEnvironment>, codex_tool_types::FunctionCallError> {
         self.resolve_apply_patch_environment(environment_id)
+            .map(|value| value.map(to_command_apply_patch_environment))
     }
 
     fn file_system_sandbox_context(
@@ -155,7 +228,7 @@ impl CommandServiceTurnCapability for TurnContext {
         crate::guardian::routes_approval_to_guardian(self)
     }
 
-    fn tool_sandbox_context(&self) -> codex_tool_runtime_api::ToolSandboxContext {
+    fn tool_sandbox_context(&self) -> ToolSandboxContext {
         self.tool_sandbox_context()
     }
 
@@ -217,7 +290,7 @@ impl CommandServiceSessionCapability for Session {
         self.sandbox_runtime()
     }
 
-    fn runtime_shell(&self) -> codex_tool_runtime_api::RuntimeShell {
+    fn runtime_shell(&self) -> RuntimeShell {
         self.runtime_shell()
     }
 
@@ -232,7 +305,7 @@ impl CommandServiceSessionCapability for Session {
     fn create_exec_approval_requirement<'a>(
         &'a self,
         request: codex_permissions_runtime::ExecPolicyApprovalRequest<'a>,
-    ) -> CommandServiceFuture<'a, codex_tool_runtime_api::ExecApprovalRequirement> {
+    ) -> CommandServiceFuture<'a, ExecApprovalRequirement> {
         Box::pin(async move { self.create_exec_approval_requirement(request).await })
     }
 
@@ -277,16 +350,16 @@ impl CommandServiceSessionCapability for Session {
 
     fn tool_permission_grants<'a>(
         &'a self,
-    ) -> CommandServiceFuture<'a, codex_tool_runtime_api::ToolPermissionGrants> {
+    ) -> CommandServiceFuture<'a, ToolPermissionGrants> {
         Box::pin(async move { self.tool_permission_grants().await })
     }
 
-    fn resolve_model_shell(&self, shell: &std::path::Path) -> codex_tool_runtime_api::RuntimeShell {
+    fn resolve_model_shell(&self, shell: &std::path::Path) -> RuntimeShell {
         let mut shell = crate::runtime_shell_model::get_shell_by_model_provided_path(
             &shell.to_path_buf(),
         );
         shell.shell_snapshot = crate::runtime_shell_model::empty_shell_snapshot_receiver();
-        crate::runtime_shell::runtime_shell(&shell)
+        to_command_runtime_shell(crate::runtime_shell::runtime_shell(&shell))
     }
 
     fn resolve_exec_command(
@@ -294,12 +367,30 @@ impl CommandServiceSessionCapability for Session {
         turn: &dyn CommandServiceTurnCapability,
         command: &str,
         login: Option<bool>,
-        model_shell: Option<&codex_tool_runtime_api::RuntimeShell>,
+        model_shell: Option<&RuntimeShell>,
     ) -> Result<ResolvedExecCommand, String> {
         let Some(turn) = turn_context(turn) else {
             return Err("command service capability received an unsupported turn context".to_string());
         };
-        self.resolve_exec_command(turn, command, login, model_shell)
+        let model_shell = model_shell.map(|shell| codex_tool_runtime_api::RuntimeShell {
+            shell_type: shell.shell_type,
+            shell_path: shell.shell_path.clone(),
+            shell_snapshot: shell
+                .shell_snapshot
+                .as_ref()
+                .map(|snapshot| codex_tool_runtime_api::RuntimeShellSnapshot {
+                    path: snapshot.path.clone(),
+                    cwd: snapshot.cwd.clone(),
+                }),
+        });
+        <Session as codex_tool_runtime_api::ExecCommandSessionRuntime<TurnContext>>::resolve_exec_command(
+            self,
+            turn,
+            command,
+            login,
+            model_shell.as_ref(),
+        )
+        .map(to_command_resolved_exec_command)
     }
 
     fn shell_env_overrides(&self) -> std::collections::HashMap<String, String> {
@@ -338,7 +429,12 @@ impl CommandServiceSessionCapability for Session {
                 self,
                 turn,
                 permission_request_run_id,
-                permission_request_hook_payload(permission_request),
+                permission_request_hook_payload(codex_tool_runtime_api::PermissionRequestPayload {
+                    tool_name: codex_tool_runtime_api::HookToolName::new(
+                        permission_request.tool_name.name().to_string(),
+                    ),
+                    tool_input: permission_request.tool_input,
+                }),
             )
             .await
         })
@@ -351,9 +447,12 @@ impl CommandServiceSessionCapability for Session {
         spec: Option<NetworkApprovalSpec<ToolRuntimeNetworkApprovalTrigger>>,
     ) -> CommandServiceFuture<'a, Option<Arc<dyn ToolRuntimeNetworkApprovalHandle>>> {
         Box::pin(async move {
-            let spec = spec.map(|spec| NetworkApprovalSpec {
+            let spec = spec.map(|spec| crate::network_approval::NetworkApprovalSpec {
                 network: spec.network,
-                mode: spec.mode,
+                mode: match spec.mode {
+                    CommandNetworkApprovalMode::Immediate => codex_thread_api::NetworkApprovalMode::Immediate,
+                    CommandNetworkApprovalMode::Deferred => codex_thread_api::NetworkApprovalMode::Deferred,
+                },
                 trigger: map_network_trigger(spec.trigger),
                 command: spec.command,
             });
@@ -362,14 +461,14 @@ impl CommandServiceSessionCapability for Session {
             let mode = active.mode();
             let cancellation_token = active.cancellation_token();
             let state = match mode {
-                codex_tool_runtime_api::NetworkApprovalMode::Deferred => {
+                codex_thread_api::NetworkApprovalMode::Deferred => {
                     SessionToolNetworkApprovalState::Deferred(
                         active
                             .into_deferred()
                             .expect("deferred network approval should convert to deferred state"),
                     )
                 }
-                codex_tool_runtime_api::NetworkApprovalMode::Immediate => {
+                codex_thread_api::NetworkApprovalMode::Immediate => {
                     SessionToolNetworkApprovalState::Immediate(Mutex::new(
                         active.registration_id().map(ToString::to_string),
                     ))
@@ -377,7 +476,14 @@ impl CommandServiceSessionCapability for Session {
             };
             Some(Arc::new(SessionToolNetworkApprovalHandle {
                 service: Arc::clone(&self.services.network_approval),
-                mode,
+                mode: match mode {
+                    codex_thread_api::NetworkApprovalMode::Immediate => {
+                        codex_thread_api::NetworkApprovalMode::Immediate
+                    }
+                    codex_thread_api::NetworkApprovalMode::Deferred => {
+                        codex_thread_api::NetworkApprovalMode::Deferred
+                    }
+                },
                 cancellation_token,
                 state,
             }) as Arc<dyn ToolRuntimeNetworkApprovalHandle>)
@@ -427,7 +533,7 @@ impl CommandServiceSessionCapability for Session {
         network_approval_context: Option<NetworkApprovalContext>,
         proposed_execpolicy_amendment: Option<codex_protocol::approvals::ExecPolicyAmendment>,
         additional_permissions: Option<AdditionalPermissionProfile>,
-        cache_keys: Vec<codex_tool_runtime_api::UnifiedExecApprovalKey>,
+        cache_keys: Vec<UnifiedExecApprovalKey>,
     ) -> CommandServiceFuture<'a, ReviewDecision> {
         Box::pin(async move {
             let turn = turn_context(turn).expect("command service approval requires TurnContext");

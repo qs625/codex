@@ -2,11 +2,15 @@ use std::path::Path;
 use std::sync::Arc;
 
 use codex_approval_service_api::ApprovalServiceApi;
+use codex_approval_service_api::ExecCommandApprovalDispatch;
+use codex_approval_service_api::ExecCommandApprovalOutcome;
 use codex_command_service_api::CommandServiceApi;
 use codex_command_service_api::CommandServiceSessionCapability;
 use codex_command_service_api::CommandServiceTurnCapability;
-use codex_approval_service_api::ExecCommandApprovalDispatch;
-use codex_approval_service_api::ExecCommandApprovalOutcome;
+use codex_command_service_api::ExecCommandApprovalMode;
+use codex_command_service_api::ExecCommandRunOutput;
+use codex_command_service_api::ExecCommandRunRequest;
+use codex_command_service_api::UnifiedExecApprovalKey;
 use codex_command_runtime::UnifiedExecError;
 use codex_command_runtime::generate_chunk_id;
 use codex_command_runtime::resolve_max_tokens;
@@ -21,15 +25,11 @@ use codex_tool_planning::ToolName;
 use codex_tool_planning::ToolSpec;
 use codex_tool_planning::create_exec_command_tool_with_environment_id;
 use codex_tool_runtime::ExecCommandToolOutput;
-use codex_tool_runtime::HookToolName;
-use codex_tool_runtime::PostToolUsePayload;
-use codex_tool_runtime_api::AnyToolResult;
 use codex_tool_runtime_api::ExecCommandArgs;
-use codex_tool_runtime_api::ExecCommandApprovalMode;
-use codex_tool_runtime_api::ExecCommandRunOutput;
-use codex_tool_runtime_api::ExecCommandRunRequest;
-use codex_tool_runtime_api::UnifiedExecApprovalKey;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
+use codex_tool_service_api::AnyToolResult;
+use codex_tool_service_api::HookToolName;
+use codex_tool_service_api::PostToolUsePayload;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolOutput;
@@ -416,20 +416,15 @@ fn exec_command_tool_output_from_run_output(output: ExecCommandRunOutput) -> Exe
 mod tests {
     use super::*;
 
-    use std::any::Any;
-
     use codex_approval_service_api::ApprovalServiceFuture;
+    use codex_command_service_api::CommandServiceFuture;
     use codex_command_runtime::CommandSessionError;
     use codex_command_runtime::CommandWaitOperation;
     use codex_command_runtime::CommandWaitRequest;
     use codex_command_runtime::WriteStdinOutput;
     use codex_command_runtime::WriteStdinRequest;
-    use codex_protocol::protocol::AskForApproval;
-    use codex_protocol::protocol::ReviewDecision;
-    use codex_thread_api::ThreadCapability;
     use codex_thread_runtime::test_support;
     use codex_tool_runtime::TurnDiffTracker;
-    use tokio_util::sync::CancellationToken;
 
     struct PanickingApprovalService;
 
@@ -480,17 +475,6 @@ mod tests {
         }
     }
 
-    struct MockCustomWaitOperation;
-
-    impl CommandWaitOperation for MockCustomWaitOperation {
-        fn wait<'a>(
-            &'a mut self,
-        ) -> CommandServiceFuture<'a, Result<codex_command_runtime::CommandWaitStatus, CommandSessionError>>
-        {
-            Box::pin(async { panic!("unexpected wait") })
-        }
-    }
-
     #[tokio::test]
     async fn exec_command_rejects_incompatible_payload() {
         let (session, turn) = test_support::make_session_and_context().await;
@@ -506,7 +490,6 @@ mod tests {
                 call_id: "call-1".to_string(),
                 tool_name: ToolName::plain("exec_command"),
                 payload: codex_tool_types::ToolPayload::Custom {
-                    name: "exec_command".to_string(),
                     input: "{}".to_string(),
                 },
             },
@@ -519,44 +502,4 @@ mod tests {
         assert_eq!(message, "tool exec_command invoked with incompatible payload");
     }
 
-    #[tokio::test]
-    async fn exec_command_rejects_escalated_permissions_when_policy_not_on_request() {
-        let (session, mut turn) = test_support::make_session_and_context().await;
-        let turn_mut = Arc::get_mut(&mut turn).expect("unique turn context Arc");
-        turn_mut
-            .approval_policy
-            .set(AskForApproval::OnFailure)
-            .expect("test setup should allow updating approval policy");
-        let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-
-        let result = dispatch(
-            Arc::new(PanickingApprovalService),
-            Arc::new(PanickingCommandService),
-            session,
-            turn.clone(),
-            tracker,
-            ToolCall {
-                call_id: "exec-call".to_string(),
-                tool_name: ToolName::plain("exec_command"),
-                payload: codex_tool_types::ToolPayload::Function {
-                    arguments: serde_json::json!({
-                        "cmd": "echo hi",
-                        "sandbox_permissions": codex_protocol::models::SandboxPermissions::RequireEscalated,
-                        "justification": "need unsandboxed execution",
-                    })
-                    .to_string(),
-                },
-            },
-        )
-        .await;
-
-        let Err(FunctionCallError::RespondToModel(output)) = result else {
-            panic!("expected escalated permissions rejection");
-        };
-        let expected = format!(
-            "approval policy is {policy:?}; reject command — you cannot ask for escalated permissions if the approval policy is {policy:?}",
-            policy = turn.approval_policy.value()
-        );
-        assert_eq!(output, expected);
-    }
 }

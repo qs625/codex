@@ -104,10 +104,11 @@ fn exec_like_command_for_parts(
                     shell.shell_snapshot = crate::runtime_shell_model::empty_shell_snapshot_receiver();
                     crate::runtime_shell::runtime_shell(&shell)
                 });
+                let session_shell = crate::runtime_shell::runtime_shell(session.user_shell().as_ref());
                 let resolved = resolve_exec_command_for_parts(
                     params.cmd.as_str(),
                     params.login,
-                    &session.runtime_shell(),
+                    &session_shell,
                     model_shell.as_ref(),
                     &turn.unified_exec_shell_mode(),
                     turn.allow_login_shell(),

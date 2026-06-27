@@ -2,8 +2,7 @@
 //!
 //! Responsibilities
 //! - Manages interactive processes (create, reuse, buffer output with caps).
-//! - Uses the shared ToolOrchestrator to handle approval, sandbox selection, and
-//!   retry semantics in a single, descriptive flow.
+//! - 在 command-service 内直接处理 approval、sandbox 选择和 retry 逻辑。
 //! - Spawns the PTY from a sandbox-transformed `ExecRequest`; on sandbox denial,
 //!   retries without sandbox when policy allows (no re‑prompt thanks to caching).
 //! - Uses the shared `is_likely_sandbox_denied` heuristic to keep denial messages
@@ -25,8 +24,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Weak;
 
-use crate::adapters::SessionCapabilityAdapter;
-use crate::adapters::TurnCapabilityAdapter;
 pub(crate) use codex_command_runtime::CommandNotificationFilter;
 pub(crate) use codex_command_runtime::CommandNotificationKind;
 pub(crate) use codex_command_runtime::CommandNotificationState;
@@ -53,40 +50,36 @@ use tokio::sync::Mutex;
 
 use crate::exec_request::SandboxPermissions;
 mod async_watcher;
-mod orchestrator_host;
+mod events;
 mod process_manager;
-mod runtime_host;
-mod zsh_fork_backend;
 
 pub(crate) fn set_deterministic_process_ids_for_tests(enabled: bool) {
     process_manager::set_deterministic_process_ids_for_tests(enabled);
 }
 
 pub(crate) use codex_command_runtime::ExecServerEnvConfig;
-#[cfg(test)]
-pub(crate) use codex_command_runtime::NoopSpawnLifecycle;
-#[cfg(unix)]
-pub(crate) use codex_command_runtime::SpawnLifecycle;
 pub(crate) use codex_command_runtime::SpawnLifecycleHandle;
 pub(crate) use codex_command_runtime::UnifiedExecError;
 pub(crate) use codex_command_runtime::UnifiedExecProcess;
-pub(crate) use codex_tool_runtime_api::ExecCommandArgs;
-pub(crate) use codex_tool_runtime_api::ExecCommandApprovalMode;
-pub(crate) use codex_tool_runtime_api::ExecApprovalRequirement;
+pub(crate) use codex_command_service_api::ExecApprovalRequirement;
+pub(crate) use codex_command_service_api::ExecCommandApprovalMode;
+pub(crate) use codex_command_service_api::ExecCommandRunRequest;
+use codex_command_service_api::CommandServiceSessionCapability;
+use codex_command_service_api::CommandServiceTurnCapability;
 pub(crate) use process_manager::UnifiedExecCommandSessionController;
 
 pub(crate) const MAX_UNIFIED_EXEC_PROCESSES: usize = 64;
 
 pub(crate) struct UnifiedExecContext {
-    pub session: Arc<SessionCapabilityAdapter>,
-    pub turn: Arc<TurnCapabilityAdapter>,
+    pub session: Arc<dyn CommandServiceSessionCapability>,
+    pub turn: Arc<dyn CommandServiceTurnCapability>,
     pub call_id: String,
 }
 
 impl UnifiedExecContext {
     pub fn new(
-        session: Arc<SessionCapabilityAdapter>,
-        turn: Arc<TurnCapabilityAdapter>,
+        session: Arc<dyn CommandServiceSessionCapability>,
+        turn: Arc<dyn CommandServiceTurnCapability>,
         call_id: String,
     ) -> Self {
         Self {
@@ -122,7 +115,7 @@ pub(crate) struct ExecCommandRequest {
 
 impl ExecCommandRequest {
     pub(crate) fn from_run_request(
-        request: codex_tool_runtime_api::ExecCommandRunRequest,
+        request: ExecCommandRunRequest,
         network: Option<SharedNetworkProxyRuntime>,
     ) -> Self {
         Self {
@@ -143,7 +136,14 @@ impl ExecCommandRequest {
             justification: request.justification,
             prefix_rule: request.prefix_rule,
             notify_on: request.notify_on,
-            approval_mode: request.approval_mode,
+            approval_mode: match request.approval_mode {
+                codex_command_service_api::ExecCommandApprovalMode::ContinueInRuntime => {
+                    ExecCommandApprovalMode::ContinueInRuntime
+                }
+                codex_command_service_api::ExecCommandApprovalMode::AlreadyApproved => {
+                    ExecCommandApprovalMode::AlreadyApproved
+                }
+            },
             exec_approval_requirement: request.exec_approval_requirement,
         }
     }
@@ -239,7 +239,7 @@ struct ProcessEntry {
     process_id: i32,
     tty: bool,
     network_approval: Option<Arc<dyn ToolRuntimeNetworkApprovalHandle>>,
-    session: Weak<SessionCapabilityAdapter>,
+    session: Weak<dyn CommandServiceSessionCapability>,
     last_used: tokio::time::Instant,
     transcript: Arc<Mutex<HeadTailBuffer>>,
     notification_state: Arc<CommandNotificationState>,

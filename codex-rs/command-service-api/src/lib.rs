@@ -1,4 +1,26 @@
+mod command_contracts;
+
+pub use command_contracts::ApplyPatchEnvironment;
+pub use command_contracts::ExecApprovalRequirement;
+pub use command_contracts::ExecCommandApprovalMode;
+pub use command_contracts::ExecCommandRunOutput;
+pub use command_contracts::ExecCommandRunRequest;
+pub use command_contracts::HookToolName;
+pub use command_contracts::NetworkApprovalMode;
+pub use command_contracts::NetworkApprovalSpec;
+pub use command_contracts::PermissionRequestPayload;
+pub use command_contracts::ResolvedApplyPatchEnvironment;
+pub use command_contracts::ResolvedExecCommand;
+pub use command_contracts::ResolvedExecCommandEnvironment;
+pub use command_contracts::RuntimeShell;
+pub use command_contracts::RuntimeShellSnapshot;
+pub use command_contracts::ToolPermissionGrants;
+pub use command_contracts::ToolSandboxContext;
+pub use command_contracts::UnifiedExecApprovalKey;
+
+use std::collections::HashMap;
 use std::future::Future;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -19,27 +41,16 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandBeginEvent;
 use codex_protocol::protocol::ExecCommandEndEvent;
-use codex_protocol::protocol::TerminalInteractionEvent;
 use codex_protocol::protocol::ReviewDecision;
+use codex_protocol::protocol::TerminalInteractionEvent;
 use codex_sandboxing_api::SharedSandboxRuntime;
+use codex_thread_api::ThreadCapability;
 use codex_thread_api::ToolRuntimeNetworkApprovalHandle;
 use codex_thread_api::ToolRuntimeNetworkApprovalTrigger;
-use codex_thread_api::ThreadCapability;
-use codex_tool_config::UnifiedExecShellMode;
 use codex_tool_config::ToolUserShellType;
-use codex_tool_runtime_api::ExecCommandRunOutput;
-use codex_tool_runtime_api::ExecCommandRunRequest;
-use codex_tool_runtime_api::NetworkApprovalSpec;
-use codex_tool_runtime_api::PermissionRequestPayload;
-use codex_tool_runtime_api::ResolvedExecCommand;
-use codex_tool_runtime_api::ResolvedExecCommandEnvironment;
-use codex_tool_runtime_api::RuntimeShell;
-use codex_tool_runtime_api::ToolSandboxContext;
-use codex_tool_runtime_api::ToolPermissionGrants;
+use codex_tool_config::UnifiedExecShellMode;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::TruncationPolicy;
-use std::collections::HashMap;
-use std::path::Path;
 use tokio::sync::watch;
 
 /// Boxed future returned by object-safe command service APIs.
@@ -131,7 +142,7 @@ pub trait CommandServiceTurnCapability: ThreadCapability + Send + Sync + 'static
     fn resolve_environment(
         &self,
         environment_id: Option<&str>,
-    ) -> Result<Option<codex_tool_runtime_api::ResolvedApplyPatchEnvironment>, codex_tool_types::FunctionCallError>;
+    ) -> Result<Option<ResolvedApplyPatchEnvironment>, codex_tool_types::FunctionCallError>;
 
     fn file_system_sandbox_context(
         &self,
@@ -223,11 +234,9 @@ pub trait CommandServiceSessionCapability: Send + Sync + 'static {
     fn create_exec_approval_requirement<'a>(
         &'a self,
         request: codex_permissions_runtime::ExecPolicyApprovalRequest<'a>,
-    ) -> CommandServiceFuture<'a, codex_tool_runtime_api::ExecApprovalRequirement>;
+    ) -> CommandServiceFuture<'a, ExecApprovalRequirement>;
 
-    fn strict_auto_review_enabled_for_turn<'a>(
-        &'a self,
-    ) -> CommandServiceFuture<'a, bool>;
+    fn strict_auto_review_enabled_for_turn<'a>(&'a self) -> CommandServiceFuture<'a, bool>;
 
     fn guardian_rejection_message<'a>(
         &'a self,
@@ -303,7 +312,7 @@ pub trait CommandServiceSessionCapability: Send + Sync + 'static {
         network_approval_context: Option<codex_protocol::protocol::NetworkApprovalContext>,
         proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
         additional_permissions: Option<codex_protocol::models::AdditionalPermissionProfile>,
-        cache_keys: Vec<codex_tool_runtime_api::UnifiedExecApprovalKey>,
+        cache_keys: Vec<UnifiedExecApprovalKey>,
     ) -> CommandServiceFuture<'a, ReviewDecision>;
 
     fn unregister_network_approval<'a>(
