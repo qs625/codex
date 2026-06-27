@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use codex_command_runtime::resolve_aggregated_output;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::exec_output::StreamOutput;
 use codex_protocol::models::CommandExecutionNotificationKind;
@@ -18,6 +17,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use tokio::sync::Mutex;
 
 use super::HeadTailBuffer;
+use super::resolve_aggregated_output;
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn emit_unified_exec_begin(

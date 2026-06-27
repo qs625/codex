@@ -16,6 +16,7 @@ use codex_protocol::ThreadId;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::Submission;
 use codex_rollout::StateDbHandle;
+use codex_state_api::SharedStateDbRuntime;
 use codex_terminal_detection::user_agent;
 use rmcp::model::CallToolRequestParams;
 use rmcp::model::CallToolResult;
@@ -84,7 +85,9 @@ impl MessageProcessor {
             auth_manager.clone(),
             model_provider_auth_manager(Some(auth_manager)),
         );
-        let shared_state_db = state_db.clone();
+        let shared_state_db: Option<SharedStateDbRuntime> = state_db
+            .clone()
+            .map(|state_db| state_db as SharedStateDbRuntime);
         let thread_service = Arc::new(
             ThreadService::new_with_workflow_runs_and_openai_file_uploader(
                 config.as_ref(),

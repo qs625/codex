@@ -21,8 +21,7 @@ use codex_context_manager::ContextualUserFragment;
 use codex_core_plugins::PluginsManager;
 use codex_core_skills::SkillsManager;
 use codex_rollout_api::TurnAborted;
-use codex_tool_runtime::format_exec_output_str;
-use codex_tool_runtime::TurnDiffTracker;
+use codex_thread_api::TurnDiffTracker;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCallSource;
 use codex_tool_types::ToolPayload;
@@ -38,6 +37,7 @@ use codex_models_manager::test_support::construct_model_info_offline_for_tests;
 use codex_models_manager::test_support::get_model_offline_for_tests;
 use codex_otel::SessionTelemetry;
 use codex_protocol::AgentPath;
+use crate::tool_output_utils::format_exec_output_str;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ServiceTier;
@@ -569,7 +569,7 @@ pub(crate) async fn dispatch_exec_command_via_tool_service(
         Arc::clone(&session),
         Arc::clone(&turn_context),
         call_id,
-        codex_tool_planning::ToolName::plain("exec_command"),
+        codex_tool_types::ToolName::plain("exec_command"),
         ToolCallSource::Direct,
         ToolPayload::Function {
             arguments: arguments.to_string(),
@@ -592,7 +592,7 @@ pub(crate) async fn dispatch_tool_via_tool_service(
     session: Arc<Session>,
     turn_context: Arc<TurnContext>,
     call_id: &str,
-    tool_name: codex_tool_planning::ToolName,
+    tool_name: codex_tool_types::ToolName,
     source: ToolCallSource,
     payload: ToolPayload,
 ) -> Result<codex_tool_service_api::AnyToolResult, FunctionCallError> {
@@ -604,7 +604,7 @@ pub(crate) async fn dispatch_tool_via_tool_service(
         Arc::clone(&turn_context),
         tool_inputs,
         tracker,
-        codex_tool_planning::ToolCall {
+        codex_tool_types::ToolCall {
             call_id: call_id.to_string(),
             tool_name,
             payload,
@@ -902,241 +902,6 @@ async fn danger_full_access_turns_do_not_expose_managed_network_proxy() -> anyho
     Ok(())
 }
 
-#[tokio::test]
-async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> anyhow::Result<()> {
-    #[derive(Default)]
-    struct ProbeToolRuntime {
-        enforce_managed_network: Vec<bool>,
-    }
-
-    impl codex_tool_runtime_api::Approvable<()> for ProbeToolRuntime {
-        type Session = Arc<crate::session::session::Session>;
-        type Turn = Arc<crate::session::turn_context::TurnContext>;
-        type ApprovalKey = String;
-
-        fn approval_keys(&self, _req: &()) -> Vec<Self::ApprovalKey> {
-            vec!["probe".to_string()]
-        }
-
-        fn start_approval_async<'a>(
-            &'a mut self,
-            _req: &'a (),
-            _ctx: codex_tool_runtime_api::ApprovalCtx<'a, Arc<crate::session::session::Session>, Arc<crate::session::turn_context::TurnContext>>,
-        ) -> futures::future::BoxFuture<'a, ReviewDecision> {
-            Box::pin(async { ReviewDecision::Approved })
-        }
-    }
-
-    impl codex_tool_runtime_api::Sandboxable for ProbeToolRuntime {
-        fn sandbox_preference(&self) -> codex_sandboxing_api::SandboxablePreference {
-            codex_sandboxing_api::SandboxablePreference::Auto
-        }
-    }
-
-    impl codex_tool_runtime_api::ToolRuntime<(), ()> for ProbeToolRuntime {
-        type NetworkApprovalTrigger = codex_thread_api::ToolRuntimeNetworkApprovalTrigger;
-
-        async fn run(
-            &mut self,
-            _req: &(),
-            attempt: &codex_tool_runtime_api::SandboxAttempt<'_>,
-            _ctx: &codex_tool_runtime_api::ToolCtx<Arc<crate::session::session::Session>, Arc<crate::session::turn_context::TurnContext>>,
-        ) -> Result<(), codex_thread_api::ToolRuntimeNetworkApprovalError> {
-            self.enforce_managed_network
-                .push(attempt.enforce_managed_network);
-            Ok(())
-        }
-    }
-
-    #[derive(Clone, Copy, Default)]
-    struct ProbeToolOrchestratorHost;
-
-    impl
-        codex_tool_runtime_api::ToolOrchestratorHost<
-            Arc<crate::session::session::Session>,
-            Arc<crate::session::turn_context::TurnContext>,
-            codex_thread_api::ToolRuntimeNetworkApprovalTrigger,
-        > for ProbeToolOrchestratorHost
-    {
-        type ActiveNetworkApproval = Arc<dyn codex_thread_api::ToolRuntimeNetworkApprovalHandle>;
-        type DeferredNetworkApproval = Arc<dyn codex_thread_api::ToolRuntimeNetworkApprovalHandle>;
-
-        fn strict_auto_review_enabled_for_turn<'a>(
-            &'a self,
-            session: &'a Arc<crate::session::session::Session>,
-        ) -> impl std::future::Future<Output = bool> + Send + 'a {
-            session.strict_auto_review_enabled_for_turn()
-        }
-
-        fn routes_approval_to_guardian(
-            &self,
-            turn: &Arc<crate::session::turn_context::TurnContext>,
-        ) -> bool {
-            crate::guardian::routes_approval_to_guardian(turn.as_ref())
-        }
-
-        fn new_guardian_review_id(&self) -> String {
-            uuid::Uuid::new_v4().to_string()
-        }
-
-        fn guardian_rejection_message<'a>(
-            &'a self,
-            session: &'a Arc<crate::session::session::Session>,
-            review_id: &'a str,
-        ) -> impl std::future::Future<Output = String> + Send + 'a {
-            session.guardian_rejection_message(review_id)
-        }
-
-        fn guardian_timeout_message(&self) -> String {
-            "guardian review timed out".to_string()
-        }
-
-        fn run_permission_request_hooks<'a>(
-            &'a self,
-            session: &'a Arc<crate::session::session::Session>,
-            turn: &'a Arc<crate::session::turn_context::TurnContext>,
-            permission_request_run_id: &'a str,
-            permission_request: codex_tool_runtime_api::PermissionRequestPayload,
-        ) -> impl std::future::Future<Output = Option<codex_hooks_api::PermissionRequestDecision>> + Send + 'a
-        {
-            session.run_permission_request_hooks(turn, permission_request_run_id, permission_request)
-        }
-
-        fn begin_network_approval<'a>(
-            &'a self,
-            session: &'a Arc<crate::session::session::Session>,
-            turn_id: &'a str,
-            managed_network_active: bool,
-            spec: Option<
-                codex_tool_runtime_api::NetworkApprovalSpec<
-                    codex_thread_api::ToolRuntimeNetworkApprovalTrigger,
-                >,
-            >,
-        ) -> impl std::future::Future<Output = Option<Self::ActiveNetworkApproval>> + Send + 'a {
-            session.begin_tool_network_approval(turn_id, managed_network_active, spec)
-        }
-
-        fn active_network_approval_mode(
-            &self,
-            active: &Self::ActiveNetworkApproval,
-        ) -> codex_thread_api::NetworkApprovalMode {
-            active.mode()
-        }
-
-        fn active_network_approval_cancellation_token(
-            &self,
-            active: &Self::ActiveNetworkApproval,
-        ) -> tokio_util::sync::CancellationToken {
-            active.cancellation_token()
-        }
-
-        fn into_deferred_network_approval(
-            &self,
-            active: Self::ActiveNetworkApproval,
-        ) -> Option<Self::DeferredNetworkApproval> {
-            (active.mode() == codex_thread_api::NetworkApprovalMode::Deferred)
-                .then_some(active)
-        }
-
-        fn finish_immediate_network_approval<'a>(
-            &'a self,
-            _session: &'a Arc<crate::session::session::Session>,
-            active: Self::ActiveNetworkApproval,
-        ) -> impl std::future::Future<Output = Result<(), codex_thread_api::ToolRuntimeNetworkApprovalError>> + Send + 'a
-        {
-            async move { active.finish().await }
-        }
-
-        fn finish_deferred_network_approval<'a>(
-            &'a self,
-            _session: &'a Arc<crate::session::session::Session>,
-            deferred: Option<Self::DeferredNetworkApproval>,
-        ) -> impl std::future::Future<Output = Result<(), codex_thread_api::ToolRuntimeNetworkApprovalError>> + Send + 'a
-        {
-            async move {
-                let Some(deferred) = deferred else {
-                    return Ok(());
-                };
-                deferred.finish().await
-            }
-        }
-    }
-
-    let network_spec = crate::config::NetworkProxySpec::from_config_and_constraints(
-        NetworkProxyConfig::default(),
-        Some(NetworkConstraints {
-            enabled: Some(true),
-            ..Default::default()
-        }),
-        &permission_profile_for_sandbox_policy(&SandboxPolicy::DangerFullAccess),
-    )?;
-
-    let session = make_session_with_config(move |config| {
-        let cwd = config.cwd.clone();
-        config
-            .permissions
-            .set_legacy_sandbox_policy(SandboxPolicy::DangerFullAccess, cwd.as_path())
-            .expect("test setup should allow sandbox policy");
-        config.permissions.network = Some(network_spec);
-
-        let layers = config
-            .config_layer_stack
-            .get_layers(
-                ConfigLayerStackOrdering::LowestPrecedenceFirst,
-                /*include_disabled*/ true,
-            )
-            .into_iter()
-            .cloned()
-            .collect();
-        let mut requirements = config.config_layer_stack.requirements().clone();
-        requirements.network = Some(Sourced::new(
-            NetworkConstraints {
-                enabled: Some(true),
-                ..Default::default()
-            },
-            RequirementSource::CloudRequirements,
-        ));
-        let mut requirements_toml = config.config_layer_stack.requirements_toml().clone();
-        requirements_toml.network = Some(codex_config::NetworkRequirementsToml {
-            enabled: Some(true),
-            ..Default::default()
-        });
-        config.config_layer_stack = ConfigLayerStack::new(layers, requirements, requirements_toml)
-            .expect("rebuild config layer stack with network requirements");
-    })
-    .await?;
-
-    let turn = session.new_default_turn().await;
-    assert!(turn.network.is_none());
-
-    let mut orchestrator = codex_tool_runtime::ToolOrchestrator::new(
-        ProbeToolOrchestratorHost,
-        Arc::new(codex_sandboxing_api::DisabledSandboxRuntime),
-    );
-    let mut tool = ProbeToolRuntime::default();
-    let tool_ctx = codex_tool_runtime_api::ToolCtx {
-        session: Arc::clone(&session),
-        turn: Arc::clone(&turn),
-        call_id: "probe-call".to_string(),
-        tool_name: codex_tool_planning::ToolName::plain("probe"),
-    };
-    let sandbox_context = turn.tool_sandbox_context();
-
-    orchestrator
-        .run(
-            &mut tool,
-            &(),
-            &tool_ctx,
-            &sandbox_context,
-            AskForApproval::Never,
-        )
-        .await
-        .expect("probe runtime should succeed");
-
-    assert_eq!(tool.enforce_managed_network, vec![false]);
-
-    Ok(())
-}
 
 #[tokio::test]
 async fn workspace_write_turns_continue_to_expose_managed_network_proxy() -> anyhow::Result<()> {
@@ -10283,7 +10048,7 @@ async fn rejects_escalated_permissions_when_policy_not_on_request() {
         .await;
     assert!(matches!(
         exec_approval_requirement,
-        codex_tool_runtime_api::ExecApprovalRequirement::Skip { .. }
+        ExecApprovalRequirement::Skip { .. }
     ));
 }
 #[tokio::test]

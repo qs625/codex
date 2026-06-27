@@ -488,9 +488,9 @@ tool-service
 目标：
 
 - `tool-service` 不依赖 `thread-runtime`。
-- `tool-service` 本身实现 tool runtime 能力，不再拆出单独的 `tool-runtime` crate 作为中间层。
-- tool handler 需要 session 能力时，只依赖 `ToolSessionCapability` 这类 port API。
-- extension tool 属于 tool domain：extension registry/data 由 session/extension owner 提供，extension executor 收集和 tool handler 装配由 `tool-service` 完成，session runtime 不保留 extension tool implementation。
+- `tool-service` 本身实现 tool 执行能力，不再拆出单独的 `tool-runtime` crate 作为中间层。
+- tool 实现需要 session 能力时，只依赖 `ToolSessionCapability` 这类 port API。
+- extension tool 属于 tool domain：extension registry/data 由 session/extension owner 提供，extension executor 收集和 tool 装配由 `tool-service` 完成，session runtime 不保留 extension tool implementation。
 
 ### MCP
 
@@ -742,13 +742,13 @@ pub struct ExtensionToolBuildParams<'a> {
 }
 ```
 
-组合根和 session runtime 只传这组数据；把 contributor 转成 executable extension tool 的逻辑属于 `ToolService` / `tool-handlers` 内部实现。
+组合根和 session runtime 只传这组数据；把 contributor 转成 executable extension tool 的逻辑属于 `ToolService` 内部实现。
 
-#### Tool handler 依赖矩阵
+#### Tool 依赖矩阵
 
-当前 handler 的目标依赖关系应整理为下表。这里的 `构造期 Service API` 表示 handler 长期持有的全局 service 依赖；`调用期 Capability API` 表示一次 `dispatch_tool(...)` 调用内传入的 live runtime 能力或只读 turn view。
+当前各类 tool 实现的目标依赖关系应整理为下表。这里的 `构造期 Service API` 表示长期持有的全局 service 依赖；`调用期 Capability API` 表示一次 `dispatch_tool(...)` 调用内传入的 live runtime 能力或只读 turn view。
 
-| handler / tool | 构造期 Service API | 调用期 Capability API | 备注 |
+| tool | 构造期 Service API | 调用期 Capability API | 备注 |
 | --- | --- | --- | --- |
 | `ApplyPatchHandler` / `apply_patch` | `ApprovalApi`、`SandboxApi` | `ToolSessionCapability`、`ToolTurnCapability` | tool 编排属于 `ToolService`；`apply_patch` 只依赖 approval/sandbox service 和当前 turn capability，不再保留 `ApplyPatchHandlerHost` / `ToolOrchestratorApi`。 |
 | `ShellCommandHandler` / `shell_command` | `ApprovalApi`、`SandboxApi`、`CommandExecutionApi` | `ToolSessionCapability`、`ToolTurnCapability` | 现状混在 `ShellCommandHandlerHost` / `ShellExecutionHost`；目标是 tool-service 编排 approval+sandbox+command execution。 |
@@ -971,17 +971,15 @@ pub trait ExtensionSkillPluginApi: Send + Sync {
 职责：
 
 - tool registry、dispatch、pre/post hook 调用、tool event、tool read metrics、goal tool accounting。
-- extension tool executor discovery and handler assembly。
-- tool handlers 只依赖对应 domain API，不依赖 `Session` / `TurnContext` concrete。
-- 作为全局 singleton service 由 composition root 创建，并显式注入其依赖的全局 service API；例如当前 workflow 相关 handler 通过 `ToolService::new(Arc<dyn WorkflowApi>)` 注入，而不是在 `build_tool_router()` 内部隐式创建 `WorkflowService`。
+- extension tool executor discovery and tool assembly。
+- tool 实现只依赖对应 domain API，不依赖 `Session` / `TurnContext` concrete。
+- 作为全局 singleton service 由 composition root 创建，并显式注入其依赖的全局 service API；例如当前 workflow 相关 tool 通过 `ToolService::new(Arc<dyn WorkflowApi>)` 注入，而不是在 `build_tool_router()` 内部隐式创建 `WorkflowService`。
 
-当前位置：
+当前位置（历史遗留，当前目标是继续收口到 `tool-service` / `tool-service-api`）：
 
-- `codex-rs/tool-handlers`
-- `codex-rs/tool-runtime`
-- `codex-rs/tool-runtime-api`
-- `codex-rs/thread-runtime/src/tools`
-- `codex-rs/thread-runtime/src/session_tool_domain_host.rs`
+- `codex-rs/tool-service`
+- `codex-rs/tool-service-api`
+- `codex-rs/thread-runtime/src` 中残留的 capability implementation
 
 目标 API/Service：
 
@@ -991,7 +989,7 @@ pub trait ExtensionSkillPluginApi: Send + Sync {
 
 目标形态：
 
-- 当前 `codex-rs/tool-runtime` 中属于 tool dispatch/runtime 的通用能力应并入目标 `tool-service` 或 `tool-api` 支撑层。
+- 原 `codex-rs/tool-runtime` 中属于 tool dispatch/runtime 的通用能力应并入目标 `tool-service` 或 `tool-api` 支撑层。
 - 不再保留“ToolService 依赖 ToolRuntime”的长期分层；service 本身就是 domain runtime implementation。
 - 只有纯 DTO、trait、registry planning、tool type 这类稳定 contract 保留在 API/foundation crate。
 - `thread-runtime` 只传 `ExtensionToolBuildParams`，不再收集 extension executors；`thread-runtime/src/tools/extension_tools.rs` 这类 tool implementation 文件不应恢复。
@@ -1134,7 +1132,6 @@ pub trait ExtensionSkillPluginApi: Send + Sync {
 当前位置：
 
 - `codex-rs/agent-runtime`
-- `codex-rs/agent-tool-handlers`
 - `codex-rs/thread-runtime/src/agent`
 
 目标 API/Service：
@@ -1262,11 +1259,11 @@ pub trait ExtensionSkillPluginApi: Send + Sync {
 
 - 已在 `codex-rs/session-api/src/lib.rs` 为 tool side effect 引入无泛型 `ToolSessionCapability`，并新增 `ToolTurnCapability` 作为当前 turn 的 API view。
 - `ToolSessionCapability` 由 `Session` 本体实现，`ToolTurnCapability` 由 `TurnContext` 本体实现；`thread-runtime` 不再创建绑定 `Session + TurnContext` 的 per-turn adapter。组合根把 `Weak<dyn ToolSessionCapability>` 注入 tool router，避免 ToolService 反向持有 concrete session/thread 类型。`CoreToolDispatchHost` 已删除，tool owner crate 中的 `SessionToolDispatchHost` 只保存注入的 Weak。
-- extension tool 已按 tool domain 收口一层：`ToolRouterBuildParams` 只携带 extension contributor/data，`ToolRuntimeBuildParams` 不再要求组合根或 thread-runtime 预收集 extension executors；executor 收集在 `codex-tool-handlers` 内部完成。
+- extension tool 已按 tool domain 收口一层：组合根只传 extension contributor/data；将其解析为 executable extension tool 的逻辑收敛在 `codex-tool-service` 内部完成。
 - `thread-runtime/src/function_tool.rs` 这类只包装 tool 类型的 thread-runtime facade 应删除；当前 `FunctionCallError` 已直接从 `codex_tool_types` 引用。
 - `thread-runtime/src/tools/context.rs` 已删除；不再用 thread-runtime 内部模块包装 `ToolInvocation` 类型。
 - `thread-runtime/src/tools/router.rs` 和 `thread-runtime/src/tools/router_tests.rs` 已删除；router implementation 和行为测试归 tool owner crate，session/thread 测试只在 `test_support` 中保留 composition helper。
-- `thread-runtime/src/tools/events.rs` 和 `thread-runtime/src/tools/orchestrator.rs` 已删除；event/orchestrator 相关 session capability implementation 暂移到 top-level `tool_event_host.rs` / `tool_orchestrator_host.rs`，避免 `tools/` 继续承载 router/orchestrator facade。旧 `ToolOrchestrator` wrapper 已删除，调用点直接使用 `codex_tool_runtime::ToolOrchestrator`。
+- `thread-runtime/src/tools/events.rs` 和 `thread-runtime/src/tools/orchestrator.rs` 已删除；event/orchestrator 相关 capability implementation 已迁回 owner crate，避免 `tools/` 继续承载 router/orchestrator facade。
 - `thread-runtime/src/shell_tool_host.rs` 和 `thread-runtime/src/unified_exec/tool_host.rs` 已删除；对应 impl 合并到 `session_tool_domain_host.rs`。这不是完成态，只是先消除分散 facade，下一步必须拆掉 `ToolDomainHost` 粗 contract。
 - `request_plugin_install` 已从粗 `ToolDomainHost` 拆出：`RequestPluginInstallHost` 不再继承 `ApplyPatchHandlerHost`，`codex-session-api` 提供 `SessionRequestPluginInstallCaller` / `SessionRequestPluginInstallHost`，由 `Session` 本体实现 caller，并通过 `ToolRuntimeBuildParams.request_plugin_install_host` 显式注入 tool assembly。
 - `thread-runtime/src/tools/registry.rs` 已收缩为 `cfg(test)` 单元测试辅助，不再作为 `test-support` feature surface。
@@ -1277,7 +1274,7 @@ pub trait ExtensionSkillPluginApi: Send + Sync {
 目标：
 
 - 以 tool domain 验证 API + Service + Weak capability + IoC 模式。
-- 将当前 tool runtime 能力合并进 `ToolService` 目标边界，不再把 `tool-runtime` 作为 service 之下的长期依赖层。
+- 将当前 tool 执行能力合并进 `ToolService` 目标边界，不再把 `tool-runtime` 作为 service 之下的长期依赖层。
 - 把 `thread-runtime/src/tools`、`session_tool_domain_host.rs`、`code_mode_host.rs` 相关 session side effect 分解为 `ToolSessionCapability` 或更窄的 owner capability。
 
 完成标准：
@@ -1285,8 +1282,8 @@ pub trait ExtensionSkillPluginApi: Send + Sync {
 - `ToolService` 不依赖 `Session` / `TurnContext` concrete。
 - `ToolService` 持有 `Weak<dyn ToolSessionCapability>`。
 - `upgrade()` 失败返回明确错误。
-- `codex-tool-handlers` normal/dev graph 不拉回 `codex-thread-runtime` 或 `codex-core`。
-- 目标设计中没有独立 `tool-runtime` service layer；当前 `codex-rs/tool-runtime` 若保留，只能作为迁移期 crate 或纯底层 helper。
+- `codex-tool-service` normal/dev graph 不拉回 `codex-thread-runtime` 或 `codex-core`。
+- 目标设计中没有独立 `tool-runtime` service layer；当前代码应只保留 `tool-service` / `tool-service-api` 两层。
 
 ### Phase 3：拆分 SessionServices 为 domain bundles
 

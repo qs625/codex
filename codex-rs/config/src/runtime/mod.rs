@@ -1,6 +1,6 @@
 use codex_auth_types::AuthManagerConfig;
 use codex_auth_types::ForcedChatgptWorkspaceIds;
-use codex_command_runtime::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
+use codex_command_service_api::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
 use codex_config_diagnostics::io_error_from_config_error;
 use codex_config_edit::ConfigEdit;
 use codex_config_edit::ConfigEditsBuilder;

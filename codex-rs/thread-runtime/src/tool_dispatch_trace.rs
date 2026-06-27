@@ -13,7 +13,7 @@ use codex_rollout_trace_api::ToolDispatchRequester;
 use codex_rollout_trace_api::ToolDispatchResult;
 use codex_rollout_trace_api::ToolDispatchTraceContext;
 use codex_thread_api::ToolSessionDispatchTrace;
-use codex_tool_planning::ToolName;
+use codex_tool_types::ToolName;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCallSource;
 use codex_tool_types::ToolOutput;

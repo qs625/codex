@@ -1,4 +1,4 @@
-use codex_command_runtime::DEFAULT_EXEC_OUTPUT_MAX_BYTES as EXEC_OUTPUT_MAX_BYTES;
+use crate::DEFAULT_EXEC_OUTPUT_MAX_BYTES as EXEC_OUTPUT_MAX_BYTES;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::exec_output::StreamOutput;
 use codex_sandboxing_api::SandboxType;

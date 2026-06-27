@@ -6,6 +6,7 @@
 //! runtime boundary.
 
 mod session_contracts;
+mod turn_diff_tracker;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -48,6 +49,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use tokio::sync::watch;
 
 pub use session_contracts::*;
+pub use turn_diff_tracker::TurnDiffTracker;
 
 /// Live thread configuration data needed by clients and persisted metadata paths.
 ///

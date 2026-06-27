@@ -10,18 +10,17 @@ use codex_code_mode_api::RuntimeResponse;
 use codex_code_mode_api::WaitOutcome;
 use codex_code_mode_api::WaitRequest;
 use codex_code_mode_api::parse_exec_source;
-use codex_command_runtime::resolve_max_tokens;
+use codex_command_service_api::resolve_max_tokens;
 use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
 use codex_thread_api::SessionCodeModeCaller;
 use codex_thread_api::ThreadRuntimeCapability;
 use codex_thread_runtime::ThreadRuntimeSession;
 use codex_thread_runtime::ThreadTurnContext;
-use codex_tool_planning::ToolSpec;
-use codex_tool_planning::code_mode_exec_plan_for_specs;
-use codex_tool_planning::collect_code_mode_tool_definitions;
-use codex_tool_planning::create_code_mode_tool;
-use codex_tool_planning::create_code_mode_wait_tool;
-use codex_tool_runtime::FunctionToolOutput;
+use crate::planning::ToolSpec;
+use crate::planning::code_mode_exec_plan_for_specs;
+use crate::planning::collect_code_mode_tool_definitions;
+use crate::planning::create_code_mode_tool;
+use crate::planning::create_code_mode_wait_tool;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_types::FunctionCallError;
@@ -34,6 +33,7 @@ use codex_utils_output_truncation::truncate_function_output_items_with_policy;
 use serde::Deserialize;
 
 use crate::context::TypedToolSpecRequest;
+use crate::output::FunctionToolOutput;
 
 pub(crate) fn specs(
     request: &TypedToolSpecRequest<'_>,

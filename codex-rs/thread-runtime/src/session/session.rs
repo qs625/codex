@@ -6,7 +6,7 @@ use codex_auth_types::AuthRuntime;
 use codex_auth_types::SharedAuthRuntime;
 use codex_code_mode_api::CodeModeRuntimeFactory;
 use codex_code_mode_api::CodeModeRuntimeService;
-use codex_command_runtime::WaitBackoffState;
+use codex_command_service_api::WaitBackoffState;
 use codex_config::ConstraintError;
 use codex_config_types::RequirementSource;
 use codex_core_plugins_api::SharedPluginRuntime;

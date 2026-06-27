@@ -172,9 +172,18 @@ pub fn load_workflow_registry_from_roots(
         }
         match by_id.get(&workflow.id) {
             Some(existing) if existing.source == workflow.source => {
-                let existing = by_id
-                    .remove(&workflow.id)
-                    .expect("existing workflow should be present");
+                let Some(existing) = by_id.remove(&workflow.id) else {
+                    diagnostics.push(WorkflowDiagnostic {
+                        source: workflow.source,
+                        path: workflow.path.clone(),
+                        message: format!(
+                            "workflow `{}` duplicates another {} workflow",
+                            workflow.id,
+                            workflow.source.label()
+                        ),
+                    });
+                    continue;
+                };
                 diagnostics.push(WorkflowDiagnostic {
                     source: existing.source,
                     path: existing.path.clone(),
@@ -592,10 +601,10 @@ fn workflow_manifest_indent(line: &str, line_number: usize) -> Result<usize, Str
     Ok(indent)
 }
 
-fn split_workflow_manifest_key_value<'a>(
-    line: &'a str,
+fn split_workflow_manifest_key_value(
+    line: &str,
     line_number: usize,
-) -> Result<(&'a str, &'a str), String> {
+) -> Result<(&str, &str), String> {
     let Some((key, value)) = line.split_once(':') else {
         return Err(format!("line {line_number}: expected `key: value`"));
     };
@@ -734,17 +743,16 @@ fn workflow_manifest_double_quote_end(value: &str, line_number: usize) -> Result
     Err(format!("line {line_number}: invalid double-quoted scalar"))
 }
 
-fn parse_workflow_manifest_single_quoted_scalar<'a>(
-    value: &'a str,
+fn parse_workflow_manifest_single_quoted_scalar(
+    value: &str,
     line_number: usize,
-) -> Result<(String, &'a str), String> {
+) -> Result<(String, &str), String> {
     let mut parsed = String::new();
     let mut index = 1;
     while index < value.len() {
-        let ch = value[index..]
-            .chars()
-            .next()
-            .expect("index stays on char boundary");
+        let Some(ch) = value[index..].chars().next() else {
+            break;
+        };
         if ch == '\'' {
             let next_index = index + ch.len_utf8();
             if value[next_index..].starts_with('\'') {
@@ -934,7 +942,7 @@ pub fn render_available_workflows_body(registry: &WorkflowRegistry) -> Option<St
         let entry_chars = entry.chars().count();
         let notice_chars = omitted_notice.chars().count();
         if used_chars + entry_chars + notice_chars + 1 > MAX_AVAILABLE_WORKFLOWS_CONTEXT_CHARS {
-            if used_chars + notice_chars + 1 <= MAX_AVAILABLE_WORKFLOWS_CONTEXT_CHARS {
+            if used_chars + notice_chars < MAX_AVAILABLE_WORKFLOWS_CONTEXT_CHARS {
                 body.push_str(&omitted_notice);
             }
             break;

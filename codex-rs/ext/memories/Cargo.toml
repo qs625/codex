@@ -17,7 +17,7 @@ codex-thread-runtime = { workspace = true }
 codex-extension-api = { workspace = true }
 codex-features = { workspace = true }
 codex-memories-read = { workspace = true }
-codex-tools = { workspace = true }
+codex-tool-types = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-output-truncation = { workspace = true }
 schemars = { workspace = true }

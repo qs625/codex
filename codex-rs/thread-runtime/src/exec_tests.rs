@@ -1,5 +1,5 @@
 use super::*;
-use codex_command_runtime::DEFAULT_EXEC_OUTPUT_MAX_BYTES as EXEC_OUTPUT_MAX_BYTES;
+use codex_command_service_api::DEFAULT_EXEC_OUTPUT_MAX_BYTES as EXEC_OUTPUT_MAX_BYTES;
 use codex_process_exec::EXEC_TIMEOUT_EXIT_CODE;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::PermissionProfile;

@@ -11,21 +11,21 @@ use codex_command_service_api::ExecCommandApprovalMode;
 use codex_command_service_api::ExecCommandRunOutput;
 use codex_command_service_api::ExecCommandRunRequest;
 use codex_command_service_api::UnifiedExecApprovalKey;
-use codex_command_runtime::UnifiedExecError;
-use codex_command_runtime::generate_chunk_id;
-use codex_command_runtime::resolve_max_tokens;
+use codex_command_service_api::UnifiedExecError;
+use codex_command_service_api::generate_chunk_id;
+use codex_command_service_api::resolve_max_tokens;
 use codex_permissions_runtime::ExecPolicyApprovalRequest;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::protocol::AskForApproval;
+use codex_thread_api::ApplyPatchEnvironment;
 use codex_thread_api::SharedToolTurnDiffTracker;
 use codex_thread_runtime::ThreadRuntimeSession;
 use codex_thread_runtime::ThreadTurnContext;
-use codex_tool_planning::CommandToolOptions;
-use codex_tool_planning::ToolName;
-use codex_tool_planning::ToolSpec;
-use codex_tool_planning::create_exec_command_tool_with_environment_id;
-use codex_tool_runtime::ExecCommandToolOutput;
-use codex_tool_runtime_api::ExecCommandArgs;
+use crate::planning::CommandToolOptions;
+use crate::planning::ToolName;
+use crate::planning::ToolSpec;
+use crate::planning::create_exec_command_tool_with_environment_id;
+use codex_command_service_api::ExecCommandArgs;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::HookToolName;
@@ -41,8 +41,23 @@ use crate::domains::apply_patch::apply_granted_permissions_from_grants;
 use crate::domains::apply_patch::implicit_granted_permissions;
 use crate::domains::apply_patch::intercept_apply_patch;
 use crate::domains::apply_patch::normalize_and_validate_additional_permissions;
+use crate::output::ExecCommandToolOutput;
 
 const EXEC_COMMAND_TOOL_NAME: &str = "exec_command";
+
+struct ThreadApplyPatchEnvironmentAdapter {
+    inner: Arc<dyn codex_command_service_api::ApplyPatchEnvironment>,
+}
+
+impl ApplyPatchEnvironment for ThreadApplyPatchEnvironmentAdapter {
+    fn environment_id(&self) -> &str {
+        self.inner.environment_id()
+    }
+
+    fn filesystem(&self) -> Arc<dyn codex_file_system::ExecutorFileSystem> {
+        self.inner.filesystem()
+    }
+}
 
 // This domain owns the `exec_command` tool. The underlying config enum still
 // uses historical shell-oriented names, but there is no separate legacy shell
@@ -66,7 +81,7 @@ pub(crate) fn specs(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
                 options,
                 matches!(
                     request.config.environment_mode,
-                    codex_tool_planning::ToolEnvironmentMode::Multiple
+                    crate::planning::ToolEnvironmentMode::Multiple
                 ),
             )]
         }
@@ -172,7 +187,8 @@ async fn dispatch_exec_command(
     let requested_additional_permissions = additional_permissions.clone();
     let grants = session_capability.tool_permission_grants().await;
     let effective_additional_permissions = apply_granted_permissions_from_grants(
-        grants,
+        grants.session,
+        grants.turn,
         cwd.as_path(),
         sandbox_permissions,
         additional_permissions,
@@ -236,7 +252,9 @@ async fn dispatch_exec_command(
         None,
         &command,
         &cwd,
-        turn_environment.apply_patch_environment.clone(),
+        Arc::new(ThreadApplyPatchEnvironmentAdapter {
+            inner: turn_environment.apply_patch_environment.clone(),
+        }),
         &call.call_id,
         EXEC_COMMAND_TOOL_NAME,
     )
@@ -418,13 +436,13 @@ mod tests {
 
     use codex_approval_service_api::ApprovalServiceFuture;
     use codex_command_service_api::CommandServiceFuture;
-    use codex_command_runtime::CommandSessionError;
-    use codex_command_runtime::CommandWaitOperation;
-    use codex_command_runtime::CommandWaitRequest;
-    use codex_command_runtime::WriteStdinOutput;
-    use codex_command_runtime::WriteStdinRequest;
+    use codex_command_service_api::CommandSessionError;
+    use codex_command_service_api::CommandWaitOperation;
+    use codex_command_service_api::CommandWaitRequest;
+    use codex_command_service_api::WriteStdinOutput;
+    use codex_command_service_api::WriteStdinRequest;
     use codex_thread_runtime::test_support;
-    use codex_tool_runtime::TurnDiffTracker;
+    use codex_thread_api::TurnDiffTracker;
 
     struct PanickingApprovalService;
 

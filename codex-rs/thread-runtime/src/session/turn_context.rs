@@ -130,9 +130,9 @@ impl TurnContext {
 
     pub(crate) fn primary_apply_patch_environment(
         &self,
-    ) -> Option<codex_tool_runtime_api::ResolvedApplyPatchEnvironment> {
+    ) -> Option<codex_thread_api::ResolvedApplyPatchEnvironment> {
         self.environments.primary().map(|turn_environment| {
-            codex_tool_runtime_api::ResolvedApplyPatchEnvironment {
+            codex_thread_api::ResolvedApplyPatchEnvironment {
                 cwd: turn_environment.cwd.clone(),
                 environment: crate::apply_patch_environment::CoreApplyPatchEnvironment::new(
                     turn_environment.clone(),
@@ -144,7 +144,7 @@ impl TurnContext {
     pub(crate) fn resolve_apply_patch_environment(
         &self,
         environment_id: Option<&str>,
-    ) -> Result<Option<codex_tool_runtime_api::ResolvedApplyPatchEnvironment>, FunctionCallError>
+    ) -> Result<Option<codex_thread_api::ResolvedApplyPatchEnvironment>, FunctionCallError>
     {
         let environment = environment_id.map_or_else(
             || Ok(self.environments.primary()),
@@ -163,7 +163,7 @@ impl TurnContext {
         )?;
 
         Ok(environment.map(|turn_environment| {
-            codex_tool_runtime_api::ResolvedApplyPatchEnvironment {
+            codex_thread_api::ResolvedApplyPatchEnvironment {
                 cwd: turn_environment.cwd.clone(),
                 environment: crate::apply_patch_environment::CoreApplyPatchEnvironment::new(
                     turn_environment.clone(),
@@ -214,8 +214,8 @@ impl TurnContext {
         ))
     }
 
-    pub(crate) fn tool_sandbox_context(&self) -> codex_command_service_api::ToolSandboxContext {
-        codex_command_service_api::ToolSandboxContext {
+    pub(crate) fn tool_sandbox_context(&self) -> codex_thread_api::ToolSandboxContext {
+        codex_thread_api::ToolSandboxContext {
             turn_id: self.sub_id.clone(),
             telemetry: self.session_telemetry.clone(),
             file_system_sandbox_policy: self.file_system_sandbox_policy(),
@@ -238,7 +238,7 @@ impl TurnContext {
         self.session_telemetry.clone()
     }
 
-    pub(crate) fn base_tool_result_tags(&self) -> codex_tool_runtime_api::ToolTelemetryTags {
+    pub(crate) fn base_tool_result_tags(&self) -> codex_thread_api::ToolTelemetryTags {
         vec![
             (
                 "sandbox",
@@ -494,8 +494,8 @@ impl TurnContext {
     pub(crate) fn request_plugin_install_context(
         &self,
         thread_id: ThreadId,
-    ) -> codex_tool_runtime_api::RequestPluginInstallContext {
-        codex_tool_runtime_api::RequestPluginInstallContext {
+    ) -> codex_thread_api::RequestPluginInstallContext {
+        codex_thread_api::RequestPluginInstallContext {
             server_name: codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME.to_string(),
             thread_id: thread_id.to_string(),
             turn_id: self.sub_id.clone(),
@@ -564,7 +564,7 @@ impl TurnContext {
         plugins_manager: &dyn codex_core_plugins_api::PluginRuntime,
         connector_auth_context: Option<&codex_mcp_types::CodexAppsAuthContext>,
         accessible_connectors: &[codex_connectors_types::AppInfo],
-    ) -> anyhow::Result<Vec<codex_tool_planning::DiscoverableTool>> {
+    ) -> anyhow::Result<Vec<codex_tool_types::DiscoverableTool>> {
         crate::connectors::list_tool_suggest_discoverable_tools_with_auth(
             &self.config,
             plugins_manager,

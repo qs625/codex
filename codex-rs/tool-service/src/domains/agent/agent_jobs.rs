@@ -18,13 +18,12 @@ use codex_state_api::default_agent_job_output_csv_path;
 use codex_state_api::ensure_unique_agent_job_headers;
 use codex_state_api::parse_agent_job_csv;
 use codex_state_api::render_agent_job_csv;
+use codex_thread_api::AgentJobRunnerOptions;
+use codex_thread_api::AgentJobSpawnWorkerError;
 use codex_thread_api::SessionAgentJobCaller;
 use codex_thread_api::ThreadRuntimeCapability;
 use codex_thread_runtime::ThreadRuntimeSession;
 use codex_thread_runtime::ThreadTurnContext;
-use codex_tool_runtime::FunctionToolOutput;
-use codex_tool_runtime_api::AgentJobRunnerOptions;
-use codex_tool_runtime_api::AgentJobSpawnWorkerError;
 use codex_tool_types::FunctionCallError;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::StreamExt;
@@ -36,6 +35,8 @@ use tokio::sync::watch;
 use tokio::time::Instant;
 use tokio::time::timeout;
 use uuid::Uuid;
+
+use crate::output::FunctionToolOutput;
 
 const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const DEFAULT_AGENT_JOB_ITEM_TIMEOUT: Duration = Duration::from_secs(60 * 30);

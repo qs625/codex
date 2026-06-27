@@ -94,6 +94,7 @@ use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_rollout::StateDbHandle;
 use codex_state::log_db::LogDbLayer;
+use codex_state_api::SharedStateDbRuntime;
 use codex_terminal_detection::user_agent;
 use tokio::sync::Mutex;
 use tokio::sync::Semaphore;
@@ -373,7 +374,9 @@ impl MessageProcessor {
             Arc::new_cyclic(|thread_service: &Weak<ThreadService>| {
                 let runtime_environment_provider: Arc<dyn ExecEnvironmentProvider> =
                     environment_manager.clone();
-                let core_state_db = state_db.clone();
+                let core_state_db: Option<SharedStateDbRuntime> = state_db
+                    .clone()
+                    .map(|state_db| state_db as SharedStateDbRuntime);
                 let auth_runtimes = ThreadAuthRuntimes::from_auth_runtime(
                     auth_manager.clone(),
                     model_provider_auth_manager(Some(auth_manager.clone())),

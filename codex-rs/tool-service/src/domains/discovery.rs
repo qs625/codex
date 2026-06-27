@@ -1,29 +1,28 @@
 use codex_mcp_tool_types::ToolInfo;
 use codex_thread_api::RequestPluginInstallApi;
 use codex_thread_api::ThreadCapability;
-use codex_tool_planning::DiscoverableTool;
-use codex_tool_planning::DiscoverableToolAction;
-use codex_tool_planning::DiscoverableToolType;
-use codex_tool_planning::REQUEST_PLUGIN_INSTALL_TOOL_NAME;
-use codex_tool_planning::RequestPluginInstallArgs;
-use codex_tool_planning::RequestPluginInstallResult;
-use codex_tool_planning::TOOL_SEARCH_DEFAULT_LIMIT;
-use codex_tool_planning::TOOL_SEARCH_TOOL_NAME;
-use codex_tool_planning::ToolSearchInfo;
-use codex_tool_planning::ToolSearchRuntime;
-use codex_tool_planning::ToolSearchSourceInfo;
-use codex_tool_planning::ToolSpec;
-use codex_tool_planning::collect_request_plugin_install_entries;
-use codex_tool_planning::create_request_plugin_install_tool;
-use codex_tool_planning::create_tool_search_tool;
-use codex_tool_planning::dynamic_tool_to_responses_api_tool;
-use codex_tool_planning::filter_request_plugin_install_discoverable_tools_for_client;
-use codex_tool_planning::mcp_tool_to_deferred_responses_api_tool;
-use codex_tool_planning::mcp_tool_to_responses_api_tool;
-use codex_tool_planning::ResponsesApiNamespace;
-use codex_tool_planning::ResponsesApiNamespaceTool;
-use codex_tool_planning::build_request_plugin_install_elicitation_request;
-use codex_tool_runtime::FunctionToolOutput;
+use crate::planning::DiscoverableTool;
+use crate::planning::DiscoverableToolAction;
+use crate::planning::DiscoverableToolType;
+use crate::planning::REQUEST_PLUGIN_INSTALL_TOOL_NAME;
+use crate::planning::RequestPluginInstallArgs;
+use crate::planning::RequestPluginInstallResult;
+use crate::planning::TOOL_SEARCH_DEFAULT_LIMIT;
+use crate::planning::TOOL_SEARCH_TOOL_NAME;
+use crate::planning::ToolSearchInfo;
+use crate::planning::ToolSearchRuntime;
+use crate::planning::ToolSearchSourceInfo;
+use crate::planning::ToolSpec;
+use crate::planning::collect_request_plugin_install_entries;
+use crate::planning::create_request_plugin_install_tool;
+use crate::planning::create_tool_search_tool;
+use crate::planning::dynamic_tool_to_responses_api_tool;
+use crate::planning::filter_request_plugin_install_discoverable_tools_for_client;
+use crate::planning::mcp_tool_to_deferred_responses_api_tool;
+use crate::planning::mcp_tool_to_responses_api_tool;
+use crate::planning::ResponsesApiNamespace;
+use crate::planning::ResponsesApiNamespaceTool;
+use crate::planning::build_request_plugin_install_elicitation_request;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_types::FunctionCallError;
@@ -33,6 +32,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::context::TypedToolSpecRequest;
+use crate::output::FunctionToolOutput;
 
 pub(crate) fn specs(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
     let mut specs = Vec::new();
@@ -283,7 +283,7 @@ fn dynamic_tool_to_spec(tool: &codex_protocol::dynamic_tools::DynamicToolSpec) -
     Some(match tool.namespace.as_ref() {
         Some(namespace) => ToolSpec::Namespace(ResponsesApiNamespace {
             name: namespace.clone(),
-            description: codex_tool_planning::default_namespace_description(namespace),
+            description: crate::planning::default_namespace_description(namespace),
             tools: vec![ResponsesApiNamespaceTool::Function(output_tool)],
         }),
         None => ToolSpec::Function(output_tool),

@@ -142,10 +142,11 @@ pub(crate) mod runtime_shell_snapshot;
 pub mod spawn;
 pub(crate) mod state_db_bridge;
 pub(crate) use state_db_bridge::StateDbHandle;
-mod function_tool_runtime;
+mod function_tool_capability;
 mod state;
 mod tasks;
 mod tool_dispatch_trace;
+mod tool_output_utils;
 mod tool_approval_support;
 mod tool_session_capability;
 mod turn_context_item;
@@ -182,7 +183,7 @@ pub use mailbox::MailboxDeliveryPhase;
 pub use mailbox::MailboxReceiver;
 #[doc(hidden)]
 pub type SharedTurnDiffTracker =
-    std::sync::Arc<tokio::sync::Mutex<codex_tool_runtime::TurnDiffTracker>>;
+    std::sync::Arc<tokio::sync::Mutex<codex_thread_api::TurnDiffTracker>>;
 pub(crate) type CoreToolServiceApi = dyn codex_tool_service_api::ToolServiceApi;
 pub type ThreadToolServiceApi = dyn codex_tool_service_api::ToolServiceApi;
 pub use session_settings::SessionPermissionProfileUpdate;

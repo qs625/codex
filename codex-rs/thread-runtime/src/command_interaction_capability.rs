@@ -1,8 +1,8 @@
-use codex_command_runtime::CommandSessionError;
-use codex_command_runtime::CommandWaitOperation;
-use codex_command_runtime::CommandWaitRequest;
-use codex_command_runtime::WriteStdinOutput;
-use codex_command_runtime::WriteStdinRequest;
+use codex_command_service_api::CommandSessionError;
+use codex_command_service_api::CommandWaitOperation;
+use codex_command_service_api::CommandWaitRequest;
+use codex_command_service_api::WriteStdinOutput;
+use codex_command_service_api::WriteStdinRequest;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TerminalInteractionEvent;

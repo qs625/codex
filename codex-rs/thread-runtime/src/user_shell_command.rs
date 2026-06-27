@@ -2,9 +2,9 @@ use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::models::ResponseItem;
 
 use crate::session::turn_context::TurnContext;
+use crate::tool_output_utils::format_exec_output_str;
 use codex_context_manager::ContextualUserFragment;
 use codex_context_manager::UserShellCommand;
-use codex_tool_runtime::format_exec_output_str;
 
 fn user_shell_command_fragment(
     command: &str,

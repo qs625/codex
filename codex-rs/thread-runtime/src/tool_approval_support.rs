@@ -1,10 +1,16 @@
 use crate::state::SessionServices;
+use codex_protocol::error::CodexErr;
 use codex_protocol::protocol::ReviewDecision;
 use futures::Future;
 use serde::Serialize;
 
-pub(crate) use codex_tool_runtime_api::PermissionRequestPayload;
-pub(crate) use codex_tool_runtime_api::ToolError;
+pub(crate) use codex_thread_api::PermissionRequestPayload;
+
+#[derive(Debug)]
+pub(crate) enum ToolError {
+    Rejected(String),
+    Codex(CodexErr),
+}
 
 pub(crate) fn permission_request_hook_payload(
     payload: PermissionRequestPayload,

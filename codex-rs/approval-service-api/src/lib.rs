@@ -9,8 +9,7 @@ use codex_command_service_api::UnifiedExecApprovalKey;
 use codex_protocol::protocol::FileChange;
 use codex_thread_api::ToolServiceSessionRef;
 use codex_thread_api::ToolServiceTurnRef;
-use codex_tool_runtime_api::ApplyPatchApprovalKey;
-use codex_tool_runtime_api::ApplyPatchApprovalRequest;
+use codex_utils_absolute_path::AbsolutePathBuf;
 
 /// Boxed future returned by object-safe approval service APIs.
 pub type ApprovalServiceFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -19,6 +18,19 @@ pub type ApprovalServiceFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 
 pub enum ExecCommandApprovalOutcome {
     ContinueInRuntime,
     Preapproved,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, serde::Serialize)]
+pub struct ApplyPatchApprovalKey {
+    pub environment_id: String,
+    pub path: AbsolutePathBuf,
+}
+
+/// Routed apply-patch approval payload owned by approval-service.
+pub struct ApplyPatchApprovalRequest {
+    pub cwd: AbsolutePathBuf,
+    pub files: Vec<AbsolutePathBuf>,
+    pub patch: String,
 }
 
 /// Apply-patch approval request routed through the approval service.

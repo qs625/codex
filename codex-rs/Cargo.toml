@@ -46,7 +46,6 @@ members = [
     "command-display",
     "command-service",
     "command-service-api",
-    "command-runtime",
     "connectors",
     "connectors-api",
     "connectors-types",
@@ -153,11 +152,7 @@ members = [
     "tool-config",
     "tool-service-api",
     "tool-service",
-    "tool-planning",
-    "tool-runtime",
-    "tool-runtime-api",
     "tool-types",
-    "tools",
     "turn-items",
     "turn-metadata",
     "v8-poc",
@@ -258,7 +253,6 @@ codex-client-identity = { path = "client-identity" }
 codex-command-display = { path = "command-display" }
 codex-command-service = { path = "command-service" }
 codex-command-service-api = { path = "command-service-api" }
-codex-command-runtime = { path = "command-runtime" }
 codex-config = { path = "config" }
 codex-config-diagnostics = { path = "config-diagnostics" }
 codex-config-edit = { path = "config-edit" }
@@ -381,11 +375,7 @@ codex-thread-store = { path = "thread-store" }
 codex-tool-config = { path = "tool-config" }
 codex-tool-service-api = { path = "tool-service-api" }
 codex-tool-service = { path = "tool-service" }
-codex-tool-planning = { path = "tool-planning" }
-codex-tool-runtime = { path = "tool-runtime" }
-codex-tool-runtime-api = { path = "tool-runtime-api" }
 codex-tool-types = { path = "tool-types" }
-codex-tools = { path = "tools" }
 codex-tui = { path = "tui" }
 codex-turn-items = { path = "turn-items" }
 codex-turn-metadata = { path = "turn-metadata" }

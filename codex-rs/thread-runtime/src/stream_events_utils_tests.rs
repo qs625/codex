@@ -17,7 +17,7 @@ use codex_protocol::memory_citation::MemoryCitation;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::ResponseItem;
-use codex_tool_runtime::TurnDiffTracker;
+use codex_thread_api::TurnDiffTracker;
 use codex_utils_absolute_path::test_support::PathExt;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;

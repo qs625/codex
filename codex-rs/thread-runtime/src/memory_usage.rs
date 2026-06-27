@@ -1,12 +1,12 @@
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
+use crate::tool_output_utils::flat_tool_name;
 use codex_protocol::parse_command::ParsedCommand;
 use codex_shell_command::is_safe_command::is_known_safe_command;
 use codex_shell_command::parse_command::parse_command;
-use codex_tool_planning::ToolName;
-use codex_tool_runtime::flat_tool_name;
-use codex_tool_runtime_api::ExecCommandArgs;
-use codex_tool_runtime_api::resolve_exec_command_for_parts;
+use codex_tool_types::ToolName;
+use codex_command_service_api::ExecCommandArgs;
+use codex_command_service_api::resolve_exec_command_for_parts;
 use codex_tool_types::ToolPayload;
 use std::path::PathBuf;
 

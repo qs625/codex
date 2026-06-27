@@ -21,12 +21,15 @@ use crate::shell_support::exec_env_for_sandbox_permissions;
 use crate::shell_support::maybe_wrap_shell_lc_with_snapshot;
 use crate::unified_exec::CommandNotificationFilter;
 use crate::unified_exec::CommandNotificationKind;
+use crate::unified_exec::CommandNotificationSnapshot;
 use crate::unified_exec::CommandNotificationState;
+use crate::unified_exec::CommandProcessPruneMeta;
 use crate::unified_exec::CommandWaitOutput;
 use crate::unified_exec::CommandWaitRequest;
 use crate::unified_exec::CommandWaitStatus;
 use crate::unified_exec::ExecCommandRequest;
 use crate::unified_exec::ExecServerEnvConfig;
+use crate::unified_exec::ExecServerSpawnRequest;
 use crate::unified_exec::HeadTailBuffer;
 use crate::unified_exec::MAX_UNIFIED_EXEC_PROCESSES;
 use crate::unified_exec::ProcessEntry;
@@ -39,7 +42,12 @@ use crate::unified_exec::UnifiedExecProcess;
 use crate::unified_exec::UnifiedExecProcessManager;
 use crate::unified_exec::WaitBackoffState;
 use crate::unified_exec::WriteStdinOutput;
+use crate::unified_exec::apply_unified_exec_env;
+use crate::unified_exec::collect_output_until_deadline;
+use crate::unified_exec::command_process_id_to_prune;
 use crate::unified_exec::events::emit_unified_exec_begin;
+use crate::unified_exec::exec_env_policy_from_shell_policy;
+use crate::unified_exec::exec_server_spawn_params;
 use codex_command_service_api::CommandServiceSessionCapability;
 use codex_thread_api::ToolRuntimeNetworkApprovalHandle;
 use codex_thread_api::ToolRuntimeNetworkApprovalTrigger;
@@ -51,18 +59,13 @@ use crate::unified_exec::async_watcher::start_streaming_output;
 use crate::unified_exec::clamp_yield_time;
 use crate::unified_exec::command_notification_filter_to_protocol;
 use crate::unified_exec::generate_chunk_id;
-use codex_command_runtime::CommandNotificationSnapshot;
-use codex_command_runtime::CommandProcessPruneMeta;
-use codex_command_runtime::CommandSessionController;
-use codex_command_runtime::CommandSessionError;
-use codex_command_runtime::CommandSessionFuture;
-use codex_command_runtime::CommandWaitOperation;
-use codex_command_runtime::ExecServerSpawnRequest;
-use codex_command_runtime::apply_unified_exec_env;
-use codex_command_runtime::collect_output_until_deadline;
-use codex_command_runtime::command_process_id_to_prune;
-use codex_command_runtime::exec_env_policy_from_shell_policy;
-use codex_command_runtime::exec_server_spawn_params;
+use codex_command_service_api::CommandSessionController;
+use codex_command_service_api::CommandSessionError;
+use codex_command_service_api::CommandSessionFuture;
+use codex_command_service_api::CommandWaitOperation;
+use codex_command_service_api::ExecCapturePolicy;
+use codex_command_service_api::ExecExpiration;
+use codex_command_service_api::ExecOptions;
 use codex_hooks_api::PermissionRequestDecision;
 use codex_protocol::ThreadId;
 use codex_protocol::approvals::NetworkApprovalContext;
@@ -421,14 +424,14 @@ fn fail_process_with_message(process: &UnifiedExecProcess, message: String) -> U
 
 fn unified_exec_options(
     network_denial_cancellation_token: Option<CancellationToken>,
-) -> codex_command_runtime::ExecOptions {
-    let mut expiration = codex_command_runtime::ExecExpiration::DefaultTimeout;
+) -> ExecOptions {
+    let mut expiration = ExecExpiration::DefaultTimeout;
     if let Some(cancellation) = network_denial_cancellation_token {
         expiration = expiration.with_cancellation(cancellation);
     }
-    codex_command_runtime::ExecOptions {
+    ExecOptions {
         expiration,
-        capture_policy: codex_command_runtime::ExecCapturePolicy::ShellTool,
+        capture_policy: ExecCapturePolicy::ShellTool,
     }
 }
 
@@ -492,7 +495,7 @@ async fn spawn_unified_exec_process(
             &exec_request,
             Some(exec_server_env_config),
             request.tty,
-            Box::new(codex_command_runtime::NoopSpawnLifecycle),
+            Box::new(crate::unified_exec::NoopSpawnLifecycle),
             request.environment.as_ref(),
         )
         .await

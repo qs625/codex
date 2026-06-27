@@ -87,6 +87,7 @@ use codex_models_manager_api::RefreshStrategy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::user_input::UserInput;
 use codex_rollout::StateDbHandle;
+use codex_state_api::SharedStateDbRuntime;
 use codex_terminal_detection::TerminalName;
 
 pub(crate) fn config_builder() -> ConfigBuilder {
@@ -1682,7 +1683,9 @@ async fn run_debug_prompt_input_command(
         auth_manager.clone(),
         codex_login::model_provider_auth_manager(Some(auth_manager)),
     );
-    let shared_state_db = state_db.clone();
+    let shared_state_db: Option<SharedStateDbRuntime> = state_db
+        .clone()
+        .map(|state_db| state_db as SharedStateDbRuntime);
     let prompt_input = codex_thread_runtime::build_prompt_input(
         config,
         input,

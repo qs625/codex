@@ -3,24 +3,34 @@ use crate::network_approval::DeferredNetworkApproval;
 use crate::network_approval::begin_network_approval;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use crate::runtime_shell_model::get_shell_by_model_provided_path;
 use crate::tool_dispatch_trace::ToolDispatchTrace;
-use crate::runtime_shell::runtime_shell;
 use crate::tool_approval_support::permission_request_hook_payload;
 use codex_hooks::PreToolUseHookResult;
 use codex_hooks::run_permission_request_hooks;
 use codex_thread_api::ApplyPatchSessionCapability;
 use codex_thread_api::ApplyPatchTurnCapability;
+use codex_thread_api::ApplyPatchEnvironment;
+use codex_thread_api::PostToolUseHookOutcome;
+use codex_thread_api::PostToolUsePayload;
+use codex_thread_api::PreToolUseHookOutcome;
+use codex_thread_api::PreToolUsePayload;
+use codex_thread_api::PermissionRequestPayload;
+use codex_thread_api::ResolvedApplyPatchEnvironment;
+use codex_thread_api::ResolvedExecCommandEnvironment;
 use codex_thread_api::SessionCapabilityFuture;
+use codex_thread_api::ToolPermissionGrants;
 use codex_thread_api::ToolSessionCapability;
 use codex_thread_api::ToolSessionDispatchTrace;
 use codex_thread_api::ToolEventSessionCapability;
 use codex_thread_api::ToolEventTurnCapability;
+use codex_thread_api::NetworkApprovalSpec;
 use codex_thread_api::ToolRuntimeNetworkApprovalHandle;
 use codex_thread_api::ToolRuntimeNetworkApprovalError;
 use codex_thread_api::ToolRuntimeNetworkApprovalTrigger;
 use codex_thread_api::ToolRuntimeSessionCapability;
+use codex_thread_api::ToolSandboxContext;
 use codex_thread_api::ToolRuntimeTurnCapability;
+use codex_thread_api::ToolTelemetryTags;
 use codex_thread_api::ToolTurnCapability;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::PermissionProfile;
@@ -33,41 +43,24 @@ use codex_protocol::protocol::ExecCommandEndEvent;
 use codex_protocol::protocol::TurnDiffEvent;
 use codex_sandboxing_api::SharedSandboxRuntime;
 use codex_session_telemetry_api::SharedSessionTelemetry;
-use codex_command_service_api::ExecCommandRunOutput as CommandExecCommandRunOutput;
-use codex_command_service_api::ExecCommandRunRequest as CommandExecCommandRunRequest;
-use codex_tool_planning::ToolCallSource;
-use codex_tool_planning::ToolName;
-use codex_tool_planning::ToolPayload;
-use codex_tool_runtime_api::ExecCommandRunOutput;
-use codex_tool_runtime_api::ExecCommandRunRequest;
-use codex_tool_runtime_api::NetworkApprovalSpec;
-use codex_tool_runtime_api::ApplyPatchDiffContext;
-use codex_tool_runtime_api::ExecCommandSessionRuntime;
-use codex_tool_runtime_api::ResolvedExecCommand;
-use codex_tool_runtime_api::ResolvedApplyPatchEnvironment;
-use codex_tool_runtime_api::ResolvedExecCommandEnvironment;
-use codex_tool_runtime_api::RuntimeShell;
-use codex_tool_runtime_api::ToolPermissionGrants;
-use codex_tool_runtime_api::PostToolUseHookOutcome;
-use codex_tool_runtime_api::PostToolUsePayload;
-use codex_tool_runtime_api::PreToolUseHookOutcome;
-use codex_tool_runtime_api::PreToolUsePayload;
-use codex_tool_runtime_api::ToolTelemetryTags;
+use codex_tool_types::ToolCallSource;
+use codex_tool_types::ToolName;
+use codex_tool_types::ToolPayload;
+use codex_thread_api::ApplyPatchDiffContext;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::TruncationPolicy;
-use codex_command_runtime::UnifiedExecError;
+use codex_permissions_runtime::ExecApprovalRequirement;
 use codex_permissions_runtime::ExecPolicyApprovalRequest;
 use codex_file_system::FileSystemSandboxContext;
 use std::collections::HashMap;
 use std::pin::Pin;
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 struct RuntimeApplyPatchEnvironmentAdapter {
     inner: Arc<dyn codex_command_service_api::ApplyPatchEnvironment>,
 }
 
-impl codex_tool_runtime_api::ApplyPatchEnvironment for RuntimeApplyPatchEnvironmentAdapter {
+impl ApplyPatchEnvironment for RuntimeApplyPatchEnvironmentAdapter {
     fn environment_id(&self) -> &str {
         self.inner.environment_id()
     }
@@ -77,54 +70,10 @@ impl codex_tool_runtime_api::ApplyPatchEnvironment for RuntimeApplyPatchEnvironm
     }
 }
 
-fn to_command_exec_request(request: ExecCommandRunRequest) -> CommandExecCommandRunRequest {
-    CommandExecCommandRunRequest {
-        command: request.command,
-        shell_type: request.shell_type,
-        hook_command: request.hook_command,
-        process_id: request.process_id,
-        yield_time_ms: request.yield_time_ms,
-        max_output_tokens: request.max_output_tokens,
-        cwd: request.cwd,
-        sandbox_cwd: request.sandbox_cwd,
-        environment: request.environment,
-        tty: request.tty,
-        sandbox_permissions: request.sandbox_permissions,
-        additional_permissions: request.additional_permissions,
-        additional_permissions_preapproved: request.additional_permissions_preapproved,
-        justification: request.justification,
-        prefix_rule: request.prefix_rule,
-        notify_on: request.notify_on,
-        approval_mode: match request.approval_mode {
-            codex_tool_runtime_api::ExecCommandApprovalMode::ContinueInRuntime => {
-                codex_command_service_api::ExecCommandApprovalMode::ContinueInRuntime
-            }
-            codex_tool_runtime_api::ExecCommandApprovalMode::AlreadyApproved => {
-                codex_command_service_api::ExecCommandApprovalMode::AlreadyApproved
-            }
-        },
-        exec_approval_requirement: request.exec_approval_requirement,
-    }
-}
-
-fn from_command_exec_output(output: CommandExecCommandRunOutput) -> ExecCommandRunOutput {
-    ExecCommandRunOutput {
-        event_call_id: output.event_call_id,
-        chunk_id: output.chunk_id,
-        wall_time: output.wall_time,
-        raw_output: output.raw_output,
-        max_output_tokens: output.max_output_tokens,
-        process_id: output.process_id,
-        exit_code: output.exit_code,
-        original_token_count: output.original_token_count,
-        hook_command: output.hook_command,
-    }
-}
-
-fn to_runtime_tool_sandbox_context(
+fn to_thread_tool_sandbox_context(
     value: codex_command_service_api::ToolSandboxContext,
-) -> codex_tool_runtime_api::ToolSandboxContext {
-    codex_tool_runtime_api::ToolSandboxContext {
+) -> ToolSandboxContext {
+    ToolSandboxContext {
         turn_id: value.turn_id,
         telemetry: value.telemetry,
         file_system_sandbox_policy: value.file_system_sandbox_policy,
@@ -139,7 +88,7 @@ fn to_runtime_tool_sandbox_context(
     }
 }
 
-fn to_runtime_resolved_exec_command_environment(
+fn to_thread_resolved_exec_command_environment(
     value: codex_command_service_api::ResolvedExecCommandEnvironment,
 ) -> ResolvedExecCommandEnvironment {
     ResolvedExecCommandEnvironment {
@@ -203,8 +152,8 @@ impl ApplyPatchTurnCapability for TurnContext {
         self.windows_sandbox_level()
     }
 
-    fn tool_sandbox_context(&self) -> codex_tool_runtime_api::ToolSandboxContext {
-        to_runtime_tool_sandbox_context(self.tool_sandbox_context())
+    fn tool_sandbox_context(&self) -> ToolSandboxContext {
+        self.tool_sandbox_context()
     }
 
     fn resolve_apply_patch_environment(
@@ -224,8 +173,8 @@ impl ToolRuntimeTurnCapability for TurnContext {
         crate::guardian::routes_approval_to_guardian(self)
     }
 
-    fn tool_sandbox_context(&self) -> codex_tool_runtime_api::ToolSandboxContext {
-        to_runtime_tool_sandbox_context(self.tool_sandbox_context())
+    fn tool_sandbox_context(&self) -> ToolSandboxContext {
+        self.tool_sandbox_context()
     }
 
     fn approval_policy(&self) -> AskForApproval {
@@ -281,7 +230,7 @@ impl ToolRuntimeTurnCapability for TurnContext {
         workdir: Option<&str>,
     ) -> Result<Option<ResolvedExecCommandEnvironment>, codex_tool_types::FunctionCallError> {
         self.resolve_exec_command_environment(environment_id, workdir)
-            .map(|value| value.map(to_runtime_resolved_exec_command_environment))
+            .map(|value| value.map(to_thread_resolved_exec_command_environment))
     }
 
     fn truncation_policy(&self) -> TruncationPolicy {
@@ -480,13 +429,13 @@ impl ToolRuntimeNetworkApprovalHandle for SessionToolNetworkApprovalHandle {
 }
 
 fn map_network_approval_error(
-    err: codex_tool_runtime_api::ToolError,
+    err: crate::tool_approval_support::ToolError,
 ) -> ToolRuntimeNetworkApprovalError {
     match err {
-        codex_tool_runtime_api::ToolError::Rejected(message) => {
+        crate::tool_approval_support::ToolError::Rejected(message) => {
             ToolRuntimeNetworkApprovalError::Rejected(message)
         }
-        codex_tool_runtime_api::ToolError::Codex(err) => {
+        crate::tool_approval_support::ToolError::Codex(err) => {
             ToolRuntimeNetworkApprovalError::Codex(err)
         }
     }
@@ -514,7 +463,7 @@ impl ToolEventSessionCapability for Session {
         event: ExecCommandBeginEvent,
     ) {
         let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-            tracing::warn!("tool runtime session capability received an unsupported turn context");
+            tracing::warn!("tool session capability received an unsupported turn context");
             return;
         };
         self.send_event(turn, EventMsg::ExecCommandBegin(event)).await;
@@ -526,7 +475,7 @@ impl ToolEventSessionCapability for Session {
         event: ExecCommandEndEvent,
     ) {
         let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-            tracing::warn!("tool runtime session capability received an unsupported turn context");
+            tracing::warn!("tool session capability received an unsupported turn context");
             return;
         };
         self.send_event(turn, EventMsg::ExecCommandEnd(event)).await;
@@ -538,7 +487,7 @@ impl ToolEventSessionCapability for Session {
         item: codex_protocol::items::FileChangeItem,
     ) {
         let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-            tracing::warn!("tool runtime session capability received an unsupported turn context");
+            tracing::warn!("tool session capability received an unsupported turn context");
             return;
         };
         self.emit_turn_item_started(turn, &codex_protocol::items::TurnItem::FileChange(item))
@@ -551,7 +500,7 @@ impl ToolEventSessionCapability for Session {
         item: codex_protocol::items::FileChangeItem,
     ) {
         let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-            tracing::warn!("tool runtime session capability received an unsupported turn context");
+            tracing::warn!("tool session capability received an unsupported turn context");
             return;
         };
         self.emit_turn_item_completed(turn, codex_protocol::items::TurnItem::FileChange(item))
@@ -564,7 +513,7 @@ impl ToolEventSessionCapability for Session {
         items: Vec<ResponseItem>,
     ) {
         let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-            tracing::warn!("tool runtime session capability received an unsupported turn context");
+            tracing::warn!("tool session capability received an unsupported turn context");
             return;
         };
         self.record_model_items_and_emit_display_events(turn, &items)
@@ -577,7 +526,7 @@ impl ToolEventSessionCapability for Session {
         event: TurnDiffEvent,
     ) {
         let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-            tracing::warn!("tool runtime session capability received an unsupported turn context");
+            tracing::warn!("tool session capability received an unsupported turn context");
             return;
         };
         self.send_event(turn, EventMsg::TurnDiff(event)).await;
@@ -605,12 +554,12 @@ impl ApplyPatchSessionCapability for Session {
         &'a self,
         turn: &'a dyn ApplyPatchTurnCapability,
         permission_request_run_id: &'a str,
-        permission_request: codex_tool_runtime_api::PermissionRequestPayload,
+        permission_request: PermissionRequestPayload,
     ) -> impl Future<Output = Option<codex_hooks_api::PermissionRequestDecision>> + Send + 'a {
         async move {
             let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
                 tracing::warn!(
-                    "tool runtime session capability received an unsupported turn context"
+                    "tool session capability received an unsupported turn context"
                 );
                 return None;
             };
@@ -625,78 +574,6 @@ impl ApplyPatchSessionCapability for Session {
     }
 }
 
-impl ExecCommandSessionRuntime<TurnContext> for Session {
-    fn tool_user_shell_type(&self) -> codex_tool_config::ToolUserShellType {
-        self.tool_user_shell_type()
-    }
-
-    fn runtime_shell(&self) -> RuntimeShell {
-        runtime_shell(self.user_shell().as_ref())
-    }
-
-    fn resolve_model_shell(&self, shell: &Path) -> RuntimeShell {
-        let mut shell = get_shell_by_model_provided_path(&shell.to_path_buf());
-        shell.shell_snapshot = crate::runtime_shell_model::empty_shell_snapshot_receiver();
-        runtime_shell(&shell)
-    }
-
-    fn resolve_exec_command(
-        &self,
-        turn: &TurnContext,
-        command: &str,
-        login: Option<bool>,
-        model_shell: Option<&RuntimeShell>,
-    ) -> Result<ResolvedExecCommand, String> {
-        let session_shell =
-            crate::runtime_shell::runtime_shell(self.user_shell().as_ref());
-        codex_tool_runtime_api::resolve_exec_command_for_parts(
-            command,
-            login,
-            &session_shell,
-            model_shell,
-            &turn.unified_exec_shell_mode(),
-            turn.allow_login_shell(),
-        )
-    }
-
-    fn maybe_emit_implicit_skill_invocation<'a>(
-        &'a self,
-        turn: &'a TurnContext,
-        command: &'a str,
-        workdir: &'a AbsolutePathBuf,
-    ) -> impl std::future::Future<Output = ()> + Send + 'a {
-        crate::maybe_emit_implicit_skill_invocation(self, turn, command, workdir)
-    }
-
-    fn allocate_exec_process_id(&self) -> impl std::future::Future<Output = i32> + Send + '_ {
-        self.allocate_unified_exec_process_id()
-    }
-
-    fn release_exec_process_id(
-        &self,
-        process_id: i32,
-    ) -> impl std::future::Future<Output = ()> + Send + '_ {
-        self.release_unified_exec_process_id(process_id)
-    }
-
-    fn run_exec_command<'a>(
-        &'a self,
-        turn: &'a TurnContext,
-        call_id: &'a str,
-        request: ExecCommandRunRequest,
-    ) -> impl std::future::Future<Output = Result<ExecCommandRunOutput, UnifiedExecError>> + Send + 'a {
-        let session = turn.session_arc();
-        let turn = turn.self_arc();
-        let call_id = call_id.to_string();
-        let request = to_command_exec_request(request);
-        async move {
-            session
-                .run_unified_exec_command(turn, call_id, request)
-                .await
-                .map(from_command_exec_output)
-        }
-    }
-}
 
 impl ToolRuntimeSessionCapability for Session {
     fn sandbox_runtime(&self) -> SharedSandboxRuntime {
@@ -709,7 +586,7 @@ impl ToolRuntimeSessionCapability for Session {
         event: ExecCommandBeginEvent,
     ) {
         let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-            tracing::warn!("tool runtime session capability received an unsupported turn context");
+            tracing::warn!("tool session capability received an unsupported turn context");
             return;
         };
         ToolEventSessionCapability::tool_send_exec_command_begin(self, turn, event).await;
@@ -721,7 +598,7 @@ impl ToolRuntimeSessionCapability for Session {
         event: ExecCommandEndEvent,
     ) {
         let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-            tracing::warn!("tool runtime session capability received an unsupported turn context");
+            tracing::warn!("tool session capability received an unsupported turn context");
             return;
         };
         ToolEventSessionCapability::tool_send_exec_command_end(self, turn, event).await;
@@ -733,7 +610,7 @@ impl ToolRuntimeSessionCapability for Session {
         item: codex_protocol::items::FileChangeItem,
     ) {
         let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-            tracing::warn!("tool runtime session capability received an unsupported turn context");
+            tracing::warn!("tool session capability received an unsupported turn context");
             return;
         };
         ToolEventSessionCapability::tool_emit_file_change_started(self, turn, item).await;
@@ -745,7 +622,7 @@ impl ToolRuntimeSessionCapability for Session {
         item: codex_protocol::items::FileChangeItem,
     ) {
         let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-            tracing::warn!("tool runtime session capability received an unsupported turn context");
+            tracing::warn!("tool session capability received an unsupported turn context");
             return;
         };
         ToolEventSessionCapability::tool_emit_file_change_completed(self, turn, item).await;
@@ -757,7 +634,7 @@ impl ToolRuntimeSessionCapability for Session {
         items: Vec<ResponseItem>,
     ) {
         let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-            tracing::warn!("tool runtime session capability received an unsupported turn context");
+            tracing::warn!("tool session capability received an unsupported turn context");
             return;
         };
         ToolEventSessionCapability::tool_record_model_items_and_emit_display_events(
@@ -772,7 +649,7 @@ impl ToolRuntimeSessionCapability for Session {
         event: TurnDiffEvent,
     ) {
         let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-            tracing::warn!("tool runtime session capability received an unsupported turn context");
+            tracing::warn!("tool session capability received an unsupported turn context");
             return;
         };
         ToolEventSessionCapability::tool_emit_turn_diff(self, turn, event).await;
@@ -797,7 +674,7 @@ impl ToolRuntimeSessionCapability for Session {
     fn create_exec_approval_requirement<'a>(
         &'a self,
         request: ExecPolicyApprovalRequest<'a>,
-    ) -> impl std::future::Future<Output = codex_tool_runtime_api::ExecApprovalRequirement> + Send + 'a {
+    ) -> impl std::future::Future<Output = ExecApprovalRequirement> + Send + 'a {
         self.create_exec_approval_requirement(request)
     }
 
@@ -820,13 +697,13 @@ impl ToolRuntimeSessionCapability for Session {
         &'a self,
         turn: &'a dyn ToolRuntimeTurnCapability,
         permission_request_run_id: &'a str,
-        permission_request: codex_tool_runtime_api::PermissionRequestPayload,
+        permission_request: PermissionRequestPayload,
     ) -> impl Future<Output = Option<codex_hooks_api::PermissionRequestDecision>> + Send + 'a {
         ApplyPatchSessionCapability::run_permission_request_hooks(
             self,
             ToolTurnCapability::as_any(turn)
                 .downcast_ref::<TurnContext>()
-                .expect("tool runtime session capability received an unsupported turn context"),
+                .expect("tool session capability received an unsupported turn context"),
             permission_request_run_id,
             permission_request,
         )
@@ -841,14 +718,7 @@ impl ToolRuntimeSessionCapability for Session {
         async move {
             let spec = spec.map(|spec| crate::network_approval::NetworkApprovalSpec {
                 network: spec.network,
-                mode: match spec.mode {
-                    codex_tool_runtime_api::NetworkApprovalMode::Immediate => {
-                        codex_thread_api::NetworkApprovalMode::Immediate
-                    }
-                    codex_tool_runtime_api::NetworkApprovalMode::Deferred => {
-                        codex_thread_api::NetworkApprovalMode::Deferred
-                    }
-                },
+                mode: spec.mode,
                 trigger: map_network_trigger(spec.trigger),
                 command: spec.command,
             });

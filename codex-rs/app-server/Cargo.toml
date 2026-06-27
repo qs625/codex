@@ -45,7 +45,7 @@ codex-config-state = { workspace = true }
 codex-config-toml = { workspace = true }
 codex-config-types = { workspace = true }
 codex-command-service = { workspace = true }
-codex-command-runtime = { workspace = true }
+codex-command-service-api = { workspace = true }
 codex-thread-runtime = { workspace = true }
 codex-core-plugins = { workspace = true }
 codex-core-plugins-api = { workspace = true }
@@ -103,9 +103,8 @@ codex-thread-api = { workspace = true }
 codex-thread-store = { workspace = true }
 codex-thread-store-api = { workspace = true }
 codex-tool-config = { workspace = true }
-codex-tool-runtime-api = { workspace = true }
 codex-tool-service = { workspace = true }
-codex-tools = { workspace = true }
+codex-tool-types = { workspace = true }
 codex-turn-metadata = { workspace = true }
 codex-terminal-detection = { workspace = true }
 codex-utils-absolute-path = { workspace = true }

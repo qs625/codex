@@ -40,7 +40,7 @@ use codex_thread_api::ActiveEventSubscriptionTracker;
 use codex_thread_store_api::LiveThreadFactory;
 use codex_thread_store_api::SharedLiveThread;
 use codex_thread_store_api::ThreadStore;
-use codex_tool_runtime_api::ApprovalStore;
+use codex_thread_api::ApprovalStore;
 use std::path::PathBuf;
 use tokio::runtime::Handle;
 use tokio::sync::Mutex;

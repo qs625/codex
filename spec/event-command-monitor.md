@@ -201,7 +201,7 @@ EventCommand 后端应复用现有 event-driven subscription 基础设施，但�
 数据流：
 
 1. 模型调用 `event_command_subscribe`。
-2. tool handler 校验 `command/cwd/label`，生成 `subscription_id`。
+2. tool 实现校验 `command/cwd/label`，生成 `subscription_id`。
 3. registry 持久化 EventCommand monitor：`subscription_id`、`command`、`cwd`、`label`。
 4. registry 启动后台 shell 命令。
 5. stdout reader 按 read chunk 生成 `EventCommandEvent(kind=output)`。

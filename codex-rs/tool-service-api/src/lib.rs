@@ -5,16 +5,16 @@ use std::sync::Weak;
 
 use codex_extension_api::ExtensionData;
 use codex_extension_api::ToolContributor;
-use codex_protocol::models::ResponseInputItem;
-use codex_protocol::protocol::EventMsg;
 use codex_mcp_tool_types::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
+use codex_protocol::models::ResponseInputItem;
+use codex_protocol::protocol::EventMsg;
 use codex_thread_api::SharedToolTurnDiffTracker;
 use codex_thread_api::ToolServiceSessionRef;
 use codex_thread_api::ToolServiceTurnRef;
 use codex_thread_api::ToolSessionCapability;
 use codex_tool_config::ToolsConfig;
-use codex_tool_planning::DiscoverableTool;
+use codex_tool_types::DiscoverableTool;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolCallSource;
@@ -152,8 +152,8 @@ impl AnyToolResult {
 pub struct ToolSpecRequest<'a> {
     pub config: &'a ToolsConfig,
     pub session_capability: Weak<dyn ToolSessionCapability>,
-    pub session: std::sync::Arc<dyn ToolServiceSessionRef>,
-    pub turn: std::sync::Arc<dyn ToolServiceTurnRef>,
+    pub session: Arc<dyn ToolServiceSessionRef>,
+    pub turn: Arc<dyn ToolServiceTurnRef>,
     pub params: ToolServiceParams<'a>,
 }
 

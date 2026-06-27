@@ -36,7 +36,7 @@ async fn dispatch_lifecycle_trace_records_direct_and_code_mode_requesters() -> a
         Arc::clone(&session),
         Arc::clone(&turn),
         "direct-call",
-        codex_tool_planning::ToolName::plain("get_goal"),
+        codex_tool_types::ToolName::plain("get_goal"),
         ToolCallSource::Direct,
         ToolPayload::Function {
             arguments: "{}".to_string(),
@@ -47,7 +47,7 @@ async fn dispatch_lifecycle_trace_records_direct_and_code_mode_requesters() -> a
         session,
         turn,
         "code-mode-call",
-        codex_tool_planning::ToolName::plain("get_goal"),
+        codex_tool_types::ToolName::plain("get_goal"),
         ToolCallSource::CodeMode {
             cell_id: "cell-1".to_string(),
             runtime_tool_call_id: "tool-1".to_string(),
@@ -115,7 +115,7 @@ async fn dispatch_lifecycle_trace_records_unsupported_tool_failures() -> anyhow:
         session,
         turn,
         "unsupported-call",
-        codex_tool_planning::ToolName::plain("missing_tool"),
+        codex_tool_types::ToolName::plain("missing_tool"),
         ToolCallSource::Direct,
         ToolPayload::Function {
             arguments: "{}".to_string(),
@@ -144,7 +144,7 @@ async fn dispatch_lifecycle_trace_records_incompatible_payload_failures() -> any
         session,
         turn,
         "incompatible-call",
-        codex_tool_planning::ToolName::plain("get_goal"),
+        codex_tool_types::ToolName::plain("get_goal"),
         ToolCallSource::Direct,
         ToolPayload::Custom {
             input: "{}".to_string(),
@@ -173,7 +173,7 @@ async fn direct_goal_tool_without_code_cell_traces_only_the_tool_call() -> anyho
         session,
         turn,
         "goal-call",
-        codex_tool_planning::ToolName::plain("get_goal"),
+        codex_tool_types::ToolName::plain("get_goal"),
         ToolCallSource::Direct,
         ToolPayload::Function {
             arguments: "{}".to_string(),

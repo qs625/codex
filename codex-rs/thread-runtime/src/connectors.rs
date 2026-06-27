@@ -37,7 +37,7 @@ pub(crate) use codex_mcp_runtime::{
     accessible_connectors_from_mcp_tools, list_accessible_and_enabled_connectors_from_manager,
 };
 use codex_mcp_types::CodexAppsAuthContext;
-use codex_tool_planning::DiscoverableTool;
+use codex_tool_types::DiscoverableTool;
 
 use crate::config::Config;
 use crate::plugins::list_tool_suggest_discoverable_plugins;

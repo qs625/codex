@@ -1,5 +1,9 @@
 mod context;
 mod domains;
+mod event_support;
+mod output;
+mod planning;
+mod support;
 
 use std::sync::Arc;
 
@@ -20,6 +24,7 @@ use codex_tool_types::FunctionCallError;
 use codex_workflow_api::WorkflowApi;
 
 use context::TypedToolSpecRequest;
+pub(crate) use planning::*;
 
 pub struct ToolService {
     approval_api: Arc<dyn ApprovalServiceApi>,

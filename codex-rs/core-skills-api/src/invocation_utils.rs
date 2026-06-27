@@ -159,7 +159,7 @@ fn unwrap_rtk_tokens(tokens: &[String]) -> &[String] {
         return tokens;
     }
 
-    match tokens.get(1).map(|token| token.as_str()) {
+    match tokens.get(1).map(String::as_str) {
         Some("proxy") if tokens.len() > 2 => &tokens[2..],
         Some(_) if tokens.len() > 1 => &tokens[1..],
         _ => tokens,

@@ -7,22 +7,24 @@ mod unified_exec;
 
 use std::sync::Arc;
 
-use codex_command_runtime::CommandSessionError;
-use codex_command_runtime::CommandWaitOperation;
-use codex_command_runtime::CommandWaitRequest;
-use codex_command_runtime::UnifiedExecError;
-use codex_command_runtime::WriteStdinOutput;
-use codex_command_runtime::WriteStdinRequest;
 use codex_command_service_api::CommandServiceApi;
 use codex_command_service_api::CommandServiceFuture;
-use codex_command_service_api::ExecCommandRunOutput;
-use codex_command_service_api::ExecCommandRunRequest;
+use codex_command_service_api::CommandSessionController;
+use codex_command_service_api::CommandSessionError;
 use codex_command_service_api::CommandServiceSessionCapability;
 use codex_command_service_api::CommandServiceSessionState;
 use codex_command_service_api::CommandServiceTurnCapability;
+use codex_command_service_api::CommandWaitOperation;
+use codex_command_service_api::CommandWaitRequest;
+use codex_command_service_api::ExecCommandRunOutput;
+use codex_command_service_api::ExecCommandRunRequest;
+use codex_command_service_api::UnifiedExecError;
+use codex_command_service_api::WriteStdinOutput;
+use codex_command_service_api::WriteStdinRequest;
 use unified_exec::UnifiedExecProcessManager;
 
 pub use unified_exec::UnifiedExecManagerHandle;
+pub use shell_support::maybe_wrap_shell_lc_with_snapshot;
 
 pub struct CommandService;
 
@@ -75,7 +77,7 @@ impl CommandServiceApi for CommandService {
 
 pub struct CommandSessionState {
     unified_exec_manager: Arc<UnifiedExecProcessManager>,
-    command_session_controller: Arc<dyn codex_command_runtime::CommandSessionController>,
+    command_session_controller: Arc<dyn CommandSessionController>,
 }
 
 impl CommandSessionState {

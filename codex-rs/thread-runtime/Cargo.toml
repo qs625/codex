@@ -50,7 +50,6 @@ codex-command-service = { workspace = true }
 codex-command-service-api = { workspace = true }
 codex-client-identity = { workspace = true }
 codex-client-types = { workspace = true }
-codex-command-runtime = { workspace = true }
 codex-config = { workspace = true }
 codex-connectors-api = { workspace = true }
 codex-connectors-types = { workspace = true }
@@ -115,9 +114,6 @@ codex-thread-api = { workspace = true }
 codex-thread-store-api = { workspace = true }
 codex-thread-store = { workspace = true, optional = true }
 codex-tool-config = { workspace = true }
-codex-tool-planning = { workspace = true }
-codex-tool-runtime = { workspace = true }
-codex-tool-runtime-api = { workspace = true }
 codex-tool-service-api = { workspace = true }
 codex-tool-types = { workspace = true }
 codex-turn-items = { workspace = true }
@@ -192,7 +188,6 @@ codex-rollout-trace = { workspace = true }
 codex-sandboxing = { workspace = true }
 codex-state = { workspace = true }
 codex-thread-store = { workspace = true }
-codex-tool-runtime-api = { workspace = true }
 codex-tool-service = { workspace = true }
 codex-test-binary-support = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }

@@ -30,7 +30,7 @@ use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
-use codex_tool_planning::ToolCall;
+use codex_tool_types::ToolCall;
 use codex_tool_types::FunctionCallError;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_image::decode_base64_image_bytes;

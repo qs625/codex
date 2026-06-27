@@ -3,12 +3,6 @@ use std::io;
 use std::process::ExitStatus;
 use std::time::Duration;
 
-use codex_command_runtime::ExecCapturePolicy;
-use codex_command_runtime::ExecExpiration;
-use codex_command_runtime::ExecExpirationOutcome;
-use codex_command_runtime::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
-use codex_command_runtime::bytes_to_string_smart;
-pub use codex_command_runtime::is_likely_sandbox_denied;
 use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result;
@@ -24,6 +18,22 @@ use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 use tokio::process::Child;
 use tokio::sync::mpsc;
+
+mod exec_control;
+mod output_decoding;
+mod sandbox_denial;
+
+pub use exec_control::DEFAULT_EXEC_COMMAND_TIMEOUT_MS;
+pub use exec_control::DEFAULT_EXEC_OUTPUT_MAX_BYTES;
+pub use exec_control::ExecCapturePolicy;
+pub use exec_control::ExecExpiration;
+pub use exec_control::ExecExpirationOutcome;
+pub use exec_control::ExecOptions;
+pub use exec_control::IO_DRAIN_TIMEOUT_MS;
+pub use exec_control::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
+pub use exec_control::cancel_when_either;
+pub use output_decoding::bytes_to_string_smart;
+pub use sandbox_denial::is_likely_sandbox_denied;
 
 const SIGKILL_CODE: i32 = 9;
 pub const LINUX_SIGSYS_CODE: i32 = 31;

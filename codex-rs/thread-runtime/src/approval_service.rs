@@ -10,11 +10,11 @@ use codex_approval_service_api::ExecCommandApprovalOutcome;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::ReviewDecision;
 use codex_thread_api::ApplyPatchSessionCapability;
+use codex_thread_api::PermissionRequestPayload;
 use codex_thread_api::ToolServiceSessionRef;
 use codex_thread_api::ToolServiceTurnRef;
-use codex_tool_runtime_api::ApplyPatchApprovalKey;
-use codex_tool_runtime_api::ApplyPatchApprovalRequest;
-use codex_tool_runtime_api::PermissionRequestPayload;
+use codex_approval_service_api::ApplyPatchApprovalKey;
+use codex_approval_service_api::ApplyPatchApprovalRequest;
 
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;

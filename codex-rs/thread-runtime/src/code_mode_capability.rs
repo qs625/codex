@@ -19,7 +19,7 @@ impl codex_thread_api::ThreadRuntimeCapability for TurnContext {
     fn resolve_environment(
         &self,
         environment_id: Option<&str>,
-    ) -> Result<Option<codex_tool_runtime_api::ResolvedApplyPatchEnvironment>, codex_tool_types::FunctionCallError>
+    ) -> Result<Option<codex_thread_api::ResolvedApplyPatchEnvironment>, codex_tool_types::FunctionCallError>
     {
         self.resolve_apply_patch_environment(environment_id)
     }

@@ -11,7 +11,7 @@ use codex_core_plugins::PluginsManager;
 use codex_core_plugins::startup_sync::curated_plugins_repo_path;
 use codex_core_plugins_api::OPENAI_BUNDLED_MARKETPLACE_NAME;
 use codex_core_plugins_api::TOOL_SUGGEST_DISCOVERABLE_PLUGIN_ALLOWLIST;
-use codex_tool_planning::DiscoverablePluginInfo;
+use codex_tool_types::DiscoverablePluginInfo;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use tempfile::tempdir;

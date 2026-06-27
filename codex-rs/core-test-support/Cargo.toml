@@ -49,7 +49,6 @@ codex-state-api = { workspace = true }
 codex-thread-api = { workspace = true }
 codex-thread-store = { workspace = true }
 codex-tool-config = { workspace = true }
-codex-tool-runtime-api = { workspace = true }
 codex-tool-service = { workspace = true }
 codex-workflow = { workspace = true }
 codex-utils-absolute-path = { workspace = true }

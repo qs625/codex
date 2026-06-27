@@ -9,7 +9,7 @@ use codex_extension_api::ToolCall;
 use codex_extension_api::ToolContributor;
 use codex_extension_api::ToolName;
 use codex_extension_api::ToolPayload;
-use codex_tools::ToolOutput;
+use codex_extension_api::ToolOutput;
 use codex_utils_absolute_path::test_support::PathBufExt;
 use codex_utils_absolute_path::test_support::PathExt;
 use codex_utils_absolute_path::test_support::test_path_buf;

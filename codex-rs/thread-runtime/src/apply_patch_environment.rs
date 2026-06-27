@@ -12,7 +12,7 @@ impl CoreApplyPatchEnvironment {
     }
 }
 
-impl codex_tool_runtime_api::ApplyPatchEnvironment for CoreApplyPatchEnvironment {
+impl codex_thread_api::ApplyPatchEnvironment for CoreApplyPatchEnvironment {
     fn environment_id(&self) -> &str {
         &self.turn_environment.environment_id
     }

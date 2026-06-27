@@ -18,10 +18,10 @@ use codex_app_server_protocol::CommandExecWriteParams;
 use codex_app_server_protocol::CommandExecWriteResponse;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::ServerNotification;
-use codex_command_runtime::ExecExpiration;
-use codex_command_runtime::ExecExpirationOutcome;
-use codex_command_runtime::IO_DRAIN_TIMEOUT_MS;
-use codex_command_runtime::bytes_to_string_smart;
+use codex_command_service_api::ExecExpiration;
+use codex_command_service_api::ExecExpirationOutcome;
+use codex_command_service_api::IO_DRAIN_TIMEOUT_MS;
+use codex_command_service_api::bytes_to_string_smart;
 use codex_thread_runtime::config::StartedNetworkProxy;
 use codex_thread_runtime::sandboxing::ExecRequest;
 use codex_sandboxing_api::SandboxType;
@@ -676,7 +676,7 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::error_code::INVALID_REQUEST_ERROR_CODE;
-    use codex_command_runtime::ExecCapturePolicy;
+    use codex_command_service_api::ExecCapturePolicy;
     use codex_protocol::config_types::WindowsSandboxLevel;
     use codex_protocol::models::PermissionProfile;
     use codex_utils_absolute_path::AbsolutePathBuf;

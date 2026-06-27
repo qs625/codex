@@ -85,7 +85,7 @@ pub(crate) fn disable_powershell_profile_for_elevated_windows_sandbox(
     command
 }
 
-pub(crate) fn maybe_wrap_shell_lc_with_snapshot(
+pub fn maybe_wrap_shell_lc_with_snapshot(
     command: &[String],
     session_shell: &RuntimeShell,
     cwd: &AbsolutePathBuf,

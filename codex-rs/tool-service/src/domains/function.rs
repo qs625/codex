@@ -17,24 +17,23 @@ use codex_protocol::request_permissions::RequestPermissionsArgs;
 use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_sandboxing_api::policy_transforms::normalize_additional_permissions;
 use codex_thread_api::FunctionToolCapability;
-use codex_tool_planning::REQUEST_USER_INPUT_TOOL_NAME;
-use codex_tool_planning::ResponsesApiNamespace;
-use codex_tool_planning::ResponsesApiNamespaceTool;
-use codex_tool_planning::ToolSpec;
-use codex_tool_planning::ViewImageToolOptions;
-use codex_tool_planning::create_request_permissions_tool;
-use codex_tool_planning::create_request_user_input_tool;
-use codex_tool_planning::create_test_sync_tool;
-use codex_tool_planning::create_update_plan_tool;
-use codex_tool_planning::create_view_image_tool;
-use codex_tool_planning::default_namespace_description;
-use codex_tool_planning::dynamic_tool_to_responses_api_tool;
-use codex_tool_planning::hosted_model_tool_specs;
-use codex_tool_planning::normalize_request_user_input_args;
-use codex_tool_planning::request_permissions_tool_description;
-use codex_tool_planning::request_user_input_tool_description;
-use codex_tool_planning::request_user_input_unavailable_message;
-use codex_tool_runtime::FunctionToolOutput;
+use crate::planning::REQUEST_USER_INPUT_TOOL_NAME;
+use crate::planning::ResponsesApiNamespace;
+use crate::planning::ResponsesApiNamespaceTool;
+use crate::planning::ToolSpec;
+use crate::planning::ViewImageToolOptions;
+use crate::planning::create_request_permissions_tool;
+use crate::planning::create_request_user_input_tool;
+use crate::planning::create_test_sync_tool;
+use crate::planning::create_update_plan_tool;
+use crate::planning::create_view_image_tool;
+use crate::planning::default_namespace_description;
+use crate::planning::dynamic_tool_to_responses_api_tool;
+use crate::planning::hosted_model_tool_specs;
+use crate::planning::normalize_request_user_input_args;
+use crate::planning::request_permissions_tool_description;
+use crate::planning::request_user_input_tool_description;
+use crate::planning::request_user_input_unavailable_message;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_types::FunctionCallError;
@@ -54,6 +53,7 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
 use crate::context::TypedToolSpecRequest;
+use crate::output::FunctionToolOutput;
 
 const UPDATE_PLAN_TOOL_NAME: &str = "update_plan";
 const REQUEST_PERMISSIONS_TOOL_NAME: &str = "request_permissions";
@@ -76,7 +76,7 @@ pub(crate) fn specs(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
             can_request_original_image_detail: false,
             include_environment_id: matches!(
                 request.config.environment_mode,
-                codex_tool_planning::ToolEnvironmentMode::Multiple
+                crate::planning::ToolEnvironmentMode::Multiple
             ),
         }),
         create_test_sync_tool(),

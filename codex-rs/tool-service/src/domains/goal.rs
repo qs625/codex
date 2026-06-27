@@ -4,16 +4,15 @@ use codex_protocol::protocol::ThreadGoal;
 use codex_protocol::protocol::ThreadGoalStatus;
 use codex_thread_api::GoalApi;
 use codex_thread_api::ThreadCapability;
-use codex_tool_runtime::FunctionToolOutput;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
-use codex_tool_planning::CREATE_GOAL_TOOL_NAME;
-use codex_tool_planning::GET_GOAL_TOOL_NAME;
-use codex_tool_planning::ToolSpec;
-use codex_tool_planning::UPDATE_GOAL_TOOL_NAME;
-use codex_tool_planning::create_create_goal_tool;
-use codex_tool_planning::create_get_goal_tool;
-use codex_tool_planning::create_update_goal_tool;
+use crate::planning::CREATE_GOAL_TOOL_NAME;
+use crate::planning::GET_GOAL_TOOL_NAME;
+use crate::planning::ToolSpec;
+use crate::planning::UPDATE_GOAL_TOOL_NAME;
+use crate::planning::create_create_goal_tool;
+use crate::planning::create_get_goal_tool;
+use crate::planning::create_update_goal_tool;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolName;
@@ -21,6 +20,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::context::TypedToolSpecRequest;
+use crate::output::FunctionToolOutput;
 
 pub(crate) fn specs(_request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
     vec![

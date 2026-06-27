@@ -10,9 +10,9 @@ ExecRequest for execution.
 #[cfg(target_os = "macos")]
 const CODEX_SANDBOX_ENV_VAR: &str = "CODEX_SANDBOX";
 const CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR: &str = "CODEX_SANDBOX_NETWORK_DISABLED";
-use codex_command_runtime::ExecCapturePolicy;
-use codex_command_runtime::ExecExpiration;
-pub(crate) use codex_command_runtime::ExecOptions;
+use codex_command_service_api::ExecCapturePolicy;
+use codex_command_service_api::ExecExpiration;
+pub(crate) use codex_command_service_api::ExecOptions;
 use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::PermissionProfile;

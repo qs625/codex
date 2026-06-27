@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use crate::runtime_shell_model::Shell;
 use crate::runtime_shell_model::ShellType;
+use codex_command_service_api::RuntimeShell;
+use codex_command_service_api::RuntimeShellSnapshot;
 use codex_tool_config::ToolUserShellType;
-use codex_tool_runtime_api::RuntimeShell;
-use codex_tool_runtime_api::RuntimeShellSnapshot;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 pub(crate) fn maybe_wrap_shell_lc_with_snapshot(
@@ -14,7 +14,7 @@ pub(crate) fn maybe_wrap_shell_lc_with_snapshot(
     explicit_env_overrides: &HashMap<String, String>,
     env: &HashMap<String, String>,
 ) -> Vec<String> {
-    codex_tool_runtime::maybe_wrap_shell_lc_with_snapshot(
+    codex_command_service::maybe_wrap_shell_lc_with_snapshot(
         command,
         &runtime_shell(session_shell),
         cwd,

@@ -3,9 +3,9 @@ use std::sync::Arc;
 use crate::mcp::tool_call::handle_mcp_tool_call;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
+use codex_thread_api::McpToolCallOutcome;
 use codex_thread_api::SessionMcpToolCaller;
 use codex_thread_api::SessionMcpToolTurn;
-use codex_tool_runtime_api::McpToolCallOutcome;
 use codex_utils_output_truncation::TruncationPolicy;
 
 impl SessionMcpToolCaller for Session {

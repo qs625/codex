@@ -90,9 +90,9 @@ use codex_protocol::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
 use crate::TurnResolvedConfigFactInput;
 use crate::build_turn_resolved_config_fact;
-use codex_tool_planning::ToolName;
-use codex_tool_planning::filter_request_plugin_install_discoverable_tools_for_client;
-use codex_tool_runtime::TurnDiffTracker;
+use codex_tool_types::ToolName;
+use codex_tool_types::filter_request_plugin_install_discoverable_tools_for_client;
+use codex_thread_api::TurnDiffTracker;
 use codex_tool_service_api::ExtensionToolBuildParams;
 use codex_tool_service_api::ToolServiceParams;
 use codex_tool_types::FunctionCallError;
@@ -1149,7 +1149,7 @@ pub(crate) struct TurnToolInputs {
     pub(crate) tool_session_capability: std::sync::Weak<dyn codex_thread_api::ToolSessionCapability>,
     pub(crate) mcp_tools: Vec<codex_mcp_tool_types::ToolInfo>,
     pub(crate) deferred_mcp_tools: Vec<codex_mcp_tool_types::ToolInfo>,
-    pub(crate) discoverable_tools: Vec<codex_tool_planning::DiscoverableTool>,
+    pub(crate) discoverable_tools: Vec<codex_tool_types::DiscoverableTool>,
     pub(crate) default_agent_type_description: String,
 }
 
@@ -1184,8 +1184,8 @@ pub(crate) async fn dispatch_tool_call(
     turn_context: Arc<TurnContext>,
     tool_inputs: Arc<TurnToolInputs>,
     tracker: SharedTurnDiffTracker,
-    call: codex_tool_planning::ToolCall,
-    source: codex_tool_planning::ToolCallSource,
+    call: codex_tool_types::ToolCall,
+    source: codex_tool_types::ToolCallSource,
     cancellation_token: CancellationToken,
 ) -> Result<codex_tool_service_api::AnyToolResult, FunctionCallError> {
     tool_service
@@ -1205,7 +1205,7 @@ pub(crate) async fn handle_tool_call(
     turn_context: Arc<TurnContext>,
     tool_inputs: Arc<TurnToolInputs>,
     tracker: SharedTurnDiffTracker,
-    call: codex_tool_planning::ToolCall,
+    call: codex_tool_types::ToolCall,
     cancellation_token: CancellationToken,
 ) -> Result<ResponseItem, CodexErr> {
     let error_call = call.clone();
@@ -1216,7 +1216,7 @@ pub(crate) async fn handle_tool_call(
         tool_inputs,
         tracker,
         call,
-        codex_tool_planning::ToolCallSource::Direct,
+        codex_tool_types::ToolCallSource::Direct,
         cancellation_token,
     )
     .await
@@ -1228,7 +1228,7 @@ pub(crate) async fn handle_tool_call(
 }
 
 fn failure_response(
-    call: codex_tool_planning::ToolCall,
+    call: codex_tool_types::ToolCall,
     err: FunctionCallError,
 ) -> ResponseItem {
     let message = err.to_string();

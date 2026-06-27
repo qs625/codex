@@ -1,8 +1,8 @@
 //! Tool configuration and lightweight model capability helpers.
 //!
-//! This crate sits below `codex-tools`: it owns the data needed to decide
-//! which tool surfaces should be exposed, while concrete tool factories and
-//! planning remain in `codex-tools`.
+//! This crate sits below the tool planning/service layers: it owns the data
+//! needed to decide which tool surfaces should be exposed, while concrete tool
+//! factories and planning remain in owner service crates such as `codex-tool-service`.
 
 mod image_detail;
 mod tool_config;

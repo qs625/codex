@@ -18,6 +18,7 @@ use codex_connectors_types::AppInfo;
 use codex_hooks::run_permission_request_hooks;
 use codex_hooks_api::PermissionRequestDecision;
 use codex_mcp_runtime::AppToolPolicy;
+use codex_thread_api::HookToolName;
 #[cfg(test)]
 use codex_mcp_runtime::CodexAppsAuthElicitationContext;
 use codex_mcp_runtime::CodexAppsAuthElicitationHost;
@@ -67,7 +68,6 @@ use codex_protocol::protocol::McpInvocation;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_protocol::request_user_input::RequestUserInputResponse;
-use codex_tool_runtime_api::HookToolName;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 

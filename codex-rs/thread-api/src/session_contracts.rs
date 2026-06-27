@@ -8,7 +8,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::future::Future;
-use std::marker::PhantomData;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,7 +17,10 @@ use codex_code_mode_api::ExecuteRequest;
 use codex_code_mode_api::RuntimeResponse;
 use codex_code_mode_api::WaitOutcome;
 use codex_code_mode_api::WaitRequest;
+use codex_exec_server_api::ExecEnvironment;
+use codex_file_system::ExecutorFileSystem;
 use codex_permissions_runtime::ExecPolicyApprovalRequest;
+use codex_permissions_runtime::ExecApprovalRequirement;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::error::CodexErr;
@@ -32,15 +35,18 @@ use codex_protocol::mcp::ReadResourceRequestParams;
 use codex_protocol::mcp::ReadResourceResult;
 use codex_protocol::mcp::Resource;
 use codex_protocol::mcp::ResourceTemplate;
+use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
+use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::ExecCommandBeginEvent;
 use codex_protocol::protocol::ExecCommandEndEvent;
 use codex_protocol::protocol::McpInvocation;
 use codex_protocol::protocol::Op;
+use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::Submission;
 use codex_protocol::protocol::ThreadGoal;
 use codex_protocol::protocol::TurnDiffEvent;
@@ -48,34 +54,13 @@ use codex_protocol::protocol::W3cTraceContext;
 use codex_session_telemetry_api::SharedSessionTelemetry;
 use codex_state_api::SharedStateDbRuntime;
 use codex_sandboxing_api::SharedSandboxRuntime;
-use codex_tool_planning::DiscoverableTool;
-use codex_tool_planning::RequestPluginInstallElicitationRequest;
-use codex_tool_runtime_api::AgentJobRunnerOptions;
-use codex_tool_runtime_api::AgentJobSpawnWorkerError;
-use codex_tool_runtime_api::AgentJobToolHost;
-use codex_tool_runtime_api::AnyToolResult;
-use codex_tool_runtime_api::NetworkApprovalSpec;
-use codex_tool_runtime_api::PermissionRequestPayload;
-use codex_tool_runtime_api::McpToolCallHost;
-use codex_tool_runtime_api::McpToolCallOutcome;
-use codex_tool_runtime_api::PostToolUseHookOutcome;
-use codex_tool_runtime_api::PostToolUsePayload;
-use codex_tool_runtime_api::PreToolUseHookOutcome;
-use codex_tool_runtime_api::PreToolUsePayload;
-use codex_tool_runtime_api::RequestPluginInstallContext;
-use codex_tool_runtime_api::RequestPluginInstallElicitationOutcome;
-use codex_tool_runtime_api::ToolArgumentDiffConsumer;
-use codex_tool_runtime_api::ToolEventHost;
-use codex_tool_runtime_api::ToolPatchTrackerUpdate;
-use codex_tool_runtime_api::ToolPermissionGrants;
-use codex_tool_runtime_api::ToolTelemetryTags;
+use codex_tool_types::DiscoverableTool;
+use codex_tool_types::RequestPluginInstallElicitationRequest;
 use codex_tool_types::FunctionCallError;
-use codex_tool_types::ToolCall;
 use codex_tool_types::ToolCallSource;
 use codex_tool_types::ToolName;
 use codex_tool_types::ToolOutput;
 use codex_tool_types::ToolPayload;
-use codex_tool_types::ToolSpec;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::TruncationPolicy;
 use tokio::sync::Mutex;
@@ -90,17 +75,195 @@ mod pending_input;
 
 pub use pending_input::PendingInputItem;
 
-/// Boxed tool dispatch future returned by session-facing tool routers.
-///
-/// The concrete tool implementation crate owns handler execution. Session and
-/// turn runtimes only need a stable async contract they can poll while managing
-/// cancellation, context, and response history.
-pub type SessionToolDispatchFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<AnyToolResult, FunctionCallError>> + Send + 'a>>;
-
 /// Boxed future returned by object-safe session capability traits.
 pub type SessionCapabilityFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-pub type SharedToolTurnDiffTracker = Arc<Mutex<codex_tool_runtime::TurnDiffTracker>>;
+pub type SharedToolTurnDiffTracker = Arc<Mutex<crate::TurnDiffTracker>>;
+
+#[derive(serde::Serialize, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct HookToolName {
+    name: String,
+    matcher_aliases: Vec<String>,
+}
+
+impl HookToolName {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            matcher_aliases: Vec::new(),
+        }
+    }
+
+    pub fn bash() -> Self {
+        Self::new("Bash")
+    }
+
+    pub fn apply_patch() -> Self {
+        Self {
+            name: "apply_patch".to_string(),
+            matcher_aliases: vec!["Write".to_string(), "Edit".to_string()],
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn matcher_aliases(&self) -> &[String] {
+        &self.matcher_aliases
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PermissionRequestPayload {
+    pub tool_name: HookToolName,
+    pub tool_input: serde_json::Value,
+}
+
+impl PermissionRequestPayload {
+    pub fn bash(command: String, description: Option<String>) -> Self {
+        let mut tool_input = serde_json::Map::new();
+        tool_input.insert("command".to_string(), serde_json::Value::String(command));
+        if let Some(description) = description {
+            tool_input.insert(
+                "description".to_string(),
+                serde_json::Value::String(description),
+            );
+        }
+
+        Self {
+            tool_name: HookToolName::bash(),
+            tool_input: serde_json::Value::Object(tool_input),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ToolPermissionGrants {
+    pub session: Option<AdditionalPermissionProfile>,
+    pub turn: Option<AdditionalPermissionProfile>,
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct ApprovalStore {
+    map: HashMap<String, ReviewDecision>,
+}
+
+impl ApprovalStore {
+    pub fn get<K>(&self, key: &K) -> Option<ReviewDecision>
+    where
+        K: Serialize,
+    {
+        let key = serde_json::to_string(key).ok()?;
+        self.map.get(&key).cloned()
+    }
+
+    pub fn put<K>(&mut self, key: K, value: ReviewDecision)
+    where
+        K: Serialize,
+    {
+        if let Ok(key) = serde_json::to_string(&key) {
+            self.map.insert(key, value);
+        }
+    }
+}
+
+/// Filesystem/environment boundary needed by thread-owned tool execution.
+pub trait ApplyPatchEnvironment: Send + Sync {
+    fn environment_id(&self) -> &str;
+
+    fn filesystem(&self) -> Arc<dyn ExecutorFileSystem>;
+}
+
+pub struct ToolSandboxContext {
+    pub turn_id: String,
+    pub telemetry: SharedSessionTelemetry,
+    pub file_system_sandbox_policy: FileSystemSandboxPolicy,
+    pub network_sandbox_policy: NetworkSandboxPolicy,
+    pub permission_profile: PermissionProfile,
+    pub managed_network_active: bool,
+    pub cwd: AbsolutePathBuf,
+    pub codex_linux_sandbox_exe: Option<PathBuf>,
+    pub use_legacy_landlock: bool,
+    pub windows_sandbox_level: WindowsSandboxLevel,
+    pub windows_sandbox_private_desktop: bool,
+}
+
+pub struct ResolvedApplyPatchEnvironment {
+    pub cwd: AbsolutePathBuf,
+    pub environment: Arc<dyn ApplyPatchEnvironment>,
+}
+
+pub struct ResolvedExecCommandEnvironment {
+    pub cwd: AbsolutePathBuf,
+    pub sandbox_cwd: AbsolutePathBuf,
+    pub environment: Arc<dyn ExecEnvironment>,
+    pub apply_patch_environment: Arc<dyn ApplyPatchEnvironment>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RequestPluginInstallContext {
+    pub server_name: String,
+    pub thread_id: String,
+    pub turn_id: String,
+    pub app_server_client_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RequestPluginInstallElicitationOutcome {
+    pub user_confirmed: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct NetworkApprovalSpec<Trigger> {
+    pub network: Option<codex_network_proxy_api::SharedNetworkProxyRuntime>,
+    pub mode: NetworkApprovalMode,
+    pub trigger: Trigger,
+    pub command: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct McpToolCallOutcome {
+    pub result: CallToolResult,
+    pub tool_input: serde_json::Value,
+}
+
+pub struct AgentJobRunnerOptions<SpawnConfig> {
+    pub max_concurrency: usize,
+    pub spawn_config: SpawnConfig,
+}
+
+pub enum AgentJobSpawnWorkerError {
+    LimitReached,
+    Other(String),
+}
+
+pub type ToolTelemetryTags = Vec<(&'static str, String)>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreToolUsePayload {
+    pub tool_name: HookToolName,
+    pub tool_input: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PostToolUsePayload {
+    pub tool_name: HookToolName,
+    pub tool_use_id: String,
+    pub tool_input: serde_json::Value,
+    pub tool_response: serde_json::Value,
+}
+
+pub enum PreToolUseHookOutcome {
+    Continue {
+        updated_input: Option<serde_json::Value>,
+    },
+    Blocked(String),
+}
+
+#[derive(Default)]
+pub struct PostToolUseHookOutcome {
+    pub replacement_text: Option<String>,
+}
 
 /// Session-owned trace lifecycle for one tool dispatch.
 ///
@@ -265,41 +428,10 @@ pub trait ToolSessionCapability: Send + Sync + 'static {
     ) -> SessionCapabilityFuture<'a, Result<(), String>>;
 }
 
-/// Tool capability surface consumed by the session/turn loop.
-///
-/// Implementations own tool registry construction, handler dispatch, hook
-/// integration, telemetry, and code-mode result shaping. Session runtimes
-/// should treat this as an injected capability and must not depend on concrete
-/// tool handler or host implementations.
-pub trait SessionToolRouter<Tracker, DiffContext>: Send + Sync + 'static {
-    /// Tool specs visible to the model for the current turn.
-    fn model_visible_specs(&self) -> Vec<ToolSpec>;
-
-    /// Create a streaming argument diff consumer for a tool, when supported.
-    fn create_diff_consumer(
-        &self,
-        tool_name: &ToolName,
-    ) -> Option<Box<dyn ToolArgumentDiffConsumer<DiffContext>>>;
-
-    /// Whether the given call can run concurrently with other tool calls.
-    fn tool_supports_parallel(&self, call: &ToolCall) -> bool;
-
-    /// Dispatch a parsed tool call through the implementation-owned registry.
-    fn dispatch_tool_call_with_code_mode_result(
-        &self,
-        cancellation_token: CancellationToken,
-        tracker: Tracker,
-        call: ToolCall,
-        source: ToolCallSource,
-    ) -> SessionToolDispatchFuture<'_>;
-}
-
 /// Session-owned MCP call capability consumed by tool handlers.
 ///
 /// Implementations own concrete MCP approval, elicitation, telemetry, event,
-/// connector, and tool-call side effects for one live session. Tool-domain code
-/// should depend on this contract through [`SessionMcpToolCallHost`] instead of
-/// requiring a broad session/runtime host.
+/// connector, and tool-call side effects for one live session.
 pub trait SessionMcpToolCaller: Send + Sync + 'static {
     /// Execute one MCP tool call for the given turn and return the model-visible
     /// result plus the normalized tool input used for history/output shaping.
@@ -351,77 +483,6 @@ where
 
     fn mcp_truncation_policy(&self) -> TruncationPolicy {
         self.as_ref().mcp_truncation_policy()
-    }
-}
-
-/// Generic tool-handler host that delegates MCP tool calls to session API traits.
-///
-/// This adapter lets composition roots wire MCP tool handling through the
-/// narrow session contract without requiring broader tool runtime host traits to
-/// implement MCP call execution.
-pub struct SessionMcpToolCallHost<Session, Turn, Tracker, DiffContext> {
-    _marker: PhantomData<fn() -> (Session, Turn, Tracker, DiffContext)>,
-}
-
-impl<Session, Turn, Tracker, DiffContext> Clone
-    for SessionMcpToolCallHost<Session, Turn, Tracker, DiffContext>
-{
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<Session, Turn, Tracker, DiffContext> Copy
-    for SessionMcpToolCallHost<Session, Turn, Tracker, DiffContext>
-{
-}
-
-impl<Session, Turn, Tracker, DiffContext> Default
-    for SessionMcpToolCallHost<Session, Turn, Tracker, DiffContext>
-{
-    fn default() -> Self {
-        Self {
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl<Session, Turn, Tracker, DiffContext> McpToolCallHost
-    for SessionMcpToolCallHost<Session, Turn, Tracker, DiffContext>
-where
-    Session: SessionMcpToolCaller,
-    Turn: Clone + SessionMcpToolTurn,
-    Tracker: Clone + Send + Sync + 'static,
-    DiffContext: 'static,
-{
-    type Session = Arc<Session>;
-    type Turn = Turn;
-    type Tracker = Tracker;
-    type DiffContext = DiffContext;
-
-    fn call_mcp_tool<'a>(
-        &'a self,
-        session: Self::Session,
-        turn: &'a Self::Turn,
-        call_id: String,
-        server: String,
-        tool_name: String,
-        hook_tool_name: String,
-        arguments: String,
-    ) -> impl Future<Output = McpToolCallOutcome> + Send + 'a {
-        async move {
-            session
-                .call_mcp_tool(turn, call_id, server, tool_name, hook_tool_name, arguments)
-                .await
-        }
-    }
-
-    fn mcp_original_image_detail_supported(&self, turn: &Self::Turn) -> bool {
-        turn.mcp_original_image_detail_supported()
-    }
-
-    fn mcp_truncation_policy(&self, turn: &Self::Turn) -> TruncationPolicy {
-        turn.mcp_truncation_policy()
     }
 }
 
@@ -571,7 +632,7 @@ pub trait ThreadRuntimeCapability: ThreadCapability {
     fn resolve_environment(
         &self,
         environment_id: Option<&str>,
-    ) -> Result<Option<codex_tool_runtime_api::ResolvedApplyPatchEnvironment>, FunctionCallError>;
+    ) -> Result<Option<ResolvedApplyPatchEnvironment>, FunctionCallError>;
 
     /// Build a filesystem sandbox context for the selected cwd.
     fn file_system_sandbox_context(
@@ -602,7 +663,7 @@ where
     fn resolve_environment(
         &self,
         environment_id: Option<&str>,
-    ) -> Result<Option<codex_tool_runtime_api::ResolvedApplyPatchEnvironment>, FunctionCallError> {
+    ) -> Result<Option<ResolvedApplyPatchEnvironment>, FunctionCallError> {
         self.as_ref().resolve_environment(environment_id)
     }
 
@@ -768,9 +829,23 @@ where
     }
 }
 
+/// Turn-owned capability for apply-patch streamed argument diff events.
+pub trait ApplyPatchDiffContext: Send + Sync + 'static {
+    fn apply_patch_streaming_events_enabled(&self) -> bool;
+}
+
+impl<Turn> ApplyPatchDiffContext for Arc<Turn>
+where
+    Turn: ApplyPatchDiffContext,
+{
+    fn apply_patch_streaming_events_enabled(&self) -> bool {
+        self.as_ref().apply_patch_streaming_events_enabled()
+    }
+}
+
 /// Turn-owned event capability consumed by tool lifecycle emitters.
 ///
-/// This is narrower than the legacy tool-runtime capability and only carries
+/// This is narrower than the previous combined tool capability and only carries
 /// display/event fields needed by generic tool event emitters.
 pub trait ToolEventTurnCapability: ToolTurnCapability + Send + Sync + 'static {
     fn runtime_turn_id_str(&self) -> &str;
@@ -894,12 +969,12 @@ pub trait ApplyPatchTurnCapability: ThreadRuntimeCapability + ToolEventTurnCapab
 
     fn windows_sandbox_level(&self) -> WindowsSandboxLevel;
 
-    fn tool_sandbox_context(&self) -> codex_tool_runtime_api::ToolSandboxContext;
+    fn tool_sandbox_context(&self) -> ToolSandboxContext;
 
     fn resolve_apply_patch_environment(
         &self,
         environment_id: Option<&str>,
-    ) -> Result<Option<codex_tool_runtime_api::ResolvedApplyPatchEnvironment>, FunctionCallError>;
+    ) -> Result<Option<ResolvedApplyPatchEnvironment>, FunctionCallError>;
 }
 
 impl<Turn> ApplyPatchTurnCapability for Arc<Turn>
@@ -922,14 +997,14 @@ where
         self.as_ref().windows_sandbox_level()
     }
 
-    fn tool_sandbox_context(&self) -> codex_tool_runtime_api::ToolSandboxContext {
+    fn tool_sandbox_context(&self) -> ToolSandboxContext {
         self.as_ref().tool_sandbox_context()
     }
 
     fn resolve_apply_patch_environment(
         &self,
         environment_id: Option<&str>,
-    ) -> Result<Option<codex_tool_runtime_api::ResolvedApplyPatchEnvironment>, FunctionCallError> {
+    ) -> Result<Option<ResolvedApplyPatchEnvironment>, FunctionCallError> {
         self.as_ref().resolve_apply_patch_environment(environment_id)
     }
 }
@@ -992,7 +1067,7 @@ pub trait ToolRuntimeTurnCapability: ToolTurnCapability + ThreadRuntimeCapabilit
 
     fn routes_approval_to_guardian(&self) -> bool;
 
-    fn tool_sandbox_context(&self) -> codex_tool_runtime_api::ToolSandboxContext;
+    fn tool_sandbox_context(&self) -> ToolSandboxContext;
 
     fn approval_policy(&self) -> AskForApproval;
 
@@ -1011,11 +1086,11 @@ pub trait ToolRuntimeTurnCapability: ToolTurnCapability + ThreadRuntimeCapabilit
     fn resolve_apply_patch_environment(
         &self,
         environment_id: Option<&str>,
-    ) -> Result<Option<codex_tool_runtime_api::ResolvedApplyPatchEnvironment>, FunctionCallError>;
+    ) -> Result<Option<ResolvedApplyPatchEnvironment>, FunctionCallError>;
 
     fn primary_apply_patch_environment(
         &self,
-    ) -> Option<codex_tool_runtime_api::ResolvedApplyPatchEnvironment>;
+    ) -> Option<ResolvedApplyPatchEnvironment>;
 
     fn explicit_shell_env_overrides(&self) -> HashMap<String, String>;
 
@@ -1027,7 +1102,7 @@ pub trait ToolRuntimeTurnCapability: ToolTurnCapability + ThreadRuntimeCapabilit
         &self,
         environment_id: Option<&str>,
         workdir: Option<&str>,
-    ) -> Result<Option<codex_tool_runtime_api::ResolvedExecCommandEnvironment>, FunctionCallError>;
+    ) -> Result<Option<ResolvedExecCommandEnvironment>, FunctionCallError>;
 
     fn truncation_policy(&self) -> TruncationPolicy;
 
@@ -1048,7 +1123,7 @@ where
         self.as_ref().routes_approval_to_guardian()
     }
 
-    fn tool_sandbox_context(&self) -> codex_tool_runtime_api::ToolSandboxContext {
+    fn tool_sandbox_context(&self) -> ToolSandboxContext {
         self.as_ref().tool_sandbox_context()
     }
 
@@ -1083,13 +1158,13 @@ where
     fn resolve_apply_patch_environment(
         &self,
         environment_id: Option<&str>,
-    ) -> Result<Option<codex_tool_runtime_api::ResolvedApplyPatchEnvironment>, FunctionCallError> {
+    ) -> Result<Option<ResolvedApplyPatchEnvironment>, FunctionCallError> {
         self.as_ref().resolve_apply_patch_environment(environment_id)
     }
 
     fn primary_apply_patch_environment(
         &self,
-    ) -> Option<codex_tool_runtime_api::ResolvedApplyPatchEnvironment> {
+    ) -> Option<ResolvedApplyPatchEnvironment> {
         self.as_ref().primary_apply_patch_environment()
     }
 
@@ -1109,7 +1184,7 @@ where
         &self,
         environment_id: Option<&str>,
         workdir: Option<&str>,
-    ) -> Result<Option<codex_tool_runtime_api::ResolvedExecCommandEnvironment>, FunctionCallError> {
+    ) -> Result<Option<ResolvedExecCommandEnvironment>, FunctionCallError> {
         self.as_ref()
             .resolve_exec_command_environment(environment_id, workdir)
     }
@@ -1183,7 +1258,7 @@ pub trait ToolRuntimeSessionCapability: Send + Sync + 'static {
     fn create_exec_approval_requirement<'a>(
         &'a self,
         request: ExecPolicyApprovalRequest<'a>,
-    ) -> impl Future<Output = codex_tool_runtime_api::ExecApprovalRequirement> + Send + 'a;
+    ) -> impl Future<Output = ExecApprovalRequirement> + Send + 'a;
 
     fn strict_auto_review_enabled_for_turn(&self) -> impl Future<Output = bool> + Send + '_;
 
@@ -1286,7 +1361,7 @@ where
     fn create_exec_approval_requirement<'a>(
         &'a self,
         request: ExecPolicyApprovalRequest<'a>,
-    ) -> impl Future<Output = codex_tool_runtime_api::ExecApprovalRequirement> + Send + 'a {
+    ) -> impl Future<Output = ExecApprovalRequirement> + Send + 'a {
         self.as_ref().create_exec_approval_requirement(request)
     }
 
@@ -1368,102 +1443,6 @@ pub trait ToolRuntimeNetworkApprovalHandle: Send + Sync + 'static {
     fn finish<'a>(
         &'a self,
     ) -> Pin<Box<dyn Future<Output = Result<(), ToolRuntimeNetworkApprovalError>> + Send + 'a>>;
-}
-
-pub struct SessionToolEventHost<'a, Session, Turn> {
-    session: &'a Session,
-    turn: &'a Turn,
-    turn_diff_tracker: Option<&'a SharedToolTurnDiffTracker>,
-}
-
-impl<'a, Session, Turn> SessionToolEventHost<'a, Session, Turn> {
-    pub fn new(
-        session: &'a Session,
-        turn: &'a Turn,
-        turn_diff_tracker: Option<&'a SharedToolTurnDiffTracker>,
-    ) -> Self {
-        Self {
-            session,
-            turn,
-            turn_diff_tracker,
-        }
-    }
-}
-
-impl<Session, Turn> ToolEventHost for SessionToolEventHost<'_, Session, Turn>
-where
-    Session: ToolEventSessionCapability,
-    Turn: ToolEventTurnCapability,
-{
-    fn turn_id(&self) -> &str {
-        self.turn.runtime_turn_id_str()
-    }
-
-    fn truncation_policy(&self) -> TruncationPolicy {
-        self.turn.truncation_policy()
-    }
-
-    async fn send_exec_command_begin(&self, event: ExecCommandBeginEvent) {
-        self.session
-            .tool_send_exec_command_begin(self.turn, event)
-            .await;
-    }
-
-    async fn send_exec_command_end(&self, event: ExecCommandEndEvent) {
-        self.session.tool_send_exec_command_end(self.turn, event).await;
-    }
-
-    async fn emit_file_change_started(&self, item: FileChangeItem) {
-        self.session
-            .tool_emit_file_change_started(self.turn, item)
-            .await;
-    }
-
-    async fn emit_file_change_completed(&self, item: FileChangeItem) {
-        self.session
-            .tool_emit_file_change_completed(self.turn, item)
-            .await;
-    }
-
-    async fn record_model_items_and_emit_display_events(&self, items: Vec<ResponseItem>) {
-        self.session
-            .tool_record_model_items_and_emit_display_events(self.turn, items)
-            .await;
-    }
-
-    async fn update_patch_diff<'a>(
-        &'a self,
-        tracker_update: ToolPatchTrackerUpdate<'a>,
-    ) {
-        let Some(tracker) = self.turn_diff_tracker else {
-            return;
-        };
-        let (should_emit_turn_diff, unified_diff) = {
-            let mut guard = tracker.lock().await;
-            let previous_diff = guard.get_unified_diff();
-            let tracker_changed = match tracker_update {
-                ToolPatchTrackerUpdate::Track(delta) => {
-                    guard.track_delta(delta);
-                    true
-                }
-                ToolPatchTrackerUpdate::Invalidate => {
-                    guard.invalidate();
-                    true
-                }
-                ToolPatchTrackerUpdate::None => false,
-            };
-            let unified_diff = guard.get_unified_diff();
-            (
-                tracker_changed && (previous_diff.is_some() || unified_diff.is_some()),
-                unified_diff.unwrap_or_default(),
-            )
-        };
-        if should_emit_turn_diff {
-            self.session
-                .tool_emit_turn_diff(self.turn, TurnDiffEvent { unified_diff })
-                .await;
-        }
-    }
 }
 
 /// Session-owned code-mode capability consumed by code-mode tool handlers.
@@ -1733,9 +1712,7 @@ where
 /// Session-owned agent-job capability consumed by CSV agent-job tools.
 ///
 /// Implementations own state DB access, subagent spawning, worker lifecycle,
-/// and status subscriptions. Tool-domain code should depend on this contract
-/// through [`SessionAgentJobHost`] instead of requiring a broad session/runtime
-/// host.
+/// and status subscriptions.
 pub trait SessionAgentJobCaller: Send + Sync + 'static {
     type SpawnConfig: Clone + Send + Sync + 'static;
 
@@ -1835,115 +1812,6 @@ where
         thread_id: ThreadId,
     ) -> impl Future<Output = Option<watch::Receiver<AgentStatus>>> + Send {
         Arc::clone(self.as_ref()).subscribe_agent_job_worker_status(thread_id)
-    }
-}
-
-/// Generic agent-job host that delegates agent-job work to session API traits.
-pub struct SessionAgentJobHost<Session, Turn, Tracker, DiffContext, SpawnConfig> {
-    _marker: PhantomData<fn() -> (Session, Turn, Tracker, DiffContext, SpawnConfig)>,
-}
-
-impl<Session, Turn, Tracker, DiffContext, SpawnConfig> Clone
-    for SessionAgentJobHost<Session, Turn, Tracker, DiffContext, SpawnConfig>
-{
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<Session, Turn, Tracker, DiffContext, SpawnConfig> Copy
-    for SessionAgentJobHost<Session, Turn, Tracker, DiffContext, SpawnConfig>
-{
-}
-
-impl<Session, Turn, Tracker, DiffContext, SpawnConfig> Default
-    for SessionAgentJobHost<Session, Turn, Tracker, DiffContext, SpawnConfig>
-{
-    fn default() -> Self {
-        Self {
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl<Session, Turn, Tracker, DiffContext, SpawnConfig> AgentJobToolHost
-    for SessionAgentJobHost<Session, Turn, Tracker, DiffContext, SpawnConfig>
-where
-    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig>,
-    Turn: Clone + ThreadRuntimeCapability,
-    Tracker: Clone + Send + Sync + 'static,
-    DiffContext: 'static,
-    SpawnConfig: Clone + Send + Sync + 'static,
-{
-    type Session = Arc<Session>;
-    type Turn = Turn;
-    type Tracker = Tracker;
-    type DiffContext = DiffContext;
-    type SpawnConfig = SpawnConfig;
-
-    fn state_db(&self, session: &Self::Session) -> Option<SharedStateDbRuntime> {
-        session.agent_job_state_db()
-    }
-
-    fn conversation_id_string(&self, session: &Self::Session) -> String {
-        session.agent_job_conversation_id_string()
-    }
-
-    fn single_local_environment_cwd(
-        &self,
-        turn: &Self::Turn,
-    ) -> Result<AbsolutePathBuf, FunctionCallError> {
-        turn.single_local_environment_cwd()
-    }
-
-    fn default_agent_job_max_runtime_seconds(&self, turn: &Self::Turn) -> Option<u64> {
-        turn.default_agent_job_max_runtime_seconds()
-    }
-
-    fn build_agent_job_runner_options<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        turn: &'a Self::Turn,
-        requested_concurrency: Option<usize>,
-    ) -> impl Future<Output = Result<AgentJobRunnerOptions<Self::SpawnConfig>, FunctionCallError>>
-    + Send
-    + 'a {
-        Arc::clone(session).build_agent_job_runner_options(turn, requested_concurrency)
-    }
-
-    fn spawn_agent_job_worker<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        turn: &'a Self::Turn,
-        spawn_config: Self::SpawnConfig,
-        job_id: &'a str,
-        prompt: String,
-    ) -> impl Future<Output = Result<ThreadId, AgentJobSpawnWorkerError>> + Send + 'a {
-        Arc::clone(session).spawn_agent_job_worker(turn, spawn_config, job_id, prompt)
-    }
-
-    fn shutdown_agent_job_worker<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = ()> + Send + 'a {
-        Arc::clone(session).shutdown_agent_job_worker(thread_id)
-    }
-
-    fn get_agent_job_worker_status<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = AgentStatus> + Send + 'a {
-        Arc::clone(session).get_agent_job_worker_status(thread_id)
-    }
-
-    fn subscribe_agent_job_worker_status<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = Option<watch::Receiver<AgentStatus>>> + Send + 'a {
-        Arc::clone(session).subscribe_agent_job_worker_status(thread_id)
     }
 }
 

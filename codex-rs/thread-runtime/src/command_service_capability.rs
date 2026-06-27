@@ -30,6 +30,8 @@ use codex_protocol::protocol::ExecCommandBeginEvent;
 use codex_protocol::protocol::ExecCommandEndEvent;
 use codex_protocol::protocol::NetworkApprovalContext;
 use codex_protocol::protocol::ReviewDecision;
+use codex_thread_api::HookToolName;
+use codex_thread_api::PermissionRequestPayload as ThreadPermissionRequestPayload;
 use codex_thread_api::ToolRuntimeNetworkApprovalHandle;
 use codex_thread_api::ToolRuntimeNetworkApprovalError;
 use codex_thread_api::ToolRuntimeNetworkApprovalTrigger;
@@ -101,20 +103,20 @@ impl codex_thread_api::ToolRuntimeNetworkApprovalHandle for SessionToolNetworkAp
 }
 
 fn map_network_approval_error(
-    err: codex_tool_runtime_api::ToolError,
+    err: crate::tool_approval_support::ToolError,
 ) -> ToolRuntimeNetworkApprovalError {
     match err {
-        codex_tool_runtime_api::ToolError::Rejected(message) => {
+        crate::tool_approval_support::ToolError::Rejected(message) => {
             ToolRuntimeNetworkApprovalError::Rejected(message)
         }
-        codex_tool_runtime_api::ToolError::Codex(err) => {
+        crate::tool_approval_support::ToolError::Codex(err) => {
             ToolRuntimeNetworkApprovalError::Codex(err)
         }
     }
 }
 
 struct CommandApplyPatchEnvironmentAdapter {
-    inner: Arc<dyn codex_tool_runtime_api::ApplyPatchEnvironment>,
+    inner: Arc<dyn codex_thread_api::ApplyPatchEnvironment>,
 }
 
 impl codex_command_service_api::ApplyPatchEnvironment for CommandApplyPatchEnvironmentAdapter {
@@ -143,7 +145,7 @@ fn map_network_trigger(
 }
 
 fn to_command_apply_patch_environment(
-    value: codex_tool_runtime_api::ResolvedApplyPatchEnvironment,
+    value: codex_thread_api::ResolvedApplyPatchEnvironment,
 ) -> ResolvedApplyPatchEnvironment {
     ResolvedApplyPatchEnvironment {
         cwd: value.cwd,
@@ -153,20 +155,29 @@ fn to_command_apply_patch_environment(
     }
 }
 
-fn to_command_runtime_shell(value: codex_tool_runtime_api::RuntimeShell) -> RuntimeShell {
-    RuntimeShell {
-        shell_type: value.shell_type,
-        shell_path: value.shell_path,
-        shell_snapshot: value
-            .shell_snapshot
-            .map(|snapshot| codex_command_service_api::RuntimeShellSnapshot {
-                path: snapshot.path,
-                cwd: snapshot.cwd,
-            }),
+fn to_command_tool_sandbox_context(
+    value: codex_thread_api::ToolSandboxContext,
+) -> ToolSandboxContext {
+    ToolSandboxContext {
+        turn_id: value.turn_id,
+        telemetry: value.telemetry,
+        file_system_sandbox_policy: value.file_system_sandbox_policy,
+        network_sandbox_policy: value.network_sandbox_policy,
+        permission_profile: value.permission_profile,
+        managed_network_active: value.managed_network_active,
+        cwd: value.cwd,
+        codex_linux_sandbox_exe: value.codex_linux_sandbox_exe,
+        use_legacy_landlock: value.use_legacy_landlock,
+        windows_sandbox_level: value.windows_sandbox_level,
+        windows_sandbox_private_desktop: value.windows_sandbox_private_desktop,
     }
 }
 
-fn to_command_resolved_exec_command(value: codex_tool_runtime_api::ResolvedExecCommand) -> ResolvedExecCommand {
+fn to_command_runtime_shell(value: RuntimeShell) -> RuntimeShell {
+    value
+}
+
+fn to_command_resolved_exec_command(value: ResolvedExecCommand) -> ResolvedExecCommand {
     ResolvedExecCommand {
         command: value.command,
         shell_type: value.shell_type,
@@ -229,7 +240,7 @@ impl CommandServiceTurnCapability for TurnContext {
     }
 
     fn tool_sandbox_context(&self) -> ToolSandboxContext {
-        self.tool_sandbox_context()
+        to_command_tool_sandbox_context(self.tool_sandbox_context())
     }
 
     fn approval_policy(&self) -> AskForApproval {
@@ -372,23 +383,14 @@ impl CommandServiceSessionCapability for Session {
         let Some(turn) = turn_context(turn) else {
             return Err("command service capability received an unsupported turn context".to_string());
         };
-        let model_shell = model_shell.map(|shell| codex_tool_runtime_api::RuntimeShell {
-            shell_type: shell.shell_type,
-            shell_path: shell.shell_path.clone(),
-            shell_snapshot: shell
-                .shell_snapshot
-                .as_ref()
-                .map(|snapshot| codex_tool_runtime_api::RuntimeShellSnapshot {
-                    path: snapshot.path.clone(),
-                    cwd: snapshot.cwd.clone(),
-                }),
-        });
-        <Session as codex_tool_runtime_api::ExecCommandSessionRuntime<TurnContext>>::resolve_exec_command(
-            self,
-            turn,
+        let session_shell = crate::runtime_shell::runtime_shell(self.user_shell().as_ref());
+        codex_command_service_api::resolve_exec_command_for_parts(
             command,
             login,
-            model_shell.as_ref(),
+            &session_shell,
+            model_shell,
+            &turn.unified_exec_shell_mode(),
+            turn.allow_login_shell(),
         )
         .map(to_command_resolved_exec_command)
     }
@@ -429,8 +431,8 @@ impl CommandServiceSessionCapability for Session {
                 self,
                 turn,
                 permission_request_run_id,
-                permission_request_hook_payload(codex_tool_runtime_api::PermissionRequestPayload {
-                    tool_name: codex_tool_runtime_api::HookToolName::new(
+                permission_request_hook_payload(ThreadPermissionRequestPayload {
+                    tool_name: HookToolName::new(
                         permission_request.tool_name.name().to_string(),
                     ),
                     tool_input: permission_request.tool_input,

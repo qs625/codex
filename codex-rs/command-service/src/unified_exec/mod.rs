@@ -24,22 +24,19 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Weak;
 
-pub(crate) use codex_command_runtime::CommandNotificationFilter;
-pub(crate) use codex_command_runtime::CommandNotificationKind;
-pub(crate) use codex_command_runtime::CommandNotificationState;
-pub(crate) use codex_command_runtime::CommandProcessIdAllocator;
-pub(crate) use codex_command_runtime::CommandWaitOutput;
-pub(crate) use codex_command_runtime::CommandWaitRequest;
-pub(crate) use codex_command_runtime::CommandWaitStatus;
-pub(crate) use codex_command_runtime::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
-pub(crate) use codex_command_runtime::HeadTailBuffer;
+pub(crate) use codex_command_service_api::CommandNotificationFilter;
+pub(crate) use codex_command_service_api::CommandNotificationKind;
+pub(crate) use codex_command_service_api::CommandWaitOutput;
+pub(crate) use codex_command_service_api::CommandWaitRequest;
+pub(crate) use codex_command_service_api::CommandWaitStatus;
+pub(crate) use codex_command_service_api::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
 #[cfg(test)]
-pub(crate) use codex_command_runtime::MIN_YIELD_TIME_MS;
-pub(crate) use codex_command_runtime::WaitBackoffState;
-pub(crate) use codex_command_runtime::WriteStdinOutput;
-pub(crate) use codex_command_runtime::WriteStdinRequest;
-pub(crate) use codex_command_runtime::clamp_yield_time;
-pub(crate) use codex_command_runtime::generate_chunk_id;
+pub(crate) use codex_command_service_api::MIN_YIELD_TIME_MS;
+pub(crate) use codex_command_service_api::WaitBackoffState;
+pub(crate) use codex_command_service_api::WriteStdinOutput;
+pub(crate) use codex_command_service_api::WriteStdinRequest;
+pub(crate) use codex_command_service_api::clamp_yield_time;
+pub(crate) use codex_command_service_api::generate_chunk_id;
 use codex_exec_server_api::ExecEnvironment;
 use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_protocol::models::AdditionalPermissionProfile;
@@ -50,25 +47,47 @@ use tokio::sync::Mutex;
 
 use crate::exec_request::SandboxPermissions;
 mod async_watcher;
+mod exec_server_env;
 mod events;
+mod output;
 mod process_manager;
+mod runtime_types;
+mod unified_exec_process;
+
+pub(crate) use output::HeadTailBuffer;
+pub(crate) use runtime_types::CommandNotificationSnapshot;
+pub(crate) use runtime_types::CommandNotificationState;
+pub(crate) use runtime_types::CommandProcessIdAllocator;
+pub(crate) use runtime_types::CommandProcessPruneMeta;
+pub(crate) use runtime_types::ProcessState;
+pub(crate) use runtime_types::command_process_id_to_prune;
 
 pub(crate) fn set_deterministic_process_ids_for_tests(enabled: bool) {
     process_manager::set_deterministic_process_ids_for_tests(enabled);
 }
 
-pub(crate) use codex_command_runtime::ExecServerEnvConfig;
-pub(crate) use codex_command_runtime::SpawnLifecycleHandle;
-pub(crate) use codex_command_runtime::UnifiedExecError;
-pub(crate) use codex_command_runtime::UnifiedExecProcess;
+pub(crate) use exec_server_env::ExecServerEnvConfig;
+pub(crate) use exec_server_env::ExecServerSpawnRequest;
+pub(crate) use exec_server_env::apply_unified_exec_env;
+pub(crate) use exec_server_env::exec_env_policy_from_shell_policy;
+pub(crate) use exec_server_env::exec_server_spawn_params;
 pub(crate) use codex_command_service_api::ExecApprovalRequirement;
 pub(crate) use codex_command_service_api::ExecCommandApprovalMode;
 pub(crate) use codex_command_service_api::ExecCommandRunRequest;
+pub(crate) use output::collect_output_until_deadline;
+pub(crate) use output::resolve_aggregated_output;
+pub(crate) use output::split_valid_utf8_prefix;
+pub(crate) use unified_exec_process::NoopSpawnLifecycle;
+pub(crate) use unified_exec_process::SpawnLifecycleHandle;
+pub(crate) use unified_exec_process::UnifiedExecProcess;
 use codex_command_service_api::CommandServiceSessionCapability;
 use codex_command_service_api::CommandServiceTurnCapability;
+pub(crate) use codex_command_service_api::UnifiedExecError;
 pub(crate) use process_manager::UnifiedExecCommandSessionController;
 
 pub(crate) const MAX_UNIFIED_EXEC_PROCESSES: usize = 64;
+pub(crate) const DEFAULT_COMMAND_OUTPUT_MAX_TOKENS: usize =
+    codex_command_service_api::DEFAULT_COMMAND_OUTPUT_MAX_BYTES / 4;
 
 pub(crate) struct UnifiedExecContext {
     pub session: Arc<dyn CommandServiceSessionCapability>,

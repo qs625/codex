@@ -4,7 +4,7 @@ use crate::config::Config;
 use codex_config_types::ToolSuggestDiscoverableType;
 use codex_core_plugins_api::PluginRuntime;
 use codex_features::Feature;
-use codex_tool_planning::DiscoverablePluginInfo;
+use codex_tool_types::DiscoverablePluginInfo;
 
 pub(crate) async fn list_tool_suggest_discoverable_plugins(
     config: &Config,

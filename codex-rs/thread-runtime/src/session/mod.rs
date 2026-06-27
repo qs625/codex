@@ -61,11 +61,11 @@ use codex_code_mode_api::ExecuteRequest;
 use codex_code_mode_api::RuntimeResponse;
 use codex_code_mode_api::WaitOutcome;
 use codex_code_mode_api::WaitRequest;
-use codex_command_runtime::CommandSessionError;
-use codex_command_runtime::CommandWaitOperation;
-use codex_command_runtime::CommandWaitRequest;
-use codex_command_runtime::WriteStdinOutput;
-use codex_command_runtime::WriteStdinRequest;
+use codex_command_service_api::CommandSessionError;
+use codex_command_service_api::CommandWaitOperation;
+use codex_command_service_api::CommandWaitRequest;
+use codex_command_service_api::WriteStdinOutput;
+use codex_command_service_api::WriteStdinRequest;
 use codex_config::ManagedFeatures;
 use codex_config::hook_config_layer_stack_from_config_layer_stack;
 use codex_config::resolve_tool_suggest_config_from_layer_stack;
@@ -225,10 +225,10 @@ use codex_protocol::error::Result as CodexResult;
 #[cfg(test)]
 use codex_protocol::exec_output::StreamOutput;
 use codex_rollout_api::initial_history_has_prior_user_turns;
-use codex_tool_planning::ToolName;
-use codex_tool_planning::UPDATE_GOAL_TOOL_NAME;
-use codex_tool_runtime_api::ApprovalStore;
-use codex_tool_runtime_api::PostToolUsePayload;
+use codex_thread_api::PostToolUsePayload;
+use codex_tool_types::ToolName;
+use codex_tool_types::UPDATE_GOAL_TOOL_NAME;
+use codex_thread_api::ApprovalStore;
 
 mod config_lock;
 mod handlers;
@@ -1623,7 +1623,7 @@ impl Session {
         turn: Arc<TurnContext>,
         call_id: String,
         request: ExecCommandRunRequest,
-    ) -> Result<ExecCommandRunOutput, codex_command_runtime::UnifiedExecError> {
+    ) -> Result<ExecCommandRunOutput, codex_command_service_api::UnifiedExecError> {
         self.services
             .command_service_state
             .run_exec_command(
@@ -4302,7 +4302,7 @@ impl Session {
         guard
             .entry((sender_thread_id, receiver_thread_id))
             .or_insert_with(|| {
-                codex_command_runtime::WaitBackoffState::new(
+                codex_command_service_api::WaitBackoffState::new(
                     duration_from_config_ms(initial_timeout_ms),
                     duration_from_config_ms(hard_cap_timeout_ms),
                 )

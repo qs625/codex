@@ -24,7 +24,7 @@ codex-model-provider-info = { workspace = true }
 codex-protocol = { workspace = true }
 codex-rollout-trace-api = { workspace = true }
 codex-session-telemetry-api = { workspace = true }
-codex-tool-planning = { workspace = true }
+codex-tool-types = { workspace = true }
 codex-trace-context = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }

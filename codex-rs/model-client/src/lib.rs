@@ -90,7 +90,7 @@ use codex_protocol::protocol::W3cTraceContext;
 use codex_rollout_trace_api::CompactionTraceContext;
 use codex_rollout_trace_api::InferenceTraceAttempt;
 use codex_rollout_trace_api::InferenceTraceContext;
-use codex_tool_planning::create_tools_json_for_responses_api;
+use codex_tool_types::create_tools_json_for_responses_api;
 use futures::StreamExt;
 use http::HeaderMap as ApiHeaderMap;
 use http::HeaderValue;

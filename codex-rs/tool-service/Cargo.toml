@@ -19,7 +19,6 @@ codex-approval-service-api = { workspace = true }
 codex-apply-patch = { workspace = true }
 codex-code-mode-api = { workspace = true }
 codex-command-service-api = { workspace = true }
-codex-command-runtime = { workspace = true }
 codex-extension-api = { workspace = true }
 codex-file-system = { workspace = true }
 codex-hooks-api = { workspace = true }
@@ -34,10 +33,7 @@ codex-state-api = { workspace = true }
 codex-thread-api = { workspace = true }
 codex-thread-runtime = { workspace = true }
 codex-tool-config = { workspace = true }
-codex-tool-planning = { workspace = true }
-codex-tool-runtime = { workspace = true }
 codex-tool-service-api = { workspace = true }
-codex-tool-runtime-api = { workspace = true }
 codex-tool-types = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-image = { workspace = true }
@@ -49,6 +45,8 @@ tokio = { workspace = true }
 tokio-util = { workspace = true }
 uuid = { workspace = true }
 futures = { workspace = true }
+codex-context-manager = { workspace = true }
+codex-utils-string = { workspace = true }
 
 [dev-dependencies]
 codex-thread-runtime = { workspace = true, features = ["test-support"] }

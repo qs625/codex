@@ -190,9 +190,7 @@ impl ExecPolicyManager {
         }
 
         let mut updated_policy = current_policy.as_ref().clone();
-        updated_policy
-            .add_prefix_rule(&amendment.command, Decision::Allow)
-            .map_err(ExecPolicyRuleError::from)?;
+        updated_policy.add_prefix_rule(&amendment.command, Decision::Allow)?;
         *self
             .policy
             .write()
@@ -241,9 +239,7 @@ impl ExecPolicyManager {
         })?;
 
         let mut updated_policy = self.current().as_ref().clone();
-        updated_policy
-            .add_network_rule(&host, protocol, decision, justification)
-            .map_err(ExecPolicyRuleError::from)?;
+        updated_policy.add_network_rule(&host, protocol, decision, justification)?;
         *self
             .policy
             .write()

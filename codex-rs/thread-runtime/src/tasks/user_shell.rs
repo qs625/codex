@@ -23,6 +23,7 @@ use crate::session::turn_context::TurnContext;
 use crate::state::TaskKind;
 use crate::runtime_shell::maybe_wrap_shell_lc_with_snapshot;
 use crate::turn_timing::now_unix_timestamp_ms;
+use crate::tool_output_utils::format_exec_output_str;
 use crate::user_shell_command::user_shell_command_record_item;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::exec_output::StreamOutput;
@@ -34,7 +35,6 @@ use codex_protocol::protocol::ExecCommandStatus;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_sandboxing_api::SandboxType;
 use codex_shell_command::parse_command::parse_command;
-use codex_tool_runtime::format_exec_output_str;
 
 use super::SessionTask;
 use super::SessionTaskContext;

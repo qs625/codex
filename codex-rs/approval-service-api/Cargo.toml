@@ -16,6 +16,6 @@ workspace = true
 codex-command-service-api = { workspace = true }
 codex-protocol = { workspace = true }
 codex-thread-api = { workspace = true }
-codex-tool-runtime-api = { workspace = true }
 codex-tool-types = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

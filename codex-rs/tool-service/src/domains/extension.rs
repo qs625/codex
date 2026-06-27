@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use codex_extension_api::ExtensionToolExecutor;
 use codex_extension_api::ToolOutput;
-use codex_tool_runtime::flat_tool_name;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::HookToolName;
@@ -15,6 +14,7 @@ use codex_tool_types::ToolSpec;
 use serde_json::Value;
 
 use crate::context::TypedToolSpecRequest;
+use crate::output::flat_tool_name;
 
 pub(crate) fn specs(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
     let Some(extension_tools) = request.params.extension_tools else {

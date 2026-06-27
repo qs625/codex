@@ -14,9 +14,9 @@ use tokio_util::sync::CancellationToken;
 use crate::SharedTurnDiffTracker;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use codex_tool_planning::ToolCall;
-use codex_tool_planning::ToolCallSource;
-use codex_tool_planning::ToolName;
+use codex_tool_types::ToolCall;
+use codex_tool_types::ToolCallSource;
+use codex_tool_types::ToolName;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolPayload;
 
@@ -198,7 +198,7 @@ fn build_freeform_tool_payload(
 mod tests {
     use super::build_nested_tool_payload;
     use codex_code_mode_api::CodeModeToolKind;
-    use codex_tool_planning::ToolName;
+    use codex_tool_types::ToolName;
     use codex_tool_types::ToolPayload;
     use serde_json::json;
 

@@ -8,13 +8,15 @@ use std::time::Instant;
 
 use codex_approval_service_api::ApprovalServiceApi;
 use codex_approval_service_api::ApplyPatchApprovalDispatch;
+use codex_approval_service_api::ApplyPatchApprovalKey;
+use codex_approval_service_api::ApplyPatchApprovalRequest;
 use codex_apply_patch::AppliedPatchDelta;
 use codex_apply_patch::ApplyPatchAction;
 use codex_apply_patch::ApplyPatchFileChange;
 use codex_apply_patch::Hunk;
 use codex_apply_patch::MaybeApplyPatchVerified;
 use codex_apply_patch::StreamingPatchParser;
-use codex_command_runtime::is_likely_sandbox_denied;
+use codex_command_service_api::is_likely_sandbox_denied;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
 use codex_protocol::exec_output::ExecToolCallOutput;
@@ -27,6 +29,7 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::PatchApplyUpdatedEvent;
+use codex_protocol::protocol::TurnDiffEvent;
 use codex_sandboxing_api::SandboxType;
 use codex_sandboxing_api::SandboxablePreference;
 use codex_sandboxing_api::policy_transforms::effective_file_system_sandbox_policy;
@@ -34,32 +37,26 @@ use codex_sandboxing_api::policy_transforms::effective_permission_profile;
 use codex_sandboxing_api::policy_transforms::merge_permission_profiles;
 use codex_sandboxing_api::policy_transforms::normalize_additional_permissions;
 use codex_thread_api::ApplyPatchSessionCapability;
+use codex_thread_api::ApplyPatchDiffContext;
 use codex_thread_api::ApplyPatchTurnCapability;
-use codex_thread_api::SessionToolEventHost;
+use codex_thread_api::ApplyPatchEnvironment;
+use codex_thread_api::HookToolName as ThreadHookToolName;
+use codex_thread_api::PermissionRequestPayload;
+use codex_thread_api::ResolvedApplyPatchEnvironment;
 use codex_thread_api::SharedToolTurnDiffTracker;
 use codex_thread_api::ThreadRuntimeCapability;
+use codex_thread_api::ToolEventSessionCapability;
+use codex_thread_api::ToolEventTurnCapability;
+use codex_thread_api::ToolSandboxContext;
 use codex_thread_runtime::ThreadRuntimeSession;
 use codex_thread_runtime::ThreadTurnContext;
-use codex_tool_runtime::ApplyPatchToolOutput;
-use codex_tool_runtime::FunctionToolOutput;
-use codex_tool_runtime::ToolEmitter;
-use codex_tool_runtime::ToolEventCtx;
-use codex_tool_runtime::convert_apply_patch_to_protocol;
-use codex_tool_runtime::plan_apply_patch;
-use codex_tool_runtime_api::ApplyPatchDiffContext;
-use codex_tool_runtime_api::ApplyPatchRequest;
-use codex_tool_runtime_api::ResolvedApplyPatchEnvironment;
-use codex_tool_runtime_api::ToolError;
-use codex_tool_runtime_api::sandbox_override_for_first_attempt;
-use codex_tool_runtime_api::should_bypass_approval;
-use codex_tool_runtime_api::wants_no_sandbox_approval;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::HookToolName;
 use codex_tool_service_api::PostToolUsePayload;
-use codex_tool_planning::ToolEnvironmentMode;
-use codex_tool_planning::ToolSpec;
-use codex_tool_planning::create_apply_patch_freeform_tool;
+use crate::planning::ToolEnvironmentMode;
+use crate::planning::ToolSpec;
+use crate::planning::create_apply_patch_freeform_tool;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolName;
@@ -68,9 +65,119 @@ use codex_tool_types::ToolPayload;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 use crate::context::TypedToolSpecRequest;
+use crate::event_support::ToolEmitter;
+use crate::event_support::ToolEventCtx;
+use crate::event_support::ToolEventHost;
+use crate::event_support::ToolPatchTrackerUpdate;
+use crate::output::ApplyPatchToolOutput;
+use crate::output::FunctionToolOutput;
+use crate::support::ApplyPatchPlan;
+use crate::support::ApplyPatchRequest;
+use crate::support::ToolError;
+use crate::support::convert_apply_patch_to_protocol;
+use crate::support::plan_apply_patch;
+use crate::support::sandbox_override_for_first_attempt;
+use crate::support::should_bypass_approval;
+use crate::support::wants_no_sandbox_approval;
 
 const APPLY_PATCH_TOOL_NAME: &str = "apply_patch";
 pub(crate) const APPLY_PATCH_ARGUMENT_DIFF_BUFFER_INTERVAL: Duration = Duration::from_millis(500);
+
+struct RuntimeApplyPatchEnvironmentAdapter {
+    inner: Arc<dyn ApplyPatchEnvironment>,
+}
+
+impl ApplyPatchEnvironment for RuntimeApplyPatchEnvironmentAdapter {
+    fn environment_id(&self) -> &str {
+        self.inner.environment_id()
+    }
+
+    fn filesystem(&self) -> Arc<dyn codex_file_system::ExecutorFileSystem> {
+        self.inner.filesystem()
+    }
+}
+
+struct SessionToolEventHost<'a> {
+    session: &'a ThreadRuntimeSession,
+    turn: &'a ThreadTurnContext,
+    turn_diff_tracker: Option<&'a SharedToolTurnDiffTracker>,
+}
+
+impl<'a> SessionToolEventHost<'a> {
+    fn new(
+        session: &'a ThreadRuntimeSession,
+        turn: &'a ThreadTurnContext,
+        turn_diff_tracker: Option<&'a SharedToolTurnDiffTracker>,
+    ) -> Self {
+        Self {
+            session,
+            turn,
+            turn_diff_tracker,
+        }
+    }
+}
+
+impl ToolEventHost for SessionToolEventHost<'_> {
+    fn turn_id(&self) -> &str {
+        self.turn.runtime_turn_id_str()
+    }
+
+    fn truncation_policy(&self) -> codex_utils_output_truncation::TruncationPolicy {
+        ToolEventTurnCapability::truncation_policy(self.turn)
+    }
+
+    async fn emit_file_change_started(&self, item: codex_protocol::items::FileChangeItem) {
+        self.session
+            .tool_emit_file_change_started(self.turn, item)
+            .await;
+    }
+
+    async fn emit_file_change_completed(&self, item: codex_protocol::items::FileChangeItem) {
+        self.session
+            .tool_emit_file_change_completed(self.turn, item)
+            .await;
+    }
+
+    async fn record_model_items_and_emit_display_events(
+        &self,
+        items: Vec<codex_protocol::models::ResponseItem>,
+    ) {
+        self.session
+            .tool_record_model_items_and_emit_display_events(self.turn, items)
+            .await;
+    }
+
+    async fn update_patch_diff<'b>(&'b self, tracker_update: ToolPatchTrackerUpdate<'b>) {
+        let Some(tracker) = self.turn_diff_tracker else {
+            return;
+        };
+        let (should_emit_turn_diff, unified_diff) = {
+            let mut guard = tracker.lock().await;
+            let previous_diff = guard.get_unified_diff();
+            let tracker_changed = match tracker_update {
+                ToolPatchTrackerUpdate::Track(delta) => {
+                    guard.track_delta(delta);
+                    true
+                }
+                ToolPatchTrackerUpdate::Invalidate => {
+                    guard.invalidate();
+                    true
+                }
+                ToolPatchTrackerUpdate::None => false,
+            };
+            let unified_diff = guard.get_unified_diff();
+            (
+                tracker_changed && (previous_diff.is_some() || unified_diff.is_some()),
+                unified_diff.unwrap_or_default(),
+            )
+        };
+        if should_emit_turn_diff {
+            self.session
+                .tool_emit_turn_diff(self.turn, TurnDiffEvent { unified_diff })
+                .await;
+        }
+    }
+}
 
 pub(crate) fn specs(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
     vec![create_apply_patch_freeform_tool(matches!(
@@ -264,7 +371,7 @@ pub(crate) async fn intercept_apply_patch(
     tracker: Option<&SharedToolTurnDiffTracker>,
     command: &[String],
     cwd: &AbsolutePathBuf,
-    environment: Arc<dyn codex_tool_runtime_api::ApplyPatchEnvironment>,
+    environment: Arc<dyn ApplyPatchEnvironment>,
     call_id: &str,
     _tool_name: &str,
 ) -> Result<Option<FunctionToolOutput>, FunctionCallError> {
@@ -326,8 +433,8 @@ async fn execute_verified_apply_patch(
         &cwd,
         turn.windows_sandbox_level(),
     ) {
-        codex_tool_runtime::ApplyPatchPlan::DelegateToRuntime(invocation) => invocation,
-        codex_tool_runtime::ApplyPatchPlan::Reject { reason } => {
+        ApplyPatchPlan::DelegateToRuntime(invocation) => invocation,
+        ApplyPatchPlan::Reject { reason } => {
             return Err(FunctionCallError::RespondToModel(format!(
                 "patch rejected: {reason}"
             )));
@@ -340,7 +447,9 @@ async fn execute_verified_apply_patch(
     emitter.begin(ToolEventCtx::new(event_host, call_id)).await;
 
     let req = ApplyPatchRequest {
-        environment: environment.environment,
+        environment: Arc::new(RuntimeApplyPatchEnvironmentAdapter {
+            inner: environment.environment,
+        }),
         action: apply.action,
         file_paths,
         changes,
@@ -379,7 +488,7 @@ async fn run_apply_patch_request(
     let mut already_approved = false;
 
     match &req.exec_approval_requirement {
-        codex_tool_runtime_api::ExecApprovalRequirement::Skip { .. } => {
+        codex_permissions_runtime::ExecApprovalRequirement::Skip { .. } => {
             if strict_auto_review {
                 request_apply_patch_approval(
                     Arc::clone(&approval_api),
@@ -393,17 +502,17 @@ async fn run_apply_patch_request(
                 already_approved = true;
             }
         }
-        codex_tool_runtime_api::ExecApprovalRequirement::Forbidden { reason } => {
+        codex_permissions_runtime::ExecApprovalRequirement::Forbidden { reason } => {
             return Err(ToolError::Rejected(reason.clone()));
         }
-        codex_tool_runtime_api::ExecApprovalRequirement::NeedsApproval { reason, .. } => {
+        codex_permissions_runtime::ExecApprovalRequirement::NeedsApproval { reason, .. } => {
             if !strict_auto_review
                 && let Some(decision) = session
                     .run_permission_request_hooks(
                         turn.as_ref(),
                         call_id,
-                        codex_tool_runtime_api::PermissionRequestPayload {
-                            tool_name: codex_tool_runtime_api::HookToolName::apply_patch(),
+                        PermissionRequestPayload {
+                            tool_name: ThreadHookToolName::apply_patch(),
                             tool_input: serde_json::json!({ "command": req.action.patch }),
                         },
                     )
@@ -440,8 +549,8 @@ async fn run_apply_patch_request(
         &req.exec_approval_requirement,
         &file_system_sandbox_policy,
     ) {
-        codex_tool_runtime_api::SandboxOverride::BypassSandboxFirstAttempt => SandboxType::None,
-        codex_tool_runtime_api::SandboxOverride::NoOverride => session.sandbox_runtime().select_initial(
+        crate::support::SandboxOverride::BypassSandboxFirstAttempt => SandboxType::None,
+        crate::support::SandboxOverride::NoOverride => session.sandbox_runtime().select_initial(
             &file_system_sandbox_policy,
             tool_sandbox_context.network_sandbox_policy,
             SandboxablePreference::Auto,
@@ -493,7 +602,11 @@ async fn request_apply_patch_approval(
             turn,
             call_id: call_id.to_string(),
             approval_keys: apply_patch_approval_keys(req.environment.environment_id(), &req.file_paths),
-            approval_request: codex_tool_runtime_api::ApplyPatchApprovalRequest::from_request(req),
+            approval_request: ApplyPatchApprovalRequest {
+                cwd: req.action.cwd.clone(),
+                files: req.file_paths.clone(),
+                patch: req.action.patch.clone(),
+            },
             changes: req.changes.clone(),
             permissions_preapproved: req.permissions_preapproved,
             retry_reason,
@@ -505,7 +618,7 @@ async fn request_apply_patch_approval(
 async fn run_apply_patch_attempt(
     req: &ApplyPatchRequest,
     sandbox: SandboxType,
-    tool_sandbox_context: &codex_tool_runtime_api::ToolSandboxContext,
+    tool_sandbox_context: &ToolSandboxContext,
     committed_delta: &mut AppliedPatchDelta,
 ) -> Result<ExecToolCallOutput, ToolError> {
     let started_at = Instant::now();
@@ -551,7 +664,7 @@ async fn run_apply_patch_attempt(
 fn file_system_sandbox_context_for_attempt(
     req: &ApplyPatchRequest,
     sandbox: SandboxType,
-    tool_sandbox_context: &codex_tool_runtime_api::ToolSandboxContext,
+    tool_sandbox_context: &ToolSandboxContext,
 ) -> Option<codex_file_system::FileSystemSandboxContext> {
     if sandbox == SandboxType::None {
         return None;
@@ -571,11 +684,11 @@ fn file_system_sandbox_context_for_attempt(
 fn apply_patch_approval_keys(
     environment_id: &str,
     file_paths: &[AbsolutePathBuf],
-) -> Vec<codex_tool_runtime_api::ApplyPatchApprovalKey> {
+) -> Vec<ApplyPatchApprovalKey> {
     file_paths
         .iter()
         .cloned()
-        .map(|path| codex_tool_runtime_api::ApplyPatchApprovalKey {
+        .map(|path| ApplyPatchApprovalKey {
             environment_id: environment_id.to_string(),
             path,
         })
@@ -601,10 +714,8 @@ async fn effective_patch_permissions(
         granted_permissions.as_ref(),
     );
     let effective_additional_permissions = apply_granted_permissions_from_grants(
-        codex_tool_runtime_api::ToolPermissionGrants {
-            session: None,
-            turn: granted_permissions,
-        },
+        None,
+        granted_permissions,
         cwd.as_path(),
         SandboxPermissions::UseDefault,
         write_permissions_for_paths(&file_paths, &file_system_sandbox_policy, cwd),
@@ -707,7 +818,8 @@ pub(crate) fn implicit_granted_permissions(
 }
 
 pub(crate) fn apply_granted_permissions_from_grants(
-    grants: codex_tool_runtime_api::ToolPermissionGrants,
+    session_grants: Option<AdditionalPermissionProfile>,
+    turn_grants: Option<AdditionalPermissionProfile>,
     cwd: &Path,
     sandbox_permissions: SandboxPermissions,
     additional_permissions: Option<AdditionalPermissionProfile>,
@@ -721,7 +833,7 @@ pub(crate) fn apply_granted_permissions_from_grants(
     }
 
     let granted_permissions =
-        merge_permission_profiles(grants.session.as_ref(), grants.turn.as_ref());
+        merge_permission_profiles(session_grants.as_ref(), turn_grants.as_ref());
     let effective_permissions = merge_permission_profiles(
         additional_permissions.as_ref(),
         granted_permissions.as_ref(),
