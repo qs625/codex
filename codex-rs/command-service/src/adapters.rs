@@ -1,21 +1,20 @@
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 
 use codex_command_service_api::CommandServiceSessionCapability;
 use codex_command_service_api::CommandServiceTurnCapability;
-use codex_hooks_api::PermissionRequestDecision;
 use codex_thread_api::ThreadRuntimeCapability;
+use codex_thread_api::ToolEventSessionCapability;
+use codex_thread_api::ToolEventTurnCapability;
 use codex_thread_api::ToolRuntimeNetworkApprovalHandle;
 use codex_thread_api::ToolRuntimeNetworkApprovalTrigger;
 use codex_thread_api::ToolRuntimeSessionCapability;
 use codex_thread_api::ToolRuntimeTurnCapability;
+use codex_hooks_api::PermissionRequestDecision;
 use codex_tool_runtime_api::NetworkApprovalSpec;
 use codex_tool_runtime_api::PermissionRequestPayload;
 use codex_tool_runtime_api::ResolvedApplyPatchEnvironment;
-use codex_tool_runtime_api::ResolvedExecCommand;
 use codex_tool_runtime_api::ResolvedExecCommandEnvironment;
-use codex_tool_runtime_api::RuntimeShell;
 use codex_tool_runtime_api::ToolPermissionGrants;
 
 pub(crate) struct SessionCapabilityAdapter {
@@ -102,9 +101,82 @@ impl ThreadRuntimeCapability for TurnCapabilityAdapter {
     }
 }
 
-impl ToolRuntimeTurnCapability for TurnCapabilityAdapter {
+impl ToolEventTurnCapability for TurnCapabilityAdapter {
     fn runtime_turn_id_str(&self) -> &str {
         self.inner.runtime_turn_id_str()
+    }
+
+    fn truncation_policy(&self) -> codex_utils_output_truncation::TruncationPolicy {
+        codex_utils_output_truncation::TruncationPolicy::Tokens(12_000)
+    }
+}
+
+impl ToolEventSessionCapability for SessionCapabilityAdapter {
+    fn tool_send_exec_command_begin<'a>(
+        &'a self,
+        turn: &'a dyn ToolEventTurnCapability,
+        event: codex_protocol::protocol::ExecCommandBeginEvent,
+    ) -> impl std::future::Future<Output = ()> + Send + 'a {
+        let turn = codex_thread_api::ToolTurnCapability::as_any(turn)
+            .downcast_ref::<TurnCapabilityAdapter>()
+            .expect("turn adapter");
+        self.inner.send_exec_command_begin(turn.inner.as_ref(), event)
+    }
+
+    fn tool_send_exec_command_end<'a>(
+        &'a self,
+        turn: &'a dyn ToolEventTurnCapability,
+        event: codex_protocol::protocol::ExecCommandEndEvent,
+    ) -> impl std::future::Future<Output = ()> + Send + 'a {
+        let turn = codex_thread_api::ToolTurnCapability::as_any(turn)
+            .downcast_ref::<TurnCapabilityAdapter>()
+            .expect("turn adapter");
+        self.inner.send_exec_command_end(turn.inner.as_ref(), event)
+    }
+
+    fn tool_emit_file_change_started<'a>(
+        &'a self,
+        _turn: &'a dyn ToolEventTurnCapability,
+        _item: codex_protocol::items::FileChangeItem,
+    ) -> impl std::future::Future<Output = ()> + Send + 'a {
+        async {}
+    }
+
+    fn tool_emit_file_change_completed<'a>(
+        &'a self,
+        _turn: &'a dyn ToolEventTurnCapability,
+        _item: codex_protocol::items::FileChangeItem,
+    ) -> impl std::future::Future<Output = ()> + Send + 'a {
+        async {}
+    }
+
+    fn tool_record_model_items_and_emit_display_events<'a>(
+        &'a self,
+        turn: &'a dyn ToolEventTurnCapability,
+        items: Vec<codex_protocol::models::ResponseItem>,
+    ) -> impl std::future::Future<Output = ()> + Send + 'a {
+        let turn = codex_thread_api::ToolTurnCapability::as_any(turn)
+            .downcast_ref::<TurnCapabilityAdapter>()
+            .expect("turn adapter");
+        async move {
+            self.inner
+                .record_model_items_and_emit_display_events(turn.inner.as_ref(), &items)
+                .await;
+        }
+    }
+
+    fn tool_emit_turn_diff<'a>(
+        &'a self,
+        _turn: &'a dyn ToolEventTurnCapability,
+        _event: codex_protocol::protocol::TurnDiffEvent,
+    ) -> impl std::future::Future<Output = ()> + Send + 'a {
+        async {}
+    }
+}
+
+impl ToolRuntimeTurnCapability for TurnCapabilityAdapter {
+    fn runtime_turn_id_str(&self) -> &str {
+        ToolEventTurnCapability::runtime_turn_id_str(self)
     }
 
     fn routes_approval_to_guardian(&self) -> bool {
@@ -183,7 +255,7 @@ impl ToolRuntimeTurnCapability for TurnCapabilityAdapter {
     }
 
     fn truncation_policy(&self) -> codex_utils_output_truncation::TruncationPolicy {
-        codex_utils_output_truncation::TruncationPolicy::Tokens(12_000)
+        ToolEventTurnCapability::truncation_policy(self)
     }
 
     fn allow_login_shell(&self) -> bool {
@@ -208,7 +280,7 @@ impl ToolRuntimeSessionCapability for SessionCapabilityAdapter {
         let turn = codex_thread_api::ToolTurnCapability::as_any(turn)
             .downcast_ref::<TurnCapabilityAdapter>()
             .expect("turn adapter");
-        self.inner.send_exec_command_begin(turn.inner.as_ref(), event)
+        ToolEventSessionCapability::tool_send_exec_command_begin(self, turn, event)
     }
 
     fn tool_send_exec_command_end<'a>(
@@ -219,23 +291,29 @@ impl ToolRuntimeSessionCapability for SessionCapabilityAdapter {
         let turn = codex_thread_api::ToolTurnCapability::as_any(turn)
             .downcast_ref::<TurnCapabilityAdapter>()
             .expect("turn adapter");
-        self.inner.send_exec_command_end(turn.inner.as_ref(), event)
+        ToolEventSessionCapability::tool_send_exec_command_end(self, turn, event)
     }
 
     fn tool_emit_file_change_started<'a>(
         &'a self,
-        _turn: &'a dyn ToolRuntimeTurnCapability,
-        _item: codex_protocol::items::FileChangeItem,
+        turn: &'a dyn ToolRuntimeTurnCapability,
+        item: codex_protocol::items::FileChangeItem,
     ) -> impl std::future::Future<Output = ()> + Send + 'a {
-        async {}
+        let turn = codex_thread_api::ToolTurnCapability::as_any(turn)
+            .downcast_ref::<TurnCapabilityAdapter>()
+            .expect("turn adapter");
+        ToolEventSessionCapability::tool_emit_file_change_started(self, turn, item)
     }
 
     fn tool_emit_file_change_completed<'a>(
         &'a self,
-        _turn: &'a dyn ToolRuntimeTurnCapability,
-        _item: codex_protocol::items::FileChangeItem,
+        turn: &'a dyn ToolRuntimeTurnCapability,
+        item: codex_protocol::items::FileChangeItem,
     ) -> impl std::future::Future<Output = ()> + Send + 'a {
-        async {}
+        let turn = codex_thread_api::ToolTurnCapability::as_any(turn)
+            .downcast_ref::<TurnCapabilityAdapter>()
+            .expect("turn adapter");
+        ToolEventSessionCapability::tool_emit_file_change_completed(self, turn, item)
     }
 
     fn tool_record_model_items_and_emit_display_events<'a>(
@@ -246,19 +324,20 @@ impl ToolRuntimeSessionCapability for SessionCapabilityAdapter {
         let turn = codex_thread_api::ToolTurnCapability::as_any(turn)
             .downcast_ref::<TurnCapabilityAdapter>()
             .expect("turn adapter");
-        async move {
-            self.inner
-                .record_model_items_and_emit_display_events(turn.inner.as_ref(), &items)
-                .await;
-        }
+        ToolEventSessionCapability::tool_record_model_items_and_emit_display_events(
+            self, turn, items,
+        )
     }
 
     fn tool_emit_turn_diff<'a>(
         &'a self,
-        _turn: &'a dyn ToolRuntimeTurnCapability,
-        _event: codex_protocol::protocol::TurnDiffEvent,
+        turn: &'a dyn ToolRuntimeTurnCapability,
+        event: codex_protocol::protocol::TurnDiffEvent,
     ) -> impl std::future::Future<Output = ()> + Send + 'a {
-        async {}
+        let turn = codex_thread_api::ToolTurnCapability::as_any(turn)
+            .downcast_ref::<TurnCapabilityAdapter>()
+            .expect("turn adapter");
+        ToolEventSessionCapability::tool_emit_turn_diff(self, turn, event)
     }
 
     fn tool_permission_grants(
@@ -286,84 +365,6 @@ impl ToolRuntimeSessionCapability for SessionCapabilityAdapter {
         request: codex_permissions_runtime::ExecPolicyApprovalRequest<'a>,
     ) -> impl std::future::Future<Output = codex_tool_runtime_api::ExecApprovalRequirement> + Send + 'a {
         self.inner.create_exec_approval_requirement(request)
-    }
-
-    fn maybe_emit_implicit_skill_invocation<'a>(
-        &'a self,
-        _turn: &'a dyn ToolRuntimeTurnCapability,
-        _command: &'a str,
-        _workdir: &'a codex_utils_absolute_path::AbsolutePathBuf,
-    ) -> impl std::future::Future<Output = ()> + Send + 'a {
-        async {}
-    }
-
-    fn tool_user_shell_type(&self) -> codex_tool_config::ToolUserShellType {
-        self.inner.runtime_shell().shell_type
-    }
-
-    fn runtime_shell(&self) -> RuntimeShell {
-        self.inner.runtime_shell()
-    }
-
-    fn resolve_model_shell(&self, _shell: &Path) -> RuntimeShell {
-        self.inner.runtime_shell()
-    }
-
-    fn resolve_exec_command(
-        &self,
-        turn: &dyn ToolRuntimeTurnCapability,
-        command: &str,
-        login: Option<bool>,
-        model_shell: Option<&RuntimeShell>,
-    ) -> Result<ResolvedExecCommand, String> {
-        let turn = codex_thread_api::ToolTurnCapability::as_any(turn)
-            .downcast_ref::<TurnCapabilityAdapter>()
-            .expect("turn adapter");
-        codex_tool_runtime_api::resolve_exec_command_for_parts(
-            command,
-            login,
-            &self.inner.runtime_shell(),
-            model_shell,
-            &turn.inner.unified_exec_shell_mode(),
-            turn.inner.allow_login_shell(),
-        )
-    }
-
-    fn allocate_exec_process_id(&self) -> impl std::future::Future<Output = i32> + Send + '_ {
-        let state = self.inner.command_service_state();
-        async move { state.allocate_process_id().await }
-    }
-
-    fn release_exec_process_id(
-        &self,
-        process_id: i32,
-    ) -> impl std::future::Future<Output = ()> + Send + '_ {
-        let state = self.inner.command_service_state();
-        async move {
-            state.release_process_id(process_id).await;
-        }
-    }
-
-    fn run_exec_command<'a>(
-        &'a self,
-        turn: &'a dyn ToolRuntimeTurnCapability,
-        call_id: &'a str,
-        request: codex_tool_runtime_api::ExecCommandRunRequest,
-    ) -> impl std::future::Future<
-        Output = Result<
-            codex_tool_runtime_api::ExecCommandRunOutput,
-            codex_command_runtime::UnifiedExecError,
-        >,
-    > + Send
-           + 'a {
-        let turn = codex_thread_api::ToolTurnCapability::as_any(turn)
-            .downcast_ref::<TurnCapabilityAdapter>()
-            .expect("turn adapter");
-        let state = self.inner.command_service_state();
-        let session = Arc::clone(&self.inner);
-        let turn = Arc::clone(&turn.inner);
-        let call_id = call_id.to_string();
-        async move { state.run_exec_command(session, turn, call_id, request).await }
     }
 
     fn strict_auto_review_enabled_for_turn(

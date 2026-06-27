@@ -104,6 +104,19 @@ impl ToolServiceApi for ToolService {
             });
         }
         let domain = domains::classify_tool_name(&tool_request, &request.call.tool_name);
+        let code_mode_nested_tool_specs = if matches!(domain, domains::ToolDomain::CodeMode) {
+            Some(domains::model_visible_specs(self, tool_request.clone()))
+        } else {
+            None
+        };
+        let extension_executor = if matches!(domain, domains::ToolDomain::Extension) {
+            Some(domains::extension::resolve_executor(
+                &tool_request,
+                &request.call.tool_name,
+            ))
+        } else {
+            None
+        };
         let goal_api = Arc::clone(&self.goal_api);
         let approval_api = Arc::clone(&self.approval_api);
         let command_service_api = Arc::clone(&self.command_service_api);
@@ -129,7 +142,9 @@ impl ToolServiceApi for ToolService {
         Box::pin(async move {
             let tool_name = call.tool_name.clone();
             let result = match domain {
-                domains::ToolDomain::Agent => domains::agent::dispatch(call),
+                domains::ToolDomain::Agent => {
+                    domains::agent::dispatch(Arc::clone(&session), Arc::clone(&turn), call).await
+                }
                 domains::ToolDomain::ApplyPatch => {
                     domains::apply_patch::dispatch(
                         Arc::clone(&approval_api),
@@ -140,7 +155,15 @@ impl ToolServiceApi for ToolService {
                     )
                     .await
                 }
-                domains::ToolDomain::CodeMode => domains::code_mode::dispatch(call),
+                domains::ToolDomain::CodeMode => {
+                    domains::code_mode::dispatch(
+                        Arc::clone(&session),
+                        Arc::clone(&turn),
+                        code_mode_nested_tool_specs.unwrap_or_default(),
+                        call,
+                    )
+                    .await
+                }
                 domains::ToolDomain::CommandInteraction => {
                     domains::command_interaction::dispatch(
                         Arc::clone(&command_service_api),
@@ -162,7 +185,10 @@ impl ToolServiceApi for ToolService {
                     )
                     .await
                 }
-                domains::ToolDomain::Extension => domains::extension::dispatch(call),
+                domains::ToolDomain::Extension => {
+                    domains::extension::dispatch(extension_executor.expect("extension route")?, call)
+                        .await
+                }
                 domains::ToolDomain::Function => {
                     domains::function::dispatch(
                         Arc::clone(&turn),

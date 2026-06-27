@@ -9,10 +9,9 @@ use codex_approval_service_api::ExecCommandApprovalDispatch;
 use codex_approval_service_api::ExecCommandApprovalOutcome;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::ReviewDecision;
+use codex_thread_api::ApplyPatchSessionCapability;
 use codex_thread_api::ToolServiceSessionRef;
 use codex_thread_api::ToolServiceTurnRef;
-use codex_thread_api::ToolRuntimeSessionCapability;
-use codex_thread_api::ToolRuntimeTurnCapability;
 use codex_tool_runtime_api::ApplyPatchApprovalKey;
 use codex_tool_runtime_api::ApplyPatchApprovalRequest;
 use codex_tool_runtime_api::PermissionRequestPayload;
@@ -85,8 +84,8 @@ async fn request_apply_patch_approval(
     permissions_preapproved: bool,
     retry_reason: Option<String>,
 ) -> Result<(), String> {
-    let review_with_guardian =
-        turn.routes_approval_to_guardian() || session.strict_auto_review_enabled_for_turn().await;
+    let review_with_guardian = crate::guardian::routes_approval_to_guardian(turn.as_ref())
+        || session.strict_auto_review_enabled_for_turn().await;
     let decision = if review_with_guardian {
         crate::guardian::review_approval_request(
             &turn.session_arc(),
@@ -155,7 +154,8 @@ async fn request_exec_command_approval(
     request: ExecCommandApprovalDispatch,
 ) -> Result<ExecCommandApprovalOutcome, String> {
     let strict_auto_review = session.strict_auto_review_enabled_for_turn().await;
-    let review_with_guardian = turn.routes_approval_to_guardian() || strict_auto_review;
+    let review_with_guardian =
+        crate::guardian::routes_approval_to_guardian(turn.as_ref()) || strict_auto_review;
 
     match request.exec_approval_requirement {
         codex_permissions_runtime::ExecApprovalRequirement::Forbidden { reason } => Err(reason),

@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::anyhow;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::AgentStatus;
-use codex_thread_api::SessionAgentJobCaller;
-use codex_thread_api::ThreadRuntimeCapability;
 use codex_state_api::AgentJob;
 use codex_state_api::AgentJobCreateParams;
 use codex_state_api::AgentJobItem;
@@ -18,50 +18,27 @@ use codex_state_api::default_agent_job_output_csv_path;
 use codex_state_api::ensure_unique_agent_job_headers;
 use codex_state_api::parse_agent_job_csv;
 use codex_state_api::render_agent_job_csv;
-use codex_tool_planning::ToolName;
-use codex_tool_planning::ToolSpec;
-use codex_tool_planning::create_report_agent_job_result_tool;
-use codex_tool_planning::create_spawn_agents_on_csv_tool;
+use codex_thread_api::SessionAgentJobCaller;
+use codex_thread_api::ThreadRuntimeCapability;
+use codex_thread_runtime::ThreadRuntimeSession;
+use codex_thread_runtime::ThreadTurnContext;
+use codex_tool_runtime::FunctionToolOutput;
 use codex_tool_runtime_api::AgentJobRunnerOptions;
 use codex_tool_runtime_api::AgentJobSpawnWorkerError;
-use codex_tool_runtime_api::ToolHandler;
 use codex_tool_types::FunctionCallError;
-use codex_tool_types::ToolExecutor;
-use codex_tool_types::ToolExecutorFuture;
-use codex_tool_types::ToolPayload;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
-use std::sync::Arc;
 use tokio::sync::watch;
 use tokio::time::Instant;
 use tokio::time::timeout;
 use uuid::Uuid;
 
-use codex_tool_runtime::FunctionToolOutput;
-use codex_tool_runtime::ToolInvocation;
-
 const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const DEFAULT_AGENT_JOB_ITEM_TIMEOUT: Duration = Duration::from_secs(60 * 30);
-
-pub struct SpawnAgentsOnCsvHandler;
-
-impl SpawnAgentsOnCsvHandler {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-pub struct ReportAgentJobResultHandler;
-
-impl ReportAgentJobResultHandler {
-    pub fn new() -> Self {
-        Self
-    }
-}
 
 #[derive(Debug, Deserialize)]
 struct SpawnAgentsOnCsvArgs {
@@ -114,115 +91,12 @@ struct ActiveJobItem {
     status_rx: Option<watch::Receiver<AgentStatus>>,
 }
 
-impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
-    for SpawnAgentsOnCsvHandler
-where
-    Session: SessionAgentJobCaller + Clone,
-    Turn: ThreadRuntimeCapability,
-    Tracker: Clone + Send + Sync + 'static,
-{
-    type Output = FunctionToolOutput;
-
-    fn tool_name(&self) -> ToolName {
-        ToolName::plain("spawn_agents_on_csv")
-    }
-
-    fn spec(&self) -> Option<ToolSpec> {
-        Some(create_spawn_agents_on_csv_tool())
-    }
-
-    fn handle<'a>(
-        &'a self,
-        invocation: ToolInvocation<Session, Turn, Tracker>,
-    ) -> ToolExecutorFuture<'a, Self::Output>
-    where
-        Self: 'a,
-    {
-        Box::pin(async move {
-            let ToolInvocation {
-                session,
-                turn,
-                metadata,
-                ..
-            } = invocation;
-            let arguments = function_arguments(metadata.payload, "agent jobs")?;
-            handle_spawn_agents_on_csv(session, turn, arguments).await
-        })
-    }
-}
-
-impl<Session, Turn, Tracker, DiffContext>
-    ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext> for SpawnAgentsOnCsvHandler
-where
-    Session: SessionAgentJobCaller + Clone,
-    Turn: ThreadRuntimeCapability,
-    Tracker: Clone + Send + Sync + 'static,
-    DiffContext: 'static,
-{
-    fn matches_kind(&self, payload: &ToolPayload) -> bool {
-        matches!(payload, ToolPayload::Function { .. })
-    }
-}
-
-impl<Session, Turn, Tracker> ToolExecutor<ToolInvocation<Session, Turn, Tracker>>
-    for ReportAgentJobResultHandler
-where
-    Session: SessionAgentJobCaller + Clone,
-    Turn: ThreadRuntimeCapability,
-    Tracker: Clone + Send + Sync + 'static,
-{
-    type Output = FunctionToolOutput;
-
-    fn tool_name(&self) -> ToolName {
-        ToolName::plain("report_agent_job_result")
-    }
-
-    fn spec(&self) -> Option<ToolSpec> {
-        Some(create_report_agent_job_result_tool())
-    }
-
-    fn handle<'a>(
-        &'a self,
-        invocation: ToolInvocation<Session, Turn, Tracker>,
-    ) -> ToolExecutorFuture<'a, Self::Output>
-    where
-        Self: 'a,
-    {
-        Box::pin(async move {
-            let ToolInvocation {
-                session, metadata, ..
-            } = invocation;
-            let arguments = function_arguments(metadata.payload, "report_agent_job_result")?;
-            handle_report_agent_job_result(session, arguments).await
-        })
-    }
-}
-
-impl<Session, Turn, Tracker, DiffContext>
-    ToolHandler<ToolInvocation<Session, Turn, Tracker>, DiffContext>
-    for ReportAgentJobResultHandler
-where
-    Session: SessionAgentJobCaller + Clone,
-    Turn: ThreadRuntimeCapability,
-    Tracker: Clone + Send + Sync + 'static,
-    DiffContext: 'static,
-{
-    fn matches_kind(&self, payload: &ToolPayload) -> bool {
-        matches!(payload, ToolPayload::Function { .. })
-    }
-}
-
-async fn handle_spawn_agents_on_csv<Session, Turn, SpawnConfig>(
-    session: Session,
-    turn: Turn,
+pub(super) async fn handle_spawn_agents_on_csv(
+    session: Arc<ThreadRuntimeSession>,
+    turn: Arc<ThreadTurnContext>,
     arguments: String,
-) -> Result<FunctionToolOutput, FunctionCallError>
-where
-    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig> + Clone,
-    Turn: ThreadRuntimeCapability,
-    SpawnConfig: Clone + Send + Sync + 'static,
-{
-    let args: SpawnAgentsOnCsvArgs = parse_arguments(arguments.as_str())?;
+) -> Result<FunctionToolOutput, FunctionCallError> {
+    let args: SpawnAgentsOnCsvArgs = super::parse_arguments(arguments.as_str())?;
     if args.instruction.trim().is_empty() {
         return Err(FunctionCallError::RespondToModel(
             "instruction must be non-empty".to_string(),
@@ -230,7 +104,7 @@ where
     }
 
     let cwd = turn.single_local_environment_cwd()?;
-    let db = required_state_db(&session)?;
+    let db = required_state_db(session.as_ref())?;
     let input_path = cwd.join(args.csv_path);
     let input_path_display = input_path.display().to_string();
     let csv_content = tokio::fs::read_to_string(&input_path)
@@ -344,8 +218,8 @@ where
         })?;
 
     let requested_concurrency = args.max_concurrency.or(args.max_workers);
-    let options = match shared_agent_job_session(&session)
-        .build_agent_job_runner_options(&turn, requested_concurrency)
+    let options = match Arc::clone(&session)
+        .build_agent_job_runner_options(turn.as_ref(), requested_concurrency)
         .await
     {
         Ok(options) => options,
@@ -364,7 +238,13 @@ where
                 "failed to transition agent job {job_id} to running: {err}"
             ))
         })?;
-    if let Err(err) = run_agent_job_loop(session.clone(), turn, db.clone(), job_id.clone(), options)
+    if let Err(err) = run_agent_job_loop(
+        Arc::clone(&session),
+        Arc::clone(&turn),
+        db.clone(),
+        job_id.clone(),
+        options,
+    )
     .await
     {
         let error_message = format!("job runner failed: {err}");
@@ -454,21 +334,17 @@ where
     Ok(FunctionToolOutput::from_text(content, Some(true)))
 }
 
-async fn handle_report_agent_job_result<Session, SpawnConfig>(
-    session: Session,
+pub(super) async fn handle_report_agent_job_result(
+    session: Arc<ThreadRuntimeSession>,
     arguments: String,
-) -> Result<FunctionToolOutput, FunctionCallError>
-where
-    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig> + Clone,
-    SpawnConfig: Clone + Send + Sync + 'static,
-{
-    let args: ReportAgentJobResultArgs = parse_arguments(arguments.as_str())?;
+) -> Result<FunctionToolOutput, FunctionCallError> {
+    let args: ReportAgentJobResultArgs = super::parse_arguments(arguments.as_str())?;
     if !args.result.is_object() {
         return Err(FunctionCallError::RespondToModel(
             "result must be a JSON object".to_string(),
         ));
     }
-    let db = required_state_db(&session)?;
+    let db = required_state_db(session.as_ref())?;
     let reporting_thread_id = session.agent_job_conversation_id_string();
     let accepted = db
         .report_agent_job_item_result(
@@ -500,23 +376,12 @@ where
     Ok(FunctionToolOutput::from_text(content, Some(true)))
 }
 
-fn required_state_db<Session, SpawnConfig>(
-    session: &Session,
-) -> Result<SharedStateDbRuntime, FunctionCallError>
-where
-    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig> + Clone,
-    SpawnConfig: Clone + Send + Sync + 'static,
-{
+fn required_state_db(
+    session: &ThreadRuntimeSession,
+) -> Result<SharedStateDbRuntime, FunctionCallError> {
     session.agent_job_state_db().ok_or_else(|| {
         FunctionCallError::Fatal("sqlite state db is unavailable for this session".to_string())
     })
-}
-
-pub fn bounded_agent_job_concurrency(
-    requested: Option<usize>,
-    max_threads: Option<usize>,
-) -> usize {
-    codex_agent_runtime::bounded_agent_job_concurrency(requested, max_threads)
 }
 
 fn normalize_max_runtime_seconds(requested: Option<u64>) -> Result<Option<u64>, FunctionCallError> {
@@ -531,33 +396,21 @@ fn normalize_max_runtime_seconds(requested: Option<u64>) -> Result<Option<u64>, 
     Ok(Some(requested))
 }
 
-fn shared_agent_job_session<Session>(session: &Session) -> Arc<Session>
-where
-    Session: Clone,
-{
-    Arc::new(session.clone())
-}
-
-async fn run_agent_job_loop<Session, Turn, SpawnConfig>(
-    session: Session,
-    turn: Turn,
+async fn run_agent_job_loop(
+    session: Arc<ThreadRuntimeSession>,
+    turn: Arc<ThreadTurnContext>,
     db: SharedStateDbRuntime,
     job_id: String,
-    options: AgentJobRunnerOptions<SpawnConfig>,
-) -> anyhow::Result<()>
-where
-    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig> + Clone,
-    Turn: ThreadRuntimeCapability,
-    SpawnConfig: Clone + Send + Sync + 'static,
-{
+    options: AgentJobRunnerOptions<<ThreadRuntimeSession as SessionAgentJobCaller>::SpawnConfig>,
+) -> anyhow::Result<()> {
     let job = db
         .get_agent_job(job_id.as_str())
         .await?
-        .ok_or_else(|| anyhow::anyhow!("agent job {job_id} was not found"))?;
+        .ok_or_else(|| anyhow!("agent job {job_id} was not found"))?;
     let runtime_timeout = job_runtime_timeout(&job);
     let mut active_items: HashMap<ThreadId, ActiveJobItem> = HashMap::new();
     recover_running_items(
-        session.clone(),
+        Arc::clone(&session),
         db.clone(),
         job_id.as_str(),
         &mut active_items,
@@ -584,8 +437,13 @@ where
                 .await?;
             for item in pending_items {
                 let prompt = build_agent_job_worker_prompt(&job, &item)?;
-                let thread_id = match shared_agent_job_session(&session)
-                    .spawn_agent_job_worker(&turn, options.spawn_config.clone(), job_id.as_str(), prompt)
+                let thread_id = match Arc::clone(&session)
+                    .spawn_agent_job_worker(
+                        turn.as_ref(),
+                        options.spawn_config.clone(),
+                        job_id.as_str(),
+                        prompt,
+                    )
                     .await
                 {
                     Ok(thread_id) => thread_id,
@@ -618,9 +476,7 @@ where
                     )
                     .await?;
                 if !assigned {
-                    shared_agent_job_session(&session)
-                        .shutdown_agent_job_worker(thread_id)
-                        .await;
+                    Arc::clone(&session).shutdown_agent_job_worker(thread_id).await;
                     continue;
                 }
                 active_items.insert(
@@ -628,7 +484,7 @@ where
                     ActiveJobItem {
                         item_id: item.item_id.clone(),
                         started_at: Instant::now(),
-                        status_rx: shared_agent_job_session(&session)
+                        status_rx: Arc::clone(&session)
                             .subscribe_agent_job_worker_status(thread_id)
                             .await,
                     },
@@ -638,7 +494,7 @@ where
         }
 
         if reap_stale_active_items(
-            session.clone(),
+            Arc::clone(&session),
             db.clone(),
             job_id.as_str(),
             &mut active_items,
@@ -649,7 +505,7 @@ where
             progressed = true;
         }
 
-        let finished = find_finished_threads(session.clone(), &active_items).await;
+        let finished = find_finished_threads(Arc::clone(&session), &active_items).await;
         if finished.is_empty() {
             let progress = db.get_agent_job_progress(job_id.as_str()).await?;
             if cancel_requested {
@@ -670,7 +526,7 @@ where
 
         for (thread_id, item_id) in finished {
             finalize_finished_item(
-                session.clone(),
+                Arc::clone(&session),
                 db.clone(),
                 job_id.as_str(),
                 item_id.as_str(),
@@ -700,7 +556,7 @@ async fn export_job_csv_snapshot(db: SharedStateDbRuntime, job: &AgentJob) -> an
         .list_agent_job_items(job.id.as_str(), /*status*/ None, /*limit*/ None)
         .await?;
     let csv_content = render_agent_job_csv(job.input_headers.as_slice(), items.as_slice())
-        .map_err(|err| anyhow::anyhow!("failed to render job csv for auto-export: {err}"))?;
+        .map_err(|err| anyhow!("failed to render job csv for auto-export: {err}"))?;
     let output_path = PathBuf::from(job.output_csv_path.clone());
     if let Some(parent) = output_path.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -709,17 +565,13 @@ async fn export_job_csv_snapshot(db: SharedStateDbRuntime, job: &AgentJob) -> an
     Ok(())
 }
 
-async fn recover_running_items<Session, SpawnConfig>(
-    session: Session,
+async fn recover_running_items(
+    session: Arc<ThreadRuntimeSession>,
     db: SharedStateDbRuntime,
     job_id: &str,
     active_items: &mut HashMap<ThreadId, ActiveJobItem>,
     runtime_timeout: Duration,
-) -> anyhow::Result<()>
-where
-    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig> + Clone,
-    SpawnConfig: Clone + Send + Sync + 'static,
-{
+) -> anyhow::Result<()> {
     let running_items = db
         .list_agent_job_items(
             job_id,
@@ -735,9 +587,7 @@ where
             if let Some(assigned_thread_id) = item.assigned_thread_id.as_ref()
                 && let Ok(thread_id) = ThreadId::from_string(assigned_thread_id.as_str())
             {
-                shared_agent_job_session(&session)
-                    .shutdown_agent_job_worker(thread_id)
-                    .await;
+                Arc::clone(&session).shutdown_agent_job_worker(thread_id).await;
             }
             continue;
         }
@@ -763,13 +613,9 @@ where
                 continue;
             }
         };
-        if is_final(
-            &shared_agent_job_session(&session)
-                .get_agent_job_worker_status(thread_id)
-                .await,
-        ) {
+        if is_final(&Arc::clone(&session).get_agent_job_worker_status(thread_id).await) {
             finalize_finished_item(
-                session.clone(),
+                Arc::clone(&session),
                 db.clone(),
                 job_id,
                 item.item_id.as_str(),
@@ -782,7 +628,7 @@ where
                 ActiveJobItem {
                     item_id: item.item_id.clone(),
                     started_at: started_at_from_item(&item),
-                    status_rx: shared_agent_job_session(&session)
+                    status_rx: Arc::clone(&session)
                         .subscribe_agent_job_worker_status(thread_id)
                         .await,
                 },
@@ -792,14 +638,10 @@ where
     Ok(())
 }
 
-async fn find_finished_threads<Session, SpawnConfig>(
-    session: Session,
+async fn find_finished_threads(
+    session: Arc<ThreadRuntimeSession>,
     active_items: &HashMap<ThreadId, ActiveJobItem>,
-) -> Vec<(ThreadId, String)>
-where
-    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig> + Clone,
-    SpawnConfig: Clone + Send + Sync + 'static,
-{
+) -> Vec<(ThreadId, String)> {
     let mut finished = Vec::new();
     for (thread_id, item) in active_items {
         let status = active_item_status(&session, *thread_id, item).await;
@@ -810,23 +652,17 @@ where
     finished
 }
 
-async fn active_item_status<Session, SpawnConfig>(
-    session: &Session,
+async fn active_item_status(
+    session: &Arc<ThreadRuntimeSession>,
     thread_id: ThreadId,
     item: &ActiveJobItem,
-) -> AgentStatus
-where
-    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig> + Clone,
-    SpawnConfig: Clone + Send + Sync + 'static,
-{
+) -> AgentStatus {
     if let Some(status_rx) = item.status_rx.as_ref()
         && status_rx.has_changed().is_ok()
     {
         return status_rx.borrow().clone();
     }
-    shared_agent_job_session(session)
-        .get_agent_job_worker_status(thread_id)
-        .await
+    Arc::clone(session).get_agent_job_worker_status(thread_id).await
 }
 
 async fn wait_for_status_change(active_items: &HashMap<ThreadId, ActiveJobItem>) {
@@ -846,17 +682,13 @@ async fn wait_for_status_change(active_items: &HashMap<ThreadId, ActiveJobItem>)
     let _ = timeout(STATUS_POLL_INTERVAL, waiters.next()).await;
 }
 
-async fn reap_stale_active_items<Session, SpawnConfig>(
-    session: Session,
+async fn reap_stale_active_items(
+    session: Arc<ThreadRuntimeSession>,
     db: SharedStateDbRuntime,
     job_id: &str,
     active_items: &mut HashMap<ThreadId, ActiveJobItem>,
     runtime_timeout: Duration,
-) -> anyhow::Result<bool>
-where
-    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig> + Clone,
-    SpawnConfig: Clone + Send + Sync + 'static,
-{
+) -> anyhow::Result<bool> {
     let mut stale = Vec::new();
     for (thread_id, item) in active_items.iter() {
         if item.started_at.elapsed() >= runtime_timeout {
@@ -870,31 +702,23 @@ where
         let error_message = format!("worker exceeded max runtime of {runtime_timeout:?}");
         db.mark_agent_job_item_failed(job_id, item_id.as_str(), error_message.as_str())
             .await?;
-        shared_agent_job_session(&session)
-            .shutdown_agent_job_worker(thread_id)
-            .await;
+        Arc::clone(&session).shutdown_agent_job_worker(thread_id).await;
         active_items.remove(&thread_id);
     }
     Ok(true)
 }
 
-async fn finalize_finished_item<Session, SpawnConfig>(
-    session: Session,
+async fn finalize_finished_item(
+    session: Arc<ThreadRuntimeSession>,
     db: SharedStateDbRuntime,
     job_id: &str,
     item_id: &str,
     thread_id: ThreadId,
-) -> anyhow::Result<()>
-where
-    Session: SessionAgentJobCaller<SpawnConfig = SpawnConfig> + Clone,
-    SpawnConfig: Clone + Send + Sync + 'static,
-{
+) -> anyhow::Result<()> {
     let item = db
         .get_agent_job_item(job_id, item_id)
         .await?
-        .ok_or_else(|| {
-            anyhow::anyhow!("job item not found for finalization: {job_id}/{item_id}")
-        })?;
+        .ok_or_else(|| anyhow!("job item not found for finalization: {job_id}/{item_id}"))?;
     if matches!(item.status, AgentJobItemStatus::Running) {
         if item.result_json.is_some() {
             let _ = db.mark_agent_job_item_completed(job_id, item_id).await?;
@@ -908,9 +732,7 @@ where
                 .await?;
         }
     }
-    shared_agent_job_session(&session)
-        .shutdown_agent_job_worker(thread_id)
-        .await;
+    Arc::clone(&session).shutdown_agent_job_worker(thread_id).await;
     Ok(())
 }
 
@@ -920,23 +742,18 @@ fn job_runtime_timeout(job: &AgentJob) -> Duration {
         .unwrap_or(DEFAULT_AGENT_JOB_ITEM_TIMEOUT)
 }
 
-fn started_at_from_item(item: &AgentJobItem) -> Instant {
-    let now = chrono::Utc::now();
-    let age = now.signed_duration_since(item.updated_at);
-    if let Ok(age) = age.to_std() {
-        Instant::now().checked_sub(age).unwrap_or_else(Instant::now)
-    } else {
-        Instant::now()
-    }
+fn is_item_stale(item: &AgentJobItem, runtime_timeout: Duration) -> bool {
+    started_at_from_item(item).elapsed() >= runtime_timeout
 }
 
-fn is_item_stale(item: &AgentJobItem, runtime_timeout: Duration) -> bool {
-    let now = chrono::Utc::now();
-    if let Ok(age) = now.signed_duration_since(item.updated_at).to_std() {
-        age >= runtime_timeout
-    } else {
-        false
-    }
+fn started_at_from_item(item: &AgentJobItem) -> Instant {
+    let elapsed = chrono::Utc::now()
+        .signed_duration_since(item.updated_at)
+        .to_std()
+        .unwrap_or_default();
+    Instant::now()
+        .checked_sub(elapsed)
+        .unwrap_or_else(Instant::now)
 }
 
 fn is_final(status: &AgentStatus) -> bool {
@@ -947,22 +764,4 @@ fn is_final(status: &AgentStatus) -> bool {
             | AgentStatus::Shutdown
             | AgentStatus::NotFound
     )
-}
-
-fn function_arguments(payload: ToolPayload, tool_name: &str) -> Result<String, FunctionCallError> {
-    match payload {
-        ToolPayload::Function { arguments } => Ok(arguments),
-        _ => Err(FunctionCallError::RespondToModel(format!(
-            "{tool_name} handler received unsupported payload"
-        ))),
-    }
-}
-
-fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
-where
-    T: for<'de> Deserialize<'de>,
-{
-    serde_json::from_str(arguments).map_err(|err| {
-        FunctionCallError::RespondToModel(format!("failed to parse function arguments: {err}"))
-    })
 }

@@ -212,3 +212,207 @@ fn completion_budget_report(goal: &ThreadGoal) -> Option<String> {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::any::Any;
+    use std::sync::Mutex;
+
+    use codex_protocol::ThreadId;
+    use codex_protocol::models::ResponseInputItem;
+    use codex_thread_api::SessionCapabilityFuture;
+    use codex_tool_types::ToolOutput;
+
+    struct MockTurn;
+
+    impl ThreadCapability for MockTurn {
+        fn as_any(&self) -> &(dyn Any + Send + Sync) {
+            self
+        }
+    }
+
+    struct MockGoalApi {
+        goal: Mutex<Option<ThreadGoal>>,
+    }
+
+    impl MockGoalApi {
+        fn with_goal(goal: Option<ThreadGoal>) -> Self {
+            Self {
+                goal: Mutex::new(goal),
+            }
+        }
+    }
+
+    impl GoalApi for MockGoalApi {
+        fn get_thread_goal<'a>(
+            &'a self,
+            _capability: &'a dyn ThreadCapability,
+        ) -> SessionCapabilityFuture<'a, Result<Option<ThreadGoal>, String>> {
+            Box::pin(async move { Ok(self.goal.lock().expect("goal lock").clone()) })
+        }
+
+        fn create_thread_goal<'a>(
+            &'a self,
+            _capability: &'a dyn ThreadCapability,
+            objective: String,
+            token_budget: Option<i64>,
+        ) -> SessionCapabilityFuture<'a, Result<ThreadGoal, String>> {
+            Box::pin(async move {
+                let mut goal = self.goal.lock().expect("goal lock");
+                if goal.is_some() {
+                    return Err("thread already has a goal".to_string());
+                }
+                let created = ThreadGoal {
+                    thread_id: ThreadId::new(),
+                    objective,
+                    status: ThreadGoalStatus::Active,
+                    token_budget,
+                    tokens_used: 0,
+                    time_used_seconds: 0,
+                    created_at: 1,
+                    updated_at: 1,
+                };
+                *goal = Some(created.clone());
+                Ok(created)
+            })
+        }
+
+        fn complete_thread_goal<'a>(
+            &'a self,
+            _capability: &'a dyn ThreadCapability,
+        ) -> SessionCapabilityFuture<'a, Result<ThreadGoal, String>> {
+            Box::pin(async move {
+                let mut goal = self.goal.lock().expect("goal lock");
+                let Some(existing) = goal.as_mut() else {
+                    return Err("goal not found".to_string());
+                };
+                existing.status = ThreadGoalStatus::Complete;
+                existing.tokens_used = 77;
+                existing.time_used_seconds = 12;
+                existing.updated_at = 2;
+                Ok(existing.clone())
+            })
+        }
+    }
+
+    fn function_call(tool_name: &str, call_id: &str, arguments: serde_json::Value) -> ToolCall {
+        ToolCall {
+            call_id: call_id.to_string(),
+            tool_name: ToolName::plain(tool_name),
+            payload: codex_tool_types::ToolPayload::Function {
+                arguments: arguments.to_string(),
+            },
+        }
+    }
+
+    fn output_text(result: &AnyToolResult) -> String {
+        match result.result.to_response_item(&result.call_id, &result.payload) {
+            ResponseInputItem::FunctionCallOutput { output, .. }
+            | ResponseInputItem::CustomToolCallOutput { output, .. } => {
+                output.body.to_text().unwrap_or_default()
+            }
+            other => panic!("unexpected tool response item: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_goal_tool_rejects_existing_goal() {
+        let existing = ThreadGoal {
+            thread_id: ThreadId::new(),
+            objective: "Keep the watcher alive".to_string(),
+            status: ThreadGoalStatus::Active,
+            token_budget: Some(123),
+            tokens_used: 0,
+            time_used_seconds: 0,
+            created_at: 1,
+            updated_at: 1,
+        };
+        let goal_api = Arc::new(MockGoalApi::with_goal(Some(existing.clone())));
+        let turn = MockTurn;
+        let response = dispatch(
+            goal_api,
+            &turn,
+            function_call(
+                CREATE_GOAL_TOOL_NAME,
+                "create-goal-2",
+                serde_json::json!({
+                    "objective": "Replace the watcher",
+                    "token_budget": 456,
+                }),
+            ),
+        )
+        .await;
+
+        let Err(FunctionCallError::RespondToModel(output)) = response else {
+            panic!("expected create_goal to reject an existing goal");
+        };
+        assert_eq!(
+            output,
+            "cannot create a new goal because this thread already has a goal; use update_goal only when the existing goal is complete"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_goal_tool_rejects_pausing_goal() {
+        let goal_api = Arc::new(MockGoalApi::with_goal(None));
+        let turn = MockTurn;
+        let response = dispatch(
+            goal_api,
+            &turn,
+            function_call(
+                UPDATE_GOAL_TOOL_NAME,
+                "pause-goal",
+                serde_json::json!({
+                    "status": "paused",
+                }),
+            ),
+        )
+        .await;
+
+        let Err(FunctionCallError::RespondToModel(output)) = response else {
+            panic!("expected update_goal to reject pausing a goal");
+        };
+        assert_eq!(
+            output,
+            "update_goal can only mark the existing goal complete; pause, resume, and budget-limited status changes are controlled by the user or system"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_goal_tool_marks_goal_complete_and_reports_budget_usage() {
+        let goal_api = Arc::new(MockGoalApi::with_goal(Some(ThreadGoal {
+            thread_id: ThreadId::new(),
+            objective: "Keep the watcher alive".to_string(),
+            status: ThreadGoalStatus::Active,
+            token_budget: Some(123),
+            tokens_used: 0,
+            time_used_seconds: 0,
+            created_at: 1,
+            updated_at: 1,
+        })));
+        let turn = MockTurn;
+        let result = dispatch(
+            goal_api,
+            &turn,
+            function_call(
+                UPDATE_GOAL_TOOL_NAME,
+                "complete-goal",
+                serde_json::json!({
+                    "status": "complete",
+                }),
+            ),
+        )
+        .await
+        .expect("update_goal should mark the goal complete");
+
+        let output: serde_json::Value =
+            serde_json::from_str(&output_text(&result)).expect("goal tool json");
+        assert_eq!(output["goal"]["status"], "complete");
+        assert_eq!(output["remainingTokens"], 46);
+        assert_eq!(
+            output["completionBudgetReport"],
+            "Goal achieved. Report final budget usage to the user: tokens used: 77 of 123; time used: 12 seconds."
+        );
+    }
+}

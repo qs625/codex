@@ -9,9 +9,13 @@ use crate::runtime_shell::runtime_shell;
 use crate::tool_approval_support::permission_request_hook_payload;
 use codex_hooks::PreToolUseHookResult;
 use codex_hooks::run_permission_request_hooks;
+use codex_thread_api::ApplyPatchSessionCapability;
+use codex_thread_api::ApplyPatchTurnCapability;
 use codex_thread_api::SessionCapabilityFuture;
 use codex_thread_api::ToolSessionCapability;
 use codex_thread_api::ToolSessionDispatchTrace;
+use codex_thread_api::ToolEventSessionCapability;
+use codex_thread_api::ToolEventTurnCapability;
 use codex_thread_api::ToolRuntimeNetworkApprovalHandle;
 use codex_thread_api::ToolRuntimeNetworkApprovalTrigger;
 use codex_thread_api::ToolRuntimeSessionCapability;
@@ -35,6 +39,7 @@ use codex_tool_runtime_api::ExecCommandRunOutput;
 use codex_tool_runtime_api::ExecCommandRunRequest;
 use codex_tool_runtime_api::NetworkApprovalSpec;
 use codex_tool_runtime_api::ApplyPatchDiffContext;
+use codex_tool_runtime_api::ExecCommandSessionRuntime;
 use codex_tool_runtime_api::ResolvedExecCommand;
 use codex_tool_runtime_api::ResolvedApplyPatchEnvironment;
 use codex_tool_runtime_api::ResolvedExecCommandEnvironment;
@@ -80,19 +85,17 @@ impl ApplyPatchDiffContext for TurnContext {
     }
 }
 
-impl ToolRuntimeTurnCapability for TurnContext {
+impl ToolEventTurnCapability for TurnContext {
     fn runtime_turn_id_str(&self) -> &str {
         self.turn_id_str()
     }
 
-    fn routes_approval_to_guardian(&self) -> bool {
-        crate::guardian::routes_approval_to_guardian(self)
+    fn truncation_policy(&self) -> TruncationPolicy {
+        self.truncation_policy()
     }
+}
 
-    fn tool_sandbox_context(&self) -> codex_tool_runtime_api::ToolSandboxContext {
-        self.tool_sandbox_context()
-    }
-
+impl ApplyPatchTurnCapability for TurnContext {
     fn approval_policy(&self) -> AskForApproval {
         self.approval_policy()
     }
@@ -109,6 +112,47 @@ impl ToolRuntimeTurnCapability for TurnContext {
         self.windows_sandbox_level()
     }
 
+    fn tool_sandbox_context(&self) -> codex_tool_runtime_api::ToolSandboxContext {
+        self.tool_sandbox_context()
+    }
+
+    fn resolve_apply_patch_environment(
+        &self,
+        environment_id: Option<&str>,
+    ) -> Result<Option<ResolvedApplyPatchEnvironment>, codex_tool_types::FunctionCallError> {
+        self.resolve_apply_patch_environment(environment_id)
+    }
+}
+
+impl ToolRuntimeTurnCapability for TurnContext {
+    fn runtime_turn_id_str(&self) -> &str {
+        ToolEventTurnCapability::runtime_turn_id_str(self)
+    }
+
+    fn routes_approval_to_guardian(&self) -> bool {
+        crate::guardian::routes_approval_to_guardian(self)
+    }
+
+    fn tool_sandbox_context(&self) -> codex_tool_runtime_api::ToolSandboxContext {
+        self.tool_sandbox_context()
+    }
+
+    fn approval_policy(&self) -> AskForApproval {
+        ApplyPatchTurnCapability::approval_policy(self)
+    }
+
+    fn permission_profile(&self) -> PermissionProfile {
+        ApplyPatchTurnCapability::permission_profile(self)
+    }
+
+    fn file_system_sandbox_policy(&self) -> FileSystemSandboxPolicy {
+        ApplyPatchTurnCapability::file_system_sandbox_policy(self)
+    }
+
+    fn windows_sandbox_level(&self) -> codex_protocol::config_types::WindowsSandboxLevel {
+        ApplyPatchTurnCapability::windows_sandbox_level(self)
+    }
+
     fn file_system_sandbox_context(
         &self,
         additional_permissions: Option<AdditionalPermissionProfile>,
@@ -121,7 +165,7 @@ impl ToolRuntimeTurnCapability for TurnContext {
         &self,
         environment_id: Option<&str>,
     ) -> Result<Option<ResolvedApplyPatchEnvironment>, codex_tool_types::FunctionCallError> {
-        self.resolve_apply_patch_environment(environment_id)
+        ApplyPatchTurnCapability::resolve_apply_patch_environment(self, environment_id)
     }
 
     fn primary_apply_patch_environment(&self) -> Option<ResolvedApplyPatchEnvironment> {
@@ -149,7 +193,7 @@ impl ToolRuntimeTurnCapability for TurnContext {
     }
 
     fn truncation_policy(&self) -> TruncationPolicy {
-        self.truncation_policy()
+        ToolEventTurnCapability::truncation_policy(self)
     }
 
     fn allow_login_shell(&self) -> bool {
@@ -352,14 +396,10 @@ fn map_network_trigger(
     }
 }
 
-impl ToolRuntimeSessionCapability for Session {
-    fn sandbox_runtime(&self) -> SharedSandboxRuntime {
-        self.sandbox_runtime()
-    }
-
+impl ToolEventSessionCapability for Session {
     async fn tool_send_exec_command_begin(
         &self,
-        turn: &dyn ToolRuntimeTurnCapability,
+        turn: &dyn ToolEventTurnCapability,
         event: ExecCommandBeginEvent,
     ) {
         let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
@@ -371,7 +411,7 @@ impl ToolRuntimeSessionCapability for Session {
 
     async fn tool_send_exec_command_end(
         &self,
-        turn: &dyn ToolRuntimeTurnCapability,
+        turn: &dyn ToolEventTurnCapability,
         event: ExecCommandEndEvent,
     ) {
         let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
@@ -383,7 +423,7 @@ impl ToolRuntimeSessionCapability for Session {
 
     async fn tool_emit_file_change_started(
         &self,
-        turn: &dyn ToolRuntimeTurnCapability,
+        turn: &dyn ToolEventTurnCapability,
         item: codex_protocol::items::FileChangeItem,
     ) {
         let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
@@ -396,7 +436,7 @@ impl ToolRuntimeSessionCapability for Session {
 
     async fn tool_emit_file_change_completed(
         &self,
-        turn: &dyn ToolRuntimeTurnCapability,
+        turn: &dyn ToolEventTurnCapability,
         item: codex_protocol::items::FileChangeItem,
     ) {
         let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
@@ -409,7 +449,7 @@ impl ToolRuntimeSessionCapability for Session {
 
     async fn tool_record_model_items_and_emit_display_events(
         &self,
-        turn: &dyn ToolRuntimeTurnCapability,
+        turn: &dyn ToolEventTurnCapability,
         items: Vec<ResponseItem>,
     ) {
         let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
@@ -422,7 +462,7 @@ impl ToolRuntimeSessionCapability for Session {
 
     async fn tool_emit_turn_diff(
         &self,
-        turn: &dyn ToolRuntimeTurnCapability,
+        turn: &dyn ToolEventTurnCapability,
         event: TurnDiffEvent,
     ) {
         let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
@@ -432,11 +472,195 @@ impl ToolRuntimeSessionCapability for Session {
         self.send_event(turn, EventMsg::TurnDiff(event)).await;
     }
 
+}
+
+impl ApplyPatchSessionCapability for Session {
+    fn sandbox_runtime(&self) -> SharedSandboxRuntime {
+        self.sandbox_runtime()
+    }
+
     async fn tool_permission_grants(&self) -> ToolPermissionGrants {
         ToolPermissionGrants {
             session: self.granted_session_permissions().await,
             turn: self.granted_turn_permissions().await,
         }
+    }
+
+    fn strict_auto_review_enabled_for_turn(&self) -> impl Future<Output = bool> + Send + '_ {
+        self.strict_auto_review_enabled_for_turn()
+    }
+
+    fn run_permission_request_hooks<'a>(
+        &'a self,
+        turn: &'a dyn ApplyPatchTurnCapability,
+        permission_request_run_id: &'a str,
+        permission_request: codex_tool_runtime_api::PermissionRequestPayload,
+    ) -> impl Future<Output = Option<codex_hooks_api::PermissionRequestDecision>> + Send + 'a {
+        async move {
+            let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
+                tracing::warn!(
+                    "tool runtime session capability received an unsupported turn context"
+                );
+                return None;
+            };
+            run_permission_request_hooks(
+                self,
+                turn,
+                permission_request_run_id,
+                permission_request_hook_payload(permission_request),
+            )
+            .await
+        }
+    }
+}
+
+impl ExecCommandSessionRuntime<TurnContext> for Session {
+    fn tool_user_shell_type(&self) -> codex_tool_config::ToolUserShellType {
+        self.tool_user_shell_type()
+    }
+
+    fn runtime_shell(&self) -> RuntimeShell {
+        runtime_shell(self.user_shell().as_ref())
+    }
+
+    fn resolve_model_shell(&self, shell: &Path) -> RuntimeShell {
+        let mut shell = get_shell_by_model_provided_path(&shell.to_path_buf());
+        shell.shell_snapshot = crate::runtime_shell_model::empty_shell_snapshot_receiver();
+        runtime_shell(&shell)
+    }
+
+    fn resolve_exec_command(
+        &self,
+        turn: &TurnContext,
+        command: &str,
+        login: Option<bool>,
+        model_shell: Option<&RuntimeShell>,
+    ) -> Result<ResolvedExecCommand, String> {
+        codex_tool_runtime_api::resolve_exec_command_for_parts(
+            command,
+            login,
+            &self.runtime_shell(),
+            model_shell,
+            &turn.unified_exec_shell_mode(),
+            turn.allow_login_shell(),
+        )
+    }
+
+    fn maybe_emit_implicit_skill_invocation<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        command: &'a str,
+        workdir: &'a AbsolutePathBuf,
+    ) -> impl std::future::Future<Output = ()> + Send + 'a {
+        crate::maybe_emit_implicit_skill_invocation(self, turn, command, workdir)
+    }
+
+    fn allocate_exec_process_id(&self) -> impl std::future::Future<Output = i32> + Send + '_ {
+        self.allocate_unified_exec_process_id()
+    }
+
+    fn release_exec_process_id(
+        &self,
+        process_id: i32,
+    ) -> impl std::future::Future<Output = ()> + Send + '_ {
+        self.release_unified_exec_process_id(process_id)
+    }
+
+    fn run_exec_command<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        call_id: &'a str,
+        request: ExecCommandRunRequest,
+    ) -> impl std::future::Future<Output = Result<ExecCommandRunOutput, UnifiedExecError>> + Send + 'a {
+        let session = turn.session_arc();
+        let turn = turn.self_arc();
+        let call_id = call_id.to_string();
+        async move { session.run_unified_exec_command(turn, call_id, request).await }
+    }
+}
+
+impl ToolRuntimeSessionCapability for Session {
+    fn sandbox_runtime(&self) -> SharedSandboxRuntime {
+        ApplyPatchSessionCapability::sandbox_runtime(self)
+    }
+
+    async fn tool_send_exec_command_begin(
+        &self,
+        turn: &dyn ToolRuntimeTurnCapability,
+        event: ExecCommandBeginEvent,
+    ) {
+        let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
+            tracing::warn!("tool runtime session capability received an unsupported turn context");
+            return;
+        };
+        ToolEventSessionCapability::tool_send_exec_command_begin(self, turn, event).await;
+    }
+
+    async fn tool_send_exec_command_end(
+        &self,
+        turn: &dyn ToolRuntimeTurnCapability,
+        event: ExecCommandEndEvent,
+    ) {
+        let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
+            tracing::warn!("tool runtime session capability received an unsupported turn context");
+            return;
+        };
+        ToolEventSessionCapability::tool_send_exec_command_end(self, turn, event).await;
+    }
+
+    async fn tool_emit_file_change_started(
+        &self,
+        turn: &dyn ToolRuntimeTurnCapability,
+        item: codex_protocol::items::FileChangeItem,
+    ) {
+        let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
+            tracing::warn!("tool runtime session capability received an unsupported turn context");
+            return;
+        };
+        ToolEventSessionCapability::tool_emit_file_change_started(self, turn, item).await;
+    }
+
+    async fn tool_emit_file_change_completed(
+        &self,
+        turn: &dyn ToolRuntimeTurnCapability,
+        item: codex_protocol::items::FileChangeItem,
+    ) {
+        let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
+            tracing::warn!("tool runtime session capability received an unsupported turn context");
+            return;
+        };
+        ToolEventSessionCapability::tool_emit_file_change_completed(self, turn, item).await;
+    }
+
+    async fn tool_record_model_items_and_emit_display_events(
+        &self,
+        turn: &dyn ToolRuntimeTurnCapability,
+        items: Vec<ResponseItem>,
+    ) {
+        let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
+            tracing::warn!("tool runtime session capability received an unsupported turn context");
+            return;
+        };
+        ToolEventSessionCapability::tool_record_model_items_and_emit_display_events(
+            self, turn, items,
+        )
+        .await;
+    }
+
+    async fn tool_emit_turn_diff(
+        &self,
+        turn: &dyn ToolRuntimeTurnCapability,
+        event: TurnDiffEvent,
+    ) {
+        let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
+            tracing::warn!("tool runtime session capability received an unsupported turn context");
+            return;
+        };
+        ToolEventSessionCapability::tool_emit_turn_diff(self, turn, event).await;
+    }
+
+    async fn tool_permission_grants(&self) -> ToolPermissionGrants {
+        ApplyPatchSessionCapability::tool_permission_grants(self).await
     }
 
     async fn dependency_env(&self) -> HashMap<String, String> {
@@ -458,91 +682,8 @@ impl ToolRuntimeSessionCapability for Session {
         self.create_exec_approval_requirement(request)
     }
 
-    fn maybe_emit_implicit_skill_invocation<'a>(
-        &'a self,
-        turn: &'a dyn ToolRuntimeTurnCapability,
-        command: &'a str,
-        workdir: &'a AbsolutePathBuf,
-    ) -> impl std::future::Future<Output = ()> + Send + 'a {
-        async move {
-            let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-                tracing::warn!(
-                    "tool runtime session capability received an unsupported turn context"
-                );
-                return;
-            };
-            crate::maybe_emit_implicit_skill_invocation(self, turn, command, workdir).await;
-        }
-    }
-
-    fn tool_user_shell_type(&self) -> codex_tool_config::ToolUserShellType {
-        self.tool_user_shell_type()
-    }
-
-    fn runtime_shell(&self) -> RuntimeShell {
-        runtime_shell(self.user_shell().as_ref())
-    }
-
-    fn resolve_model_shell(&self, shell: &Path) -> RuntimeShell {
-        let mut shell = get_shell_by_model_provided_path(&shell.to_path_buf());
-        shell.shell_snapshot = crate::runtime_shell_model::empty_shell_snapshot_receiver();
-        runtime_shell(&shell)
-    }
-
-    fn resolve_exec_command(
-        &self,
-        turn: &dyn ToolRuntimeTurnCapability,
-        command: &str,
-        login: Option<bool>,
-        model_shell: Option<&RuntimeShell>,
-    ) -> Result<ResolvedExecCommand, String> {
-        let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-            return Err(
-                "tool runtime session capability received an unsupported turn context".to_string(),
-            );
-        };
-        codex_tool_runtime_api::resolve_exec_command_for_parts(
-            command,
-            login,
-            &self.runtime_shell(),
-            model_shell,
-            &turn.unified_exec_shell_mode(),
-            turn.allow_login_shell(),
-        )
-    }
-
-    fn allocate_exec_process_id(&self) -> impl std::future::Future<Output = i32> + Send + '_ {
-        self.allocate_unified_exec_process_id()
-    }
-
-    fn release_exec_process_id(
-        &self,
-        process_id: i32,
-    ) -> impl std::future::Future<Output = ()> + Send + '_ {
-        self.release_unified_exec_process_id(process_id)
-    }
-
-    fn run_exec_command<'a>(
-        &'a self,
-        turn: &'a dyn ToolRuntimeTurnCapability,
-        call_id: &'a str,
-        request: ExecCommandRunRequest,
-    ) -> impl std::future::Future<Output = Result<ExecCommandRunOutput, UnifiedExecError>> + Send + 'a {
-        async move {
-            let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-                return Err(UnifiedExecError::process_failed(
-                    "tool runtime session capability received an unsupported turn context"
-                        .to_string(),
-                ));
-            };
-            turn.session_arc()
-                .run_unified_exec_command(turn.self_arc(), call_id.to_string(), request)
-                .await
-        }
-    }
-
     fn strict_auto_review_enabled_for_turn(&self) -> impl Future<Output = bool> + Send + '_ {
-        self.strict_auto_review_enabled_for_turn()
+        ApplyPatchSessionCapability::strict_auto_review_enabled_for_turn(self)
     }
 
     fn guardian_rejection_message<'a>(
@@ -562,21 +703,14 @@ impl ToolRuntimeSessionCapability for Session {
         permission_request_run_id: &'a str,
         permission_request: codex_tool_runtime_api::PermissionRequestPayload,
     ) -> impl Future<Output = Option<codex_hooks_api::PermissionRequestDecision>> + Send + 'a {
-        async move {
-            let Some(turn) = ToolTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-                tracing::warn!(
-                    "tool runtime session capability received an unsupported turn context"
-                );
-                return None;
-            };
-            run_permission_request_hooks(
-                self,
-                turn,
-                permission_request_run_id,
-                permission_request_hook_payload(permission_request),
-            )
-            .await
-        }
+        ApplyPatchSessionCapability::run_permission_request_hooks(
+            self,
+            ToolTurnCapability::as_any(turn)
+                .downcast_ref::<TurnContext>()
+                .expect("tool runtime session capability received an unsupported turn context"),
+            permission_request_run_id,
+            permission_request,
+        )
     }
 
     fn begin_tool_network_approval<'a>(

@@ -24,4 +24,5 @@ codex-tool-config = { workspace = true }
 codex-tool-runtime-api = { workspace = true }
 codex-tool-types = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
+codex-utils-output-truncation = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }

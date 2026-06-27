@@ -93,7 +93,8 @@ use crate::build_turn_resolved_config_fact;
 use codex_tool_planning::ToolName;
 use codex_tool_planning::filter_request_plugin_install_discoverable_tools_for_client;
 use codex_tool_runtime::TurnDiffTracker;
-use codex_tool_runtime_api::ToolServiceParams;
+use codex_tool_service_api::ExtensionToolBuildParams;
+use codex_tool_service_api::ToolServiceParams;
 use codex_tool_types::FunctionCallError;
 use codex_turn_items::AssistantMessageStreamParsers;
 use codex_turn_items::ParsedAssistantTextDelta;
@@ -1166,7 +1167,7 @@ pub(crate) fn tool_service_request<'a>(
             mcp_tools: Some(tool_inputs.mcp_tools.as_slice()),
             deferred_mcp_tools: Some(tool_inputs.deferred_mcp_tools.as_slice()),
             discoverable_tools: Some(tool_inputs.discoverable_tools.as_slice()),
-            extension_tools: Some(codex_tool_runtime_api::ExtensionToolBuildParams {
+            extension_tools: Some(ExtensionToolBuildParams {
                 tool_contributors: sess.services.extensions.tool_contributors(),
                 session_store: &sess.services.session_extension_data,
                 thread_store: &sess.services.thread_extension_data,

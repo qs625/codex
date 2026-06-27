@@ -9,7 +9,6 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::future::Future;
 use std::marker::PhantomData;
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,12 +17,6 @@ use codex_code_mode_api::ExecuteRequest;
 use codex_code_mode_api::RuntimeResponse;
 use codex_code_mode_api::WaitOutcome;
 use codex_code_mode_api::WaitRequest;
-use codex_command_runtime::CommandSessionError;
-use codex_command_runtime::CommandWaitOperation;
-use codex_command_runtime::CommandWaitRequest;
-use codex_command_runtime::UnifiedExecError;
-use codex_command_runtime::WriteStdinOutput;
-use codex_command_runtime::WriteStdinRequest;
 use codex_permissions_runtime::ExecPolicyApprovalRequest;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::WindowsSandboxLevel;
@@ -48,7 +41,6 @@ use codex_protocol::protocol::ExecCommandEndEvent;
 use codex_protocol::protocol::McpInvocation;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::Submission;
-use codex_protocol::protocol::TerminalInteractionEvent;
 use codex_protocol::protocol::ThreadGoal;
 use codex_protocol::protocol::TurnDiffEvent;
 use codex_protocol::protocol::W3cTraceContext;
@@ -57,14 +49,10 @@ use codex_state_api::SharedStateDbRuntime;
 use codex_sandboxing_api::SharedSandboxRuntime;
 use codex_tool_planning::DiscoverableTool;
 use codex_tool_planning::RequestPluginInstallElicitationRequest;
-use codex_tool_config::ToolUserShellType;
 use codex_tool_runtime_api::AgentJobRunnerOptions;
 use codex_tool_runtime_api::AgentJobSpawnWorkerError;
 use codex_tool_runtime_api::AgentJobToolHost;
 use codex_tool_runtime_api::AnyToolResult;
-use codex_tool_runtime_api::CommandInteractionHost;
-use codex_tool_runtime_api::ExecCommandRunOutput;
-use codex_tool_runtime_api::ExecCommandRunRequest;
 use codex_tool_runtime_api::NetworkApprovalMode;
 use codex_tool_runtime_api::NetworkApprovalSpec;
 use codex_tool_runtime_api::PermissionRequestPayload;
@@ -76,7 +64,6 @@ use codex_tool_runtime_api::PreToolUseHookOutcome;
 use codex_tool_runtime_api::PreToolUsePayload;
 use codex_tool_runtime_api::RequestPluginInstallContext;
 use codex_tool_runtime_api::RequestPluginInstallElicitationOutcome;
-use codex_tool_runtime_api::RuntimeShell;
 use codex_tool_runtime_api::ToolArgumentDiffConsumer;
 use codex_tool_runtime_api::ToolEventHost;
 use codex_tool_runtime_api::ToolPatchTrackerUpdate;
@@ -781,6 +768,220 @@ where
     }
 }
 
+/// Turn-owned event capability consumed by tool lifecycle emitters.
+///
+/// This is narrower than the legacy tool-runtime capability and only carries
+/// display/event fields needed by generic tool event emitters.
+pub trait ToolEventTurnCapability: ToolTurnCapability + Send + Sync + 'static {
+    fn runtime_turn_id_str(&self) -> &str;
+
+    fn truncation_policy(&self) -> TruncationPolicy;
+}
+
+impl<Turn> ToolEventTurnCapability for Arc<Turn>
+where
+    Turn: ToolEventTurnCapability,
+{
+    fn runtime_turn_id_str(&self) -> &str {
+        self.as_ref().runtime_turn_id_str()
+    }
+
+    fn truncation_policy(&self) -> TruncationPolicy {
+        self.as_ref().truncation_policy()
+    }
+}
+
+/// Session-owned event capability consumed by tool lifecycle emitters.
+pub trait ToolEventSessionCapability: Send + Sync + 'static {
+    fn tool_send_exec_command_begin<'a>(
+        &'a self,
+        turn: &'a dyn ToolEventTurnCapability,
+        event: ExecCommandBeginEvent,
+    ) -> impl Future<Output = ()> + Send + 'a;
+
+    fn tool_send_exec_command_end<'a>(
+        &'a self,
+        turn: &'a dyn ToolEventTurnCapability,
+        event: ExecCommandEndEvent,
+    ) -> impl Future<Output = ()> + Send + 'a;
+
+    fn tool_emit_file_change_started<'a>(
+        &'a self,
+        turn: &'a dyn ToolEventTurnCapability,
+        item: FileChangeItem,
+    ) -> impl Future<Output = ()> + Send + 'a;
+
+    fn tool_emit_file_change_completed<'a>(
+        &'a self,
+        turn: &'a dyn ToolEventTurnCapability,
+        item: FileChangeItem,
+    ) -> impl Future<Output = ()> + Send + 'a;
+
+    fn tool_record_model_items_and_emit_display_events<'a>(
+        &'a self,
+        turn: &'a dyn ToolEventTurnCapability,
+        items: Vec<ResponseItem>,
+    ) -> impl Future<Output = ()> + Send + 'a;
+
+    fn tool_emit_turn_diff<'a>(
+        &'a self,
+        turn: &'a dyn ToolEventTurnCapability,
+        event: TurnDiffEvent,
+    ) -> impl Future<Output = ()> + Send + 'a;
+}
+
+impl<Session> ToolEventSessionCapability for Arc<Session>
+where
+    Session: ToolEventSessionCapability,
+{
+    fn tool_send_exec_command_begin<'a>(
+        &'a self,
+        turn: &'a dyn ToolEventTurnCapability,
+        event: ExecCommandBeginEvent,
+    ) -> impl Future<Output = ()> + Send + 'a {
+        self.as_ref().tool_send_exec_command_begin(turn, event)
+    }
+
+    fn tool_send_exec_command_end<'a>(
+        &'a self,
+        turn: &'a dyn ToolEventTurnCapability,
+        event: ExecCommandEndEvent,
+    ) -> impl Future<Output = ()> + Send + 'a {
+        self.as_ref().tool_send_exec_command_end(turn, event)
+    }
+
+    fn tool_emit_file_change_started<'a>(
+        &'a self,
+        turn: &'a dyn ToolEventTurnCapability,
+        item: FileChangeItem,
+    ) -> impl Future<Output = ()> + Send + 'a {
+        self.as_ref().tool_emit_file_change_started(turn, item)
+    }
+
+    fn tool_emit_file_change_completed<'a>(
+        &'a self,
+        turn: &'a dyn ToolEventTurnCapability,
+        item: FileChangeItem,
+    ) -> impl Future<Output = ()> + Send + 'a {
+        self.as_ref().tool_emit_file_change_completed(turn, item)
+    }
+
+    fn tool_record_model_items_and_emit_display_events<'a>(
+        &'a self,
+        turn: &'a dyn ToolEventTurnCapability,
+        items: Vec<ResponseItem>,
+    ) -> impl Future<Output = ()> + Send + 'a {
+        self.as_ref()
+            .tool_record_model_items_and_emit_display_events(turn, items)
+    }
+
+    fn tool_emit_turn_diff<'a>(
+        &'a self,
+        turn: &'a dyn ToolEventTurnCapability,
+        event: TurnDiffEvent,
+    ) -> impl Future<Output = ()> + Send + 'a {
+        self.as_ref().tool_emit_turn_diff(turn, event)
+    }
+}
+
+/// Turn-owned apply-patch capability exposed by thread service.
+pub trait ApplyPatchTurnCapability: ThreadRuntimeCapability + ToolEventTurnCapability {
+    fn approval_policy(&self) -> AskForApproval;
+
+    fn permission_profile(&self) -> PermissionProfile;
+
+    fn file_system_sandbox_policy(&self) -> FileSystemSandboxPolicy;
+
+    fn windows_sandbox_level(&self) -> WindowsSandboxLevel;
+
+    fn tool_sandbox_context(&self) -> codex_tool_runtime_api::ToolSandboxContext;
+
+    fn resolve_apply_patch_environment(
+        &self,
+        environment_id: Option<&str>,
+    ) -> Result<Option<codex_tool_runtime_api::ResolvedApplyPatchEnvironment>, FunctionCallError>;
+}
+
+impl<Turn> ApplyPatchTurnCapability for Arc<Turn>
+where
+    Turn: ApplyPatchTurnCapability,
+{
+    fn approval_policy(&self) -> AskForApproval {
+        self.as_ref().approval_policy()
+    }
+
+    fn permission_profile(&self) -> PermissionProfile {
+        self.as_ref().permission_profile()
+    }
+
+    fn file_system_sandbox_policy(&self) -> FileSystemSandboxPolicy {
+        self.as_ref().file_system_sandbox_policy()
+    }
+
+    fn windows_sandbox_level(&self) -> WindowsSandboxLevel {
+        self.as_ref().windows_sandbox_level()
+    }
+
+    fn tool_sandbox_context(&self) -> codex_tool_runtime_api::ToolSandboxContext {
+        self.as_ref().tool_sandbox_context()
+    }
+
+    fn resolve_apply_patch_environment(
+        &self,
+        environment_id: Option<&str>,
+    ) -> Result<Option<codex_tool_runtime_api::ResolvedApplyPatchEnvironment>, FunctionCallError> {
+        self.as_ref().resolve_apply_patch_environment(environment_id)
+    }
+}
+
+/// Session-owned apply-patch capability exposed by thread service.
+pub trait ApplyPatchSessionCapability:
+    ToolEventSessionCapability + Send + Sync + 'static
+{
+    fn sandbox_runtime(&self) -> SharedSandboxRuntime;
+
+    fn strict_auto_review_enabled_for_turn(&self) -> impl Future<Output = bool> + Send + '_;
+
+    fn run_permission_request_hooks<'a>(
+        &'a self,
+        turn: &'a dyn ApplyPatchTurnCapability,
+        permission_request_run_id: &'a str,
+        permission_request: PermissionRequestPayload,
+    ) -> impl Future<Output = Option<codex_hooks_api::PermissionRequestDecision>> + Send + 'a;
+
+    fn tool_permission_grants(&self) -> impl Future<Output = ToolPermissionGrants> + Send + '_;
+}
+
+impl<Session> ApplyPatchSessionCapability for Arc<Session>
+where
+    Session: ApplyPatchSessionCapability,
+{
+    fn sandbox_runtime(&self) -> SharedSandboxRuntime {
+        self.as_ref().sandbox_runtime()
+    }
+
+    fn strict_auto_review_enabled_for_turn(&self) -> impl Future<Output = bool> + Send + '_ {
+        self.as_ref().strict_auto_review_enabled_for_turn()
+    }
+
+    fn run_permission_request_hooks<'a>(
+        &'a self,
+        turn: &'a dyn ApplyPatchTurnCapability,
+        permission_request_run_id: &'a str,
+        permission_request: PermissionRequestPayload,
+    ) -> impl Future<Output = Option<codex_hooks_api::PermissionRequestDecision>> + Send + 'a {
+        self.as_ref().run_permission_request_hooks(
+            turn,
+            permission_request_run_id,
+            permission_request,
+        )
+    }
+
+    fn tool_permission_grants(&self) -> impl Future<Output = ToolPermissionGrants> + Send + '_ {
+        self.as_ref().tool_permission_grants()
+    }
+}
+
 /// Turn-owned runtime capability required by apply-patch, shell, and unified-exec tools.
 ///
 /// Implementations own the active turn's sandbox, environment, permission, and
@@ -984,38 +1185,6 @@ pub trait ToolRuntimeSessionCapability: Send + Sync + 'static {
         request: ExecPolicyApprovalRequest<'a>,
     ) -> impl Future<Output = codex_tool_runtime_api::ExecApprovalRequirement> + Send + 'a;
 
-    fn maybe_emit_implicit_skill_invocation<'a>(
-        &'a self,
-        turn: &'a dyn ToolRuntimeTurnCapability,
-        command: &'a str,
-        workdir: &'a AbsolutePathBuf,
-    ) -> impl Future<Output = ()> + Send + 'a;
-
-    fn tool_user_shell_type(&self) -> ToolUserShellType;
-
-    fn runtime_shell(&self) -> RuntimeShell;
-
-    fn resolve_model_shell(&self, shell: &Path) -> RuntimeShell;
-
-    fn resolve_exec_command(
-        &self,
-        turn: &dyn ToolRuntimeTurnCapability,
-        command: &str,
-        login: Option<bool>,
-        model_shell: Option<&RuntimeShell>,
-    ) -> Result<codex_tool_runtime_api::ResolvedExecCommand, String>;
-
-    fn allocate_exec_process_id(&self) -> impl Future<Output = i32> + Send + '_;
-
-    fn release_exec_process_id(&self, process_id: i32) -> impl Future<Output = ()> + Send + '_;
-
-    fn run_exec_command<'a>(
-        &'a self,
-        turn: &'a dyn ToolRuntimeTurnCapability,
-        call_id: &'a str,
-        request: ExecCommandRunRequest,
-    ) -> impl Future<Output = Result<ExecCommandRunOutput, UnifiedExecError>> + Send + 'a;
-
     fn strict_auto_review_enabled_for_turn(&self) -> impl Future<Output = bool> + Send + '_;
 
     fn guardian_rejection_message<'a>(
@@ -1121,56 +1290,6 @@ where
         self.as_ref().create_exec_approval_requirement(request)
     }
 
-    fn maybe_emit_implicit_skill_invocation<'a>(
-        &'a self,
-        turn: &'a dyn ToolRuntimeTurnCapability,
-        command: &'a str,
-        workdir: &'a AbsolutePathBuf,
-    ) -> impl Future<Output = ()> + Send + 'a {
-        self.as_ref()
-            .maybe_emit_implicit_skill_invocation(turn, command, workdir)
-    }
-
-    fn tool_user_shell_type(&self) -> ToolUserShellType {
-        self.as_ref().tool_user_shell_type()
-    }
-
-    fn runtime_shell(&self) -> RuntimeShell {
-        self.as_ref().runtime_shell()
-    }
-
-    fn resolve_model_shell(&self, shell: &Path) -> RuntimeShell {
-        self.as_ref().resolve_model_shell(shell)
-    }
-
-    fn resolve_exec_command(
-        &self,
-        turn: &dyn ToolRuntimeTurnCapability,
-        command: &str,
-        login: Option<bool>,
-        model_shell: Option<&RuntimeShell>,
-    ) -> Result<codex_tool_runtime_api::ResolvedExecCommand, String> {
-        self.as_ref()
-            .resolve_exec_command(turn, command, login, model_shell)
-    }
-
-    fn allocate_exec_process_id(&self) -> impl Future<Output = i32> + Send + '_ {
-        self.as_ref().allocate_exec_process_id()
-    }
-
-    fn release_exec_process_id(&self, process_id: i32) -> impl Future<Output = ()> + Send + '_ {
-        self.as_ref().release_exec_process_id(process_id)
-    }
-
-    fn run_exec_command<'a>(
-        &'a self,
-        turn: &'a dyn ToolRuntimeTurnCapability,
-        call_id: &'a str,
-        request: ExecCommandRunRequest,
-    ) -> impl Future<Output = Result<ExecCommandRunOutput, UnifiedExecError>> + Send + 'a {
-        self.as_ref().run_exec_command(turn, call_id, request)
-    }
-
     fn strict_auto_review_enabled_for_turn(&self) -> impl Future<Output = bool> + Send + '_ {
         self.as_ref().strict_auto_review_enabled_for_turn()
     }
@@ -1261,8 +1380,8 @@ impl<'a, Session, Turn> SessionToolEventHost<'a, Session, Turn> {
 
 impl<Session, Turn> ToolEventHost for SessionToolEventHost<'_, Session, Turn>
 where
-    Session: ToolRuntimeSessionCapability,
-    Turn: ToolRuntimeTurnCapability,
+    Session: ToolEventSessionCapability,
+    Turn: ToolEventTurnCapability,
 {
     fn turn_id(&self) -> &str {
         self.turn.runtime_turn_id_str()
@@ -1462,182 +1581,6 @@ where
     ) {
         self.as_ref()
             .record_code_mode_cell_ended(turn, runtime_cell_id, response);
-    }
-}
-
-/// Session-owned command interaction capability consumed by command tools.
-///
-/// Implementations own the concrete command session controller and typed
-/// conversation event sinks. Tool-domain command handlers own argument parsing
-/// and model-visible response shaping, then call this contract through
-/// [`SessionCommandInteractionHost`].
-pub trait SessionCommandInteractionCaller: Send + Sync + 'static {
-    /// Begin one bounded wait operation for an existing command process.
-    fn begin_command_wait<'a>(
-        &'a self,
-        request: CommandWaitRequest,
-    ) -> impl Future<Output = Result<Box<dyn CommandWaitOperation>, CommandSessionError>> + Send + 'a;
-
-    /// Write stdin to an existing command process.
-    fn write_command_stdin<'a>(
-        &'a self,
-        request: WriteStdinRequest<'a>,
-    ) -> impl Future<Output = Result<WriteStdinOutput, CommandSessionError>> + Send + 'a;
-
-    /// Emit the command interaction started display event.
-    fn emit_model_item_started_display_event<'a>(
-        &'a self,
-        turn: &'a dyn ThreadCapability,
-        item: &'a ResponseItem,
-    ) -> impl Future<Output = ()> + Send + 'a;
-
-    /// Record model-visible command interaction items and emit display events.
-    fn record_model_items_and_emit_display_events<'a>(
-        &'a self,
-        turn: &'a dyn ThreadCapability,
-        items: &'a [ResponseItem],
-    ) -> impl Future<Output = ()> + Send + 'a;
-
-    /// Emit a typed terminal interaction event for command stdin/wait actions.
-    fn send_terminal_interaction<'a>(
-        &'a self,
-        turn: &'a dyn ThreadCapability,
-        event: TerminalInteractionEvent,
-    ) -> impl Future<Output = ()> + Send + 'a;
-}
-
-impl<Session> SessionCommandInteractionCaller for Arc<Session>
-where
-    Session: SessionCommandInteractionCaller,
-{
-    fn begin_command_wait<'a>(
-        &'a self,
-        request: CommandWaitRequest,
-    ) -> impl Future<Output = Result<Box<dyn CommandWaitOperation>, CommandSessionError>> + Send + 'a
-    {
-        self.as_ref().begin_command_wait(request)
-    }
-
-    fn write_command_stdin<'a>(
-        &'a self,
-        request: WriteStdinRequest<'a>,
-    ) -> impl Future<Output = Result<WriteStdinOutput, CommandSessionError>> + Send + 'a {
-        self.as_ref().write_command_stdin(request)
-    }
-
-    fn emit_model_item_started_display_event<'a>(
-        &'a self,
-        turn: &'a dyn ThreadCapability,
-        item: &'a ResponseItem,
-    ) -> impl Future<Output = ()> + Send + 'a {
-        self.as_ref().emit_model_item_started_display_event(turn, item)
-    }
-
-    fn record_model_items_and_emit_display_events<'a>(
-        &'a self,
-        turn: &'a dyn ThreadCapability,
-        items: &'a [ResponseItem],
-    ) -> impl Future<Output = ()> + Send + 'a {
-        self.as_ref()
-            .record_model_items_and_emit_display_events(turn, items)
-    }
-
-    fn send_terminal_interaction<'a>(
-        &'a self,
-        turn: &'a dyn ThreadCapability,
-        event: TerminalInteractionEvent,
-    ) -> impl Future<Output = ()> + Send + 'a {
-        self.as_ref().send_terminal_interaction(turn, event)
-    }
-}
-
-/// Generic command-interaction host backed by session API traits.
-pub struct SessionCommandInteractionHost<Session, Turn, Tracker, DiffContext> {
-    _marker: PhantomData<fn() -> (Session, Turn, Tracker, DiffContext)>,
-}
-
-impl<Session, Turn, Tracker, DiffContext> Clone
-    for SessionCommandInteractionHost<Session, Turn, Tracker, DiffContext>
-{
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<Session, Turn, Tracker, DiffContext> Copy
-    for SessionCommandInteractionHost<Session, Turn, Tracker, DiffContext>
-{
-}
-
-impl<Session, Turn, Tracker, DiffContext> Default
-    for SessionCommandInteractionHost<Session, Turn, Tracker, DiffContext>
-{
-    fn default() -> Self {
-        Self {
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl<Session, Turn, Tracker, DiffContext> CommandInteractionHost
-    for SessionCommandInteractionHost<Session, Turn, Tracker, DiffContext>
-where
-    Session: SessionCommandInteractionCaller,
-    Turn: Clone + ThreadCapability,
-    Tracker: Clone + Send + Sync + 'static,
-    DiffContext: 'static,
-{
-    type Session = Arc<Session>;
-    type Turn = Turn;
-    type Tracker = Tracker;
-    type DiffContext = DiffContext;
-
-    fn new_response_item_id(&self) -> String {
-        format!("response-item-{}", uuid::Uuid::new_v4())
-    }
-
-    fn begin_command_wait<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        request: CommandWaitRequest,
-    ) -> impl Future<Output = Result<Box<dyn CommandWaitOperation>, CommandSessionError>> + Send + 'a
-    {
-        session.begin_command_wait(request)
-    }
-
-    fn write_command_stdin<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        request: WriteStdinRequest<'a>,
-    ) -> impl Future<Output = Result<WriteStdinOutput, CommandSessionError>> + Send + 'a {
-        session.write_command_stdin(request)
-    }
-
-    fn emit_model_item_started_display_event<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        turn: &'a Self::Turn,
-        item: &'a ResponseItem,
-    ) -> impl Future<Output = ()> + Send + 'a {
-        session.emit_model_item_started_display_event(turn, item)
-    }
-
-    fn record_model_items_and_emit_display_events<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        turn: &'a Self::Turn,
-        items: &'a [ResponseItem],
-    ) -> impl Future<Output = ()> + Send + 'a {
-        session.record_model_items_and_emit_display_events(turn, items)
-    }
-
-    fn send_terminal_interaction<'a>(
-        &'a self,
-        session: &'a Self::Session,
-        turn: &'a Self::Turn,
-        event: TerminalInteractionEvent,
-    ) -> impl Future<Output = ()> + Send + 'a {
-        session.send_terminal_interaction(turn, event)
     }
 }
 

@@ -10,7 +10,7 @@ pub(crate) struct TypedToolSpecRequest<'a> {
     pub(crate) session_capability: std::sync::Weak<dyn codex_thread_api::ToolSessionCapability>,
     pub(crate) session: Arc<ThreadRuntimeSession>,
     pub(crate) turn: Arc<ThreadTurnContext>,
-    pub(crate) params: codex_tool_runtime_api::ToolServiceParams<'a>,
+    pub(crate) params: codex_tool_service_api::ToolServiceParams<'a>,
 }
 
 impl Clone for TypedToolSpecRequest<'_> {
@@ -20,7 +20,7 @@ impl Clone for TypedToolSpecRequest<'_> {
             session_capability: self.session_capability.clone(),
             session: Arc::clone(&self.session),
             turn: Arc::clone(&self.turn),
-            params: codex_tool_runtime_api::ToolServiceParams {
+            params: codex_tool_service_api::ToolServiceParams {
                 mcp_tools: self.params.mcp_tools,
                 deferred_mcp_tools: self.params.deferred_mcp_tools,
                 discoverable_tools: self.params.discoverable_tools,

@@ -9,57 +9,14 @@ use codex_rollout_trace::ThreadStartedTraceMetadata;
 use codex_rollout_trace::ToolCallRequester;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
-use tokio_util::sync::CancellationToken;
 
 use crate::session::session::Session;
+use crate::session::tests::dispatch_tool_via_tool_service;
 use crate::session::tests::make_session_and_context;
 use crate::session::turn_context::TurnContext;
-use crate::tool_test_registry::ToolExecutor;
-use crate::tool_test_registry::ToolHandler;
-use crate::tool_test_registry::ToolRegistry;
-use codex_tool_runtime::FunctionToolOutput;
-use codex_tool_runtime::TurnDiffTracker;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCallSource;
-use codex_tool_types::ToolInvocationMetadata;
 use codex_tool_types::ToolPayload;
-
-type ToolInvocation = codex_tool_runtime::ToolInvocation<
-    Arc<Session>,
-    Arc<TurnContext>,
-    crate::SharedTurnDiffTracker,
->;
-
-struct TestHandler {
-    tool_name: codex_tool_planning::ToolName,
-}
-
-impl ToolExecutor<ToolInvocation> for TestHandler {
-    type Output = FunctionToolOutput;
-
-    fn tool_name(&self) -> codex_tool_planning::ToolName {
-        self.tool_name.clone()
-    }
-
-    fn handle<'a>(
-        &'a self,
-        _invocation: ToolInvocation,
-    ) -> crate::tool_test_registry::ToolExecutorFuture<'a, Self::Output>
-    where
-        Self: 'a,
-    {
-        Box::pin(async move { Ok(FunctionToolOutput::from_text("ok".to_string(), Some(true))) })
-    }
-}
-
-impl ToolHandler<ToolInvocation, crate::session::turn_context::TurnContext> for TestHandler {}
-
-fn tool_session_capability(
-    session: Arc<Session>,
-    _turn: Arc<TurnContext>,
-) -> Arc<dyn codex_thread_api::ToolSessionCapability> {
-    session as Arc<dyn codex_thread_api::ToolSessionCapability>
-}
 
 #[tokio::test]
 async fn dispatch_lifecycle_trace_records_direct_and_code_mode_requesters() -> anyhow::Result<()> {
@@ -75,35 +32,30 @@ async fn dispatch_lifecycle_trace_records_direct_and_code_mode_requesters() -> a
 
     let session = Arc::new(session);
     let turn = Arc::new(turn);
-    let registry = ToolRegistry::with_handler_and_session_capability_for_test(
-        Arc::new(TestHandler {
-            tool_name: codex_tool_planning::ToolName::plain("test_tool"),
-        }),
-        tool_session_capability(Arc::clone(&session), Arc::clone(&turn)),
-    );
-
-    registry
-        .dispatch_any(test_invocation(
-            Arc::clone(&session),
-            Arc::clone(&turn),
-            "direct-call",
-            "test_tool",
-            ToolCallSource::Direct,
-            "{}",
-        ))
+    dispatch_tool_via_tool_service(
+        Arc::clone(&session),
+        Arc::clone(&turn),
+        "direct-call",
+        codex_tool_planning::ToolName::plain("get_goal"),
+        ToolCallSource::Direct,
+        ToolPayload::Function {
+            arguments: "{}".to_string(),
+        },
+    )
         .await?;
-    registry
-        .dispatch_any(test_invocation(
-            session,
-            turn,
-            "code-mode-call",
-            "test_tool",
-            ToolCallSource::CodeMode {
-                cell_id: "cell-1".to_string(),
-                runtime_tool_call_id: "tool-1".to_string(),
-            },
-            "{}",
-        ))
+    dispatch_tool_via_tool_service(
+        session,
+        turn,
+        "code-mode-call",
+        codex_tool_planning::ToolName::plain("get_goal"),
+        ToolCallSource::CodeMode {
+            cell_id: "cell-1".to_string(),
+            runtime_tool_call_id: "tool-1".to_string(),
+        },
+        ToolPayload::Function {
+            arguments: "{}".to_string(),
+        },
+    )
         .await?;
 
     let replayed = codex_rollout_trace::replay_bundle(single_bundle_dir(temp.path())?)?;
@@ -159,21 +111,17 @@ async fn dispatch_lifecycle_trace_records_unsupported_tool_failures() -> anyhow:
 
     let session = Arc::new(session);
     let turn = Arc::new(turn);
-    let registry = ToolRegistry::empty_with_session_capability_for_test(tool_session_capability(
-        Arc::clone(&session),
-        Arc::clone(&turn),
-    ));
-
-    let result = registry
-        .dispatch_any(test_invocation(
-            session,
-            turn,
-            "unsupported-call",
-            "missing_tool",
-            ToolCallSource::Direct,
-            "{}",
-        ))
-        .await;
+    let result = dispatch_tool_via_tool_service(
+        session,
+        turn,
+        "unsupported-call",
+        codex_tool_planning::ToolName::plain("missing_tool"),
+        ToolCallSource::Direct,
+        ToolPayload::Function {
+            arguments: "{}".to_string(),
+        },
+    )
+    .await;
 
     assert!(matches!(result, Err(FunctionCallError::RespondToModel(_))));
     let replayed = codex_rollout_trace::replay_bundle(single_bundle_dir(temp.path())?)?;
@@ -192,25 +140,17 @@ async fn dispatch_lifecycle_trace_records_incompatible_payload_failures() -> any
 
     let session = Arc::new(session);
     let turn = Arc::new(turn);
-    let registry = ToolRegistry::with_handler_and_session_capability_for_test(
-        Arc::new(TestHandler {
-            tool_name: codex_tool_planning::ToolName::plain("test_tool"),
-        }),
-        tool_session_capability(Arc::clone(&session), Arc::clone(&turn)),
-    );
-
-    let result = registry
-        .dispatch_any(test_invocation_with_payload(
-            session,
-            turn,
-            "incompatible-call",
-            codex_tool_planning::ToolName::plain("test_tool"),
-            ToolCallSource::Direct,
-            ToolPayload::Custom {
-                input: "{}".to_string(),
-            },
-        ))
-        .await;
+    let result = dispatch_tool_via_tool_service(
+        session,
+        turn,
+        "incompatible-call",
+        codex_tool_planning::ToolName::plain("get_goal"),
+        ToolCallSource::Direct,
+        ToolPayload::Custom {
+            input: "{}".to_string(),
+        },
+    )
+    .await;
 
     assert!(matches!(result, Err(FunctionCallError::Fatal(_))));
     let replayed = codex_rollout_trace::replay_bundle(single_bundle_dir(temp.path())?)?;
@@ -222,80 +162,34 @@ async fn dispatch_lifecycle_trace_records_incompatible_payload_failures() -> any
 }
 
 #[tokio::test]
-async fn missing_code_mode_wait_traces_only_the_wait_tool_call() -> anyhow::Result<()> {
+async fn direct_goal_tool_without_code_cell_traces_only_the_tool_call() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     let (mut session, turn) = make_session_and_context().await;
     attach_test_trace(&mut session, &turn, temp.path())?;
 
     let session = Arc::new(session);
     let turn = Arc::new(turn);
-    let registry = ToolRegistry::with_handler_and_session_capability_for_test(
-        Arc::new(codex_tool_handlers::CodeModeWaitHandler::new()),
-        tool_session_capability(Arc::clone(&session), Arc::clone(&turn)),
-    );
-
-    registry
-        .dispatch_any(test_invocation(
-            session,
-            turn,
-            "wait-call",
-            codex_code_mode_api::WAIT_TOOL_NAME,
-            ToolCallSource::Direct,
-            r#"{"cell_id":"noop","terminate":true}"#,
-        ))
+    dispatch_tool_via_tool_service(
+        session,
+        turn,
+        "goal-call",
+        codex_tool_planning::ToolName::plain("get_goal"),
+        ToolCallSource::Direct,
+        ToolPayload::Function {
+            arguments: "{}".to_string(),
+        },
+    )
         .await?;
 
     let replayed = codex_rollout_trace::replay_bundle(single_bundle_dir(temp.path())?)?;
     assert_eq!(replayed.code_cells.len(), 0);
     assert!(
-        replayed.tool_calls["wait-call"]
+        replayed.tool_calls["goal-call"]
             .raw_result_payload_id
             .is_some()
     );
 
     Ok(())
-}
-
-fn test_invocation(
-    session: Arc<Session>,
-    turn: Arc<TurnContext>,
-    call_id: &str,
-    tool_name: &str,
-    source: ToolCallSource,
-    arguments: &str,
-) -> ToolInvocation {
-    test_invocation_with_payload(
-        session,
-        turn,
-        call_id,
-        codex_tool_planning::ToolName::plain(tool_name),
-        source,
-        ToolPayload::Function {
-            arguments: arguments.to_string(),
-        },
-    )
-}
-
-fn test_invocation_with_payload(
-    session: Arc<Session>,
-    turn: Arc<TurnContext>,
-    call_id: &str,
-    tool_name: codex_tool_planning::ToolName,
-    source: ToolCallSource,
-    payload: ToolPayload,
-) -> ToolInvocation {
-    ToolInvocation {
-        session,
-        turn,
-        cancellation_token: CancellationToken::new(),
-        tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
-        metadata: ToolInvocationMetadata {
-            call_id: call_id.to_string(),
-            tool_name,
-            source,
-            payload,
-        },
-    }
 }
 
 fn attach_test_trace(session: &mut Session, turn: &TurnContext, root: &Path) -> anyhow::Result<()> {

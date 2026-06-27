@@ -30,6 +30,7 @@ use crate::unified_exec::UnifiedExecProcess;
 use crate::unified_exec::UnifiedExecProcessManager;
 use crate::unified_exec::WaitBackoffState;
 use crate::unified_exec::WriteStdinOutput;
+use crate::unified_exec::orchestrator_host::CommandServiceToolOrchestratorHost;
 use crate::unified_exec::runtime_host::ThreadUnifiedExecRuntimeHost;
 use codex_thread_api::ToolRuntimeNetworkApprovalHandle;
 use codex_thread_api::SessionToolEventHost;
@@ -1056,7 +1057,7 @@ impl UnifiedExecProcessManager {
             local_policy_env,
         };
         let mut orchestrator = codex_tool_runtime::ToolOrchestrator::new(
-            codex_tool_handlers::CapabilityToolOrchestratorHost,
+            CommandServiceToolOrchestratorHost,
             context.session.inner.sandbox_runtime(),
         );
         let mut runtime = UnifiedExecRuntime::new(

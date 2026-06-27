@@ -21,13 +21,10 @@ use codex_context_manager::ContextualUserFragment;
 use codex_core_plugins::PluginsManager;
 use codex_core_skills::SkillsManager;
 use codex_rollout_api::TurnAborted;
-use codex_tool_service_api::ToolServiceApi;
 use codex_tool_runtime::format_exec_output_str;
 use codex_tool_runtime::TurnDiffTracker;
-use codex_tool_runtime_api::ToolServiceParams;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCallSource;
-use codex_tool_types::ToolInvocationMetadata;
 use codex_tool_types::ToolPayload;
 
 use codex_features::Feature;
@@ -66,10 +63,9 @@ use codex_protocol::request_permissions::RequestPermissionProfile;
 use codex_state_api::ExternalGoalPreviousStatus;
 use codex_state_api::ExternalGoalSet;
 use codex_thread_store::LiveThread;
+use codex_thread_api::ToolRuntimeSessionCapability;
 use tracing::Span;
 
-use crate::SharedTurnDiffTracker;
-use crate::GoalService;
 use crate::goal::GoalRuntimeEvent;
 use crate::goal::SetGoalRequest;
 use crate::state::ActiveTurn;
@@ -78,8 +74,7 @@ use crate::tasks::SessionTask;
 use crate::tasks::SessionTaskContext;
 use crate::tasks::UserShellCommandMode;
 use crate::tasks::execute_user_shell_command;
-use crate::test_support::TestToolService;
-use crate::tool_test_registry::ToolExecutor;
+use crate::test_support::DisabledToolServiceForTests;
 use codex_auth_types::TelemetryAuthMode;
 use codex_config::config_toml::ConfigToml;
 use codex_config_loader::ProjectConfig;
@@ -141,7 +136,6 @@ use codex_protocol::request_user_input::RequestUserInputAnswer;
 use codex_protocol::request_user_input::RequestUserInputResponse;
 use codex_rollout::RolloutRecorder;
 use crate::PendingInputItem;
-use codex_tool_handlers::SpawnAgentHandler;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use core_test_support::context_snapshot;
@@ -182,9 +176,6 @@ use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
-
-type ToolInvocation =
-    codex_tool_runtime::ToolInvocation<Arc<Session>, Arc<TurnContext>, SharedTurnDiffTracker>;
 
 mod guardian_tests;
 
@@ -569,6 +560,62 @@ pub(crate) fn test_tool_inputs(
     Arc::new(result)
 }
 
+pub(crate) async fn dispatch_exec_command_via_tool_service(
+    session: Arc<Session>,
+    turn_context: Arc<TurnContext>,
+    call_id: &str,
+    arguments: serde_json::Value,
+) -> Result<String, FunctionCallError> {
+    let result = dispatch_tool_via_tool_service(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        call_id,
+        codex_tool_planning::ToolName::plain("exec_command"),
+        ToolCallSource::Direct,
+        ToolPayload::Function {
+            arguments: arguments.to_string(),
+        },
+    )
+    .await?;
+    let response_item = result.result.to_response_item(call_id, &result.payload);
+    match response_item {
+        ResponseInputItem::FunctionCallOutput { output, .. }
+        | ResponseInputItem::CustomToolCallOutput { output, .. } => {
+            Ok(output.body.to_text().unwrap_or_default())
+        }
+        other => Err(FunctionCallError::Fatal(format!(
+            "unexpected exec_command response item: {other:?}"
+        ))),
+    }
+}
+
+pub(crate) async fn dispatch_tool_via_tool_service(
+    session: Arc<Session>,
+    turn_context: Arc<TurnContext>,
+    call_id: &str,
+    tool_name: codex_tool_planning::ToolName,
+    source: ToolCallSource,
+    payload: ToolPayload,
+) -> Result<codex_tool_runtime_api::AnyToolResult, FunctionCallError> {
+    let tool_inputs = test_tool_inputs(Arc::clone(&session), Arc::clone(&turn_context));
+    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+    crate::session::turn::dispatch_tool_call(
+        Arc::clone(&session.services.tool_service),
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        tool_inputs,
+        tracker,
+        codex_tool_planning::ToolCall {
+            call_id: call_id.to_string(),
+            tool_name,
+            payload,
+        },
+        source,
+        CancellationToken::new(),
+    )
+    .await
+}
+
 #[tokio::test]
 async fn beta_features_header_omits_remote_compaction_v2() -> anyhow::Result<()> {
     let mut config = ConfigBuilder::default().build().await?;
@@ -863,7 +910,7 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
         enforce_managed_network: Vec<bool>,
     }
 
-    impl crate::tool_runtime_support::Approvable<()> for ProbeToolRuntime {
+    impl codex_tool_runtime_api::Approvable<()> for ProbeToolRuntime {
         type Session = Arc<crate::session::session::Session>;
         type Turn = Arc<crate::session::turn_context::TurnContext>;
         type ApprovalKey = String;
@@ -875,30 +922,144 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
         fn start_approval_async<'a>(
             &'a mut self,
             _req: &'a (),
-            _ctx: crate::tool_runtime_support::ApprovalCtx<'a>,
+            _ctx: codex_tool_runtime_api::ApprovalCtx<'a, Arc<crate::session::session::Session>, Arc<crate::session::turn_context::TurnContext>>,
         ) -> futures::future::BoxFuture<'a, ReviewDecision> {
             Box::pin(async { ReviewDecision::Approved })
         }
     }
 
-    impl crate::tool_runtime_support::Sandboxable for ProbeToolRuntime {
+    impl codex_tool_runtime_api::Sandboxable for ProbeToolRuntime {
         fn sandbox_preference(&self) -> codex_sandboxing_api::SandboxablePreference {
             codex_sandboxing_api::SandboxablePreference::Auto
         }
     }
 
-    impl crate::tool_runtime_support::ToolRuntime<(), ()> for ProbeToolRuntime {
-        type NetworkApprovalTrigger = crate::guardian::GuardianNetworkAccessTrigger;
+    impl codex_tool_runtime_api::ToolRuntime<(), ()> for ProbeToolRuntime {
+        type NetworkApprovalTrigger = codex_thread_api::ToolRuntimeNetworkApprovalTrigger;
 
         async fn run(
             &mut self,
             _req: &(),
-            attempt: &crate::tool_runtime_support::SandboxAttempt<'_>,
-            _ctx: &crate::tool_runtime_support::ToolCtx,
-        ) -> Result<(), crate::tool_runtime_support::ToolError> {
+            attempt: &codex_tool_runtime_api::SandboxAttempt<'_>,
+            _ctx: &codex_tool_runtime_api::ToolCtx<Arc<crate::session::session::Session>, Arc<crate::session::turn_context::TurnContext>>,
+        ) -> Result<(), codex_tool_runtime_api::ToolError> {
             self.enforce_managed_network
                 .push(attempt.enforce_managed_network);
             Ok(())
+        }
+    }
+
+    #[derive(Clone, Copy, Default)]
+    struct ProbeToolOrchestratorHost;
+
+    impl
+        codex_tool_runtime_api::ToolOrchestratorHost<
+            Arc<crate::session::session::Session>,
+            Arc<crate::session::turn_context::TurnContext>,
+            codex_thread_api::ToolRuntimeNetworkApprovalTrigger,
+        > for ProbeToolOrchestratorHost
+    {
+        type ActiveNetworkApproval = Arc<dyn codex_thread_api::ToolRuntimeNetworkApprovalHandle>;
+        type DeferredNetworkApproval = Arc<dyn codex_thread_api::ToolRuntimeNetworkApprovalHandle>;
+
+        fn strict_auto_review_enabled_for_turn<'a>(
+            &'a self,
+            session: &'a Arc<crate::session::session::Session>,
+        ) -> impl std::future::Future<Output = bool> + Send + 'a {
+            session.strict_auto_review_enabled_for_turn()
+        }
+
+        fn routes_approval_to_guardian(
+            &self,
+            turn: &Arc<crate::session::turn_context::TurnContext>,
+        ) -> bool {
+            crate::guardian::routes_approval_to_guardian(turn.as_ref())
+        }
+
+        fn new_guardian_review_id(&self) -> String {
+            uuid::Uuid::new_v4().to_string()
+        }
+
+        fn guardian_rejection_message<'a>(
+            &'a self,
+            session: &'a Arc<crate::session::session::Session>,
+            review_id: &'a str,
+        ) -> impl std::future::Future<Output = String> + Send + 'a {
+            session.guardian_rejection_message(review_id)
+        }
+
+        fn guardian_timeout_message(&self) -> String {
+            "guardian review timed out".to_string()
+        }
+
+        fn run_permission_request_hooks<'a>(
+            &'a self,
+            session: &'a Arc<crate::session::session::Session>,
+            turn: &'a Arc<crate::session::turn_context::TurnContext>,
+            permission_request_run_id: &'a str,
+            permission_request: codex_tool_runtime_api::PermissionRequestPayload,
+        ) -> impl std::future::Future<Output = Option<codex_hooks_api::PermissionRequestDecision>> + Send + 'a
+        {
+            session.run_permission_request_hooks(turn, permission_request_run_id, permission_request)
+        }
+
+        fn begin_network_approval<'a>(
+            &'a self,
+            session: &'a Arc<crate::session::session::Session>,
+            turn_id: &'a str,
+            managed_network_active: bool,
+            spec: Option<
+                codex_tool_runtime_api::NetworkApprovalSpec<
+                    codex_thread_api::ToolRuntimeNetworkApprovalTrigger,
+                >,
+            >,
+        ) -> impl std::future::Future<Output = Option<Self::ActiveNetworkApproval>> + Send + 'a {
+            session.begin_tool_network_approval(turn_id, managed_network_active, spec)
+        }
+
+        fn active_network_approval_mode(
+            &self,
+            active: &Self::ActiveNetworkApproval,
+        ) -> codex_tool_runtime_api::NetworkApprovalMode {
+            active.mode()
+        }
+
+        fn active_network_approval_cancellation_token(
+            &self,
+            active: &Self::ActiveNetworkApproval,
+        ) -> tokio_util::sync::CancellationToken {
+            active.cancellation_token()
+        }
+
+        fn into_deferred_network_approval(
+            &self,
+            active: Self::ActiveNetworkApproval,
+        ) -> Option<Self::DeferredNetworkApproval> {
+            (active.mode() == codex_tool_runtime_api::NetworkApprovalMode::Deferred)
+                .then_some(active)
+        }
+
+        fn finish_immediate_network_approval<'a>(
+            &'a self,
+            _session: &'a Arc<crate::session::session::Session>,
+            active: Self::ActiveNetworkApproval,
+        ) -> impl std::future::Future<Output = Result<(), codex_tool_runtime_api::ToolError>> + Send + 'a
+        {
+            async move { active.finish().await }
+        }
+
+        fn finish_deferred_network_approval<'a>(
+            &'a self,
+            _session: &'a Arc<crate::session::session::Session>,
+            deferred: Option<Self::DeferredNetworkApproval>,
+        ) -> impl std::future::Future<Output = Result<(), codex_tool_runtime_api::ToolError>> + Send + 'a
+        {
+            async move {
+                let Some(deferred) = deferred else {
+                    return Ok(());
+                };
+                deferred.finish().await
+            }
         }
     }
 
@@ -950,11 +1111,11 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
     assert!(turn.network.is_none());
 
     let mut orchestrator = codex_tool_runtime::ToolOrchestrator::new(
-        codex_tool_handlers::CapabilityToolOrchestratorHost,
+        ProbeToolOrchestratorHost,
         Arc::new(codex_sandboxing_api::DisabledSandboxRuntime),
     );
     let mut tool = ProbeToolRuntime::default();
-    let tool_ctx = crate::tool_runtime_support::ToolCtx {
+    let tool_ctx = codex_tool_runtime_api::ToolCtx {
         session: Arc::clone(&session),
         turn: Arc::clone(&turn),
         call_id: "probe-call".to_string(),
@@ -4140,7 +4301,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(TestToolService),
+        Arc::new(DisabledToolServiceForTests),
         Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
     )
     .await;
@@ -4341,7 +4502,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         openai_file_uploader: Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         code_mode_service: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         code_mode_runtime_factory: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        tool_service: Arc::new(TestToolService),
+        tool_service: Arc::new(DisabledToolServiceForTests),
         environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     };
 
@@ -4545,7 +4706,7 @@ async fn make_session_with_config_and_rx(
         Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(TestToolService),
+        Arc::new(DisabledToolServiceForTests),
         Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
     )
     .await?;
@@ -4677,7 +4838,7 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(TestToolService),
+        Arc::new(DisabledToolServiceForTests),
         Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
     )
     .await?;
@@ -6266,7 +6427,7 @@ where
         openai_file_uploader: Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         code_mode_service: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         code_mode_runtime_factory: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        tool_service: Arc::new(TestToolService),
+        tool_service: Arc::new(DisabledToolServiceForTests),
         environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     };
 
@@ -10116,305 +10277,9 @@ async fn sample_rollout(
 }
 
 #[tokio::test]
-async fn create_goal_tool_rejects_existing_goal() {
-    let (session, turn_context, rx, _codex_home) = make_goal_session_and_context_with_rx().await;
-    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-    let goal_service = Arc::new(GoalService);
-    let handler = codex_tool_handlers::CreateGoalHandler::new(goal_service);
-
-    handler
-        .handle(ToolInvocation {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn_context),
-            cancellation_token: CancellationToken::new(),
-            tracker: Arc::clone(&tracker),
-            metadata: ToolInvocationMetadata {
-                call_id: "create-goal-1".to_string(),
-                tool_name: codex_tool_planning::ToolName::plain("create_goal"),
-                source: ToolCallSource::Direct,
-                payload: ToolPayload::Function {
-                    arguments: serde_json::json!({
-                        "objective": "Keep the watcher alive",
-                        "token_budget": 123,
-                    })
-                    .to_string(),
-                },
-            },
-        })
-        .await
-        .expect("initial create_goal should succeed");
-
-    let completed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        loop {
-            let event = rx.recv().await.expect("event");
-            if let EventMsg::ThreadGoalUpdateCompleted(completed) = event.msg {
-                break completed;
-            }
-        }
-    })
-    .await
-    .expect("expected goal display event");
-    assert_eq!(completed.thread_id, session.conversation_id);
-    assert_eq!(completed.turn_id, turn_context.sub_id);
-    assert_eq!(
-        completed.action,
-        codex_protocol::models::ThreadGoalUpdateEventAction::Created
-    );
-    assert_eq!(
-        completed.source,
-        codex_protocol::models::ThreadGoalUpdateEventSource::ModelTool
-    );
-    assert_eq!(completed.previous_status, None);
-    assert_eq!(completed.goal.objective, "Keep the watcher alive");
-
-    let response = handler
-        .handle(ToolInvocation {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn_context),
-            cancellation_token: CancellationToken::new(),
-            tracker,
-            metadata: ToolInvocationMetadata {
-                call_id: "create-goal-2".to_string(),
-                tool_name: codex_tool_planning::ToolName::plain("create_goal"),
-                source: ToolCallSource::Direct,
-                payload: ToolPayload::Function {
-                    arguments: serde_json::json!({
-                        "objective": "Replace the watcher",
-                        "token_budget": 456,
-                    })
-                    .to_string(),
-                },
-            },
-        })
-        .await;
-
-    let Err(FunctionCallError::RespondToModel(output)) = response else {
-        panic!("expected create_goal to reject an existing goal");
-    };
-    assert_eq!(
-        output,
-        "cannot create a new goal because this thread already has a goal; use update_goal only when the existing goal is complete"
-    );
-
-    let goal = session
-        .get_thread_goal()
-        .await
-        .expect("read thread goal")
-        .expect("goal should still exist");
-    assert_eq!(goal.objective, "Keep the watcher alive");
-    assert_eq!(goal.token_budget, Some(123));
-}
-
-#[tokio::test]
-async fn update_goal_tool_rejects_pausing_goal() {
-    let (session, turn_context, _rx, _codex_home) = make_goal_session_and_context_with_rx().await;
-    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-    let goal_service = Arc::new(GoalService);
-    let create_handler = codex_tool_handlers::CreateGoalHandler::new(goal_service.clone());
-    let update_handler = codex_tool_handlers::UpdateGoalHandler::new(goal_service);
-
-    create_handler
-        .handle(ToolInvocation {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn_context),
-            cancellation_token: CancellationToken::new(),
-            tracker: Arc::clone(&tracker),
-            metadata: ToolInvocationMetadata {
-                call_id: "create-goal".to_string(),
-                tool_name: codex_tool_planning::ToolName::plain("create_goal"),
-                source: ToolCallSource::Direct,
-                payload: ToolPayload::Function {
-                    arguments: serde_json::json!({
-                        "objective": "Keep the watcher alive",
-                        "token_budget": 123,
-                    })
-                    .to_string(),
-                },
-            },
-        })
-        .await
-        .expect("initial create_goal should succeed");
-
-    let response = update_handler
-        .handle(ToolInvocation {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn_context),
-            cancellation_token: CancellationToken::new(),
-            tracker,
-            metadata: ToolInvocationMetadata {
-                call_id: "pause-goal".to_string(),
-                tool_name: codex_tool_planning::ToolName::plain("update_goal"),
-                source: ToolCallSource::Direct,
-                payload: ToolPayload::Function {
-                    arguments: serde_json::json!({
-                        "status": "paused",
-                    })
-                    .to_string(),
-                },
-            },
-        })
-        .await;
-
-    let Err(FunctionCallError::RespondToModel(output)) = response else {
-        panic!("expected update_goal to reject pausing a goal");
-    };
-    assert_eq!(
-        output,
-        "update_goal can only mark the existing goal complete; pause, resume, and budget-limited status changes are controlled by the user or system"
-    );
-
-    let goal = session
-        .get_thread_goal()
-        .await
-        .expect("read thread goal")
-        .expect("goal should still exist");
-    assert_eq!(goal.status, ThreadGoalStatus::Active);
-}
-
-#[tokio::test]
-async fn update_goal_tool_marks_goal_complete() {
-    let (session, turn_context, rx, _codex_home) = make_goal_session_and_context_with_rx().await;
-    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-    let goal_service = Arc::new(GoalService);
-    let create_handler = codex_tool_handlers::CreateGoalHandler::new(goal_service.clone());
-    let update_handler = codex_tool_handlers::UpdateGoalHandler::new(goal_service);
-
-    create_handler
-        .handle(ToolInvocation {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn_context),
-            cancellation_token: CancellationToken::new(),
-            tracker: Arc::clone(&tracker),
-            metadata: ToolInvocationMetadata {
-                call_id: "create-goal".to_string(),
-                tool_name: codex_tool_planning::ToolName::plain("create_goal"),
-                source: ToolCallSource::Direct,
-                payload: ToolPayload::Function {
-                    arguments: serde_json::json!({
-                        "objective": "Keep the watcher alive",
-                        "token_budget": 123,
-                    })
-                    .to_string(),
-                },
-            },
-        })
-        .await
-        .expect("initial create_goal should succeed");
-
-    update_handler
-        .handle(ToolInvocation {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn_context),
-            cancellation_token: CancellationToken::new(),
-            tracker,
-            metadata: ToolInvocationMetadata {
-                call_id: "complete-goal".to_string(),
-                tool_name: codex_tool_planning::ToolName::plain("update_goal"),
-                source: ToolCallSource::Direct,
-                payload: ToolPayload::Function {
-                    arguments: serde_json::json!({
-                        "status": "complete",
-                    })
-                    .to_string(),
-                },
-            },
-        })
-        .await
-        .expect("update_goal should mark the goal complete");
-
-    let completed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        loop {
-            let event = rx.recv().await.expect("event");
-            if let EventMsg::ThreadGoalUpdateCompleted(completed) = event.msg {
-                if matches!(
-                    completed.action,
-                    codex_protocol::models::ThreadGoalUpdateEventAction::Completed
-                ) {
-                    break completed;
-                }
-            }
-        }
-    })
-    .await
-    .expect("expected completed goal display event");
-    assert_eq!(
-        completed.action,
-        codex_protocol::models::ThreadGoalUpdateEventAction::Completed
-    );
-    assert_eq!(
-        completed.source,
-        codex_protocol::models::ThreadGoalUpdateEventSource::ModelTool
-    );
-    assert_eq!(
-        completed.previous_status,
-        Some(codex_protocol::models::ThreadGoalUpdateGoalStatus::Active)
-    );
-    assert_eq!(
-        completed.goal.status,
-        codex_protocol::models::ThreadGoalUpdateGoalStatus::Complete
-    );
-
-    let goal = session
-        .get_thread_goal()
-        .await
-        .expect("read thread goal")
-        .expect("goal should still exist");
-    assert_eq!(goal.status, ThreadGoalStatus::Complete);
-}
-
-#[tokio::test]
-async fn spawn_agent_tool_rejects_depth_limit_at_call_time() {
-    let (session, mut turn_context) = make_session_and_context().await;
-    let mut config = (*turn_context.config).clone();
-    config.agent_max_depth = 1;
-    turn_context.config = Arc::new(config);
-    turn_context.session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-        parent_thread_id: ThreadId::new(),
-        depth: 1,
-        agent_path: Some(AgentPath::root().join("worker").expect("agent path")),
-        agent_nickname: None,
-        agent_role: Some("worker".to_string()),
-    });
-    let session = Arc::new(session);
-    let turn_context = Arc::new(turn_context);
-    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-    let handler = SpawnAgentHandler::default();
-
-    let response = handler
-        .handle(ToolInvocation {
-            session,
-            turn: turn_context,
-            cancellation_token: CancellationToken::new(),
-            tracker,
-            metadata: ToolInvocationMetadata {
-                call_id: "spawn-depth-limit".to_string(),
-                tool_name: codex_tool_planning::ToolName::plain("spawn_agent"),
-                source: ToolCallSource::Direct,
-                payload: ToolPayload::Function {
-                    arguments: serde_json::json!({
-                        "task_name": "blocked_child",
-                        "message": "try to spawn",
-                    })
-                    .to_string(),
-                },
-            },
-        })
-        .await;
-
-    let Err(FunctionCallError::RespondToModel(output)) = response else {
-        panic!("expected depth limit error");
-    };
-    assert_eq!(
-        output,
-        "agent depth limit reached: cannot spawn depth 2; configured agents.max_depth is 1"
-    );
-}
-
-#[tokio::test]
 async fn rejects_escalated_permissions_when_policy_not_on_request() {
     use crate::exec_policy::ExecApprovalRequest;
     use crate::sandboxing::SandboxPermissions;
-    use crate::tool_runtime_support::ExecApprovalRequirement;
     use codex_protocol::protocol::AskForApproval;
     use codex_tool_runtime::TurnDiffTracker;
 
@@ -10431,42 +10296,20 @@ async fn rejects_escalated_permissions_when_policy_not_on_request() {
     let timeout_ms = 1000;
     let sandbox_permissions = SandboxPermissions::RequireEscalated;
 
-    let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-
-    let tool_name = "exec_command";
     let call_id = "test-call".to_string();
-
-    let handler = codex_tool_handlers::ExecCommandHandler::new(
-        crate::thread_capability_tool_host(),
-        codex_tool_handlers::ExecCommandHandlerOptions {
-            allow_login_shell: false,
-            exec_permission_approvals_enabled: false,
-            include_environment_id: false,
-        },
-    );
     #[allow(deprecated)]
     let workdir = Some(turn_context.cwd.to_string_lossy().to_string());
-    let resp = handler
-        .handle(ToolInvocation {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn_context),
-            cancellation_token: CancellationToken::new(),
-            tracker: Arc::clone(&turn_diff_tracker),
-            metadata: ToolInvocationMetadata {
-                call_id,
-                tool_name: codex_tool_planning::ToolName::plain(tool_name),
-                source: codex_tool_types::ToolCallSource::Direct,
-                payload: ToolPayload::Function {
-                    arguments: serde_json::json!({
-                        "cmd": command_script,
-                        "workdir": workdir,
-                        "sandbox_permissions": sandbox_permissions,
-                        "justification": Some("test"),
-                    })
-                    .to_string(),
-                },
-            },
-        })
+    let resp = dispatch_exec_command_via_tool_service(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        &call_id,
+        serde_json::json!({
+            "cmd": command_script,
+            "workdir": workdir,
+            "sandbox_permissions": sandbox_permissions,
+            "justification": Some("test"),
+        }),
+    )
         .await;
 
     let Err(FunctionCallError::RespondToModel(output)) = resp else {
@@ -10507,7 +10350,7 @@ async fn rejects_escalated_permissions_when_policy_not_on_request() {
         .await;
     assert!(matches!(
         exec_approval_requirement,
-        ExecApprovalRequirement::Skip { .. }
+        codex_tool_runtime_api::ExecApprovalRequirement::Skip { .. }
     ));
 }
 #[tokio::test]
@@ -10523,36 +10366,16 @@ async fn unified_exec_rejects_escalated_permissions_when_policy_not_on_request()
         .expect("test setup should allow updating approval policy");
     let session = Arc::new(session);
     let turn_context = Arc::new(turn_context_raw);
-    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-
-    let handler = codex_tool_handlers::ExecCommandHandler::new(
-        crate::thread_capability_tool_host(),
-        codex_tool_handlers::ExecCommandHandlerOptions {
-            allow_login_shell: false,
-            exec_permission_approvals_enabled: false,
-            include_environment_id: false,
-        },
-    );
-    let resp = handler
-        .handle(ToolInvocation {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn_context),
-            cancellation_token: CancellationToken::new(),
-            tracker: Arc::clone(&tracker),
-            metadata: ToolInvocationMetadata {
-                call_id: "exec-call".to_string(),
-                tool_name: codex_tool_planning::ToolName::plain("exec_command"),
-                source: codex_tool_types::ToolCallSource::Direct,
-                payload: ToolPayload::Function {
-                    arguments: serde_json::json!({
-                        "cmd": "echo hi",
-                        "sandbox_permissions": SandboxPermissions::RequireEscalated,
-                        "justification": "need unsandboxed execution",
-                    })
-                    .to_string(),
-                },
-            },
-        })
+    let resp = dispatch_exec_command_via_tool_service(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        "exec-call",
+        serde_json::json!({
+            "cmd": "echo hi",
+            "sandbox_permissions": SandboxPermissions::RequireEscalated,
+            "justification": "need unsandboxed execution",
+        }),
+    )
         .await;
 
     let Err(FunctionCallError::RespondToModel(output)) = resp else {

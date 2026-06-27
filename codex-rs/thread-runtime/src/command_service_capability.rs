@@ -11,6 +11,7 @@ use codex_hooks::run_permission_request_hooks;
 use codex_hooks_api::PermissionRequestDecision;
 use codex_protocol::ThreadId;
 use codex_protocol::models::AdditionalPermissionProfile;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
@@ -22,6 +23,8 @@ use codex_thread_api::ToolRuntimeNetworkApprovalHandle;
 use codex_thread_api::ToolRuntimeNetworkApprovalTrigger;
 use codex_tool_runtime_api::NetworkApprovalSpec;
 use codex_tool_runtime_api::PermissionRequestPayload;
+use codex_tool_runtime_api::ResolvedExecCommand;
+use codex_tool_runtime_api::ResolvedExecCommandEnvironment;
 use crate::network_approval::DeferredNetworkApproval;
 use crate::network_approval::begin_network_approval;
 use crate::session::session::Session;
@@ -179,6 +182,26 @@ impl CommandServiceTurnCapability for TurnContext {
     fn emit_unified_exec_tty_metric(&self, tty: bool) {
         self.emit_unified_exec_tty_metric(tty);
     }
+
+    fn permission_profile(&self) -> PermissionProfile {
+        self.permission_profile()
+    }
+
+    fn file_system_sandbox_policy(&self) -> codex_protocol::permissions::FileSystemSandboxPolicy {
+        self.file_system_sandbox_policy()
+    }
+
+    fn resolve_exec_command_environment(
+        &self,
+        environment_id: Option<&str>,
+        workdir: Option<&str>,
+    ) -> Result<Option<ResolvedExecCommandEnvironment>, codex_tool_types::FunctionCallError> {
+        self.resolve_exec_command_environment(environment_id, workdir)
+    }
+
+    fn truncation_policy(&self) -> codex_utils_output_truncation::TruncationPolicy {
+        self.truncation_policy()
+    }
 }
 
 impl CommandServiceSessionCapability for Session {
@@ -196,6 +219,10 @@ impl CommandServiceSessionCapability for Session {
 
     fn runtime_shell(&self) -> codex_tool_runtime_api::RuntimeShell {
         self.runtime_shell()
+    }
+
+    fn tool_user_shell_type(&self) -> codex_tool_config::ToolUserShellType {
+        self.tool_user_shell_type()
     }
 
     fn subscribe_out_of_band_elicitation_pause_state(&self) -> tokio::sync::watch::Receiver<bool> {
@@ -222,6 +249,78 @@ impl CommandServiceSessionCapability for Session {
 
     fn guardian_timeout_message(&self) -> String {
         crate::guardian::guardian_timeout_message()
+    }
+
+    fn maybe_emit_implicit_skill_invocation<'a>(
+        &'a self,
+        turn: &'a dyn CommandServiceTurnCapability,
+        command: &'a str,
+        workdir: &'a codex_utils_absolute_path::AbsolutePathBuf,
+    ) -> CommandServiceFuture<'a, ()> {
+        Box::pin(async move {
+            let Some(turn) = turn_context(turn) else {
+                tracing::warn!("command service capability received an unsupported turn context");
+                return;
+            };
+            self.maybe_emit_implicit_skill_invocation(turn, command, workdir)
+                .await;
+        })
+    }
+
+    fn exec_permission_approvals_enabled(&self) -> bool {
+        self.enabled(codex_features::Feature::ExecPermissionApprovals)
+    }
+
+    fn request_permissions_tool_enabled(&self) -> bool {
+        self.enabled(codex_features::Feature::RequestPermissionsTool)
+    }
+
+    fn tool_permission_grants<'a>(
+        &'a self,
+    ) -> CommandServiceFuture<'a, codex_tool_runtime_api::ToolPermissionGrants> {
+        Box::pin(async move { self.tool_permission_grants().await })
+    }
+
+    fn resolve_model_shell(&self, shell: &std::path::Path) -> codex_tool_runtime_api::RuntimeShell {
+        let mut shell = crate::runtime_shell_model::get_shell_by_model_provided_path(
+            &shell.to_path_buf(),
+        );
+        shell.shell_snapshot = crate::runtime_shell_model::empty_shell_snapshot_receiver();
+        crate::runtime_shell::runtime_shell(&shell)
+    }
+
+    fn resolve_exec_command(
+        &self,
+        turn: &dyn CommandServiceTurnCapability,
+        command: &str,
+        login: Option<bool>,
+        model_shell: Option<&codex_tool_runtime_api::RuntimeShell>,
+    ) -> Result<ResolvedExecCommand, String> {
+        let Some(turn) = turn_context(turn) else {
+            return Err("command service capability received an unsupported turn context".to_string());
+        };
+        self.resolve_exec_command(turn, command, login, model_shell)
+    }
+
+    fn shell_env_overrides(&self) -> std::collections::HashMap<String, String> {
+        std::collections::HashMap::new()
+    }
+
+    fn resolve_shell_workdir(
+        &self,
+        workdir: Option<String>,
+    ) -> codex_utils_absolute_path::AbsolutePathBuf {
+        workdir
+            .and_then(|path| {
+                codex_utils_absolute_path::AbsolutePathBuf::try_from(std::path::PathBuf::from(path))
+                    .ok()
+            })
+            .unwrap_or_else(|| {
+                codex_utils_absolute_path::AbsolutePathBuf::try_from(
+                    std::env::current_dir().expect("current_dir should be available"),
+                )
+                .expect("current_dir should be absolute")
+            })
     }
 
     fn run_permission_request_hooks<'a>(

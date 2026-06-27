@@ -33,7 +33,6 @@ codex-shell-escalation = { workspace = true }
 codex-shell-utils = { workspace = true }
 codex-thread-api = { workspace = true }
 codex-tool-config = { workspace = true }
-codex-tool-handlers = { workspace = true }
 codex-tool-planning = { workspace = true }
 codex-tool-runtime = { workspace = true }
 codex-tool-runtime-api = { workspace = true }

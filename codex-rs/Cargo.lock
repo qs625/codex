@@ -1834,28 +1834,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "codex-agent-tool-handlers"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "chrono",
- "codex-agent-runtime",
- "codex-protocol",
- "codex-state-api",
- "codex-thread-api",
- "codex-tool-planning",
- "codex-tool-runtime",
- "codex-tool-runtime-api",
- "codex-tool-types",
- "codex-utils-absolute-path",
- "futures",
- "serde",
- "serde_json",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "codex-analytics"
 version = "0.0.0"
 dependencies = [
@@ -2708,7 +2686,6 @@ dependencies = [
  "codex-shell-utils",
  "codex-thread-api",
  "codex-tool-config",
- "codex-tool-handlers",
  "codex-tool-planning",
  "codex-tool-runtime",
  "codex-tool-runtime-api",
@@ -2740,6 +2717,7 @@ dependencies = [
  "codex-tool-runtime-api",
  "codex-tool-types",
  "codex-utils-absolute-path",
+ "codex-utils-output-truncation",
  "tokio",
 ]
 
@@ -4984,7 +4962,6 @@ dependencies = [
  "codex-thread-store",
  "codex-thread-store-api",
  "codex-tool-config",
- "codex-tool-handlers",
  "codex-tool-planning",
  "codex-tool-runtime",
  "codex-tool-runtime-api",
@@ -5126,58 +5103,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "codex-tool-handlers"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "chrono",
- "codex-agent-runtime",
- "codex-agent-tool-handlers",
- "codex-apply-patch",
- "codex-code-mode-api",
- "codex-command-runtime",
- "codex-connectors-types",
- "codex-context-manager",
- "codex-exec-server-api",
- "codex-extension-api",
- "codex-features",
- "codex-file-system",
- "codex-git-info",
- "codex-hooks-api",
- "codex-mcp-tool-types",
- "codex-metrics-api",
- "codex-network-proxy-api",
- "codex-permissions-runtime",
- "codex-process-exec",
- "codex-protocol",
- "codex-sandboxing-api",
- "codex-session-telemetry-api",
- "codex-shell-command",
- "codex-state-api",
- "codex-thread-api",
- "codex-tool-config",
- "codex-tool-planning",
- "codex-tool-runtime",
- "codex-tool-runtime-api",
- "codex-tool-types",
- "codex-utils-absolute-path",
- "codex-utils-image",
- "codex-utils-output-truncation",
- "codex-utils-path",
- "codex-utils-string",
- "codex-workflow-api",
- "futures",
- "pretty_assertions",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "codex-tool-planning"
 version = "0.0.0"
 dependencies = [
@@ -5270,11 +5195,15 @@ dependencies = [
 name = "codex-tool-service"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
+ "chrono",
+ "codex-agent-runtime",
  "codex-apply-patch",
  "codex-approval-service-api",
  "codex-code-mode-api",
  "codex-command-runtime",
  "codex-command-service-api",
+ "codex-extension-api",
  "codex-file-system",
  "codex-hooks-api",
  "codex-mcp-tool-types",
@@ -5284,6 +5213,7 @@ dependencies = [
  "codex-protocol",
  "codex-sandboxing-api",
  "codex-shell-command",
+ "codex-state-api",
  "codex-thread-api",
  "codex-thread-runtime",
  "codex-tool-config",
@@ -5296,6 +5226,7 @@ dependencies = [
  "codex-utils-image",
  "codex-utils-output-truncation",
  "codex-workflow-api",
+ "futures",
  "serde",
  "serde_json",
  "tokio",
@@ -5307,9 +5238,12 @@ dependencies = [
 name = "codex-tool-service-api"
 version = "0.0.0"
 dependencies = [
+ "codex-extension-api",
+ "codex-mcp-tool-types",
  "codex-protocol",
  "codex-thread-api",
  "codex-tool-config",
+ "codex-tool-planning",
  "codex-tool-runtime-api",
  "codex-tool-types",
  "tokio-util",
@@ -6056,7 +5990,6 @@ dependencies = [
  "codex-thread-runtime",
  "codex-thread-store",
  "codex-tool-config",
- "codex-tool-handlers",
  "codex-tool-runtime-api",
  "codex-tool-service",
  "codex-utils-absolute-path",

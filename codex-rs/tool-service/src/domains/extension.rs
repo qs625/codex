@@ -1,9 +1,18 @@
-use codex_tool_types::ToolName;
-use codex_tool_types::ToolSpec;
+use std::sync::Arc;
+
+use codex_extension_api::ExtensionToolExecutor;
+use codex_extension_api::ToolOutput;
+use codex_tool_runtime::HookToolName;
+use codex_tool_runtime::PostToolUsePayload;
+use codex_tool_runtime::flat_tool_name;
 use codex_tool_runtime_api::AnyToolResult;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCall;
+use codex_tool_types::ToolName;
+use codex_tool_types::ToolPayload;
+use codex_tool_types::ToolSpec;
+use serde_json::Value;
 
 use crate::context::TypedToolSpecRequest;
 
@@ -48,9 +57,69 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
     false
 }
 
-pub(crate) fn dispatch(call: ToolCall) -> Result<AnyToolResult, FunctionCallError> {
-    Err(FunctionCallError::Fatal(format!(
-        "tool domain extension is not migrated into ToolService yet for {}",
-        call.tool_name
-    )))
+pub(crate) fn resolve_executor(
+    request: &TypedToolSpecRequest<'_>,
+    tool_name: &ToolName,
+) -> Result<Arc<dyn ExtensionToolExecutor>, FunctionCallError> {
+    let Some(extension_tools) = request.params.extension_tools else {
+        return Err(FunctionCallError::Fatal(format!(
+            "tool domain extension is unavailable for {}",
+            tool_name
+        )));
+    };
+
+    extension_tools
+        .tool_contributors
+        .iter()
+        .flat_map(|contributor| {
+            contributor.tools(extension_tools.session_store, extension_tools.thread_store)
+        })
+        .find(|tool| tool.tool_name() == *tool_name)
+        .ok_or_else(|| {
+            FunctionCallError::Fatal(format!("unsupported extension tool {}", tool_name))
+        })
+}
+
+pub(crate) async fn dispatch(
+    executor: Arc<dyn ExtensionToolExecutor>,
+    call: ToolCall,
+) -> Result<AnyToolResult, FunctionCallError> {
+    let result = executor.handle(call.clone()).await?;
+    let post_tool_use_payload = post_tool_use_payload(executor.as_ref(), &call, &result);
+
+    Ok(AnyToolResult {
+        call_id: call.call_id,
+        payload: call.payload,
+        result: Box::new(result),
+        post_tool_use_payload,
+    })
+}
+
+fn arguments_from_payload(payload: &ToolPayload) -> Option<&str> {
+    let ToolPayload::Function { arguments } = payload else {
+        return None;
+    };
+    Some(arguments)
+}
+
+fn post_tool_use_payload(
+    executor: &dyn ExtensionToolExecutor,
+    call: &ToolCall,
+    result: &codex_extension_api::ExtensionToolOutput,
+) -> Option<PostToolUsePayload> {
+    let arguments = arguments_from_payload(&call.payload)?;
+    Some(PostToolUsePayload {
+        tool_name: HookToolName::new(flat_tool_name(&executor.tool_name()).into_owned()),
+        tool_use_id: call.call_id.clone(),
+        tool_input: extension_tool_hook_input(arguments),
+        tool_response: result.post_tool_use_response(&call.call_id, &call.payload)?,
+    })
+}
+
+fn extension_tool_hook_input(arguments: &str) -> Value {
+    if arguments.trim().is_empty() {
+        return Value::Object(serde_json::Map::new());
+    }
+
+    serde_json::from_str(arguments).unwrap_or_else(|_| Value::String(arguments.to_string()))
 }

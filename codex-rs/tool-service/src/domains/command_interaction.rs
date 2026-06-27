@@ -4,11 +4,11 @@ use std::time::UNIX_EPOCH;
 
 use codex_command_service_api::CommandServiceApi;
 use codex_command_service_api::CommandServiceSessionCapability;
+use codex_command_service_api::SessionCommandInteractionCaller;
 use codex_command_runtime::CommandNotificationKind;
 use codex_command_runtime::CommandWaitRequest;
 use codex_command_runtime::CommandWaitStatus;
 use codex_command_runtime::WriteStdinRequest;
-use codex_thread_api::SessionCommandInteractionCaller;
 use codex_protocol::models::CommandWaitNotificationKind as ResponseCommandWaitNotificationKind;
 use codex_protocol::models::CommandWaitStatus as ResponseCommandWaitStatus;
 use codex_protocol::models::FunctionCallOutputContentItem;

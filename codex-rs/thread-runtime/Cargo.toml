@@ -115,7 +115,6 @@ codex-thread-api = { workspace = true }
 codex-thread-store-api = { workspace = true }
 codex-thread-store = { workspace = true, optional = true }
 codex-tool-config = { workspace = true }
-codex-tool-handlers = { workspace = true }
 codex-tool-planning = { workspace = true }
 codex-tool-runtime = { workspace = true }
 codex-tool-runtime-api = { workspace = true }

@@ -534,7 +534,7 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(crate::test_support::TestToolService),
+        Arc::new(crate::test_support::DisabledToolServiceForTests),
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
@@ -657,7 +657,7 @@ async fn explicit_installation_id_skips_codex_home_file() {
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(crate::test_support::TestToolService),
+        Arc::new(crate::test_support::DisabledToolServiceForTests),
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
@@ -702,7 +702,7 @@ async fn resume_active_thread_from_rollout_returns_running_thread() {
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(crate::test_support::TestToolService),
+        Arc::new(crate::test_support::DisabledToolServiceForTests),
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
@@ -760,7 +760,7 @@ async fn resume_stopped_thread_from_rollout_spawns_new_thread() {
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(crate::test_support::TestToolService),
+        Arc::new(crate::test_support::DisabledToolServiceForTests),
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
@@ -825,7 +825,7 @@ async fn resume_stopped_thread_from_rollout_preserves_thread_source() {
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(crate::test_support::TestToolService),
+        Arc::new(crate::test_support::DisabledToolServiceForTests),
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
@@ -916,7 +916,7 @@ async fn rollout_path_resume_and_fork_read_history_through_thread_store() {
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(crate::test_support::TestToolService),
+        Arc::new(crate::test_support::DisabledToolServiceForTests),
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
@@ -1023,7 +1023,7 @@ async fn new_uses_active_provider_for_model_refresh() {
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(crate::test_support::TestToolService),
+        Arc::new(crate::test_support::DisabledToolServiceForTests),
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
@@ -1247,7 +1247,7 @@ async fn interrupted_fork_snapshot_does_not_synthesize_turn_id_for_legacy_histor
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(crate::test_support::TestToolService),
+        Arc::new(crate::test_support::DisabledToolServiceForTests),
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
@@ -1359,7 +1359,7 @@ async fn interrupted_fork_snapshot_preserves_explicit_turn_id() {
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(crate::test_support::TestToolService),
+        Arc::new(crate::test_support::DisabledToolServiceForTests),
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
@@ -1461,7 +1461,7 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(crate::test_support::TestToolService),
+        Arc::new(crate::test_support::DisabledToolServiceForTests),
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
@@ -1608,7 +1608,7 @@ async fn resumed_thread_keeps_paused_goal_paused() -> anyhow::Result<()> {
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(crate::test_support::TestToolService),
+        Arc::new(crate::test_support::DisabledToolServiceForTests),
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );

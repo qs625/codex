@@ -5,6 +5,7 @@
 //! permutations of the crate.
 
 use std::future::Future;
+use std::path::Path;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -14,8 +15,14 @@ use std::time::Duration;
 use codex_api::ModelsClient;
 use codex_api::ReqwestTransport;
 use codex_api_types::map_api_error;
+#[cfg(any(test, feature = "test-support"))]
+use codex_code_mode_api::DisabledCodeModeRuntimeFactory;
+#[cfg(any(test, feature = "test-support"))]
+use codex_config::ConfigBuilder;
 use codex_default_client::build_reqwest_client;
 use codex_exec_server_api::ExecEnvironmentProvider;
+#[cfg(any(test, feature = "test-support"))]
+use codex_features::Feature;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::model_provider_auth_manager;
@@ -46,17 +53,19 @@ use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ModelsResponse;
 #[cfg(any(test, feature = "test-support"))]
-use codex_thread_api::SessionMcpToolCallHost;
+use codex_protocol::protocol::InitialHistory;
 #[cfg(any(test, feature = "test-support"))]
-use codex_thread_api::SessionToolRouter;
+use codex_protocol::protocol::SessionSource;
+#[cfg(any(test, feature = "test-support"))]
+use codex_state::StateRuntime;
+#[cfg(any(test, feature = "test-support"))]
+use codex_thread_store::DefaultLiveThreadFactory;
+#[cfg(any(test, feature = "test-support"))]
+use codex_thread_store::LocalThreadStore;
+#[cfg(any(test, feature = "test-support"))]
+use codex_thread_store::LocalThreadStoreConfig;
 #[cfg(any(test, feature = "test-support"))]
 use codex_tool_runtime_api::AnyToolResult;
-#[cfg(any(test, feature = "test-support"))]
-use codex_tool_runtime_api::registered_tool;
-#[cfg(any(test, feature = "test-support"))]
-use codex_tool_runtime::ToolRegistryBuilder;
-#[cfg(any(test, feature = "test-support"))]
-use codex_tool_runtime::ToolRouter;
 #[cfg(any(test, feature = "test-support"))]
 use codex_tool_service_api::ToolDispatchRequest;
 #[cfg(any(test, feature = "test-support"))]
@@ -77,12 +86,10 @@ use tokio::time::timeout;
 use crate::ThreadAuthRuntimes;
 use crate::ThreadService;
 #[cfg(any(test, feature = "test-support"))]
-use crate::SharedTurnDiffTracker;
+use crate::ThreadTurnContext;
+#[cfg(any(test, feature = "test-support"))]
+use crate::ThreadRuntimeSession;
 use crate::config::Config;
-#[cfg(any(test, feature = "test-support"))]
-use crate::session::session::Session;
-#[cfg(any(test, feature = "test-support"))]
-use crate::session::turn_context::TurnContext;
 use crate::thread;
 
 static TEST_MODEL_PRESETS: LazyLock<Vec<ModelPreset>> = LazyLock::new(|| {
@@ -420,264 +427,143 @@ pub fn builtin_collaboration_mode_presets() -> Vec<CollaborationModeMask> {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-#[derive(Default)]
-pub struct TestToolService;
-
-#[cfg(any(test, feature = "test-support"))]
-impl TestToolService {
-    fn build_inner(
-        &self,
-        request: ToolSpecRequest<'_>,
-    ) -> Arc<dyn SessionToolRouter<SharedTurnDiffTracker, TurnContext>> {
-        let turn = Arc::clone(&request.turn)
-            .into_any_arc()
-            .downcast::<TurnContext>()
-            .expect("test tool service requires TurnContext");
-        let session = Arc::clone(&request.session)
-            .into_any_arc()
-            .downcast::<Session>()
-            .unwrap_or_else(|_| turn.session_arc());
-
-        let mut builder =
-            ToolRegistryBuilder::<
-                codex_tool_runtime::ToolInvocation<
-                    Arc<Session>,
-                    Arc<TurnContext>,
-                    SharedTurnDiffTracker,
-                >,
-                TurnContext,
-            >::new();
-
-        let multi_environment =
-            request.config.environment_mode == codex_tool_planning::ToolEnvironmentMode::Multiple;
-        builder.register_tool(registered_tool(Arc::new(
-            codex_tool_handlers::ApplyPatchHandler::with_host(
-                multi_environment,
-                crate::thread_capability_tool_host(),
-            ),
-        )))
-        .expect("register apply_patch");
-        builder.register_tool(registered_tool(Arc::new(
-            codex_tool_handlers::ExecCommandHandler::new(
-                crate::thread_capability_tool_host(),
-                codex_tool_handlers::ExecCommandHandlerOptions {
-                    allow_login_shell: request.config.allow_login_shell,
-                    exec_permission_approvals_enabled: request
-                        .config
-                        .exec_permission_approvals_enabled,
-                    include_environment_id: multi_environment,
-                },
-            ),
-        )))
-        .expect("register exec_command");
-        builder.register_tool(registered_tool(Arc::new(
-            codex_tool_handlers::CommandWaitHandler::new(),
-        )))
-        .expect("register command_wait");
-        builder.register_tool(registered_tool(Arc::new(
-            codex_tool_handlers::WriteStdinHandler::new(),
-        )))
-        .expect("register command_write_stdin");
-        builder.register_tool(registered_tool(Arc::new(
-            codex_tool_handlers::PlanHandler::new(),
-        )))
-        .expect("register update_plan");
-        if request.config.request_permissions_tool_enabled {
-            builder.register_tool(registered_tool(Arc::new(
-                codex_tool_handlers::RequestPermissionsHandler::new(),
-            )))
-            .expect("register request_permissions");
-        }
-        if !request.config.request_user_input_available_modes.is_empty() {
-            builder.register_tool(registered_tool(Arc::new(
-                codex_tool_handlers::RequestUserInputHandler::new(
-                    request.config.request_user_input_available_modes.clone(),
-                ),
-            )))
-            .expect("register request_user_input");
-        }
-        if request.config.goal_tools {
-            let goal_service = Arc::new(crate::GoalService);
-            builder.register_tool(registered_tool(Arc::new(
-                codex_tool_handlers::GetGoalHandler::new(goal_service.clone()),
-            )))
-            .expect("register get_goal");
-            builder.register_tool(registered_tool(Arc::new(
-                codex_tool_handlers::CreateGoalHandler::new(goal_service.clone()),
-            )))
-            .expect("register create_goal");
-            builder.register_tool(registered_tool(Arc::new(
-                codex_tool_handlers::UpdateGoalHandler::new(goal_service),
-            )))
-            .expect("register update_goal");
-        }
-
-        if request.config.multi_agent_v2 {
-            builder.register_tool(registered_tool(Arc::new(
-                codex_tool_handlers::SpawnAgentHandler::new(
-                    codex_tool_planning::SpawnAgentToolOptions {
-                        available_models: request.config.available_models.clone(),
-                        agent_type_description: request.config.agent_type_description.clone(),
-                        hide_agent_type_model_reasoning: request
-                            .config
-                            .hide_spawn_agent_metadata,
-                        include_usage_hint: request.config.spawn_agent_usage_hint,
-                        usage_hint_text: request.config.spawn_agent_usage_hint_text.clone(),
-                        max_concurrent_threads_per_session: request
-                            .config
-                            .max_concurrent_threads_per_session,
-                    },
-                ),
-            )))
-            .expect("register spawn_agent");
-            builder.register_tool(registered_tool(Arc::new(
-                codex_tool_handlers::FollowupTaskHandler::new(),
-            )))
-            .expect("register followup_task");
-            builder.register_tool(registered_tool(Arc::new(
-                codex_tool_handlers::WaitAgentHandler::new(),
-            )))
-            .expect("register wait_agent");
-            builder.register_tool(registered_tool(Arc::new(
-                codex_tool_handlers::CloseAgentHandler::new(),
-            )))
-            .expect("register close_agent");
-            builder.register_tool(registered_tool(Arc::new(
-                codex_tool_handlers::ListAgentsHandler::new(),
-            )))
-            .expect("register list_agents");
-        }
-
-        if request.config.agent_jobs_tools {
-            builder.register_tool(registered_tool(Arc::new(
-                codex_tool_handlers::SpawnAgentsOnCsvHandler::new(),
-            )))
-            .expect("register spawn_agents_on_csv");
-            builder.register_tool(registered_tool(Arc::new(
-                codex_tool_handlers::ReportAgentJobResultHandler::new(),
-            )))
-            .expect("register report_agent_job_result");
-        }
-
-        let mcp_host = SessionMcpToolCallHost::<
-            Session,
-            Arc<TurnContext>,
-            SharedTurnDiffTracker,
-            TurnContext,
-        >::default();
-        if let Some(mcp_tools) = request.params.mcp_tools {
-            for tool in mcp_tools {
-                builder
-                    .register_tool(registered_tool(Arc::new(
-                        codex_tool_handlers::McpHandler::new(mcp_host, tool.clone()),
-                    )))
-                    .expect("register mcp tool");
-            }
-        }
-        if let Some(deferred_mcp_tools) = request.params.deferred_mcp_tools {
-            for tool in deferred_mcp_tools {
-                builder
-                    .register_tool(registered_tool(Arc::new(
-                        codex_tool_handlers::McpHandler::with_exposure(
-                            mcp_host,
-                            tool.clone(),
-                            codex_tool_types::ToolExposure::Deferred,
-                        ),
-                    )))
-                    .expect("register deferred mcp tool");
-            }
-        }
-
-        let mcp_resource_service = Arc::new(crate::McpResourceService);
-        builder.register_tool(registered_tool(Arc::new(
-            codex_tool_handlers::ListMcpResourcesHandler::new(mcp_resource_service.clone()),
-        )))
-        .expect("register list_mcp_resources");
-        builder.register_tool(registered_tool(Arc::new(
-            codex_tool_handlers::ListMcpResourceTemplatesHandler::new(
-                mcp_resource_service.clone(),
-            ),
-        )))
-        .expect("register list_mcp_resource_templates");
-        builder.register_tool(registered_tool(Arc::new(
-            codex_tool_handlers::ReadMcpResourceHandler::new(mcp_resource_service),
-        )))
-        .expect("register read_mcp_resource");
-
-        if let Some(discoverable_tools) = request.params.discoverable_tools {
-            builder.register_tool(registered_tool(Arc::new(
-                codex_tool_handlers::RequestPluginInstallHandler::new(
-                    Arc::new(crate::RequestPluginInstallService),
-                    discoverable_tools,
-                ),
-            )))
-            .expect("register request_plugin_install");
-        }
-
-        for dynamic_tool in request.params.dynamic_tools {
-            if let Some(handler) = codex_tool_handlers::DynamicToolHandler::new(dynamic_tool) {
-                builder
-                    .register_tool(registered_tool(Arc::new(handler)))
-                    .expect("register dynamic tool");
-            }
-        }
-
-        let (specs, registry) = builder.build();
-        let router = ToolRouter::new(request.config.code_mode_only_enabled, specs, registry);
-        Arc::new(codex_tool_handlers::SessionToolRouterAdapter::new(
-            router,
-            codex_tool_handlers::SessionToolDispatchHost::new(request.session_capability),
-            session,
-            turn,
-        ))
-    }
-
-    fn incompatible_payload_error(tool_name: &codex_tool_types::ToolName) -> FunctionCallError {
-        FunctionCallError::Fatal(format!("tool {tool_name} invoked with incompatible payload"))
-    }
+async fn build_test_config(codex_home: &Path) -> Config {
+    ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.to_path_buf())
+        .fallback_cwd(Some(codex_home.to_path_buf()))
+        .build()
+        .await
+        .expect("load default test config")
 }
 
 #[cfg(any(test, feature = "test-support"))]
-impl ToolServiceApi for TestToolService {
+pub async fn make_session_and_context() -> (Arc<ThreadRuntimeSession>, Arc<ThreadTurnContext>) {
+    make_session_and_context_with(None, |_config| {}).await
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub async fn make_session_and_context_with<F>(
+    session_source: Option<SessionSource>,
+    configure_config: F,
+) -> (Arc<ThreadRuntimeSession>, Arc<ThreadTurnContext>)
+where
+    F: FnOnce(&mut Config),
+{
+    make_session_and_context_with_auth(
+        CodexAuth::from_api_key("Test API Key"),
+        session_source,
+        configure_config,
+    )
+    .await
+}
+
+#[cfg(any(test, feature = "test-support"))]
+async fn make_session_and_context_with_auth<F>(
+    auth: CodexAuth,
+    session_source: Option<SessionSource>,
+    configure_config: F,
+) -> (Arc<ThreadRuntimeSession>, Arc<ThreadTurnContext>)
+where
+    F: FnOnce(&mut Config),
+{
+    set_thread_service_test_mode(/*enabled*/ true);
+    let codex_home = std::env::temp_dir().join(format!(
+        "codex-thread-runtime-test-support-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&codex_home).expect("create temp dir");
+    let mut config = build_test_config(&codex_home).await;
+    configure_config(&mut config);
+    let state_db = if config.features.enabled(Feature::Goals) {
+        Some(
+            StateRuntime::init(
+                config.sqlite_home.clone(),
+                config.model_provider_id.clone(),
+            )
+            .await
+            .expect("goal tests should initialize sqlite state db"),
+        )
+    } else {
+        None
+    };
+    let auth_manager = auth_manager_from_auth_with_home(auth, config.codex_home.to_path_buf());
+    let environment_manager = Arc::new(codex_exec_server::EnvironmentManager::default_for_tests());
+    let thread_store = Arc::new(LocalThreadStore::new(
+        LocalThreadStoreConfig::from_config(&config),
+        state_db.clone(),
+    ));
+    let thread_service = ThreadService::new(
+        &config,
+        thread_auth_runtimes_from_auth_manager(auth_manager),
+        session_source.clone().unwrap_or(SessionSource::Exec),
+        environment_manager.clone(),
+        Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
+        /*analytics_events_client*/ None,
+        thread_store,
+        state_db,
+        Arc::new(DefaultLiveThreadFactory),
+        uuid::Uuid::new_v4().to_string(),
+        /*attestation_provider*/ None,
+        model_provider_factory_for_tests(),
+        Arc::new(DisabledCodeModeRuntimeFactory),
+        Arc::new(DisabledToolServiceForTests),
+    );
+    let thread = thread_service
+        .start_thread_with_options(crate::StartThreadOptions {
+            config: config.clone(),
+            initial_history: InitialHistory::New,
+            session_source,
+            thread_source: None,
+            dynamic_tools: Vec::new(),
+            persist_extended_history: false,
+            metrics_service_name: None,
+            parent_trace: None,
+            environments: thread_service.default_environment_selections(&config.cwd),
+        })
+        .await
+        .expect("start test thread");
+    let session = Arc::clone(&thread.thread.codex.session);
+    let turn = session.new_default_turn().await;
+    (session, turn)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Default)]
+/// 仅用于不触发真实 tool dispatch 的测试场景。
+///
+/// 需要验证 tool 行为的测试不应注入这个类型，而应直接走真实 owner
+/// service 的 dispatch 路径。
+pub struct DisabledToolServiceForTests;
+
+#[cfg(any(test, feature = "test-support"))]
+impl ToolServiceApi for DisabledToolServiceForTests {
     fn model_visible_specs(&self, request: ToolSpecRequest<'_>) -> Vec<codex_tool_types::ToolSpec> {
-        self.build_inner(request).model_visible_specs()
+        let _ = request;
+        Vec::new()
     }
 
     fn create_diff_consumer(
         &self,
         request: ToolDiffConsumerRequest<'_>,
     ) -> Option<Box<dyn codex_tool_service_api::ErasedToolArgumentDiffConsumer>> {
-        self.build_inner(request.tool)
-            .create_diff_consumer(request.tool_name)
-            .map(|consumer| {
-                Box::new(codex_tool_service_api::TypedDiffConsumer::<TurnContext>::new(consumer))
-                    as Box<dyn codex_tool_service_api::ErasedToolArgumentDiffConsumer>
-            })
+        let _ = request;
+        None
     }
 
     fn tool_supports_parallel(&self, request: ToolParallelRequest<'_>) -> bool {
-        self.build_inner(request.tool)
-            .tool_supports_parallel(request.call)
+        let _ = request;
+        false
     }
 
     fn dispatch_tool(
         &self,
         request: ToolDispatchRequest<'_>,
     ) -> ToolServiceFuture<'_, Result<AnyToolResult, FunctionCallError>> {
-        let inner = self.build_inner(request.tool);
-        let cancellation_token = request.cancellation_token;
-        let tracker = request.tracker;
-        let call = request.call;
-        let source = request.source;
         Box::pin(async move {
-            inner
-                .dispatch_tool_call_with_code_mode_result(
-                    cancellation_token,
-                    tracker,
-                    call,
-                    source,
-                )
-                .await
+            Err(FunctionCallError::Fatal(format!(
+                "DisabledToolServiceForTests does not dispatch {}",
+                request.call.tool_name
+            )))
         })
     }
 }

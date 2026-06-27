@@ -33,10 +33,11 @@ use codex_sandboxing_api::policy_transforms::effective_file_system_sandbox_polic
 use codex_sandboxing_api::policy_transforms::effective_permission_profile;
 use codex_sandboxing_api::policy_transforms::merge_permission_profiles;
 use codex_sandboxing_api::policy_transforms::normalize_additional_permissions;
+use codex_thread_api::ApplyPatchSessionCapability;
+use codex_thread_api::ApplyPatchTurnCapability;
 use codex_thread_api::SessionToolEventHost;
 use codex_thread_api::SharedToolTurnDiffTracker;
-use codex_thread_api::ToolRuntimeSessionCapability;
-use codex_thread_api::ToolRuntimeTurnCapability;
+use codex_thread_api::ThreadRuntimeCapability;
 use codex_thread_runtime::ThreadRuntimeSession;
 use codex_thread_runtime::ThreadTurnContext;
 use codex_tool_runtime::ApplyPatchToolOutput;

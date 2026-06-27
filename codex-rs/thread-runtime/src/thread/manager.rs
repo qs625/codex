@@ -630,7 +630,7 @@ impl ThreadService {
                 ),
                 openai_file_uploader: Arc::new(DisabledOpenAiFileUploader),
                 exec_policy_loader: Arc::new(EmptyExecPolicyLoader),
-                tool_service: Arc::new(crate::test_support::TestToolService),
+                tool_service: Arc::new(crate::test_support::DisabledToolServiceForTests),
                 workflow_runs: Arc::new(codex_workflow_api::DisabledWorkflowRunController),
                 ops_log: should_use_test_thread_service_behavior()
                     .then(|| Arc::new(std::sync::Mutex::new(Vec::new()))),

@@ -53,6 +53,7 @@ use tokio::sync::Mutex;
 
 use crate::exec_request::SandboxPermissions;
 mod async_watcher;
+mod orchestrator_host;
 mod process_manager;
 mod runtime_host;
 mod zsh_fork_backend;

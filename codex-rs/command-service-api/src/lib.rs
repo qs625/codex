@@ -13,27 +13,112 @@ use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_protocol::ThreadId;
 use codex_protocol::approvals::ExecPolicyAmendment;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandBeginEvent;
 use codex_protocol::protocol::ExecCommandEndEvent;
+use codex_protocol::protocol::TerminalInteractionEvent;
 use codex_protocol::protocol::ReviewDecision;
 use codex_sandboxing_api::SharedSandboxRuntime;
 use codex_thread_api::ToolRuntimeNetworkApprovalHandle;
 use codex_thread_api::ToolRuntimeNetworkApprovalTrigger;
 use codex_thread_api::ThreadCapability;
 use codex_tool_config::UnifiedExecShellMode;
+use codex_tool_config::ToolUserShellType;
 use codex_tool_runtime_api::ExecCommandRunOutput;
 use codex_tool_runtime_api::ExecCommandRunRequest;
 use codex_tool_runtime_api::NetworkApprovalSpec;
 use codex_tool_runtime_api::PermissionRequestPayload;
+use codex_tool_runtime_api::ResolvedExecCommand;
+use codex_tool_runtime_api::ResolvedExecCommandEnvironment;
 use codex_tool_runtime_api::RuntimeShell;
 use codex_tool_runtime_api::ToolSandboxContext;
+use codex_tool_runtime_api::ToolPermissionGrants;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_output_truncation::TruncationPolicy;
+use std::collections::HashMap;
+use std::path::Path;
 use tokio::sync::watch;
 
 /// Boxed future returned by object-safe command service APIs.
 pub type CommandServiceFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// Session-owned command interaction capability consumed by command tools.
+pub trait SessionCommandInteractionCaller: Send + Sync + 'static {
+    fn begin_command_wait<'a>(
+        &'a self,
+        request: CommandWaitRequest,
+    ) -> CommandServiceFuture<'a, Result<Box<dyn CommandWaitOperation>, CommandSessionError>>;
+
+    fn write_command_stdin<'a>(
+        &'a self,
+        request: WriteStdinRequest<'a>,
+    ) -> CommandServiceFuture<'a, Result<WriteStdinOutput, CommandSessionError>>;
+
+    fn emit_model_item_started_display_event<'a>(
+        &'a self,
+        turn: &'a dyn ThreadCapability,
+        item: &'a ResponseItem,
+    ) -> CommandServiceFuture<'a, ()>;
+
+    fn record_model_items_and_emit_display_events<'a>(
+        &'a self,
+        turn: &'a dyn ThreadCapability,
+        items: &'a [ResponseItem],
+    ) -> CommandServiceFuture<'a, ()>;
+
+    fn send_terminal_interaction<'a>(
+        &'a self,
+        turn: &'a dyn ThreadCapability,
+        event: TerminalInteractionEvent,
+    ) -> CommandServiceFuture<'a, ()>;
+}
+
+impl<Session> SessionCommandInteractionCaller for Arc<Session>
+where
+    Session: SessionCommandInteractionCaller,
+{
+    fn begin_command_wait<'a>(
+        &'a self,
+        request: CommandWaitRequest,
+    ) -> CommandServiceFuture<'a, Result<Box<dyn CommandWaitOperation>, CommandSessionError>> {
+        self.as_ref().begin_command_wait(request)
+    }
+
+    fn write_command_stdin<'a>(
+        &'a self,
+        request: WriteStdinRequest<'a>,
+    ) -> CommandServiceFuture<'a, Result<WriteStdinOutput, CommandSessionError>> {
+        self.as_ref().write_command_stdin(request)
+    }
+
+    fn emit_model_item_started_display_event<'a>(
+        &'a self,
+        turn: &'a dyn ThreadCapability,
+        item: &'a ResponseItem,
+    ) -> CommandServiceFuture<'a, ()> {
+        self.as_ref().emit_model_item_started_display_event(turn, item)
+    }
+
+    fn record_model_items_and_emit_display_events<'a>(
+        &'a self,
+        turn: &'a dyn ThreadCapability,
+        items: &'a [ResponseItem],
+    ) -> CommandServiceFuture<'a, ()> {
+        self.as_ref()
+            .record_model_items_and_emit_display_events(turn, items)
+    }
+
+    fn send_terminal_interaction<'a>(
+        &'a self,
+        turn: &'a dyn ThreadCapability,
+        event: TerminalInteractionEvent,
+    ) -> CommandServiceFuture<'a, ()> {
+        self.as_ref().send_terminal_interaction(turn, event)
+    }
+}
 
 /// Object-safe turn capability consumed by command service.
 pub trait CommandServiceTurnCapability: ThreadCapability + Send + Sync + 'static {
@@ -75,6 +160,18 @@ pub trait CommandServiceTurnCapability: ThreadCapability + Send + Sync + 'static
     fn active_network(&self) -> Option<SharedNetworkProxyRuntime>;
 
     fn emit_unified_exec_tty_metric(&self, tty: bool);
+
+    fn permission_profile(&self) -> PermissionProfile;
+
+    fn file_system_sandbox_policy(&self) -> codex_protocol::permissions::FileSystemSandboxPolicy;
+
+    fn resolve_exec_command_environment(
+        &self,
+        environment_id: Option<&str>,
+        workdir: Option<&str>,
+    ) -> Result<Option<ResolvedExecCommandEnvironment>, codex_tool_types::FunctionCallError>;
+
+    fn truncation_policy(&self) -> TruncationPolicy;
 }
 
 /// Per-session command runtime state owned by command-service.
@@ -119,6 +216,8 @@ pub trait CommandServiceSessionCapability: Send + Sync + 'static {
 
     fn runtime_shell(&self) -> RuntimeShell;
 
+    fn tool_user_shell_type(&self) -> ToolUserShellType;
+
     fn subscribe_out_of_band_elicitation_pause_state(&self) -> watch::Receiver<bool>;
 
     fn create_exec_approval_requirement<'a>(
@@ -136,6 +235,33 @@ pub trait CommandServiceSessionCapability: Send + Sync + 'static {
     ) -> CommandServiceFuture<'a, String>;
 
     fn guardian_timeout_message(&self) -> String;
+
+    fn maybe_emit_implicit_skill_invocation<'a>(
+        &'a self,
+        turn: &'a dyn CommandServiceTurnCapability,
+        command: &'a str,
+        workdir: &'a AbsolutePathBuf,
+    ) -> CommandServiceFuture<'a, ()>;
+
+    fn exec_permission_approvals_enabled(&self) -> bool;
+
+    fn request_permissions_tool_enabled(&self) -> bool;
+
+    fn tool_permission_grants<'a>(&'a self) -> CommandServiceFuture<'a, ToolPermissionGrants>;
+
+    fn resolve_model_shell(&self, shell: &Path) -> RuntimeShell;
+
+    fn resolve_exec_command(
+        &self,
+        turn: &dyn CommandServiceTurnCapability,
+        command: &str,
+        login: Option<bool>,
+        model_shell: Option<&RuntimeShell>,
+    ) -> Result<ResolvedExecCommand, String>;
+
+    fn shell_env_overrides(&self) -> HashMap<String, String>;
+
+    fn resolve_shell_workdir(&self, workdir: Option<String>) -> AbsolutePathBuf;
 
     fn run_permission_request_hooks<'a>(
         &'a self,

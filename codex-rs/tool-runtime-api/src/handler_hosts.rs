@@ -255,6 +255,51 @@ pub trait ExecCommandHandlerHost: ShellExecutionHost {
     fn emit_unified_exec_tty_metric(&self, turn: &Self::Turn, tty: bool);
 }
 
+/// Legacy session capability bridge used by the old exec-command handler path.
+///
+/// This contract stays next to tool-runtime handler hosts because it only
+/// exists to keep the legacy generic handler/orchestrator path compiling while
+/// exec-command behavior is being moved behind service APIs.
+pub trait ExecCommandSessionRuntime<Turn>: Send + Sync + 'static
+where
+    Turn: Send + Sync + 'static,
+{
+    fn tool_user_shell_type(&self) -> ToolUserShellType;
+
+    fn runtime_shell(&self) -> RuntimeShell;
+
+    fn resolve_model_shell(&self, shell: &Path) -> RuntimeShell;
+
+    fn resolve_exec_command(
+        &self,
+        turn: &Turn,
+        command: &str,
+        login: Option<bool>,
+        model_shell: Option<&RuntimeShell>,
+    ) -> Result<ResolvedExecCommand, String>;
+
+    fn maybe_emit_implicit_skill_invocation<'a>(
+        &'a self,
+        turn: &'a Turn,
+        command: &'a str,
+        workdir: &'a AbsolutePathBuf,
+    ) -> impl Future<Output = ()> + Send + 'a;
+
+    fn allocate_exec_process_id(&self) -> impl Future<Output = i32> + Send + '_;
+
+    fn release_exec_process_id(
+        &self,
+        process_id: i32,
+    ) -> impl Future<Output = ()> + Send + '_;
+
+    fn run_exec_command<'a>(
+        &'a self,
+        turn: &'a Turn,
+        call_id: &'a str,
+        request: ExecCommandRunRequest,
+    ) -> impl Future<Output = Result<ExecCommandRunOutput, UnifiedExecError>> + Send + 'a;
+}
+
 /// Host capabilities required by shell-like handlers before delegating to the
 /// shell runtime.
 pub trait ShellExecutionHost: ApplyPatchHandlerHost {

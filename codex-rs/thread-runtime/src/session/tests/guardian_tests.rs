@@ -3,7 +3,7 @@ use crate::compact::InitialContextInjection;
 use crate::environment_selection::ResolvedTurnEnvironments;
 use crate::guardian::GUARDIAN_REVIEWER_NAME;
 use crate::sandboxing::SandboxPermissions;
-use crate::test_support::TestToolService;
+use crate::test_support::DisabledToolServiceForTests;
 use crate::test_support::create_model_provider_for_tests_with_provider_auth;
 use crate::test_support::models_manager_with_provider_auth;
 use codex_config::ConfigLayerEntry;
@@ -24,17 +24,11 @@ use codex_protocol::models::AdditionalPermissionProfile as PermissionProfile;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::NetworkPermissions;
 use codex_protocol::models::ResponseItem;
-use codex_protocol::models::function_call_output_content_items_to_text;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::request_permissions::PermissionGrantScope;
 use codex_protocol::request_permissions::RequestPermissionProfile;
 use codex_protocol::request_permissions::RequestPermissionsArgs;
 use codex_protocol::request_permissions::RequestPermissionsResponse;
-use codex_tool_runtime::ExecCommandToolOutput;
-use codex_tool_runtime::FunctionToolOutput;
-use codex_tool_runtime::TurnDiffTracker;
-use codex_tool_types::ToolCallSource;
-use codex_tool_types::ToolInvocationMetadata;
 use core_test_support::PathExt;
 use core_test_support::TempDirExt;
 use core_test_support::codex_linux_sandbox_exe_or_skip;
@@ -53,14 +47,6 @@ use std::time::Duration;
 use tempfile::tempdir;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
-
-fn expect_text_output(output: &FunctionToolOutput) -> String {
-    function_call_output_content_items_to_text(&output.body).unwrap_or_default()
-}
-
-fn expect_exec_output_text(output: &ExecCommandToolOutput) -> String {
-    output.truncated_output()
-}
 
 #[tokio::test]
 async fn request_permissions_routes_to_guardian_when_reviewer_is_enabled() {
@@ -298,46 +284,27 @@ async fn guardian_allows_exec_command_additional_permissions_requests_past_polic
     let turn_context = Arc::new(turn_context_raw);
     let expiration_ms: u64 = if cfg!(windows) { 2_500 } else { 1_000 };
 
-    let handler = codex_tool_handlers::ExecCommandHandler::new(
-        crate::thread_capability_tool_host(),
-        codex_tool_handlers::ExecCommandHandlerOptions {
-            allow_login_shell: false,
-            exec_permission_approvals_enabled: false,
-            include_environment_id: false,
-        },
-    );
     #[allow(deprecated)]
     let workdir = Some(turn_context.cwd.to_string_lossy().to_string());
-    let resp = handler
-        .handle(ToolInvocation {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn_context),
-            cancellation_token: CancellationToken::new(),
-            tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
-            metadata: ToolInvocationMetadata {
-                call_id: "test-call".to_string(),
-                tool_name: codex_tool_planning::ToolName::plain("exec_command"),
-                source: codex_tool_types::ToolCallSource::Direct,
-                payload: ToolPayload::Function {
-                    arguments: serde_json::json!({
-                        "cmd": "echo hi",
-                        "workdir": workdir,
-                        "sandbox_permissions": SandboxPermissions::WithAdditionalPermissions,
-                        "additional_permissions": PermissionProfile {
-                            network: Some(NetworkPermissions {
-                                enabled: Some(true),
-                            }),
-                            file_system: None,
-                        },
-                        "justification": Some("test"),
-                    })
-                    .to_string(),
-                },
+    let output = super::dispatch_exec_command_via_tool_service(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        "test-call",
+        serde_json::json!({
+            "cmd": "echo hi",
+            "workdir": workdir,
+            "sandbox_permissions": SandboxPermissions::WithAdditionalPermissions,
+            "additional_permissions": PermissionProfile {
+                network: Some(NetworkPermissions {
+                    enabled: Some(true),
+                }),
+                file_system: None,
             },
-        })
+            "justification": Some("test"),
+        }),
+    )
         .await;
-
-    let output = expect_exec_output_text(&resp.expect("expected Ok result"));
+    let output = output.expect("expected Ok result");
     assert!(output.contains("hi"));
 }
 
@@ -406,38 +373,19 @@ async fn strict_auto_review_turn_grant_forces_guardian_for_exec_command_policy_s
     let session = Arc::new(session);
     let turn_context = Arc::new(turn_context_raw);
 
-    let handler = codex_tool_handlers::ExecCommandHandler::new(
-        crate::thread_capability_tool_host(),
-        codex_tool_handlers::ExecCommandHandlerOptions {
-            allow_login_shell: false,
-            exec_permission_approvals_enabled: false,
-            include_environment_id: false,
-        },
-    );
     #[allow(deprecated)]
     let workdir = Some(turn_context.cwd.to_string_lossy().to_string());
-    let resp = handler
-        .handle(ToolInvocation {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn_context),
-            cancellation_token: CancellationToken::new(),
-            tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
-            metadata: ToolInvocationMetadata {
-                call_id: "strict-exec-command-call".to_string(),
-                tool_name: codex_tool_planning::ToolName::plain("exec_command"),
-                source: ToolCallSource::Direct,
-                payload: ToolPayload::Function {
-                    arguments: serde_json::json!({
-                        "cmd": "echo hi",
-                        "workdir": workdir,
-                    })
-                    .to_string(),
-                },
-            },
-        })
+    let output = super::dispatch_exec_command_via_tool_service(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        "strict-exec-command-call",
+        serde_json::json!({
+            "cmd": "echo hi",
+            "workdir": workdir,
+        }),
+    )
         .await;
-
-    let output = expect_exec_output_text(&resp.expect("expected Ok result"));
+    let output = output.expect("expected Ok result");
     assert!(output.contains("hi"));
     let guardian_request = guardian_request_log.single_request();
     assert!(guardian_request.body_contains_text("echo hi"));
@@ -460,36 +408,16 @@ async fn guardian_allows_unified_exec_additional_permissions_requests_past_polic
         .expect("test setup should allow enabling request permissions");
     let session = Arc::new(session);
     let turn_context = Arc::new(turn_context_raw);
-    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-
-    let handler = codex_tool_handlers::ExecCommandHandler::new(
-        crate::thread_capability_tool_host(),
-        codex_tool_handlers::ExecCommandHandlerOptions {
-            allow_login_shell: false,
-            exec_permission_approvals_enabled: false,
-            include_environment_id: false,
-        },
-    );
-    let resp = handler
-        .handle(ToolInvocation {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn_context),
-            cancellation_token: CancellationToken::new(),
-            tracker: Arc::clone(&tracker),
-            metadata: ToolInvocationMetadata {
-                call_id: "exec-call".to_string(),
-                tool_name: codex_tool_planning::ToolName::plain("exec_command"),
-                source: codex_tool_types::ToolCallSource::Direct,
-                payload: ToolPayload::Function {
-                    arguments: serde_json::json!({
-                        "cmd": "echo hi",
-                        "sandbox_permissions": SandboxPermissions::WithAdditionalPermissions,
-                        "justification": "need additional sandbox permissions",
-                    })
-                    .to_string(),
-                },
-            },
-        })
+    let resp = super::dispatch_exec_command_via_tool_service(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        "exec-call",
+        serde_json::json!({
+            "cmd": "echo hi",
+            "sandbox_permissions": SandboxPermissions::WithAdditionalPermissions,
+            "justification": "need additional sandbox permissions",
+        }),
+    )
         .await;
 
     let Err(FunctionCallError::RespondToModel(output)) = resp else {
@@ -588,40 +516,21 @@ async fn exec_command_allows_sticky_turn_permissions_without_inline_request_perm
     let session = Arc::new(session);
     let turn_context = Arc::new(turn_context_raw);
 
-    let handler = codex_tool_handlers::ExecCommandHandler::new(
-        crate::thread_capability_tool_host(),
-        codex_tool_handlers::ExecCommandHandlerOptions {
-            allow_login_shell: false,
-            exec_permission_approvals_enabled: false,
-            include_environment_id: false,
-        },
-    );
     #[allow(deprecated)]
     let workdir = Some(turn_context.cwd.to_string_lossy().to_string());
-    let resp = handler
-        .handle(ToolInvocation {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn_context),
-            cancellation_token: CancellationToken::new(),
-            tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
-            metadata: ToolInvocationMetadata {
-                call_id: "sticky-turn-grant".to_string(),
-                tool_name: codex_tool_planning::ToolName::plain("exec_command"),
-                source: codex_tool_types::ToolCallSource::Direct,
-                payload: ToolPayload::Function {
-                    arguments: serde_json::json!({
-                        "cmd": "echo hi",
-                        "workdir": workdir,
-                    })
-                    .to_string(),
-                },
-            },
-        })
+    let resp = super::dispatch_exec_command_via_tool_service(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        "sticky-turn-grant",
+        serde_json::json!({
+            "cmd": "echo hi",
+            "workdir": workdir,
+        }),
+    )
         .await;
 
     match resp {
         Ok(output) => {
-            let output = expect_exec_output_text(&output);
             assert!(output.contains("hi"));
         }
         Err(FunctionCallError::RespondToModel(output)) => {
@@ -754,7 +663,7 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
         openai_file_uploader: Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         code_mode_service: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         code_mode_runtime_factory: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        tool_service: Arc::new(TestToolService),
+        tool_service: Arc::new(DisabledToolServiceForTests),
         workflow_runs: Arc::new(crate::workflow_runs::DisabledWorkflowRunController),
     })
     .await

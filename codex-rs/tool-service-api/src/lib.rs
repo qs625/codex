@@ -1,7 +1,12 @@
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::Weak;
 
+use codex_extension_api::ExtensionData;
+use codex_extension_api::ToolContributor;
+use codex_mcp_tool_types::ToolInfo;
+use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_thread_api::SharedToolTurnDiffTracker;
 use codex_thread_api::ToolServiceSessionRef;
 use codex_thread_api::ToolServiceTurnRef;
@@ -9,7 +14,7 @@ use codex_thread_api::ToolSessionCapability;
 use codex_tool_config::ToolsConfig;
 use codex_tool_runtime_api::AnyToolResult;
 use codex_tool_runtime_api::ToolArgumentDiffConsumer;
-use codex_tool_runtime_api::ToolServiceParams;
+use codex_tool_planning::DiscoverableTool;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolCallSource;
@@ -19,6 +24,24 @@ use tokio_util::sync::CancellationToken;
 
 /// Boxed future returned by object-safe tool service APIs.
 pub type ToolServiceFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// Borrowed extension state required by the tool owner to discover extension tools.
+#[derive(Clone, Copy)]
+pub struct ExtensionToolBuildParams<'a> {
+    pub tool_contributors: &'a [Arc<dyn ToolContributor>],
+    pub session_store: &'a ExtensionData,
+    pub thread_store: &'a ExtensionData,
+}
+
+/// Borrowed inputs required to build one turn's tool set.
+pub struct ToolServiceParams<'a> {
+    pub mcp_tools: Option<&'a [ToolInfo]>,
+    pub deferred_mcp_tools: Option<&'a [ToolInfo]>,
+    pub discoverable_tools: Option<&'a [DiscoverableTool]>,
+    pub extension_tools: Option<ExtensionToolBuildParams<'a>>,
+    pub dynamic_tools: &'a [DynamicToolSpec],
+    pub default_agent_type_description: &'a str,
+}
 
 pub trait ErasedToolArgumentDiffConsumer: Send {
     fn consume_diff(

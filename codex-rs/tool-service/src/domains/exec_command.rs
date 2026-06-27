@@ -14,8 +14,6 @@ use codex_permissions_runtime::ExecPolicyApprovalRequest;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::protocol::AskForApproval;
 use codex_thread_api::SharedToolTurnDiffTracker;
-use codex_thread_api::ToolRuntimeSessionCapability;
-use codex_thread_api::ToolRuntimeTurnCapability;
 use codex_thread_runtime::ThreadRuntimeSession;
 use codex_thread_runtime::ThreadTurnContext;
 use codex_tool_planning::CommandToolOptions;
@@ -126,7 +124,9 @@ async fn dispatch_exec_command(
 ) -> Result<ExecCommandToolOutput, FunctionCallError> {
     let arguments = call.function_arguments()?;
     let environment_args: ExecCommandEnvironmentArgs = parse_arguments(arguments)?;
-    let Some(turn_environment) = turn.resolve_exec_command_environment(
+    let turn_capability = turn.as_ref() as &dyn CommandServiceTurnCapability;
+    let session_capability = session.as_ref() as &dyn CommandServiceSessionCapability;
+    let Some(turn_environment) = turn_capability.resolve_exec_command_environment(
         environment_args.environment_id.as_deref(),
         environment_args.workdir.as_deref(),
     )? else {
@@ -137,16 +137,16 @@ async fn dispatch_exec_command(
     let cwd = turn_environment.cwd.clone();
     let args: ExecCommandArgs = parse_arguments_with_base_path(arguments, &cwd)?;
     let hook_command = args.cmd.clone();
-    session
-        .maybe_emit_implicit_skill_invocation(turn.as_ref(), &hook_command, &cwd)
+    session_capability
+        .maybe_emit_implicit_skill_invocation(turn_capability, &hook_command, &cwd)
         .await;
 
     let model_shell = args
         .shell
         .as_deref()
-        .map(|shell| session.resolve_model_shell(Path::new(shell)));
-    let resolved_command = session
-        .resolve_exec_command(turn.as_ref(), &args.cmd, args.login, model_shell.as_ref())
+        .map(|shell| session_capability.resolve_model_shell(Path::new(shell)));
+    let resolved_command = session_capability
+        .resolve_exec_command(turn_capability, &args.cmd, args.login, model_shell.as_ref())
         .map_err(FunctionCallError::RespondToModel)?;
     let command = resolved_command.command;
     let command_for_display = codex_shell_command::parse_command::shlex_join(&command);
@@ -163,12 +163,14 @@ async fn dispatch_exec_command(
         prefix_rule,
         ..
     } = args;
-    let max_output_tokens =
-        effective_max_output_tokens(max_output_tokens, turn.truncation_policy());
+    let max_output_tokens = effective_max_output_tokens(
+        max_output_tokens,
+        turn_capability.truncation_policy(),
+    );
 
-    let exec_permission_approvals_enabled = session.exec_permission_approvals_enabled();
+    let exec_permission_approvals_enabled = session_capability.exec_permission_approvals_enabled();
     let requested_additional_permissions = additional_permissions.clone();
-    let grants = session.tool_permission_grants().await;
+    let grants = session_capability.tool_permission_grants().await;
     let effective_additional_permissions = apply_granted_permissions_from_grants(
         grants,
         cwd.as_path(),
@@ -176,16 +178,16 @@ async fn dispatch_exec_command(
         additional_permissions,
     );
     let additional_permissions_allowed = exec_permission_approvals_enabled
-        || (session.request_permissions_tool_enabled()
+        || (session_capability.request_permissions_tool_enabled()
             && effective_additional_permissions.permissions_preapproved);
 
     if effective_additional_permissions
         .sandbox_permissions
         .requests_sandbox_override()
         && !effective_additional_permissions.permissions_preapproved
-        && !matches!(turn.approval_policy(), AskForApproval::OnRequest)
+        && !matches!(turn_capability.approval_policy(), AskForApproval::OnRequest)
     {
-        let approval_policy = turn.approval_policy();
+        let approval_policy = turn_capability.approval_policy();
         return Err(FunctionCallError::RespondToModel(format!(
             "approval policy is {approval_policy:?}; reject command — you cannot ask for escalated permissions if the approval policy is {approval_policy:?}"
         )));
@@ -200,7 +202,7 @@ async fn dispatch_exec_command(
         || {
             normalize_and_validate_additional_permissions(
                 additional_permissions_allowed,
-                turn.approval_policy(),
+                turn_capability.approval_policy(),
                 effective_additional_permissions.sandbox_permissions,
                 effective_additional_permissions.additional_permissions.clone(),
                 effective_additional_permissions.permissions_preapproved,
@@ -211,12 +213,12 @@ async fn dispatch_exec_command(
     )
     .map_err(FunctionCallError::RespondToModel)?;
 
-    let exec_approval_requirement = session
+    let exec_approval_requirement = session_capability
         .create_exec_approval_requirement(ExecPolicyApprovalRequest {
             command: &command,
-            approval_policy: turn.approval_policy(),
-            permission_profile: turn.permission_profile(),
-            file_system_sandbox_policy: &turn.file_system_sandbox_policy(),
+            approval_policy: turn_capability.approval_policy(),
+            permission_profile: turn_capability.permission_profile(),
+            file_system_sandbox_policy: &turn_capability.file_system_sandbox_policy(),
             sandbox_cwd: turn_environment.sandbox_cwd.as_path(),
             sandbox_permissions: if effective_additional_permissions.permissions_preapproved {
                 codex_protocol::models::SandboxPermissions::UseDefault
@@ -279,8 +281,11 @@ async fn dispatch_exec_command(
         .await
         .map_err(FunctionCallError::RespondToModel)?;
 
-    turn.emit_unified_exec_tty_metric(tty);
-    let process_id = session.allocate_exec_process_id().await;
+    turn_capability.emit_unified_exec_tty_metric(tty);
+    let process_id = session_capability
+        .command_service_state()
+        .allocate_process_id()
+        .await;
     let run_request = ExecCommandRunRequest {
         command,
         shell_type: resolved_command.shell_type,
@@ -404,5 +409,154 @@ fn exec_command_tool_output_from_run_output(output: ExecCommandRunOutput) -> Exe
         exit_code: output.exit_code,
         original_token_count: output.original_token_count,
         hook_command: output.hook_command,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::any::Any;
+
+    use codex_approval_service_api::ApprovalServiceFuture;
+    use codex_command_runtime::CommandSessionError;
+    use codex_command_runtime::CommandWaitOperation;
+    use codex_command_runtime::CommandWaitRequest;
+    use codex_command_runtime::WriteStdinOutput;
+    use codex_command_runtime::WriteStdinRequest;
+    use codex_protocol::protocol::AskForApproval;
+    use codex_protocol::protocol::ReviewDecision;
+    use codex_thread_api::ThreadCapability;
+    use codex_thread_runtime::test_support;
+    use codex_tool_runtime::TurnDiffTracker;
+    use tokio_util::sync::CancellationToken;
+
+    struct PanickingApprovalService;
+
+    impl ApprovalServiceApi for PanickingApprovalService {
+        fn request_apply_patch_approval(
+            &self,
+            _request: codex_approval_service_api::ApplyPatchApprovalDispatch,
+        ) -> ApprovalServiceFuture<'_, Result<(), String>> {
+            Box::pin(async { panic!("unexpected apply_patch approval request") })
+        }
+
+        fn request_exec_command_approval(
+            &self,
+            _request: ExecCommandApprovalDispatch,
+        ) -> ApprovalServiceFuture<'_, Result<ExecCommandApprovalOutcome, String>> {
+            Box::pin(async { panic!("unexpected exec_command approval request") })
+        }
+    }
+
+    struct PanickingCommandService;
+
+    impl CommandServiceApi for PanickingCommandService {
+        fn run_exec_command<'a>(
+            &'a self,
+            _session: Arc<dyn CommandServiceSessionCapability>,
+            _turn: Arc<dyn CommandServiceTurnCapability>,
+            _call_id: String,
+            _request: ExecCommandRunRequest,
+        ) -> CommandServiceFuture<'a, Result<ExecCommandRunOutput, UnifiedExecError>> {
+            Box::pin(async { panic!("unexpected exec_command run") })
+        }
+
+        fn begin_command_wait<'a>(
+            &'a self,
+            _session: Arc<dyn CommandServiceSessionCapability>,
+            _request: CommandWaitRequest,
+        ) -> CommandServiceFuture<'a, Result<Box<dyn CommandWaitOperation>, CommandSessionError>>
+        {
+            Box::pin(async { panic!("unexpected command_wait") })
+        }
+
+        fn write_command_stdin<'a>(
+            &'a self,
+            _session: Arc<dyn CommandServiceSessionCapability>,
+            _request: WriteStdinRequest<'a>,
+        ) -> CommandServiceFuture<'a, Result<WriteStdinOutput, CommandSessionError>> {
+            Box::pin(async { panic!("unexpected command_write_stdin") })
+        }
+    }
+
+    struct MockCustomWaitOperation;
+
+    impl CommandWaitOperation for MockCustomWaitOperation {
+        fn wait<'a>(
+            &'a mut self,
+        ) -> CommandServiceFuture<'a, Result<codex_command_runtime::CommandWaitStatus, CommandSessionError>>
+        {
+            Box::pin(async { panic!("unexpected wait") })
+        }
+    }
+
+    #[tokio::test]
+    async fn exec_command_rejects_incompatible_payload() {
+        let (session, turn) = test_support::make_session_and_context().await;
+        let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+
+        let result = dispatch(
+            Arc::new(PanickingApprovalService),
+            Arc::new(PanickingCommandService),
+            session,
+            turn,
+            tracker,
+            ToolCall {
+                call_id: "call-1".to_string(),
+                tool_name: ToolName::plain("exec_command"),
+                payload: codex_tool_types::ToolPayload::Custom {
+                    name: "exec_command".to_string(),
+                    input: "{}".to_string(),
+                },
+            },
+        )
+        .await;
+
+        let Err(FunctionCallError::Fatal(message)) = result else {
+            panic!("expected incompatible payload error");
+        };
+        assert_eq!(message, "tool exec_command invoked with incompatible payload");
+    }
+
+    #[tokio::test]
+    async fn exec_command_rejects_escalated_permissions_when_policy_not_on_request() {
+        let (session, mut turn) = test_support::make_session_and_context().await;
+        let turn_mut = Arc::get_mut(&mut turn).expect("unique turn context Arc");
+        turn_mut
+            .approval_policy
+            .set(AskForApproval::OnFailure)
+            .expect("test setup should allow updating approval policy");
+        let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+
+        let result = dispatch(
+            Arc::new(PanickingApprovalService),
+            Arc::new(PanickingCommandService),
+            session,
+            turn.clone(),
+            tracker,
+            ToolCall {
+                call_id: "exec-call".to_string(),
+                tool_name: ToolName::plain("exec_command"),
+                payload: codex_tool_types::ToolPayload::Function {
+                    arguments: serde_json::json!({
+                        "cmd": "echo hi",
+                        "sandbox_permissions": codex_protocol::models::SandboxPermissions::RequireEscalated,
+                        "justification": "need unsandboxed execution",
+                    })
+                    .to_string(),
+                },
+            },
+        )
+        .await;
+
+        let Err(FunctionCallError::RespondToModel(output)) = result else {
+            panic!("expected escalated permissions rejection");
+        };
+        let expected = format!(
+            "approval policy is {policy:?}; reject command — you cannot ask for escalated permissions if the approval policy is {policy:?}",
+            policy = turn.approval_policy.value()
+        );
+        assert_eq!(output, expected);
     }
 }

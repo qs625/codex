@@ -1,7 +1,7 @@
 use super::*;
 use crate::guardian::GuardianNetworkAccessTrigger;
 use crate::sandboxing::SandboxPermissions;
-use crate::tool_runtime_support::ToolError;
+use crate::tool_approval_support::ToolError;
 use codex_permissions_runtime::NetworkApprovalOutcome;
 use core_test_support::PathBufExt;
 use core_test_support::test_path_buf;

@@ -9,7 +9,6 @@ members = [
     "agent-identity-api",
     "agent-runtime",
     "agent-roles",
-    "agent-tool-handlers",
     "backend-client",
     "bwrap",
     "ansi-escape",
@@ -154,7 +153,6 @@ members = [
     "tool-config",
     "tool-service-api",
     "tool-service",
-    "tool-handlers",
     "tool-planning",
     "tool-runtime",
     "tool-runtime-api",
@@ -228,7 +226,6 @@ codex-agent-identity = { path = "agent-identity" }
 codex-agent-identity-api = { path = "agent-identity-api" }
 codex-agent-runtime = { path = "agent-runtime" }
 codex-agent-roles = { path = "agent-roles" }
-codex-agent-tool-handlers = { path = "agent-tool-handlers" }
 codex-ansi-escape = { path = "ansi-escape" }
 codex-api = { path = "codex-api" }
 codex-api-auth = { path = "api-auth" }
@@ -384,7 +381,6 @@ codex-thread-store = { path = "thread-store" }
 codex-tool-config = { path = "tool-config" }
 codex-tool-service-api = { path = "tool-service-api" }
 codex-tool-service = { path = "tool-service" }
-codex-tool-handlers = { path = "tool-handlers" }
 codex-tool-planning = { path = "tool-planning" }
 codex-tool-runtime = { path = "tool-runtime" }
 codex-tool-runtime-api = { path = "tool-runtime-api" }

@@ -110,8 +110,6 @@ mod stream_events_utils;
 pub mod test_support;
 pub mod thread;
 mod thread_skills;
-#[cfg(any(test, feature = "test-support"))]
-mod unified_exec;
 pub(crate) mod web_search;
 pub mod windows_sandbox;
 pub(crate) mod windows_sandbox_read_grants;
@@ -140,9 +138,6 @@ pub use agents_md::LOCAL_AGENTS_MD_FILENAME;
 pub use approval_service::ThreadApprovalService;
 mod rollout;
 pub mod runtime_shell_model;
-#[cfg(unix)]
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) mod shell_escalation_adapter;
 pub(crate) mod runtime_shell_snapshot;
 pub mod spawn;
 pub(crate) mod state_db_bridge;
@@ -152,13 +147,7 @@ mod state;
 mod tasks;
 mod tool_dispatch_trace;
 mod tool_approval_support;
-#[cfg(any(test, feature = "test-support"))]
-mod tool_runtime_support;
 mod tool_session_capability;
-#[cfg(any(test, feature = "test-support"))]
-mod tool_test_runtime_host;
-#[cfg(test)]
-mod tool_test_registry;
 mod turn_context_item;
 mod turn_metadata;
 mod turn_resolved_config;
@@ -192,24 +181,10 @@ pub use mailbox::Mailbox;
 pub use mailbox::MailboxDeliveryPhase;
 pub use mailbox::MailboxReceiver;
 #[doc(hidden)]
-#[cfg(any(test, feature = "test-support"))]
-pub use tool_test_runtime_host::CoreToolRuntimeHost;
-#[doc(hidden)]
 pub type SharedTurnDiffTracker =
     std::sync::Arc<tokio::sync::Mutex<codex_tool_runtime::TurnDiffTracker>>;
 pub(crate) type CoreToolServiceApi = dyn codex_tool_service_api::ToolServiceApi;
 pub type ThreadToolServiceApi = dyn codex_tool_service_api::ToolServiceApi;
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) type ThreadCapabilityToolHost = codex_tool_handlers::CapabilityToolHost<
-    session::session::Session,
-    std::sync::Arc<session::turn_context::TurnContext>,
-    session::turn_context::TurnContext,
-    tool_test_runtime_host::CoreToolRuntimeHost,
->;
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) fn thread_capability_tool_host() -> ThreadCapabilityToolHost {
-    codex_tool_handlers::CapabilityToolHost::new(tool_test_runtime_host::CoreToolRuntimeHost)
-}
 pub use session_settings::SessionPermissionProfileUpdate;
 pub use session_settings::SessionSettingsApplyCurrent;
 pub use session_settings::SessionSettingsApplyPlan;
@@ -243,9 +218,6 @@ pub mod compact;
 mod memory_usage;
 mod steer_input;
 mod task_kind;
-#[cfg(test)]
-#[path = "session_tool_domain_host_apply_patch_tests.rs"]
-mod thread_capability_tool_host_apply_patch_tests;
 
 /// Session configuration overrides supplied by thread resume, turn override,
 /// or app-server settings update paths.
