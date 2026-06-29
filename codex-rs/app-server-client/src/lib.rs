@@ -48,11 +48,11 @@ use codex_config_loader::NoopThreadConfigLoader;
 use codex_config_loader::ThreadConfigLoader;
 use codex_config_loader_remote::RemoteThreadConfigLoader;
 use codex_config_requirements::CloudRequirementsLoader;
-use codex_thread_runtime::config::Config;
 pub use codex_exec_server::EnvironmentManager;
 pub use codex_exec_server::ExecServerRuntimePaths;
 use codex_feedback::CodexFeedback;
 use codex_protocol::protocol::SessionSource;
+use thread_service::config::Config;
 use serde::de::DeserializeOwned;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -70,24 +70,24 @@ pub use crate::remote::RemoteAppServerEndpoint;
 /// module exists so clients can remove a direct legacy runtime dependency
 /// while legacy startup/config paths are migrated to RPCs.
 pub mod legacy_core {
-    pub use codex_thread_runtime::DEFAULT_AGENTS_MD_FILENAME;
-    pub use codex_thread_runtime::LOCAL_AGENTS_MD_FILENAME;
-    pub use codex_thread_runtime::McpManager;
-    pub use codex_thread_runtime::grant_read_root_non_elevated;
-    pub use codex_thread_runtime::web_search_detail;
     pub use codex_execpolicy_loader::check_execpolicy_for_warnings;
     pub use codex_execpolicy_loader::format_exec_policy_error_with_source;
+    pub use codex_sandboxing::grant_read_root_non_elevated;
+    pub use thread_service::DEFAULT_AGENTS_MD_FILENAME;
+    pub use thread_service::LOCAL_AGENTS_MD_FILENAME;
+    pub use thread_service::McpManager;
+    pub use thread_service::web_search_detail;
 
     pub mod config {
-        pub use codex_thread_runtime::config::*;
+        pub use thread_service::config::*;
 
         pub mod edit {
-            pub use codex_thread_runtime::config::edit::*;
+            pub use thread_service::config::edit::*;
         }
     }
 
     pub mod connectors {
-        pub use codex_thread_runtime::connectors::*;
+        pub use thread_service::connectors::*;
     }
 
     pub mod otel_init {
@@ -95,28 +95,28 @@ pub mod legacy_core {
     }
 
     pub mod personality_migration {
-        pub use codex_thread_runtime::personality_migration::*;
+        pub use thread_service::personality_migration::*;
     }
 
     pub mod review_format {
-        pub use codex_thread_runtime::review_format::*;
+        pub use thread_service::review_format::*;
     }
 
     pub mod review_prompts {
-        pub use codex_thread_runtime::review_prompts::*;
+        pub use thread_service::review_prompts::*;
     }
 
     #[cfg(feature = "test-support")]
     pub mod test_support {
-        pub use codex_thread_runtime::test_support::*;
+        pub use thread_service::test_support::*;
     }
 
     pub mod util {
-        pub use codex_thread_runtime::util::*;
+        pub use thread_service::util::*;
     }
 
     pub mod windows_sandbox {
-        pub use codex_thread_runtime::windows_sandbox::*;
+        pub use codex_sandboxing::*;
     }
 }
 
@@ -957,8 +957,8 @@ mod tests {
     use codex_app_server_protocol::ToolRequestUserInputParams;
     use codex_app_server_protocol::ToolRequestUserInputQuestion;
     use codex_config_loader::ThreadConfigLoadErrorCode;
-    use codex_thread_runtime::config::ConfigBuilder;
     use codex_rollout::state_db::init as init_state_db;
+    use thread_service::config::ConfigBuilder;
     use codex_uds::UnixListener;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use futures::SinkExt;

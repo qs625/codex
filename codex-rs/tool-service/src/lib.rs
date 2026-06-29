@@ -9,11 +9,9 @@ use std::sync::Arc;
 
 use codex_approval_service_api::ApprovalServiceApi;
 use codex_command_service_api::CommandServiceApi;
-use codex_thread_api::GoalApi;
-use codex_thread_api::McpResourceApi;
-use codex_thread_api::RequestPluginInstallApi;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
+use thread_service_api::RequestPluginInstallApi;
 use codex_tool_service_api::AnyToolResult;
+use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_service_api::ToolDiffConsumerRequest;
 use codex_tool_service_api::ToolDispatchRequest;
 use codex_tool_service_api::ToolParallelRequest;
@@ -22,6 +20,8 @@ use codex_tool_service_api::ToolServiceFuture;
 use codex_tool_service_api::ToolSpecRequest;
 use codex_tool_types::FunctionCallError;
 use codex_workflow_api::WorkflowApi;
+use goal_service_api::GoalServiceApi;
+use mcp_service_api::McpServiceApi;
 
 use context::TypedToolSpecRequest;
 pub(crate) use planning::*;
@@ -29,8 +29,8 @@ pub(crate) use planning::*;
 pub struct ToolService {
     approval_api: Arc<dyn ApprovalServiceApi>,
     command_service_api: Arc<dyn CommandServiceApi>,
-    goal_api: Arc<dyn GoalApi>,
-    mcp_resource_api: Arc<dyn McpResourceApi>,
+    goal_api: Arc<dyn GoalServiceApi>,
+    mcp_service_api: Arc<dyn McpServiceApi>,
     request_plugin_install_api: Arc<dyn RequestPluginInstallApi>,
     workflow_api: Arc<dyn WorkflowApi>,
 }
@@ -39,8 +39,8 @@ impl ToolService {
     pub fn new(
         approval_api: Arc<dyn ApprovalServiceApi>,
         command_service_api: Arc<dyn CommandServiceApi>,
-        goal_api: Arc<dyn GoalApi>,
-        mcp_resource_api: Arc<dyn McpResourceApi>,
+        goal_api: Arc<dyn GoalServiceApi>,
+        mcp_service_api: Arc<dyn McpServiceApi>,
         request_plugin_install_api: Arc<dyn RequestPluginInstallApi>,
         workflow_api: Arc<dyn WorkflowApi>,
     ) -> Self {
@@ -48,7 +48,7 @@ impl ToolService {
             approval_api,
             command_service_api,
             goal_api,
-            mcp_resource_api,
+            mcp_service_api,
             request_plugin_install_api,
             workflow_api,
         }
@@ -104,9 +104,9 @@ impl ToolServiceApi for ToolService {
             let workflow_api = Arc::clone(&self.workflow_api);
             let turn = Arc::clone(&tool_request.turn);
             let call = request.call;
-            return Box::pin(async move {
-                domains::workflow::dispatch(workflow_api, turn, call).await
-            });
+            return Box::pin(
+                async move { domains::workflow::dispatch(workflow_api, turn, call).await },
+            );
         }
         let domain = domains::classify_tool_name(&tool_request, &request.call.tool_name);
         let code_mode_nested_tool_specs = if matches!(domain, domains::ToolDomain::CodeMode) {
@@ -125,12 +125,14 @@ impl ToolServiceApi for ToolService {
         let goal_api = Arc::clone(&self.goal_api);
         let approval_api = Arc::clone(&self.approval_api);
         let command_service_api = Arc::clone(&self.command_service_api);
-        let mcp_resource_api = Arc::clone(&self.mcp_resource_api);
+        let mcp_service_api = Arc::clone(&self.mcp_service_api);
         let request_plugin_install_api = Arc::clone(&self.request_plugin_install_api);
         let session = Arc::clone(&tool_request.session);
         let turn = Arc::clone(&tool_request.turn);
-        let request_user_input_available_modes =
-            tool_request.config.request_user_input_available_modes.clone();
+        let request_user_input_available_modes = tool_request
+            .config
+            .request_user_input_available_modes
+            .clone();
         let dynamic_tools = tool_request.params.dynamic_tools.to_vec();
         let discoverable_tools = tool_request
             .params
@@ -191,8 +193,11 @@ impl ToolServiceApi for ToolService {
                     .await
                 }
                 domains::ToolDomain::Extension => {
-                    domains::extension::dispatch(extension_executor.expect("extension route")?, call)
-                        .await
+                    domains::extension::dispatch(
+                        extension_executor.expect("extension route")?,
+                        call,
+                    )
+                    .await
                 }
                 domains::ToolDomain::Function => {
                     domains::function::dispatch(
@@ -209,9 +214,8 @@ impl ToolServiceApi for ToolService {
                 }
                 domains::ToolDomain::Mcp => {
                     domains::mcp::dispatch(
-                        Arc::clone(&session),
                         Arc::clone(&turn),
-                        mcp_resource_api,
+                        mcp_service_api,
                         mcp_tools.as_deref(),
                         deferred_mcp_tools.as_deref(),
                         call,

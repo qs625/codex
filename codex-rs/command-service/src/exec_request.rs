@@ -28,6 +28,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct ExecRequest {
     pub command: Vec<String>,
     pub cwd: AbsolutePathBuf,
@@ -83,6 +84,7 @@ impl ExecRequest {
         }
     }
 
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     pub(crate) fn compatibility_sandbox_policy(&self) -> SandboxPolicy {
         compatibility_sandbox_policy_for_permission_profile(
             &self.permission_profile,

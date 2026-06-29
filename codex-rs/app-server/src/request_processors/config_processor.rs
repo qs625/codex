@@ -43,8 +43,6 @@ use codex_config_types::HookHandlerConfig as CoreHookHandlerConfig;
 use codex_config_types::ManagedHooksRequirementsToml;
 use codex_config_types::MatcherGroup as CoreMatcherGroup;
 use codex_config_types::ResidencyRequirement as CoreResidencyRequirement;
-use codex_thread_runtime::ThreadService;
-use codex_thread_runtime::connectors as core_connectors;
 use codex_core_plugins::PluginsManager;
 use codex_exec_server::EnvironmentManager;
 use codex_features::canonical_feature_for_key;
@@ -53,6 +51,8 @@ use codex_login::AuthManager;
 use codex_model_provider::create_model_provider;
 use codex_plugin::PluginId;
 use codex_protocol::config_types::WebSearchMode;
+use thread_service::ThreadService;
+use thread_service::connectors as core_connectors;
 use futures::future::BoxFuture;
 use serde_json::json;
 use std::path::PathBuf;
@@ -75,7 +75,7 @@ pub(crate) trait ConfigRuntime: Send + Sync {
 
     fn refresh_live_threads_runtime_config(
         &self,
-        next_config: codex_thread_runtime::config::Config,
+        next_config: thread_service::config::Config,
     ) -> BoxFuture<'_, ()>;
 }
 
@@ -90,7 +90,7 @@ impl ConfigRuntime for ThreadService {
 
     fn refresh_live_threads_runtime_config(
         &self,
-        next_config: codex_thread_runtime::config::Config,
+        next_config: thread_service::config::Config,
     ) -> BoxFuture<'_, ()> {
         Box::pin(ThreadService::refresh_live_threads_runtime_config(
             self,
@@ -326,7 +326,7 @@ impl ConfigRequestProcessor {
     async fn load_latest_config(
         &self,
         fallback_cwd: Option<PathBuf>,
-    ) -> Result<codex_thread_runtime::config::Config, JSONRPCErrorError> {
+    ) -> Result<thread_service::config::Config, JSONRPCErrorError> {
         self.config_manager
             .load_latest_config(fallback_cwd)
             .await

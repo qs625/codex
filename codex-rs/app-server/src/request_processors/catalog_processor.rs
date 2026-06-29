@@ -471,7 +471,7 @@ impl CatalogRequestProcessor {
                     let effective_skill_roots = if workspace_codex_plugins_enabled {
                         let plugins_input = config.plugins_config_input();
                         let plugin_config_layer_stack =
-                            codex_thread_runtime::config::plugin_config_layer_stack_from_config_layer_stack(
+                            thread_service::config::plugin_config_layer_stack_from_config_layer_stack(
                                 &config_layer_stack,
                             );
                         plugins_manager
@@ -486,7 +486,7 @@ impl CatalogRequestProcessor {
                     let skills_input = SkillsLoadInput::new(
                         cwd_abs.clone(),
                         effective_skill_roots,
-                        codex_thread_runtime::config::skill_config_layer_stack_from_config_layer_stack(
+                        thread_service::config::skill_config_layer_stack_from_config_layer_stack(
                             &config_layer_stack,
                         ),
                         config.bundled_skills_enabled(),
@@ -563,7 +563,7 @@ impl CatalogRequestProcessor {
             {
                 let plugins_input = config.plugins_config_input();
                 let plugin_config_layer_stack =
-                    codex_thread_runtime::config::plugin_config_layer_stack_from_config_layer_stack(
+                    thread_service::config::plugin_config_layer_stack_from_config_layer_stack(
                         &config.config_layer_stack,
                     );
                 plugins_manager
@@ -580,7 +580,7 @@ impl CatalogRequestProcessor {
                 feature_enabled: config.features.enabled(Feature::CodexHooks),
                 bypass_hook_trust: config.bypass_hook_trust,
                 config_layer_stack: Some(
-                    codex_thread_runtime::config::hook_config_layer_stack_from_config_layer_stack(
+                    thread_service::config::hook_config_layer_stack_from_config_layer_stack(
                         &config.config_layer_stack,
                     ),
                 ),

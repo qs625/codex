@@ -31,6 +31,6 @@ tracing = { workspace = true, features = ["log"] }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-codex-thread-runtime = { workspace = true }
+thread-service = { workspace = true }
 pretty_assertions = { workspace = true }
 wiremock = { workspace = true }

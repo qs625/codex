@@ -21,7 +21,7 @@ codex-permissions-runtime = { workspace = true }
 codex-protocol = { workspace = true }
 codex-sandboxing-api = { workspace = true }
 codex-session-telemetry-api = { workspace = true }
-codex-thread-api = { workspace = true }
+thread-service-api = { workspace = true }
 codex-tool-config = { workspace = true }
 codex-tool-types = { workspace = true }
 codex-utils-absolute-path = { workspace = true }

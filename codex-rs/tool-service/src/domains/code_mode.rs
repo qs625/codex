@@ -2,6 +2,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::planning::ToolSpec;
+use crate::planning::code_mode_exec_plan_for_specs;
+use crate::planning::collect_code_mode_tool_definitions;
+use crate::planning::create_code_mode_tool;
+use crate::planning::create_code_mode_wait_tool;
 use codex_code_mode_api::DEFAULT_WAIT_YIELD_TIME_MS;
 use codex_code_mode_api::ExecuteRequest;
 use codex_code_mode_api::FunctionCallOutputContentItem as CodeModeContentItem;
@@ -12,17 +17,12 @@ use codex_code_mode_api::WaitRequest;
 use codex_code_mode_api::parse_exec_source;
 use codex_command_service_api::resolve_max_tokens;
 use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
-use codex_thread_api::SessionCodeModeCaller;
-use codex_thread_api::ThreadRuntimeCapability;
-use codex_thread_runtime::ThreadRuntimeSession;
-use codex_thread_runtime::ThreadTurnContext;
-use crate::planning::ToolSpec;
-use crate::planning::code_mode_exec_plan_for_specs;
-use crate::planning::collect_code_mode_tool_definitions;
-use crate::planning::create_code_mode_tool;
-use crate::planning::create_code_mode_wait_tool;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
+use thread_service_api::SessionCodeModeCaller;
+use thread_service_api::ThreadRuntimeCapability;
+use thread_service::ThreadRuntimeSession;
+use thread_service::ThreadTurnContext;
 use codex_tool_service_api::AnyToolResult;
+use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolName;
@@ -85,8 +85,14 @@ pub(crate) async fn dispatch(
             if call.tool_name.namespace.is_none()
                 && call.tool_name.name.as_str() == codex_code_mode_api::PUBLIC_TOOL_NAME =>
         {
-            dispatch_execute(session.as_ref(), turn.as_ref(), call.call_id.clone(), input, &nested_tool_specs)
-                .await?
+            dispatch_execute(
+                session.as_ref(),
+                turn.as_ref(),
+                call.call_id.clone(),
+                input,
+                &nested_tool_specs,
+            )
+            .await?
         }
         ToolPayload::Function { arguments }
             if call.tool_name.namespace.is_none()
@@ -136,7 +142,12 @@ async fn dispatch_execute(
     let enabled_tools = collect_code_mode_tool_definitions(nested_tool_specs);
     let stored_values = session.code_mode_stored_values().await;
     let runtime_cell_id = session.code_mode_allocate_cell_id();
-    session.record_code_mode_cell_started(turn, runtime_cell_id.as_str(), call_id.as_str(), args.code.as_str());
+    session.record_code_mode_cell_started(
+        turn,
+        runtime_cell_id.as_str(),
+        call_id.as_str(),
+        args.code.as_str(),
+    );
     let started_at = Instant::now();
     let response = session
         .code_mode_execute(ExecuteRequest {
@@ -181,9 +192,15 @@ async fn dispatch_wait(
     {
         session.record_code_mode_cell_ended(turn, runtime_cell_id(response), response);
     }
-    handle_runtime_response(session, turn, wait_response.into(), args.max_tokens, started_at)
-        .await
-        .map_err(FunctionCallError::RespondToModel)
+    handle_runtime_response(
+        session,
+        turn,
+        wait_response.into(),
+        args.max_tokens,
+        started_at,
+    )
+    .await
+    .map_err(FunctionCallError::RespondToModel)
 }
 
 async fn handle_runtime_response(
@@ -214,13 +231,18 @@ async fn handle_runtime_response(
             session.code_mode_replace_stored_values(stored_values).await;
             let success = error_text.is_none();
             if let Some(error_text) = error_text {
-                content_items.push(codex_protocol::models::FunctionCallOutputContentItem::InputText {
-                    text: format!("Script error:\n{error_text}"),
-                });
+                content_items.push(
+                    codex_protocol::models::FunctionCallOutputContentItem::InputText {
+                        text: format!("Script error:\n{error_text}"),
+                    },
+                );
             }
             content_items = truncate_code_mode_result(content_items, max_output_tokens);
             prepend_script_status(&mut content_items, &script_status, started_at.elapsed());
-            Ok(FunctionToolOutput::from_content(content_items, Some(success)))
+            Ok(FunctionToolOutput::from_content(
+                content_items,
+                Some(success),
+            ))
         }
     }
 }
@@ -229,12 +251,17 @@ fn sanitize_runtime_image_detail(
     turn: &ThreadTurnContext,
     items: &mut [codex_protocol::models::FunctionCallOutputContentItem],
 ) {
-    codex_tool_config::sanitize_original_image_detail(turn.can_request_original_image_detail(), items);
+    codex_tool_config::sanitize_original_image_detail(
+        turn.can_request_original_image_detail(),
+        items,
+    );
 }
 
 fn format_script_status(response: &RuntimeResponse) -> String {
     match response {
-        RuntimeResponse::Yielded { cell_id, .. } => format!("Script running with cell ID {cell_id}"),
+        RuntimeResponse::Yielded { cell_id, .. } => {
+            format!("Script running with cell ID {cell_id}")
+        }
         RuntimeResponse::Terminated { .. } => "Script terminated".to_string(),
         RuntimeResponse::Result { error_text, .. } => {
             if error_text.is_none() {

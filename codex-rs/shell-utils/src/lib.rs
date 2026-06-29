@@ -1,4 +1,20 @@
+//! Shared shell parsing, normalization, and safety utilities.
+
+mod approval_canonicalization;
+pub mod bash;
+pub mod is_dangerous_command;
+pub mod is_safe_command;
+pub mod parse_command;
+pub mod powershell;
+mod powershell_parser;
+mod shell_detect;
+#[cfg(windows)]
+mod windows_dangerous_commands;
+mod windows_safe_commands;
+
 use std::path::PathBuf;
+
+pub use approval_canonicalization::canonicalize_command_for_approval;
 
 pub fn shlex_join(tokens: &[String]) -> String {
     shlex::try_join(tokens.iter().map(String::as_str))

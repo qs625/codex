@@ -18,6 +18,7 @@ doctest = false
 workspace = true
 
 [dependencies]
+approval-service = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 clap_complete = { workspace = true }
@@ -36,7 +37,7 @@ codex-config-edit = { workspace = true }
 codex-config-local-loader = { workspace = true }
 codex-config-loader = { workspace = true }
 codex-config-types = { workspace = true }
-codex-thread-runtime = { workspace = true }
+thread-service = { workspace = true }
 codex-core-plugins = { workspace = true }
 codex-exec = { workspace = true }
 codex-exec-server-api = { workspace = true }
@@ -44,10 +45,12 @@ codex-exec-server = { workspace = true }
 codex-execpolicy = { workspace = true }
 codex-execpolicy-cli = { workspace = true }
 codex-features = { workspace = true }
+goal-service = { workspace = true }
 codex-install-context = { workspace = true }
 codex-login = { workspace = true, features = ["model-provider-auth"] }
 codex-memories-write = { workspace = true }
 codex-mcp = { workspace = true }
+mcp-service = { workspace = true }
 codex-mcp-server = { workspace = true }
 codex-mcp-types = { workspace = true }
 codex-model-provider = { workspace = true }
@@ -65,7 +68,7 @@ codex-state = { workspace = true }
 codex-state-api = { workspace = true }
 codex-stdio-to-uds = { workspace = true }
 codex-terminal-detection = { workspace = true }
-codex-thread-api = { workspace = true }
+thread-service-api = { workspace = true }
 codex-thread-store = { workspace = true }
 codex-tool-config = { workspace = true }
 codex-tool-service = { workspace = true }

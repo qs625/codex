@@ -1,8 +1,8 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
-use codex_command_service_api::CommandServiceSessionCapability;
-use codex_command_service_api::CommandServiceTurnCapability;
+use thread_service_api::ThreadRuntimeCapability;
+use thread_service_api::ThreadSessionCapability;
 use codex_command_service_api::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
@@ -110,8 +110,8 @@ pub(crate) fn start_streaming_output(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_exit_watcher(
     process: Arc<UnifiedExecProcess>,
-    session_ref: Arc<dyn CommandServiceSessionCapability>,
-    turn_ref: Arc<dyn CommandServiceTurnCapability>,
+    session_ref: Arc<dyn ThreadSessionCapability>,
+    turn_ref: Arc<dyn ThreadRuntimeCapability>,
     call_id: String,
     command: Vec<String>,
     cwd: AbsolutePathBuf,
@@ -175,12 +175,13 @@ pub(crate) fn spawn_exit_watcher(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn process_chunk(
     pending: &mut Vec<u8>,
     transcript: &Arc<Mutex<HeadTailBuffer>>,
     call_id: &str,
-    session_ref: &Arc<dyn CommandServiceSessionCapability>,
-    turn_ref: &Arc<dyn CommandServiceTurnCapability>,
+    session_ref: &Arc<dyn ThreadSessionCapability>,
+    turn_ref: &Arc<dyn ThreadRuntimeCapability>,
     emitted_deltas: &mut usize,
     notify_on: CommandNotificationFilter,
     notification_state: &Arc<CommandNotificationState>,
@@ -209,7 +210,7 @@ async fn process_chunk(
             chunk: prefix.clone(),
         };
         session_ref
-            .send_event(turn_ref.as_ref(), EventMsg::ExecCommandOutputDelta(event))
+            .emit_event(turn_ref.as_ref(), EventMsg::ExecCommandOutputDelta(event))
             .await;
         *emitted_deltas += 1;
         if generates_notification {
@@ -224,7 +225,7 @@ async fn process_chunk(
                 created_at_ms: now_unix_timestamp_ms(),
             };
             session_ref
-                .record_model_items_and_emit_display_events(turn_ref.as_ref(), &[item])
+                .record_model_items_and_emit_display_events(turn_ref.as_ref(), vec![item])
                 .await;
             notification_state
                 .notify(CommandNotificationKind::Output)
@@ -238,8 +239,8 @@ async fn process_chunk(
 /// text when the transcript is empty.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn emit_exec_end_for_unified_exec(
-    session_ref: Arc<dyn CommandServiceSessionCapability>,
-    turn_ref: Arc<dyn CommandServiceTurnCapability>,
+    session_ref: Arc<dyn ThreadSessionCapability>,
+    turn_ref: Arc<dyn ThreadRuntimeCapability>,
     call_id: String,
     command: Vec<String>,
     cwd: AbsolutePathBuf,
@@ -271,8 +272,8 @@ pub(crate) async fn emit_exec_end_for_unified_exec(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn emit_failed_exec_end_for_unified_exec(
-    session_ref: Arc<dyn CommandServiceSessionCapability>,
-    turn_ref: Arc<dyn CommandServiceTurnCapability>,
+    session_ref: Arc<dyn ThreadSessionCapability>,
+    turn_ref: Arc<dyn ThreadRuntimeCapability>,
     call_id: String,
     command: Vec<String>,
     cwd: AbsolutePathBuf,

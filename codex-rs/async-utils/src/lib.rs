@@ -9,12 +9,10 @@ pub enum CancelErr {
 pub trait OrCancelExt: Sized {
     type Output;
 
-    fn or_cancel<'a>(
+    fn or_cancel(
         self,
-        token: &'a CancellationToken,
-    ) -> impl Future<Output = Result<Self::Output, CancelErr>> + Send + 'a
-    where
-        Self: 'a;
+        token: &CancellationToken,
+    ) -> impl Future<Output = Result<Self::Output, CancelErr>> + Send;
 }
 
 impl<F> OrCancelExt for F
@@ -24,13 +22,11 @@ where
 {
     type Output = F::Output;
 
-    fn or_cancel<'a>(
+    #[allow(clippy::manual_async_fn)]
+    fn or_cancel(
         self,
-        token: &'a CancellationToken,
-    ) -> impl Future<Output = Result<Self::Output, CancelErr>> + Send + 'a
-    where
-        Self: 'a,
-    {
+        token: &CancellationToken,
+    ) -> impl Future<Output = Result<Self::Output, CancelErr>> + Send {
         async move {
             tokio::select! {
                 _ = token.cancelled() => Err(CancelErr::Cancelled),

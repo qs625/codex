@@ -1,10 +1,10 @@
 use super::*;
 
 use codex_config_types::McpServerConfig;
-use codex_mcp_runtime_api::SharedMcpAuthHeaderProvider;
-use codex_mcp_runtime_api::StaticMcpAuthHeaderProvider;
 use codex_protocol::mcp::CallToolResult;
 use futures::future::BoxFuture;
+use mcp_service_api::SharedMcpAuthHeaderProvider;
+use mcp_service_api::StaticMcpAuthHeaderProvider;
 use std::collections::HashMap;
 use std::io;
 
@@ -16,7 +16,7 @@ fn mcp_runtime_environment(
 ) -> McpRuntimeEnvironment {
     let local_http_client: Arc<dyn codex_exec_server_api::HttpClient> =
         Arc::new(codex_exec_server::ReqwestHttpClient);
-    McpRuntimeEnvironment::new(codex_mcp_runtime_api::McpRuntimeEnvironmentParams {
+    McpRuntimeEnvironment::new(mcp_service_api::McpRuntimeEnvironmentParams {
         remote_available: environment.is_remote(),
         remote_exec_backend: environment.get_exec_backend(),
         local_http_client,
@@ -96,7 +96,7 @@ impl McpProcessorRuntime for ThreadService {
     }
 
     fn is_thread_loaded(&self, thread_id: ThreadId) -> BoxFuture<'_, bool> {
-        Box::pin(codex_thread_api::LiveThreadRegistry::is_thread_loaded(
+        Box::pin(thread_service_api::LiveThreadRegistry::is_thread_loaded(
             self, thread_id,
         ))
     }

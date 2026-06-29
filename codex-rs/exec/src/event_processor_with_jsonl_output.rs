@@ -13,9 +13,9 @@ use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadTokenUsage;
 use codex_app_server_protocol::TurnStatus;
-use codex_thread_runtime::config::Config;
 use codex_protocol::models::WebSearchAction;
 use codex_protocol::protocol::SessionConfiguredEvent;
+use thread_service::config::Config;
 use serde_json::json;
 
 pub use crate::event_processor::CodexStatus;

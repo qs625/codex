@@ -1,6 +1,5 @@
 use chrono::DateTime;
 use chrono::Utc;
-use codex_thread_runtime::test_support::all_model_presets;
 use codex_models_manager::client_version_to_whole;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::openai_models::ConfigShellToolType;
@@ -9,6 +8,7 @@ use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ModelVisibility;
 use codex_protocol::openai_models::TruncationPolicyConfig;
 use codex_protocol::openai_models::default_input_modalities;
+use thread_service::test_support::all_model_presets;
 use serde_json::json;
 use std::path::Path;
 

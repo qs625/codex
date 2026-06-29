@@ -8,8 +8,10 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+codex-config-state = { workspace = true }
+codex-config-types = { workspace = true }
 codex-protocol = { workspace = true }
-codex-runtime-capability-api = { workspace = true }
+thread-service-api = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 

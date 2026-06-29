@@ -1,5 +1,4 @@
 use codex_config_types::PluginConfig;
-use codex_thread_runtime::config::Config;
 use codex_core_plugins::PluginInstallRequest;
 use codex_core_plugins::PluginsManager;
 use codex_core_plugins::marketplace::MarketplacePluginInstallPolicy;
@@ -20,6 +19,7 @@ use codex_external_agent_sessions::ExternalAgentSessionMigration;
 use codex_external_agent_sessions::detect_recent_sessions;
 use codex_plugin::PluginId;
 use codex_protocol::protocol::Product;
+use thread_service::config::Config;
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 use std::collections::HashMap;

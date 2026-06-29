@@ -3,7 +3,7 @@ mod tool_contract;
 
 pub use runtime::DisabledWorkflowRunController;
 pub use runtime::WorkflowAgentBinding;
-pub use runtime::WorkflowCapability;
+pub use runtime::WorkflowApi;
 pub use runtime::WorkflowRun;
 pub use runtime::WorkflowRunController;
 pub use runtime::WorkflowRunFuture;
@@ -12,12 +12,6 @@ pub use runtime::WorkflowRunStatus;
 pub use runtime::WorkflowRunUpdateError;
 pub use runtime::WorkflowRunUpdateFuture;
 pub use runtime::WorkflowRunUpdateReceiver;
-pub use runtime::WorkflowProgressFuture;
-pub use runtime::WorkflowProgressSink;
-pub use runtime::WorkflowApi;
-pub use runtime::WorkflowRuntimeBridge;
-pub use runtime::WorkflowRuntimeError;
-pub use runtime::WorkflowRuntimeRequest;
 pub use tool_contract::WorkflowAbortArgs;
 pub use tool_contract::WorkflowDescribeArgs;
 pub use tool_contract::WorkflowFollowupTaskToolCall;
@@ -32,15 +26,22 @@ pub use tool_contract::workflow_tool_call_id;
 pub use tool_contract::workflow_tool_output_json;
 pub use tool_contract::workflow_wait_agent_tool_call;
 
+use codex_config_state::ConfigLayerEntry;
+use codex_config_types::ConfigLayerSource;
+use serde_json::Value;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
+use std::future::Future;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::Arc;
+use thread_service_api::ThreadTurnCapability;
 
 const WORKFLOW_INSTRUCTIONS_FILE: &str = "WORKFLOW.md";
 const MAX_WORKFLOW_INSTRUCTIONS_BYTES: usize = 16 * 1024;
@@ -49,6 +50,102 @@ const MAX_CONTEXT_FIELD_CHARS: usize = 600;
 const MAX_CONTEXT_INSTRUCTIONS_CHARS: usize = 2_000;
 const MAX_AVAILABLE_WORKFLOWS_CONTEXT_CHARS: usize = 24_000;
 const TRUNCATED_NOTICE: &str = "... [truncated]";
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowDiscoveryContext {
+    pub home_root: PathBuf,
+    #[serde(default)]
+    pub project_roots: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowRuntimeRequest {
+    pub run_id: String,
+    pub workflow_id: String,
+    pub rpc_id: u64,
+    pub method: String,
+    #[serde(default)]
+    pub params: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowRuntimeError {
+    pub code: String,
+    pub message: String,
+}
+
+impl WorkflowRuntimeError {
+    pub fn unsupported(message: impl Into<String>) -> Self {
+        Self {
+            code: "unsupported".to_string(),
+            message: message.into(),
+        }
+    }
+
+    pub fn invalid_request(message: impl Into<String>) -> Self {
+        Self {
+            code: "invalid_request".to_string(),
+            message: message.into(),
+        }
+    }
+}
+
+pub trait WorkflowRuntimeBridge: Send + Sync {
+    fn call(
+        &self,
+        request: WorkflowRuntimeRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, WorkflowRuntimeError>> + Send + '_>>;
+}
+
+pub type WorkflowProgressFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+
+pub trait WorkflowProgressSink: Send + Sync + 'static {
+    fn record_workflow_progress<'a>(
+        &'a self,
+        run_id: &'a str,
+        workflow_id: &'a str,
+        status: Value,
+        runner_status: Option<String>,
+        kind: codex_protocol::models::WorkflowRunProgressKind,
+        message: Option<String>,
+        updated_at: i64,
+    ) -> WorkflowProgressFuture<'a>;
+}
+
+#[derive(Clone)]
+pub struct WorkflowExecutionContext {
+    discovery: WorkflowDiscoveryContext,
+    turn: Option<Arc<dyn ThreadTurnCapability>>,
+}
+
+impl WorkflowExecutionContext {
+    pub fn new(
+        discovery: WorkflowDiscoveryContext,
+        turn: Option<Arc<dyn ThreadTurnCapability>>,
+    ) -> Self {
+        Self { discovery, turn }
+    }
+
+    pub fn discovery(&self) -> &WorkflowDiscoveryContext {
+        &self.discovery
+    }
+
+    pub fn turn(&self) -> Option<Arc<dyn ThreadTurnCapability>> {
+        self.turn.clone()
+    }
+}
+
+impl From<thread_service_api::ThreadDiscoveryContext> for WorkflowDiscoveryContext {
+    fn from(value: thread_service_api::ThreadDiscoveryContext) -> Self {
+        Self {
+            home_root: value.home_root,
+            project_roots: value.project_roots,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -233,6 +330,42 @@ pub fn load_workflow_registry_from_roots(
     WorkflowRegistry {
         workflows: by_id.into_values().collect(),
         diagnostics,
+    }
+}
+
+pub fn load_workflow_registry(context: &WorkflowDiscoveryContext) -> WorkflowRegistry {
+    load_workflow_registry_from_roots(
+        context.home_root.clone(),
+        context.project_roots.clone(),
+    )
+}
+
+pub fn workflow_discovery_context_from_config_layers(
+    codex_home: &Path,
+    cwd: &Path,
+    layers: Vec<ConfigLayerEntry>,
+) -> WorkflowDiscoveryContext {
+    WorkflowDiscoveryContext {
+        home_root: codex_home.join("workflows"),
+        project_roots: project_workflow_roots(cwd, layers),
+    }
+}
+
+fn project_workflow_roots(cwd: &Path, layers: Vec<ConfigLayerEntry>) -> Vec<PathBuf> {
+    if layers.is_empty() {
+        return vec![cwd.join(".codex").join("workflows")];
+    }
+
+    let roots = layers
+        .into_iter()
+        .filter(|layer| matches!(&layer.name, ConfigLayerSource::Project { .. }))
+        .filter_map(|layer| ConfigLayerEntry::config_folder(&layer))
+        .map(|folder| folder.join("workflows").to_path_buf())
+        .collect::<Vec<_>>();
+    if roots.is_empty() {
+        vec![cwd.join(".codex").join("workflows")]
+    } else {
+        roots
     }
 }
 

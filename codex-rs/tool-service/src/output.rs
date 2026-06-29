@@ -55,8 +55,9 @@ impl ToolOutput for McpToolOutput {
     }
 
     fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
-        serde_json::to_value(&self.result)
-            .unwrap_or_else(|err| JsonValue::String(format!("failed to serialize mcp result: {err}")))
+        serde_json::to_value(&self.result).unwrap_or_else(|err| {
+            JsonValue::String(format!("failed to serialize mcp result: {err}"))
+        })
     }
 }
 
@@ -67,7 +68,10 @@ impl McpToolOutput {
             sanitize_original_image_detail(self.original_image_detail_supported, items);
         }
 
-        let header = format!("Wall time: {:.4} seconds\nOutput:", self.wall_time.as_secs_f64());
+        let header = format!(
+            "Wall time: {:.4} seconds\nOutput:",
+            self.wall_time.as_secs_f64()
+        );
         match &mut payload.body {
             FunctionCallOutputBody::Text(text) => {
                 if text.is_empty() {
@@ -117,7 +121,9 @@ impl FunctionToolOutput {
 
 impl ToolOutput for FunctionToolOutput {
     fn log_preview(&self) -> String {
-        telemetry_preview(&function_call_output_content_items_to_text(&self.body).unwrap_or_default())
+        telemetry_preview(
+            &function_call_output_content_items_to_text(&self.body).unwrap_or_default(),
+        )
     }
 
     fn success_for_logging(&self) -> bool {
@@ -251,7 +257,10 @@ impl ExecCommandToolOutput {
         if !self.chunk_id.is_empty() {
             sections.push(format!("Chunk ID: {}", self.chunk_id));
         }
-        sections.push(format!("Wall time: {:.4} seconds", self.wall_time.as_secs_f64()));
+        sections.push(format!(
+            "Wall time: {:.4} seconds",
+            self.wall_time.as_secs_f64()
+        ));
         if let Some(exit_code) = self.exit_code {
             sections.push(format!("Process exited with code {exit_code}"));
         }

@@ -85,7 +85,7 @@ impl WindowsSandboxRequestProcessor {
                         codex_home: config.codex_home.to_path_buf(),
                         active_profile: config.active_profile.clone(),
                     };
-                    codex_thread_runtime::windows_sandbox::run_windows_sandbox_setup(setup_request).await
+                    codex_sandboxing::run_windows_sandbox_setup(setup_request).await
                 }
                 Err(err) => Err(err.into()),
             };

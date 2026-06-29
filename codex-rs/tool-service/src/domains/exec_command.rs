@@ -1,13 +1,17 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::planning::CommandToolOptions;
+use crate::planning::ToolName;
+use crate::planning::ToolSpec;
+use crate::planning::create_exec_command_tool_with_environment_id;
 use codex_approval_service_api::ApprovalServiceApi;
 use codex_approval_service_api::ExecCommandApprovalDispatch;
 use codex_approval_service_api::ExecCommandApprovalOutcome;
 use codex_command_service_api::CommandServiceApi;
-use codex_command_service_api::CommandServiceSessionCapability;
-use codex_command_service_api::CommandServiceTurnCapability;
+use codex_command_service_api::CommandServiceSessionApi;
 use codex_command_service_api::ExecCommandApprovalMode;
+use codex_command_service_api::ExecCommandArgs;
 use codex_command_service_api::ExecCommandRunOutput;
 use codex_command_service_api::ExecCommandRunRequest;
 use codex_command_service_api::UnifiedExecApprovalKey;
@@ -17,17 +21,13 @@ use codex_command_service_api::resolve_max_tokens;
 use codex_permissions_runtime::ExecPolicyApprovalRequest;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::protocol::AskForApproval;
-use codex_thread_api::ApplyPatchEnvironment;
-use codex_thread_api::SharedToolTurnDiffTracker;
-use codex_thread_runtime::ThreadRuntimeSession;
-use codex_thread_runtime::ThreadTurnContext;
-use crate::planning::CommandToolOptions;
-use crate::planning::ToolName;
-use crate::planning::ToolSpec;
-use crate::planning::create_exec_command_tool_with_environment_id;
-use codex_command_service_api::ExecCommandArgs;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
+use thread_service_api::SharedToolTurnDiffTracker;
+use thread_service_api::ThreadSessionCapability;
+use thread_service_api::ThreadRuntimeCapability;
+use thread_service::ThreadRuntimeSession;
+use thread_service::ThreadTurnContext;
 use codex_tool_service_api::AnyToolResult;
+use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_service_api::HookToolName;
 use codex_tool_service_api::PostToolUsePayload;
 use codex_tool_types::FunctionCallError;
@@ -44,20 +44,6 @@ use crate::domains::apply_patch::normalize_and_validate_additional_permissions;
 use crate::output::ExecCommandToolOutput;
 
 const EXEC_COMMAND_TOOL_NAME: &str = "exec_command";
-
-struct ThreadApplyPatchEnvironmentAdapter {
-    inner: Arc<dyn codex_command_service_api::ApplyPatchEnvironment>,
-}
-
-impl ApplyPatchEnvironment for ThreadApplyPatchEnvironmentAdapter {
-    fn environment_id(&self) -> &str {
-        self.inner.environment_id()
-    }
-
-    fn filesystem(&self) -> Arc<dyn codex_file_system::ExecutorFileSystem> {
-        self.inner.filesystem()
-    }
-}
 
 // This domain owns the `exec_command` tool. The underlying config enum still
 // uses historical shell-oriented names, but there is no separate legacy shell
@@ -139,12 +125,13 @@ async fn dispatch_exec_command(
 ) -> Result<ExecCommandToolOutput, FunctionCallError> {
     let arguments = call.function_arguments()?;
     let environment_args: ExecCommandEnvironmentArgs = parse_arguments(arguments)?;
-    let turn_capability = turn.as_ref() as &dyn CommandServiceTurnCapability;
-    let session_capability = session.as_ref() as &dyn CommandServiceSessionCapability;
+    let turn_capability = turn.as_ref() as &dyn ThreadRuntimeCapability;
+    let session_api = session.as_ref() as &dyn CommandServiceSessionApi;
     let Some(turn_environment) = turn_capability.resolve_exec_command_environment(
         environment_args.environment_id.as_deref(),
         environment_args.workdir.as_deref(),
-    )? else {
+    )?
+    else {
         return Err(FunctionCallError::RespondToModel(
             "unified exec is unavailable in this session".to_string(),
         ));
@@ -152,19 +139,19 @@ async fn dispatch_exec_command(
     let cwd = turn_environment.cwd.clone();
     let args: ExecCommandArgs = parse_arguments_with_base_path(arguments, &cwd)?;
     let hook_command = args.cmd.clone();
-    session_capability
+    session_api
         .maybe_emit_implicit_skill_invocation(turn_capability, &hook_command, &cwd)
         .await;
 
     let model_shell = args
         .shell
         .as_deref()
-        .map(|shell| session_capability.resolve_model_shell(Path::new(shell)));
-    let resolved_command = session_capability
+        .map(|shell| session_api.resolve_model_shell(Path::new(shell)));
+    let resolved_command = session_api
         .resolve_exec_command(turn_capability, &args.cmd, args.login, model_shell.as_ref())
         .map_err(FunctionCallError::RespondToModel)?;
     let command = resolved_command.command;
-    let command_for_display = codex_shell_command::parse_command::shlex_join(&command);
+    let command_for_display = codex_shell_utils::parse_command::shlex_join(&command);
 
     let ExecCommandArgs {
         tty,
@@ -178,14 +165,12 @@ async fn dispatch_exec_command(
         prefix_rule,
         ..
     } = args;
-    let max_output_tokens = effective_max_output_tokens(
-        max_output_tokens,
-        turn_capability.truncation_policy(),
-    );
+    let max_output_tokens =
+        effective_max_output_tokens(max_output_tokens, turn_capability.truncation_policy());
 
-    let exec_permission_approvals_enabled = session_capability.exec_permission_approvals_enabled();
+    let exec_permission_approvals_enabled = session_api.exec_permission_approvals_enabled();
     let requested_additional_permissions = additional_permissions.clone();
-    let grants = session_capability.tool_permission_grants().await;
+    let grants = session.tool_permission_grants().await;
     let effective_additional_permissions = apply_granted_permissions_from_grants(
         grants.session,
         grants.turn,
@@ -194,7 +179,7 @@ async fn dispatch_exec_command(
         additional_permissions,
     );
     let additional_permissions_allowed = exec_permission_approvals_enabled
-        || (session_capability.request_permissions_tool_enabled()
+        || (session_api.request_permissions_tool_enabled()
             && effective_additional_permissions.permissions_preapproved);
 
     if effective_additional_permissions
@@ -220,7 +205,9 @@ async fn dispatch_exec_command(
                 additional_permissions_allowed,
                 turn_capability.approval_policy(),
                 effective_additional_permissions.sandbox_permissions,
-                effective_additional_permissions.additional_permissions.clone(),
+                effective_additional_permissions
+                    .additional_permissions
+                    .clone(),
                 effective_additional_permissions.permissions_preapproved,
                 &cwd,
             )
@@ -229,7 +216,7 @@ async fn dispatch_exec_command(
     )
     .map_err(FunctionCallError::RespondToModel)?;
 
-    let exec_approval_requirement = session_capability
+    let exec_approval_requirement = session_api
         .create_exec_approval_requirement(ExecPolicyApprovalRequest {
             command: &command,
             approval_policy: turn_capability.approval_policy(),
@@ -252,9 +239,7 @@ async fn dispatch_exec_command(
         None,
         &command,
         &cwd,
-        Arc::new(ThreadApplyPatchEnvironmentAdapter {
-            inner: turn_environment.apply_patch_environment.clone(),
-        }),
+        turn_environment.apply_patch_environment.clone(),
         &call.call_id,
         EXEC_COMMAND_TOOL_NAME,
     )
@@ -288,7 +273,7 @@ async fn dispatch_exec_command(
             tty,
             exec_approval_requirement: exec_approval_requirement.clone(),
             approval_keys: vec![UnifiedExecApprovalKey {
-                command: codex_shell_command::canonicalize_command_for_approval(&command),
+                command: codex_shell_utils::canonicalize_command_for_approval(&command),
                 cwd: cwd.clone(),
                 tty,
                 sandbox_permissions: effective_additional_permissions.sandbox_permissions,
@@ -300,10 +285,7 @@ async fn dispatch_exec_command(
         .map_err(FunctionCallError::RespondToModel)?;
 
     turn_capability.emit_unified_exec_tty_metric(tty);
-    let process_id = session_capability
-        .command_service_state()
-        .allocate_process_id()
-        .await;
+    let process_id = session_api.command_service_state().allocate_process_id().await;
     let run_request = ExecCommandRunRequest {
         command,
         shell_type: resolved_command.shell_type,
@@ -317,7 +299,8 @@ async fn dispatch_exec_command(
         tty,
         sandbox_permissions: effective_additional_permissions.sandbox_permissions,
         additional_permissions: normalized_additional_permissions,
-        additional_permissions_preapproved: effective_additional_permissions.permissions_preapproved,
+        additional_permissions_preapproved: effective_additional_permissions
+            .permissions_preapproved,
         justification,
         prefix_rule,
         notify_on: notify_on.into(),
@@ -331,8 +314,9 @@ async fn dispatch_exec_command(
     };
     match command_service_api
         .run_exec_command(
-            Arc::clone(&session) as Arc<dyn CommandServiceSessionCapability>,
-            Arc::clone(&turn) as Arc<dyn CommandServiceTurnCapability>,
+            Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>,
+            Arc::clone(&session) as Arc<dyn CommandServiceSessionApi>,
+            Arc::clone(&turn) as Arc<dyn ThreadRuntimeCapability>,
             call.call_id.clone(),
             run_request,
         )
@@ -441,8 +425,8 @@ mod tests {
     use codex_command_service_api::CommandWaitRequest;
     use codex_command_service_api::WriteStdinOutput;
     use codex_command_service_api::WriteStdinRequest;
-    use codex_thread_runtime::test_support;
-    use codex_thread_api::TurnDiffTracker;
+    use thread_service_api::TurnDiffTracker;
+    use thread_service::test_support;
 
     struct PanickingApprovalService;
 
@@ -467,8 +451,9 @@ mod tests {
     impl CommandServiceApi for PanickingCommandService {
         fn run_exec_command<'a>(
             &'a self,
-            _session: Arc<dyn CommandServiceSessionCapability>,
-            _turn: Arc<dyn CommandServiceTurnCapability>,
+            _session: Arc<dyn thread_service_api::ThreadSessionCapability>,
+            _session_api: Arc<dyn CommandServiceSessionApi>,
+            _turn: Arc<dyn ThreadRuntimeCapability>,
             _call_id: String,
             _request: ExecCommandRunRequest,
         ) -> CommandServiceFuture<'a, Result<ExecCommandRunOutput, UnifiedExecError>> {
@@ -477,7 +462,7 @@ mod tests {
 
         fn begin_command_wait<'a>(
             &'a self,
-            _session: Arc<dyn CommandServiceSessionCapability>,
+            _state: Arc<dyn codex_command_service_api::CommandServiceSessionState>,
             _request: CommandWaitRequest,
         ) -> CommandServiceFuture<'a, Result<Box<dyn CommandWaitOperation>, CommandSessionError>>
         {
@@ -486,7 +471,7 @@ mod tests {
 
         fn write_command_stdin<'a>(
             &'a self,
-            _session: Arc<dyn CommandServiceSessionCapability>,
+            _state: Arc<dyn codex_command_service_api::CommandServiceSessionState>,
             _request: WriteStdinRequest<'a>,
         ) -> CommandServiceFuture<'a, Result<WriteStdinOutput, CommandSessionError>> {
             Box::pin(async { panic!("unexpected command_write_stdin") })
@@ -517,7 +502,9 @@ mod tests {
         let Err(FunctionCallError::Fatal(message)) = result else {
             panic!("expected incompatible payload error");
         };
-        assert_eq!(message, "tool exec_command invoked with incompatible payload");
+        assert_eq!(
+            message,
+            "tool exec_command invoked with incompatible payload"
+        );
     }
-
 }

@@ -1,0 +1,17 @@
+[package]
+name = "goal-service-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "goal_service_api"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-protocol = { workspace = true }
+thread-service-api = { workspace = true }

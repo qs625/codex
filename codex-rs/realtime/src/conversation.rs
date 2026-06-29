@@ -526,6 +526,12 @@ impl RealtimeConversationManager {
     }
 }
 
+impl Default for RealtimeConversationManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 async fn stop_conversation_state(
     mut state: ConversationState,
     fanout_task_stop: RealtimeFanoutTaskStop,

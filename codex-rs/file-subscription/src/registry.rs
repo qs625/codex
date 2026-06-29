@@ -34,6 +34,7 @@ const EVENT_COMMAND_TERM_GRACE_PERIOD: Duration = Duration::from_millis(250);
 struct SubscriptionEntry {
     _cancel_tx: oneshot::Sender<()>,
     persisted: PersistedSubscription,
+    #[cfg_attr(not(test), allow(dead_code))]
     event_command_runtime: Option<EventCommandRuntime>,
 }
 
@@ -210,6 +211,7 @@ impl FsSubscriptionRegistry {
             .await
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) async fn subscribe_event_command(
         &self,
         thread_id: ThreadId,
@@ -311,6 +313,7 @@ impl FsSubscriptionRegistry {
         });
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) async fn write_event_command_stdin(
         &self,
         thread_id: ThreadId,
@@ -906,6 +909,7 @@ async fn terminate_event_command_process_tree(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_event_command_output_event(
     thread_runtime: &dyn FileSubscriptionThreadRuntime,
     thread_id: ThreadId,

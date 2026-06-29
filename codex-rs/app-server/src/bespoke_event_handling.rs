@@ -84,8 +84,6 @@ use codex_app_server_protocol::WarningNotification;
 use codex_app_server_protocol::build_item_from_guardian_event;
 use codex_app_server_protocol::guardian_auto_approval_review_notification;
 use codex_app_server_protocol::item_event_to_server_notification;
-use codex_thread_runtime::review_format::format_review_findings_block;
-use codex_thread_runtime::review_prompts;
 use codex_protocol::ThreadId;
 use codex_protocol::items::TurnItem as CoreTurnItem;
 use codex_protocol::items::parse_hook_prompt_message;
@@ -112,7 +110,9 @@ use codex_protocol::request_user_input::RequestUserInputAnswer as CoreRequestUse
 use codex_protocol::request_user_input::RequestUserInputResponse as CoreRequestUserInputResponse;
 use codex_sandboxing_api::policy_transforms::intersect_permission_profiles;
 use codex_shell_utils::shlex_join;
-use codex_thread_api::ThreadRuntimeStatus;
+use thread_service_api::ThreadRuntimeStatus;
+use thread_service::review_format::format_review_findings_block;
+use thread_service::review_prompts;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -2167,8 +2167,6 @@ mod tests {
     use codex_app_server_protocol::GuardianApprovalReviewStatus;
     use codex_app_server_protocol::JSONRPCErrorError;
     use codex_app_server_protocol::TurnPlanStepStatus;
-    use codex_thread_runtime::CodexThread;
-    use codex_thread_runtime::ThreadService;
     use codex_login::CodexAuth;
     use codex_protocol::items::HookPromptFragment;
     use codex_protocol::items::build_hook_prompt_message;
@@ -2197,6 +2195,8 @@ mod tests {
     use codex_protocol::protocol::TokenUsage;
     use codex_protocol::protocol::TokenUsageInfo;
     use codex_protocol::protocol::UserMessageEvent;
+    use thread_service::CodexThread;
+    use thread_service::ThreadService;
     use codex_thread_store::StoredThread;
     use codex_thread_store::StoredThreadHistory;
     use codex_utils_absolute_path::AbsolutePathBuf;
@@ -2715,14 +2715,14 @@ mod tests {
         let codex_home = TempDir::new()?;
         let config = load_default_config_for_test(&codex_home).await;
         let thread_service = Arc::new(
-            codex_thread_runtime::test_support::thread_service_with_models_provider_and_home(
+            thread_service::test_support::thread_service_with_models_provider_and_home(
                 CodexAuth::create_dummy_chatgpt_auth_for_testing(),
                 config.model_provider.clone(),
                 config.codex_home.to_path_buf(),
                 Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
             ),
         );
-        let codex_thread_runtime::NewThread {
+        let thread_service::NewThread {
             thread_id: conversation_id,
             thread: conversation,
             ..
@@ -3293,14 +3293,14 @@ mod tests {
         let codex_home = TempDir::new()?;
         let config = load_default_config_for_test(&codex_home).await;
         let thread_service = Arc::new(
-            codex_thread_runtime::test_support::thread_service_with_models_provider_and_home(
+            thread_service::test_support::thread_service_with_models_provider_and_home(
                 CodexAuth::create_dummy_chatgpt_auth_for_testing(),
                 config.model_provider.clone(),
                 config.codex_home.to_path_buf(),
                 Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
             ),
         );
-        let codex_thread_runtime::NewThread {
+        let thread_service::NewThread {
             thread_id: conversation_id,
             thread: conversation,
             ..
@@ -3378,14 +3378,14 @@ mod tests {
         let codex_home = TempDir::new()?;
         let config = load_default_config_for_test(&codex_home).await;
         let thread_service = Arc::new(
-            codex_thread_runtime::test_support::thread_service_with_models_provider_and_home(
+            thread_service::test_support::thread_service_with_models_provider_and_home(
                 CodexAuth::create_dummy_chatgpt_auth_for_testing(),
                 config.model_provider.clone(),
                 config.codex_home.to_path_buf(),
                 Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
             ),
         );
-        let codex_thread_runtime::NewThread {
+        let thread_service::NewThread {
             thread_id: conversation_id,
             thread: conversation,
             ..
@@ -3459,14 +3459,14 @@ mod tests {
         let codex_home = TempDir::new()?;
         let config = load_default_config_for_test(&codex_home).await;
         let thread_service = Arc::new(
-            codex_thread_runtime::test_support::thread_service_with_models_provider_and_home(
+            thread_service::test_support::thread_service_with_models_provider_and_home(
                 CodexAuth::create_dummy_chatgpt_auth_for_testing(),
                 config.model_provider.clone(),
                 config.codex_home.to_path_buf(),
                 Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
             ),
         );
-        let codex_thread_runtime::NewThread {
+        let thread_service::NewThread {
             thread_id: conversation_id,
             thread: conversation,
             ..

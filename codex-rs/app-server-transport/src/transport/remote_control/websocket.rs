@@ -1252,7 +1252,7 @@ mod tests {
     use codex_login::token_data::TokenData;
     use codex_login::token_data::parse_chatgpt_jwt_claims;
     use codex_state::StateRuntime;
-    use codex_thread_runtime::test_support::auth_manager_from_auth;
+    use thread_service::test_support::auth_manager_from_auth;
     use futures::StreamExt;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;

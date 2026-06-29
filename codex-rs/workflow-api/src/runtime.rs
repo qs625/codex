@@ -1,19 +1,19 @@
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use codex_runtime_capability_api::ThreadCapability;
-use codex_protocol::models::WorkflowRunProgressKind;
-use serde::Deserialize;
-use serde::Serialize;
-use serde_json::Value;
-
 use crate::WorkflowAbortArgs;
-use crate::WorkflowDetails;
 use crate::WorkflowDescribeArgs;
+use crate::WorkflowDetails;
+use crate::WorkflowDiscoveryContext;
+use crate::WorkflowExecutionContext;
 use crate::WorkflowRegistry;
 use crate::WorkflowResumeArgs;
+use crate::WorkflowRuntimeBridge;
 use crate::WorkflowStartArgs;
 use crate::WorkflowStatusArgs;
 use crate::WorkflowSummary;
@@ -37,69 +37,10 @@ pub struct WorkflowAgentBinding {
     pub options: Value,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowRuntimeRequest {
-    pub run_id: String,
-    pub workflow_id: String,
-    pub rpc_id: u64,
-    pub method: String,
-    #[serde(default)]
-    pub params: Value,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowRuntimeError {
-    pub code: String,
-    pub message: String,
-}
-
-impl WorkflowRuntimeError {
-    pub fn unsupported(message: impl Into<String>) -> Self {
-        Self {
-            code: "unsupported".to_string(),
-            message: message.into(),
-        }
-    }
-
-    pub fn invalid_request(message: impl Into<String>) -> Self {
-        Self {
-            code: "invalid_request".to_string(),
-            message: message.into(),
-        }
-    }
-}
-
-/// Host implementation for workflow runtime requests.
-///
-/// Implementations must route requests through Codex runtime primitives so workflow scripts keep
-/// the same permission, lifecycle, and typed event semantics as normal tool calls.
-pub trait WorkflowRuntimeBridge: Send + Sync {
-    fn call(
-        &self,
-        request: WorkflowRuntimeRequest,
-    ) -> Pin<Box<dyn Future<Output = Result<Value, WorkflowRuntimeError>> + Send + '_>>;
-}
-
-pub type WorkflowProgressFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 pub type WorkflowRunResult = Result<WorkflowRun, String>;
 pub type WorkflowRunFuture<'a> = Pin<Box<dyn Future<Output = WorkflowRunResult> + Send + 'a>>;
 pub type WorkflowRunUpdateFuture<'a> =
     Pin<Box<dyn Future<Output = Result<WorkflowRun, WorkflowRunUpdateError>> + Send + 'a>>;
-
-/// Owned progress sink for workflow run lifecycle updates.
-///
-/// Workflow services may need to emit follow-up progress events from spawned
-/// background tasks after the initiating tool call has returned. This trait is
-/// the owned, `'static` surface for that use case.
-pub trait WorkflowProgressSink: Send + Sync + 'static {
-    fn record_workflow_progress<'a>(
-        &'a self,
-        run: &'a WorkflowRun,
-        kind: WorkflowRunProgressKind,
-    ) -> WorkflowProgressFuture<'a>;
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkflowRunUpdateError {
@@ -142,84 +83,45 @@ pub trait WorkflowRunController: Send + Sync {
     fn abort<'a>(&'a self, run_id: &'a str, reason: Option<String>) -> WorkflowRunFuture<'a>;
 }
 
-/// Workflow-specific runtime capability available during one live tool dispatch.
-///
-/// This extends the shared turn/runtime capability so workflow tools can
-/// consume the common active-turn contract while still exposing workflow-owned
-/// runtime hooks here.
-pub trait WorkflowCapability: ThreadCapability {
-    /// Load the workflow registry visible to this turn.
-    fn load_workflow_registry(&self) -> WorkflowRegistry;
-
-    /// Return the workflow run controller owned by the embedding runtime.
-    fn workflow_run_controller(&self) -> Arc<dyn WorkflowRunController>;
-
-    /// Create one workflow runtime bridge bound to the active capability.
-    fn create_workflow_runtime_bridge(&self) -> Arc<dyn WorkflowRuntimeBridge>;
-
-    /// Return an owned progress sink for background workflow lifecycle events.
-    fn workflow_progress_sink(&self) -> Arc<dyn WorkflowProgressSink>;
-}
-
-impl<Service> WorkflowCapability for Arc<Service>
-where
-    Service: WorkflowCapability,
-{
-    fn load_workflow_registry(&self) -> WorkflowRegistry {
-        self.as_ref().load_workflow_registry()
-    }
-
-    fn workflow_run_controller(&self) -> Arc<dyn WorkflowRunController> {
-        self.as_ref().workflow_run_controller()
-    }
-
-    fn create_workflow_runtime_bridge(&self) -> Arc<dyn WorkflowRuntimeBridge> {
-        self.as_ref().create_workflow_runtime_bridge()
-    }
-
-    fn workflow_progress_sink(&self) -> Arc<dyn WorkflowProgressSink> {
-        self.as_ref().workflow_progress_sink()
-    }
-}
-
 /// Narrow workflow service API consumed by tool handlers.
 ///
 /// This is the global workflow domain service boundary. Handlers should depend
 /// on this trait instead of assembling workflow controller, runtime bridge, and
 /// progress side effects themselves.
 pub trait WorkflowApi: Send + Sync + 'static {
+    fn subscribe_workflow_updates(&self) -> Box<dyn WorkflowRunUpdateReceiver>;
+
     fn list_workflows<'a>(
         &'a self,
-        capability: &'a dyn WorkflowCapability,
+        discovery: WorkflowDiscoveryContext,
     ) -> Pin<Box<dyn Future<Output = Result<WorkflowRegistry, String>> + Send + 'a>>;
 
     fn describe_workflow<'a>(
         &'a self,
-        capability: &'a dyn WorkflowCapability,
+        discovery: WorkflowDiscoveryContext,
         args: WorkflowDescribeArgs,
     ) -> Pin<Box<dyn Future<Output = Result<WorkflowDetails, String>> + Send + 'a>>;
 
     fn start_workflow<'a>(
         &'a self,
-        capability: &'a dyn WorkflowCapability,
+        context: WorkflowExecutionContext,
         args: WorkflowStartArgs,
     ) -> WorkflowRunFuture<'a>;
 
     fn workflow_status<'a>(
         &'a self,
-        capability: &'a dyn WorkflowCapability,
         args: WorkflowStatusArgs,
     ) -> WorkflowRunFuture<'a>;
 
     fn resume_workflow<'a>(
         &'a self,
-        capability: &'a dyn WorkflowCapability,
+        context: WorkflowExecutionContext,
         args: WorkflowResumeArgs,
     ) -> WorkflowRunFuture<'a>;
 
     fn abort_workflow<'a>(
         &'a self,
-        capability: &'a dyn WorkflowCapability,
+        context: WorkflowExecutionContext,
         args: WorkflowAbortArgs,
     ) -> WorkflowRunFuture<'a>;
 }
@@ -228,51 +130,54 @@ impl<Service> WorkflowApi for Arc<Service>
 where
     Service: WorkflowApi,
 {
+    fn subscribe_workflow_updates(&self) -> Box<dyn WorkflowRunUpdateReceiver> {
+        self.as_ref().subscribe_workflow_updates()
+    }
+
     fn list_workflows<'a>(
         &'a self,
-        capability: &'a dyn WorkflowCapability,
+        discovery: WorkflowDiscoveryContext,
     ) -> Pin<Box<dyn Future<Output = Result<WorkflowRegistry, String>> + Send + 'a>> {
-        self.as_ref().list_workflows(capability)
+        self.as_ref().list_workflows(discovery)
     }
 
     fn describe_workflow<'a>(
         &'a self,
-        capability: &'a dyn WorkflowCapability,
+        discovery: WorkflowDiscoveryContext,
         args: WorkflowDescribeArgs,
     ) -> Pin<Box<dyn Future<Output = Result<WorkflowDetails, String>> + Send + 'a>> {
-        self.as_ref().describe_workflow(capability, args)
+        self.as_ref().describe_workflow(discovery, args)
     }
 
     fn start_workflow<'a>(
         &'a self,
-        capability: &'a dyn WorkflowCapability,
+        context: WorkflowExecutionContext,
         args: WorkflowStartArgs,
     ) -> WorkflowRunFuture<'a> {
-        self.as_ref().start_workflow(capability, args)
+        self.as_ref().start_workflow(context, args)
     }
 
     fn workflow_status<'a>(
         &'a self,
-        capability: &'a dyn WorkflowCapability,
         args: WorkflowStatusArgs,
     ) -> WorkflowRunFuture<'a> {
-        self.as_ref().workflow_status(capability, args)
+        self.as_ref().workflow_status(args)
     }
 
     fn resume_workflow<'a>(
         &'a self,
-        capability: &'a dyn WorkflowCapability,
+        context: WorkflowExecutionContext,
         args: WorkflowResumeArgs,
     ) -> WorkflowRunFuture<'a> {
-        self.as_ref().resume_workflow(capability, args)
+        self.as_ref().resume_workflow(context, args)
     }
 
     fn abort_workflow<'a>(
         &'a self,
-        capability: &'a dyn WorkflowCapability,
+        context: WorkflowExecutionContext,
         args: WorkflowAbortArgs,
     ) -> WorkflowRunFuture<'a> {
-        self.as_ref().abort_workflow(capability, args)
+        self.as_ref().abort_workflow(context, args)
     }
 }
 

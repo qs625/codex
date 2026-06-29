@@ -9,7 +9,7 @@ use codex_extension_api::ThreadStartInput;
 use codex_extension_api::ToolContributor;
 use codex_features::Feature;
 use codex_memories_read::build_memory_tool_developer_instructions;
-use codex_thread_runtime::config::Config;
+use thread_service::config::Config;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 use crate::local::LocalMemoriesBackend;

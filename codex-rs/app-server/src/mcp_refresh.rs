@@ -1,11 +1,11 @@
 use crate::config_manager::ConfigManager;
 use codex_config_types::McpServerConfig;
-use codex_thread_runtime::ThreadService;
-use codex_thread_runtime::config::Config;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::Op;
-use codex_thread_api::LiveThreadRegistry;
+use thread_service_api::LiveThreadRegistry;
+use thread_service::ThreadService;
+use thread_service::config::Config;
 use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::io;
@@ -161,12 +161,12 @@ mod tests {
     use codex_config_loader::ThreadConfigLoader;
     use codex_config_loader::ThreadConfigSource;
     use codex_config_requirements::CloudRequirementsLoader;
-    use codex_thread_runtime::config::ConfigOverrides;
     use codex_exec_server::EnvironmentManager;
     use codex_file_watcher::FileWatcher;
     use codex_login::AuthManager;
     use codex_login::CodexAuth;
     use codex_protocol::protocol::SessionSource;
+    use thread_service::config::ConfigOverrides;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
     use std::future::Future;
@@ -238,16 +238,19 @@ mod tests {
             Some(state_db.clone()),
         );
         let thread_watch_manager = crate::thread_status::ThreadWatchManager::new();
+        let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
+            good_config.codex_home.clone(),
+        ));
         let thread_service: Arc<ThreadService> =
             Arc::new_cyclic(|thread_service: &Weak<ThreadService>| {
-                let auth_runtimes = codex_thread_runtime::ThreadAuthRuntimes::from_auth_runtime(
+                let auth_runtimes = thread_service::ThreadAuthRuntimes::from_auth_runtime(
                     auth_manager.clone(),
                     codex_login::model_provider_auth_manager(Some(auth_manager.clone())),
                 );
                 let guardian_agent_host: Weak<dyn GuardianAgentSpawnHost> = thread_service.clone();
                 let file_subscription_host: Weak<dyn FileSubscriptionThreadHost> =
                     Weak::<ThreadService>::clone(thread_service);
-                ThreadService::new_with_workflow_runs_and_openai_file_uploader(
+                ThreadService::new_with_openai_file_uploader(
                     &good_config,
                     auth_runtimes,
                     SessionSource::Exec,
@@ -268,9 +271,6 @@ mod tests {
                     Arc::new(codex_code_mode::V8CodeModeRuntimeFactory),
                     Arc::new(codex_mcp::DefaultMcpAuthRuntime),
                     Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
-                    Arc::new(codex_workflow::WorkflowRunManager::new(
-                        good_config.codex_home.clone(),
-                    )),
                     Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
                     Arc::new(codex_execpolicy_loader::StarlarkExecPolicyLoader),
                     Arc::new(codex_api::DefaultApiRuntimeFactory),
@@ -293,15 +293,18 @@ mod tests {
                         ),
                     ),
                     Arc::new(codex_tool_service::ToolService::new(
-                        Arc::new(codex_thread_runtime::ThreadApprovalService),
+                        Arc::new(approval_service::ApprovalService),
                         Arc::new(codex_command_service::CommandService::new()),
-                        Arc::new(codex_thread_runtime::GoalService),
-                        Arc::new(codex_thread_runtime::McpResourceService),
-                        Arc::new(codex_thread_runtime::RequestPluginInstallService),
-                        Arc::new(codex_workflow::WorkflowService::new()),
+                        Arc::new(goal_service::GoalService),
+                        Arc::new(mcp_service::McpService),
+                        Arc::new(thread_service::RequestPluginInstallService),
+                        workflow_service.clone(),
                     )),
                 )
             });
+        let thread_service_api: Arc<dyn thread_service_api::ThreadServiceApi> =
+            thread_service.clone();
+        workflow_service.set_thread_service_api(Arc::downgrade(&thread_service_api));
         thread_service.start_thread(good_config).await?;
         thread_service.start_thread(bad_config).await?;
 

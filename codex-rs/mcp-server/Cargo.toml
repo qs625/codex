@@ -17,6 +17,7 @@ doctest = false
 workspace = true
 
 [dependencies]
+approval-service = { workspace = true }
 anyhow = { workspace = true }
 codex-api = { workspace = true }
 codex-arg0 = { workspace = true }
@@ -28,9 +29,11 @@ codex-execpolicy-loader = { workspace = true }
 codex-extension-api = { workspace = true }
 codex-features = { workspace = true }
 codex-hooks = { workspace = true }
+goal-service = { workspace = true }
 codex-login = { workspace = true, features = ["model-provider-auth"] }
 codex-memories-read = { workspace = true }
 codex-mcp = { workspace = true }
+mcp-service = { workspace = true }
 codex-model-provider = { workspace = true }
 codex-network-proxy = { workspace = true }
 codex-openai-files = { workspace = true }
@@ -39,10 +42,11 @@ codex-otel-init = { workspace = true }
 codex-protocol = { workspace = true }
 codex-rollout = { workspace = true }
 codex-sandboxing = { workspace = true }
+codex-shell-utils = { workspace = true }
 codex-state-api = { workspace = true }
 codex-command-service = { workspace = true }
-codex-thread-api = { workspace = true }
-codex-thread-runtime = { workspace = true }
+thread-service-api = { workspace = true }
+thread-service = { workspace = true }
 codex-terminal-detection = { workspace = true }
 codex-thread-store = { workspace = true }
 codex-tool-config = { workspace = true }
@@ -68,7 +72,6 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 [dev-dependencies]
 codex-config-types = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
-codex-shell-command = { workspace = true }
 core_test_support = { workspace = true }
 mcp_test_support = { workspace = true }
 os_info = { workspace = true }

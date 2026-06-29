@@ -5,7 +5,10 @@ use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::items::FileChangeItem;
-use codex_protocol::models::ResponseItem;
+use codex_protocol::items::TurnItem;
+use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::ItemCompletedEvent;
+use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::PatchApplyStatus;
 use codex_tool_types::FunctionCallError;
@@ -13,14 +16,18 @@ use codex_utils_output_truncation::TruncationPolicy;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 pub(crate) trait ToolEventHost {
+    fn thread_id(&self) -> codex_protocol::ThreadId;
     fn turn_id(&self) -> &str;
     fn truncation_policy(&self) -> TruncationPolicy;
-    fn emit_file_change_started(&self, item: FileChangeItem) -> impl Future<Output = ()> + Send;
-    fn emit_file_change_completed(&self, item: FileChangeItem) -> impl Future<Output = ()> + Send;
-    fn record_model_items_and_emit_display_events(&self, items: Vec<ResponseItem>) -> impl Future<Output = ()> + Send;
-    fn update_patch_diff<'a>(&'a self, tracker_update: ToolPatchTrackerUpdate<'a>) -> impl Future<Output = ()> + Send + 'a;
+    fn emit_event(&self, event: EventMsg) -> impl Future<Output = ()> + Send;
+    fn update_patch_diff<'a>(
+        &'a self,
+        tracker_update: ToolPatchTrackerUpdate<'a>,
+    ) -> impl Future<Output = ()> + Send + 'a;
 }
 
 pub(crate) enum ToolPatchTrackerUpdate<'a> {
@@ -65,14 +72,19 @@ impl ToolEmitter {
                 auto_approved,
             } => {
                 ctx.host
-                    .emit_file_change_started(FileChangeItem {
-                        id: ctx.call_id.to_string(),
-                        changes: changes.clone(),
-                        status: None,
-                        auto_approved: Some(*auto_approved),
-                        stdout: None,
-                        stderr: None,
-                    })
+                    .emit_event(EventMsg::ItemStarted(ItemStartedEvent {
+                        thread_id: ctx.host.thread_id(),
+                        turn_id: ctx.host.turn_id().to_string(),
+                        item: TurnItem::FileChange(FileChangeItem {
+                            id: ctx.call_id.to_string(),
+                            changes: changes.clone(),
+                            status: None,
+                            auto_approved: Some(*auto_approved),
+                            stdout: None,
+                            stderr: None,
+                        }),
+                        started_at_ms: now_unix_timestamp_ms(),
+                    }))
                     .await;
             }
         }
@@ -89,7 +101,8 @@ impl ToolEmitter {
     {
         let (status, stdout, stderr, tracker_update, result) = match out {
             Ok(output) => {
-                let content = format_exec_output_for_model_structured(&output, ctx.host.truncation_policy());
+                let content =
+                    format_exec_output_for_model_structured(&output, ctx.host.truncation_policy());
                 (
                     if output.exit_code == 0 {
                         PatchApplyStatus::Completed
@@ -127,7 +140,10 @@ impl ToolEmitter {
                     output.stderr.text.clone(),
                     tracker_update,
                     Err(FunctionCallError::RespondToModel(
-                        format_exec_output_for_model_structured(&output, ctx.host.truncation_policy()),
+                        format_exec_output_for_model_structured(
+                            &output,
+                            ctx.host.truncation_policy(),
+                        ),
                     )),
                 )
             }
@@ -136,7 +152,9 @@ impl ToolEmitter {
                 String::new(),
                 format!("execution error: {err:?}"),
                 ToolPatchTrackerUpdate::None,
-                Err(FunctionCallError::RespondToModel(format!("execution error: {err:?}"))),
+                Err(FunctionCallError::RespondToModel(format!(
+                    "execution error: {err:?}"
+                ))),
             ),
             Err(ToolError::Rejected(message)) => (
                 PatchApplyStatus::Declined,
@@ -149,28 +167,42 @@ impl ToolEmitter {
                 applied_patch_delta
                     .map(tracker_update_for_known_delta)
                     .unwrap_or(ToolPatchTrackerUpdate::None),
-                Err(FunctionCallError::RespondToModel(if message == "rejected by user" {
-                    "patch rejected by user".to_string()
-                } else {
-                    message
-                })),
+                Err(FunctionCallError::RespondToModel(
+                    if message == "rejected by user" {
+                        "patch rejected by user".to_string()
+                    } else {
+                        message
+                    },
+                )),
             ),
         };
 
         let Self::ApplyPatch { changes, .. } = self;
         ctx.host
-            .emit_file_change_completed(FileChangeItem {
-                id: ctx.call_id.to_string(),
-                changes: changes.clone(),
-                status: Some(status),
-                auto_approved: None,
-                stdout: Some(stdout),
-                stderr: Some(stderr),
-            })
+            .emit_event(EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: ctx.host.thread_id(),
+                turn_id: ctx.host.turn_id().to_string(),
+                item: TurnItem::FileChange(FileChangeItem {
+                    id: ctx.call_id.to_string(),
+                    changes: changes.clone(),
+                    status: Some(status),
+                    auto_approved: None,
+                    stdout: Some(stdout),
+                    stderr: Some(stderr),
+                }),
+                completed_at_ms: now_unix_timestamp_ms(),
+            }))
             .await;
         ctx.host.update_patch_diff(tracker_update).await;
         result
     }
+}
+
+fn now_unix_timestamp_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock before unix epoch")
+        .as_millis() as i64
 }
 
 fn tracker_update_for_known_delta(delta: &AppliedPatchDelta) -> ToolPatchTrackerUpdate<'_> {

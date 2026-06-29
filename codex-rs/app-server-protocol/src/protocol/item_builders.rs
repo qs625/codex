@@ -9,6 +9,7 @@
 //!   synthetic items, so sharing the logic avoids drift between those paths.
 //! - The projection is presentation-specific. Core protocol events stay generic, while the
 //!   app-server protocol decides how to surface those events as `ThreadItem`s for clients.
+use crate::protocol::command_display::parse_command::parse_command;
 use crate::protocol::common::ServerNotification;
 use crate::protocol::v2::AutoReviewDecisionSource;
 use crate::protocol::v2::CommandAction;
@@ -23,7 +24,6 @@ use crate::protocol::v2::ItemGuardianApprovalReviewStartedNotification;
 use crate::protocol::v2::PatchApplyStatus;
 use crate::protocol::v2::PatchChangeKind;
 use crate::protocol::v2::ThreadItem;
-use codex_command_display::parse_command::parse_command;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
 use codex_protocol::protocol::ExecApprovalRequestEvent;

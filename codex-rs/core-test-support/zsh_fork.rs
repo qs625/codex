@@ -6,8 +6,8 @@ use codex_features::Feature;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
-use codex_thread_runtime::config::Config;
-use codex_thread_runtime::config::Constrained;
+use thread_service::config::Config;
+use thread_service::config::Constrained;
 
 use crate::test_codex::TestCodex;
 use crate::test_codex::test_codex;

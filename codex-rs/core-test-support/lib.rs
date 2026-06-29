@@ -14,11 +14,11 @@ use codex_config_requirements::CloudRequirementsLoader;
 use codex_config_requirements::ConfigRequirementsToml;
 use codex_config_requirements::NetworkRequirementsToml;
 use codex_rollout::StateDbHandle;
-use codex_thread_runtime::CodexThread;
-use codex_thread_runtime::config::Config;
-use codex_thread_runtime::config::ConfigBuilder;
-use codex_thread_runtime::config::ConfigOverrides;
-use codex_thread_runtime::config::ThreadStoreConfig;
+use thread_service::CodexThread;
+use thread_service::config::Config;
+use thread_service::config::ConfigBuilder;
+use thread_service::config::ConfigOverrides;
+use thread_service::config::ThreadStoreConfig;
 use codex_utils_absolute_path::AbsolutePathBuf;
 pub use codex_utils_absolute_path::test_support::PathBufExt;
 pub use codex_utils_absolute_path::test_support::PathExt;
@@ -53,8 +53,8 @@ static TEST_ARG0_PATH_ENTRY: OnceLock<Option<Arg0PathEntryGuard>> = OnceLock::ne
 
 #[ctor]
 fn enable_deterministic_unified_exec_process_ids_for_tests() {
-    codex_thread_runtime::test_support::set_thread_service_test_mode(/*enabled*/ true);
-    codex_thread_runtime::test_support::set_deterministic_process_ids(/*enabled*/ true);
+    thread_service::test_support::set_thread_service_test_mode(/*enabled*/ true);
+    thread_service::test_support::set_deterministic_process_ids(/*enabled*/ true);
 }
 
 #[ctor]
@@ -295,11 +295,11 @@ where
 }
 
 pub fn sandbox_env_var() -> &'static str {
-    codex_thread_runtime::spawn::CODEX_SANDBOX_ENV_VAR
+    thread_service::spawn::CODEX_SANDBOX_ENV_VAR
 }
 
 pub fn sandbox_network_env_var() -> &'static str {
-    codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
+    thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
 }
 
 const REMOTE_ENV_ENV_VAR: &str = "CODEX_TEST_REMOTE_ENV";
@@ -330,7 +330,7 @@ pub fn get_remote_test_env() -> Option<RemoteEnvConfig> {
 }
 
 pub fn format_with_current_shell(command: &str) -> Vec<String> {
-    codex_thread_runtime::runtime_shell_model::default_user_shell()
+    thread_service::runtime_shell_model::default_user_shell()
         .derive_exec_args(command, /*use_login_shell*/ true)
 }
 
@@ -340,7 +340,7 @@ pub fn format_with_current_shell_display(command: &str) -> String {
 }
 
 pub fn format_with_current_shell_non_login(command: &str) -> Vec<String> {
-    codex_thread_runtime::runtime_shell_model::default_user_shell()
+    thread_service::runtime_shell_model::default_user_shell()
         .derive_exec_args(command, /*use_login_shell*/ false)
 }
 

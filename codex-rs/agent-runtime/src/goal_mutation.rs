@@ -264,9 +264,11 @@ where
     let goal = protocol_goal_from_state(goal);
     host.reset_budget_limit_reported_goal().await;
     let current_token_usage = host.current_token_usage().await;
+    let Some(newly_active_goal_id) = plan.newly_active_goal_id else {
+        return Err(anyhow::anyhow!("created thread goals should be active"));
+    };
     host.mark_active_goal_accounting(
-        plan.newly_active_goal_id
-            .expect("created thread goals should be active"),
+        newly_active_goal_id,
         Some(host.turn_id(turn_context)),
         current_token_usage,
     )

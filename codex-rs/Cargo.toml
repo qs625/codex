@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "approval-service",
     "aws-auth",
     "analytics",
     "analytics-api",
@@ -43,7 +44,6 @@ members = [
     "cloud-tasks-mock-client",
     "cli",
     "collaboration-mode-templates",
-    "command-display",
     "command-service",
     "command-service-api",
     "connectors",
@@ -66,9 +66,6 @@ members = [
     "default-client",
     "default-client-api",
     "shell-utils",
-    "shell-command",
-    "shell-escalation",
-    "shell-escalation-cli",
     "skills",
     "state-cli",
     "state-api",
@@ -104,10 +101,12 @@ members = [
     "lmstudio",
     "login",
     "git-info",
+    "goal-service",
+    "goal-service-api",
     "codex-mcp",
     "mcp-server",
-    "mcp-runtime",
-    "mcp-runtime-api",
+    "mcp-service",
+    "mcp-service-api",
     "mcp-tool-types",
     "mcp-types",
     "metrics-api",
@@ -143,7 +142,7 @@ members = [
     "response-debug-context",
     "sandboxing-api",
     "sandboxing",
-    "thread-runtime",
+    "thread-service",
     "session-telemetry-api",
     "stdio-to-uds",
     "otel",
@@ -188,7 +187,7 @@ members = [
     "test-binary-support",
     "thread-service-sample",
     "runtime-capability-api",
-    "thread-api",
+    "thread-service-api",
     "thread-store-api",
     "thread-store",
     "uds",
@@ -212,6 +211,7 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 # Internal
+approval-service = { path = "approval-service" }
 app_test_support = { path = "app-server/tests/common" }
 codex-analytics = { path = "analytics" }
 codex-analytics-api = { path = "analytics-api" }
@@ -250,7 +250,6 @@ codex-cloud-tasks-mock-client = { path = "cloud-tasks-mock-client" }
 codex-code-mode = { path = "code-mode" }
 codex-code-mode-api = { path = "code-mode-api" }
 codex-client-identity = { path = "client-identity" }
-codex-command-display = { path = "command-display" }
 codex-command-service = { path = "command-service" }
 codex-command-service-api = { path = "command-service-api" }
 codex-config = { path = "config" }
@@ -279,6 +278,8 @@ codex-core-skills-api = { path = "core-skills-api" }
 codex-core-skills = { path = "core-skills" }
 codex-exec = { path = "exec" }
 codex-file-system = { path = "file-system" }
+goal-service = { path = "goal-service" }
+goal-service-api = { path = "goal-service-api" }
 codex-exec-server-api = { path = "exec-server-api" }
 codex-exec-server-protocol = { path = "exec-server-protocol" }
 codex-exec-server = { path = "exec-server" }
@@ -316,8 +317,8 @@ codex-memories-read = { path = "memories/read" }
 codex-memories-write = { path = "memories/write" }
 codex-mcp = { path = "codex-mcp" }
 codex-mcp-server = { path = "mcp-server" }
-codex-mcp-runtime = { path = "mcp-runtime" }
-codex-mcp-runtime-api = { path = "mcp-runtime-api" }
+mcp-service = { path = "mcp-service" }
+mcp-service-api = { path = "mcp-service-api" }
 codex-mcp-tool-types = { path = "mcp-tool-types" }
 codex-mcp-types = { path = "mcp-types" }
 codex-metrics-api = { path = "metrics-api" }
@@ -356,11 +357,8 @@ codex-sandboxing-api = { path = "sandboxing-api" }
 codex-sandboxing = { path = "sandboxing" }
 codex-secrets = { path = "secrets" }
 codex-shell-utils = { path = "shell-utils" }
-codex-shell-command = { path = "shell-command" }
 codex-state-api = { path = "state-api" }
-codex-shell-escalation = { path = "shell-escalation" }
-codex-shell-escalation-cli = { path = "shell-escalation-cli" }
-codex-thread-runtime = { path = "thread-runtime" }
+thread-service = { path = "thread-service" }
 codex-session-telemetry-api = { path = "session-telemetry-api" }
 codex-skills = { path = "skills" }
 codex-state = { path = "state" }
@@ -369,7 +367,7 @@ codex-stdio-to-uds = { path = "stdio-to-uds" }
 codex-terminal-detection = { path = "terminal-detection" }
 codex-trace-context = { path = "trace-context" }
 codex-test-binary-support = { path = "test-binary-support" }
-codex-thread-api = { path = "thread-api" }
+thread-service-api = { path = "thread-service-api" }
 codex-thread-store-api = { path = "thread-store-api" }
 codex-thread-store = { path = "thread-store" }
 codex-tool-config = { path = "tool-config" }

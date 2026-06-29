@@ -1,6 +1,6 @@
 use codex_chatgpt::ChatGptConfig;
-use codex_thread_runtime::config::Config;
 use codex_features::Feature;
+use thread_service::config::Config;
 
 pub(crate) fn chatgpt_config_from_core(config: &Config) -> ChatGptConfig {
     ChatGptConfig {

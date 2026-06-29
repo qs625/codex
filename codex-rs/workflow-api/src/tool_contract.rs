@@ -3,8 +3,8 @@ use serde::Serialize;
 use serde_json::Value;
 use serde_json::json;
 
-use crate::runtime::WorkflowRuntimeError;
-use crate::runtime::WorkflowRuntimeRequest;
+use crate::WorkflowRuntimeError;
+use crate::WorkflowRuntimeRequest;
 
 #[derive(Debug, Deserialize)]
 pub struct WorkflowDescribeArgs {

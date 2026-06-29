@@ -57,14 +57,6 @@ use codex_config_diagnostics::format_config_error_with_source;
 use codex_config_loader::ConfigLoadOptions;
 use codex_config_loader::LoaderOverrides;
 use codex_config_local_loader::LocalConfigLayerLoader;
-use codex_thread_runtime::config::Config;
-use codex_thread_runtime::config::ConfigBuilder;
-use codex_thread_runtime::config::ConfigOverrides;
-use codex_thread_runtime::config::find_codex_home;
-use codex_thread_runtime::config::load_config_as_toml_with_cli_and_load_options_and_layer_loader;
-use codex_thread_runtime::config::resolve_oss_provider;
-use codex_thread_runtime::config::resolve_profile_v2_config_path;
-use codex_thread_runtime::path_utils;
 use codex_execpolicy_loader::check_execpolicy_for_warnings;
 use codex_execpolicy_loader::format_exec_policy_error_with_source;
 use codex_feedback::CodexFeedback;
@@ -92,6 +84,14 @@ use codex_protocol::protocol::SessionSource;
 use codex_protocol::user_input::UserInput;
 use codex_rollout::StateDbHandle;
 use codex_rollout::find_thread_meta_by_name_str;
+use thread_service::config::Config;
+use thread_service::config::ConfigBuilder;
+use thread_service::config::ConfigOverrides;
+use thread_service::config::find_codex_home;
+use thread_service::config::load_config_as_toml_with_cli_and_load_options_and_layer_loader;
+use thread_service::config::resolve_oss_provider;
+use thread_service::config::resolve_profile_v2_config_path;
+use thread_service::path_utils;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::canonicalize_existing_preserving_symlinks;
 use codex_utils_cli::SharedCliOptions;
@@ -637,7 +637,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         (Some(ExecCommand::Review(review_cli)), _, _) => {
             let review_request = build_review_request(review_cli)?;
             let summary =
-                codex_thread_runtime::review_prompts::user_facing_hint(&review_request.target);
+                thread_service::review_prompts::user_facing_hint(&review_request.target);
             (InitialOperation::Review { review_request }, summary)
         }
         (Some(ExecCommand::Resume(args)), root_prompt, imgs) => {

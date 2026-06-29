@@ -18,13 +18,14 @@ use codex_app_server_protocol::CommandExecWriteParams;
 use codex_app_server_protocol::CommandExecWriteResponse;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::ServerNotification;
+use codex_command_service::ExecRequest;
+use codex_command_service::execute_exec_request;
 use codex_command_service_api::ExecExpiration;
 use codex_command_service_api::ExecExpirationOutcome;
 use codex_command_service_api::IO_DRAIN_TIMEOUT_MS;
 use codex_command_service_api::bytes_to_string_smart;
-use codex_thread_runtime::config::StartedNetworkProxy;
-use codex_thread_runtime::sandboxing::ExecRequest;
 use codex_sandboxing_api::SandboxType;
+use thread_service::config::StartedNetworkProxy;
 use codex_utils_pty::DEFAULT_OUTPUT_BYTES_CAP;
 use codex_utils_pty::ProcessHandle;
 use codex_utils_pty::SpawnedProcess;
@@ -202,8 +203,12 @@ impl CommandExecManager {
             let sessions = Arc::clone(&self.sessions);
             tokio::spawn(async move {
                 let _started_network_proxy = started_network_proxy;
-                match codex_thread_runtime::sandboxing::execute_env(exec_request, /*stdout_stream*/ None)
-                    .await
+                match execute_exec_request(
+                    exec_request,
+                    /*stdout_stream*/ None,
+                    /*after_spawn*/ None,
+                )
+                .await
                 {
                     Ok(output) => {
                         outgoing

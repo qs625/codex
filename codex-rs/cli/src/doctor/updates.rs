@@ -8,8 +8,8 @@
 
 use std::path::Path;
 
-use codex_thread_runtime::config::Config;
 use codex_install_context::InstallContext;
+use thread_service::config::Config;
 use serde::Deserialize;
 
 use super::CheckStatus;

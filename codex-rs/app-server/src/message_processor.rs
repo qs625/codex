@@ -70,9 +70,6 @@ use codex_app_server_protocol::experimental_required_message;
 use codex_arg0::Arg0DispatchPaths;
 use codex_auth_types::AuthMode as LoginAuthMode;
 use codex_chatgpt::workspace_settings;
-use codex_thread_runtime::ThreadAuthRuntimes;
-use codex_thread_runtime::ThreadService;
-use codex_thread_runtime::config::Config;
 use codex_core_plugins::PluginAnalyticsEventSink;
 use codex_core_plugins::PluginsManager;
 use codex_core_plugins_remote::RemotePluginAuth;
@@ -93,9 +90,12 @@ use codex_protocol::ThreadId;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_rollout::StateDbHandle;
-use codex_state::log_db::LogDbLayer;
 use codex_state_api::SharedStateDbRuntime;
+use codex_state::log_db::LogDbLayer;
 use codex_terminal_detection::user_agent;
+use thread_service::ThreadAuthRuntimes;
+use thread_service::ThreadService;
+use thread_service::config::Config;
 use tokio::sync::Mutex;
 use tokio::sync::Semaphore;
 use tokio::sync::broadcast;
@@ -370,11 +370,14 @@ impl MessageProcessor {
         ));
         let thread_service_plugin_runtime: codex_core_plugins_api::SharedPluginRuntime =
             plugins_manager.clone();
+        let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
+            config.codex_home.clone(),
+        ));
         let thread_service: Arc<ThreadService> =
             Arc::new_cyclic(|thread_service: &Weak<ThreadService>| {
                 let runtime_environment_provider: Arc<dyn ExecEnvironmentProvider> =
                     environment_manager.clone();
-                let core_state_db: Option<SharedStateDbRuntime> = state_db
+                let shared_state_db: Option<SharedStateDbRuntime> = state_db
                     .clone()
                     .map(|state_db| state_db as SharedStateDbRuntime);
                 let auth_runtimes = ThreadAuthRuntimes::from_auth_runtime(
@@ -384,7 +387,7 @@ impl MessageProcessor {
                 let guardian_agent_host: Weak<dyn GuardianAgentSpawnHost> = thread_service.clone();
                 let file_subscription_host: Weak<dyn FileSubscriptionThreadHost> =
                     thread_service.clone();
-                ThreadService::new_with_workflow_runs_and_openai_file_uploader(
+                ThreadService::new_with_openai_file_uploader(
                     config.as_ref(),
                     auth_runtimes,
                     session_source.clone(),
@@ -397,7 +400,7 @@ impl MessageProcessor {
                     ),
                     Some(analytics_events_client.api_client()),
                     Arc::clone(&thread_store),
-                    core_state_db,
+                    shared_state_db,
                     Arc::new(codex_thread_store::DefaultLiveThreadFactory),
                     installation_id,
                     Some(app_server_attestation_provider(
@@ -408,9 +411,6 @@ impl MessageProcessor {
                     Arc::new(codex_code_mode::V8CodeModeRuntimeFactory),
                     Arc::new(codex_mcp::DefaultMcpAuthRuntime),
                     Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
-                    Arc::new(codex_workflow::WorkflowRunManager::new(
-                        config.codex_home.clone(),
-                    )),
                     Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
                     Arc::new(codex_execpolicy_loader::StarlarkExecPolicyLoader),
                     Arc::new(codex_api::DefaultApiRuntimeFactory),
@@ -427,17 +427,20 @@ impl MessageProcessor {
                         ),
                     ),
                     thread_service_plugin_runtime.clone(),
-        Arc::new(codex_tool_service::ToolService::new(
-            Arc::new(codex_thread_runtime::ThreadApprovalService),
-            Arc::new(codex_command_service::CommandService::new()),
-            Arc::new(codex_thread_runtime::GoalService),
-            Arc::new(codex_thread_runtime::McpResourceService),
-            Arc::new(codex_thread_runtime::RequestPluginInstallService),
-            Arc::new(codex_workflow::WorkflowService::new()),
-        )),
+                    Arc::new(codex_tool_service::ToolService::new(
+                        Arc::new(approval_service::ApprovalService),
+                        Arc::new(codex_command_service::CommandService::new()),
+                        Arc::new(goal_service::GoalService),
+                        Arc::new(mcp_service::McpService),
+                        Arc::new(thread_service::RequestPluginInstallService),
+                        workflow_service.clone(),
+                    )),
                 )
                 .with_terminal_type(user_agent())
             });
+        let thread_service_api: Arc<dyn thread_service_api::ThreadServiceApi> =
+            thread_service.clone();
+        workflow_service.set_thread_service_api(Arc::downgrade(&thread_service_api));
         plugins_manager.set_plugin_analytics_event_sink(Arc::new(
             AppServerPluginAnalyticsEventSink {
                 analytics_events_client: analytics_events_client.clone(),
@@ -604,7 +607,7 @@ impl MessageProcessor {
         let workflow_processor = WorkflowRequestProcessor::new(
             config_manager,
             outgoing.clone(),
-            config.codex_home.to_path_buf(),
+            workflow_service,
         );
 
         Self {
@@ -774,7 +777,7 @@ impl MessageProcessor {
 
     pub(crate) fn thread_created_receiver(
         &self,
-    ) -> broadcast::Receiver<codex_thread_api::ThreadCreatedEvent> {
+    ) -> broadcast::Receiver<thread_service_api::ThreadCreatedEvent> {
         self.thread_processor.thread_created_receiver()
     }
 

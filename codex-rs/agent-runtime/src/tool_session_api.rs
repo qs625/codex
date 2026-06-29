@@ -189,6 +189,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn wait_agent_result_from_message(
     target: String,
     agent_name: String,

@@ -6,14 +6,8 @@ mod seatbelt;
 use std::path::PathBuf;
 use std::process::Stdio;
 
+use codex_command_service::create_env;
 use codex_config_loader::LoaderOverrides;
-use codex_thread_runtime::config::Config;
-use codex_thread_runtime::config::ConfigOverrides;
-use codex_thread_runtime::config::NetworkProxyAuditMetadata;
-use codex_thread_runtime::exec_env::create_env;
-#[cfg(target_os = "macos")]
-use codex_thread_runtime::spawn::CODEX_SANDBOX_ENV_VAR;
-use codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_sandboxing::landlock::allow_network_for_proxy;
@@ -22,6 +16,12 @@ use codex_sandboxing::landlock::create_linux_sandbox_command_args_for_permission
 use codex_sandboxing::seatbelt::CreateSeatbeltCommandArgsParams;
 #[cfg(target_os = "macos")]
 use codex_sandboxing::seatbelt::create_seatbelt_command_args;
+use thread_service::config::Config;
+use thread_service::config::ConfigOverrides;
+use thread_service::config::NetworkProxyAuditMetadata;
+#[cfg(target_os = "macos")]
+use thread_service::spawn::CODEX_SANDBOX_ENV_VAR;
+use thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
 use tokio::process::Child;
@@ -343,8 +343,8 @@ async fn run_command_under_windows_session(
     sandbox_policy_cwd: AbsolutePathBuf,
     env: std::collections::HashMap<String, String>,
 ) -> ! {
-    use codex_thread_runtime::windows_sandbox::WindowsSandboxLevelExt;
     use codex_protocol::config_types::WindowsSandboxLevel;
+    use codex_sandboxing::WindowsSandboxLevelExt;
     use codex_windows_sandbox::spawn_windows_sandbox_session_elevated;
     use codex_windows_sandbox::spawn_windows_sandbox_session_legacy;
 

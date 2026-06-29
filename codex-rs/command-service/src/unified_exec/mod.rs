@@ -41,7 +41,7 @@ use codex_exec_server_api::ExecEnvironment;
 use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_tool_config::ToolUserShellType;
-use codex_thread_api::ToolRuntimeNetworkApprovalHandle;
+use thread_service_api::ToolRuntimeNetworkApprovalHandle;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use tokio::sync::Mutex;
 
@@ -80,29 +80,33 @@ pub(crate) use output::split_valid_utf8_prefix;
 pub(crate) use unified_exec_process::NoopSpawnLifecycle;
 pub(crate) use unified_exec_process::SpawnLifecycleHandle;
 pub(crate) use unified_exec_process::UnifiedExecProcess;
-use codex_command_service_api::CommandServiceSessionCapability;
-use codex_command_service_api::CommandServiceTurnCapability;
+use codex_command_service_api::CommandServiceSessionApi;
 pub(crate) use codex_command_service_api::UnifiedExecError;
 pub(crate) use process_manager::UnifiedExecCommandSessionController;
+use thread_service_api::ThreadSessionCapability;
+use thread_service_api::ThreadRuntimeCapability;
 
 pub(crate) const MAX_UNIFIED_EXEC_PROCESSES: usize = 64;
 pub(crate) const DEFAULT_COMMAND_OUTPUT_MAX_TOKENS: usize =
     codex_command_service_api::DEFAULT_COMMAND_OUTPUT_MAX_BYTES / 4;
 
 pub(crate) struct UnifiedExecContext {
-    pub session: Arc<dyn CommandServiceSessionCapability>,
-    pub turn: Arc<dyn CommandServiceTurnCapability>,
+    pub session: Arc<dyn ThreadSessionCapability>,
+    pub session_api: Arc<dyn CommandServiceSessionApi>,
+    pub turn: Arc<dyn ThreadRuntimeCapability>,
     pub call_id: String,
 }
 
 impl UnifiedExecContext {
     pub fn new(
-        session: Arc<dyn CommandServiceSessionCapability>,
-        turn: Arc<dyn CommandServiceTurnCapability>,
+        session: Arc<dyn ThreadSessionCapability>,
+        session_api: Arc<dyn CommandServiceSessionApi>,
+        turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
     ) -> Self {
         Self {
             session,
+            session_api,
             turn,
             call_id,
         }
@@ -118,14 +122,17 @@ pub(crate) struct ExecCommandRequest {
     pub yield_time_ms: u64,
     pub max_output_tokens: Option<usize>,
     pub cwd: AbsolutePathBuf,
+    #[allow(dead_code)]
     pub sandbox_cwd: AbsolutePathBuf,
     pub environment: Arc<dyn ExecEnvironment>,
     pub network: Option<SharedNetworkProxyRuntime>,
     pub tty: bool,
     pub sandbox_permissions: SandboxPermissions,
     pub additional_permissions: Option<AdditionalPermissionProfile>,
+    #[allow(dead_code)]
     pub additional_permissions_preapproved: bool,
     pub justification: Option<String>,
+    #[allow(dead_code)]
     pub prefix_rule: Option<Vec<String>>,
     pub notify_on: CommandNotificationFilter,
     pub approval_mode: ExecCommandApprovalMode,
@@ -202,6 +209,7 @@ pub(crate) struct UnifiedExecProcessManager {
 
 #[derive(Clone)]
 pub struct UnifiedExecManagerHandle {
+    #[cfg_attr(not(test), allow(dead_code))]
     manager: Weak<UnifiedExecProcessManager>,
 }
 
@@ -210,11 +218,13 @@ impl UnifiedExecManagerHandle {
         Self { manager }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn upgrade(&self) -> Option<Arc<UnifiedExecProcessManager>> {
         self.manager.upgrade()
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct ProcessExitSubscription {
     process: Arc<UnifiedExecProcess>,
     cancellation_token: tokio_util::sync::CancellationToken,
@@ -222,11 +232,13 @@ pub(crate) struct ProcessExitSubscription {
 }
 
 impl ProcessExitSubscription {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) async fn wait(&self) -> Option<i32> {
         self.cancellation_token.cancelled().await;
         self.process.exit_code()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) async fn wait_with_retained_output(&self) -> (Option<i32>, String) {
         self.cancellation_token.cancelled().await;
         let output = {
@@ -258,8 +270,10 @@ struct ProcessEntry {
     process_id: i32,
     tty: bool,
     network_approval: Option<Arc<dyn ToolRuntimeNetworkApprovalHandle>>,
-    session: Weak<dyn CommandServiceSessionCapability>,
+    session: Weak<dyn ThreadSessionCapability>,
+    session_api: Weak<dyn CommandServiceSessionApi>,
     last_used: tokio::time::Instant,
+    #[allow(dead_code)]
     transcript: Arc<Mutex<HeadTailBuffer>>,
     notification_state: Arc<CommandNotificationState>,
     command_wait_backoff: WaitBackoffState,

@@ -26,10 +26,6 @@ use codex_app_server_protocol::MigrationDetails;
 use codex_app_server_protocol::PluginsMigration;
 use codex_app_server_protocol::ServerNotification;
 use codex_arg0::Arg0DispatchPaths;
-use codex_thread_runtime::StartThreadOptions;
-use codex_thread_runtime::ThreadService;
-use codex_thread_runtime::config::Config;
-use codex_thread_runtime::config::ConfigOverrides;
 use codex_core_plugins::PluginsManager;
 use codex_external_agent_sessions::ExternalAgentSessionMigration as CoreSessionMigration;
 use codex_external_agent_sessions::ImportedExternalAgentSession;
@@ -39,6 +35,10 @@ use codex_external_agent_sessions::record_imported_session;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::RolloutItem;
+use thread_service::StartThreadOptions;
+use thread_service::ThreadService;
+use thread_service::config::Config;
+use thread_service::config::ConfigOverrides;
 use codex_thread_store::ThreadMetadataPatch;
 use futures::future::BoxFuture;
 use std::collections::HashSet;
@@ -86,7 +86,7 @@ impl ExternalAgentRuntime for ThreadService {
                 .await
                 .map_err(|err| internal_error(format!("failed to import session: {err}")))?;
             if let Some(title) = title
-                && let Some(name) = codex_thread_runtime::util::normalize_thread_name(&title)
+                && let Some(name) = thread_service::util::normalize_thread_name(&title)
             {
                 imported_thread
                     .thread

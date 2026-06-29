@@ -2,13 +2,6 @@ mod agent_jobs;
 
 use std::sync::Arc;
 
-use codex_agent_runtime::AgentMode;
-use codex_agent_runtime::MultiAgentToolSession;
-use codex_agent_runtime::SpawnAgentForkMode;
-use codex_agent_runtime::SpawnAgentToolRequest;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_thread_runtime::ThreadRuntimeSession;
-use codex_thread_runtime::ThreadTurnContext;
 use crate::planning::SpawnAgentToolOptions;
 use crate::planning::ToolSpec;
 use crate::planning::create_close_agent_tool_v2;
@@ -18,8 +11,15 @@ use crate::planning::create_report_agent_job_result_tool;
 use crate::planning::create_spawn_agent_tool_v2;
 use crate::planning::create_spawn_agents_on_csv_tool;
 use crate::planning::create_wait_agent_tool_v2;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
+use codex_agent_runtime::AgentMode;
+use codex_agent_runtime::MultiAgentToolSession;
+use codex_agent_runtime::SpawnAgentForkMode;
+use codex_agent_runtime::SpawnAgentToolRequest;
+use codex_protocol::openai_models::ReasoningEffort;
+use thread_service::ThreadRuntimeSession;
+use thread_service::ThreadTurnContext;
 use codex_tool_service_api::AnyToolResult;
+use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolName;
@@ -93,7 +93,9 @@ pub(crate) async fn dispatch(
         SPAWN_AGENT_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
             let request = spawn_agent_request_from_arguments(&arguments)?;
-            let result = session.spawn_agent_tool(&turn, call.call_id.clone(), request).await?;
+            let result = session
+                .spawn_agent_tool(&turn, call.call_id.clone(), request)
+                .await?;
             function_tool_json_output(&result, SPAWN_AGENT_TOOL_NAME)?
         }
         FOLLOWUP_TASK_TOOL_NAME => {
@@ -313,7 +315,7 @@ mod tests {
     use codex_protocol::ThreadId;
     use codex_protocol::protocol::SessionSource;
     use codex_protocol::protocol::SubAgentSource;
-    use codex_thread_runtime::test_support;
+    use thread_service::test_support;
 
     #[tokio::test]
     async fn spawn_agent_tool_rejects_depth_limit_at_call_time() {

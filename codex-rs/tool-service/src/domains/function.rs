@@ -4,19 +4,6 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::dynamic_tools::DynamicToolSpec;
-use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
-use codex_protocol::models::FunctionCallOutputBody;
-use codex_protocol::models::FunctionCallOutputContentItem;
-use codex_protocol::models::FunctionCallOutputPayload;
-use codex_protocol::models::ImageDetail;
-use codex_protocol::models::ResponseInputItem;
-use codex_protocol::plan_tool::UpdatePlanArgs;
-use codex_protocol::request_permissions::RequestPermissionsArgs;
-use codex_protocol::request_user_input::RequestUserInputArgs;
-use codex_sandboxing_api::policy_transforms::normalize_additional_permissions;
-use codex_thread_api::FunctionToolCapability;
 use crate::planning::REQUEST_USER_INPUT_TOOL_NAME;
 use crate::planning::ResponsesApiNamespace;
 use crate::planning::ResponsesApiNamespaceTool;
@@ -34,8 +21,23 @@ use crate::planning::normalize_request_user_input_args;
 use crate::planning::request_permissions_tool_description;
 use crate::planning::request_user_input_tool_description;
 use crate::planning::request_user_input_unavailable_message;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
+use codex_protocol::config_types::ModeKind;
+use codex_protocol::dynamic_tools::DynamicToolSpec;
+use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
+use codex_protocol::models::FunctionCallOutputBody;
+use codex_protocol::models::FunctionCallOutputContentItem;
+use codex_protocol::models::FunctionCallOutputPayload;
+use codex_protocol::models::ImageDetail;
+use codex_protocol::models::ResponseInputItem;
+use codex_protocol::plan_tool::UpdatePlanArgs;
+use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::ViewImageToolCallEvent;
+use codex_protocol::request_permissions::RequestPermissionsArgs;
+use codex_protocol::request_user_input::RequestUserInputArgs;
+use codex_sandboxing_api::policy_transforms::normalize_additional_permissions;
+use thread_service_api::ThreadTurnCapability;
 use codex_tool_service_api::AnyToolResult;
+use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolName;
@@ -83,7 +85,13 @@ pub(crate) fn specs(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
     ];
 
     specs.extend(hosted_model_tool_specs(request.config));
-    specs.extend(request.params.dynamic_tools.iter().filter_map(dynamic_tool_to_spec));
+    specs.extend(
+        request
+            .params
+            .dynamic_tools
+            .iter()
+            .filter_map(dynamic_tool_to_spec),
+    );
     specs
 }
 
@@ -130,7 +138,7 @@ pub(crate) fn supports_parallel(request: &TypedToolSpecRequest<'_>, call: &ToolC
 }
 
 pub(crate) async fn dispatch(
-    turn: Arc<codex_thread_runtime::ThreadTurnContext>,
+    turn: Arc<thread_service::ThreadTurnContext>,
     request_user_input_available_modes: Vec<ModeKind>,
     dynamic_tools: Vec<DynamicToolSpec>,
     cancellation_token: CancellationToken,
@@ -138,16 +146,12 @@ pub(crate) async fn dispatch(
 ) -> Result<AnyToolResult, FunctionCallError> {
     let result: Box<dyn ToolOutput> = match call.tool_name.name.as_str() {
         UPDATE_PLAN_TOOL_NAME => Box::new(dispatch_update_plan(turn.as_ref(), &call).await?),
-        REQUEST_PERMISSIONS_TOOL_NAME => Box::new(
-            dispatch_request_permissions(turn.as_ref(), cancellation_token, &call).await?,
-        ),
+        REQUEST_PERMISSIONS_TOOL_NAME => {
+            Box::new(dispatch_request_permissions(turn.as_ref(), cancellation_token, &call).await?)
+        }
         REQUEST_USER_INPUT_TOOL_NAME => Box::new(
-            dispatch_request_user_input(
-                turn.as_ref(),
-                &request_user_input_available_modes,
-                &call,
-            )
-            .await?,
+            dispatch_request_user_input(turn.as_ref(), &request_user_input_available_modes, &call)
+                .await?,
         ),
         codex_protocol::models::VIEW_IMAGE_TOOL_NAME => {
             Box::new(dispatch_view_image(turn.as_ref(), &call).await?)
@@ -173,30 +177,28 @@ pub(crate) async fn dispatch(
 }
 
 async fn dispatch_update_plan(
-    turn: &impl FunctionToolCapability,
+    turn: &(impl ThreadTurnCapability + ?Sized),
     call: &ToolCall,
 ) -> Result<PlanToolOutput, FunctionCallError> {
-    if turn.function_tool_collaboration_mode() == ModeKind::Plan {
+    if turn.collaboration_mode_kind() == ModeKind::Plan {
         return Err(FunctionCallError::RespondToModel(
             "update_plan is a TODO/checklist tool and is not allowed in Plan mode".to_string(),
         ));
     }
 
-    turn.function_tool_emit_plan_update(parse_arguments::<UpdatePlanArgs>(call)?)
+    turn.emit_event(EventMsg::PlanUpdate(parse_arguments::<UpdatePlanArgs>(call)?))
         .await;
     Ok(PlanToolOutput)
 }
 
 async fn dispatch_request_permissions(
-    turn: &impl FunctionToolCapability,
+    turn: &(impl ThreadTurnCapability + ?Sized),
     cancellation_token: CancellationToken,
     call: &ToolCall,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
     #[allow(deprecated)]
-    let mut args: RequestPermissionsArgs = parse_arguments_with_base_path(
-        call.function_arguments()?,
-        &turn.function_tool_cwd(),
-    )?;
+    let mut args: RequestPermissionsArgs =
+        parse_arguments_with_base_path(call.function_arguments()?, &turn.legacy_cwd())?;
     args.permissions = normalize_additional_permissions(args.permissions.into())
         .map(codex_protocol::request_permissions::RequestPermissionProfile::from)
         .map_err(FunctionCallError::RespondToModel)?;
@@ -207,7 +209,7 @@ async fn dispatch_request_permissions(
     }
 
     let response = turn
-        .function_tool_request_permissions(call.call_id.clone(), args, cancellation_token)
+        .request_permissions(call.call_id.clone(), args, cancellation_token)
         .await
         .ok_or_else(|| {
             FunctionCallError::RespondToModel(
@@ -225,17 +227,17 @@ async fn dispatch_request_permissions(
 }
 
 async fn dispatch_request_user_input(
-    turn: &impl FunctionToolCapability,
+    turn: &(impl ThreadTurnCapability + ?Sized),
     available_modes: &[ModeKind],
     call: &ToolCall,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
-    if turn.function_tool_is_non_root_agent() {
+    if turn.is_non_root_agent() {
         return Err(FunctionCallError::RespondToModel(
             "request_user_input can only be used by the root thread".to_string(),
         ));
     }
 
-    let mode = turn.function_tool_session_collaboration_mode().await;
+    let mode = turn.session_collaboration_mode().await;
     if let Some(message) = request_user_input_unavailable_message(mode, available_modes) {
         return Err(FunctionCallError::RespondToModel(message));
     }
@@ -243,7 +245,7 @@ async fn dispatch_request_user_input(
     let args = normalize_request_user_input_args(parse_arguments::<RequestUserInputArgs>(call)?)
         .map_err(FunctionCallError::RespondToModel)?;
     let response = turn
-        .function_tool_request_user_input(call.call_id.clone(), args)
+        .request_user_input(call.call_id.clone(), args)
         .await
         .ok_or_else(|| {
             FunctionCallError::RespondToModel(format!(
@@ -261,11 +263,11 @@ async fn dispatch_request_user_input(
 }
 
 async fn dispatch_dynamic_tool(
-    turn: &impl FunctionToolCapability,
+    turn: &(impl ThreadTurnCapability + ?Sized),
     call: &ToolCall,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
     let response = turn
-        .function_tool_request_dynamic_tool(
+        .request_dynamic_tool(
             call.call_id.clone(),
             call.tool_name.clone(),
             parse_arguments::<Value>(call)?,
@@ -288,10 +290,10 @@ async fn dispatch_dynamic_tool(
 }
 
 async fn dispatch_view_image(
-    turn: &impl FunctionToolCapability,
+    turn: &(impl ThreadTurnCapability + thread_service_api::ThreadRuntimeCapability + ?Sized),
     call: &ToolCall,
 ) -> Result<ViewImageOutput, FunctionCallError> {
-    if !turn.function_tool_supports_image_input() {
+    if !turn.supports_image_input() {
         return Err(FunctionCallError::RespondToModel(
             VIEW_IMAGE_UNSUPPORTED_MESSAGE.to_string(),
         ));
@@ -338,15 +340,18 @@ async fn dispatch_view_image(
         )));
     }
 
-    let file_bytes = fs.read_file(&abs_path, Some(&sandbox)).await.map_err(|error| {
-        FunctionCallError::RespondToModel(format!(
-            "unable to read image at `{}`: {error}",
-            abs_path.display()
-        ))
-    })?;
+    let file_bytes = fs
+        .read_file(&abs_path, Some(&sandbox))
+        .await
+        .map_err(|error| {
+            FunctionCallError::RespondToModel(format!(
+                "unable to read image at `{}`: {error}",
+                abs_path.display()
+            ))
+        })?;
 
-    let use_original_detail =
-        turn.can_request_original_image_detail() && matches!(detail, Some(ViewImageDetail::Original));
+    let use_original_detail = turn.can_request_original_image_detail()
+        && matches!(detail, Some(ViewImageDetail::Original));
     let image_detail = Some(if use_original_detail {
         ImageDetail::Original
     } else {
@@ -357,17 +362,19 @@ async fn dispatch_view_image(
     } else {
         PromptImageMode::ResizeToFit
     };
-    let image = load_for_prompt_bytes(abs_path.as_path(), file_bytes, image_mode).map_err(
-        |error| {
+    let image =
+        load_for_prompt_bytes(abs_path.as_path(), file_bytes, image_mode).map_err(|error| {
             FunctionCallError::RespondToModel(format!(
                 "unable to process image at `{}`: {error}",
                 abs_path.display()
             ))
-        },
-    )?;
+        })?;
 
-    turn.function_tool_emit_image_view(call.call_id.clone(), abs_path)
-        .await;
+    turn.emit_event(EventMsg::ViewImageToolCall(ViewImageToolCallEvent {
+        call_id: call.call_id.clone(),
+        path: abs_path,
+    }))
+    .await;
 
     Ok(ViewImageOutput {
         image_url: image.into_data_url(),
@@ -400,7 +407,8 @@ fn tool_name_matches_dynamic_spec(tool_name: &ToolName, spec: &DynamicToolSpec) 
 }
 
 fn tool_name_matches_dynamic_specs(tool_name: &ToolName, specs: &[DynamicToolSpec]) -> bool {
-    specs.iter()
+    specs
+        .iter()
         .any(|tool| tool_name_matches_dynamic_spec(tool_name, tool))
 }
 

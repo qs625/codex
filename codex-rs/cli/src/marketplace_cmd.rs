@@ -2,8 +2,6 @@ use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
 use clap::Parser;
-use codex_thread_runtime::config::Config;
-use codex_thread_runtime::config::find_codex_home;
 use codex_core_plugins::PluginMarketplaceUpgradeOutcome;
 use codex_core_plugins::PluginsManager;
 use codex_core_plugins::installed_marketplaces::marketplace_install_root;
@@ -13,6 +11,8 @@ use codex_core_plugins::marketplace_add::add_marketplace;
 use codex_core_plugins::marketplace_remove::MarketplaceRemoveRequest;
 use codex_core_plugins::marketplace_remove::remove_marketplace;
 use codex_plugin::validate_plugin_segment;
+use thread_service::config::Config;
+use thread_service::config::find_codex_home;
 use codex_utils_cli::CliConfigOverrides;
 
 #[derive(Debug, Parser)]

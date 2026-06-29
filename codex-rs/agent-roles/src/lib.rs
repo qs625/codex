@@ -773,10 +773,10 @@ fn agent_frontmatter_indent(line: &str, line_number: usize) -> Result<usize, Str
     Ok(indent)
 }
 
-fn split_agent_frontmatter_key_value<'a>(
-    line: &'a str,
+fn split_agent_frontmatter_key_value(
+    line: &str,
     line_number: usize,
-) -> Result<(&'a str, &'a str), String> {
+) -> Result<(&str, &str), String> {
     let Some((key, value)) = line.split_once(':') else {
         return Err(format!("line {line_number}: expected `key: value`"));
     };
@@ -849,11 +849,12 @@ fn agent_frontmatter_bracketed_list(
                 escaped = true;
                 continue;
             }
-            if active_quote == '\'' && ch == '\'' {
-                if iter.peek().is_some_and(|(_, next)| *next == '\'') {
-                    iter.next();
-                    continue;
-                }
+            if active_quote == '\''
+                && ch == '\''
+                && iter.peek().is_some_and(|(_, next)| *next == '\'')
+            {
+                iter.next();
+                continue;
             }
             if ch == active_quote {
                 quote = None;
@@ -964,17 +965,16 @@ fn agent_frontmatter_double_quote_end(value: &str, line_number: usize) -> Result
     Err(format!("line {line_number}: invalid double-quoted scalar"))
 }
 
-fn parse_agent_frontmatter_single_quoted_scalar<'a>(
-    value: &'a str,
+fn parse_agent_frontmatter_single_quoted_scalar(
+    value: &str,
     line_number: usize,
-) -> Result<(String, &'a str), String> {
+) -> Result<(String, &str), String> {
     let mut parsed = String::new();
     let mut index = 1;
     while index < value.len() {
-        let ch = value[index..]
-            .chars()
-            .next()
-            .expect("index stays on char boundary");
+        let Some(ch) = value[index..].chars().next() else {
+            break;
+        };
         if ch == '\'' {
             let next_index = index + ch.len_utf8();
             if value[next_index..].starts_with('\'') {

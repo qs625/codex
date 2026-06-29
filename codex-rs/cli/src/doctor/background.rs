@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use codex_thread_runtime::config::Config;
+use thread_service::config::Config;
 
 use super::CheckStatus;
 use super::DoctorCheck;

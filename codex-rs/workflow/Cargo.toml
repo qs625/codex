@@ -9,6 +9,11 @@ workspace = true
 
 [dependencies]
 codex-protocol = { workspace = true }
+codex-runtime-capability-api = { workspace = true }
+codex-session-telemetry-api = { workspace = true }
+codex-tool-types = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+thread-service-api = { workspace = true }
 codex-workflow-api = { workspace = true }
 once_cell = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

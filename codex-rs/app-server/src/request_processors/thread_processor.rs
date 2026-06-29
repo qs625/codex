@@ -60,7 +60,7 @@ pub(crate) trait ThreadProcessorLifecycleRuntime: FinalStatusNotifier {
     fn shutdown_all_threads_bounded<'a>(
         &'a self,
         timeout: Duration,
-    ) -> futures::future::BoxFuture<'a, codex_thread_api::ThreadShutdownReport>;
+    ) -> futures::future::BoxFuture<'a, thread_service_api::ThreadShutdownReport>;
 
     fn subscribe_thread_created(&self) -> broadcast::Receiver<ThreadCreatedEvent>;
 
@@ -71,7 +71,7 @@ impl ThreadProcessorLifecycleRuntime for ThreadService {
     fn shutdown_all_threads_bounded<'a>(
         &'a self,
         timeout: Duration,
-    ) -> futures::future::BoxFuture<'a, codex_thread_api::ThreadShutdownReport> {
+    ) -> futures::future::BoxFuture<'a, thread_service_api::ThreadShutdownReport> {
         Box::pin(ThreadService::shutdown_all_threads_bounded(self, timeout))
     }
 
@@ -93,7 +93,7 @@ pub(crate) trait ThreadProcessorCreatedThread: AppServerLiveThreadHandle {
     );
 }
 
-impl ThreadProcessorCreatedThread for codex_thread_runtime::CodexThread {
+impl ThreadProcessorCreatedThread for thread_service::CodexThread {
     fn record_startup_phase(
         &self,
         phase: &'static str,
@@ -969,7 +969,7 @@ impl ThreadRequestProcessor {
     }
 
     async fn instruction_sources_from_config(config: &Config) -> Vec<AbsolutePathBuf> {
-        codex_thread_runtime::AgentsMdManager::new(config)
+        thread_service::AgentsMdManager::new(config)
             .instruction_sources(LOCAL_FS.as_ref())
             .await
     }
@@ -1349,7 +1349,7 @@ impl ThreadRequestProcessor {
             let current_cli_overrides = config_manager.current_cli_overrides();
             let cli_overrides_with_trust;
             let cli_overrides_for_reload = if let Err(err) =
-                codex_thread_runtime::config::set_project_trust_level(
+                thread_service::config::set_project_trust_level(
                     &listener_task_context.codex_home,
                     trust_target.as_path(),
                     TrustLevel::Trusted,
@@ -1834,7 +1834,7 @@ impl ThreadRequestProcessor {
         let ThreadSetNameParams { thread_id, name } = params;
         let thread_id = ThreadId::from_string(&thread_id)
             .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
-        let Some(name) = codex_thread_runtime::util::normalize_thread_name(&name) else {
+        let Some(name) = thread_service::util::normalize_thread_name(&name) else {
             return Err(invalid_request("thread name must not be empty"));
         };
 

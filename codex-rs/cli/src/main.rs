@@ -66,15 +66,6 @@ use state_db_recovery as local_state_db;
 use codex_config_loader::LoaderOverrides;
 use codex_config_local_loader::LocalConfigLayerLoader;
 use codex_config_types::CONFIG_TOML_FILE;
-use codex_thread_runtime::ThreadAuthRuntimes;
-use codex_thread_runtime::build_models_manager;
-use codex_thread_runtime::config::Config;
-use codex_thread_runtime::config::ConfigBuilder;
-use codex_thread_runtime::config::ConfigOverrides;
-use codex_thread_runtime::config::ThreadStoreConfig;
-use codex_thread_runtime::config::edit::ConfigEditsBuilder;
-use codex_thread_runtime::config::find_codex_home;
-use codex_thread_runtime::config::resolve_profile_v2_config_path;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server_api::ExecServerRuntimePaths;
 use codex_features::FEATURES;
@@ -87,8 +78,16 @@ use codex_models_manager_api::RefreshStrategy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::user_input::UserInput;
 use codex_rollout::StateDbHandle;
-use codex_state_api::SharedStateDbRuntime;
 use codex_terminal_detection::TerminalName;
+use thread_service::ThreadAuthRuntimes;
+use thread_service::build_models_manager;
+use thread_service::config::Config;
+use thread_service::config::ConfigBuilder;
+use thread_service::config::ConfigOverrides;
+use thread_service::config::ThreadStoreConfig;
+use thread_service::config::edit::ConfigEditsBuilder;
+use thread_service::config::find_codex_home;
+use thread_service::config::resolve_profile_v2_config_path;
 
 pub(crate) fn config_builder() -> ConfigBuilder {
     ConfigBuilder::default().config_layer_loader(Arc::new(LocalConfigLayerLoader::default()))
@@ -1683,25 +1682,25 @@ async fn run_debug_prompt_input_command(
         auth_manager.clone(),
         codex_login::model_provider_auth_manager(Some(auth_manager)),
     );
-    let shared_state_db: Option<SharedStateDbRuntime> = state_db
-        .clone()
-        .map(|state_db| state_db as SharedStateDbRuntime);
-    let prompt_input = codex_thread_runtime::build_prompt_input(
+    let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
+        config.codex_home.clone(),
+    ));
+    let prompt_input = thread_service::build_prompt_input(
         config,
         input,
-        shared_state_db,
+        state_db.clone(),
         environment_provider,
         thread_store,
         Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         auth_runtimes,
         Arc::new(codex_model_provider::DefaultModelProviderFactory),
         Arc::new(codex_tool_service::ToolService::new(
-            Arc::new(codex_thread_runtime::ThreadApprovalService),
+            Arc::new(approval_service::ApprovalService),
             Arc::new(codex_command_service::CommandService::new()),
-            Arc::new(codex_thread_runtime::GoalService),
-            Arc::new(codex_thread_runtime::McpResourceService),
-            Arc::new(codex_thread_runtime::RequestPluginInstallService),
-            Arc::new(codex_workflow::WorkflowService::new()),
+            Arc::new(goal_service::GoalService),
+            Arc::new(mcp_service::McpService),
+            Arc::new(thread_service::RequestPluginInstallService),
+            workflow_service,
         )),
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),

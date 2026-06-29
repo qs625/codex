@@ -1,8 +1,8 @@
 use codex_config_edit::CONFIG_TOML_FILE;
 use codex_config_state::ConfigLayerStack;
-use codex_thread_runtime::config::Config;
 use codex_features::Feature;
 use codex_hooks::HookListEntry;
+use thread_service::config::Config;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use toml::Value as TomlValue;
 
@@ -14,7 +14,7 @@ pub fn trust_discovered_hooks(config: &mut Config) {
     let listed = codex_hooks::list_hooks(codex_hooks::HooksConfig {
         feature_enabled: true,
         config_layer_stack: Some(
-            codex_thread_runtime::config::hook_config_layer_stack_from_config_layer_stack(
+            thread_service::config::hook_config_layer_stack_from_config_layer_stack(
                 &config.config_layer_stack,
             ),
         ),

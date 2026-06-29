@@ -200,12 +200,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_models_happy_path() {
-        if std::env::var(codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
+        if std::env::var(thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
             .is_ok()
         {
             tracing::info!(
                 "{} is set; skipping test_fetch_models_happy_path",
-                codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
+                thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
             );
             return;
         }
@@ -234,12 +234,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_models_no_data_array() {
-        if std::env::var(codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
+        if std::env::var(thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
             .is_ok()
         {
             tracing::info!(
                 "{} is set; skipping test_fetch_models_no_data_array",
-                codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
+                thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
             );
             return;
         }
@@ -267,12 +267,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_models_server_error() {
-        if std::env::var(codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
+        if std::env::var(thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
             .is_ok()
         {
             tracing::info!(
                 "{} is set; skipping test_fetch_models_server_error",
-                codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
+                thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
             );
             return;
         }
@@ -297,12 +297,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_server_happy_path() {
-        if std::env::var(codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
+        if std::env::var(thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
             .is_ok()
         {
             tracing::info!(
                 "{} is set; skipping test_check_server_happy_path",
-                codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
+                thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
             );
             return;
         }
@@ -323,12 +323,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_server_error() {
-        if std::env::var(codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
+        if std::env::var(thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
             .is_ok()
         {
             tracing::info!(
                 "{} is set; skipping test_check_server_error",
-                codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
+                thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
             );
             return;
         }

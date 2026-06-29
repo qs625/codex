@@ -11,7 +11,7 @@ use codex_protocol::ThreadId;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::RolloutItem;
 use codex_rollout::state_db::StateDbHandle;
-use codex_thread_api::ThreadConfigSnapshot;
+use thread_service_api::ThreadConfigSnapshot;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
 use std::collections::HashSet;

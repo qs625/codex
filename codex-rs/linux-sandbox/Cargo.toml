@@ -32,7 +32,8 @@ sha2 = { workspace = true }
 url = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-codex-thread-runtime = { workspace = true }
+codex-command-service = { workspace = true }
+thread-service = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = [

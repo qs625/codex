@@ -21,6 +21,7 @@ doctest = false
 workspace = true
 
 [dependencies]
+approval-service = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
@@ -46,7 +47,7 @@ codex-config-toml = { workspace = true }
 codex-config-types = { workspace = true }
 codex-command-service = { workspace = true }
 codex-command-service-api = { workspace = true }
-codex-thread-runtime = { workspace = true }
+thread-service = { workspace = true }
 codex-core-plugins = { workspace = true }
 codex-core-plugins-api = { workspace = true }
 codex-core-plugins-remote = { workspace = true }
@@ -63,6 +64,7 @@ codex-file-subscription = { workspace = true }
 codex-file-watcher = { workspace = true }
 codex-guardian = { workspace = true }
 codex-git-info = { workspace = true }
+goal-service = { workspace = true }
 codex-hooks = { workspace = true }
 codex-otel = { workspace = true }
 codex-otel-init = { workspace = true }
@@ -77,7 +79,8 @@ codex-login = { workspace = true, features = ["model-provider-auth"] }
 codex-memories-read = { workspace = true }
 codex-memories-write = { workspace = true }
 codex-mcp = { workspace = true }
-codex-mcp-runtime-api = { workspace = true }
+mcp-service = { workspace = true }
+mcp-service-api = { workspace = true }
 codex-mcp-types = { workspace = true }
 codex-model-provider = { workspace = true }
 codex-model-provider-api = { workspace = true }
@@ -99,7 +102,7 @@ codex-sandboxing-api = { workspace = true }
 codex-sandboxing = { workspace = true }
 codex-state-api = { workspace = true }
 codex-state = { workspace = true }
-codex-thread-api = { workspace = true }
+thread-service-api = { workspace = true }
 codex-thread-store = { workspace = true }
 codex-thread-store-api = { workspace = true }
 codex-tool-config = { workspace = true }
@@ -142,7 +145,7 @@ axum = { workspace = true, default-features = false, features = [
 ] }
 base64 = { workspace = true }
 codex-config = { workspace = true }
-codex-thread-runtime = { workspace = true, features = ["test-support"] }
+thread-service = { workspace = true, features = ["test-support"] }
 codex-utils-cargo-bin = { workspace = true }
 core_test_support = { workspace = true }
 flate2 = { workspace = true }

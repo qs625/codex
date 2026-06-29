@@ -1,0 +1,61 @@
+//! Unix shell-escalation protocol implementation.
+//!
+//! A patched shell invokes an exec wrapper on every `exec()` attempt. The wrapper sends an
+//! `EscalateRequest` over the inherited `CODEX_ESCALATE_SOCKET`, and the server decides whether to
+//! run the command directly (`Run`) or execute it on the server side (`Escalate`).
+//!
+//! Of key importance is the `EscalateRequest` includes a file descriptor for a socket
+//! that the server can use to send the response to the execve wrapper. In this
+//! way, all descendents of the Server process can use the file descriptor
+//! specified by the `CODEX_ESCALATE_SOCKET` environment variable to _send_ escalation requests,
+//! but responses are read from a separate socket that is created for each request, which
+//! allows the server to handle multiple concurrent escalation requests.
+//!
+//! ### Escalation flow
+//!
+//! Command  Server  Shell  Execve Wrapper
+//!          |
+//!          o----->o
+//!          |      |
+//!          |      o--(exec)-->o
+//!          |      |           |
+//!          |o<-(EscalateReq)--o
+//!          ||     |           |
+//!          |o--(Escalate)---->o
+//!          ||     |           |
+//!          |o<---------(fds)--o
+//!          ||     |           |
+//!   o<------o     |           |
+//!   |      ||     |           |
+//!   x------>o     |           |
+//!          ||     |           |
+//!          |x--(exit code)--->o
+//!          |      |           |
+//!          |      o<--(exit)--x
+//!          |      |
+//!          o<-----x
+//!
+//! ### Non-escalation flow
+//!
+//! Server  Shell  Execve Wrapper  Command
+//!   |
+//!   o----->o
+//!   |      |
+//!   |      o--(exec)-->o
+//!   |      |           |
+//!   |o<-(EscalateReq)--o
+//!   ||     |           |
+//!   |o-(Run)---------->o
+//!   |      |           |
+//!   |      |           x--(exec)-->o
+//!   |      |                       |
+//!   |      o<--------------(exit)--x
+//!   |      |
+//!   o<-----x
+//!
+pub(crate) mod escalate_client;
+pub(crate) mod escalate_protocol;
+pub(crate) mod escalate_server;
+pub(crate) mod socket;
+
+pub use self::escalate_client::run_shell_escalation_execve_wrapper;

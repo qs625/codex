@@ -7,9 +7,9 @@
 
 use std::time::Duration;
 
-pub use codex_mcp_runtime_api::McpRuntimeEnvironment;
-pub use codex_mcp_runtime_api::McpRuntimeEnvironmentParams;
 pub use codex_mcp_types::SandboxState;
+pub use mcp_service_api::McpRuntimeEnvironment;
+pub use mcp_service_api::McpRuntimeEnvironmentParams;
 
 pub(crate) fn emit_duration(metric: &str, duration: Duration, tags: &[(&str, &str)]) {
     codex_metrics_api::record_global_duration(metric, duration, tags);

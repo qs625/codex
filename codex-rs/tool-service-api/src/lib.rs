@@ -9,10 +9,10 @@ use codex_mcp_tool_types::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::protocol::EventMsg;
-use codex_thread_api::SharedToolTurnDiffTracker;
-use codex_thread_api::ToolServiceSessionRef;
-use codex_thread_api::ToolServiceTurnRef;
-use codex_thread_api::ToolSessionCapability;
+use thread_service_api::SharedToolTurnDiffTracker;
+use thread_service_api::ToolServiceSessionRef;
+use thread_service_api::ToolServiceTurnRef;
+use thread_service_api::ThreadSessionCapability;
 use codex_tool_config::ToolsConfig;
 use codex_tool_types::DiscoverableTool;
 use codex_tool_types::FunctionCallError;
@@ -97,12 +97,8 @@ pub trait ErasedToolArgumentDiffConsumer: Send {
 
 /// Consumes streamed argument diffs for one tool call.
 pub trait ToolArgumentDiffConsumer<DiffContext>: Send {
-    fn consume_diff(
-        &mut self,
-        turn: &DiffContext,
-        call_id: String,
-        diff: &str,
-    ) -> Option<EventMsg>;
+    fn consume_diff(&mut self, turn: &DiffContext, call_id: String, diff: &str)
+    -> Option<EventMsg>;
 
     fn finish(&mut self) -> Result<Option<EventMsg>, FunctionCallError> {
         Ok(None)
@@ -151,7 +147,7 @@ impl AnyToolResult {
 
 pub struct ToolSpecRequest<'a> {
     pub config: &'a ToolsConfig,
-    pub session_capability: Weak<dyn ToolSessionCapability>,
+    pub session_capability: Weak<dyn ThreadSessionCapability>,
     pub session: Arc<dyn ToolServiceSessionRef>,
     pub turn: Arc<dyn ToolServiceTurnRef>,
     pub params: ToolServiceParams<'a>,
@@ -212,9 +208,7 @@ where
         call_id: String,
         diff: &str,
     ) -> Option<codex_protocol::protocol::EventMsg> {
-        let Some(turn) = turn.as_any().downcast_ref::<Turn>() else {
-            return None;
-        };
+        let turn = turn.as_any().downcast_ref::<Turn>()?;
         self.inner.consume_diff(turn, call_id, diff)
     }
 

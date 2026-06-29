@@ -1,10 +1,6 @@
 use std::sync::Arc;
 use std::sync::Weak;
 
-use codex_thread_runtime::NewThread;
-use codex_thread_runtime::StartThreadOptions;
-use codex_thread_runtime::ThreadService;
-use codex_thread_runtime::config::Config;
 use codex_extension_api::AgentSpawnFuture;
 use codex_extension_api::AgentSpawner;
 use codex_extension_api::ExtensionRegistry;
@@ -18,8 +14,12 @@ use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::subscriptions::PersistedSubscription;
-use codex_thread_api::ActiveEventSubscriptionTracker;
-use codex_thread_api::LiveThreadRegistry;
+use thread_service_api::ActiveEventSubscriptionTracker;
+use thread_service_api::LiveThreadRegistry;
+use thread_service::NewThread;
+use thread_service::StartThreadOptions;
+use thread_service::ThreadService;
+use thread_service::config::Config;
 use codex_thread_store_api::ReadThreadParams;
 use codex_thread_store_api::ThreadMetadataPatch;
 use futures::future::BoxFuture;

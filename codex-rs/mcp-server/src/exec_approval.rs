@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use codex_thread_runtime::CodexThread;
 use codex_protocol::ThreadId;
 use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::ReviewDecision;
+use thread_service::CodexThread;
 use rmcp::model::ErrorData;
 use rmcp::model::RequestId;
 use serde::Deserialize;

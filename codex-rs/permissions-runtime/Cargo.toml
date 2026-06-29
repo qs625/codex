@@ -17,7 +17,6 @@ codex-config-state = { workspace = true }
 codex-execpolicy-api = { workspace = true }
 codex-network-proxy-api = { workspace = true }
 codex-protocol = { workspace = true }
-codex-shell-command = { workspace = true }
 codex-shell-utils = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 globset = { workspace = true }

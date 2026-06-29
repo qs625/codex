@@ -23,13 +23,15 @@ use codex_app_server_protocol::WorkflowStartParams;
 use codex_app_server_protocol::WorkflowStartResponse;
 use codex_app_server_protocol::WorkflowStatusParams;
 use codex_app_server_protocol::WorkflowStatusResponse;
-use codex_workflow::WorkflowRunManager;
 use codex_workflow_api::WorkflowDetails;
+use codex_workflow_api::WorkflowDiscoveryContext;
+use codex_workflow_api::WorkflowExecutionContext;
 use codex_workflow_api::WorkflowDiagnostic;
+use codex_workflow_api::WorkflowApi;
 use codex_workflow_api::WorkflowInputSpec;
-use codex_workflow_api::WorkflowRegistry;
 use codex_workflow_api::WorkflowRun;
 use codex_workflow_api::WorkflowRunStatus;
+use codex_workflow_api::WorkflowRunUpdateError;
 use codex_workflow_api::WorkflowSource;
 use codex_workflow_api::WorkflowSummary;
 use std::path::PathBuf;
@@ -39,19 +41,19 @@ use std::sync::Arc;
 pub(crate) struct WorkflowRequestProcessor {
     config_manager: ConfigManager,
     outgoing: Arc<OutgoingMessageSender>,
-    workflow_runs: Arc<WorkflowRunManager>,
+    workflow_api: Arc<dyn WorkflowApi>,
 }
 
 impl WorkflowRequestProcessor {
     pub(crate) fn new(
         config_manager: ConfigManager,
         outgoing: Arc<OutgoingMessageSender>,
-        codex_home: PathBuf,
+        workflow_api: Arc<dyn WorkflowApi>,
     ) -> Self {
         Self {
             config_manager,
             outgoing,
-            workflow_runs: Arc::new(WorkflowRunManager::new(codex_home)),
+            workflow_api,
         }
     }
 
@@ -59,14 +61,19 @@ impl WorkflowRequestProcessor {
         &self,
         params: WorkflowListParams,
     ) -> Result<WorkflowListResponse, JSONRPCErrorError> {
-        let registry = self.registry(params.cwd).await?;
+        let discovery = self.discovery_context(params.cwd).await?;
+        let workflows = self
+            .workflow_api
+            .list_workflows(discovery)
+            .await
+            .map_err(invalid_request)?;
         Ok(WorkflowListResponse {
-            workflows: registry
+            workflows: workflows
                 .workflows
                 .into_iter()
                 .map(map_workflow_summary)
                 .collect(),
-            diagnostics: registry
+            diagnostics: workflows
                 .diagnostics
                 .into_iter()
                 .map(map_workflow_diagnostic)
@@ -78,12 +85,17 @@ impl WorkflowRequestProcessor {
         &self,
         params: WorkflowDescribeParams,
     ) -> Result<WorkflowDescribeResponse, JSONRPCErrorError> {
-        let registry = self.registry(params.cwd).await?;
-        let workflow = params.workflow.trim();
-        if workflow.is_empty() {
-            return Err(invalid_request("workflow must not be empty"));
-        }
-        let details = registry.details(workflow).map_err(invalid_request)?;
+        let discovery = self.discovery_context(params.cwd).await?;
+        let details = self
+            .workflow_api
+            .describe_workflow(
+                discovery,
+                codex_workflow_api::WorkflowDescribeArgs {
+                    workflow: params.workflow,
+                },
+            )
+            .await
+            .map_err(invalid_request)?;
         Ok(WorkflowDescribeResponse {
             workflow: map_workflow_details(details),
         })
@@ -93,15 +105,17 @@ impl WorkflowRequestProcessor {
         &self,
         params: WorkflowStartParams,
     ) -> Result<WorkflowStartResponse, JSONRPCErrorError> {
-        let registry = self.registry(params.cwd).await?;
-        let workflow = params.workflow.trim();
-        if workflow.is_empty() {
-            return Err(invalid_request("workflow must not be empty"));
-        }
-        let updates = self.workflow_runs.subscribe();
+        let discovery = self.discovery_context(params.cwd).await?;
+        let updates = self.workflow_api.subscribe_workflow_updates();
         let run = self
-            .workflow_runs
-            .start(&registry, workflow, params.inputs)
+            .workflow_api
+            .start_workflow(
+                WorkflowExecutionContext::new(discovery, None),
+                codex_workflow_api::WorkflowStartArgs {
+                    workflow: params.workflow,
+                    inputs: Some(params.inputs),
+                },
+            )
             .await
             .map_err(invalid_request)?;
         self.send_run_updated(run.clone()).await;
@@ -115,13 +129,11 @@ impl WorkflowRequestProcessor {
         &self,
         params: WorkflowStatusParams,
     ) -> Result<WorkflowStatusResponse, JSONRPCErrorError> {
-        let run_id = params.run_id.trim();
-        if run_id.is_empty() {
-            return Err(invalid_request("run_id must not be empty"));
-        }
         let run = self
-            .workflow_runs
-            .status(run_id)
+            .workflow_api
+            .workflow_status(codex_workflow_api::WorkflowStatusArgs {
+                run_id: params.run_id,
+            })
             .await
             .map_err(invalid_request)?;
         Ok(WorkflowStatusResponse {
@@ -133,14 +145,16 @@ impl WorkflowRequestProcessor {
         &self,
         params: WorkflowResumeParams,
     ) -> Result<WorkflowResumeResponse, JSONRPCErrorError> {
-        let run_id = params.run_id.trim();
-        if run_id.is_empty() {
-            return Err(invalid_request("run_id must not be empty"));
-        }
-        let updates = self.workflow_runs.subscribe();
+        let updates = self.workflow_api.subscribe_workflow_updates();
         let run = self
-            .workflow_runs
-            .resume(run_id, params.inputs)
+            .workflow_api
+            .resume_workflow(
+                WorkflowExecutionContext::new(empty_discovery_context(), None),
+                codex_workflow_api::WorkflowResumeArgs {
+                    run_id: params.run_id,
+                    inputs: params.inputs,
+                },
+            )
             .await
             .map_err(invalid_request)?;
         self.send_run_updated(run.clone()).await;
@@ -154,13 +168,15 @@ impl WorkflowRequestProcessor {
         &self,
         params: WorkflowAbortParams,
     ) -> Result<WorkflowAbortResponse, JSONRPCErrorError> {
-        let run_id = params.run_id.trim();
-        if run_id.is_empty() {
-            return Err(invalid_request("run_id must not be empty"));
-        }
         let run = self
-            .workflow_runs
-            .abort(run_id, params.reason)
+            .workflow_api
+            .abort_workflow(
+                WorkflowExecutionContext::new(empty_discovery_context(), None),
+                codex_workflow_api::WorkflowAbortArgs {
+                    run_id: params.run_id,
+                    reason: params.reason,
+                },
+            )
             .await
             .map_err(invalid_request)?;
         self.send_run_updated(run.clone()).await;
@@ -169,14 +185,27 @@ impl WorkflowRequestProcessor {
         })
     }
 
-    async fn registry(&self, cwd: Option<String>) -> Result<WorkflowRegistry, JSONRPCErrorError> {
+    async fn discovery_context(
+        &self,
+        cwd: Option<String>,
+    ) -> Result<WorkflowDiscoveryContext, JSONRPCErrorError> {
         let fallback_cwd = cwd.map(PathBuf::from);
         let config = self
             .config_manager
             .load_latest_config(fallback_cwd)
             .await
             .map_err(|err| internal_error(format!("failed to load workflow config: {err}")))?;
-        Ok(codex_thread_runtime::workflows::load_workflow_registry(&config))
+        Ok(codex_workflow_api::workflow_discovery_context_from_config_layers(
+            config.codex_home.as_ref(),
+            config.cwd.as_ref(),
+            config.config_layer_stack.get_layers(
+                codex_config_state::ConfigLayerStackOrdering::LowestPrecedenceFirst,
+                /*include_disabled*/ false,
+            )
+            .into_iter()
+            .cloned()
+            .collect(),
+        ))
     }
 
     async fn send_run_updated(&self, run: WorkflowRun) {
@@ -192,15 +221,15 @@ impl WorkflowRequestProcessor {
     fn spawn_terminal_run_notification(
         &self,
         run_id: String,
-        mut updates: tokio::sync::broadcast::Receiver<WorkflowRun>,
+        mut updates: Box<dyn codex_workflow_api::WorkflowRunUpdateReceiver>,
     ) {
         let outgoing = Arc::clone(&self.outgoing);
         tokio::spawn(async move {
             loop {
                 let run = match updates.recv().await {
                     Ok(run) => run,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    Err(WorkflowRunUpdateError::Lagged(_)) => continue,
+                    Err(WorkflowRunUpdateError::Closed) => break,
                 };
                 if run.run_id == run_id
                     && matches!(
@@ -219,6 +248,13 @@ impl WorkflowRequestProcessor {
                 }
             }
         });
+    }
+}
+
+fn empty_discovery_context() -> WorkflowDiscoveryContext {
+    WorkflowDiscoveryContext {
+        home_root: PathBuf::new(),
+        project_roots: Vec::new(),
     }
 }
 

@@ -28,8 +28,8 @@ use codex_protocol::protocol::McpAuthStatus;
 use serde_json::Value;
 
 use crate::connection_manager::McpConnectionManager;
-use codex_mcp_runtime_api::McpRuntimeEnvironment;
-use codex_mcp_runtime_api::SharedMcpAuthHeaderProvider;
+use mcp_service_api::McpRuntimeEnvironment;
+use mcp_service_api::SharedMcpAuthHeaderProvider;
 
 pub use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
 pub use codex_mcp_types::CodexAppsAuthContext;

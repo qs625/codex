@@ -11,7 +11,7 @@ workspace = true
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
 codex-app-server-protocol = { workspace = true }
-codex-thread-runtime = { workspace = true }
+thread-service = { workspace = true }
 codex-features = { workspace = true }
 codex-otel = { workspace = true }
 codex-otel-init = { workspace = true }

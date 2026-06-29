@@ -2,25 +2,25 @@ use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-use codex_command_service_api::CommandServiceApi;
-use codex_command_service_api::CommandServiceSessionCapability;
-use codex_command_service_api::SessionCommandInteractionCaller;
+use crate::planning::ToolSpec;
+use crate::planning::create_command_wait_tool;
+use crate::planning::create_write_stdin_tool;
 use codex_command_service_api::CommandNotificationKind;
+use codex_command_service_api::CommandServiceApi;
+use codex_command_service_api::CommandServiceSessionApi;
 use codex_command_service_api::CommandWaitRequest;
 use codex_command_service_api::CommandWaitStatus;
+use codex_command_service_api::SessionCommandInteractionCaller;
 use codex_command_service_api::WriteStdinRequest;
 use codex_protocol::models::CommandWaitNotificationKind as ResponseCommandWaitNotificationKind;
 use codex_protocol::models::CommandWaitStatus as ResponseCommandWaitStatus;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::TerminalInteractionEvent;
-use codex_thread_runtime::ThreadRuntimeSession;
-use codex_thread_runtime::ThreadTurnContext;
+use thread_service::ThreadRuntimeSession;
+use thread_service::ThreadTurnContext;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
-use crate::planning::ToolSpec;
-use crate::planning::create_command_wait_tool;
-use crate::planning::create_write_stdin_tool;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolName;
@@ -38,7 +38,7 @@ const WRITE_STDIN_EMPTY_INPUT_ERROR: &str = "command_write_stdin requires non-em
 
 // This domain owns command-session interaction tools. They operate on command
 // sessions created by `exec_command` and should eventually depend on a dedicated
-// command service rather than thread-runtime internals.
+// command service rather than thread service internals.
 pub(crate) fn specs(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
     if request.config.shell_type != codex_protocol::openai_models::ConfigShellToolType::UnifiedExec
     {
@@ -75,17 +75,16 @@ pub(crate) async fn dispatch(
 ) -> Result<AnyToolResult, FunctionCallError> {
     let result = match call.tool_name.name.as_str() {
         COMMAND_WAIT_TOOL_NAME => {
-            dispatch_command_wait(
+            dispatch_command_wait(command_service_api, session.as_ref(), turn.as_ref(), &call).await
+        }
+        COMMAND_WRITE_STDIN_TOOL_NAME => {
+            dispatch_command_write_stdin(
                 command_service_api,
                 session.as_ref(),
                 turn.as_ref(),
                 &call,
             )
             .await
-        }
-        COMMAND_WRITE_STDIN_TOOL_NAME => {
-            dispatch_command_write_stdin(command_service_api, session.as_ref(), turn.as_ref(), &call)
-                .await
         }
         _ => Err(FunctionCallError::Fatal(format!(
             "unsupported command tool {}",
@@ -108,11 +107,12 @@ async fn dispatch_command_wait(
     call: &ToolCall,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
     let args: CommandWaitArgs = parse_function_arguments(call)?;
+    let session_api = session as &dyn CommandServiceSessionApi;
     let item_id = format!("response-item-{}", uuid::Uuid::new_v4());
     let created_at_ms = now_unix_timestamp_ms();
     let command_wait = command_service_api
         .begin_command_wait(
-            turn.session_arc() as Arc<dyn CommandServiceSessionCapability>,
+            session_api.command_service_state(),
             CommandWaitRequest {
                 process_id: args.command_id,
             },
@@ -186,6 +186,7 @@ async fn dispatch_command_write_stdin(
     call: &ToolCall,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
     let args: WriteStdinArgs = parse_function_arguments(call)?;
+    let session_api = session as &dyn CommandServiceSessionApi;
     let Some(chars) = args.chars else {
         return Err(FunctionCallError::RespondToModel(
             WRITE_STDIN_EMPTY_INPUT_ERROR.to_string(),
@@ -199,7 +200,7 @@ async fn dispatch_command_write_stdin(
 
     let response = command_service_api
         .write_command_stdin(
-            turn.session_arc() as Arc<dyn CommandServiceSessionCapability>,
+            session_api.command_service_state(),
             WriteStdinRequest {
                 process_id: args.command_id,
                 input: &chars,

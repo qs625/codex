@@ -6,16 +6,19 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-use codex_approval_service_api::ApprovalServiceApi;
-use codex_approval_service_api::ApplyPatchApprovalDispatch;
-use codex_approval_service_api::ApplyPatchApprovalKey;
-use codex_approval_service_api::ApplyPatchApprovalRequest;
+use crate::planning::ToolEnvironmentMode;
+use crate::planning::ToolSpec;
+use crate::planning::create_apply_patch_freeform_tool;
 use codex_apply_patch::AppliedPatchDelta;
 use codex_apply_patch::ApplyPatchAction;
 use codex_apply_patch::ApplyPatchFileChange;
 use codex_apply_patch::Hunk;
 use codex_apply_patch::MaybeApplyPatchVerified;
 use codex_apply_patch::StreamingPatchParser;
+use codex_approval_service_api::ApplyPatchApprovalDispatch;
+use codex_approval_service_api::ApplyPatchApprovalKey;
+use codex_approval_service_api::ApplyPatchApprovalRequest;
+use codex_approval_service_api::ApprovalServiceApi;
 use codex_command_service_api::is_likely_sandbox_denied;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
@@ -30,33 +33,28 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::PatchApplyUpdatedEvent;
 use codex_protocol::protocol::TurnDiffEvent;
+use codex_sandboxing_api::ApplyPatchEnvironment;
+use codex_sandboxing_api::ResolvedApplyPatchEnvironment;
 use codex_sandboxing_api::SandboxType;
 use codex_sandboxing_api::SandboxablePreference;
+use codex_sandboxing_api::ToolSandboxContext;
 use codex_sandboxing_api::policy_transforms::effective_file_system_sandbox_policy;
 use codex_sandboxing_api::policy_transforms::effective_permission_profile;
 use codex_sandboxing_api::policy_transforms::merge_permission_profiles;
 use codex_sandboxing_api::policy_transforms::normalize_additional_permissions;
-use codex_thread_api::ApplyPatchSessionCapability;
-use codex_thread_api::ApplyPatchDiffContext;
-use codex_thread_api::ApplyPatchTurnCapability;
-use codex_thread_api::ApplyPatchEnvironment;
-use codex_thread_api::HookToolName as ThreadHookToolName;
-use codex_thread_api::PermissionRequestPayload;
-use codex_thread_api::ResolvedApplyPatchEnvironment;
-use codex_thread_api::SharedToolTurnDiffTracker;
-use codex_thread_api::ThreadRuntimeCapability;
-use codex_thread_api::ToolEventSessionCapability;
-use codex_thread_api::ToolEventTurnCapability;
-use codex_thread_api::ToolSandboxContext;
-use codex_thread_runtime::ThreadRuntimeSession;
-use codex_thread_runtime::ThreadTurnContext;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
+use thread_service_api::ApplyPatchDiffContext;
+use thread_service_api::HookToolName as ThreadHookToolName;
+use thread_service_api::PermissionRequestPayload;
+use thread_service_api::SharedToolTurnDiffTracker;
+use thread_service_api::ThreadRuntimeCapability;
+use thread_service_api::ThreadSessionCapability;
+use thread_service_api::ThreadTurnCapability;
+use thread_service::ThreadRuntimeSession;
+use thread_service::ThreadTurnContext;
 use codex_tool_service_api::AnyToolResult;
+use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_service_api::HookToolName;
 use codex_tool_service_api::PostToolUsePayload;
-use crate::planning::ToolEnvironmentMode;
-use crate::planning::ToolSpec;
-use crate::planning::create_apply_patch_freeform_tool;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolName;
@@ -118,33 +116,20 @@ impl<'a> SessionToolEventHost<'a> {
 }
 
 impl ToolEventHost for SessionToolEventHost<'_> {
+    fn thread_id(&self) -> codex_protocol::ThreadId {
+        self.turn.thread_id()
+    }
+
     fn turn_id(&self) -> &str {
         self.turn.runtime_turn_id_str()
     }
 
     fn truncation_policy(&self) -> codex_utils_output_truncation::TruncationPolicy {
-        ToolEventTurnCapability::truncation_policy(self.turn)
+        ThreadTurnCapability::truncation_policy(self.turn)
     }
 
-    async fn emit_file_change_started(&self, item: codex_protocol::items::FileChangeItem) {
-        self.session
-            .tool_emit_file_change_started(self.turn, item)
-            .await;
-    }
-
-    async fn emit_file_change_completed(&self, item: codex_protocol::items::FileChangeItem) {
-        self.session
-            .tool_emit_file_change_completed(self.turn, item)
-            .await;
-    }
-
-    async fn record_model_items_and_emit_display_events(
-        &self,
-        items: Vec<codex_protocol::models::ResponseItem>,
-    ) {
-        self.session
-            .tool_record_model_items_and_emit_display_events(self.turn, items)
-            .await;
+    async fn emit_event(&self, event: EventMsg) {
+        self.session.emit_event(self.turn, event).await;
     }
 
     async fn update_patch_diff<'b>(&'b self, tracker_update: ToolPatchTrackerUpdate<'b>) {
@@ -173,7 +158,7 @@ impl ToolEventHost for SessionToolEventHost<'_> {
         };
         if should_emit_turn_diff {
             self.session
-                .tool_emit_turn_diff(self.turn, TurnDiffEvent { unified_diff })
+                .emit_event(self.turn, EventMsg::TurnDiff(TurnDiffEvent { unified_diff }))
                 .await;
         }
     }
@@ -245,15 +230,11 @@ async fn dispatch_apply_patch(
     };
 
     let args = codex_apply_patch::parse_patch(patch_input).map_err(|parse_error| {
-        FunctionCallError::RespondToModel(format!(
-            "apply_patch verification failed: {parse_error}"
-        ))
+        FunctionCallError::RespondToModel(format!("apply_patch verification failed: {parse_error}"))
     })?;
-    let selected_environment_id = require_environment_id(
-        args.environment_id.as_deref(),
-        true,
-    )?;
-    let Some(environment) = turn.resolve_apply_patch_environment(selected_environment_id.as_deref())?
+    let selected_environment_id = require_environment_id(args.environment_id.as_deref(), true)?;
+    let Some(environment) =
+        turn.resolve_apply_patch_environment(selected_environment_id.as_deref())?
     else {
         return Err(FunctionCallError::RespondToModel(
             "apply_patch is unavailable in this session".to_string(),
@@ -281,16 +262,14 @@ async fn dispatch_apply_patch(
             .await?;
             Ok(ApplyPatchToolOutput::from_text(content))
         }
-        MaybeApplyPatchVerified::CorrectnessError(parse_error) => Err(
-            FunctionCallError::RespondToModel(format!(
+        MaybeApplyPatchVerified::CorrectnessError(parse_error) => {
+            Err(FunctionCallError::RespondToModel(format!(
                 "apply_patch verification failed: {parse_error}"
-            )),
-        ),
-        MaybeApplyPatchVerified::ShellParseError(_) => {
-            Err(FunctionCallError::RespondToModel(
-                "apply_patch handler received invalid patch input".to_string(),
-            ))
+            )))
         }
+        MaybeApplyPatchVerified::ShellParseError(_) => Err(FunctionCallError::RespondToModel(
+            "apply_patch handler received invalid patch input".to_string(),
+        )),
         MaybeApplyPatchVerified::NotApplyPatch => Err(FunctionCallError::RespondToModel(
             "apply_patch handler received non-apply_patch input".to_string(),
         )),
@@ -307,7 +286,7 @@ struct ApplyPatchArgumentDiffConsumer {
 impl ErasedToolArgumentDiffConsumer for ApplyPatchArgumentDiffConsumer {
     fn consume_diff(
         &mut self,
-        turn: &dyn codex_thread_api::ToolServiceTurnRef,
+        turn: &dyn thread_service_api::ToolServiceTurnRef,
         call_id: String,
         diff: &str,
     ) -> Option<EventMsg> {
@@ -316,7 +295,8 @@ impl ErasedToolArgumentDiffConsumer for ApplyPatchArgumentDiffConsumer {
             return None;
         }
 
-        self.push_delta(call_id, diff).map(EventMsg::PatchApplyUpdated)
+        self.push_delta(call_id, diff)
+            .map(EventMsg::PatchApplyUpdated)
     }
 
     fn finish(&mut self) -> Result<Option<EventMsg>, FunctionCallError> {
@@ -401,14 +381,12 @@ pub(crate) async fn intercept_apply_patch(
             .await?;
             Ok(Some(FunctionToolOutput::from_text(content, Some(true))))
         }
-        MaybeApplyPatchVerified::CorrectnessError(parse_error) => Err(
-            FunctionCallError::RespondToModel(format!(
+        MaybeApplyPatchVerified::CorrectnessError(parse_error) => {
+            Err(FunctionCallError::RespondToModel(format!(
                 "apply_patch verification failed: {parse_error}"
-            )),
-        ),
-        MaybeApplyPatchVerified::ShellParseError(_) => {
-            Ok(None)
+            )))
         }
+        MaybeApplyPatchVerified::ShellParseError(_) => Ok(None),
         MaybeApplyPatchVerified::NotApplyPatch => Ok(None),
     }
 }
@@ -559,7 +537,8 @@ async fn run_apply_patch_request(
         ),
     };
 
-    let first_result = run_apply_patch_attempt(req, initial_sandbox, &tool_sandbox_context, committed_delta).await;
+    let first_result =
+        run_apply_patch_attempt(req, initial_sandbox, &tool_sandbox_context, committed_delta).await;
     match first_result {
         Ok(output) => Ok(output),
         Err(ToolError::Codex(CodexErr::Sandbox(SandboxErr::Denied { output, .. }))) => {
@@ -582,7 +561,13 @@ async fn run_apply_patch_request(
                 .await?;
             }
 
-            run_apply_patch_attempt(req, SandboxType::None, &tool_sandbox_context, committed_delta).await
+            run_apply_patch_attempt(
+                req,
+                SandboxType::None,
+                &tool_sandbox_context,
+                committed_delta,
+            )
+            .await
         }
         Err(err) => Err(err),
     }
@@ -601,7 +586,10 @@ async fn request_apply_patch_approval(
             session,
             turn,
             call_id: call_id.to_string(),
-            approval_keys: apply_patch_approval_keys(req.environment.environment_id(), &req.file_paths),
+            approval_keys: apply_patch_approval_keys(
+                req.environment.environment_id(),
+                &req.file_paths,
+            ),
             approval_request: ApplyPatchApprovalRequest {
                 cwd: req.action.cwd.clone(),
                 files: req.file_paths.clone(),
@@ -623,7 +611,8 @@ async fn run_apply_patch_attempt(
 ) -> Result<ExecToolCallOutput, ToolError> {
     let started_at = Instant::now();
     let filesystem = req.environment.filesystem();
-    let sandbox_context = file_system_sandbox_context_for_attempt(req, sandbox, tool_sandbox_context);
+    let sandbox_context =
+        file_system_sandbox_context_for_attempt(req, sandbox, tool_sandbox_context);
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let result = codex_apply_patch::apply_patch(
@@ -670,8 +659,10 @@ fn file_system_sandbox_context_for_attempt(
         return None;
     }
 
-    let permissions =
-        effective_permission_profile(&tool_sandbox_context.permission_profile, req.additional_permissions.as_ref());
+    let permissions = effective_permission_profile(
+        &tool_sandbox_context.permission_profile,
+        req.additional_permissions.as_ref(),
+    );
     Some(codex_file_system::FileSystemSandboxContext {
         permissions,
         cwd: Some(req.action.cwd.clone()),
@@ -707,7 +698,8 @@ async fn effective_patch_permissions(
 ) {
     let file_paths = file_paths_for_action(action);
     let grants = session.tool_permission_grants().await;
-    let granted_permissions = merge_permission_profiles(grants.session.as_ref(), grants.turn.as_ref());
+    let granted_permissions =
+        merge_permission_profiles(grants.session.as_ref(), grants.turn.as_ref());
     let base_file_system_sandbox_policy = turn.file_system_sandbox_policy();
     let file_system_sandbox_policy = effective_file_system_sandbox_policy(
         &base_file_system_sandbox_policy,
@@ -775,7 +767,11 @@ pub(crate) fn write_permissions_for_paths(
 ) -> Option<AdditionalPermissionProfile> {
     let write_paths = file_paths
         .iter()
-        .map(|path| path.parent().unwrap_or_else(|| path.clone()).into_path_buf())
+        .map(|path| {
+            path.parent()
+                .unwrap_or_else(|| path.clone())
+                .into_path_buf()
+        })
         .filter(|path| {
             !file_system_sandbox_policy.can_write_path_with_cwd(path.as_path(), cwd.as_path())
         })
@@ -811,7 +807,9 @@ pub(crate) fn implicit_granted_permissions(
         && !matches!(sandbox_permissions, SandboxPermissions::RequireEscalated)
         && additional_permissions.is_none()
     {
-        effective_additional_permissions.additional_permissions.clone()
+        effective_additional_permissions
+            .additional_permissions
+            .clone()
     } else {
         None
     }

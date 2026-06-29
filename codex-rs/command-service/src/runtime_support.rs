@@ -15,6 +15,7 @@ use codex_sandboxing_api::SandboxType;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) enum ToolError {
     Rejected(String),
     Codex(codex_protocol::error::CodexErr),

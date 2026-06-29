@@ -18,12 +18,12 @@ use codex_state_api::default_agent_job_output_csv_path;
 use codex_state_api::ensure_unique_agent_job_headers;
 use codex_state_api::parse_agent_job_csv;
 use codex_state_api::render_agent_job_csv;
-use codex_thread_api::AgentJobRunnerOptions;
-use codex_thread_api::AgentJobSpawnWorkerError;
-use codex_thread_api::SessionAgentJobCaller;
-use codex_thread_api::ThreadRuntimeCapability;
-use codex_thread_runtime::ThreadRuntimeSession;
-use codex_thread_runtime::ThreadTurnContext;
+use thread_service_api::AgentJobRunnerOptions;
+use thread_service_api::AgentJobSpawnWorkerError;
+use thread_service_api::SessionAgentJobCaller;
+use thread_service_api::ThreadRuntimeCapability;
+use thread_service::ThreadRuntimeSession;
+use thread_service::ThreadTurnContext;
 use codex_tool_types::FunctionCallError;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::StreamExt;
@@ -477,7 +477,9 @@ async fn run_agent_job_loop(
                     )
                     .await?;
                 if !assigned {
-                    Arc::clone(&session).shutdown_agent_job_worker(thread_id).await;
+                    Arc::clone(&session)
+                        .shutdown_agent_job_worker(thread_id)
+                        .await;
                     continue;
                 }
                 active_items.insert(
@@ -588,7 +590,9 @@ async fn recover_running_items(
             if let Some(assigned_thread_id) = item.assigned_thread_id.as_ref()
                 && let Ok(thread_id) = ThreadId::from_string(assigned_thread_id.as_str())
             {
-                Arc::clone(&session).shutdown_agent_job_worker(thread_id).await;
+                Arc::clone(&session)
+                    .shutdown_agent_job_worker(thread_id)
+                    .await;
             }
             continue;
         }
@@ -614,7 +618,11 @@ async fn recover_running_items(
                 continue;
             }
         };
-        if is_final(&Arc::clone(&session).get_agent_job_worker_status(thread_id).await) {
+        if is_final(
+            &Arc::clone(&session)
+                .get_agent_job_worker_status(thread_id)
+                .await,
+        ) {
             finalize_finished_item(
                 Arc::clone(&session),
                 db.clone(),
@@ -663,7 +671,9 @@ async fn active_item_status(
     {
         return status_rx.borrow().clone();
     }
-    Arc::clone(session).get_agent_job_worker_status(thread_id).await
+    Arc::clone(session)
+        .get_agent_job_worker_status(thread_id)
+        .await
 }
 
 async fn wait_for_status_change(active_items: &HashMap<ThreadId, ActiveJobItem>) {
@@ -703,7 +713,9 @@ async fn reap_stale_active_items(
         let error_message = format!("worker exceeded max runtime of {runtime_timeout:?}");
         db.mark_agent_job_item_failed(job_id, item_id.as_str(), error_message.as_str())
             .await?;
-        Arc::clone(&session).shutdown_agent_job_worker(thread_id).await;
+        Arc::clone(&session)
+            .shutdown_agent_job_worker(thread_id)
+            .await;
         active_items.remove(&thread_id);
     }
     Ok(true)
@@ -733,7 +745,9 @@ async fn finalize_finished_item(
                 .await?;
         }
     }
-    Arc::clone(&session).shutdown_agent_job_worker(thread_id).await;
+    Arc::clone(&session)
+        .shutdown_agent_job_worker(thread_id)
+        .await;
     Ok(())
 }
 

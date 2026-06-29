@@ -3,10 +3,16 @@
 //! This crate owns sandbox DTOs, sandbox selection helpers, legacy compatibility projection and
 //! permission-profile transforms. Platform-specific command rewriting stays in `codex-sandboxing`.
 
+use std::path::PathBuf;
+use std::sync::Arc;
+
 mod manager;
 pub mod policy_transforms;
 mod request_permissions;
 mod sandbox_tags;
+pub mod shell_escalation;
+mod shell_escalation_policy;
+mod shell_escalation_stopwatch;
 mod windows_deny_read;
 mod windows_filesystem_overrides;
 
@@ -23,6 +29,24 @@ pub use request_permissions::normalize_request_permissions_response;
 pub use sandbox_tags::permission_profile_policy_tag;
 pub use sandbox_tags::permission_profile_sandbox_tag;
 pub use sandbox_tags::sandbox_tag;
+pub use shell_escalation::EscalationDecision;
+pub use shell_escalation::EscalationExecution;
+pub use codex_protocol::approvals::EscalationPermissions;
+pub use shell_escalation::EscalationPolicyDecisionParams;
+pub use shell_escalation::EscalationPromptDecision;
+pub use shell_escalation::EscalationPromptFuture;
+pub use shell_escalation::EscalationPromptHandler;
+pub use shell_escalation::EscalationPromptRequest;
+pub use shell_escalation::ExecResult;
+pub use shell_escalation::ParsedShellCommand;
+pub use codex_protocol::approvals::ResolvedPermissionProfile;
+pub use shell_escalation_stopwatch::Stopwatch;
+pub use shell_escalation::approval_sandbox_permissions;
+pub use shell_escalation::determine_escalation_action;
+pub use shell_escalation::extract_shell_script;
+pub use shell_escalation::map_exec_result;
+pub use shell_escalation_policy::EscalationPolicy;
+pub use shell_escalation_policy::EscalationPolicyFuture;
 pub use windows_deny_read::resolve_windows_deny_read_paths;
 pub use windows_filesystem_overrides::WindowsSandboxFilesystemOverrides;
 pub use windows_filesystem_overrides::resolve_windows_elevated_filesystem_overrides;
@@ -30,6 +54,51 @@ pub use windows_filesystem_overrides::resolve_windows_restricted_token_filesyste
 pub use windows_filesystem_overrides::should_use_windows_restricted_token_sandbox;
 pub use windows_filesystem_overrides::unsupported_windows_restricted_token_sandbox_reason;
 pub use windows_filesystem_overrides::windows_sandbox_uses_elevated_backend;
+
+use codex_exec_server_api::ExecEnvironment;
+use codex_file_system::ExecutorFileSystem;
+use codex_protocol::config_types::WindowsSandboxLevel;
+use codex_protocol::models::PermissionProfile;
+use codex_protocol::permissions::FileSystemSandboxPolicy;
+use codex_protocol::permissions::NetworkSandboxPolicy;
+use codex_session_telemetry_api::SharedSessionTelemetry;
+use codex_utils_absolute_path::AbsolutePathBuf;
+
+/// Filesystem/environment boundary needed by apply-patch and exec-style tools.
+pub trait ApplyPatchEnvironment: Send + Sync {
+    fn environment_id(&self) -> &str;
+
+    fn filesystem(&self) -> Arc<dyn ExecutorFileSystem>;
+}
+
+/// Runtime sandbox inputs derived from the active turn.
+pub struct ToolSandboxContext {
+    pub turn_id: String,
+    pub telemetry: SharedSessionTelemetry,
+    pub file_system_sandbox_policy: FileSystemSandboxPolicy,
+    pub network_sandbox_policy: NetworkSandboxPolicy,
+    pub permission_profile: PermissionProfile,
+    pub managed_network_active: bool,
+    pub cwd: AbsolutePathBuf,
+    pub codex_linux_sandbox_exe: Option<PathBuf>,
+    pub use_legacy_landlock: bool,
+    pub windows_sandbox_level: WindowsSandboxLevel,
+    pub windows_sandbox_private_desktop: bool,
+}
+
+/// Apply-patch environment resolution result for one selected runtime environment.
+pub struct ResolvedApplyPatchEnvironment {
+    pub cwd: AbsolutePathBuf,
+    pub environment: Arc<dyn ApplyPatchEnvironment>,
+}
+
+/// Exec-command environment resolution result for one selected runtime environment.
+pub struct ResolvedExecCommandEnvironment {
+    pub cwd: AbsolutePathBuf,
+    pub sandbox_cwd: AbsolutePathBuf,
+    pub environment: Arc<dyn ExecEnvironment>,
+    pub apply_patch_environment: Arc<dyn ApplyPatchEnvironment>,
+}
 
 /// Runtime capability for selecting and transforming sandboxed process commands.
 ///

@@ -1,8 +1,8 @@
 #![cfg(unix)]
-use codex_thread_runtime::spawn::StdioPolicy;
 use codex_protocol::protocol::SandboxPolicy;
-use codex_utils_absolute_path::AbsolutePathBuf;
+use thread_service::spawn::StdioPolicy;
 use codex_utils_absolute_path::test_support::PathBufExt;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
 use std::future::Future;
 use std::io;
@@ -19,12 +19,12 @@ async fn spawn_command_under_sandbox(
     stdio_policy: StdioPolicy,
     env: HashMap<String, String>,
 ) -> std::io::Result<Child> {
-    use codex_thread_runtime::exec::ExecCapturePolicy;
-    use codex_thread_runtime::exec::ExecParams;
-    use codex_thread_runtime::exec::build_exec_request;
-    use codex_thread_runtime::sandboxing::SandboxPermissions;
+    use codex_command_service::build_exec_request;
+    use codex_command_service::ExecCapturePolicy;
+    use codex_command_service::ExecParams;
     use codex_protocol::config_types::WindowsSandboxLevel;
     use codex_protocol::models::PermissionProfile;
+    use codex_protocol::models::SandboxPermissions;
     use std::process::Stdio;
 
     let codex_linux_sandbox_exe = None;
@@ -91,9 +91,9 @@ async fn spawn_command_under_sandbox(
     env: HashMap<String, String>,
 ) -> std::io::Result<Child> {
     use codex_protocol::models::PermissionProfile;
-    use codex_sandboxing::landlock::CODEX_LINUX_SANDBOX_ARG0;
     use codex_sandboxing::landlock::allow_network_for_proxy;
     use codex_sandboxing::landlock::create_linux_sandbox_command_args_for_permission_profile;
+    use codex_sandboxing::landlock::CODEX_LINUX_SANDBOX_ARG0;
     use std::process::Stdio;
 
     let codex_linux_sandbox_exe = core_test_support::find_codex_linux_sandbox_exe()

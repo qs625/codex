@@ -1,12 +1,12 @@
 //! Configuration object accepted by the `codex` MCP tool-call.
 
 use codex_arg0::Arg0DispatchPaths;
-use codex_thread_runtime::config::Config;
-use codex_thread_runtime::config::ConfigBuilder;
-use codex_thread_runtime::config::ConfigOverrides;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::protocol::AskForApproval;
+use thread_service::config::Config;
+use thread_service::config::ConfigBuilder;
+use thread_service::config::ConfigOverrides;
 use codex_utils_json_to_toml::json_to_toml;
 use rmcp::model::JsonObject;
 use rmcp::model::Tool;

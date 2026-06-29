@@ -1,0 +1,28 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "approval-service"
+version.workspace = true
+
+[lib]
+name = "approval_service"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-approval-service-api = { workspace = true }
+codex-analytics-api = { workspace = true }
+codex-guardian = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tokio-util = { workspace = true, features = ["rt"] }
+codex-protocol = { workspace = true }
+thread-service-api = { workspace = true }
+codex-hooks-api = { workspace = true }
+codex-permissions-runtime = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+uuid = { workspace = true }

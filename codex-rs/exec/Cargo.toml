@@ -31,7 +31,7 @@ codex-cloud-requirements = { workspace = true }
 codex-config-diagnostics = { workspace = true }
 codex-config-local-loader = { workspace = true }
 codex-config-loader = { workspace = true }
-codex-thread-runtime = { workspace = true }
+thread-service = { workspace = true }
 codex-execpolicy-loader = { workspace = true }
 codex-feedback = { workspace = true }
 codex-features = { workspace = true }
@@ -71,6 +71,7 @@ uuid = { workspace = true }
 [dev-dependencies]
 assert_cmd = { workspace = true }
 codex-apply-patch = { workspace = true }
+codex-command-service = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }
 core_test_support = { workspace = true }
 libc = { workspace = true }

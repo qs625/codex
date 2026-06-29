@@ -1,11 +1,5 @@
 use std::sync::Arc;
 
-use codex_protocol::protocol::ThreadGoal;
-use codex_protocol::protocol::ThreadGoalStatus;
-use codex_thread_api::GoalApi;
-use codex_thread_api::ThreadCapability;
-use codex_tool_service_api::AnyToolResult;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use crate::planning::CREATE_GOAL_TOOL_NAME;
 use crate::planning::GET_GOAL_TOOL_NAME;
 use crate::planning::ToolSpec;
@@ -13,9 +7,15 @@ use crate::planning::UPDATE_GOAL_TOOL_NAME;
 use crate::planning::create_create_goal_tool;
 use crate::planning::create_get_goal_tool;
 use crate::planning::create_update_goal_tool;
+use codex_protocol::protocol::ThreadGoal;
+use codex_protocol::protocol::ThreadGoalStatus;
+use thread_service_api::ThreadTurnCapability;
+use codex_tool_service_api::AnyToolResult;
+use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolName;
+use goal_service_api::GoalServiceApi;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -50,8 +50,8 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 }
 
 pub(crate) async fn dispatch(
-    goal_api: Arc<dyn GoalApi>,
-    turn: &dyn ThreadCapability,
+    goal_api: Arc<dyn GoalServiceApi>,
+    turn: &dyn ThreadTurnCapability,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
     let result = match call.tool_name.name.as_str() {
@@ -221,7 +221,8 @@ mod tests {
 
     use codex_protocol::ThreadId;
     use codex_protocol::models::ResponseInputItem;
-    use codex_thread_api::SessionCapabilityFuture;
+    use thread_service_api::ThreadCapability;
+    use thread_service_api::SessionCapabilityFuture;
     use codex_tool_types::ToolOutput;
 
     struct MockTurn;
@@ -229,6 +230,28 @@ mod tests {
     impl ThreadCapability for MockTurn {
         fn as_any(&self) -> &(dyn Any + Send + Sync) {
             self
+        }
+    }
+
+    impl ThreadTurnCapability for MockTurn {
+        fn get_thread_goal<'a>(
+            &'a self,
+        ) -> SessionCapabilityFuture<'a, Result<Option<ThreadGoal>, String>> {
+            Box::pin(async { unreachable!("mock goal api should handle get_thread_goal") })
+        }
+
+        fn create_thread_goal<'a>(
+            &'a self,
+            _objective: String,
+            _token_budget: Option<i64>,
+        ) -> SessionCapabilityFuture<'a, Result<ThreadGoal, String>> {
+            Box::pin(async { unreachable!("mock goal api should handle create_thread_goal") })
+        }
+
+        fn complete_thread_goal<'a>(
+            &'a self,
+        ) -> SessionCapabilityFuture<'a, Result<ThreadGoal, String>> {
+            Box::pin(async { unreachable!("mock goal api should handle complete_thread_goal") })
         }
     }
 
@@ -244,17 +267,17 @@ mod tests {
         }
     }
 
-    impl GoalApi for MockGoalApi {
+    impl GoalServiceApi for MockGoalApi {
         fn get_thread_goal<'a>(
             &'a self,
-            _capability: &'a dyn ThreadCapability,
+            _capability: &'a dyn ThreadTurnCapability,
         ) -> SessionCapabilityFuture<'a, Result<Option<ThreadGoal>, String>> {
             Box::pin(async move { Ok(self.goal.lock().expect("goal lock").clone()) })
         }
 
         fn create_thread_goal<'a>(
             &'a self,
-            _capability: &'a dyn ThreadCapability,
+            _capability: &'a dyn ThreadTurnCapability,
             objective: String,
             token_budget: Option<i64>,
         ) -> SessionCapabilityFuture<'a, Result<ThreadGoal, String>> {
@@ -280,7 +303,7 @@ mod tests {
 
         fn complete_thread_goal<'a>(
             &'a self,
-            _capability: &'a dyn ThreadCapability,
+            _capability: &'a dyn ThreadTurnCapability,
         ) -> SessionCapabilityFuture<'a, Result<ThreadGoal, String>> {
             Box::pin(async move {
                 let mut goal = self.goal.lock().expect("goal lock");
@@ -307,7 +330,10 @@ mod tests {
     }
 
     fn output_text(result: &AnyToolResult) -> String {
-        match result.result.to_response_item(&result.call_id, &result.payload) {
+        match result
+            .result
+            .to_response_item(&result.call_id, &result.payload)
+        {
             ResponseInputItem::FunctionCallOutput { output, .. }
             | ResponseInputItem::CustomToolCallOutput { output, .. } => {
                 output.body.to_text().unwrap_or_default()

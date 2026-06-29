@@ -8,9 +8,9 @@ use std::sync::Arc;
 use anyhow::Context;
 use anyhow::bail;
 use clap::Parser;
+use codex_app_server_protocol::item_event_to_server_notification;
 use codex_arg0::Arg0DispatchPaths;
 use codex_arg0::arg0_dispatch_or_else;
-use codex_app_server_protocol::item_event_to_server_notification;
 use codex_code_mode_api::DisabledCodeModeRuntimeFactory;
 use codex_config_types::AuthCredentialsStoreMode;
 use codex_config_types::History;
@@ -25,23 +25,6 @@ use codex_config_types::TuiKeymap;
 use codex_config_types::TuiNotificationSettings;
 use codex_config_types::TuiPetAnchor;
 use codex_config_types::UriBasedFileOpener;
-use codex_thread_runtime::CodexThread;
-use codex_thread_runtime::NewThread;
-use codex_thread_runtime::ThreadAuthRuntimes;
-use codex_thread_runtime::ThreadService;
-use codex_thread_runtime::config::Config;
-use codex_thread_runtime::config::ConfigLayerStack;
-use codex_thread_runtime::config::Constrained;
-use codex_thread_runtime::config::GhostSnapshotConfig;
-use codex_thread_runtime::config::MultiAgentV2Config;
-use codex_thread_runtime::config::Permissions;
-use codex_thread_runtime::config::ProjectConfig;
-use codex_thread_runtime::config::RealtimeAudioConfig;
-use codex_thread_runtime::config::RealtimeConfig;
-use codex_thread_runtime::config::TerminalResizeReflowConfig;
-use codex_thread_runtime::config::ThreadStoreConfig;
-use codex_thread_runtime::config::find_codex_home;
-use codex_thread_runtime::resolve_installation_id;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimePaths;
 use codex_extension_api::empty_extension_registry;
@@ -62,6 +45,24 @@ use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::user_input::UserInput;
 use codex_rollout::StateDbHandle;
+use codex_state_api::SharedStateDbRuntime;
+use thread_service::CodexThread;
+use thread_service::NewThread;
+use thread_service::ThreadAuthRuntimes;
+use thread_service::ThreadService;
+use thread_service::config::Config;
+use thread_service::config::ConfigLayerStack;
+use thread_service::config::Constrained;
+use thread_service::config::GhostSnapshotConfig;
+use thread_service::config::MultiAgentV2Config;
+use thread_service::config::Permissions;
+use thread_service::config::ProjectConfig;
+use thread_service::config::RealtimeAudioConfig;
+use thread_service::config::RealtimeConfig;
+use thread_service::config::TerminalResizeReflowConfig;
+use thread_service::config::ThreadStoreConfig;
+use thread_service::config::find_codex_home;
+use thread_service::resolve_installation_id;
 use codex_thread_store::DefaultLiveThreadFactory;
 use codex_thread_store::ThreadStore;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -136,7 +137,9 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         config.codex_linux_sandbox_exe.clone(),
     )?;
     let thread_store = thread_store_from_config(&config, state_db.clone());
-    let shared_state_db = state_db.clone();
+    let shared_state_db: Option<SharedStateDbRuntime> = state_db
+        .clone()
+        .map(|state_db| state_db as SharedStateDbRuntime);
     let environment_manager = Arc::new(
         EnvironmentManager::from_codex_home(config.codex_home.clone(), local_runtime_paths).await?,
     );
@@ -145,6 +148,9 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         auth_manager.clone(),
         model_provider_auth_manager(Some(auth_manager)),
     );
+    let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
+        config.codex_home.clone(),
+    ));
     let thread_service = ThreadService::new(
         &config,
         auth_runtimes,
@@ -160,14 +166,18 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         Arc::new(DefaultModelProviderFactory),
         Arc::new(DisabledCodeModeRuntimeFactory),
         Arc::new(codex_tool_service::ToolService::new(
-            Arc::new(codex_thread_runtime::ThreadApprovalService),
+            Arc::new(approval_service::ApprovalService),
             Arc::new(codex_command_service::CommandService::new()),
-            Arc::new(codex_thread_runtime::GoalService),
-            Arc::new(codex_thread_runtime::McpResourceService),
-            Arc::new(codex_thread_runtime::RequestPluginInstallService),
-            Arc::new(codex_workflow::WorkflowService::new()),
+            Arc::new(goal_service::GoalService),
+            Arc::new(mcp_service::McpService),
+            Arc::new(thread_service::RequestPluginInstallService),
+            workflow_service.clone(),
         )),
     );
+    let thread_service = Arc::new(thread_service);
+    let thread_service_api: Arc<dyn thread_service_api::ThreadServiceApi> =
+        thread_service.clone();
+    workflow_service.set_thread_service_api(Arc::downgrade(&thread_service_api));
 
     let NewThread {
         thread_id, thread, ..

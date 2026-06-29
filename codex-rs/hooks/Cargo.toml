@@ -21,7 +21,7 @@ codex-context-manager = { workspace = true }
 codex-hooks-api = { workspace = true }
 codex-plugin-types = { workspace = true }
 codex-protocol = { workspace = true }
-codex-thread-api = { workspace = true }
+thread-service-api = { workspace = true }
 codex-turn-items = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-output-truncation = { workspace = true }

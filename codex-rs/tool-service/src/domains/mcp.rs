@@ -1,6 +1,14 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use crate::planning::ResponsesApiNamespace;
+use crate::planning::ResponsesApiNamespaceTool;
+use crate::planning::ToolSpec;
+use crate::planning::create_list_mcp_resource_templates_tool;
+use crate::planning::create_list_mcp_resources_tool;
+use crate::planning::create_read_mcp_resource_tool;
+use crate::planning::mcp_tool_to_deferred_responses_api_tool;
+use crate::planning::mcp_tool_to_responses_api_tool;
 use codex_mcp_tool_types::ToolInfo;
 use codex_protocol::mcp::CallToolResult;
 use codex_protocol::mcp::ListResourceTemplatesResult;
@@ -12,27 +20,16 @@ use codex_protocol::mcp::Resource;
 use codex_protocol::mcp::ResourceTemplate;
 use codex_protocol::models::function_call_output_content_items_to_text;
 use codex_protocol::protocol::McpInvocation;
-use codex_thread_api::McpResourceApi;
-use codex_thread_api::SessionMcpToolCaller;
-use codex_thread_api::SessionMcpToolTurn;
-use codex_thread_api::ThreadCapability;
-use codex_thread_runtime::ThreadRuntimeSession;
-use codex_thread_runtime::ThreadTurnContext;
-use crate::planning::ResponsesApiNamespace;
-use crate::planning::ResponsesApiNamespaceTool;
-use crate::planning::ToolSpec;
-use crate::planning::create_list_mcp_resource_templates_tool;
-use crate::planning::create_list_mcp_resources_tool;
-use crate::planning::create_read_mcp_resource_tool;
-use crate::planning::mcp_tool_to_deferred_responses_api_tool;
-use crate::planning::mcp_tool_to_responses_api_tool;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
+use thread_service::ThreadTurnContext;
+use thread_service_api::ThreadRuntimeCapability;
 use codex_tool_service_api::AnyToolResult;
+use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolName;
 use codex_tool_types::ToolOutput;
 use codex_tool_types::ToolPayload;
+use mcp_service_api::McpServiceApi;
 use serde::Deserialize;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -120,26 +117,32 @@ pub(crate) fn supports_parallel(request: &TypedToolSpecRequest<'_>, call: &ToolC
 }
 
 pub(crate) async fn dispatch(
-    session: Arc<ThreadRuntimeSession>,
     turn: Arc<ThreadTurnContext>,
-    mcp_resource_api: Arc<dyn McpResourceApi>,
+    mcp_service_api: Arc<dyn McpServiceApi>,
     mcp_tools: Option<&[ToolInfo]>,
     deferred_mcp_tools: Option<&[ToolInfo]>,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
     let result: Box<dyn ToolOutput> = match call.tool_name.name.as_str() {
         LIST_MCP_RESOURCES_TOOL_NAME => Box::new(
-            dispatch_list_mcp_resources(mcp_resource_api.as_ref(), turn.as_ref(), &call).await?,
+            dispatch_list_mcp_resources(mcp_service_api.as_ref(), turn.as_ref(), &call).await?,
         ),
         LIST_MCP_RESOURCE_TEMPLATES_TOOL_NAME => Box::new(
-            dispatch_list_mcp_resource_templates(mcp_resource_api.as_ref(), turn.as_ref(), &call)
+            dispatch_list_mcp_resource_templates(mcp_service_api.as_ref(), turn.as_ref(), &call)
                 .await?,
         ),
         READ_MCP_RESOURCE_TOOL_NAME => Box::new(
-            dispatch_read_mcp_resource(mcp_resource_api.as_ref(), turn.as_ref(), &call).await?,
+            dispatch_read_mcp_resource(mcp_service_api.as_ref(), turn.as_ref(), &call).await?,
         ),
         _ => Box::new(
-            dispatch_mcp_tool_call(session, turn, mcp_tools, deferred_mcp_tools, &call).await?,
+            dispatch_mcp_tool_call(
+                mcp_service_api.as_ref(),
+                turn,
+                mcp_tools,
+                deferred_mcp_tools,
+                &call,
+            )
+            .await?,
         ),
     };
 
@@ -182,7 +185,7 @@ fn tool_info_to_spec(tool: &ToolInfo, deferred: bool) -> Option<ToolSpec> {
 }
 
 async fn dispatch_mcp_tool_call(
-    session: Arc<ThreadRuntimeSession>,
+    service: &dyn McpServiceApi,
     turn: Arc<ThreadTurnContext>,
     mcp_tools: Option<&[ToolInfo]>,
     deferred_mcp_tools: Option<&[ToolInfo]>,
@@ -208,8 +211,8 @@ async fn dispatch_mcp_tool_call(
     };
 
     let started = Instant::now();
-    let outcome = session
-        .call_mcp_tool(
+    let outcome = service
+        .call_tool(
             turn.as_ref(),
             call.call_id.clone(),
             tool_info.server_name.clone(),
@@ -229,8 +232,8 @@ async fn dispatch_mcp_tool_call(
 }
 
 async fn dispatch_list_mcp_resources(
-    service: &dyn McpResourceApi,
-    turn: &dyn ThreadCapability,
+    service: &dyn McpServiceApi,
+    turn: &dyn ThreadRuntimeCapability,
     call: &ToolCall,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
     let raw_arguments = function_arguments(&call.payload, LIST_MCP_RESOURCES_TOOL_NAME)?;
@@ -259,7 +262,10 @@ async fn dispatch_list_mcp_resources(
                 .map_err(|err| {
                     FunctionCallError::RespondToModel(format!("resources/list failed: {err}"))
                 })?;
-            Ok(ListResourcesPayload::from_single_server(server_name, result))
+            Ok(ListResourcesPayload::from_single_server(
+                server_name,
+                result,
+            ))
         } else {
             if cursor.is_some() {
                 return Err(FunctionCallError::RespondToModel(
@@ -273,16 +279,23 @@ async fn dispatch_list_mcp_resources(
     }
     .await;
 
-    finish_mcp_resource_call(service, turn, &call.call_id, invocation, start, payload_result).await
+    finish_mcp_resource_call(
+        service,
+        turn,
+        &call.call_id,
+        invocation,
+        start,
+        payload_result,
+    )
+    .await
 }
 
 async fn dispatch_list_mcp_resource_templates(
-    service: &dyn McpResourceApi,
-    turn: &dyn ThreadCapability,
+    service: &dyn McpServiceApi,
+    turn: &dyn ThreadRuntimeCapability,
     call: &ToolCall,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
-    let raw_arguments =
-        function_arguments(&call.payload, LIST_MCP_RESOURCE_TEMPLATES_TOOL_NAME)?;
+    let raw_arguments = function_arguments(&call.payload, LIST_MCP_RESOURCE_TEMPLATES_TOOL_NAME)?;
     let parsed_arguments = parse_arguments(&raw_arguments)?;
     let args: ListResourceTemplatesArgs = parse_optional_args(call)?;
     let server = normalize_optional_string(args.server);
@@ -327,12 +340,20 @@ async fn dispatch_list_mcp_resource_templates(
     }
     .await;
 
-    finish_mcp_resource_call(service, turn, &call.call_id, invocation, start, payload_result).await
+    finish_mcp_resource_call(
+        service,
+        turn,
+        &call.call_id,
+        invocation,
+        start,
+        payload_result,
+    )
+    .await
 }
 
 async fn dispatch_read_mcp_resource(
-    service: &dyn McpResourceApi,
-    turn: &dyn ThreadCapability,
+    service: &dyn McpServiceApi,
+    turn: &dyn ThreadRuntimeCapability,
     call: &ToolCall,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
     let raw_arguments = function_arguments(&call.payload, READ_MCP_RESOURCE_TOOL_NAME)?;
@@ -352,7 +373,11 @@ async fn dispatch_read_mcp_resource(
     let start = Instant::now();
     let payload_result: Result<ReadResourcePayload, FunctionCallError> = async {
         let result = service
-            .read_resource(turn, &server, ReadResourceRequestParams { uri: uri.clone() })
+            .read_resource(
+                turn,
+                &server,
+                ReadResourceRequestParams { uri: uri.clone() },
+            )
             .await
             .map_err(|err| {
                 FunctionCallError::RespondToModel(format!("resources/read failed: {err}"))
@@ -365,12 +390,20 @@ async fn dispatch_read_mcp_resource(
     }
     .await;
 
-    finish_mcp_resource_call(service, turn, &call.call_id, invocation, start, payload_result).await
+    finish_mcp_resource_call(
+        service,
+        turn,
+        &call.call_id,
+        invocation,
+        start,
+        payload_result,
+    )
+    .await
 }
 
 async fn finish_mcp_resource_call<Payload>(
-    service: &dyn McpResourceApi,
-    turn: &dyn ThreadCapability,
+    service: &dyn McpServiceApi,
+    turn: &dyn ThreadRuntimeCapability,
     call_id: &str,
     invocation: McpInvocation,
     start: Instant,

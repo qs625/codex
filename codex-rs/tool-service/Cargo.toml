@@ -24,17 +24,19 @@ codex-file-system = { workspace = true }
 codex-hooks-api = { workspace = true }
 codex-permissions-runtime = { workspace = true }
 codex-mcp-tool-types = { workspace = true }
+goal-service-api = { workspace = true }
+mcp-service-api = { workspace = true }
 codex-network-proxy-api = { workspace = true }
 codex-process-exec = { workspace = true }
 codex-protocol = { workspace = true }
 codex-sandboxing-api = { workspace = true }
-codex-shell-command = { workspace = true }
 codex-state-api = { workspace = true }
-codex-thread-api = { workspace = true }
-codex-thread-runtime = { workspace = true }
+thread-service-api = { workspace = true }
+thread-service = { workspace = true }
 codex-tool-config = { workspace = true }
 codex-tool-service-api = { workspace = true }
 codex-tool-types = { workspace = true }
+codex-shell-utils = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-image = { workspace = true }
 codex-utils-output-truncation = { workspace = true }
@@ -49,4 +51,4 @@ codex-context-manager = { workspace = true }
 codex-utils-string = { workspace = true }
 
 [dev-dependencies]
-codex-thread-runtime = { workspace = true, features = ["test-support"] }
+thread-service = { workspace = true, features = ["test-support"] }

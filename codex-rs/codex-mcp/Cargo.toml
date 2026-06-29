@@ -18,7 +18,7 @@ async-channel = { workspace = true }
 codex-async-utils = { workspace = true }
 codex-config-types = { workspace = true }
 codex-exec-server-api = { workspace = true }
-codex-mcp-runtime-api = { workspace = true }
+mcp-service-api = { workspace = true }
 codex-mcp-tool-types = { workspace = true }
 codex-mcp-types = { workspace = true }
 codex-metrics-api = { workspace = true }

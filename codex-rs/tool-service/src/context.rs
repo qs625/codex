@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use codex_thread_runtime::ThreadRuntimeSession;
-use codex_thread_runtime::ThreadTurnContext;
+use thread_service::ThreadRuntimeSession;
+use thread_service::ThreadTurnContext;
 use codex_tool_service_api::ToolSpecRequest;
 use codex_tool_types::FunctionCallError;
 
 pub(crate) struct TypedToolSpecRequest<'a> {
     pub(crate) config: &'a codex_tool_config::ToolsConfig,
-    pub(crate) session_capability: std::sync::Weak<dyn codex_thread_api::ToolSessionCapability>,
+    pub(crate) session_capability: std::sync::Weak<dyn thread_service_api::ThreadSessionCapability>,
     pub(crate) session: Arc<ThreadRuntimeSession>,
     pub(crate) turn: Arc<ThreadTurnContext>,
     pub(crate) params: codex_tool_service_api::ToolServiceParams<'a>,

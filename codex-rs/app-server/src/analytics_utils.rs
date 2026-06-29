@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use codex_analytics::AnalyticsEventsClient;
-use codex_thread_runtime::config::Config;
 use codex_login::AuthManager;
+use thread_service::config::Config;
 
 pub(crate) fn analytics_events_client_from_config(
     auth_manager: Arc<AuthManager>,

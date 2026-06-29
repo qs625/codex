@@ -3,7 +3,6 @@ use std::env;
 use std::path::Path;
 use std::path::PathBuf;
 
-use codex_thread_runtime::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use codex_mcp_server::CodexToolCallParam;
 use codex_mcp_server::ExecApprovalElicitRequestParams;
 use codex_mcp_server::ExecApprovalResponse;
@@ -11,7 +10,8 @@ use codex_mcp_server::PatchApprovalElicitRequestParams;
 use codex_mcp_server::PatchApprovalResponse;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::ReviewDecision;
-use codex_shell_command::parse_command;
+use codex_shell_utils::parse_command;
+use thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use pretty_assertions::assert_eq;
 use rmcp::model::JsonRpcResponse;
 use rmcp::model::JsonRpcVersion2_0;

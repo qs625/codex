@@ -26,13 +26,13 @@ use codex_protocol::protocol::TokenUsage;
 use codex_protocol::user_input::UserInput;
 use codex_rollout_trace::InferenceTraceContext;
 use codex_session_telemetry_api::SessionTelemetry as SessionTelemetryTrait;
-use codex_thread_runtime::CodexThread;
-use codex_thread_runtime::ModelClient;
-use codex_thread_runtime::Prompt;
-use codex_thread_runtime::ThreadConfigSnapshot;
-use codex_thread_runtime::ThreadService;
-use codex_thread_runtime::config::Config;
-use codex_thread_runtime::resolve_installation_id;
+use thread_service::CodexThread;
+use thread_service::ModelClient;
+use thread_service::Prompt;
+use thread_service::ThreadConfigSnapshot;
+use thread_service::ThreadService;
+use thread_service::config::Config;
+use thread_service::resolve_installation_id;
 use core_test_support::responses::ResponseMock;
 use core_test_support::responses::ResponsesRequest;
 use core_test_support::responses::ev_assistant_message;
@@ -529,7 +529,7 @@ impl MemoryStartupRuntime for TestMemoryStartupRuntime {
                 self.thread_id,
                 installation_id,
                 Arc::new(codex_api::DefaultApiRuntimeFactory),
-                codex_thread_runtime::test_support::model_provider_factory_for_tests(),
+                thread_service::test_support::model_provider_factory_for_tests(),
                 self.config.model_provider.clone(),
                 session_source,
                 self.config.model_verbosity,
@@ -733,7 +733,7 @@ async fn stream_consolidation_prompt(
         thread_id,
         installation_id,
         Arc::new(codex_api::DefaultApiRuntimeFactory),
-        codex_thread_runtime::test_support::model_provider_factory_for_tests(),
+        thread_service::test_support::model_provider_factory_for_tests(),
         config.model_provider.clone(),
         session_source,
         config.model_verbosity,

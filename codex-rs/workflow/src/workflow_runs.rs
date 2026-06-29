@@ -121,7 +121,7 @@ impl WorkflowRunManager {
         let store_root = codex_home.into().join(WORKFLOW_RUNS_DIR);
         let mut states = WORKFLOW_RUN_STATES
             .lock()
-            .expect("workflow run state registry should not be poisoned");
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(state) = states.get(&store_root).and_then(Weak::upgrade) {
             return Self { state };
         }

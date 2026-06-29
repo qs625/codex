@@ -34,12 +34,12 @@ use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::user_input::UserInput;
-use codex_thread_runtime::CodexThread;
-use codex_thread_runtime::ThreadService;
-use codex_thread_runtime::config::Config;
-use codex_thread_runtime::resolve_installation_id;
-use codex_thread_runtime::runtime_shell_model::Shell;
-use codex_thread_runtime::runtime_shell_model::get_shell_by_model_provided_path;
+use thread_service::CodexThread;
+use thread_service::ThreadService;
+use thread_service::config::Config;
+use thread_service::resolve_installation_id;
+use thread_service::runtime_shell_model::Shell;
+use thread_service::runtime_shell_model::get_shell_by_model_provided_path;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::future::BoxFuture;
 use serde_json::Value;
@@ -466,15 +466,18 @@ impl TestCodexBuilder {
         environment_manager: Arc<codex_exec_server::EnvironmentManager>,
     ) -> anyhow::Result<TestCodex> {
         let auth = self.auth.clone();
-        let auth_manager = codex_thread_runtime::test_support::auth_manager_from_auth(auth);
+        let auth_manager = thread_service::test_support::auth_manager_from_auth(auth);
         let state_db = codex_rollout::state_db::init(&config).await;
         let thread_store = thread_store_from_config(&config, state_db.clone());
         let installation_id = resolve_installation_id(&config.codex_home).await?;
         let environment_provider: Arc<dyn codex_exec_server_api::ExecEnvironmentProvider> =
             environment_manager.clone();
-        let thread_service = ThreadService::new_with_workflow_runs_and_openai_file_uploader(
+        let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
+            config.codex_home.clone(),
+        ));
+        let thread_service = ThreadService::new_with_openai_file_uploader(
             &config,
-            codex_thread_runtime::test_support::thread_auth_runtimes_from_auth_manager(Arc::clone(
+            thread_service::test_support::thread_auth_runtimes_from_auth_manager(Arc::clone(
                 &auth_manager,
             )),
             SessionSource::Exec,
@@ -486,13 +489,10 @@ impl TestCodexBuilder {
             Arc::new(codex_thread_store::DefaultLiveThreadFactory),
             installation_id,
             /*attestation_provider*/ None,
-            codex_thread_runtime::test_support::model_provider_factory_for_tests(),
+            thread_service::test_support::model_provider_factory_for_tests(),
             Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
             Arc::new(codex_mcp::DefaultMcpAuthRuntime),
             Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
-            Arc::new(codex_workflow::WorkflowRunManager::new(
-                config.codex_home.clone(),
-            )),
             Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
             Arc::new(codex_execpolicy_loader::StarlarkExecPolicyLoader),
             Arc::new(codex_api::DefaultApiRuntimeFactory),
@@ -504,21 +504,24 @@ impl TestCodexBuilder {
             Arc::new(codex_core_skills_api::DisabledSkillsRuntime),
             Arc::new(codex_core_plugins_api::DisabledPluginRuntime),
             Arc::new(codex_tool_service::ToolService::new(
-                Arc::new(codex_thread_runtime::ThreadApprovalService),
+                Arc::new(approval_service::ApprovalService),
                 Arc::new(codex_command_service::CommandService::new()),
-                Arc::new(codex_thread_runtime::GoalService),
-                Arc::new(codex_thread_runtime::McpResourceService),
-                Arc::new(codex_thread_runtime::RequestPluginInstallService),
-                Arc::new(codex_workflow::WorkflowService::new()),
+                Arc::new(goal_service::GoalService),
+                Arc::new(mcp_service::McpService),
+                Arc::new(thread_service::RequestPluginInstallService),
+                workflow_service.clone(),
             )),
         );
         let thread_service = Arc::new(thread_service);
+        let thread_service_api: Arc<dyn thread_service_api::ThreadServiceApi> =
+            thread_service.clone();
+        workflow_service.set_thread_service_api(Arc::downgrade(&thread_service_api));
         let user_shell_override = self.user_shell_override.clone();
 
         let new_conversation =
             match (resume_from, user_shell_override) {
                 (Some(path), Some(user_shell_override)) => Box::pin(
-                    codex_thread_runtime::test_support::resume_thread_from_rollout_with_user_shell_override(
+                    thread_service::test_support::resume_thread_from_rollout_with_user_shell_override(
                         thread_service.as_ref(),
                         config.clone(),
                         path,
@@ -536,7 +539,7 @@ impl TestCodexBuilder {
                 }
                 (None, Some(user_shell_override)) => {
                     Box::pin(
-                        codex_thread_runtime::test_support::start_thread_with_user_shell_override(
+                        thread_service::test_support::start_thread_with_user_shell_override(
                             thread_service.as_ref(),
                             config.clone(),
                             user_shell_override,

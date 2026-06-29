@@ -1,6 +1,5 @@
 use crate::system::system_cache_root_dir;
 use codex_config_types::ConfigLayerSource;
-use codex_core_skills_api::SkillConfigLayerEntry;
 use codex_core_skills_api::SkillConfigLayerStack;
 use codex_core_skills_api::SkillConfigLayerStackOrdering;
 use codex_core_skills_api::model::SkillDependencies;
@@ -1443,10 +1442,7 @@ fn skill_yaml_line<'a>(
     }))
 }
 
-fn split_skill_yaml_key_value<'a>(
-    line: &'a str,
-    line_number: usize,
-) -> Result<(&'a str, &'a str), String> {
+fn split_skill_yaml_key_value(line: &str, line_number: usize) -> Result<(&str, &str), String> {
     let Some((key, value)) = line.split_once(':') else {
         return Err(format!("line {line_number}: expected `key: value`"));
     };
@@ -1664,17 +1660,16 @@ fn skill_yaml_double_quote_end(value: &str, line_number: usize) -> Result<usize,
     Err(format!("line {line_number}: invalid double-quoted scalar"))
 }
 
-fn parse_skill_yaml_single_quoted_scalar<'a>(
-    value: &'a str,
+fn parse_skill_yaml_single_quoted_scalar(
+    value: &str,
     line_number: usize,
-) -> Result<(String, &'a str), String> {
+) -> Result<(String, &str), String> {
     let mut parsed = String::new();
     let mut index = 1;
     while index < value.len() {
-        let ch = value[index..]
-            .chars()
-            .next()
-            .expect("index stays on char boundary");
+        let Some(ch) = value[index..].chars().next() else {
+            break;
+        };
         if ch == '\'' {
             let next_index = index + ch.len_utf8();
             if value[next_index..].starts_with('\'') {

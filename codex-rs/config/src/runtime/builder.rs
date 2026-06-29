@@ -510,7 +510,7 @@ pub async fn load_config_as_toml_with_cli_and_load_options_and_layer_loader(
 ) -> std::io::Result<ConfigToml> {
     let config_layer_stack = config_layer_loader
         .load(ConfigLayerLoadRequest {
-            codex_home: AbsolutePathBuf::from_absolute_path(codex_home.to_path_buf())?,
+            codex_home: AbsolutePathBuf::from_absolute_path(codex_home)?,
             cwd: cwd.cloned(),
             cli_overrides,
             options: options.into(),

@@ -11,7 +11,7 @@ use codex_file_watcher::Receiver;
 use codex_file_watcher::ThrottledWatchReceiver;
 use codex_file_watcher::WatchPath;
 use codex_file_watcher::WatchRegistration;
-use codex_thread_api::ThreadSkillWatchPath;
+use thread_service_api::ThreadSkillWatchPath;
 use tracing::warn;
 
 #[cfg(not(test))]

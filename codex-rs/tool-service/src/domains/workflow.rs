@@ -12,14 +12,15 @@ use crate::planning::create_workflow_start_tool;
 use crate::planning::create_workflow_status_tool;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
-use codex_thread_runtime::ThreadTurnContext;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolName;
 use codex_tool_types::ToolSpec;
+use thread_service_api::ThreadTurnCapability;
 use codex_workflow_api::WorkflowAbortArgs;
 use codex_workflow_api::WorkflowApi;
 use codex_workflow_api::WorkflowDescribeArgs;
+use codex_workflow_api::WorkflowExecutionContext;
 use codex_workflow_api::WorkflowResumeArgs;
 use codex_workflow_api::WorkflowStartArgs;
 use codex_workflow_api::WorkflowStatusArgs;
@@ -65,20 +66,20 @@ pub(crate) fn create_diff_consumer(
 
 pub(crate) async fn dispatch(
     workflow_api: Arc<dyn WorkflowApi>,
-    turn: Arc<ThreadTurnContext>,
+    turn: Arc<dyn ThreadTurnCapability>,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
     let result = match call.tool_name.name.as_str() {
         WORKFLOW_LIST_TOOL_NAME => workflow_output(
             workflow_api
-                .list_workflows(turn.as_ref())
+                .list_workflows(workflow_discovery_context(&turn)?)
                 .await
                 .map_err(FunctionCallError::RespondToModel)?,
         ),
         WORKFLOW_DESCRIBE_TOOL_NAME => workflow_output(
             workflow_api
                 .describe_workflow(
-                    turn.as_ref(),
+                    workflow_discovery_context(&turn)?,
                     parse_arguments::<WorkflowDescribeArgs>(&call)?,
                 )
                 .await
@@ -87,7 +88,10 @@ pub(crate) async fn dispatch(
         WORKFLOW_START_TOOL_NAME => workflow_output(
             workflow_api
                 .start_workflow(
-                    turn.as_ref(),
+                    WorkflowExecutionContext::new(
+                        workflow_discovery_context(&turn)?,
+                        Some(Arc::clone(&turn)),
+                    ),
                     parse_arguments::<WorkflowStartArgs>(&call)?,
                 )
                 .await
@@ -95,17 +99,17 @@ pub(crate) async fn dispatch(
         ),
         WORKFLOW_STATUS_TOOL_NAME => workflow_output(
             workflow_api
-                .workflow_status(
-                    turn.as_ref(),
-                    parse_arguments::<WorkflowStatusArgs>(&call)?,
-                )
+                .workflow_status(parse_arguments::<WorkflowStatusArgs>(&call)?)
                 .await
                 .map_err(FunctionCallError::RespondToModel)?,
         ),
         WORKFLOW_RESUME_TOOL_NAME => workflow_output(
             workflow_api
                 .resume_workflow(
-                    turn.as_ref(),
+                    WorkflowExecutionContext::new(
+                        workflow_discovery_context(&turn)?,
+                        Some(Arc::clone(&turn)),
+                    ),
                     parse_arguments::<WorkflowResumeArgs>(&call)?,
                 )
                 .await
@@ -114,7 +118,10 @@ pub(crate) async fn dispatch(
         WORKFLOW_ABORT_TOOL_NAME => workflow_output(
             workflow_api
                 .abort_workflow(
-                    turn.as_ref(),
+                    WorkflowExecutionContext::new(
+                        workflow_discovery_context(&turn)?,
+                        Some(Arc::clone(&turn)),
+                    ),
                     parse_arguments::<WorkflowAbortArgs>(&call)?,
                 )
                 .await
@@ -149,4 +156,10 @@ fn parse_arguments<T: DeserializeOwned>(call: &ToolCall) -> Result<T, FunctionCa
             call.tool_name
         ))
     })
+}
+
+fn workflow_discovery_context(
+    turn: &Arc<dyn ThreadTurnCapability>,
+) -> Result<codex_workflow_api::WorkflowDiscoveryContext, FunctionCallError> {
+    Ok(turn.discovery_context().into())
 }

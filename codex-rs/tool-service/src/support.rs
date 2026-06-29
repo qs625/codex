@@ -1,5 +1,6 @@
 use codex_apply_patch::ApplyPatchAction;
 use codex_apply_patch::ApplyPatchFileChange;
+use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_permissions_runtime::ExecApprovalRequirement;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::error::CodexErr;
@@ -10,11 +11,10 @@ use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::FileChange;
 use codex_sandboxing_api::get_platform_sandbox;
-use codex_network_proxy_api::SharedNetworkProxyRuntime;
-use codex_thread_api::ApplyPatchEnvironment;
+use codex_sandboxing_api::ApplyPatchEnvironment;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use std::path::Component;
 use std::collections::HashMap;
+use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -47,13 +47,9 @@ pub(crate) enum ApplyPatchPlan {
 }
 
 enum SafetyCheck {
-    AutoApprove {
-        user_explicitly_approved: bool,
-    },
+    AutoApprove { user_explicitly_approved: bool },
     AskUser,
-    Reject {
-        reason: String,
-    },
+    Reject { reason: String },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -138,16 +134,14 @@ pub(crate) fn plan_apply_patch(
                 proposed_execpolicy_amendment: None,
             },
         }),
-        SafetyCheck::AskUser => {
-            ApplyPatchPlan::DelegateToRuntime(ApplyPatchRuntimeInvocation {
-                action,
-                auto_approved: false,
-                exec_approval_requirement: ExecApprovalRequirement::NeedsApproval {
-                    reason: None,
-                    proposed_execpolicy_amendment: None,
-                },
-            })
-        }
+        SafetyCheck::AskUser => ApplyPatchPlan::DelegateToRuntime(ApplyPatchRuntimeInvocation {
+            action,
+            auto_approved: false,
+            exec_approval_requirement: ExecApprovalRequirement::NeedsApproval {
+                reason: None,
+                proposed_execpolicy_amendment: None,
+            },
+        }),
         SafetyCheck::Reject { reason } => ApplyPatchPlan::Reject { reason },
     }
 }

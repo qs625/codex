@@ -11,7 +11,6 @@ mod session;
 pub use chat_completions::ChatCompletionsClient;
 pub use codex_api_types::ChatCompletionsPath;
 pub use codex_api_types::RealtimeCallResponse;
-pub use codex_api_types::ResponsesOptions;
 pub use codex_api_types::ResponsesWebsocketClose;
 pub use codex_api_types::ResponsesWebsocketProbe;
 pub use compact::CompactClient;

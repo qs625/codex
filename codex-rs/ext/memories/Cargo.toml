@@ -13,7 +13,7 @@ doctest = false
 workspace = true
 
 [dependencies]
-codex-thread-runtime = { workspace = true }
+thread-service = { workspace = true }
 codex-extension-api = { workspace = true }
 codex-features = { workspace = true }
 codex-memories-read = { workspace = true }

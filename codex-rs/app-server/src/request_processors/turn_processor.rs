@@ -3,8 +3,8 @@ use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::live_thread_runtime::AppServerLiveThreadRegistry;
 use crate::memories_runtime::MemoryStartupHost;
 use crate::request_processors::thread_processor::thread_processor_new_thread;
-use codex_thread_api::AppServerClientInfo;
-use codex_thread_api::LiveThreadRegistry;
+use thread_service_api::AppServerClientInfo;
+use thread_service_api::LiveThreadRegistry;
 use futures::future::BoxFuture;
 
 pub(crate) trait TurnProcessorRuntime: Send + Sync {
@@ -453,7 +453,7 @@ impl TurnRequestProcessor {
             ApiReviewTarget::Custom { instructions } => CoreReviewTarget::Custom { instructions },
         };
 
-        let hint = codex_thread_runtime::review_prompts::user_facing_hint(&core_target);
+        let hint = thread_service::review_prompts::user_facing_hint(&core_target);
         let review_request = ReviewRequest {
             target: core_target,
             user_facing_hint: Some(hint.clone()),

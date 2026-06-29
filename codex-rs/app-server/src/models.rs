@@ -2,8 +2,6 @@ use codex_app_server_protocol::Model;
 use codex_app_server_protocol::ModelServiceTier;
 use codex_app_server_protocol::ModelUpgradeInfo;
 use codex_app_server_protocol::ReasoningEffortOption;
-use codex_thread_runtime::ThreadService;
-use codex_thread_runtime::config::Config;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_models_manager::model_info;
 use codex_models_manager_api::RefreshStrategy;
@@ -11,6 +9,8 @@ use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ModelsResponse;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::openai_models::ReasoningEffortPreset;
+use thread_service::ThreadService;
+use thread_service::config::Config;
 use futures::future::BoxFuture;
 
 const OPENAI_PROVIDER_ID: &str = "openai";

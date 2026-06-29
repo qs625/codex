@@ -15,7 +15,7 @@ workspace = true
 [dependencies]
 codex-command-service-api = { workspace = true }
 codex-protocol = { workspace = true }
-codex-thread-api = { workspace = true }
+thread-service-api = { workspace = true }
 codex-tool-types = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

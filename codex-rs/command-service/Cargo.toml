@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 anyhow = { workspace = true }
 async-channel = { workspace = true }
+approval-service = { workspace = true }
 codex-command-service-api = { workspace = true }
 codex-exec-server-api = { workspace = true }
 codex-exec-server-protocol = { workspace = true }
@@ -21,29 +22,32 @@ codex-features = { workspace = true }
 codex-file-system = { workspace = true }
 codex-hooks = { workspace = true }
 codex-hooks-api = { workspace = true }
+codex-metrics-api = { workspace = true }
 codex-network-proxy-api = { workspace = true }
 codex-permissions-runtime = { workspace = true }
 codex-process-exec = { workspace = true }
 codex-protocol = { workspace = true }
 codex-sandboxing-api = { workspace = true }
 codex-session-telemetry-api = { workspace = true }
-codex-shell-command = { workspace = true }
-codex-shell-escalation = { workspace = true }
 codex-shell-utils = { workspace = true }
-codex-thread-api = { workspace = true }
+thread-service-api = { workspace = true }
 codex-tool-config = { workspace = true }
 codex-tool-types = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
+codex-utils-home-dir = { workspace = true }
 codex-utils-output-truncation = { workspace = true }
 codex-utils-path = { workspace = true }
 codex-utils-pty = { workspace = true }
 futures = { workspace = true }
+libc = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process", "signal"] }
+serde_json = { workspace = true }
+socket2 = { workspace = true, features = ["all"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process", "signal", "net"] }
 tokio-util = { workspace = true, features = ["rt"] }
 tracing = { workspace = true, features = ["log"] }
 uuid = { workspace = true, features = ["serde", "v4"] }
 
-[target.'cfg(unix)'.dependencies]
-codex-shell-escalation = { workspace = true }
+[target.'cfg(windows)'.dependencies]
+codex-windows-sandbox = { package = "codex-windows-sandbox", path = "../windows-sandbox-rs", default-features = false }

@@ -11,10 +11,10 @@ use codex_protocol::models::SandboxPermissions;
 use codex_protocol::permissions::FileSystemSandboxKind;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
-use codex_shell_command::bash::parse_shell_lc_plain_commands;
-use codex_shell_command::bash::parse_shell_lc_single_command_prefix;
-use codex_shell_command::is_dangerous_command::command_might_be_dangerous;
-use codex_shell_command::is_safe_command::is_known_safe_command;
+use codex_shell_utils::bash::parse_shell_lc_plain_commands;
+use codex_shell_utils::bash::parse_shell_lc_single_command_prefix;
+use codex_shell_utils::is_dangerous_command::command_might_be_dangerous;
+use codex_shell_utils::is_safe_command::is_known_safe_command;
 use codex_shell_utils::shlex_join;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
@@ -287,7 +287,7 @@ pub fn render_decision_for_unmatched_command(
         ExecPolicyCommandOrigin::Generic => is_known_safe_command(command),
         #[cfg(windows)]
         ExecPolicyCommandOrigin::PowerShell => {
-            codex_shell_command::is_safe_command::is_safe_powershell_words(command)
+            codex_shell_utils::is_safe_command::is_safe_powershell_words(command)
         }
     };
 
@@ -318,7 +318,7 @@ pub fn render_decision_for_unmatched_command(
         ExecPolicyCommandOrigin::Generic => command_might_be_dangerous(command),
         #[cfg(windows)]
         ExecPolicyCommandOrigin::PowerShell => {
-            codex_shell_command::is_dangerous_command::is_dangerous_powershell_words(command)
+            codex_shell_utils::is_dangerous_command::is_dangerous_powershell_words(command)
         }
     };
     if command_is_dangerous || environment_lacks_sandbox_protections {
@@ -419,7 +419,7 @@ pub fn commands_for_exec_policy(command: &[String]) -> ExecPolicyCommands {
     #[cfg(windows)]
     {
         if let Some(commands) =
-            codex_shell_command::powershell::parse_powershell_command_into_plain_commands(command)
+            codex_shell_utils::powershell::parse_powershell_command_into_plain_commands(command)
             && !commands.is_empty()
         {
             return ExecPolicyCommands {

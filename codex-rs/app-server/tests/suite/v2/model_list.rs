@@ -81,7 +81,7 @@ fn model_from_preset(preset: &ModelPreset, model_provider_id: &str) -> Model {
 fn expected_visible_models(model_provider_id: &str) -> Vec<Model> {
     // Filter by supported_in_api to support testing with both ChatGPT and non-ChatGPT auth modes.
     let mut presets = ModelPreset::filter_by_auth(
-        codex_thread_runtime::test_support::all_model_presets().clone(),
+        thread_service::test_support::all_model_presets().clone(),
         /*chatgpt_mode*/ false,
     );
 

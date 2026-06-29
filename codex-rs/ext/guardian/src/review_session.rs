@@ -123,6 +123,7 @@ pub trait GuardianReviewSessionHost: Send + Sync + 'static {
         session: &'a Self::Session,
     ) -> impl Future<Output = Option<TokenUsage>> + Send + 'a;
 
+    #[allow(clippy::too_many_arguments)]
     fn submit_review<'a>(
         &'a self,
         session: &'a Self::Session,
@@ -537,13 +538,9 @@ where
 
     #[doc(hidden)]
     pub async fn send_trunk_event_raw_for_test(&self, event: Event) {
-        let trunk = self
-            .state
-            .lock()
-            .await
-            .trunk
-            .clone()
-            .expect("guardian trunk should exist");
+        let Some(trunk) = self.state.lock().await.trunk.clone() else {
+            return;
+        };
         trunk
             .host
             .send_event_raw_for_test(&trunk.session, event)

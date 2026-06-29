@@ -8,6 +8,7 @@ use tokio::sync::Notify;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
+#[cfg_attr(not(test), allow(dead_code))]
 const EVENT_COMMAND_STDIN_READY_TIMEOUT: Duration = Duration::from_secs(2);
 const EVENT_COMMAND_STDIN_WRITE_QUEUE_SIZE: usize = 8;
 
@@ -36,6 +37,7 @@ impl EventCommandRuntime {
         self.writer_ready.notify_waiters();
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) async fn write_stdin(
         &self,
         subscription_id: &str,

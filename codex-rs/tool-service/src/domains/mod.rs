@@ -10,14 +10,14 @@ pub(crate) mod goal;
 pub(crate) mod mcp;
 pub(crate) mod workflow;
 
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use crate::planning::merge_tool_specs_into_namespaces;
+use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolName;
 use codex_tool_types::ToolSpec;
 
-use crate::context::TypedToolSpecRequest;
 use crate::ToolService;
+use crate::context::TypedToolSpecRequest;
 
 /// `ToolService` 内部的按-domain 直分发骨架。
 ///

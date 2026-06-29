@@ -6,11 +6,11 @@ use std::io::Result as IoResult;
 use std::sync::Arc;
 
 use codex_arg0::Arg0DispatchPaths;
-use codex_thread_runtime::config::ConfigBuilder;
-use codex_thread_runtime::resolve_installation_id;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimePaths;
 use codex_login::default_client::set_default_client_residency_requirement;
+use thread_service::config::ConfigBuilder;
+use thread_service::resolve_installation_id;
 use codex_utils_cli::CliConfigOverrides;
 
 use rmcp::model::ClientNotification;
@@ -213,7 +213,7 @@ pub async fn run_main(
 mod tests {
     use super::*;
     use codex_config_types::OtelExporterKind;
-    use codex_thread_runtime::config::ConfigBuilder;
+    use thread_service::config::ConfigBuilder;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
     use tempfile::TempDir;

@@ -38,8 +38,6 @@ use codex_config_types::McpServerConfig;
 use codex_config_types::McpServerTransportConfig;
 use codex_config_types::OAuthCredentialsStoreMode;
 use codex_exec_server_api::HttpClient;
-use codex_mcp_runtime_api::McpRuntimeEnvironment;
-use codex_mcp_runtime_api::SharedMcpAuthHeaderProvider;
 use codex_mcp_tool_types::McpTool;
 use codex_mcp_tool_types::ToolAnnotations;
 use codex_mcp_tool_types::ToolInfo;
@@ -55,6 +53,8 @@ use codex_rmcp_client::StdioServerLauncher;
 use futures::future::BoxFuture;
 use futures::future::FutureExt;
 use futures::future::Shared;
+use mcp_service_api::McpRuntimeEnvironment;
+use mcp_service_api::SharedMcpAuthHeaderProvider;
 use rmcp::model::ClientCapabilities;
 use rmcp::model::ElicitationCapability;
 use rmcp::model::Implementation;
@@ -421,7 +421,7 @@ fn mcp_tool_from_rmcp_tool(tool: RmcpTool) -> McpTool {
     McpTool {
         name: name.into_owned(),
         title,
-        description: description.map(|description| description.into_owned()),
+        description: description.map(std::borrow::Cow::into_owned),
         input_schema: JsonValue::Object(input_schema.as_ref().clone()),
         output_schema: output_schema
             .map(|output_schema| JsonValue::Object(output_schema.as_ref().clone())),
