@@ -13,9 +13,8 @@ doctest = false
 workspace = true
 
 [dependencies]
-codex-command-service-api = { workspace = true }
+codex-guardian = { workspace = true }
 codex-protocol = { workspace = true }
 thread-service-api = { workspace = true }
-codex-tool-types = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

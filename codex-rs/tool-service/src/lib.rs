@@ -6,12 +6,13 @@ mod planning;
 mod support;
 
 use std::sync::Arc;
+use std::sync::Weak;
 
 use codex_approval_service_api::ApprovalServiceApi;
 use codex_command_service_api::CommandServiceApi;
-use thread_service_api::RequestPluginInstallApi;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
+use codex_tool_service_api::RequestPluginInstallApi;
 use codex_tool_service_api::ToolDiffConsumerRequest;
 use codex_tool_service_api::ToolDispatchRequest;
 use codex_tool_service_api::ToolParallelRequest;
@@ -22,6 +23,7 @@ use codex_tool_types::FunctionCallError;
 use codex_workflow_api::WorkflowApi;
 use goal_service_api::GoalServiceApi;
 use mcp_service_api::McpServiceApi;
+use thread_service_api::ThreadServiceApi;
 
 use context::TypedToolSpecRequest;
 pub(crate) use planning::*;
@@ -33,6 +35,7 @@ pub struct ToolService {
     mcp_service_api: Arc<dyn McpServiceApi>,
     request_plugin_install_api: Arc<dyn RequestPluginInstallApi>,
     workflow_api: Arc<dyn WorkflowApi>,
+    thread_service_api: Weak<dyn ThreadServiceApi>,
 }
 
 impl ToolService {
@@ -43,6 +46,7 @@ impl ToolService {
         mcp_service_api: Arc<dyn McpServiceApi>,
         request_plugin_install_api: Arc<dyn RequestPluginInstallApi>,
         workflow_api: Arc<dyn WorkflowApi>,
+        thread_service_api: Weak<dyn ThreadServiceApi>,
     ) -> Self {
         Self {
             approval_api,
@@ -51,7 +55,18 @@ impl ToolService {
             mcp_service_api,
             request_plugin_install_api,
             workflow_api,
+            thread_service_api,
         }
+    }
+
+    fn thread_service_api(&self) -> Result<Arc<dyn ThreadServiceApi>, FunctionCallError> {
+        self.thread_service_api
+            .upgrade()
+            .ok_or_else(|| {
+                FunctionCallError::Fatal(
+                    "tool service thread service api is unavailable".to_string(),
+                )
+            })
     }
 }
 
@@ -150,13 +165,15 @@ impl ToolServiceApi for ToolService {
             let tool_name = call.tool_name.clone();
             let result = match domain {
                 domains::ToolDomain::Agent => {
-                    domains::agent::dispatch(Arc::clone(&session), Arc::clone(&turn), call).await
+                    domains::agent::dispatch(self.thread_service_api()?, Arc::clone(&turn), call)
+                        .await
                 }
                 domains::ToolDomain::ApplyPatch => {
                     domains::apply_patch::dispatch(
                         Arc::clone(&approval_api),
-                        Arc::clone(&session),
-                        Arc::clone(&turn),
+                        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>,
+                        Arc::clone(&turn)
+                            as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         tracker,
                         call,
                     )
@@ -201,7 +218,8 @@ impl ToolServiceApi for ToolService {
                 }
                 domains::ToolDomain::Function => {
                     domains::function::dispatch(
-                        Arc::clone(&turn),
+                        Arc::clone(&turn)
+                            as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         request_user_input_available_modes,
                         dynamic_tools,
                         cancellation_token,
@@ -210,11 +228,19 @@ impl ToolServiceApi for ToolService {
                     .await
                 }
                 domains::ToolDomain::Goal => {
-                    domains::goal::dispatch(Arc::clone(&goal_api), turn.as_ref(), call).await
+                    domains::goal::dispatch(
+                        Arc::clone(&goal_api),
+                        session.as_ref(),
+                        turn.as_ref(),
+                        call,
+                    )
+                    .await
                 }
                 domains::ToolDomain::Mcp => {
                     domains::mcp::dispatch(
-                        Arc::clone(&turn),
+                        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>,
+                        Arc::clone(&turn)
+                            as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         mcp_service_api,
                         mcp_tools.as_deref(),
                         deferred_mcp_tools.as_deref(),
@@ -241,15 +267,21 @@ impl ToolServiceApi for ToolService {
             }?;
 
             if let Some(session_capability) = tool_request.session_capability.upgrade() {
-                let _ = session_capability
-                    .account_goal_tool_completed(turn.as_ref(), &tool_name)
-                    .await;
+                let _ = if matches!(domain, domains::ToolDomain::Goal) {
+                    session_capability
+                        .account_goal_mutation_completed(turn.as_ref())
+                        .await
+                } else {
+                    session_capability
+                        .account_goal_tool_completed(turn.as_ref(), &tool_name.name)
+                        .await
+                };
             }
 
             let mut result = result;
             if matches!(domain, domains::ToolDomain::Goal) {
                 let goal = goal_api
-                    .get_thread_goal(turn.as_ref())
+                    .get_thread_goal(session.as_ref())
                     .await
                     .map_err(FunctionCallError::RespondToModel)?;
                 result.result = Box::new(domains::goal::tool_output_for_state(&tool_name, goal)?);

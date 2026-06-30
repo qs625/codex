@@ -14,6 +14,7 @@ use codex_guardian::guardian_reviewed_action;
 use thread_service_api::ReviewRejectionRecord;
 use thread_service_api::ReviewRuntimeError;
 use thread_service_api::ReviewRuntimeOutcome;
+use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
 
@@ -127,10 +128,17 @@ pub async fn guardian_rejection_message(
     session: &dyn ThreadSessionCapability,
     review_id: &str,
 ) -> String {
-    let rejection = session
-        .take_review_rejection(review_id)
-        .await
-        .filter(|rejection| !rejection.rationale.trim().is_empty())
+    let rejection = session.take_review_rejection(review_id).await;
+    guardian_rejection_message_from_rationale(rejection.as_ref().map(|rejection| rejection.rationale.as_str()))
+}
+
+pub fn guardian_rejection_message_from_rationale(rationale: Option<&str>) -> String {
+    let rejection = rationale
+        .filter(|rationale| !rationale.trim().is_empty())
+        .map(|rationale| ReviewRejectionRecord {
+            rationale: rationale.to_string(),
+            source: codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
+        })
         .unwrap_or_else(default_guardian_rejection);
     match rejection.source {
         codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent => format!(
@@ -165,7 +173,7 @@ pub async fn review_approval_request(
 
 pub fn spawn_approval_request_review(
     session: Arc<dyn ThreadSessionCapability>,
-    turn: Arc<dyn ThreadTurnCapability>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     review_id: String,
     request: GuardianApprovalRequest,
     retry_reason: Option<String>,

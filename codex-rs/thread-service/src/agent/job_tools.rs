@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::agent::SpawnAgentOptions;
 use crate::agent::exceeds_thread_spawn_depth_limit;
-use crate::agent::tool_support::build_agent_spawn_config;
+use crate::agent::spawn_support::build_agent_spawn_config;
 use crate::config::Config;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;

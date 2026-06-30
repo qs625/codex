@@ -1,6 +1,10 @@
 use super::*;
-#[path = "../approval_review_session.rs"]
+#[path = "approval_review_session.rs"]
 pub(crate) mod approval_review_session_impl;
+#[path = "approval_review_runtime.rs"]
+pub(crate) mod approval_review_runtime_impl;
+#[path = "approval_support.rs"]
+pub(crate) mod approval_support_impl;
 use crate::SessionPermissionProfileUpdate;
 use crate::SessionSettingsApplyCurrent;
 use crate::build_session_settings_apply_plan;
@@ -26,8 +30,10 @@ use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_session_telemetry_api::SessionTelemetryCreateParams;
 use codex_session_telemetry_api::SharedSessionTelemetryFactory;
+use goal_service_api::GoalServiceApi;
 use mcp_service_api::McpAuthRuntime;
 use mcp_service_api::McpConnectionRuntimeFactory;
+use mcp_service_api::McpServiceApi;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::Weak;
@@ -50,7 +56,7 @@ pub struct Session {
     /// The set of enabled features should be invariant for the lifetime of the
     /// session.
     pub(super) features: ManagedFeatures,
-    pub(super) pending_mcp_server_refresh_config: Mutex<Option<McpServerRefreshConfig>>,
+    pub(crate) pending_mcp_server_refresh_config: Mutex<Option<McpServerRefreshConfig>>,
     pub(crate) conversation: Arc<RealtimeConversationManager>,
     pub(crate) active_turn: Mutex<Option<ActiveTurn>>,
     pub(super) mailbox: Mailbox,
@@ -336,8 +342,7 @@ impl Session {
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = codex_protocol::protocol::ReviewDecision>,
     {
-        crate::tool_approval_support::with_cached_approval(&self.services, tool_name, keys, fetch)
-            .await
+        approval_support_impl::with_cached_approval(&self.services, tool_name, keys, fetch).await
     }
 }
 
@@ -385,6 +390,7 @@ impl Session {
         skills_manager: codex_core_skills_api::SharedSkillsRuntime,
         plugins_manager: SharedPluginRuntime,
         mcp_manager: Arc<McpManager>,
+        mcp_service: Arc<dyn McpServiceApi>,
         mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
         mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
         api_runtime_factory: SharedApiRuntimeFactory,
@@ -406,6 +412,7 @@ impl Session {
         openai_file_uploader: SharedOpenAiFileUploader,
         code_mode_service: Arc<dyn CodeModeRuntimeService>,
         code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+        goal_service: Arc<dyn GoalServiceApi>,
         tool_service: Arc<crate::CoreToolServiceApi>,
     ) -> anyhow::Result<Arc<Self>> {
         debug!(
@@ -519,7 +526,7 @@ impl Session {
         let mcp_auth_runtime_for_mcp = Arc::clone(&mcp_auth_runtime);
         let auth_and_mcp_fut = async move {
             let auth_snapshot = auth_runtime_for_mcp.auth().await;
-            let auth_context = crate::mcp::codex_apps_auth_context(auth_snapshot.as_ref());
+            let auth_context = mcp_service::codex_apps_auth_context(auth_snapshot.as_ref());
             let mcp_servers = mcp_manager_for_mcp
                 .effective_servers(&config_for_mcp, auth_context.as_ref())
                 .await;
@@ -776,7 +783,13 @@ impl Session {
                     .permissions
                     .network
                     .as_ref()
-                    .map(|_| Arc::new(RwLock::new(std::sync::Weak::<Session>::new())))
+                    .map(|_| {
+                        Arc::new(RwLock::new(
+                            None::<
+                                std::sync::Weak<dyn thread_service_api::ThreadSessionCapability>,
+                            >,
+                        ))
+                    })
             } else {
                 None
             };
@@ -874,6 +887,7 @@ impl Session {
                         config.permissions.permission_profile().clone(),
                     ),
                 )),
+                mcp_service,
                 mcp_auth_runtime,
                 mcp_connection_runtime_factory,
                 network_proxy_runtime_factory,
@@ -945,6 +959,7 @@ impl Session {
                 openai_file_uploader,
                 code_mode_service,
                 code_mode_runtime_factory,
+                goal_service,
                 tool_service,
                 environment_manager,
             };
@@ -981,7 +996,9 @@ impl Session {
             let _ = sess.self_weak.set(Arc::downgrade(&sess));
             if let Some(network_policy_decider_session) = network_policy_decider_session {
                 let mut guard = network_policy_decider_session.write().await;
-                *guard = Arc::downgrade(&sess);
+                let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
+                    sess.clone();
+                *guard = Some(Arc::downgrade(&session_capability));
             }
             // Dispatch the SessionConfiguredEvent first and then report any errors.
             // If resuming, include converted initial messages in the payload so UIs can render them immediately.
@@ -1030,7 +1047,7 @@ impl Session {
             let required_mcp_server_count = required_mcp_servers.len();
             let tool_plugin_provenance = mcp_manager.tool_plugin_provenance(config.as_ref()).await;
             let codex_apps_auth_context =
-                crate::mcp::codex_apps_auth_context(auth_snapshot.as_ref());
+                mcp_service::codex_apps_auth_context(auth_snapshot.as_ref());
             let host_owned_codex_apps_enabled = config
                 .features
                 .apps_enabled_for_auth(auth_snapshot.as_ref().is_some_and(|auth| {
@@ -1059,7 +1076,7 @@ impl Session {
             .cloned();
             let local_environment = sess.services.environment_manager.local_environment();
             let mcp_runtime_environment = match turn_environment {
-                Some(turn_environment) => crate::mcp::mcp_runtime_environment(
+                Some(turn_environment) => mcp_service::mcp_runtime_environment(
                     Arc::clone(&turn_environment.environment),
                     Arc::clone(&local_environment),
                     turn_environment.cwd.to_path_buf(),
@@ -1070,17 +1087,16 @@ impl Session {
                         .environment_manager
                         .default_environment()
                         .unwrap_or_else(|| Arc::clone(&local_environment));
-                    crate::mcp::mcp_runtime_environment(
+                    mcp_service::mcp_runtime_environment(
                         environment,
                         local_environment,
                         session_configuration.cwd.to_path_buf(),
                     )
                 }
             };
-            let mcp_connection_runtime_start = sess
-                .services
-                .mcp_connection_runtime_factory
-                .start(McpConnectionRuntimeStartRequest {
+            let mcp_connection_runtime_start = mcp_service::start_mcp_connection_runtime(
+                sess.services.mcp_connection_runtime_factory.as_ref(),
+                mcp_service::McpConnectionStartParams {
                     mcp_servers,
                     store_mode: config.mcp_oauth_credentials_store_mode,
                     auth_entries: auth_statuses,
@@ -1096,11 +1112,12 @@ impl Session {
                     host_owned_codex_apps_enabled,
                     client_elicitation_support,
                     tool_plugin_provenance,
-                    codex_apps_auth_provider: crate::mcp::codex_apps_auth_provider(
+                    codex_apps_auth_provider: mcp_service::codex_apps_auth_provider(
                         auth_snapshot.as_ref(),
                     ),
                     elicitation_reviewer: Some(sess.mcp_elicitation_reviewer()),
-                })
+                },
+            )
             .instrument(info_span!(
                 "session_init.mcp_manager_init",
                 otel.name = "session_init.mcp_manager_init",

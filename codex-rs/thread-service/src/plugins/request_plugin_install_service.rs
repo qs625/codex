@@ -12,11 +12,11 @@ use codex_mcp_types::McpElicitationSchema;
 use codex_mcp_types::McpServerElicitationRequest;
 use codex_mcp_types::McpServerElicitationRequestParams;
 use codex_protocol::mcp::RequestId;
-use thread_service_api::RequestPluginInstallApi;
-use thread_service_api::RequestPluginInstallContext;
-use thread_service_api::RequestPluginInstallElicitationOutcome;
 use thread_service_api::SessionCapabilityFuture;
 use thread_service_api::ThreadCapability;
+use codex_tool_service_api::RequestPluginInstallApi;
+use codex_tool_service_api::RequestPluginInstallContext;
+use codex_tool_service_api::RequestPluginInstallElicitationOutcome;
 use codex_tool_types::DiscoverableTool;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE;
@@ -55,7 +55,7 @@ impl RequestPluginInstallApi for RequestPluginInstallService {
         Box::pin(async move {
             let auth_snapshot = turn.auth_snapshot().await;
             let connector_auth_context =
-                crate::mcp::codex_apps_auth_context(auth_snapshot.as_ref());
+                mcp_service::codex_apps_auth_context(auth_snapshot.as_ref());
             let mcp_tools = session.list_all_mcp_tools().await;
             let accessible_connectors = turn.accessible_connectors_from_mcp_tools(&mcp_tools);
             turn.list_tool_suggest_discoverable_tools_with_auth(
@@ -81,7 +81,9 @@ impl RequestPluginInstallApi for RequestPluginInstallService {
             let request_id = RequestId::String(format!("request_plugin_install_{call_id}"));
             let params = request_plugin_install_elicitation_request_to_mcp_params(request);
             let response = session
-                .request_mcp_server_elicitation(turn, request_id, params)
+                .services
+                .mcp_service
+                .request_server_elicitation(session.as_ref(), turn, request_id, params)
                 .await;
             if let Some(response) = response.as_ref() {
                 maybe_persist_disabled_install_request(session.as_ref(), turn, tool, response)
@@ -106,7 +108,7 @@ impl RequestPluginInstallApi for RequestPluginInstallService {
         Box::pin(async move {
             let auth_snapshot = turn.auth_snapshot().await;
             let connector_auth_context =
-                crate::mcp::codex_apps_auth_context(auth_snapshot.as_ref());
+                mcp_service::codex_apps_auth_context(auth_snapshot.as_ref());
             let completed = verify_request_plugin_install_completed(
                 session.as_ref(),
                 turn,
@@ -274,7 +276,12 @@ async fn refresh_missing_requested_connectors(
         return Some(accessible_connectors);
     }
 
-    match session.hard_refresh_codex_apps_tools_cache().await {
+    match session
+        .services
+        .mcp_service
+        .hard_refresh_codex_apps_tools_cache(session)
+        .await
+    {
         Ok(mcp_tools) => {
             let accessible_connectors = turn.accessible_connectors_from_mcp_tools(&mcp_tools);
             turn.refresh_accessible_connectors_cache_from_mcp_tools(

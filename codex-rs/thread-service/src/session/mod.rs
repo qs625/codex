@@ -72,7 +72,6 @@ use codex_command_service_api::WriteStdinRequest;
 use codex_config::ManagedFeatures;
 use codex_config::hook_config_layer_stack_from_config_layer_stack;
 use codex_config::resolve_tool_suggest_config_from_layer_stack;
-use codex_config_types::OAuthCredentialsStoreMode;
 use codex_exec_server_api::ExecEnvironmentProvider;
 use codex_extension_api::PromptSlot;
 use codex_features::FEATURES;
@@ -87,10 +86,7 @@ use codex_hooks::run_pre_tool_use_hooks;
 use codex_hooks_api::HooksConfig;
 use codex_hooks_api::SharedHookRuntime;
 use codex_hooks_api::SharedHookRuntimeFactory;
-use codex_mcp_types::ElicitationResponse;
 use codex_mcp_types::McpClientElicitationSupport;
-use codex_mcp_types::McpServerElicitationRequest;
-use codex_mcp_types::McpServerElicitationRequestParams;
 use codex_mcp_types::codex_apps_tools_cache_key;
 use codex_model_client::AttestationProvider;
 use codex_model_provider_api::SharedModelProviderAuthManager;
@@ -109,7 +105,6 @@ use codex_permissions_runtime::ExecPolicyManager;
 use codex_permissions_runtime::validate_network_policy_amendment_host;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
-use codex_protocol::approvals::ElicitationRequestEvent;
 use codex_protocol::approvals::ExecPolicyAmendment;
 use codex_protocol::approvals::NetworkPolicyAmendment;
 use codex_protocol::approvals::NetworkPolicyRuleAction;
@@ -121,12 +116,6 @@ use codex_protocol::dynamic_tools::DynamicToolResponse;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::items::TurnItem;
 use codex_protocol::items::UserMessageItem;
-use codex_protocol::mcp::CallToolResult;
-use codex_protocol::mcp::ListResourceTemplatesResult;
-use codex_protocol::mcp::ListResourcesResult;
-use codex_protocol::mcp::PaginatedRequestParams;
-use codex_protocol::mcp::ReadResourceRequestParams;
-use codex_protocol::mcp::ReadResourceResult;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::BaseInstructions;
@@ -182,7 +171,7 @@ use futures::future::Shared;
 use futures::prelude::*;
 use mcp_service_api::McpAuthRuntime;
 use mcp_service_api::McpConnectionRuntimeFactory;
-use mcp_service_api::McpConnectionRuntimeStartRequest;
+use mcp_service_api::McpServiceApi;
 use serde_json::Value;
 use tokio::sync::Mutex;
 use tokio::sync::RwLock;
@@ -211,7 +200,6 @@ use codex_config::PermissionProfileState;
 use codex_config::StartedNetworkProxy;
 use codex_config_state::ConfigLayerStackOrdering;
 use codex_config_types::ConfigLayerSource;
-use codex_config_types::McpServerConfig;
 use codex_context_manager::ContextManager;
 use codex_context_manager::PreviousTurnSettingsView;
 use codex_context_manager::SettingsUpdateInput;
@@ -224,14 +212,11 @@ use codex_protocol::error::Result as CodexResult;
 #[cfg(test)]
 use codex_protocol::exec_output::StreamOutput;
 use codex_rollout_api::initial_history_has_prior_user_turns;
-use thread_service_api::ApprovalStore;
 use thread_service_api::PostToolUsePayload;
-use codex_tool_types::ToolName;
 use codex_tool_types::UPDATE_GOAL_TOOL_NAME;
 
 mod config_lock;
 mod handlers;
-mod mcp;
 mod multi_agents;
 mod review;
 mod rollout_reconstruction;
@@ -259,6 +244,7 @@ pub use crate::SteerInputError;
 use crate::SteerableTaskKind;
 use crate::resolve_session_service_tier;
 use crate::validate_steer_input;
+use self::session::approval_support_impl::ApprovalStore;
 pub(crate) use codex_rollout_api::PreviousTurnSettings;
 
 fn previous_turn_settings_view(
@@ -276,10 +262,10 @@ use crate::SkillLoadOutcome;
 use crate::SkillMetadata;
 use crate::agents_md::AgentsMdManager;
 use self::session::approval_review_session_impl::GuardianReviewSessionManager;
-use crate::network_approval::NetworkApprovalService;
-use crate::network_approval::build_blocked_request_observer;
-use crate::network_approval::build_network_policy_decider;
-use crate::network_policy_decision::execpolicy_network_rule_amendment;
+use approval_service::network::NetworkApprovalService;
+use approval_service::network::build_blocked_request_observer;
+use approval_service::network::build_network_policy_decider;
+use approval_service::network_policy::execpolicy_network_rule_amendment;
 use crate::rollout::map_session_init_error;
 use crate::runtime_shell_model as shell;
 use crate::runtime_shell_snapshot::ShellSnapshot;
@@ -319,8 +305,6 @@ use codex_core_plugins_api::PluginRuntime;
 use codex_core_plugins_api::SharedPluginRuntime;
 use codex_core_skills_api::SharedSkillsRuntime;
 use codex_git_info::get_git_repo_root;
-use codex_mcp_types::effective_mcp_servers_from_configured;
-use codex_mcp_types::host_owned_codex_apps_enabled;
 use codex_memories_read_api::SharedMemoryToolDeveloperInstructionsProvider;
 use codex_metrics_api::THREAD_STARTED_METRIC;
 use codex_permissions_runtime::ExecPolicyUpdateError;
@@ -418,6 +402,7 @@ pub(crate) struct CodexSpawnArgs {
     pub(crate) skills_manager: SharedSkillsRuntime,
     pub(crate) plugins_manager: SharedPluginRuntime,
     pub(crate) mcp_manager: Arc<McpManager>,
+    pub(crate) mcp_service: Arc<dyn McpServiceApi>,
     pub(crate) mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
     pub(crate) mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
     pub(crate) network_proxy_runtime_factory: SharedNetworkProxyRuntimeFactory,
@@ -449,6 +434,7 @@ pub(crate) struct CodexSpawnArgs {
     pub(crate) openai_file_uploader: SharedOpenAiFileUploader,
     pub(crate) code_mode_service: Arc<dyn CodeModeRuntimeService>,
     pub(crate) code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+    pub(crate) goal_service: Arc<dyn goal_service_api::GoalServiceApi>,
     pub(crate) tool_service: Arc<crate::CoreToolServiceApi>,
 }
 
@@ -548,6 +534,7 @@ impl Codex {
             skills_manager,
             plugins_manager,
             mcp_manager,
+            mcp_service,
             mcp_auth_runtime,
             mcp_connection_runtime_factory,
             network_proxy_runtime_factory,
@@ -576,6 +563,7 @@ impl Codex {
             openai_file_uploader,
             code_mode_service,
             code_mode_runtime_factory,
+            goal_service,
             tool_service,
             memory_tool_developer_instructions_provider,
         } = args;
@@ -746,6 +734,7 @@ impl Codex {
             skills_manager,
             plugins_manager,
             mcp_manager.clone(),
+            mcp_service,
             mcp_auth_runtime,
             mcp_connection_runtime_factory,
             api_runtime_factory,
@@ -767,6 +756,7 @@ impl Codex {
             openai_file_uploader,
             code_mode_service,
             code_mode_runtime_factory,
+            goal_service,
             tool_service,
         )
         .await
@@ -1024,7 +1014,7 @@ impl Session {
         self.conversation_id
     }
 
-    pub(crate) fn thread_id_string(&self) -> String {
+    pub fn thread_id_string(&self) -> String {
         self.conversation_id.to_string()
     }
 
@@ -1246,22 +1236,22 @@ impl Session {
             .await
     }
 
-    pub(crate) async fn list_all_mcp_tools(&self) -> Vec<codex_mcp_tool_types::ToolInfo> {
+    pub async fn list_all_mcp_tools(&self) -> Vec<codex_mcp_tool_types::ToolInfo> {
         let manager = self.services.mcp_connection_manager.read().await;
         manager.list_all_tools().await
     }
 
-    pub(crate) async fn mcp_server_origin(&self, server: &str) -> Option<String> {
+    pub async fn mcp_server_origin(&self, server: &str) -> Option<String> {
         let manager = self.services.mcp_connection_manager.read().await;
         mcp_service_api::McpToolRuntime::server_origin(manager.as_ref(), server)
     }
 
-    pub(crate) async fn mcp_server_is_host_owned_codex_apps(&self, server: &str) -> bool {
+    pub async fn mcp_server_is_host_owned_codex_apps(&self, server: &str) -> bool {
         let manager = self.services.mcp_connection_manager.read().await;
         mcp_service_api::McpToolRuntime::is_host_owned_codex_apps_server(manager.as_ref(), server)
     }
 
-    pub(crate) async fn mcp_server_supports_sandbox_state_meta(&self, server: &str) -> bool {
+    pub async fn mcp_server_supports_sandbox_state_meta(&self, server: &str) -> bool {
         let manager = self.services.mcp_connection_manager.read().await;
         mcp_service_api::McpToolRuntime::server_supports_sandbox_state_meta_capability(
             manager.as_ref(),
@@ -1283,7 +1273,15 @@ impl Session {
         manager.hard_refresh_codex_apps_tools_cache().await
     }
 
-    pub(crate) async fn rewrite_mcp_tool_arguments_for_openai_files(
+    pub(crate) async fn queue_mcp_server_refresh(
+        &self,
+        refresh_config: McpServerRefreshConfig,
+    ) {
+        let mut guard = self.pending_mcp_server_refresh_config.lock().await;
+        *guard = Some(refresh_config);
+    }
+
+    pub async fn rewrite_mcp_tool_arguments_for_openai_files(
         &self,
         turn: &TurnContext,
         arguments_value: Option<serde_json::Value>,
@@ -1302,7 +1300,7 @@ impl Session {
         .await
     }
 
-    pub(crate) fn add_optional_mcp_call_trace_request_meta(
+    pub fn add_optional_mcp_call_trace_request_meta(
         &self,
         call_id: &str,
         meta: Option<serde_json::Value>,
@@ -1313,7 +1311,7 @@ impl Session {
             .add_request_meta(meta)
     }
 
-    pub(crate) async fn mark_thread_memory_mode_polluted_for_mcp_tool_call(
+    pub async fn mark_thread_memory_mode_polluted_for_mcp_tool_call(
         &self,
         turn: &TurnContext,
         server: &str,
@@ -1332,7 +1330,7 @@ impl Session {
         .await;
     }
 
-    pub(crate) async fn track_codex_app_used_for_mcp_tool(
+    pub async fn track_codex_app_used_for_mcp_tool(
         &self,
         turn: &TurnContext,
         server: &str,
@@ -1382,7 +1380,7 @@ impl Session {
         mcp_service::lookup_mcp_app_usage_metadata(&tools, server, tool_name)
     }
 
-    pub(crate) async fn mcp_tool_approval_is_remembered(
+    pub async fn mcp_tool_approval_is_remembered(
         &self,
         key: &codex_mcp_types::McpToolApprovalKey,
     ) -> bool {
@@ -1390,7 +1388,7 @@ impl Session {
         matches!(store.get(key), Some(ReviewDecision::ApprovedForSession))
     }
 
-    pub(crate) async fn remember_mcp_tool_approval(
+    pub async fn remember_mcp_tool_approval(
         &self,
         key: codex_mcp_types::McpToolApprovalKey,
     ) {
@@ -1402,7 +1400,7 @@ impl Session {
         self.services.plugins_manager.as_ref()
     }
 
-    pub(crate) async fn custom_mcp_tool_approval_mode(
+    pub async fn custom_mcp_tool_approval_mode(
         &self,
         turn: &TurnContext,
         server: &str,
@@ -1417,7 +1415,7 @@ impl Session {
         .await
     }
 
-    pub(crate) async fn fetch_accessible_connectors_from_mcp_tools(
+    pub async fn fetch_accessible_connectors_from_mcp_tools(
         &self,
         turn: &TurnContext,
         auth_snapshot: Option<&codex_auth_types::RequestAuthSnapshot>,
@@ -1433,7 +1431,7 @@ impl Session {
         .await
     }
 
-    pub(crate) async fn persist_codex_app_tool_approval_for_turn(
+    pub async fn persist_codex_app_tool_approval_for_turn(
         &self,
         turn: &TurnContext,
         connector_id: &str,
@@ -1442,7 +1440,7 @@ impl Session {
         mcp_service::persist_codex_app_tool_approval(&turn.config, connector_id, tool_name).await
     }
 
-    pub(crate) async fn persist_non_app_mcp_tool_approval_for_turn(
+    pub async fn persist_non_app_mcp_tool_approval_for_turn(
         &self,
         turn: &TurnContext,
         server: &str,
@@ -1563,9 +1561,9 @@ impl Session {
     pub(crate) async fn account_goal_tool_completed(
         &self,
         turn: &TurnContext,
-        tool_name: &ToolName,
+        tool_name: &str,
     ) -> Result<(), String> {
-        if tool_name.name == UPDATE_GOAL_TOOL_NAME {
+        if tool_name == UPDATE_GOAL_TOOL_NAME {
             return Ok(());
         }
 
@@ -2261,7 +2259,7 @@ impl Session {
         }
     }
 
-    pub(crate) async fn reload_user_config_layer(&self) {
+    pub async fn reload_user_config_layer(&self) {
         // Refresh layer-backed runtime state for an existing session, including enabled plugin,
         // skill, and hook state. Derived config fields such as feature gates and legacy notify
         // settings remain session-static.
@@ -2701,7 +2699,7 @@ impl Session {
         }
     }
 
-    pub(crate) async fn emit_turn_item_started(&self, turn_context: &TurnContext, item: &TurnItem) {
+    pub async fn emit_turn_item_started(&self, turn_context: &TurnContext, item: &TurnItem) {
         self.send_event(
             turn_context,
             EventMsg::ItemStarted(ItemStartedEvent {
@@ -2714,7 +2712,7 @@ impl Session {
         .await;
     }
 
-    pub(crate) async fn emit_turn_item_completed(
+    pub async fn emit_turn_item_completed(
         &self,
         turn_context: &TurnContext,
         item: TurnItem,
@@ -2785,7 +2783,7 @@ impl Session {
             .map(|task| Arc::clone(&task.turn_context))
     }
 
-    async fn active_turn_context_and_cancellation_token(
+    pub(crate) async fn active_turn_context_and_cancellation_token(
         &self,
     ) -> Option<(Arc<TurnContext>, CancellationToken)> {
         let active = self.active_turn.lock().await;
@@ -3103,7 +3101,7 @@ impl Session {
             let review_id = approval_service::guardian::new_guardian_review_id();
             let session = Arc::clone(self);
             let turn = Arc::clone(turn_context);
-            let request = crate::guardian::GuardianApprovalRequest::RequestPermissions {
+            let request = codex_guardian::GuardianApprovalRequest::RequestPermissions {
                 id: call_id,
                 turn_id: turn_context.sub_id.clone(),
                 reason: args.reason,
@@ -4486,7 +4484,7 @@ impl Session {
         // Even without an active task, interrupt handling pauses any active goal.
         self.abort_all_tasks(TurnAbortReason::Interrupted).await;
         if !had_active_turn {
-            self.cancel_mcp_startup().await;
+            self.services.mcp_service.cancel_startup(self.as_ref()).await;
         }
     }
 

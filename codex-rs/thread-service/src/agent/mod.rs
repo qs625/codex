@@ -1,9 +1,9 @@
 pub(crate) mod agent_resolver;
+pub(crate) mod collab_tools;
 pub(crate) mod control;
-pub(crate) mod job_tool_host;
+pub(crate) mod job_tools;
 pub(crate) mod role;
-pub(crate) mod tool_host;
-pub(crate) mod tool_support;
+pub(crate) mod spawn_support;
 
 pub(crate) mod registry {
     pub(crate) use codex_agent_runtime::AgentMode;

@@ -21,10 +21,10 @@ use crate::planning::filter_request_plugin_install_discoverable_tools_for_client
 use crate::planning::mcp_tool_to_deferred_responses_api_tool;
 use crate::planning::mcp_tool_to_responses_api_tool;
 use codex_mcp_tool_types::ToolInfo;
-use thread_service_api::RequestPluginInstallApi;
 use thread_service_api::ThreadCapability;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
+use codex_tool_service_api::RequestPluginInstallApi;
 use codex_tool_types::FunctionCallError;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolName;

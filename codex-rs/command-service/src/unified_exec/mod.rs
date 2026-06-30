@@ -32,6 +32,7 @@ pub(crate) use codex_command_service_api::CommandWaitStatus;
 pub(crate) use codex_command_service_api::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
 #[cfg(test)]
 pub(crate) use codex_command_service_api::MIN_YIELD_TIME_MS;
+use codex_command_service_api::ToolRuntimeNetworkApprovalHandle;
 pub(crate) use codex_command_service_api::WaitBackoffState;
 pub(crate) use codex_command_service_api::WriteStdinOutput;
 pub(crate) use codex_command_service_api::WriteStdinRequest;
@@ -41,7 +42,6 @@ use codex_exec_server_api::ExecEnvironment;
 use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_tool_config::ToolUserShellType;
-use thread_service_api::ToolRuntimeNetworkApprovalHandle;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use tokio::sync::Mutex;
 

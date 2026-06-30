@@ -2,11 +2,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::RwLock as StdRwLock;
 
+use approval_service::network::NetworkApprovalService;
 use crate::StateDbHandle;
 use crate::agent::AgentControl;
-use crate::guardian::GuardianRejection;
-use crate::guardian::GuardianRejectionCircuitBreaker;
-use crate::network_approval::NetworkApprovalService;
+use crate::session::session::approval_support_impl::ApprovalStore;
 use codex_analytics_api::AnalyticsEventsClient;
 use codex_api_runtime_api::SharedApiRuntimeFactory;
 use codex_auth_types::SharedAuthRuntime;
@@ -19,6 +18,8 @@ use codex_core_skills_api::SharedSkillsRuntime;
 use codex_exec_server_api::ExecEnvironmentProvider;
 use codex_extension_api::ExtensionData;
 use codex_extension_api::ExtensionRegistry;
+use codex_guardian::GuardianRejection;
+use codex_guardian::GuardianRejectionCircuitBreaker;
 use codex_memories_read_api::SharedMemoryToolDeveloperInstructionsProvider;
 use codex_model_client::AttestationProvider;
 use codex_model_client::ModelClient;
@@ -33,14 +34,15 @@ use codex_sandboxing_api::SharedSandboxRuntime;
 use codex_session_telemetry_api::SharedSessionTelemetry;
 use codex_session_telemetry_api::SharedSessionTelemetryFactory;
 use thread_service_api::ActiveEventSubscriptionTracker;
-use thread_service_api::ApprovalStore;
 use codex_thread_store_api::LiveThreadFactory;
 use codex_thread_store_api::SharedLiveThread;
 use codex_thread_store_api::ThreadStore;
+use goal_service_api::GoalServiceApi;
 use mcp_service::McpManager;
 use mcp_service_api::McpAuthRuntime;
 use mcp_service_api::McpConnectionRuntime;
 use mcp_service_api::McpConnectionRuntimeFactory;
+use mcp_service_api::McpServiceApi;
 use std::path::PathBuf;
 use tokio::runtime::Handle;
 use tokio::sync::Mutex;
@@ -50,6 +52,7 @@ use tokio_util::sync::CancellationToken;
 
 pub(crate) struct SessionServices {
     pub(crate) mcp_connection_manager: Arc<RwLock<Box<dyn McpConnectionRuntime>>>,
+    pub(crate) mcp_service: Arc<dyn McpServiceApi>,
     pub(crate) mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
     pub(crate) mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
     pub(crate) network_proxy_runtime_factory: SharedNetworkProxyRuntimeFactory,
@@ -102,6 +105,7 @@ pub(crate) struct SessionServices {
     pub(crate) openai_file_uploader: SharedOpenAiFileUploader,
     pub(crate) code_mode_service: Arc<dyn CodeModeRuntimeService>,
     pub(crate) code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+    pub(crate) goal_service: Arc<dyn GoalServiceApi>,
     pub(crate) tool_service: Arc<crate::CoreToolServiceApi>,
     /// Shared process-level environment registry. Sessions carry an `Arc` handle so they can pass
     /// the same manager through child-thread spawn paths without reconstructing it.

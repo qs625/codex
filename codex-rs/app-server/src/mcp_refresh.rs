@@ -238,11 +238,26 @@ mod tests {
             Some(state_db.clone()),
         );
         let thread_watch_manager = crate::thread_status::ThreadWatchManager::new();
-        let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
-            good_config.codex_home.clone(),
-        ));
         let thread_service: Arc<ThreadService> =
             Arc::new_cyclic(|thread_service: &Weak<ThreadService>| {
+                let thread_service_api: Weak<dyn thread_service_api::ThreadServiceApi> =
+                    thread_service.clone();
+                let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
+                    good_config.codex_home.clone(),
+                    thread_service_api.clone(),
+                ));
+                let approval_service = Arc::new(approval_service::ApprovalService);
+                let mcp_service =
+                    Arc::new(mcp_service::McpService::new(approval_service.clone()));
+                let tool_service = Arc::new(codex_tool_service::ToolService::new(
+                    approval_service,
+                    Arc::new(codex_command_service::CommandService::new()),
+                    Arc::new(goal_service::GoalService),
+                    mcp_service.clone(),
+                    Arc::new(thread_service::RequestPluginInstallService),
+                    workflow_service,
+                    thread_service_api,
+                ));
                 let auth_runtimes = thread_service::ThreadAuthRuntimes::from_auth_runtime(
                     auth_manager.clone(),
                     codex_login::model_provider_auth_manager(Some(auth_manager.clone())),
@@ -263,12 +278,13 @@ mod tests {
                     ),
                     /*analytics_events_client*/ None,
                     thread_store,
-                    shared_state_db,
+                    state_db.clone(),
                     Arc::new(codex_thread_store::DefaultLiveThreadFactory),
                     "11111111-1111-4111-8111-111111111111".to_string(),
                     /*attestation_provider*/ None,
                     Arc::new(codex_model_provider::DefaultModelProviderFactory),
                     Arc::new(codex_code_mode::V8CodeModeRuntimeFactory),
+                    Arc::new(goal_service::GoalService),
                     Arc::new(codex_mcp::DefaultMcpAuthRuntime),
                     Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
                     Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
@@ -292,19 +308,10 @@ mod tests {
                             SessionSource::Exec.restriction_product(),
                         ),
                     ),
-                    Arc::new(codex_tool_service::ToolService::new(
-                        Arc::new(approval_service::ApprovalService),
-                        Arc::new(codex_command_service::CommandService::new()),
-                        Arc::new(goal_service::GoalService),
-                        Arc::new(mcp_service::McpService),
-                        Arc::new(thread_service::RequestPluginInstallService),
-                        workflow_service.clone(),
-                    )),
+                    tool_service.clone(),
+                    mcp_service.clone(),
                 )
             });
-        let thread_service_api: Arc<dyn thread_service_api::ThreadServiceApi> =
-            thread_service.clone();
-        workflow_service.set_thread_service_api(Arc::downgrade(&thread_service_api));
         thread_service.start_thread(good_config).await?;
         thread_service.start_thread(bad_config).await?;
 

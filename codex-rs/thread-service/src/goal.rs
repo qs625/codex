@@ -1,8 +1,10 @@
-//! Core support for persisted thread goals.
+//! Thread-owned goal runtime state integration.
 //!
-//! This module bridges core sessions and the state-db goal table. It validates
-//! goal mutations, converts between state and protocol shapes, emits goal-update
-//! events, and owns helper hooks used by goal lifecycle behavior.
+//! Goal domain mutation semantics live in owner crates such as `goal-service`,
+//! `codex-agent-runtime`, and `codex-state-api`. This module only owns the
+//! thread-side runtime responsibilities: accounting, continuation scheduling,
+//! typed event emission after external mutations, and post-turn state
+//! selection.
 
 use crate::PendingInputItem;
 use crate::session::session::Session;
@@ -15,22 +17,15 @@ use anyhow::Context;
 use chrono::DateTime;
 use chrono::Utc;
 use codex_agent_runtime::BudgetLimitSteering;
-use codex_agent_runtime::CreateGoalRequest;
 use codex_agent_runtime::ExternalGoalStatusAction;
-use codex_agent_runtime::GoalRuntimeLifecycleHost;
-use codex_agent_runtime::SetGoalRequest;
 use codex_agent_runtime::TerminalMetricEmission;
-use codex_agent_runtime::ThreadGoalMutationHost;
 use codex_agent_runtime::ThreadPostTurnInputs;
 use codex_agent_runtime::ThreadPostTurnState;
-use codex_agent_runtime::apply_goal_runtime_event;
-use codex_agent_runtime::create_thread_goal as create_thread_goal_with_host;
 use codex_agent_runtime::external_goal_mutation_plan;
 use codex_agent_runtime::goal_budget_limit_steering_item;
 use codex_agent_runtime::goal_continuation_input_item;
 use codex_agent_runtime::goal_objective_updated_steering_item;
 use codex_agent_runtime::select_thread_post_turn_state;
-use codex_agent_runtime::set_thread_goal as set_thread_goal_with_host;
 use codex_agent_runtime::should_ignore_goal_for_mode;
 use codex_features::Feature;
 use codex_metrics_api::GOAL_BUDGET_LIMITED_METRIC;
@@ -39,11 +34,9 @@ use codex_metrics_api::GOAL_CREATED_METRIC;
 use codex_metrics_api::GOAL_DURATION_SECONDS_METRIC;
 use codex_metrics_api::GOAL_TOKEN_COUNT_METRIC;
 use codex_protocol::models::ResponseInputItem;
-use codex_protocol::models::ThreadGoalUpdateEventSource;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ThreadGoal;
-use codex_protocol::protocol::ThreadGoalStatus;
 use codex_protocol::protocol::ThreadGoalUpdatedEvent;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::TurnAbortReason;
@@ -51,274 +44,20 @@ use codex_state_api::ExternalGoalSet;
 use codex_state_api::SharedStateDbRuntime;
 use codex_state_api::ThreadGoalTurnAccountingSnapshot as GoalTurnAccountingSnapshot;
 use codex_state_api::protocol_goal_from_state;
-use codex_state_api::thread_goal_update_response_item;
-use futures::future::BoxFuture;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
-pub(crate) type GoalRuntimeEvent<'a> = codex_agent_runtime::GoalRuntimeEvent<'a, TurnContext>;
-
-struct SessionGoalRuntimeHost<'a> {
-    session: &'a Arc<Session>,
-}
-
-struct SessionGoalMutationHost<'a> {
-    session: &'a Session,
-}
 
 struct GoalContinuationCandidate {
     goal_id: String,
     items: Vec<ResponseInputItem>,
 }
 
-impl GoalRuntimeLifecycleHost for SessionGoalRuntimeHost<'_> {
-    type Turn = TurnContext;
-
-    async fn mark_goal_turn_started(&self, turn_context: &Self::Turn, token_usage: TokenUsage) {
-        self.session
-            .mark_thread_goal_turn_started(turn_context, token_usage)
-            .await;
-    }
-
-    async fn account_goal_progress_after_tool(
-        &self,
-        turn_context: &Self::Turn,
-        budget_limit_steering: BudgetLimitSteering,
-        terminal_metric_emission: TerminalMetricEmission,
-    ) -> anyhow::Result<()> {
-        self.session
-            .account_thread_goal_progress(
-                turn_context,
-                budget_limit_steering,
-                terminal_metric_emission,
-            )
-            .await
-    }
-
-    async fn finish_goal_turn(&self, turn_context: &Self::Turn, turn_completed: bool) {
-        self.session
-            .finish_thread_goal_turn(turn_context, turn_completed)
-            .await;
-    }
-
-    async fn maybe_continue_goal_if_idle(&self) {
-        self.session.maybe_continue_goal_if_idle_runtime().await;
-    }
-
-    async fn handle_goal_task_abort(
-        &self,
-        turn_context: Option<&Self::Turn>,
-        reason: TurnAbortReason,
-    ) {
-        self.session
-            .handle_thread_goal_task_abort(turn_context, reason)
-            .await;
-    }
-
-    async fn account_goal_before_external_mutation(&self) -> anyhow::Result<()> {
-        self.session
-            .account_thread_goal_before_external_mutation()
-            .await
-    }
-
-    async fn apply_external_goal_status(&self, external_set: ExternalGoalSet) {
-        self.session
-            .apply_external_thread_goal_status(external_set)
-            .await;
-    }
-
-    async fn clear_stopped_goal_runtime_state(&self) {
-        self.session.clear_stopped_thread_goal_runtime_state().await;
-    }
-
-    async fn restore_goal_runtime_after_resume(&self) -> anyhow::Result<()> {
-        self.session
-            .restore_thread_goal_runtime_after_resume()
-            .await
-    }
-}
-
-impl ThreadGoalMutationHost for SessionGoalMutationHost<'_> {
-    type Turn = TurnContext;
-
-    fn goals_enabled(&self) -> bool {
-        self.session.enabled(Feature::Goals)
-    }
-
-    fn thread_id(&self) -> codex_protocol::ThreadId {
-        self.session.conversation_id
-    }
-
-    fn turn_id(&self, turn_context: &Self::Turn) -> String {
-        turn_context.sub_id.clone()
-    }
-
-    async fn require_state_db_for_thread_goals(&self) -> anyhow::Result<SharedStateDbRuntime> {
-        self.session.require_state_db_for_thread_goals().await
-    }
-
-    async fn account_goal_wall_clock_usage(
-        &self,
-        state_db: &SharedStateDbRuntime,
-        mode: codex_state_api::ThreadGoalAccountingMode,
-        terminal_metric_emission: TerminalMetricEmission,
-    ) -> anyhow::Result<Option<ThreadGoal>> {
-        self.session
-            .account_thread_goal_wall_clock_usage(state_db, mode, terminal_metric_emission)
-            .await
-    }
-
-    fn emit_goal_created_metric(&self) {
-        self.session.emit_goal_created_metric();
-    }
-
-    fn emit_goal_terminal_metrics_if_status_changed(
-        &self,
-        previous_status: Option<codex_state_api::ThreadGoalStatus>,
-        goal: &codex_state_api::ThreadGoal,
-    ) {
-        self.session
-            .emit_goal_terminal_metrics_if_status_changed(previous_status, goal);
-    }
-
-    async fn reset_budget_limit_reported_goal(&self) {
-        *self
-            .session
-            .goal_runtime
-            .budget_limit_reported_goal_id
-            .lock()
-            .await = None;
-    }
-
-    async fn current_token_usage(&self) -> TokenUsage {
-        self.session.total_token_usage().await.unwrap_or_default()
-    }
-
-    async fn mark_active_goal_accounting(
-        &self,
-        goal_id: String,
-        turn_id: Option<String>,
-        token_usage: TokenUsage,
-    ) {
-        self.session
-            .mark_active_goal_accounting(goal_id, turn_id, token_usage)
-            .await;
-    }
-
-    async fn clear_active_goal_accounting(&self, turn_context: &Self::Turn) {
-        self.session
-            .clear_active_goal_accounting(turn_context)
-            .await;
-    }
-
-    async fn emit_thread_goal_updated(&self, turn_context: &Self::Turn, goal: ThreadGoal) {
-        self.session
-            .send_event(
-                turn_context,
-                EventMsg::ThreadGoalUpdated(ThreadGoalUpdatedEvent {
-                    thread_id: self.session.conversation_id,
-                    turn_id: Some(turn_context.sub_id.clone()),
-                    goal,
-                }),
-            )
-            .await;
-    }
-
-    async fn record_thread_goal_update_item(
-        &self,
-        turn_context: &Self::Turn,
-        goal: ThreadGoal,
-        previous_status: Option<codex_state_api::ThreadGoalStatus>,
-    ) {
-        self.session
-            .record_thread_goal_update_item(turn_context, goal, previous_status)
-            .await;
-    }
-
-    async fn maybe_notify_parent_of_final_status(&self) {
-        self.session
-            .maybe_notify_parent_of_final_status_for_current_source()
-            .await;
-    }
-}
-
 impl Session {
-    /// Applies runtime policy for a goal lifecycle event.
-    ///
-    /// Goal data methods validate and persist state; this dispatcher owns the
-    /// cross-cutting runtime behavior: plan mode ignores continuations, turn
-    /// starts capture the active goal and token baseline, tool completions
-    /// account usage and may inject budget steering, completion accounting
-    /// suppresses that steering, external mutations account best-effort before
-    /// changing state, interrupts pause active goals, thread resumes restore
-    /// runtime state for already-active goals, explicit maybe-continue events
-    /// start idle goal continuation turns, and continuation turns with no counted
-    /// autonomous activity suppress the next automatic continuation until
-    /// user/tool/external activity resets it.
-    pub(crate) fn goal_runtime_apply<'a>(
-        self: &'a Arc<Self>,
-        event: GoalRuntimeEvent<'a>,
-    ) -> BoxFuture<'a, anyhow::Result<()>> {
-        Box::pin(async move {
-            apply_goal_runtime_event(&SessionGoalRuntimeHost { session: self }, event).await
-        })
-    }
-
-    pub async fn get_thread_goal(&self) -> anyhow::Result<Option<ThreadGoal>> {
-        if !self.enabled(Feature::Goals) {
-            anyhow::bail!("goals feature is disabled");
-        }
-
-        let state_db = self.require_state_db_for_thread_goals().await?;
-        state_db
-            .get_thread_goal(self.conversation_id)
-            .await
-            .map(|goal| goal.map(protocol_goal_from_state))
-    }
-
-    pub(crate) async fn set_thread_goal(
-        &self,
-        turn_context: &TurnContext,
-        request: SetGoalRequest,
-    ) -> anyhow::Result<ThreadGoal> {
-        set_thread_goal_with_host(
-            &SessionGoalMutationHost { session: self },
-            turn_context,
-            request,
-        )
-        .await
-    }
-
-    pub(crate) async fn create_thread_goal(
-        &self,
-        turn_context: &TurnContext,
-        request: CreateGoalRequest,
-    ) -> anyhow::Result<ThreadGoal> {
-        create_thread_goal_with_host(
-            &SessionGoalMutationHost { session: self },
-            turn_context,
-            request,
-        )
-        .await
-    }
-
-    async fn record_thread_goal_update_item(
-        &self,
-        turn_context: &TurnContext,
-        goal: ThreadGoal,
-        previous_status: Option<codex_state_api::ThreadGoalStatus>,
+    pub(crate) async fn apply_external_thread_goal_status(
+        self: &Arc<Self>,
+        external_set: ExternalGoalSet,
     ) {
-        let item = thread_goal_update_response_item(
-            goal,
-            previous_status,
-            ThreadGoalUpdateEventSource::ModelTool,
-        );
-        self.record_model_items_and_emit_display_events(turn_context, std::slice::from_ref(&item))
-            .await;
-    }
-
-    async fn apply_external_thread_goal_status(self: &Arc<Self>, external_set: ExternalGoalSet) {
         let ExternalGoalSet {
             goal,
             previous_status,
@@ -383,7 +122,7 @@ impl Session {
         }
     }
 
-    async fn clear_stopped_thread_goal_runtime_state(&self) {
+    pub(crate) async fn clear_stopped_thread_goal_runtime_state(&self) {
         *self.goal_runtime.budget_limit_reported_goal_id.lock().await = None;
         let mut accounting = self.goal_runtime.accounting.lock().await;
         if let Some(turn) = accounting.turn.as_mut() {
@@ -485,7 +224,7 @@ impl Session {
             .map(|task| Arc::clone(&task.turn_context))
     }
 
-    async fn mark_thread_goal_turn_started(
+    pub(crate) async fn mark_thread_goal_turn_started(
         &self,
         turn_context: &TurnContext,
         token_usage: TokenUsage,
@@ -560,7 +299,7 @@ impl Session {
         }
     }
 
-    async fn finish_thread_goal_turn(
+    pub(crate) async fn finish_thread_goal_turn(
         self: &Arc<Self>,
         turn_context: &TurnContext,
         turn_completed: bool,
@@ -591,7 +330,7 @@ impl Session {
         }
     }
 
-    async fn handle_thread_goal_task_abort(
+    pub(crate) async fn handle_thread_goal_task_abort(
         &self,
         turn_context: Option<&TurnContext>,
         reason: TurnAbortReason,
@@ -749,7 +488,7 @@ impl Session {
         Ok(())
     }
 
-    async fn account_thread_goal_before_external_mutation(&self) -> anyhow::Result<()> {
+    pub(crate) async fn account_thread_goal_before_external_mutation(&self) -> anyhow::Result<()> {
         if let Some(turn_context) = self.active_turn_context().await {
             return self
                 .account_thread_goal_progress(
@@ -881,7 +620,7 @@ impl Session {
         Ok(())
     }
 
-    async fn restore_thread_goal_runtime_after_resume(&self) -> anyhow::Result<()> {
+    pub(crate) async fn restore_thread_goal_runtime_after_resume(&self) -> anyhow::Result<()> {
         if !self.enabled(Feature::Goals) {
             return Ok(());
         }
@@ -923,7 +662,7 @@ impl Session {
         Ok(())
     }
 
-    async fn maybe_continue_goal_if_idle_runtime(self: &Arc<Self>) {
+    pub(crate) async fn maybe_continue_goal_if_idle_runtime(self: &Arc<Self>) {
         self.maybe_start_turn_for_pending_work().await;
         self.maybe_start_goal_continuation_turn().await;
     }
@@ -1200,7 +939,9 @@ impl Session {
         metadata
     }
 
-    async fn require_state_db_for_thread_goals(&self) -> anyhow::Result<SharedStateDbRuntime> {
+    pub(crate) async fn require_state_db_for_thread_goals(
+        &self,
+    ) -> anyhow::Result<SharedStateDbRuntime> {
         self.state_db_for_thread_goals().await?.ok_or_else(|| {
             anyhow::anyhow!("thread goals require a persisted thread; this thread is ephemeral")
         })

@@ -60,6 +60,7 @@ pub use codex_sandboxing_api::ResolvedExecCommandEnvironment;
 pub use codex_sandboxing_api::ToolSandboxContext;
 use codex_protocol::ThreadId;
 use codex_protocol::approvals::ExecPolicyAmendment;
+use codex_protocol::error::CodexErr;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::TerminalInteractionEvent;
@@ -67,18 +68,63 @@ use thread_service_api::ThreadCapability;
 use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadRuntimeCapability;
 pub use thread_service_api::HookToolName;
-pub use thread_service_api::NetworkApprovalMode;
-pub use thread_service_api::NetworkApprovalSpec;
 pub use thread_service_api::PermissionRequestPayload;
 pub use thread_service_api::ToolPermissionGrants;
-use thread_service_api::ToolRuntimeNetworkApprovalHandle;
-use thread_service_api::ToolRuntimeNetworkApprovalTrigger;
 use codex_tool_config::ToolUserShellType;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 
 /// Boxed future returned by object-safe command service APIs.
 pub type CommandServiceFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolRuntimeNetworkApprovalTrigger {
+    pub call_id: String,
+    pub tool_name: String,
+    pub command: Vec<String>,
+    pub cwd: AbsolutePathBuf,
+    pub sandbox_permissions: codex_protocol::models::SandboxPermissions,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub additional_permissions: Option<codex_protocol::models::AdditionalPermissionProfile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub justification: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tty: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NetworkApprovalMode {
+    Immediate,
+    Deferred,
+}
+
+#[derive(Clone, Debug)]
+pub struct NetworkApprovalSpec<Trigger> {
+    pub network: Option<codex_network_proxy_api::SharedNetworkProxyRuntime>,
+    pub mode: NetworkApprovalMode,
+    pub trigger: Trigger,
+    pub command: String,
+}
+
+#[derive(Debug)]
+pub enum ToolRuntimeNetworkApprovalError {
+    Rejected(String),
+    Codex(CodexErr),
+}
+
+pub trait ToolRuntimeNetworkApprovalHandle: Send + Sync + 'static {
+    fn mode(&self) -> NetworkApprovalMode;
+
+    fn registration_id(&self) -> Option<String>;
+
+    fn cancellation_token(&self) -> CancellationToken;
+
+    fn finish<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<(), ToolRuntimeNetworkApprovalError>> + Send + 'a>>;
+}
 
 /// Session-owned command interaction capability consumed by command tools.
 pub trait SessionCommandInteractionCaller: Send + Sync + 'static {

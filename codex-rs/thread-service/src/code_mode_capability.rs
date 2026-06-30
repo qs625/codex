@@ -2,15 +2,6 @@ use codex_code_mode_api::ExecuteRequest;
 use codex_code_mode_api::RuntimeResponse;
 use codex_code_mode_api::WaitOutcome;
 use codex_code_mode_api::WaitRequest;
-use codex_protocol::mcp::CallToolResult;
-use codex_protocol::mcp::ListResourceTemplatesResult;
-use codex_protocol::mcp::ListResourcesResult;
-use codex_protocol::mcp::PaginatedRequestParams;
-use codex_protocol::mcp::ReadResourceRequestParams;
-use codex_protocol::mcp::ReadResourceResult;
-use codex_protocol::mcp::Resource;
-use codex_protocol::mcp::ResourceTemplate;
-use codex_protocol::protocol::McpInvocation;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -117,100 +108,6 @@ impl thread_service_api::ThreadRuntimeCapability for TurnContext {
             })
     }
 
-    fn call_mcp_tool(
-        &self,
-        call_id: String,
-        server: String,
-        tool_name: String,
-        hook_tool_name: String,
-        arguments: String,
-    ) -> thread_service_api::SessionCapabilityFuture<'_, (CallToolResult, serde_json::Value)> {
-        Box::pin(async move {
-            crate::mcp::call_mcp_tool_via_turn(
-                self,
-                call_id,
-                server,
-                tool_name,
-                hook_tool_name,
-                arguments,
-            )
-            .await
-        })
-    }
-
-    fn mcp_original_image_detail_supported(&self) -> bool {
-        self.can_request_original_image_detail()
-    }
-
-    fn mcp_truncation_policy(&self) -> codex_utils_output_truncation::TruncationPolicy {
-        self.truncation_policy()
-    }
-
-    fn list_resources<'a>(
-        &'a self,
-        server: &'a str,
-        params: Option<PaginatedRequestParams>,
-    ) -> thread_service_api::SessionCapabilityFuture<'a, Result<ListResourcesResult, String>> {
-        Box::pin(async move { crate::mcp::list_resources_via_turn(self, server, params).await })
-    }
-
-    fn list_all_resources(
-        &self,
-    ) -> thread_service_api::SessionCapabilityFuture<'_, std::collections::HashMap<String, Vec<Resource>>> {
-        Box::pin(async move { crate::mcp::list_all_resources_via_turn(self).await })
-    }
-
-    fn list_resource_templates<'a>(
-        &'a self,
-        server: &'a str,
-        params: Option<PaginatedRequestParams>,
-    ) -> thread_service_api::SessionCapabilityFuture<
-        'a,
-        Result<ListResourceTemplatesResult, String>,
-    > {
-        Box::pin(async move {
-            crate::mcp::list_resource_templates_via_turn(self, server, params).await
-        })
-    }
-
-    fn list_all_resource_templates(
-        &self,
-    ) -> thread_service_api::SessionCapabilityFuture<'_, std::collections::HashMap<String, Vec<ResourceTemplate>>> {
-        Box::pin(async move { crate::mcp::list_all_resource_templates_via_turn(self).await })
-    }
-
-    fn read_resource<'a>(
-        &'a self,
-        server: &'a str,
-        params: ReadResourceRequestParams,
-    ) -> thread_service_api::SessionCapabilityFuture<'a, Result<ReadResourceResult, String>> {
-        Box::pin(async move { crate::mcp::read_resource_via_turn(self, server, params).await })
-    }
-
-    fn emit_mcp_resource_tool_call_begin<'a>(
-        &'a self,
-        call_id: &'a str,
-        invocation: McpInvocation,
-    ) -> thread_service_api::SessionCapabilityFuture<'a, ()> {
-        Box::pin(async move {
-            crate::mcp::emit_mcp_resource_tool_call_begin_via_turn(self, call_id, invocation).await
-        })
-    }
-
-    fn emit_mcp_resource_tool_call_end<'a>(
-        &'a self,
-        call_id: &'a str,
-        invocation: McpInvocation,
-        duration: std::time::Duration,
-        result: Result<CallToolResult, String>,
-    ) -> thread_service_api::SessionCapabilityFuture<'a, ()> {
-        Box::pin(async move {
-            crate::mcp::emit_mcp_resource_tool_call_end_via_turn(
-                self, call_id, invocation, duration, result,
-            )
-            .await
-        })
-    }
 }
 
 impl thread_service_api::SessionCodeModeCaller for Session {

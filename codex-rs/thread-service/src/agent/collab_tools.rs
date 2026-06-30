@@ -4,7 +4,7 @@ use crate::agent::SpawnAgentOptions;
 use crate::agent::agent_resolver::resolve_agent_target;
 use crate::agent::exceeds_thread_spawn_depth_limit;
 use crate::agent::role::apply_role_to_config;
-use crate::agent::tool_support::*;
+use crate::agent::spawn_support::*;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use codex_agent_roles::DEFAULT_ROLE_NAME;

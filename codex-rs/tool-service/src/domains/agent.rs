@@ -12,11 +12,9 @@ use crate::planning::create_spawn_agent_tool_v2;
 use crate::planning::create_spawn_agents_on_csv_tool;
 use crate::planning::create_wait_agent_tool_v2;
 use codex_agent_runtime::AgentMode;
-use codex_agent_runtime::MultiAgentToolSession;
 use codex_agent_runtime::SpawnAgentForkMode;
 use codex_agent_runtime::SpawnAgentToolRequest;
 use codex_protocol::openai_models::ReasoningEffort;
-use thread_service::ThreadRuntimeSession;
 use thread_service::ThreadTurnContext;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
@@ -28,6 +26,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
 use serde::Deserialize;
 use serde::Serialize;
+use thread_service_api::ThreadServiceApi;
 
 use crate::context::TypedToolSpecRequest;
 use crate::output::FunctionToolOutput;
@@ -85,7 +84,7 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 }
 
 pub(crate) async fn dispatch(
-    session: Arc<ThreadRuntimeSession>,
+    thread_service_api: Arc<dyn ThreadServiceApi>,
     turn: Arc<ThreadTurnContext>,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
@@ -93,49 +92,72 @@ pub(crate) async fn dispatch(
         SPAWN_AGENT_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
             let request = spawn_agent_request_from_arguments(&arguments)?;
-            let result = session
-                .spawn_agent_tool(&turn, call.call_id.clone(), request)
+            let result = thread_service_api
+                .spawn_agent(
+                    Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
+                    call.call_id.clone(),
+                    from_runtime_spawn_request(request),
+                )
                 .await?;
             function_tool_json_output(&result, SPAWN_AGENT_TOOL_NAME)?
         }
         FOLLOWUP_TASK_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
             let (target, message) = followup_task_from_arguments(&arguments)?;
-            session
-                .followup_task_tool(&turn, call.call_id.clone(), target, message)
+            thread_service_api
+                .followup_task(
+                    Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
+                    call.call_id.clone(),
+                    target,
+                    message,
+                )
                 .await?;
             FunctionToolOutput::from_text(String::new(), Some(true))
         }
         WAIT_AGENT_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
             let target = wait_agent_target_from_arguments(&arguments)?;
-            let result = session
-                .wait_agent_tool(&turn, call.call_id.clone(), target)
+            let result = thread_service_api
+                .wait_agent(
+                    Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
+                    call.call_id.clone(),
+                    target,
+                )
                 .await?;
             function_tool_json_output(&result, WAIT_AGENT_TOOL_NAME)?
         }
         LIST_AGENTS_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
             let args: ListAgentsArgs = parse_arguments(&arguments)?;
-            let result = session
-                .list_agents_tool(&turn, call.call_id.clone(), args.path_prefix)
+            let result = thread_service_api
+                .list_agents(
+                    Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
+                    call.call_id.clone(),
+                    args.path_prefix,
+                )
                 .await?;
             function_tool_json_output(&result, LIST_AGENTS_TOOL_NAME)?
         }
         CLOSE_AGENT_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
             let args: CloseAgentArgs = parse_arguments(&arguments)?;
-            let result = session
-                .close_agent_tool(&turn, call.call_id.clone(), args.target)
+            let result = thread_service_api
+                .close_agent(
+                    Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
+                    call.call_id.clone(),
+                    args.target,
+                )
                 .await?;
             function_tool_json_output(&result, CLOSE_AGENT_TOOL_NAME)?
         }
         SPAWN_AGENTS_ON_CSV_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
+            let session = turn.session_arc();
             agent_jobs::handle_spawn_agents_on_csv(session, turn, arguments).await?
         }
         REPORT_AGENT_JOB_RESULT_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
+            let session = turn.session_arc();
             agent_jobs::handle_report_agent_job_result(session, arguments).await?
         }
         _ => {
@@ -152,6 +174,32 @@ pub(crate) async fn dispatch(
         result: Box::new(result),
         post_tool_use_payload: None,
     })
+}
+
+fn from_runtime_spawn_request(
+    request: SpawnAgentToolRequest,
+) -> thread_service_api::ThreadSpawnAgentRequest {
+    thread_service_api::ThreadSpawnAgentRequest {
+        message: request.message,
+        task_name: request.task_name,
+        agent_type: request.agent_type,
+        cwd: request.cwd,
+        model: request.model,
+        reasoning_effort: request.reasoning_effort,
+        service_tier: request.service_tier,
+        agent_mode: request.agent_mode.map(|mode| match mode {
+            AgentMode::Normal => thread_service_api::ThreadAgentMode::Normal,
+            AgentMode::Management => thread_service_api::ThreadAgentMode::Management,
+        }),
+        fork_mode: request.fork_mode.map(|mode| match mode {
+            SpawnAgentForkMode::FullHistory => {
+                thread_service_api::ThreadSpawnAgentForkMode::FullHistory
+            }
+            SpawnAgentForkMode::LastNTurns(last_n_turns) => {
+                thread_service_api::ThreadSpawnAgentForkMode::LastNTurns { last_n_turns }
+            }
+        }),
+    }
 }
 
 #[derive(Debug, Deserialize)]

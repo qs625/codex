@@ -48,8 +48,6 @@ use crate::unified_exec::command_process_id_to_prune;
 use crate::unified_exec::events::emit_unified_exec_begin;
 use crate::unified_exec::exec_env_policy_from_shell_policy;
 use crate::unified_exec::exec_server_spawn_params;
-use thread_service_api::ToolRuntimeNetworkApprovalHandle;
-use thread_service_api::ToolRuntimeNetworkApprovalTrigger;
 use crate::unified_exec::WriteStdinRequest;
 use crate::unified_exec::async_watcher::emit_exec_end_for_unified_exec;
 use crate::unified_exec::async_watcher::emit_failed_exec_end_for_unified_exec;
@@ -64,7 +62,12 @@ use codex_command_service_api::CommandSessionFuture;
 use codex_command_service_api::CommandWaitOperation;
 use codex_command_service_api::ExecCapturePolicy;
 use codex_command_service_api::ExecExpiration;
+use codex_command_service_api::ExecApprovalRequirement;
+use codex_command_service_api::ExecCommandRunOutput;
 use codex_command_service_api::ExecOptions;
+use codex_command_service_api::ToolRuntimeNetworkApprovalError;
+use codex_command_service_api::ToolRuntimeNetworkApprovalHandle;
+use codex_command_service_api::ToolRuntimeNetworkApprovalTrigger;
 use codex_hooks_api::PermissionRequestDecision;
 use codex_protocol::ThreadId;
 use codex_protocol::approvals::NetworkApprovalContext;
@@ -75,8 +78,6 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_protocol::protocol::NetworkPolicyRuleAction;
 use codex_protocol::protocol::ReviewDecision;
-use codex_command_service_api::ExecApprovalRequirement;
-use codex_command_service_api::ExecCommandRunOutput;
 use thread_service_api::ThreadSessionCapability;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::approx_token_count;
@@ -233,12 +234,10 @@ async fn finish_network_approval(
         .map_err(network_approval_error_message_from_runtime)
 }
 
-fn network_approval_error_message_from_runtime(
-    err: thread_service_api::ToolRuntimeNetworkApprovalError,
-) -> String {
+fn network_approval_error_message_from_runtime(err: ToolRuntimeNetworkApprovalError) -> String {
     match err {
-        thread_service_api::ToolRuntimeNetworkApprovalError::Rejected(message) => message,
-        thread_service_api::ToolRuntimeNetworkApprovalError::Codex(err) => err.to_string(),
+        ToolRuntimeNetworkApprovalError::Rejected(message) => message,
+        ToolRuntimeNetworkApprovalError::Codex(err) => err.to_string(),
     }
 }
 
@@ -335,7 +334,10 @@ async fn reject_unapproved_decision(
     match decision {
         ReviewDecision::Denied | ReviewDecision::Abort => {
             let reason = if let Some(review_id) = review_id {
-                approval_service::guardian::guardian_rejection_message(session, review_id).await
+                let rejection = session.take_review_rejection(review_id).await;
+                approval_service::guardian::guardian_rejection_message_from_rationale(
+                    rejection.as_ref().map(|rejection| rejection.rationale.as_str()),
+                )
             } else {
                 "rejected by user".to_string()
             };
@@ -563,14 +565,14 @@ async fn run_unified_exec_attempt(
     };
 
     match network_approval.mode() {
-        thread_service_api::NetworkApprovalMode::Immediate => {
+        codex_command_service_api::NetworkApprovalMode::Immediate => {
             let finalize = network_approval.finish().await;
             match finalize {
                 Ok(()) => (run_result, None),
                 Err(err) => (Err(map_runtime_tool_error(err)), None),
             }
         }
-        thread_service_api::NetworkApprovalMode::Deferred => {
+        codex_command_service_api::NetworkApprovalMode::Deferred => {
             if run_result.is_err() {
                 match network_approval.finish().await {
                     Ok(()) => (run_result, None),
@@ -583,12 +585,12 @@ async fn run_unified_exec_attempt(
     }
 }
 
-fn map_runtime_tool_error(err: thread_service_api::ToolRuntimeNetworkApprovalError) -> ToolError {
+fn map_runtime_tool_error(err: ToolRuntimeNetworkApprovalError) -> ToolError {
     match err {
-        thread_service_api::ToolRuntimeNetworkApprovalError::Rejected(message) => {
+        ToolRuntimeNetworkApprovalError::Rejected(message) => {
             ToolError::Rejected(message)
         }
-        thread_service_api::ToolRuntimeNetworkApprovalError::Codex(err) => ToolError::Codex(err),
+        ToolRuntimeNetworkApprovalError::Codex(err) => ToolError::Codex(err),
     }
 }
 

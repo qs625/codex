@@ -1,6 +1,6 @@
 use super::*;
-use crate::mcp::MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC;
-use crate::mcp::MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX;
+use codex_mcp_types::MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC;
+use codex_mcp_types::MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX;
 use async_channel::bounded;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::models::NetworkPermissions;

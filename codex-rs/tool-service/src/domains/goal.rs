@@ -9,6 +9,7 @@ use crate::planning::create_get_goal_tool;
 use crate::planning::create_update_goal_tool;
 use codex_protocol::protocol::ThreadGoal;
 use codex_protocol::protocol::ThreadGoalStatus;
+use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
@@ -51,13 +52,14 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 
 pub(crate) async fn dispatch(
     goal_api: Arc<dyn GoalServiceApi>,
+    session: &dyn ThreadSessionCapability,
     turn: &dyn ThreadTurnCapability,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
     let result = match call.tool_name.name.as_str() {
         GET_GOAL_TOOL_NAME => goal_response(
             goal_api
-                .get_thread_goal(turn)
+                .get_thread_goal(session)
                 .await
                 .map_err(FunctionCallError::RespondToModel)?,
             CompletionBudgetReport::Omit,
@@ -65,7 +67,7 @@ pub(crate) async fn dispatch(
         CREATE_GOAL_TOOL_NAME => {
             let args: CreateGoalArgs = parse_arguments(&call)?;
             let goal = goal_api
-                .create_thread_goal(turn, args.objective, args.token_budget)
+                .create_thread_goal(session, turn, args.objective, args.token_budget)
                 .await
                 .map_err(map_create_goal_error)?;
             goal_response(Some(goal), CompletionBudgetReport::Omit)
@@ -79,7 +81,7 @@ pub(crate) async fn dispatch(
                 ));
             }
             let goal = goal_api
-                .complete_thread_goal(turn)
+                .complete_thread_goal(session, turn)
                 .await
                 .map_err(FunctionCallError::RespondToModel)?;
             goal_response(Some(goal), CompletionBudgetReport::Include)
@@ -221,11 +223,13 @@ mod tests {
 
     use codex_protocol::ThreadId;
     use codex_protocol::models::ResponseInputItem;
-    use thread_service_api::ThreadCapability;
     use thread_service_api::SessionCapabilityFuture;
+    use thread_service_api::ThreadCapability;
+    use thread_service_api::ThreadSessionCapability;
     use codex_tool_types::ToolOutput;
 
     struct MockTurn;
+    struct MockSession;
 
     impl ThreadCapability for MockTurn {
         fn as_any(&self) -> &(dyn Any + Send + Sync) {
@@ -233,25 +237,25 @@ mod tests {
         }
     }
 
-    impl ThreadTurnCapability for MockTurn {
-        fn get_thread_goal<'a>(
-            &'a self,
-        ) -> SessionCapabilityFuture<'a, Result<Option<ThreadGoal>, String>> {
-            Box::pin(async { unreachable!("mock goal api should handle get_thread_goal") })
+    impl ThreadTurnCapability for MockTurn {}
+
+    impl ThreadSessionCapability for MockSession {
+        fn as_any(&self) -> &(dyn Any + Send + Sync) {
+            self
         }
 
-        fn create_thread_goal<'a>(
-            &'a self,
-            _objective: String,
-            _token_budget: Option<i64>,
-        ) -> SessionCapabilityFuture<'a, Result<ThreadGoal, String>> {
-            Box::pin(async { unreachable!("mock goal api should handle create_thread_goal") })
+        fn into_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
+            self
         }
 
-        fn complete_thread_goal<'a>(
+        fn conversation_id(&self) -> ThreadId {
+            ThreadId::new()
+        }
+
+        fn require_persisted_state_db<'a>(
             &'a self,
-        ) -> SessionCapabilityFuture<'a, Result<ThreadGoal, String>> {
-            Box::pin(async { unreachable!("mock goal api should handle complete_thread_goal") })
+        ) -> SessionCapabilityFuture<'a, Result<codex_state_api::SharedStateDbRuntime, String>> {
+            Box::pin(async { unreachable!("mock goal api should handle state db access") })
         }
     }
 
@@ -270,14 +274,15 @@ mod tests {
     impl GoalServiceApi for MockGoalApi {
         fn get_thread_goal<'a>(
             &'a self,
-            _capability: &'a dyn ThreadTurnCapability,
+            _session: &'a dyn ThreadSessionCapability,
         ) -> SessionCapabilityFuture<'a, Result<Option<ThreadGoal>, String>> {
             Box::pin(async move { Ok(self.goal.lock().expect("goal lock").clone()) })
         }
 
         fn create_thread_goal<'a>(
             &'a self,
-            _capability: &'a dyn ThreadTurnCapability,
+            _session: &'a dyn ThreadSessionCapability,
+            _turn: &'a dyn ThreadTurnCapability,
             objective: String,
             token_budget: Option<i64>,
         ) -> SessionCapabilityFuture<'a, Result<ThreadGoal, String>> {
@@ -303,7 +308,8 @@ mod tests {
 
         fn complete_thread_goal<'a>(
             &'a self,
-            _capability: &'a dyn ThreadTurnCapability,
+            _session: &'a dyn ThreadSessionCapability,
+            _turn: &'a dyn ThreadTurnCapability,
         ) -> SessionCapabilityFuture<'a, Result<ThreadGoal, String>> {
             Box::pin(async move {
                 let mut goal = self.goal.lock().expect("goal lock");
@@ -355,9 +361,11 @@ mod tests {
             updated_at: 1,
         };
         let goal_api = Arc::new(MockGoalApi::with_goal(Some(existing.clone())));
+        let session = MockSession;
         let turn = MockTurn;
         let response = dispatch(
             goal_api,
+            &session,
             &turn,
             function_call(
                 CREATE_GOAL_TOOL_NAME,
@@ -382,9 +390,11 @@ mod tests {
     #[tokio::test]
     async fn update_goal_tool_rejects_pausing_goal() {
         let goal_api = Arc::new(MockGoalApi::with_goal(None));
+        let session = MockSession;
         let turn = MockTurn;
         let response = dispatch(
             goal_api,
+            &session,
             &turn,
             function_call(
                 UPDATE_GOAL_TOOL_NAME,
@@ -417,9 +427,11 @@ mod tests {
             created_at: 1,
             updated_at: 1,
         })));
+        let session = MockSession;
         let turn = MockTurn;
         let result = dispatch(
             goal_api,
+            &session,
             &turn,
             function_call(
                 UPDATE_GOAL_TOOL_NAME,

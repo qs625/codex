@@ -1,5 +1,16 @@
-use super::*;
+use crate::GuardianElicitationReview;
+use crate::guardian_elicitation_review_request;
+use crate::mcp_elicitation_response_from_guardian_decision_parts;
+use codex_mcp_types::ElicitationAction;
+use codex_mcp_types::ElicitationResponse;
+use codex_mcp_types::ElicitationReviewRequest;
+use codex_protocol::config_types::ApprovalsReviewer;
+use codex_protocol::mcp::RequestId;
+use codex_protocol::protocol::ReviewDecision;
+use serde_json::Value;
 use serde_json::json;
+
+const GUARDIAN_TIMEOUT_MESSAGE: &str = "Guardian timed out reviewing this request.";
 
 fn meta(value: Value) -> Option<Value> {
     let Value::Object(map) = value else {
@@ -33,7 +44,7 @@ fn empty_form_schema() -> Value {
 fn form_request(meta: Option<Value>) -> ElicitationReviewRequest {
     ElicitationReviewRequest {
         server_name: "browser-use".to_string(),
-        request_id: codex_protocol::mcp::RequestId::Integer(7),
+        request_id: RequestId::Integer(7),
         elicitation: codex_protocol::approvals::ElicitationRequest::Form {
             meta,
             message: "Allow origin?".to_string(),
@@ -53,7 +64,7 @@ fn guardian_elicitation_review_request_builds_mcp_tool_call() {
     else {
         panic!("expected Guardian MCP tool call request");
     };
-    let crate::guardian::GuardianApprovalRequest::McpToolCall {
+    let codex_guardian::GuardianApprovalRequest::McpToolCall {
         id,
         server,
         tool_name,
@@ -90,7 +101,7 @@ fn guardian_elicitation_review_request_defaults_missing_tool_params() {
     else {
         panic!("expected Guardian MCP tool call request");
     };
-    let crate::guardian::GuardianApprovalRequest::McpToolCall { arguments, .. } = *guardian_request
+    let codex_guardian::GuardianApprovalRequest::McpToolCall { arguments, .. } = *guardian_request
     else {
         panic!("expected Guardian MCP tool call request");
     };
@@ -115,7 +126,7 @@ fn guardian_elicitation_review_request_requires_opt_in() {
 fn guardian_elicitation_review_request_declines_unsupported_opt_in_shapes() {
     let url_request = ElicitationReviewRequest {
         server_name: "browser-use".to_string(),
-        request_id: codex_protocol::mcp::RequestId::Integer(8),
+        request_id: RequestId::Integer(8),
         elicitation: codex_protocol::approvals::ElicitationRequest::Url {
             meta: guardian_meta(Some(json!({}))),
             message: "Open URL".to_string(),
@@ -130,7 +141,7 @@ fn guardian_elicitation_review_request_declines_unsupported_opt_in_shapes() {
 
     let non_empty_schema_request = ElicitationReviewRequest {
         server_name: "browser-use".to_string(),
-        request_id: codex_protocol::mcp::RequestId::Integer(9),
+        request_id: RequestId::Integer(9),
         elicitation: codex_protocol::approvals::ElicitationRequest::Form {
             meta: guardian_meta(Some(json!({}))),
             message: "Allow origin?".to_string(),
@@ -198,7 +209,7 @@ fn guardian_decisions_map_to_elicitation_responses_without_session_state() {
             content: None,
             meta: Some(json!({
                 "approvals_reviewer": ApprovalsReviewer::AutoReview,
-                "message": approval_service::guardian::guardian_timeout_message(),
+                "message": GUARDIAN_TIMEOUT_MESSAGE,
             })),
         }
     );

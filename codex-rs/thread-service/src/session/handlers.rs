@@ -147,11 +147,14 @@ pub(super) async fn user_input_or_turn_inner(
                     .set_responsesapi_client_metadata(responsesapi_client_metadata);
             }
             current_context.session_telemetry.user_prompt(&items);
-            sess.refresh_mcp_servers_if_requested(
-                &current_context,
-                Some(sess.mcp_elicitation_reviewer()),
-            )
-            .await;
+            sess.services
+                .mcp_service
+                .refresh_servers_if_requested(
+                    sess.as_ref(),
+                    current_context.as_ref(),
+                    Some(sess.mcp_elicitation_reviewer()),
+                )
+                .await;
             let accepted_items = items.clone();
             sess.spawn_task(
                 Arc::clone(&current_context),
@@ -263,7 +266,9 @@ pub async fn resolve_elicitation(
         meta,
     };
     if let Err(err) = sess
-        .resolve_elicitation(server_name, request_id, response)
+        .services
+        .mcp_service
+        .resolve_elicitation(sess.as_ref(), server_name, request_id, response)
         .await
     {
         warn!(
@@ -348,8 +353,10 @@ pub async fn dynamic_tool_response(sess: &Arc<Session>, id: String, response: Dy
 }
 
 pub async fn refresh_mcp_servers(sess: &Arc<Session>, refresh_config: McpServerRefreshConfig) {
-    let mut guard = sess.pending_mcp_server_refresh_config.lock().await;
-    *guard = Some(refresh_config);
+    sess.services
+        .mcp_service
+        .queue_server_refresh(sess.as_ref(), refresh_config)
+        .await;
 }
 
 pub async fn reload_user_config(sess: &Arc<Session>) {
@@ -580,7 +587,13 @@ pub async fn review(
     let turn_context = sess.new_default_turn_with_sub_id(sub_id.clone()).await;
     sess.maybe_emit_unknown_model_warning_for_turn(turn_context.as_ref())
         .await;
-    sess.refresh_mcp_servers_if_requested(&turn_context, Some(sess.mcp_elicitation_reviewer()))
+    sess.services
+        .mcp_service
+        .refresh_servers_if_requested(
+            sess.as_ref(),
+            turn_context.as_ref(),
+            Some(sess.mcp_elicitation_reviewer()),
+        )
         .await;
     #[allow(deprecated)]
     match resolve_review_request(review_request, &turn_context.cwd) {
@@ -819,7 +832,7 @@ async fn approve_guardian_denied_action(sess: &Arc<Session>, event: GuardianAsse
             return;
         }
     };
-    let approval_prefix = crate::guardian::AUTO_REVIEW_DENIED_ACTION_APPROVAL_DEVELOPER_PREFIX;
+    let approval_prefix = codex_guardian::AUTO_REVIEW_DENIED_ACTION_APPROVAL_DEVELOPER_PREFIX;
     let text = format!(
         r#"{approval_prefix}
 

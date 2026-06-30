@@ -43,6 +43,7 @@ use owo_colors::OwoColorize;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Weak;
 use supports_color::Stream;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -1675,6 +1676,9 @@ async fn run_debug_prompt_input_command(
     );
 
     let state_db: Option<StateDbHandle> = None;
+    let shared_state_db = state_db
+        .clone()
+        .map(|state_db| state_db as codex_state_api::SharedStateDbRuntime);
     let thread_store = thread_store_from_config(&config, state_db.clone());
     let auth_manager =
         AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false).await;
@@ -1682,13 +1686,16 @@ async fn run_debug_prompt_input_command(
         auth_manager.clone(),
         codex_login::model_provider_auth_manager(Some(auth_manager)),
     );
+    let missing_thread_service_api: Weak<dyn thread_service_api::ThreadServiceApi> =
+        Weak::<thread_service::ThreadService>::new();
     let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
         config.codex_home.clone(),
+        missing_thread_service_api.clone(),
     ));
     let prompt_input = thread_service::build_prompt_input(
         config,
         input,
-        state_db.clone(),
+        shared_state_db,
         environment_provider,
         thread_store,
         Arc::new(codex_thread_store::DefaultLiveThreadFactory),
@@ -1698,9 +1705,10 @@ async fn run_debug_prompt_input_command(
             Arc::new(approval_service::ApprovalService),
             Arc::new(codex_command_service::CommandService::new()),
             Arc::new(goal_service::GoalService),
-            Arc::new(mcp_service::McpService),
+            Arc::new(mcp_service::McpService::new(Arc::new(approval_service::ApprovalService))),
             Arc::new(thread_service::RequestPluginInstallService),
             workflow_service,
+            missing_thread_service_api,
         )),
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),

@@ -63,11 +63,11 @@ use codex_protocol::request_permissions::RequestPermissionProfile;
 use codex_state_api::ExternalGoalPreviousStatus;
 use codex_state_api::ExternalGoalSet;
 use codex_thread_store::LiveThread;
+use goal_service::GoalService;
+use goal_service_api::GoalServiceApi;
 use tracing::Span;
 
 use crate::PendingInputItem;
-use crate::goal::GoalRuntimeEvent;
-use crate::goal::SetGoalRequest;
 use crate::state::ActiveTurn;
 use crate::state::TaskKind;
 use crate::tasks::SessionTask;
@@ -4263,6 +4263,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         openai_file_uploader: Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         code_mode_service: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         code_mode_runtime_factory: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        goal_service: Arc::new(goal_service::GoalService),
         tool_service: Arc::new(DisabledToolServiceForTests),
         environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     };
@@ -6185,6 +6186,7 @@ where
         openai_file_uploader: Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         code_mode_service: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         code_mode_runtime_factory: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        goal_service: Arc::new(goal_service::GoalService),
         tool_service: Arc::new(DisabledToolServiceForTests),
         environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     };
@@ -8561,15 +8563,14 @@ async fn abort_empty_active_turn_preserves_pending_input() {
 #[tokio::test]
 async fn interrupt_accounts_active_goal_before_pausing() -> anyhow::Result<()> {
     let (sess, tc, _rx, _codex_home) = make_goal_session_and_context_with_rx().await;
-    sess.set_thread_goal(
-        tc.as_ref(),
-        SetGoalRequest {
-            objective: Some("Keep improving the benchmark".to_string()),
-            status: None,
-            token_budget: None,
-        },
-    )
-    .await?;
+    GoalService
+        .create_thread_goal(
+            sess.as_ref(),
+            tc.as_ref(),
+            "Keep improving the benchmark".to_string(),
+            None,
+        )
+        .await?;
 
     sess.spawn_task(
         Arc::clone(&tc),
@@ -8584,8 +8585,8 @@ async fn interrupt_accounts_active_goal_before_pausing() -> anyhow::Result<()> {
 
     sess.abort_all_tasks(TurnAbortReason::Interrupted).await;
 
-    let goal = sess
-        .get_thread_goal()
+    let goal = GoalService
+        .get_thread_goal(sess.as_ref())
         .await?
         .expect("goal should remain persisted after interrupt");
     assert_eq!(
@@ -8843,20 +8844,17 @@ async fn goal_test_state_db(sess: &Session) -> anyhow::Result<crate::StateDbHand
 #[tokio::test]
 async fn budget_limited_accounting_steers_active_turn_without_aborting() -> anyhow::Result<()> {
     let (sess, tc, rx, _codex_home) = make_goal_session_and_context_with_rx().await;
-    sess.set_thread_goal(
-        tc.as_ref(),
-        SetGoalRequest {
-            objective: Some("Keep improving the benchmark".to_string()),
-            status: None,
-            token_budget: Some(Some(10)),
-        },
-    )
-    .await?;
-    sess.goal_runtime_apply(GoalRuntimeEvent::TurnStarted {
-        turn_context: tc.as_ref(),
-        token_usage: TokenUsage::default(),
-    })
-    .await?;
+    GoalService
+        .create_thread_goal(
+            sess.as_ref(),
+            tc.as_ref(),
+            "Keep improving the benchmark".to_string(),
+            Some(10),
+        )
+        .await?;
+    GoalService
+        .begin_turn_goal_accounting(sess.as_ref(), tc.as_ref(), TokenUsage::default())
+        .await?;
     sess.spawn_task(
         Arc::clone(&tc),
         Vec::new(),
@@ -8880,11 +8878,9 @@ async fn budget_limited_accounting_steers_active_turn_without_aborting() -> anyh
     )
     .await;
 
-    sess.goal_runtime_apply(GoalRuntimeEvent::ToolCompleted {
-        turn_context: tc.as_ref(),
-        tool_name: "exec_command",
-    })
-    .await?;
+    GoalService
+        .account_non_goal_tool_completed(sess.as_ref(), tc.as_ref(), "exec_command")
+        .await?;
 
     let pending_input = sess.get_pending_input().await;
     let [PendingInputItem::HookInspectable(ResponseItem::Message { role, content, .. })] =
@@ -8930,10 +8926,9 @@ async fn budget_limited_accounting_steers_active_turn_without_aborting() -> anyh
         },
     )
     .await;
-    sess.goal_runtime_apply(GoalRuntimeEvent::ToolCompletedGoal {
-        turn_context: tc.as_ref(),
-    })
-    .await?;
+    GoalService
+        .account_goal_mutation_completed(sess.as_ref(), tc.as_ref())
+        .await?;
 
     let goal = state_db
         .get_thread_goal(sess.conversation_id)
@@ -8953,15 +8948,14 @@ async fn budget_limited_accounting_steers_active_turn_without_aborting() -> anyh
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn external_goal_mutation_accounts_active_turn_before_status_change() -> anyhow::Result<()> {
     let (sess, tc, _rx, _codex_home) = make_goal_session_and_context_with_rx().await;
-    sess.set_thread_goal(
-        tc.as_ref(),
-        SetGoalRequest {
-            objective: Some("Keep improving the benchmark".to_string()),
-            status: None,
-            token_budget: None,
-        },
-    )
-    .await?;
+    GoalService
+        .create_thread_goal(
+            sess.as_ref(),
+            tc.as_ref(),
+            "Keep improving the benchmark".to_string(),
+            None,
+        )
+        .await?;
     sess.spawn_task(
         Arc::clone(&tc),
         Vec::new(),
@@ -8973,7 +8967,8 @@ async fn external_goal_mutation_accounts_active_turn_before_status_change() -> a
     .await;
     set_total_token_usage(&sess, post_goal_token_usage()).await;
 
-    sess.goal_runtime_apply(GoalRuntimeEvent::ExternalMutationStarting)
+    GoalService
+        .prepare_external_goal_mutation(sess.as_ref())
         .await?;
 
     let state_db = goal_test_state_db(sess.as_ref()).await?;
@@ -8997,13 +8992,15 @@ async fn external_goal_mutation_accounts_active_turn_before_status_change() -> a
         )
         .await?
         .expect("goal status update should succeed");
-    sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
-        external_set: ExternalGoalSet {
-            goal: updated_goal,
-            previous_status: ExternalGoalPreviousStatus::from(&previous_goal),
-        },
-    })
-    .await?;
+    GoalService
+        .apply_external_goal_set(
+            sess.as_ref(),
+            ExternalGoalSet {
+                goal: updated_goal,
+                previous_status: ExternalGoalPreviousStatus::from(&previous_goal),
+            },
+        )
+        .await?;
 
     assert!(sess.active_turn.lock().await.is_some());
     let goal = state_db
@@ -9049,13 +9046,15 @@ async fn external_objective_change_steers_active_turn() -> anyhow::Result<()> {
         )
         .await?;
 
-    sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
-        external_set: ExternalGoalSet {
-            goal: new_goal,
-            previous_status: ExternalGoalPreviousStatus::from(&old_goal),
-        },
-    })
-    .await?;
+    GoalService
+        .apply_external_goal_set(
+            sess.as_ref(),
+            ExternalGoalSet {
+                goal: new_goal,
+                previous_status: ExternalGoalPreviousStatus::from(&old_goal),
+            },
+        )
+        .await?;
 
     let pending_input = sess.get_pending_input().await;
     assert!(
@@ -9105,13 +9104,15 @@ async fn external_active_goal_set_marks_current_turn_for_accounting() -> anyhow:
             /*token_budget*/ None,
         )
         .await?;
-    sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
-        external_set: ExternalGoalSet {
-            goal,
-            previous_status: ExternalGoalPreviousStatus::NewGoal,
-        },
-    })
-    .await?;
+    GoalService
+        .apply_external_goal_set(
+            sess.as_ref(),
+            ExternalGoalSet {
+                goal,
+                previous_status: ExternalGoalPreviousStatus::NewGoal,
+            },
+        )
+        .await?;
 
     set_total_token_usage(
         &sess,
@@ -9124,11 +9125,9 @@ async fn external_active_goal_set_marks_current_turn_for_accounting() -> anyhow:
         },
     )
     .await;
-    sess.goal_runtime_apply(GoalRuntimeEvent::ToolCompleted {
-        turn_context: tc.as_ref(),
-        tool_name: "exec_command",
-    })
-    .await?;
+    GoalService
+        .account_non_goal_tool_completed(sess.as_ref(), tc.as_ref(), "exec_command")
+        .await?;
 
     let goal = state_db
         .get_thread_goal(sess.conversation_id)

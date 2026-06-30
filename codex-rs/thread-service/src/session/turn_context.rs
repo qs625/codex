@@ -121,7 +121,7 @@ impl TurnContext {
             .expect("TurnContext session must remain alive while the turn is active")
     }
 
-    pub(crate) fn self_arc(&self) -> Arc<TurnContext> {
+    pub fn self_arc(&self) -> Arc<TurnContext> {
         self.self_weak
             .get()
             .and_then(Weak::upgrade)
@@ -260,7 +260,7 @@ impl TurnContext {
         ]
     }
 
-    pub(crate) fn approval_policy(&self) -> AskForApproval {
+    pub fn approval_policy(&self) -> AskForApproval {
         self.approval_policy.value()
     }
 
@@ -272,7 +272,7 @@ impl TurnContext {
         self.sub_id.clone()
     }
 
-    pub(crate) fn turn_id_str(&self) -> &str {
+    pub fn turn_id_str(&self) -> &str {
         self.sub_id.as_str()
     }
 
@@ -414,13 +414,13 @@ impl TurnContext {
         &self.model_info.supported_reasoning_levels
     }
 
-    pub(crate) fn supports_image_input(&self) -> bool {
+    pub fn supports_image_input(&self) -> bool {
         self.model_info
             .input_modalities
             .contains(&codex_protocol::openai_models::InputModality::Image)
     }
 
-    pub(crate) fn auth_elicitation_enabled(&self) -> bool {
+    pub fn auth_elicitation_enabled(&self) -> bool {
         self.features.enabled(Feature::AuthElicitation)
     }
 
@@ -428,7 +428,7 @@ impl TurnContext {
         self.features.enabled(Feature::ToolCallMcpElicitation)
     }
 
-    pub(crate) fn mcp_turn_metadata_value(&self) -> Option<serde_json::Value> {
+    pub fn mcp_turn_metadata_value(&self) -> Option<serde_json::Value> {
         self.turn_metadata_state.current_meta_value_for_mcp_request(
             crate::turn_metadata::McpTurnMetadataContext {
                 model: self.model_info.slug.as_str(),
@@ -437,7 +437,7 @@ impl TurnContext {
         )
     }
 
-    pub(crate) fn mcp_sandbox_state(&self) -> codex_mcp_types::SandboxState {
+    pub fn mcp_sandbox_state(&self) -> codex_mcp_types::SandboxState {
         codex_mcp_types::SandboxState {
             permission_profile: Some(self.permission_profile()),
             sandbox_policy: self.sandbox_policy(),
@@ -448,7 +448,7 @@ impl TurnContext {
         }
     }
 
-    pub(crate) fn mcp_approval_review_context<'a>(
+    pub fn mcp_approval_review_context<'a>(
         &'a self,
         thread_id: &'a str,
         call_id: &'a str,
@@ -510,8 +510,8 @@ impl TurnContext {
     pub(crate) fn request_plugin_install_context(
         &self,
         thread_id: ThreadId,
-    ) -> thread_service_api::RequestPluginInstallContext {
-        thread_service_api::RequestPluginInstallContext {
+    ) -> codex_tool_service_api::RequestPluginInstallContext {
+        codex_tool_service_api::RequestPluginInstallContext {
             server_name: codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME.to_string(),
             thread_id: thread_id.to_string(),
             turn_id: self.sub_id.clone(),
@@ -533,7 +533,7 @@ impl TurnContext {
         }
     }
 
-    pub(crate) async fn auth_snapshot(&self) -> Option<codex_auth_types::RequestAuthSnapshot> {
+    pub async fn auth_snapshot(&self) -> Option<codex_auth_types::RequestAuthSnapshot> {
         match self.auth_runtime.as_ref() {
             Some(auth_runtime) => auth_runtime.auth().await,
             None => None,
@@ -550,7 +550,7 @@ impl TurnContext {
         )
     }
 
-    pub(crate) fn codex_app_tool_policy(
+    pub fn codex_app_tool_policy(
         &self,
         metadata: Option<&codex_mcp_types::McpToolApprovalMetadata>,
         tool_name: &str,
@@ -564,7 +564,7 @@ impl TurnContext {
         )
     }
 
-    pub(crate) async fn cached_accessible_connectors_from_mcp_tools(
+    pub async fn cached_accessible_connectors_from_mcp_tools(
         &self,
         auth_snapshot: Option<&codex_auth_types::RequestAuthSnapshot>,
     ) -> Option<Vec<codex_connectors_types::AppInfo>> {
@@ -590,7 +590,7 @@ impl TurnContext {
         .await
     }
 
-    pub(crate) fn refresh_accessible_connectors_cache_from_mcp_tools(
+    pub fn refresh_accessible_connectors_cache_from_mcp_tools(
         &self,
         connector_auth_context: Option<&codex_mcp_types::CodexAppsAuthContext>,
         mcp_tools: &[codex_mcp_tool_types::ToolInfo],

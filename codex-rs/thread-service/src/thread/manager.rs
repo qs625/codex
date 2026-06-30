@@ -109,11 +109,13 @@ use codex_thread_store_api::UpdateThreadMetadataParams;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
+use goal_service_api::GoalServiceApi;
 use mcp_service::McpManager;
 use mcp_service_api::DisabledMcpAuthRuntime;
 use mcp_service_api::DisabledMcpConnectionRuntimeFactory;
 use mcp_service_api::McpAuthRuntime;
 use mcp_service_api::McpConnectionRuntimeFactory;
+use mcp_service_api::McpServiceApi;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -242,6 +244,7 @@ pub(crate) struct ThreadServiceState {
     skills_manager: SharedSkillsRuntime,
     plugin_runtime: SharedPluginRuntime,
     mcp_manager: Arc<McpManager>,
+    mcp_service: Arc<dyn McpServiceApi>,
     mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
     mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
     api_runtime_factory: SharedApiRuntimeFactory,
@@ -262,6 +265,7 @@ pub(crate) struct ThreadServiceState {
     active_event_subscriptions: Arc<ActiveEventSubscriptionTracker>,
     model_provider_factory: SharedModelProviderFactory,
     code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+    goal_service: Arc<dyn GoalServiceApi>,
     openai_file_uploader: SharedOpenAiFileUploader,
     exec_policy_loader: Arc<dyn ExecPolicyLoader>,
     tool_service: Arc<crate::CoreToolServiceApi>,
@@ -298,7 +302,9 @@ impl ThreadService {
         attestation_provider: Option<Arc<dyn AttestationProvider>>,
         model_provider_factory: SharedModelProviderFactory,
         code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+        goal_service: Arc<dyn GoalServiceApi>,
         tool_service: Arc<crate::CoreToolServiceApi>,
+        mcp_service: Arc<dyn McpServiceApi>,
     ) -> Self {
         Self::new_with_mcp_auth_runtime(
             config,
@@ -314,7 +320,9 @@ impl ThreadService {
             attestation_provider,
             model_provider_factory,
             code_mode_runtime_factory,
+            goal_service,
             tool_service,
+            mcp_service,
             Arc::new(DisabledMcpAuthRuntime),
             Arc::new(DisabledMcpConnectionRuntimeFactory),
         )
@@ -335,7 +343,9 @@ impl ThreadService {
         attestation_provider: Option<Arc<dyn AttestationProvider>>,
         model_provider_factory: SharedModelProviderFactory,
         code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+        goal_service: Arc<dyn GoalServiceApi>,
         tool_service: Arc<crate::CoreToolServiceApi>,
+        mcp_service: Arc<dyn McpServiceApi>,
         mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
         mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
     ) -> Self {
@@ -353,6 +363,7 @@ impl ThreadService {
             attestation_provider,
             model_provider_factory,
             code_mode_runtime_factory,
+            goal_service,
             mcp_auth_runtime,
             mcp_connection_runtime_factory,
             Arc::new(DisabledOpenAiFileUploader),
@@ -366,6 +377,7 @@ impl ThreadService {
             Arc::new(DisabledSkillsRuntime),
             Arc::new(DisabledPluginRuntime),
             tool_service,
+            mcp_service,
         )
     }
 
@@ -384,6 +396,7 @@ impl ThreadService {
         attestation_provider: Option<Arc<dyn AttestationProvider>>,
         model_provider_factory: SharedModelProviderFactory,
         code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+        goal_service: Arc<dyn GoalServiceApi>,
         mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
         mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
         openai_file_uploader: SharedOpenAiFileUploader,
@@ -397,6 +410,7 @@ impl ThreadService {
         skills_runtime: SharedSkillsRuntime,
         plugin_runtime: SharedPluginRuntime,
         tool_service: Arc<crate::CoreToolServiceApi>,
+        mcp_service: Arc<dyn McpServiceApi>,
     ) -> Self {
         let (thread_created_tx, _) = broadcast::channel(THREAD_CREATED_CHANNEL_CAPACITY);
         let mcp_manager = Arc::new(McpManager::new(plugin_runtime.clone()));
@@ -418,6 +432,7 @@ impl ThreadService {
                 skills_manager: skills_runtime,
                 plugin_runtime,
                 mcp_manager,
+                mcp_service,
                 mcp_auth_runtime,
                 mcp_connection_runtime_factory,
                 api_runtime_factory,
@@ -439,6 +454,7 @@ impl ThreadService {
                 active_event_subscriptions: Arc::new(ActiveEventSubscriptionTracker::default()),
                 model_provider_factory,
                 code_mode_runtime_factory,
+                goal_service,
                 openai_file_uploader,
                 exec_policy_loader,
                 tool_service,
@@ -546,6 +562,7 @@ impl ThreadService {
                 skills_manager,
                 plugin_runtime,
                 mcp_manager,
+                mcp_service: Arc::new(mcp_service::McpService::new(Arc::new(approval_service::ApprovalService))),
                 mcp_auth_runtime: Arc::new(codex_mcp::DefaultMcpAuthRuntime),
                 mcp_connection_runtime_factory: Arc::new(
                     codex_mcp::DefaultMcpConnectionRuntimeFactory,
@@ -575,6 +592,7 @@ impl ThreadService {
                 code_mode_runtime_factory: Arc::new(
                     codex_code_mode_api::DisabledCodeModeRuntimeFactory,
                 ),
+                goal_service: Arc::new(goal_service::GoalService),
                 openai_file_uploader: Arc::new(DisabledOpenAiFileUploader),
                 exec_policy_loader: Arc::new(EmptyExecPolicyLoader),
                 tool_service: Arc::new(crate::test_support::DisabledToolServiceForTests),
@@ -1585,6 +1603,7 @@ impl ThreadServiceState {
             skills_manager: Arc::clone(&self.skills_manager),
             plugins_manager: self.plugin_runtime.clone(),
             mcp_manager: Arc::clone(&self.mcp_manager),
+            mcp_service: Arc::clone(&self.mcp_service),
             mcp_auth_runtime: Arc::clone(&self.mcp_auth_runtime),
             mcp_connection_runtime_factory: Arc::clone(&self.mcp_connection_runtime_factory),
             network_proxy_runtime_factory: Arc::clone(&self.network_proxy_runtime_factory),
@@ -1613,6 +1632,7 @@ impl ThreadServiceState {
             openai_file_uploader: Arc::clone(&self.openai_file_uploader),
             code_mode_service: self.code_mode_runtime_factory.create_service(),
             code_mode_runtime_factory: Arc::clone(&self.code_mode_runtime_factory),
+            goal_service: Arc::clone(&self.goal_service),
             tool_service: Arc::clone(&self.tool_service),
         })
         .await?;

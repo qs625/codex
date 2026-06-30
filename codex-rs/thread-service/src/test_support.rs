@@ -504,7 +504,9 @@ where
         /*attestation_provider*/ None,
         model_provider_factory_for_tests(),
         Arc::new(DisabledCodeModeRuntimeFactory),
+        Arc::new(goal_service::GoalService),
         Arc::new(DisabledToolServiceForTests),
+        Arc::new(mcp_service::McpService::new(Arc::new(approval_service::ApprovalService))),
     );
     let thread = thread_service
         .start_thread_with_options(crate::StartThreadOptions {

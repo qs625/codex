@@ -6,7 +6,9 @@ use crate::planning::ToolName;
 use crate::planning::ToolSpec;
 use crate::planning::create_exec_command_tool_with_environment_id;
 use codex_approval_service_api::ApprovalServiceApi;
+use codex_approval_service_api::ExecCommandApprovalKey;
 use codex_approval_service_api::ExecCommandApprovalDispatch;
+use codex_approval_service_api::ExecCommandApprovalRequirement;
 use codex_approval_service_api::ExecCommandApprovalOutcome;
 use codex_command_service_api::CommandServiceApi;
 use codex_command_service_api::CommandServiceSessionApi;
@@ -14,7 +16,6 @@ use codex_command_service_api::ExecCommandApprovalMode;
 use codex_command_service_api::ExecCommandArgs;
 use codex_command_service_api::ExecCommandRunOutput;
 use codex_command_service_api::ExecCommandRunRequest;
-use codex_command_service_api::UnifiedExecApprovalKey;
 use codex_command_service_api::UnifiedExecError;
 use codex_command_service_api::generate_chunk_id;
 use codex_command_service_api::resolve_max_tokens;
@@ -271,8 +272,26 @@ async fn dispatch_exec_command(
             sandbox_permissions: effective_additional_permissions.sandbox_permissions,
             additional_permissions: normalized_additional_permissions.clone(),
             tty,
-            exec_approval_requirement: exec_approval_requirement.clone(),
-            approval_keys: vec![UnifiedExecApprovalKey {
+            exec_approval_requirement: match exec_approval_requirement.clone() {
+                codex_permissions_runtime::ExecApprovalRequirement::Skip {
+                    bypass_sandbox,
+                    proposed_execpolicy_amendment,
+                } => ExecCommandApprovalRequirement::Skip {
+                    bypass_sandbox,
+                    proposed_execpolicy_amendment,
+                },
+                codex_permissions_runtime::ExecApprovalRequirement::NeedsApproval {
+                    reason,
+                    proposed_execpolicy_amendment,
+                } => ExecCommandApprovalRequirement::NeedsApproval {
+                    reason,
+                    proposed_execpolicy_amendment,
+                },
+                codex_permissions_runtime::ExecApprovalRequirement::Forbidden { reason } => {
+                    ExecCommandApprovalRequirement::Forbidden { reason }
+                }
+            },
+            approval_keys: vec![ExecCommandApprovalKey {
                 command: codex_shell_utils::canonicalize_command_for_approval(&command),
                 cwd: cwd.clone(),
                 tty,

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use async_channel::Sender;
 use codex_api_auth::auth_provider_from_auth_snapshot;
 use codex_auth_types::RequestAuthSnapshot;
 use codex_config::Config;
@@ -9,18 +10,31 @@ use codex_config::McpServerConfig;
 use codex_core_plugins_api::SharedPluginRuntime;
 use codex_exec_server_api::ExecEnvironment;
 use codex_mcp_types::CodexAppsAuthContext;
+use codex_mcp_types::CodexAppsToolsCacheKey;
 use codex_mcp_types::EffectiveMcpServer;
+use codex_mcp_types::ElicitationReviewerHandle;
+use codex_mcp_types::McpAuthStatusEntry;
+use codex_mcp_types::McpClientElicitationSupport;
 use codex_mcp_types::ToolPluginProvenance;
 use codex_mcp_types::configured_mcp_servers;
 use codex_mcp_types::effective_mcp_servers;
 use codex_mcp_types::tool_plugin_provenance as collect_tool_plugin_provenance;
+use codex_protocol::models::PermissionProfile;
+use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::Event;
 use mcp_service_api::McpRuntimeEnvironment;
 use mcp_service_api::McpRuntimeEnvironmentParams;
+use mcp_service_api::McpConnectionRuntimeFactory;
+use mcp_service_api::McpConnectionRuntimeStart;
+use mcp_service_api::McpConnectionRuntimeStartRequest;
 use mcp_service_api::SharedMcpAuthHeaderProvider;
 use mcp_service_api::StaticMcpAuthHeaderProvider;
 
 mod app_tools;
 mod connectors;
+mod elicitation_review;
+#[cfg(test)]
+mod elicitation_review_tests;
 mod openai_file;
 mod service;
 mod skill_dependencies;
@@ -53,6 +67,10 @@ pub use connectors::list_accessible_connectors_from_mcp_tools_with_options_and_s
 pub use connectors::list_cached_accessible_connectors_from_mcp_tools;
 pub use connectors::refresh_accessible_connectors_cache_from_mcp_tools;
 pub use connectors::with_app_plugin_sources;
+pub use elicitation_review::GuardianElicitationReview;
+pub use elicitation_review::guardian_elicitation_review_request;
+pub use elicitation_review::mcp_elicitation_request_id;
+pub use elicitation_review::mcp_elicitation_response_from_guardian_decision_parts;
 pub use openai_file::OpenAiFilePathResolver;
 pub use openai_file::rewrite_mcp_tool_arguments_for_openai_files;
 pub use service::McpService;
@@ -116,6 +134,24 @@ pub use tool_exposure::DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD;
 pub use tool_exposure::McpToolExposure;
 pub use tool_exposure::build_mcp_tool_exposure;
 
+pub struct McpConnectionStartParams {
+    pub mcp_servers: HashMap<String, EffectiveMcpServer>,
+    pub store_mode: codex_config_types::OAuthCredentialsStoreMode,
+    pub auth_entries: HashMap<String, McpAuthStatusEntry>,
+    pub approval_policy: codex_config_types::Constrained<AskForApproval>,
+    pub submit_id: String,
+    pub tx_event: Sender<Event>,
+    pub initial_permission_profile: PermissionProfile,
+    pub runtime_environment: McpRuntimeEnvironment,
+    pub codex_home: PathBuf,
+    pub codex_apps_tools_cache_key: CodexAppsToolsCacheKey,
+    pub host_owned_codex_apps_enabled: bool,
+    pub client_elicitation_support: McpClientElicitationSupport,
+    pub tool_plugin_provenance: ToolPluginProvenance,
+    pub codex_apps_auth_provider: Option<SharedMcpAuthHeaderProvider>,
+    pub elicitation_reviewer: Option<ElicitationReviewerHandle>,
+}
+
 pub fn codex_apps_auth_provider(
     auth: Option<&RequestAuthSnapshot>,
 ) -> Option<SharedMcpAuthHeaderProvider> {
@@ -146,6 +182,48 @@ pub fn mcp_runtime_environment(
         remote_http_client: environment.get_http_client(),
         fallback_cwd,
     })
+}
+
+pub async fn start_mcp_connection_runtime(
+    factory: &dyn McpConnectionRuntimeFactory,
+    params: McpConnectionStartParams,
+) -> McpConnectionRuntimeStart {
+    let McpConnectionStartParams {
+        mcp_servers,
+        store_mode,
+        auth_entries,
+        approval_policy,
+        submit_id,
+        tx_event,
+        initial_permission_profile,
+        runtime_environment,
+        codex_home,
+        codex_apps_tools_cache_key,
+        host_owned_codex_apps_enabled,
+        client_elicitation_support,
+        tool_plugin_provenance,
+        codex_apps_auth_provider,
+        elicitation_reviewer,
+    } = params;
+    factory
+        .start(McpConnectionRuntimeStartRequest {
+            mcp_servers,
+            store_mode,
+            auth_entries,
+            approval_policy,
+            submit_id,
+            tx_event,
+            initial_permission_profile,
+            runtime_environment,
+            codex_home,
+            codex_apps_tools_cache_key,
+            host_owned_codex_apps_enabled,
+            client_elicitation_support,
+            tool_plugin_provenance,
+            codex_apps_auth_provider,
+            elicitation_reviewer,
+        })
+        .await
 }
 
 #[derive(Clone)]

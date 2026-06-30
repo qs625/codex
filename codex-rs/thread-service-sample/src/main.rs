@@ -4,6 +4,7 @@ use std::io::IsTerminal;
 use std::io::Read;
 use std::io::Write;
 use std::sync::Arc;
+use std::sync::Weak;
 
 use anyhow::Context;
 use anyhow::bail;
@@ -144,40 +145,45 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         EnvironmentManager::from_codex_home(config.codex_home.clone(), local_runtime_paths).await?,
     );
     let installation_id = resolve_installation_id(&config.codex_home).await?;
-    let auth_runtimes = ThreadAuthRuntimes::from_auth_runtime(
-        auth_manager.clone(),
-        model_provider_auth_manager(Some(auth_manager)),
-    );
-    let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
-        config.codex_home.clone(),
-    ));
-    let thread_service = ThreadService::new(
-        &config,
-        auth_runtimes,
-        SessionSource::Exec,
-        environment_manager,
-        empty_extension_registry(),
-        /*analytics_events_client*/ None,
-        Arc::clone(&thread_store),
-        shared_state_db,
-        Arc::new(DefaultLiveThreadFactory),
-        installation_id,
-        /*attestation_provider*/ None,
-        Arc::new(DefaultModelProviderFactory),
-        Arc::new(DisabledCodeModeRuntimeFactory),
-        Arc::new(codex_tool_service::ToolService::new(
-            Arc::new(approval_service::ApprovalService),
-            Arc::new(codex_command_service::CommandService::new()),
+    let thread_service: Arc<ThreadService> = Arc::new_cyclic(|thread_service| {
+        let auth_runtimes = ThreadAuthRuntimes::from_auth_runtime(
+            auth_manager.clone(),
+            model_provider_auth_manager(Some(auth_manager.clone())),
+        );
+        let thread_service_api: Weak<dyn thread_service_api::ThreadServiceApi> =
+            thread_service.clone();
+        let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
+            config.codex_home.clone(),
+            thread_service_api.clone(),
+        ));
+        ThreadService::new(
+            &config,
+            auth_runtimes,
+            SessionSource::Exec,
+            environment_manager.clone(),
+            empty_extension_registry(),
+            /*analytics_events_client*/ None,
+            Arc::clone(&thread_store),
+            shared_state_db.clone(),
+            Arc::new(DefaultLiveThreadFactory),
+            installation_id.clone(),
+            /*attestation_provider*/ None,
+            Arc::new(DefaultModelProviderFactory),
+            Arc::new(DisabledCodeModeRuntimeFactory),
             Arc::new(goal_service::GoalService),
-            Arc::new(mcp_service::McpService),
-            Arc::new(thread_service::RequestPluginInstallService),
-            workflow_service.clone(),
-        )),
-    );
-    let thread_service = Arc::new(thread_service);
-    let thread_service_api: Arc<dyn thread_service_api::ThreadServiceApi> =
-        thread_service.clone();
-    workflow_service.set_thread_service_api(Arc::downgrade(&thread_service_api));
+            Arc::new(codex_tool_service::ToolService::new(
+                Arc::new(approval_service::ApprovalService),
+                Arc::new(codex_command_service::CommandService::new()),
+                Arc::new(goal_service::GoalService),
+                Arc::new(mcp_service::McpService::new(Arc::new(
+                    approval_service::ApprovalService,
+                ))),
+                Arc::new(thread_service::RequestPluginInstallService),
+                workflow_service,
+                thread_service_api,
+            )),
+        )
+    });
 
     let NewThread {
         thread_id, thread, ..

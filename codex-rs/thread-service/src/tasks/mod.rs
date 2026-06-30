@@ -22,7 +22,6 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::PendingInputItem;
-use crate::goal::GoalRuntimeEvent;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::state::ActiveTurn;
@@ -305,13 +304,16 @@ impl Session {
             .clear_turn(&turn_context.sub_id);
 
         if let Err(err) = self
-            .goal_runtime_apply(GoalRuntimeEvent::TurnStarted {
-                turn_context: turn_context.as_ref(),
-                token_usage: token_usage_at_turn_start.clone(),
-            })
+            .services
+            .goal_service
+            .begin_turn_goal_accounting(
+                self.as_ref(),
+                turn_context.as_ref(),
+                token_usage_at_turn_start.clone(),
+            )
             .await
         {
-            warn!("failed to apply goal runtime turn-start event: {err}");
+            warn!("failed to begin turn goal accounting: {err}");
         }
         let queued_response_items = self.take_queued_response_items_for_next_turn().await;
         let mailbox_items = self.get_pending_input().await;
@@ -478,13 +480,18 @@ impl Session {
         }
         if (aborted_turn || reason == TurnAbortReason::Interrupted)
             && let Err(err) = self
-                .goal_runtime_apply(GoalRuntimeEvent::TaskAborted {
-                    turn_context: turn_context.as_deref(),
-                    reason: reason.clone(),
-                })
+                .services
+                .goal_service
+                .handle_goal_turn_abort(
+                    self.as_ref(),
+                    turn_context
+                        .as_deref()
+                        .map(|turn| turn as &dyn thread_service_api::ThreadTurnCapability),
+                    reason.clone(),
+                )
                 .await
         {
-            warn!("failed to apply goal runtime abort event: {err}");
+            warn!("failed to handle goal turn abort: {err}");
         }
         if let Some(active_turn) = active_turn_to_clear {
             // Let interrupted tasks observe cancellation before dropping pending approvals, or an
@@ -525,13 +532,18 @@ impl Session {
             self.emit_turn_abort_lifecycle(reason.clone(), turn_context.extension_data.as_ref());
         }
         if let Err(err) = self
-            .goal_runtime_apply(GoalRuntimeEvent::TaskAborted {
-                turn_context: turn_context.as_deref(),
-                reason: reason.clone(),
-            })
+            .services
+            .goal_service
+            .handle_goal_turn_abort(
+                self.as_ref(),
+                turn_context
+                    .as_deref()
+                    .map(|turn| turn as &dyn thread_service_api::ThreadTurnCapability),
+                reason.clone(),
+            )
             .await
         {
-            warn!("failed to apply goal runtime abort event: {err}");
+            warn!("failed to handle goal turn abort: {err}");
         }
         // Let interrupted tasks observe cancellation before dropping pending approvals, or an
         // in-flight approval wait can surface as a model-visible rejection before TurnAborted.
@@ -740,13 +752,16 @@ impl Session {
             self.emit_turn_stop_lifecycle(turn_context.extension_data.as_ref());
         }
         if let Err(err) = self
-            .goal_runtime_apply(GoalRuntimeEvent::TurnFinished {
-                turn_context: turn_context.as_ref(),
-                turn_completed: should_clear_active_turn,
-            })
+            .services
+            .goal_service
+            .finish_turn_goal_accounting(
+                self.as_ref(),
+                turn_context.as_ref(),
+                should_clear_active_turn,
+            )
             .await
         {
-            warn!("failed to apply goal runtime turn-finished event: {err}");
+            warn!("failed to finish turn goal accounting: {err}");
         }
         let event = EventMsg::TurnComplete(TurnCompleteEvent {
             turn_id: turn_context.sub_id.clone(),
@@ -781,10 +796,12 @@ impl Session {
                 return;
             }
             if let Err(err) = self
-                .goal_runtime_apply(GoalRuntimeEvent::MaybeContinueIfIdle)
+                .services
+                .goal_service
+                .maybe_continue_active_goal(self.as_ref())
                 .await
             {
-                warn!("failed to apply goal runtime maybe-continue event: {err}");
+                warn!("failed to continue active goal while idle: {err}");
             }
             Box::pin(self.maybe_notify_parent_of_final_status(turn_context.as_ref())).await;
         }

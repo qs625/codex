@@ -1027,7 +1027,7 @@ discoverables = [
         .expect("config should load");
     let auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
     let auth_snapshot = auth.request_auth_snapshot();
-    let auth_context = crate::mcp::codex_apps_auth_context(Some(&auth_snapshot));
+    let auth_context = mcp_service::codex_apps_auth_context(Some(&auth_snapshot));
 
     let plugins_manager = PluginsManager::new(config.codex_home.to_path_buf());
     let discoverable_tools = list_tool_suggest_discoverable_tools_with_auth(

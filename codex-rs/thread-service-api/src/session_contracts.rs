@@ -16,14 +16,21 @@ use codex_code_mode_api::ExecuteRequest;
 use codex_code_mode_api::RuntimeResponse;
 use codex_code_mode_api::WaitOutcome;
 use codex_code_mode_api::WaitRequest;
+use codex_connectors_types::AppInfo;
 use codex_file_system::FileSystemSandboxContext;
+use codex_mcp_tool_types::ToolInfo;
+use codex_mcp_types::ElicitationResponse;
+use codex_mcp_types::ElicitationReviewerHandle;
+use codex_mcp_types::CodexAppsAuthContext;
+use codex_mcp_types::McpServerElicitationRequestParams;
+use codex_mcp_types::McpToolApprovalMetadata;
+use codex_mcp_types::SandboxState;
 use codex_protocol::ThreadId;
 use codex_protocol::approvals::ExecPolicyAmendment;
 use codex_protocol::approvals::NetworkApprovalContext;
 use codex_protocol::approvals::NetworkPolicyAmendment;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::mcp::CallToolResult;
 use codex_protocol::mcp::ListResourceTemplatesResult;
@@ -31,6 +38,7 @@ use codex_protocol::mcp::ListResourcesResult;
 use codex_protocol::mcp::PaginatedRequestParams;
 use codex_protocol::mcp::ReadResourceRequestParams;
 use codex_protocol::mcp::ReadResourceResult;
+use codex_protocol::mcp::RequestId;
 use codex_protocol::mcp::Resource;
 use codex_protocol::mcp::ResourceTemplate;
 use codex_protocol::models::AdditionalPermissionProfile;
@@ -41,22 +49,22 @@ use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::McpInvocation;
+use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::Submission;
-use codex_protocol::protocol::ThreadGoal;
+use codex_protocol::protocol::TokenUsage;
+use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_sandboxing_api::ResolvedApplyPatchEnvironment;
 use codex_sandboxing_api::ResolvedExecCommandEnvironment;
 use codex_sandboxing_api::SharedSandboxRuntime;
 use codex_sandboxing_api::ToolSandboxContext;
 use codex_session_telemetry_api::SharedSessionTelemetry;
+use codex_state_api::ExternalGoalSet;
 use codex_state_api::SharedStateDbRuntime;
-use codex_tool_types::DiscoverableTool;
 use codex_tool_types::FunctionCallError;
-use codex_tool_types::RequestPluginInstallElicitationRequest;
 use codex_tool_types::ToolCallSource;
 use codex_tool_types::ToolName;
 use codex_tool_types::ToolOutput;
@@ -107,6 +115,13 @@ pub enum ReviewRuntimeError {
 pub enum ReviewRuntimeOutcome {
     Completed(ReviewAssessmentRecord),
     Error(ReviewRuntimeError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AutoApprovalSafetyOutcome {
+    Ok,
+    AskUser(String),
+    SteerModel(String),
 }
 
 #[derive(Debug)]
@@ -179,41 +194,10 @@ pub struct ToolPermissionGrants {
     pub turn: Option<AdditionalPermissionProfile>,
 }
 
-#[derive(Clone, Default, Debug)]
-pub struct ApprovalStore {
-    map: HashMap<String, ReviewDecision>,
-}
-
-impl ApprovalStore {
-    pub fn get<K>(&self, key: &K) -> Option<ReviewDecision>
-    where
-        K: Serialize,
-    {
-        let key = serde_json::to_string(key).ok()?;
-        self.map.get(&key).cloned()
-    }
-
-    pub fn put<K>(&mut self, key: K, value: ReviewDecision)
-    where
-        K: Serialize,
-    {
-        if let Ok(key) = serde_json::to_string(&key) {
-            self.map.insert(key, value);
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RequestPluginInstallContext {
-    pub server_name: String,
-    pub thread_id: String,
-    pub turn_id: String,
-    pub app_server_client_name: Option<String>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct RequestPluginInstallElicitationOutcome {
-    pub user_confirmed: bool,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ThreadAppToolPolicy {
+    pub enabled: bool,
+    pub approval: codex_config_types::AppToolApproval,
 }
 
 pub struct AgentJobRunnerOptions<SpawnConfig> {
@@ -303,6 +287,26 @@ pub struct ThreadWaitAgentResult {
     pub hard_cap_timeout_ms: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadCloseAgentResult {
+    pub previous_status: AgentStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadListedAgent {
+    pub agent_name: String,
+    pub agent_status: AgentStatus,
+    pub last_task_message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadListAgentsResult {
+    pub agents: Vec<ThreadListedAgent>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreToolUsePayload {
     pub tool_name: HookToolName,
@@ -369,23 +373,6 @@ pub trait ThreadTurnCapability: Send + Sync + 'static {
     /// Runtime turn identifier used in rollout trace records.
     fn rollout_turn_id(&self) -> String;
 
-    /// Read the current thread goal visible to this turn.
-    fn get_thread_goal<'a>(
-        &'a self,
-    ) -> SessionCapabilityFuture<'a, Result<Option<ThreadGoal>, String>>;
-
-    /// Create a new active thread goal from this turn.
-    fn create_thread_goal<'a>(
-        &'a self,
-        objective: String,
-        token_budget: Option<i64>,
-    ) -> SessionCapabilityFuture<'a, Result<ThreadGoal, String>>;
-
-    /// Mark the current thread goal complete from this turn.
-    fn complete_thread_goal<'a>(
-        &'a self,
-    ) -> SessionCapabilityFuture<'a, Result<ThreadGoal, String>>;
-
     /// Return immutable workspace discovery inputs visible to this turn.
     fn discovery_context(&self) -> ThreadDiscoveryContext;
 
@@ -422,6 +409,9 @@ pub trait ThreadTurnCapability: Send + Sync + 'static {
     /// Output truncation policy for tool-visible text.
     fn truncation_policy(&self) -> TruncationPolicy;
 
+    /// Whether streamed apply-patch preview events are enabled for this turn.
+    fn apply_patch_streaming_events_enabled(&self) -> bool;
+
     /// Collaboration mode configured for the active turn.
     fn collaboration_mode_kind(&self) -> codex_protocol::config_types::ModeKind;
 
@@ -433,6 +423,43 @@ pub trait ThreadTurnCapability: Send + Sync + 'static {
 
     /// Whether the current client supports image input items.
     fn supports_image_input(&self) -> bool;
+
+    /// Whether auth elicitation is enabled for the active turn.
+    fn auth_elicitation_enabled(&self) -> bool;
+
+    /// Whether MCP tool approval elicitation is enabled for the active turn.
+    fn tool_call_mcp_elicitation_enabled(&self) -> bool;
+
+    /// MCP request metadata derived from the active turn state.
+    fn mcp_turn_metadata(&self) -> Option<serde_json::Value>;
+
+    /// MCP sandbox state snapshot for the active turn.
+    fn mcp_sandbox_state(&self) -> SandboxState;
+
+    /// Auth snapshot visible to the active turn.
+    fn auth_snapshot<'a>(
+        &'a self,
+    ) -> SessionCapabilityFuture<'a, Option<codex_auth_types::RequestAuthSnapshot>>;
+
+    /// Cached accessible connectors visible to the active turn.
+    fn cached_accessible_connectors_from_mcp_tools<'a>(
+        &'a self,
+        auth_snapshot: Option<&'a codex_auth_types::RequestAuthSnapshot>,
+    ) -> SessionCapabilityFuture<'a, Option<Vec<AppInfo>>>;
+
+    /// Refresh the accessible connector cache derived from MCP tools.
+    fn refresh_accessible_connectors_cache_from_mcp_tools(
+        &self,
+        connector_auth_context: Option<&CodexAppsAuthContext>,
+        mcp_tools: &[ToolInfo],
+    );
+
+    /// App-tool policy for one Codex Apps tool under the active turn config.
+    fn codex_app_tool_policy(
+        &self,
+        metadata: Option<&McpToolApprovalMetadata>,
+        tool_name: &str,
+    ) -> ThreadAppToolPolicy;
 
     /// Collaboration mode currently configured on the owning session.
     fn session_collaboration_mode<'a>(
@@ -496,26 +523,6 @@ where
         self.as_ref().rollout_turn_id()
     }
 
-    fn get_thread_goal<'a>(
-        &'a self,
-    ) -> SessionCapabilityFuture<'a, Result<Option<ThreadGoal>, String>> {
-        self.as_ref().get_thread_goal()
-    }
-
-    fn create_thread_goal<'a>(
-        &'a self,
-        objective: String,
-        token_budget: Option<i64>,
-    ) -> SessionCapabilityFuture<'a, Result<ThreadGoal, String>> {
-        self.as_ref().create_thread_goal(objective, token_budget)
-    }
-
-    fn complete_thread_goal<'a>(
-        &'a self,
-    ) -> SessionCapabilityFuture<'a, Result<ThreadGoal, String>> {
-        self.as_ref().complete_thread_goal()
-    }
-
     fn discovery_context(&self) -> ThreadDiscoveryContext {
         self.as_ref().discovery_context()
     }
@@ -564,6 +571,10 @@ where
         self.as_ref().truncation_policy()
     }
 
+    fn apply_patch_streaming_events_enabled(&self) -> bool {
+        self.as_ref().apply_patch_streaming_events_enabled()
+    }
+
     fn collaboration_mode_kind(&self) -> codex_protocol::config_types::ModeKind {
         self.as_ref().collaboration_mode_kind()
     }
@@ -578,6 +589,53 @@ where
 
     fn supports_image_input(&self) -> bool {
         self.as_ref().supports_image_input()
+    }
+
+    fn auth_elicitation_enabled(&self) -> bool {
+        self.as_ref().auth_elicitation_enabled()
+    }
+
+    fn tool_call_mcp_elicitation_enabled(&self) -> bool {
+        self.as_ref().tool_call_mcp_elicitation_enabled()
+    }
+
+    fn mcp_turn_metadata(&self) -> Option<serde_json::Value> {
+        self.as_ref().mcp_turn_metadata()
+    }
+
+    fn mcp_sandbox_state(&self) -> SandboxState {
+        self.as_ref().mcp_sandbox_state()
+    }
+
+    fn auth_snapshot<'a>(
+        &'a self,
+    ) -> SessionCapabilityFuture<'a, Option<codex_auth_types::RequestAuthSnapshot>> {
+        self.as_ref().auth_snapshot()
+    }
+
+    fn cached_accessible_connectors_from_mcp_tools<'a>(
+        &'a self,
+        auth_snapshot: Option<&'a codex_auth_types::RequestAuthSnapshot>,
+    ) -> SessionCapabilityFuture<'a, Option<Vec<AppInfo>>> {
+        self.as_ref()
+            .cached_accessible_connectors_from_mcp_tools(auth_snapshot)
+    }
+
+    fn refresh_accessible_connectors_cache_from_mcp_tools(
+        &self,
+        connector_auth_context: Option<&CodexAppsAuthContext>,
+        mcp_tools: &[ToolInfo],
+    ) {
+        self.as_ref()
+            .refresh_accessible_connectors_cache_from_mcp_tools(connector_auth_context, mcp_tools);
+    }
+
+    fn codex_app_tool_policy(
+        &self,
+        metadata: Option<&McpToolApprovalMetadata>,
+        tool_name: &str,
+    ) -> ThreadAppToolPolicy {
+        self.as_ref().codex_app_tool_policy(metadata, tool_name)
     }
 
     fn session_collaboration_mode<'a>(
@@ -658,60 +716,25 @@ pub trait ThreadServiceApi: Send + Sync + 'static {
         target: String,
     ) -> ThreadServiceFuture<'a, Result<ThreadWaitAgentResult, FunctionCallError>>;
 
+    fn close_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>>;
+
+    fn list_agents<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        path_prefix: Option<String>,
+    ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>>;
+
     fn record_model_items_and_emit_display_events<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,
         items: Vec<ResponseItem>,
     ) -> ThreadServiceFuture<'a, Result<(), String>>;
-}
-
-/// Thread-runtime-owned session reference passed into tool service dispatch.
-///
-/// This is still a migration-time bridge while tool handlers are being moved
-/// away from concrete session/runtime generics. The owner stays in
-/// `thread-service-api` because the referenced runtime object belongs to the
-/// thread domain, not the tool domain.
-pub trait ToolServiceSessionRef: Send + Sync + 'static {
-    fn as_any(&self) -> &(dyn Any + Send + Sync);
-
-    fn into_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
-}
-
-impl<T> ToolServiceSessionRef for T
-where
-    T: Send + Sync + 'static,
-{
-    fn as_any(&self) -> &(dyn Any + Send + Sync) {
-        self
-    }
-
-    fn into_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
-        self
-    }
-}
-
-/// Thread-runtime-owned turn reference passed into tool service dispatch.
-///
-/// Like [`ToolServiceSessionRef`], this is a temporary bridge that keeps
-/// runtime ownership on the thread side while the tool domain is being
-/// converted from generic handlers to capability-driven dyn dispatch.
-pub trait ToolServiceTurnRef: Send + Sync + 'static {
-    fn as_any(&self) -> &(dyn Any + Send + Sync);
-
-    fn into_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
-}
-
-impl<T> ToolServiceTurnRef for T
-where
-    T: Send + Sync + 'static,
-{
-    fn as_any(&self) -> &(dyn Any + Send + Sync) {
-        self
-    }
-
-    fn into_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
-        self
-    }
 }
 
 pub trait ThreadSessionCapability: Send + Sync + 'static {
@@ -724,6 +747,12 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
 
     /// Thread identifier owned by this session runtime.
     fn conversation_id(&self) -> ThreadId;
+
+    /// Return the persisted state DB for this thread, materializing any
+    /// required thread metadata first.
+    fn require_persisted_state_db<'a>(
+        &'a self,
+    ) -> SessionCapabilityFuture<'a, Result<SharedStateDbRuntime, String>>;
 
     /// Telemetry sink for tool dispatch spans and handler results.
     fn tool_dispatch_telemetry(&self, turn: &dyn ThreadTurnCapability) -> SharedSessionTelemetry;
@@ -775,7 +804,57 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
     fn account_goal_tool_completed<'a>(
         &'a self,
         turn: &'a dyn ThreadTurnCapability,
-        tool_name: &'a ToolName,
+        tool_name: &'a str,
+    ) -> SessionCapabilityFuture<'a, Result<(), String>>;
+
+    /// Account goal progress after a goal-mutating tool completes without
+    /// steering or terminal metric emission.
+    fn account_goal_mutation_completed<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+    ) -> SessionCapabilityFuture<'a, Result<(), String>>;
+
+    /// Capture active-goal accounting baselines for a newly started turn.
+    fn begin_turn_goal_accounting<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        token_usage: TokenUsage,
+    ) -> SessionCapabilityFuture<'a, Result<(), String>>;
+
+    /// Finalize active-goal accounting for one turn.
+    fn finish_turn_goal_accounting<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        turn_completed: bool,
+    ) -> SessionCapabilityFuture<'a, Result<(), String>>;
+
+    /// Handle goal side effects when the active turn aborts.
+    fn handle_goal_turn_abort<'a>(
+        &'a self,
+        turn: Option<&'a dyn ThreadTurnCapability>,
+        reason: TurnAbortReason,
+    ) -> SessionCapabilityFuture<'a, Result<(), String>>;
+
+    /// Continue one active goal when the thread is idle.
+    fn maybe_continue_active_goal<'a>(&'a self) -> SessionCapabilityFuture<'a, Result<(), String>>;
+
+    /// Account active goal usage before mutating persisted goal state externally.
+    fn prepare_external_goal_mutation<'a>(
+        &'a self,
+    ) -> SessionCapabilityFuture<'a, Result<(), String>>;
+
+    /// Apply runtime side effects after an external goal upsert.
+    fn apply_external_goal_set<'a>(
+        &'a self,
+        external_set: ExternalGoalSet,
+    ) -> SessionCapabilityFuture<'a, Result<(), String>>;
+
+    /// Clear goal runtime state after an external goal removal.
+    fn apply_external_goal_clear<'a>(&'a self) -> SessionCapabilityFuture<'a, Result<(), String>>;
+
+    /// Restore goal runtime state after resuming a thread.
+    fn restore_goal_runtime_after_resume<'a>(
+        &'a self,
     ) -> SessionCapabilityFuture<'a, Result<(), String>>;
 
     /// Emit one typed event for the active turn.
@@ -920,6 +999,210 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
     fn tool_permission_grants<'a>(
         &'a self,
     ) -> SessionCapabilityFuture<'a, ToolPermissionGrants>;
+
+    /// Request one MCP server elicitation through the active turn lifecycle.
+    fn request_mcp_server_elicitation<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        request_id: RequestId,
+        params: McpServerElicitationRequestParams,
+    ) -> SessionCapabilityFuture<'a, Option<ElicitationResponse>>;
+
+    /// Resolve one pending or runtime-owned MCP elicitation.
+    fn resolve_mcp_elicitation<'a>(
+        &'a self,
+        server_name: String,
+        request_id: RequestId,
+        response: ElicitationResponse,
+    ) -> SessionCapabilityFuture<'a, Result<(), String>>;
+
+    /// Refresh MCP servers queued on the session, if any.
+    fn refresh_mcp_servers_if_requested<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        elicitation_reviewer: Option<ElicitationReviewerHandle>,
+    ) -> SessionCapabilityFuture<'a, ()>;
+
+    /// Queue one MCP server refresh configuration on the session.
+    fn queue_mcp_server_refresh<'a>(
+        &'a self,
+        refresh_config: McpServerRefreshConfig,
+    ) -> SessionCapabilityFuture<'a, ()>;
+
+    /// Refresh MCP servers immediately with the provided configuration.
+    fn refresh_mcp_servers_now<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        refresh_config: McpServerRefreshConfig,
+        elicitation_reviewer: Option<ElicitationReviewerHandle>,
+    ) -> SessionCapabilityFuture<'a, ()>;
+
+    /// Cancel any in-flight MCP startup owned by this session.
+    fn cancel_mcp_startup<'a>(&'a self) -> SessionCapabilityFuture<'a, ()>;
+
+    /// Hard-refresh the Codex Apps MCP tools cache.
+    fn hard_refresh_codex_apps_tools_cache<'a>(
+        &'a self,
+    ) -> SessionCapabilityFuture<'a, Result<Vec<codex_mcp_tool_types::ToolInfo>, String>>;
+
+    /// Execute one raw MCP tool call through the session-owned MCP runtime.
+    fn call_mcp_tool<'a>(
+        &'a self,
+        server: &'a str,
+        tool: &'a str,
+        arguments: Option<serde_json::Value>,
+        meta: Option<serde_json::Value>,
+    ) -> SessionCapabilityFuture<'a, Result<CallToolResult, String>>;
+
+    /// List MCP resources for one server through the session-owned MCP runtime.
+    fn list_mcp_resources<'a>(
+        &'a self,
+        server: &'a str,
+        params: Option<PaginatedRequestParams>,
+    ) -> SessionCapabilityFuture<'a, Result<ListResourcesResult, String>>;
+
+    /// List MCP resources for all visible servers.
+    fn list_all_mcp_resources(
+        &self,
+    ) -> SessionCapabilityFuture<'_, HashMap<String, Vec<Resource>>>;
+
+    /// List MCP resource templates for one server through the session-owned MCP runtime.
+    fn list_mcp_resource_templates<'a>(
+        &'a self,
+        server: &'a str,
+        params: Option<PaginatedRequestParams>,
+    ) -> SessionCapabilityFuture<'a, Result<ListResourceTemplatesResult, String>>;
+
+    /// List MCP resource templates for all visible servers.
+    fn list_all_mcp_resource_templates(
+        &self,
+    ) -> SessionCapabilityFuture<'_, HashMap<String, Vec<ResourceTemplate>>>;
+
+    /// Read one MCP resource through the session-owned MCP runtime.
+    fn read_mcp_resource<'a>(
+        &'a self,
+        server: &'a str,
+        params: ReadResourceRequestParams,
+    ) -> SessionCapabilityFuture<'a, Result<ReadResourceResult, String>>;
+
+    /// List all visible MCP tools for the session-owned MCP runtime.
+    fn list_all_mcp_tools<'a>(&'a self) -> SessionCapabilityFuture<'a, Vec<ToolInfo>>;
+
+    /// Return the server origin for one MCP server, if known.
+    fn mcp_server_origin<'a>(
+        &'a self,
+        server: &'a str,
+    ) -> SessionCapabilityFuture<'a, Option<String>>;
+
+    /// Whether one MCP server is the host-owned Codex Apps server.
+    fn mcp_server_is_host_owned_codex_apps<'a>(
+        &'a self,
+        server: &'a str,
+    ) -> SessionCapabilityFuture<'a, bool>;
+
+    /// Whether one MCP server supports sandbox-state request metadata.
+    fn mcp_server_supports_sandbox_state_meta<'a>(
+        &'a self,
+        server: &'a str,
+    ) -> SessionCapabilityFuture<'a, bool>;
+
+    /// Add optional trace metadata for one MCP tool call.
+    fn add_optional_mcp_call_trace_request_meta(
+        &self,
+        call_id: &str,
+        meta: Option<serde_json::Value>,
+    ) -> Option<serde_json::Value>;
+
+    /// Rewrite MCP tool arguments for OpenAI file uploads under the active turn.
+    fn rewrite_mcp_tool_arguments_for_openai_files<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        arguments: Option<serde_json::Value>,
+        openai_file_input_params: Option<&'a [String]>,
+    ) -> SessionCapabilityFuture<'a, Result<Option<serde_json::Value>, String>>;
+
+    /// Mark the thread memory mode polluted when the specified MCP server requires it.
+    fn mark_thread_memory_mode_polluted_for_mcp_tool_call<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        server: &'a str,
+    ) -> SessionCapabilityFuture<'a, ()>;
+
+    /// Track one Codex Apps tool usage event for analytics/state.
+    fn track_codex_app_used_for_mcp_tool<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        server: &'a str,
+        tool_name: &'a str,
+    ) -> SessionCapabilityFuture<'a, ()>;
+
+    /// Whether one MCP tool approval key is already remembered for the session.
+    fn mcp_tool_approval_is_remembered<'a>(
+        &'a self,
+        key: &'a codex_mcp_types::McpToolApprovalKey,
+    ) -> SessionCapabilityFuture<'a, bool>;
+
+    /// Remember one MCP tool approval key for the current session.
+    fn remember_mcp_tool_approval<'a>(
+        &'a self,
+        key: codex_mcp_types::McpToolApprovalKey,
+    ) -> SessionCapabilityFuture<'a, ()>;
+
+    /// Resolve the custom approval mode for one MCP tool.
+    fn custom_mcp_tool_approval_mode<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        server: &'a str,
+        tool_name: &'a str,
+    ) -> SessionCapabilityFuture<'a, codex_config_types::AppToolApproval>;
+
+    /// Fetch accessible connectors derived from MCP tools for the current session.
+    fn fetch_accessible_connectors_from_mcp_tools<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        auth_snapshot: Option<&'a codex_auth_types::RequestAuthSnapshot>,
+    ) -> SessionCapabilityFuture<'a, anyhow::Result<Vec<AppInfo>>>;
+
+    /// Persist approval for one Codex Apps tool and reload user config.
+    fn persist_codex_app_tool_approval_for_turn<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        connector_id: String,
+        tool_name: String,
+    ) -> SessionCapabilityFuture<'a, anyhow::Result<()>>;
+
+    /// Persist approval for one non-app MCP tool and reload user config.
+    fn persist_non_app_mcp_tool_approval_for_turn<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        server: String,
+        tool_name: String,
+    ) -> SessionCapabilityFuture<'a, anyhow::Result<()>>;
+
+    /// Reload the user config layer for subsequent turn decisions.
+    fn reload_user_config_layer<'a>(&'a self) -> SessionCapabilityFuture<'a, ()>;
+
+    /// Evaluate one auto-approved action with the runtime safety monitor.
+    fn monitor_auto_approved_action<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        action: serde_json::Value,
+        callsite_mode: &'static str,
+    ) -> SessionCapabilityFuture<'a, AutoApprovalSafetyOutcome>;
+
+    /// Emit one started item for the active turn.
+    fn emit_turn_item_started<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        item: &'a codex_protocol::items::TurnItem,
+    ) -> SessionCapabilityFuture<'a, ()>;
+
+    /// Emit one completed item for the active turn.
+    fn emit_turn_item_completed<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        item: codex_protocol::items::TurnItem,
+    ) -> SessionCapabilityFuture<'a, ()>;
 }
 
 /// Common turn-runtime capability shared by tool services that need active turn
@@ -975,66 +1258,6 @@ pub trait ThreadRuntimeCapability: ThreadCapability + ThreadTurnCapability {
         workdir: Option<&str>,
     ) -> Result<Option<ResolvedExecCommandEnvironment>, FunctionCallError>;
 
-    /// Execute one MCP tool call in the active turn runtime.
-    fn call_mcp_tool(
-        &self,
-        call_id: String,
-        server: String,
-        tool_name: String,
-        hook_tool_name: String,
-        arguments: String,
-    ) -> SessionCapabilityFuture<'_, (CallToolResult, serde_json::Value)>;
-
-    /// Whether MCP tool outputs may request original-detail images.
-    fn mcp_original_image_detail_supported(&self) -> bool;
-
-    /// Truncation policy used for MCP resource tool outputs.
-    fn mcp_truncation_policy(&self) -> TruncationPolicy;
-
-    /// List MCP resources for one server in the active turn context.
-    fn list_resources<'a>(
-        &'a self,
-        server: &'a str,
-        params: Option<PaginatedRequestParams>,
-    ) -> SessionCapabilityFuture<'a, Result<ListResourcesResult, String>>;
-
-    /// List MCP resources for all servers visible to the active turn.
-    fn list_all_resources(&self) -> SessionCapabilityFuture<'_, HashMap<String, Vec<Resource>>>;
-
-    /// List MCP resource templates for one server in the active turn context.
-    fn list_resource_templates<'a>(
-        &'a self,
-        server: &'a str,
-        params: Option<PaginatedRequestParams>,
-    ) -> SessionCapabilityFuture<'a, Result<ListResourceTemplatesResult, String>>;
-
-    /// List MCP resource templates for all servers visible to the active turn.
-    fn list_all_resource_templates(
-        &self,
-    ) -> SessionCapabilityFuture<'_, HashMap<String, Vec<ResourceTemplate>>>;
-
-    /// Read one MCP resource in the active turn context.
-    fn read_resource<'a>(
-        &'a self,
-        server: &'a str,
-        params: ReadResourceRequestParams,
-    ) -> SessionCapabilityFuture<'a, Result<ReadResourceResult, String>>;
-
-    /// Emit the started lifecycle event for one MCP resource tool call.
-    fn emit_mcp_resource_tool_call_begin<'a>(
-        &'a self,
-        call_id: &'a str,
-        invocation: McpInvocation,
-    ) -> SessionCapabilityFuture<'a, ()>;
-
-    /// Emit the completed lifecycle event for one MCP resource tool call.
-    fn emit_mcp_resource_tool_call_end<'a>(
-        &'a self,
-        call_id: &'a str,
-        invocation: McpInvocation,
-        duration: std::time::Duration,
-        result: Result<CallToolResult, String>,
-    ) -> SessionCapabilityFuture<'a, ()>;
 }
 
 impl<Turn> ThreadRuntimeCapability for Arc<Turn>
@@ -1106,95 +1329,7 @@ where
             .resolve_exec_command_environment(environment_id, workdir)
     }
 
-    fn call_mcp_tool(
-        &self,
-        call_id: String,
-        server: String,
-        tool_name: String,
-        hook_tool_name: String,
-        arguments: String,
-    ) -> SessionCapabilityFuture<'_, (CallToolResult, serde_json::Value)> {
-        self.as_ref()
-            .call_mcp_tool(call_id, server, tool_name, hook_tool_name, arguments)
-    }
-
-    fn mcp_original_image_detail_supported(&self) -> bool {
-        self.as_ref().mcp_original_image_detail_supported()
-    }
-
-    fn mcp_truncation_policy(&self) -> TruncationPolicy {
-        self.as_ref().mcp_truncation_policy()
-    }
-
-    fn list_resources<'a>(
-        &'a self,
-        server: &'a str,
-        params: Option<PaginatedRequestParams>,
-    ) -> SessionCapabilityFuture<'a, Result<ListResourcesResult, String>> {
-        self.as_ref().list_resources(server, params)
-    }
-
-    fn list_all_resources(&self) -> SessionCapabilityFuture<'_, HashMap<String, Vec<Resource>>> {
-        self.as_ref().list_all_resources()
-    }
-
-    fn list_resource_templates<'a>(
-        &'a self,
-        server: &'a str,
-        params: Option<PaginatedRequestParams>,
-    ) -> SessionCapabilityFuture<'a, Result<ListResourceTemplatesResult, String>> {
-        self.as_ref().list_resource_templates(server, params)
-    }
-
-    fn list_all_resource_templates(
-        &self,
-    ) -> SessionCapabilityFuture<'_, HashMap<String, Vec<ResourceTemplate>>> {
-        self.as_ref().list_all_resource_templates()
-    }
-
-    fn read_resource<'a>(
-        &'a self,
-        server: &'a str,
-        params: ReadResourceRequestParams,
-    ) -> SessionCapabilityFuture<'a, Result<ReadResourceResult, String>> {
-        self.as_ref().read_resource(server, params)
-    }
-
-    fn emit_mcp_resource_tool_call_begin<'a>(
-        &'a self,
-        call_id: &'a str,
-        invocation: McpInvocation,
-    ) -> SessionCapabilityFuture<'a, ()> {
-        self.as_ref()
-            .emit_mcp_resource_tool_call_begin(call_id, invocation)
-    }
-
-    fn emit_mcp_resource_tool_call_end<'a>(
-        &'a self,
-        call_id: &'a str,
-        invocation: McpInvocation,
-        duration: std::time::Duration,
-        result: Result<CallToolResult, String>,
-    ) -> SessionCapabilityFuture<'a, ()> {
-        self.as_ref()
-            .emit_mcp_resource_tool_call_end(call_id, invocation, duration, result)
-    }
 }
-
-/// Turn-owned capability for apply-patch streamed argument diff events.
-pub trait ApplyPatchDiffContext: Send + Sync + 'static {
-    fn apply_patch_streaming_events_enabled(&self) -> bool;
-}
-
-impl<Turn> ApplyPatchDiffContext for Arc<Turn>
-where
-    Turn: ApplyPatchDiffContext,
-{
-    fn apply_patch_streaming_events_enabled(&self) -> bool {
-        self.as_ref().apply_patch_streaming_events_enabled()
-    }
-}
-
 
 /// Session-owned code-mode capability consumed by code-mode tool handlers.
 ///
@@ -1325,82 +1460,6 @@ where
             .record_code_mode_cell_ended(turn, runtime_cell_id, response);
     }
 }
-
-/// Global request-plugin-install service API consumed by tool handlers.
-///
-/// Implementations own discoverable-tool lookup, confirmation elicitation, and
-/// post-install verification. Handlers should depend on this service API
-/// instead of calling install logic through the session object directly.
-pub trait RequestPluginInstallApi: Send + Sync + 'static {
-    /// Build the model-visible request context for this turn.
-    fn request_plugin_install_context(
-        &self,
-        capability: &dyn ThreadCapability,
-    ) -> RequestPluginInstallContext;
-
-    /// List discoverable plugin/connector install candidates for this turn.
-    fn list_request_plugin_install_discoverable_tools<'a>(
-        &'a self,
-        capability: &'a dyn ThreadCapability,
-    ) -> SessionCapabilityFuture<'a, Result<Vec<DiscoverableTool>, FunctionCallError>>;
-
-    /// Ask the client to confirm one plugin/connector install request.
-    fn request_plugin_install_elicitation<'a>(
-        &'a self,
-        capability: &'a dyn ThreadCapability,
-        call_id: &'a str,
-        request: RequestPluginInstallElicitationRequest,
-        tool: &'a DiscoverableTool,
-    ) -> SessionCapabilityFuture<'a, RequestPluginInstallElicitationOutcome>;
-
-    /// Verify and apply session state after a confirmed install request.
-    fn complete_request_plugin_install_if_ready<'a>(
-        &'a self,
-        capability: &'a dyn ThreadCapability,
-        tool: &'a DiscoverableTool,
-    ) -> SessionCapabilityFuture<'a, bool>;
-}
-
-impl<Service> RequestPluginInstallApi for Arc<Service>
-where
-    Service: RequestPluginInstallApi,
-{
-    fn request_plugin_install_context(
-        &self,
-        capability: &dyn ThreadCapability,
-    ) -> RequestPluginInstallContext {
-        self.as_ref().request_plugin_install_context(capability)
-    }
-
-    fn list_request_plugin_install_discoverable_tools<'a>(
-        &'a self,
-        capability: &'a dyn ThreadCapability,
-    ) -> SessionCapabilityFuture<'a, Result<Vec<DiscoverableTool>, FunctionCallError>> {
-        self.as_ref()
-            .list_request_plugin_install_discoverable_tools(capability)
-    }
-
-    fn request_plugin_install_elicitation<'a>(
-        &'a self,
-        capability: &'a dyn ThreadCapability,
-        call_id: &'a str,
-        request: RequestPluginInstallElicitationRequest,
-        tool: &'a DiscoverableTool,
-    ) -> SessionCapabilityFuture<'a, RequestPluginInstallElicitationOutcome> {
-        self.as_ref()
-            .request_plugin_install_elicitation(capability, call_id, request, tool)
-    }
-
-    fn complete_request_plugin_install_if_ready<'a>(
-        &'a self,
-        capability: &'a dyn ThreadCapability,
-        tool: &'a DiscoverableTool,
-    ) -> SessionCapabilityFuture<'a, bool> {
-        self.as_ref()
-            .complete_request_plugin_install_if_ready(capability, tool)
-    }
-}
-
 
 /// Session-owned agent-job capability consumed by CSV agent-job tools.
 ///

@@ -3,7 +3,15 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use codex_config_types::McpServerConfig;
+use codex_config_types::McpServerTransportConfig;
+use codex_config_types::OAuthCredentialsStoreMode;
 use codex_features::Feature;
+use codex_mcp_types::ElicitationReviewerHandle;
+use codex_mcp_types::McpOAuthLoginSupport;
+use codex_mcp_types::ResolvedMcpOAuthScopes;
+use codex_protocol::request_user_input::RequestUserInputArgs;
+use codex_protocol::request_user_input::RequestUserInputResponse;
 
 use crate::SharedTurnDiffTracker;
 use crate::SkillInjections;
@@ -23,7 +31,6 @@ use crate::compact::run_inline_auto_compact_task;
 use crate::connectors;
 use crate::emit_thread_skills_update;
 use crate::feedback_tags;
-use crate::mcp::maybe_prompt_and_install_mcp_dependencies;
 use crate::mentions::build_connector_slug_counts;
 use crate::mentions::build_skill_name_counts;
 use crate::mentions::collect_explicit_app_ids;
@@ -103,7 +110,10 @@ use codex_turn_items::raw_assistant_output_text_from_item;
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::FuturesOrdered;
+use mcp_service::McpSkillDependencyHost;
 use mcp_service::build_mcp_tool_exposure;
+use mcp_service_api::McpOAuthLoginRequest;
+use mcp_service_api::McpRuntimeFuture;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 use tracing::error;
@@ -113,6 +123,119 @@ use tracing::instrument;
 use tracing::trace;
 use tracing::trace_span;
 use tracing::warn;
+
+struct SessionMcpSkillDependencyHost<'a> {
+    session: &'a Session,
+    turn_context: &'a TurnContext,
+}
+
+impl McpSkillDependencyHost for SessionMcpSkillDependencyHost<'_> {
+    fn configured_servers<'a>(
+        &'a self,
+        config: &'a crate::config::Config,
+    ) -> McpRuntimeFuture<'a, HashMap<String, McpServerConfig>> {
+        Box::pin(async move { self.session.configured_mcp_servers(config).await })
+    }
+
+    fn prompted_dependency_keys(&self) -> McpRuntimeFuture<'_, HashSet<String>> {
+        Box::pin(async move { self.session.mcp_dependency_prompted().await })
+    }
+
+    fn record_prompted_dependency_keys<'a>(
+        &'a self,
+        names: Vec<String>,
+    ) -> McpRuntimeFuture<'a, ()> {
+        Box::pin(async move {
+            self.session.record_mcp_dependency_prompted(names).await;
+        })
+    }
+
+    fn request_user_input<'a>(
+        &'a self,
+        call_id: String,
+        args: RequestUserInputArgs,
+    ) -> McpRuntimeFuture<'a, Option<RequestUserInputResponse>> {
+        Box::pin(async move {
+            self.session
+                .request_user_input(self.turn_context, call_id, args)
+                .await
+        })
+    }
+
+    fn notify_user_input_response<'a>(
+        &'a self,
+        sub_id: &'a str,
+        response: RequestUserInputResponse,
+    ) -> McpRuntimeFuture<'a, ()> {
+        Box::pin(async move {
+            self.session.notify_user_input_response(sub_id, response).await;
+        })
+    }
+
+    fn oauth_login_support<'a>(
+        &'a self,
+        transport: &'a McpServerTransportConfig,
+    ) -> McpRuntimeFuture<'a, McpOAuthLoginSupport> {
+        Box::pin(async move { self.session.mcp_oauth_login_support(transport).await })
+    }
+
+    fn perform_oauth_login<'a>(
+        &'a self,
+        request: McpOAuthLoginRequest,
+    ) -> McpRuntimeFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move { self.session.perform_mcp_oauth_login(request).await })
+    }
+
+    fn should_retry_without_scopes(
+        &self,
+        scopes: &ResolvedMcpOAuthScopes,
+        error: &anyhow::Error,
+    ) -> bool {
+        self.session
+            .should_retry_mcp_oauth_without_scopes(scopes, error)
+    }
+
+    fn refresh_mcp_servers_now<'a>(
+        &'a self,
+        servers: HashMap<String, McpServerConfig>,
+        store_mode: OAuthCredentialsStoreMode,
+        elicitation_reviewer: Option<ElicitationReviewerHandle>,
+    ) -> McpRuntimeFuture<'a, ()> {
+        Box::pin(async move {
+            self.session
+                .refresh_mcp_servers_now(
+                    self.turn_context,
+                    servers,
+                    store_mode,
+                    elicitation_reviewer,
+                )
+                .await;
+        })
+    }
+}
+
+async fn maybe_prompt_and_install_mcp_dependencies(
+    session: &Session,
+    turn_context: &TurnContext,
+    cancellation_token: &CancellationToken,
+    mentioned_skills: &[crate::SkillMetadata],
+    elicitation_reviewer: Option<ElicitationReviewerHandle>,
+) {
+    let host = SessionMcpSkillDependencyHost {
+        session,
+        turn_context,
+    };
+    let dependency_turn_context = turn_context.mcp_skill_dependency_turn_context();
+    mcp_service::maybe_prompt_and_install_mcp_dependencies(
+        &host,
+        &dependency_turn_context,
+        turn_context.mcp_skill_dependency_config(),
+        cancellation_token,
+        mentioned_skills,
+        elicitation_reviewer,
+    )
+    .await;
+}
 
 /// Takes a user message as input and runs a loop where, at each sampling request, the model
 /// replies with either:
@@ -1079,7 +1202,7 @@ pub(crate) async fn built_tools(
         Some(auth_runtime) => auth_runtime.auth().await,
         None => None,
     };
-    let connector_auth_context = crate::mcp::codex_apps_auth_context(auth_snapshot.as_ref());
+    let connector_auth_context = mcp_service::codex_apps_auth_context(auth_snapshot.as_ref());
     let discoverable_tools = if apps_enabled && turn_context.tools_config.tool_suggest {
         if let Some(accessible_connectors) = accessible_connectors_with_enabled_state.as_ref() {
             match connectors::list_tool_suggest_discoverable_tools_with_auth(
@@ -1161,8 +1284,8 @@ pub(crate) fn tool_service_request<'a>(
     codex_tool_service_api::ToolSpecRequest {
         config: &turn_context.tools_config,
         session_capability: tool_inputs.session_capability.clone(),
-        session: Arc::clone(sess) as Arc<dyn thread_service_api::ToolServiceSessionRef>,
-        turn: Arc::clone(turn_context) as Arc<dyn thread_service_api::ToolServiceTurnRef>,
+        session: Arc::clone(sess) as Arc<dyn thread_service_api::ThreadSessionCapability>,
+        turn: Arc::clone(turn_context) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
         params: ToolServiceParams {
             mcp_tools: Some(tool_inputs.mcp_tools.as_slice()),
             deferred_mcp_tools: Some(tool_inputs.deferred_mcp_tools.as_slice()),

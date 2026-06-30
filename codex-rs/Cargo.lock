@@ -431,8 +431,11 @@ version = "0.0.0"
 dependencies = [
  "codex-analytics-api",
  "codex-approval-service-api",
+ "codex-command-service-api",
+ "codex-execpolicy-api",
  "codex-guardian",
  "codex-hooks-api",
+ "codex-network-proxy-api",
  "codex-permissions-runtime",
  "codex-protocol",
  "codex-utils-absolute-path",
@@ -441,6 +444,7 @@ dependencies = [
  "thread-service-api",
  "tokio",
  "tokio-util",
+ "tracing",
  "uuid",
 ]
 
@@ -2277,9 +2281,8 @@ dependencies = [
 name = "codex-approval-service-api"
 version = "0.0.0"
 dependencies = [
- "codex-command-service-api",
+ "codex-guardian",
  "codex-protocol",
- "codex-tool-types",
  "codex-utils-absolute-path",
  "serde",
  "thread-service-api",
@@ -2719,6 +2722,7 @@ dependencies = [
  "serde_json",
  "thread-service-api",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -8197,6 +8201,7 @@ name = "goal-service"
 version = "0.0.0"
 dependencies = [
  "codex-protocol",
+ "codex-state-api",
  "goal-service-api",
  "thread-service-api",
 ]
@@ -8206,6 +8211,7 @@ name = "goal-service-api"
 version = "0.0.0"
 dependencies = [
  "codex-protocol",
+ "codex-state-api",
  "thread-service-api",
 ]
 
@@ -9743,6 +9749,7 @@ dependencies = [
  "async-channel",
  "codex-api-auth",
  "codex-api-provider",
+ "codex-approval-service-api",
  "codex-auth-types",
  "codex-client-identity",
  "codex-config",
@@ -9756,6 +9763,7 @@ dependencies = [
  "codex-exec-server-api",
  "codex-features",
  "codex-guardian",
+ "codex-hooks-api",
  "codex-mcp-tool-types",
  "codex-mcp-types",
  "codex-models-manager",
@@ -9778,6 +9786,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-test",
+ "uuid",
  "wiremock",
 ]
 
@@ -14186,6 +14195,8 @@ dependencies = [
  "dirs",
  "dunce",
  "futures",
+ "goal-service",
+ "goal-service-api",
  "http 1.4.0",
  "image",
  "insta",
@@ -14229,15 +14240,20 @@ dependencies = [
 name = "thread-service-api"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
  "codex-analytics-api",
  "codex-apply-patch",
+ "codex-auth-types",
  "codex-code-mode-api",
  "codex-config-types",
+ "codex-connectors-types",
  "codex-exec-server-api",
  "codex-features",
  "codex-file-system",
  "codex-git-info",
  "codex-hooks-api",
+ "codex-mcp-tool-types",
+ "codex-mcp-types",
  "codex-network-proxy-api",
  "codex-permissions-runtime",
  "codex-process-exec",

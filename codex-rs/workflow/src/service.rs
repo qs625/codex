@@ -2,7 +2,6 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::RwLock;
 use std::sync::Weak;
 
 use codex_protocol::models::ResponseItem;
@@ -48,44 +47,42 @@ use codex_workflow_api::workflow_wait_agent_tool_call;
 
 pub struct WorkflowService {
     workflow_runs: Arc<dyn WorkflowRunController>,
-    thread_service_api: RwLock<Option<Weak<dyn ThreadServiceApi>>>,
+    thread_service_api: Weak<dyn ThreadServiceApi>,
 }
 
 impl WorkflowService {
-    pub fn new(codex_home: impl Into<PathBuf>) -> Self {
+    pub fn new(
+        codex_home: impl Into<PathBuf>,
+        thread_service_api: Weak<dyn ThreadServiceApi>,
+    ) -> Self {
         Self {
             workflow_runs: Arc::new(WorkflowRunManager::new(codex_home)),
-            thread_service_api: RwLock::new(None),
+            thread_service_api,
         }
     }
 
-    pub fn with_run_manager(workflow_runs: Arc<WorkflowRunManager>) -> Self {
+    pub fn with_run_manager(
+        workflow_runs: Arc<WorkflowRunManager>,
+        thread_service_api: Weak<dyn ThreadServiceApi>,
+    ) -> Self {
         Self {
             workflow_runs,
-            thread_service_api: RwLock::new(None),
+            thread_service_api,
         }
     }
 
-    pub fn with_run_controller(workflow_runs: Arc<dyn WorkflowRunController>) -> Self {
+    pub fn with_run_controller(
+        workflow_runs: Arc<dyn WorkflowRunController>,
+        thread_service_api: Weak<dyn ThreadServiceApi>,
+    ) -> Self {
         Self {
             workflow_runs,
-            thread_service_api: RwLock::new(None),
+            thread_service_api,
         }
-    }
-
-    pub fn set_thread_service_api(&self, thread_service_api: Weak<dyn ThreadServiceApi>) {
-        *self
-            .thread_service_api
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(thread_service_api);
     }
 
     fn thread_service_api(&self) -> Result<Weak<dyn ThreadServiceApi>, String> {
-        self.thread_service_api
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-            .ok_or_else(|| "workflow service is missing thread service api".to_string())
+        Ok(self.thread_service_api.clone())
     }
 }
 

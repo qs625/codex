@@ -5,6 +5,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::Weak;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -472,50 +473,57 @@ impl TestCodexBuilder {
         let installation_id = resolve_installation_id(&config.codex_home).await?;
         let environment_provider: Arc<dyn codex_exec_server_api::ExecEnvironmentProvider> =
             environment_manager.clone();
-        let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
-            config.codex_home.clone(),
-        ));
-        let thread_service = ThreadService::new_with_openai_file_uploader(
-            &config,
-            thread_service::test_support::thread_auth_runtimes_from_auth_manager(Arc::clone(
-                &auth_manager,
-            )),
-            SessionSource::Exec,
-            environment_provider,
-            empty_extension_registry(),
-            /*analytics_events_client*/ None,
-            thread_store,
-            state_db.clone(),
-            Arc::new(codex_thread_store::DefaultLiveThreadFactory),
-            installation_id,
-            /*attestation_provider*/ None,
-            thread_service::test_support::model_provider_factory_for_tests(),
-            Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-            Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-            Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
-            Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
-            Arc::new(codex_execpolicy_loader::StarlarkExecPolicyLoader),
-            Arc::new(codex_api::DefaultApiRuntimeFactory),
-            Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
-            Arc::new(codex_sandboxing::SandboxManager::new()),
-            Arc::new(codex_otel::OtelSessionTelemetryFactory),
-            Arc::new(codex_hooks::DisabledHookRuntimeFactory),
-            Arc::new(codex_memories_read_api::DisabledMemoryToolDeveloperInstructionsProvider),
-            Arc::new(codex_core_skills_api::DisabledSkillsRuntime),
-            Arc::new(codex_core_plugins_api::DisabledPluginRuntime),
-            Arc::new(codex_tool_service::ToolService::new(
-                Arc::new(approval_service::ApprovalService),
+        let thread_service = Arc::new_cyclic(|thread_service: &Weak<ThreadService>| {
+            let thread_service_api: Weak<dyn thread_service_api::ThreadServiceApi> =
+                thread_service.clone();
+            let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
+                config.codex_home.clone(),
+                thread_service_api.clone(),
+            ));
+            let approval_service = Arc::new(approval_service::ApprovalService);
+            let mcp_service = Arc::new(mcp_service::McpService::new(approval_service.clone()));
+            let tool_service = Arc::new(codex_tool_service::ToolService::new(
+                approval_service,
                 Arc::new(codex_command_service::CommandService::new()),
                 Arc::new(goal_service::GoalService),
-                Arc::new(mcp_service::McpService),
+                mcp_service.clone(),
                 Arc::new(thread_service::RequestPluginInstallService),
-                workflow_service.clone(),
-            )),
-        );
-        let thread_service = Arc::new(thread_service);
-        let thread_service_api: Arc<dyn thread_service_api::ThreadServiceApi> =
-            thread_service.clone();
-        workflow_service.set_thread_service_api(Arc::downgrade(&thread_service_api));
+                workflow_service,
+                thread_service_api,
+            ));
+            ThreadService::new_with_openai_file_uploader(
+                &config,
+                thread_service::test_support::thread_auth_runtimes_from_auth_manager(Arc::clone(
+                    &auth_manager,
+                )),
+                SessionSource::Exec,
+                environment_provider,
+                empty_extension_registry(),
+                /*analytics_events_client*/ None,
+                thread_store,
+                state_db.clone(),
+                Arc::new(codex_thread_store::DefaultLiveThreadFactory),
+                installation_id,
+                /*attestation_provider*/ None,
+                thread_service::test_support::model_provider_factory_for_tests(),
+                Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+                Arc::new(goal_service::GoalService),
+                Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+                Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
+                Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
+                Arc::new(codex_execpolicy_loader::StarlarkExecPolicyLoader),
+                Arc::new(codex_api::DefaultApiRuntimeFactory),
+                Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
+                Arc::new(codex_sandboxing::SandboxManager::new()),
+                Arc::new(codex_otel::OtelSessionTelemetryFactory),
+                Arc::new(codex_hooks::DisabledHookRuntimeFactory),
+                Arc::new(codex_memories_read_api::DisabledMemoryToolDeveloperInstructionsProvider),
+                Arc::new(codex_core_skills_api::DisabledSkillsRuntime),
+                Arc::new(codex_core_plugins_api::DisabledPluginRuntime),
+                tool_service,
+                mcp_service,
+            )
+        });
         let user_shell_override = self.user_shell_override.clone();
 
         let new_conversation =

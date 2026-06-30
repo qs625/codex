@@ -9,7 +9,6 @@ use crate::agent::agent_status_from_event;
 use crate::config::AgentRoleConfig;
 use crate::config::Config;
 use crate::config::ConfigBuilder;
-use crate::goal::SetGoalRequest;
 use crate::state_db_bridge::init_state_db;
 use assert_matches::assert_matches;
 use codex_agent_runtime::SpawnAgentForkMode;
@@ -30,7 +29,6 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
-use codex_protocol::protocol::ThreadGoalStatus;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnCompleteEvent;
@@ -41,6 +39,8 @@ use codex_thread_store::LocalThreadStore;
 use codex_thread_store::LocalThreadStoreConfig;
 use codex_thread_store_api::ArchiveThreadParams;
 use codex_thread_store_api::ThreadStore;
+use goal_service::GoalService;
+use goal_service_api::GoalServiceApi;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 use tokio::time::Duration;
@@ -1886,16 +1886,10 @@ async fn multi_agent_v2_completion_waits_for_active_goal_continuation() {
         &AgentPath::root(),
     ));
 
-    worker_thread
-        .codex
-        .session
-        .set_thread_goal(
+    GoalService
+        .complete_thread_goal(
+            worker_thread.codex.session.as_ref(),
             completed_turn.as_ref(),
-            SetGoalRequest {
-                objective: None,
-                status: Some(ThreadGoalStatus::Complete),
-                token_budget: None,
-            },
         )
         .await
         .expect("goal completion should be written");

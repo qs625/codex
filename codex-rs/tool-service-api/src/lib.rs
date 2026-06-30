@@ -9,13 +9,16 @@ use codex_mcp_tool_types::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::protocol::EventMsg;
+use thread_service_api::SessionCapabilityFuture;
 use thread_service_api::SharedToolTurnDiffTracker;
-use thread_service_api::ToolServiceSessionRef;
-use thread_service_api::ToolServiceTurnRef;
+use thread_service_api::ThreadCapability;
 use thread_service_api::ThreadSessionCapability;
+use thread_service_api::ThreadTurnCapability;
+use thread_service_api::ThreadRuntimeCapability;
 use codex_tool_config::ToolsConfig;
 use codex_tool_types::DiscoverableTool;
 use codex_tool_types::FunctionCallError;
+use codex_tool_types::RequestPluginInstallElicitationRequest;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolCallSource;
 use codex_tool_types::ToolName;
@@ -85,7 +88,7 @@ pub type ToolTelemetryTags = Vec<(&'static str, String)>;
 pub trait ErasedToolArgumentDiffConsumer: Send {
     fn consume_diff(
         &mut self,
-        turn: &dyn ToolServiceTurnRef,
+        turn: &dyn ThreadTurnCapability,
         call_id: String,
         diff: &str,
     ) -> Option<EventMsg>;
@@ -148,8 +151,8 @@ impl AnyToolResult {
 pub struct ToolSpecRequest<'a> {
     pub config: &'a ToolsConfig,
     pub session_capability: Weak<dyn ThreadSessionCapability>,
-    pub session: Arc<dyn ToolServiceSessionRef>,
-    pub turn: Arc<dyn ToolServiceTurnRef>,
+    pub session: Arc<dyn ThreadSessionCapability>,
+    pub turn: Arc<dyn ThreadRuntimeCapability>,
     pub params: ToolServiceParams<'a>,
 }
 
@@ -163,12 +166,92 @@ pub struct ToolParallelRequest<'a> {
     pub call: &'a ToolCall,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RequestPluginInstallContext {
+    pub server_name: String,
+    pub thread_id: String,
+    pub turn_id: String,
+    pub app_server_client_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RequestPluginInstallElicitationOutcome {
+    pub user_confirmed: bool,
+}
+
 pub struct ToolDispatchRequest<'a> {
     pub tool: ToolSpecRequest<'a>,
     pub cancellation_token: CancellationToken,
     pub tracker: SharedToolTurnDiffTracker,
     pub call: ToolCall,
     pub source: ToolCallSource,
+}
+
+/// Plugin/connector install service API consumed by tool discovery handlers.
+pub trait RequestPluginInstallApi: Send + Sync + 'static {
+    fn request_plugin_install_context(
+        &self,
+        capability: &dyn ThreadCapability,
+    ) -> RequestPluginInstallContext;
+
+    fn list_request_plugin_install_discoverable_tools<'a>(
+        &'a self,
+        capability: &'a dyn ThreadCapability,
+    ) -> SessionCapabilityFuture<'a, Result<Vec<DiscoverableTool>, FunctionCallError>>;
+
+    fn request_plugin_install_elicitation<'a>(
+        &'a self,
+        capability: &'a dyn ThreadCapability,
+        call_id: &'a str,
+        request: RequestPluginInstallElicitationRequest,
+        tool: &'a DiscoverableTool,
+    ) -> SessionCapabilityFuture<'a, RequestPluginInstallElicitationOutcome>;
+
+    fn complete_request_plugin_install_if_ready<'a>(
+        &'a self,
+        capability: &'a dyn ThreadCapability,
+        tool: &'a DiscoverableTool,
+    ) -> SessionCapabilityFuture<'a, bool>;
+}
+
+impl<Service> RequestPluginInstallApi for Arc<Service>
+where
+    Service: RequestPluginInstallApi,
+{
+    fn request_plugin_install_context(
+        &self,
+        capability: &dyn ThreadCapability,
+    ) -> RequestPluginInstallContext {
+        self.as_ref().request_plugin_install_context(capability)
+    }
+
+    fn list_request_plugin_install_discoverable_tools<'a>(
+        &'a self,
+        capability: &'a dyn ThreadCapability,
+    ) -> SessionCapabilityFuture<'a, Result<Vec<DiscoverableTool>, FunctionCallError>> {
+        self.as_ref()
+            .list_request_plugin_install_discoverable_tools(capability)
+    }
+
+    fn request_plugin_install_elicitation<'a>(
+        &'a self,
+        capability: &'a dyn ThreadCapability,
+        call_id: &'a str,
+        request: RequestPluginInstallElicitationRequest,
+        tool: &'a DiscoverableTool,
+    ) -> SessionCapabilityFuture<'a, RequestPluginInstallElicitationOutcome> {
+        self.as_ref()
+            .request_plugin_install_elicitation(capability, call_id, request, tool)
+    }
+
+    fn complete_request_plugin_install_if_ready<'a>(
+        &'a self,
+        capability: &'a dyn ThreadCapability,
+        tool: &'a DiscoverableTool,
+    ) -> SessionCapabilityFuture<'a, bool> {
+        self.as_ref()
+            .complete_request_plugin_install_if_ready(capability, tool)
+    }
 }
 
 /// Tool domain service API exposed to thread/session runtimes.
@@ -200,11 +283,11 @@ impl<Turn> TypedDiffConsumer<Turn> {
 
 impl<Turn> ErasedToolArgumentDiffConsumer for TypedDiffConsumer<Turn>
 where
-    Turn: ToolServiceTurnRef + 'static,
+    Turn: ThreadTurnCapability + 'static,
 {
     fn consume_diff(
         &mut self,
-        turn: &dyn ToolServiceTurnRef,
+        turn: &dyn ThreadTurnCapability,
         call_id: String,
         diff: &str,
     ) -> Option<codex_protocol::protocol::EventMsg> {

@@ -138,7 +138,7 @@ pub(crate) fn supports_parallel(request: &TypedToolSpecRequest<'_>, call: &ToolC
 }
 
 pub(crate) async fn dispatch(
-    turn: Arc<thread_service::ThreadTurnContext>,
+    turn: Arc<dyn thread_service_api::ThreadRuntimeCapability>,
     request_user_input_available_modes: Vec<ModeKind>,
     dynamic_tools: Vec<DynamicToolSpec>,
     cancellation_token: CancellationToken,

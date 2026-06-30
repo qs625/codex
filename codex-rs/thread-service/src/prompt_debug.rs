@@ -56,7 +56,9 @@ pub async fn build_prompt_input(
         /*attestation_provider*/ None,
         model_provider_factory,
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(goal_service::GoalService),
         tool_service,
+        Arc::new(mcp_service::McpService::new(Arc::new(approval_service::ApprovalService))),
         mcp_auth_runtime,
         mcp_connection_runtime_factory,
     );

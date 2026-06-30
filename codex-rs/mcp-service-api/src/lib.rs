@@ -17,9 +17,11 @@ use codex_mcp_types::CodexAppsToolsCacheKey;
 use codex_mcp_types::EffectiveMcpServer;
 use codex_mcp_types::ElicitationResponse;
 use codex_mcp_types::ElicitationReviewerHandle;
+use codex_mcp_types::McpServerElicitationRequestParams;
 use codex_mcp_types::McpAuthStatusEntry;
 use codex_mcp_types::McpClientElicitationSupport;
 use codex_mcp_types::McpOAuthLoginSupport;
+use codex_mcp_types::McpToolApprovalMetadata;
 use codex_mcp_types::ResolvedMcpOAuthScopes;
 use codex_mcp_types::ToolPluginProvenance;
 use codex_protocol::mcp::CallToolResult;
@@ -34,8 +36,11 @@ use codex_protocol::mcp::ResourceTemplate;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::Event;
+use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::McpStartupFailure;
 use thread_service_api::ThreadRuntimeCapability;
+use thread_service_api::ThreadSessionCapability;
+use thread_service_api::ThreadTurnCapability;
 use http::HeaderMap;
 use tokio_util::sync::CancellationToken;
 
@@ -550,9 +555,65 @@ impl McpRuntimeEnvironment {
 
 /// Global MCP service API consumed by tool-service.
 pub trait McpServiceApi: Send + Sync + 'static {
+    fn request_server_elicitation<'a>(
+        &self,
+        session: &'a dyn ThreadSessionCapability,
+        turn: &'a dyn ThreadTurnCapability,
+        request_id: RequestId,
+        params: McpServerElicitationRequestParams,
+    ) -> McpRuntimeFuture<'a, Option<ElicitationResponse>>;
+
+    fn resolve_elicitation<'a>(
+        &self,
+        session: &'a dyn ThreadSessionCapability,
+        server_name: String,
+        request_id: RequestId,
+        response: ElicitationResponse,
+    ) -> McpRuntimeFuture<'a, Result<(), String>>;
+
+    fn refresh_servers_if_requested<'a>(
+        &self,
+        session: &'a dyn ThreadSessionCapability,
+        turn: &'a dyn ThreadTurnCapability,
+        elicitation_reviewer: Option<ElicitationReviewerHandle>,
+    ) -> McpRuntimeFuture<'a, ()>;
+
+    fn queue_server_refresh<'a>(
+        &self,
+        session: &'a dyn ThreadSessionCapability,
+        refresh_config: McpServerRefreshConfig,
+    ) -> McpRuntimeFuture<'a, ()>;
+
+    fn refresh_servers_now<'a>(
+        &self,
+        session: &'a dyn ThreadSessionCapability,
+        turn: &'a dyn ThreadTurnCapability,
+        refresh_config: McpServerRefreshConfig,
+        elicitation_reviewer: Option<ElicitationReviewerHandle>,
+    ) -> McpRuntimeFuture<'a, ()>;
+
+    fn cancel_startup<'a>(
+        &self,
+        session: &'a dyn ThreadSessionCapability,
+    ) -> McpRuntimeFuture<'a, ()>;
+
+    fn hard_refresh_codex_apps_tools_cache<'a>(
+        &self,
+        session: &'a dyn ThreadSessionCapability,
+    ) -> McpRuntimeFuture<'a, Result<Vec<codex_mcp_tool_types::ToolInfo>, String>>;
+
+    fn lookup_tool_metadata<'a>(
+        &self,
+        session: Arc<dyn ThreadSessionCapability>,
+        turn: Arc<dyn ThreadRuntimeCapability>,
+        server: &'a str,
+        tool_name: &'a str,
+    ) -> McpRuntimeFuture<'a, Option<McpToolApprovalMetadata>>;
+
     fn call_tool<'a>(
         &self,
-        capability: &'a dyn ThreadRuntimeCapability,
+        session: Arc<dyn ThreadSessionCapability>,
+        turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
         server: String,
         tool_name: String,
@@ -562,48 +623,42 @@ pub trait McpServiceApi: Send + Sync + 'static {
 
     fn list_resources<'a>(
         &self,
-        capability: &'a dyn ThreadRuntimeCapability,
+        session: Arc<dyn ThreadSessionCapability>,
+        turn: Arc<dyn ThreadRuntimeCapability>,
+        call_id: String,
         server: &'a str,
         params: Option<PaginatedRequestParams>,
     ) -> McpRuntimeFuture<'a, Result<ListResourcesResult, String>>;
 
     fn list_all_resources<'a>(
         &self,
-        capability: &'a dyn ThreadRuntimeCapability,
+        session: Arc<dyn ThreadSessionCapability>,
+        turn: Arc<dyn ThreadRuntimeCapability>,
+        call_id: String,
     ) -> McpRuntimeFuture<'a, HashMap<String, Vec<Resource>>>;
 
     fn list_resource_templates<'a>(
         &self,
-        capability: &'a dyn ThreadRuntimeCapability,
+        session: Arc<dyn ThreadSessionCapability>,
+        turn: Arc<dyn ThreadRuntimeCapability>,
+        call_id: String,
         server: &'a str,
         params: Option<PaginatedRequestParams>,
     ) -> McpRuntimeFuture<'a, Result<ListResourceTemplatesResult, String>>;
 
     fn list_all_resource_templates<'a>(
         &self,
-        capability: &'a dyn ThreadRuntimeCapability,
+        session: Arc<dyn ThreadSessionCapability>,
+        turn: Arc<dyn ThreadRuntimeCapability>,
+        call_id: String,
     ) -> McpRuntimeFuture<'a, HashMap<String, Vec<ResourceTemplate>>>;
 
     fn read_resource<'a>(
         &self,
-        capability: &'a dyn ThreadRuntimeCapability,
+        session: Arc<dyn ThreadSessionCapability>,
+        turn: Arc<dyn ThreadRuntimeCapability>,
+        call_id: String,
         server: &'a str,
         params: ReadResourceRequestParams,
     ) -> McpRuntimeFuture<'a, Result<ReadResourceResult, String>>;
-
-    fn emit_mcp_resource_tool_call_begin<'a>(
-        &self,
-        capability: &'a dyn ThreadRuntimeCapability,
-        call_id: &'a str,
-        invocation: codex_protocol::protocol::McpInvocation,
-    ) -> McpRuntimeFuture<'a, ()>;
-
-    fn emit_mcp_resource_tool_call_end<'a>(
-        &self,
-        capability: &'a dyn ThreadRuntimeCapability,
-        call_id: &'a str,
-        invocation: codex_protocol::protocol::McpInvocation,
-        duration: Duration,
-        result: Result<CallToolResult, String>,
-    ) -> McpRuntimeFuture<'a, ()>;
 }

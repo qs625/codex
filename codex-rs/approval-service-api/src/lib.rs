@@ -4,15 +4,16 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use codex_command_service_api::ExecApprovalRequirement;
-use codex_network_proxy_api::SharedNetworkProxyRuntime;
-use codex_protocol::error::CodexErr;
-use codex_command_service_api::UnifiedExecApprovalKey;
+use codex_guardian::GuardianApprovalRequest;
+use codex_protocol::approvals::ExecPolicyAmendment;
+use codex_protocol::approvals::NetworkApprovalContext;
+use codex_protocol::models::AdditionalPermissionProfile;
+use codex_protocol::models::SandboxPermissions;
 use codex_protocol::protocol::FileChange;
+use codex_protocol::protocol::ReviewDecision;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadSessionCapability;
-use tokio_util::sync::CancellationToken;
 
 /// Boxed future returned by object-safe approval service APIs.
 pub type ApprovalServiceFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -57,60 +58,49 @@ pub struct ExecCommandApprovalDispatch {
     pub cwd: std::path::PathBuf,
     pub reason: Option<String>,
     pub justification: Option<String>,
-    pub sandbox_permissions: codex_protocol::models::SandboxPermissions,
-    pub additional_permissions: Option<codex_protocol::models::AdditionalPermissionProfile>,
+    pub sandbox_permissions: SandboxPermissions,
+    pub additional_permissions: Option<AdditionalPermissionProfile>,
     pub tty: bool,
-    pub exec_approval_requirement: ExecApprovalRequirement,
-    pub approval_keys: Vec<UnifiedExecApprovalKey>,
-    pub network_approval_context: Option<codex_protocol::approvals::NetworkApprovalContext>,
+    pub exec_approval_requirement: ExecCommandApprovalRequirement,
+    pub approval_keys: Vec<ExecCommandApprovalKey>,
+    pub network_approval_context: Option<NetworkApprovalContext>,
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ToolRuntimeNetworkApprovalTrigger {
-    pub call_id: String,
-    pub tool_name: String,
-    pub command: Vec<String>,
-    pub cwd: AbsolutePathBuf,
-    pub sandbox_permissions: codex_protocol::models::SandboxPermissions,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub additional_permissions: Option<codex_protocol::models::AdditionalPermissionProfile>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub justification: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tty: Option<bool>,
+pub struct GuardianReviewDispatch {
+    pub session: Arc<dyn ThreadSessionCapability>,
+    pub turn: Arc<dyn ThreadRuntimeCapability>,
+    pub review_id: String,
+    pub request: GuardianApprovalRequest,
+    pub retry_reason: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NetworkApprovalMode {
-    Immediate,
-    Deferred,
+pub struct GuardianReviewResult {
+    pub decision: ReviewDecision,
+    pub decline_message: Option<String>,
 }
 
 #[derive(Clone, Debug)]
-pub struct NetworkApprovalSpec<Trigger> {
-    pub network: Option<SharedNetworkProxyRuntime>,
-    pub mode: NetworkApprovalMode,
-    pub trigger: Trigger,
-    pub command: String,
+pub enum ExecCommandApprovalRequirement {
+    Skip {
+        bypass_sandbox: bool,
+        proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
+    },
+    NeedsApproval {
+        reason: Option<String>,
+        proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
+    },
+    Forbidden {
+        reason: String,
+    },
 }
 
-#[derive(Debug)]
-pub enum ToolRuntimeNetworkApprovalError {
-    Rejected(String),
-    Codex(CodexErr),
-}
-
-pub trait ToolRuntimeNetworkApprovalHandle: Send + Sync + 'static {
-    fn mode(&self) -> NetworkApprovalMode;
-
-    fn registration_id(&self) -> Option<String>;
-
-    fn cancellation_token(&self) -> CancellationToken;
-
-    fn finish<'a>(
-        &'a self,
-    ) -> ApprovalServiceFuture<'a, Result<(), ToolRuntimeNetworkApprovalError>>;
+#[derive(Clone, Debug, Eq, PartialEq, Hash, serde::Serialize)]
+pub struct ExecCommandApprovalKey {
+    pub command: Vec<String>,
+    pub cwd: AbsolutePathBuf,
+    pub tty: bool,
+    pub sandbox_permissions: SandboxPermissions,
+    pub additional_permissions: Option<AdditionalPermissionProfile>,
 }
 
 /// Global approval service API.
@@ -127,4 +117,9 @@ pub trait ApprovalServiceApi: Send + Sync + 'static {
         &self,
         request: ExecCommandApprovalDispatch,
     ) -> ApprovalServiceFuture<'_, Result<ExecCommandApprovalOutcome, String>>;
+
+    fn review_guardian_request(
+        &self,
+        request: GuardianReviewDispatch,
+    ) -> ApprovalServiceFuture<'_, GuardianReviewResult>;
 }

@@ -6,6 +6,30 @@ use serde::Serialize;
 
 pub(crate) use thread_service_api::PermissionRequestPayload;
 
+#[derive(Clone, Default, Debug)]
+pub(crate) struct ApprovalStore {
+    map: std::collections::HashMap<String, ReviewDecision>,
+}
+
+impl ApprovalStore {
+    pub(crate) fn get<K>(&self, key: &K) -> Option<ReviewDecision>
+    where
+        K: Serialize,
+    {
+        let key = serde_json::to_string(key).ok()?;
+        self.map.get(&key).cloned()
+    }
+
+    pub(crate) fn put<K>(&mut self, key: K, value: ReviewDecision)
+    where
+        K: Serialize,
+    {
+        if let Ok(key) = serde_json::to_string(&key) {
+            self.map.insert(key, value);
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum ToolError {
     Rejected(String),

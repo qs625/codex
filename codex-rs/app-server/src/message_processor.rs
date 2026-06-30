@@ -370,11 +370,30 @@ impl MessageProcessor {
         ));
         let thread_service_plugin_runtime: codex_core_plugins_api::SharedPluginRuntime =
             plugins_manager.clone();
-        let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
-            config.codex_home.clone(),
-        ));
+        let workflow_service_slot = std::sync::OnceLock::new();
         let thread_service: Arc<ThreadService> =
             Arc::new_cyclic(|thread_service: &Weak<ThreadService>| {
+                let thread_service_api: Weak<dyn thread_service_api::ThreadServiceApi> =
+                    thread_service.clone();
+                let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
+                    config.codex_home.clone(),
+                    thread_service_api.clone(),
+                ));
+                workflow_service_slot
+                    .set(Arc::clone(&workflow_service))
+                    .unwrap_or_else(|_| panic!("workflow service slot should only be set once"));
+                let approval_service = Arc::new(approval_service::ApprovalService);
+                let mcp_service =
+                    Arc::new(mcp_service::McpService::new(approval_service.clone()));
+                let tool_service = Arc::new(codex_tool_service::ToolService::new(
+                    approval_service,
+                    Arc::new(codex_command_service::CommandService::new()),
+                    Arc::new(goal_service::GoalService),
+                    mcp_service.clone(),
+                    Arc::new(thread_service::RequestPluginInstallService),
+                    workflow_service,
+                    thread_service_api,
+                ));
                 let runtime_environment_provider: Arc<dyn ExecEnvironmentProvider> =
                     environment_manager.clone();
                 let shared_state_db: Option<SharedStateDbRuntime> = state_db
@@ -409,6 +428,7 @@ impl MessageProcessor {
                     )),
                     Arc::new(codex_model_provider::DefaultModelProviderFactory),
                     Arc::new(codex_code_mode::V8CodeModeRuntimeFactory),
+                    Arc::new(goal_service::GoalService),
                     Arc::new(codex_mcp::DefaultMcpAuthRuntime),
                     Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
                     Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
@@ -427,20 +447,14 @@ impl MessageProcessor {
                         ),
                     ),
                     thread_service_plugin_runtime.clone(),
-                    Arc::new(codex_tool_service::ToolService::new(
-                        Arc::new(approval_service::ApprovalService),
-                        Arc::new(codex_command_service::CommandService::new()),
-                        Arc::new(goal_service::GoalService),
-                        Arc::new(mcp_service::McpService),
-                        Arc::new(thread_service::RequestPluginInstallService),
-                        workflow_service.clone(),
-                    )),
+                    tool_service.clone(),
+                    mcp_service.clone(),
                 )
                 .with_terminal_type(user_agent())
             });
-        let thread_service_api: Arc<dyn thread_service_api::ThreadServiceApi> =
-            thread_service.clone();
-        workflow_service.set_thread_service_api(Arc::downgrade(&thread_service_api));
+        let workflow_service = workflow_service_slot
+            .into_inner()
+            .unwrap_or_else(|| panic!("workflow service should be initialized"));
         plugins_manager.set_plugin_analytics_event_sink(Arc::new(
             AppServerPluginAnalyticsEventSink {
                 analytics_events_client: analytics_events_client.clone(),

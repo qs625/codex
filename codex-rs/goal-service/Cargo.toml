@@ -14,5 +14,6 @@ workspace = true
 
 [dependencies]
 codex-protocol = { workspace = true }
+codex-state-api = { workspace = true }
 goal-service-api = { workspace = true }
 thread-service-api = { workspace = true }

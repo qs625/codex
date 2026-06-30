@@ -42,15 +42,12 @@ use codex_sandboxing_api::policy_transforms::effective_file_system_sandbox_polic
 use codex_sandboxing_api::policy_transforms::effective_permission_profile;
 use codex_sandboxing_api::policy_transforms::merge_permission_profiles;
 use codex_sandboxing_api::policy_transforms::normalize_additional_permissions;
-use thread_service_api::ApplyPatchDiffContext;
 use thread_service_api::HookToolName as ThreadHookToolName;
 use thread_service_api::PermissionRequestPayload;
 use thread_service_api::SharedToolTurnDiffTracker;
 use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
-use thread_service::ThreadRuntimeSession;
-use thread_service::ThreadTurnContext;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_service_api::HookToolName;
@@ -96,15 +93,15 @@ impl ApplyPatchEnvironment for RuntimeApplyPatchEnvironmentAdapter {
 }
 
 struct SessionToolEventHost<'a> {
-    session: &'a ThreadRuntimeSession,
-    turn: &'a ThreadTurnContext,
+    session: &'a dyn ThreadSessionCapability,
+    turn: &'a dyn ThreadRuntimeCapability,
     turn_diff_tracker: Option<&'a SharedToolTurnDiffTracker>,
 }
 
 impl<'a> SessionToolEventHost<'a> {
     fn new(
-        session: &'a ThreadRuntimeSession,
-        turn: &'a ThreadTurnContext,
+        session: &'a dyn ThreadSessionCapability,
+        turn: &'a dyn ThreadRuntimeCapability,
         turn_diff_tracker: Option<&'a SharedToolTurnDiffTracker>,
     ) -> Self {
         Self {
@@ -188,8 +185,8 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 
 pub(crate) async fn dispatch(
     approval_api: Arc<dyn ApprovalServiceApi>,
-    session: Arc<ThreadRuntimeSession>,
-    turn: Arc<ThreadTurnContext>,
+    session: Arc<dyn ThreadSessionCapability>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     tracker: SharedToolTurnDiffTracker,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
@@ -218,8 +215,8 @@ pub(crate) async fn dispatch(
 
 async fn dispatch_apply_patch(
     approval_api: Arc<dyn ApprovalServiceApi>,
-    session: Arc<ThreadRuntimeSession>,
-    turn: Arc<ThreadTurnContext>,
+    session: Arc<dyn ThreadSessionCapability>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     tracker: SharedToolTurnDiffTracker,
     call: &ToolCall,
 ) -> Result<ApplyPatchToolOutput, FunctionCallError> {
@@ -286,12 +283,11 @@ struct ApplyPatchArgumentDiffConsumer {
 impl ErasedToolArgumentDiffConsumer for ApplyPatchArgumentDiffConsumer {
     fn consume_diff(
         &mut self,
-        turn: &dyn thread_service_api::ToolServiceTurnRef,
+        turn: &dyn ThreadTurnCapability,
         call_id: String,
         diff: &str,
     ) -> Option<EventMsg> {
-        let turn = turn.as_any().downcast_ref::<Arc<ThreadTurnContext>>()?;
-        if !turn.as_ref().apply_patch_streaming_events_enabled() {
+        if !turn.apply_patch_streaming_events_enabled() {
             return None;
         }
 
@@ -346,8 +342,8 @@ impl ApplyPatchArgumentDiffConsumer {
 
 pub(crate) async fn intercept_apply_patch(
     approval_api: Arc<dyn ApprovalServiceApi>,
-    session: Arc<ThreadRuntimeSession>,
-    turn: Arc<ThreadTurnContext>,
+    session: Arc<dyn ThreadSessionCapability>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     tracker: Option<&SharedToolTurnDiffTracker>,
     command: &[String],
     cwd: &AbsolutePathBuf,
@@ -393,8 +389,8 @@ pub(crate) async fn intercept_apply_patch(
 
 async fn execute_verified_apply_patch(
     approval_api: Arc<dyn ApprovalServiceApi>,
-    session: Arc<ThreadRuntimeSession>,
-    turn: Arc<ThreadTurnContext>,
+    session: Arc<dyn ThreadSessionCapability>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     tracker: Option<&SharedToolTurnDiffTracker>,
     call_id: &str,
     action: ApplyPatchAction,
@@ -421,7 +417,7 @@ async fn execute_verified_apply_patch(
 
     let changes = convert_apply_patch_to_protocol(&apply.action);
     let emitter = ToolEmitter::apply_patch(changes.clone(), apply.auto_approved);
-    let event_host = SessionToolEventHost::new(session.as_ref(), &turn, tracker);
+    let event_host = SessionToolEventHost::new(session.as_ref(), turn.as_ref(), tracker);
     emitter.begin(ToolEventCtx::new(event_host, call_id)).await;
 
     let req = ApplyPatchRequest {
@@ -446,7 +442,7 @@ async fn execute_verified_apply_patch(
     )
     .await;
     let delta = Some(committed_delta);
-    let event_host = SessionToolEventHost::new(session.as_ref(), &turn, tracker);
+    let event_host = SessionToolEventHost::new(session.as_ref(), turn.as_ref(), tracker);
     emitter
         .finish(ToolEventCtx::new(event_host, call_id), out, delta.as_ref())
         .await
@@ -454,8 +450,8 @@ async fn execute_verified_apply_patch(
 
 async fn run_apply_patch_request(
     approval_api: Arc<dyn ApprovalServiceApi>,
-    session: Arc<ThreadRuntimeSession>,
-    turn: Arc<ThreadTurnContext>,
+    session: Arc<dyn ThreadSessionCapability>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     call_id: &str,
     req: &ApplyPatchRequest,
     committed_delta: &mut AppliedPatchDelta,
@@ -575,8 +571,8 @@ async fn run_apply_patch_request(
 
 async fn request_apply_patch_approval(
     approval_api: Arc<dyn ApprovalServiceApi>,
-    session: Arc<ThreadRuntimeSession>,
-    turn: Arc<ThreadTurnContext>,
+    session: Arc<dyn ThreadSessionCapability>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     call_id: &str,
     req: &ApplyPatchRequest,
     retry_reason: Option<String>,
@@ -687,8 +683,8 @@ fn apply_patch_approval_keys(
 }
 
 async fn effective_patch_permissions(
-    session: &ThreadRuntimeSession,
-    turn: &ThreadTurnContext,
+    session: &dyn ThreadSessionCapability,
+    turn: &dyn ThreadRuntimeCapability,
     action: &ApplyPatchAction,
     cwd: &AbsolutePathBuf,
 ) -> (

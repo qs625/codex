@@ -31,12 +31,6 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
-use crate::guardian::GuardianApprovalRequest;
-use crate::mcp::MCP_TOOL_APPROVAL_ACCEPT;
-use crate::mcp::MCP_TOOL_APPROVAL_ACCEPT_FOR_SESSION;
-use crate::mcp::MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC;
-use crate::mcp::is_mcp_tool_approval_question_id;
-use crate::mcp::lookup_mcp_tool_metadata;
 use crate::session::Codex;
 use crate::session::CodexSpawnArgs;
 use crate::session::CodexSpawnOk;
@@ -45,10 +39,15 @@ use crate::session::emit_subagent_session_started;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use codex_auth_types::SharedAuthRuntime;
+use codex_guardian::GuardianApprovalRequest;
 use codex_model_provider_api::SharedModelProviderAuthManager;
 use codex_models_manager_api::SharedModelsManager;
 use codex_protocol::error::CodexErr;
 use codex_protocol::protocol::InitialHistory;
+use codex_mcp_types::MCP_TOOL_APPROVAL_ACCEPT;
+use codex_mcp_types::MCP_TOOL_APPROVAL_ACCEPT_FOR_SESSION;
+use codex_mcp_types::MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC;
+use codex_mcp_types::is_mcp_tool_approval_question_id;
 use mcp_service::build_guardian_mcp_tool_review_request;
 
 #[cfg(test)]
@@ -95,6 +94,7 @@ pub(crate) async fn run_codex_thread_interactive(
         skills_manager: Arc::clone(&parent_session.services.skills_manager),
         plugins_manager: Arc::clone(&parent_session.services.plugins_manager),
         mcp_manager: Arc::clone(&parent_session.services.mcp_manager),
+        mcp_service: Arc::clone(&parent_session.services.mcp_service),
         mcp_auth_runtime: Arc::clone(&parent_session.services.mcp_auth_runtime),
         mcp_connection_runtime_factory: Arc::clone(
             &parent_session.services.mcp_connection_runtime_factory,
@@ -129,6 +129,7 @@ pub(crate) async fn run_codex_thread_interactive(
             .code_mode_runtime_factory
             .create_service(),
         code_mode_runtime_factory: Arc::clone(&parent_session.services.code_mode_runtime_factory),
+        goal_service: Arc::clone(&parent_session.services.goal_service),
         tool_service: Arc::clone(&parent_session.services.tool_service),
     }))
     .or_cancel(&cancel_token)
@@ -489,7 +490,7 @@ async fn handle_exec_approval(
         let review_cancel = cancel_token.child_token();
         let review_rx = approval_service::guardian::spawn_approval_request_review(
             Arc::clone(parent_session) as Arc<dyn thread_service_api::ThreadSessionCapability>,
-            Arc::clone(parent_ctx) as Arc<dyn thread_service_api::ThreadTurnCapability>,
+            Arc::clone(parent_ctx) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
             approval_service::guardian::new_guardian_review_id(),
             GuardianApprovalRequest::Shell {
                 id: call_id.clone(),
@@ -604,7 +605,7 @@ async fn handle_patch_approval(
             .join("\n");
         let review_rx = approval_service::guardian::spawn_approval_request_review(
             Arc::clone(parent_session) as Arc<dyn thread_service_api::ThreadSessionCapability>,
-            Arc::clone(parent_ctx) as Arc<dyn thread_service_api::ThreadTurnCapability>,
+            Arc::clone(parent_ctx) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
             approval_service::guardian::new_guardian_review_id(),
             GuardianApprovalRequest::ApplyPatch {
                 id: approval_id.clone(),
@@ -720,17 +721,20 @@ async fn maybe_auto_review_mcp_request_user_input(
         .await
         .get(&event.call_id)
         .cloned()?;
-    let metadata = lookup_mcp_tool_metadata(
-        parent_session.as_ref(),
-        parent_ctx.as_ref(),
-        &invocation.server,
-        &invocation.tool,
-    )
-    .await;
+    let metadata = parent_session
+        .services
+        .mcp_service
+        .lookup_tool_metadata(
+            Arc::clone(parent_session) as Arc<dyn thread_service_api::ThreadSessionCapability>,
+            Arc::clone(parent_ctx) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
+            &invocation.server,
+            &invocation.tool,
+        )
+        .await;
     let review_cancel = cancel_token.child_token();
     let review_rx = approval_service::guardian::spawn_approval_request_review(
         Arc::clone(parent_session) as Arc<dyn thread_service_api::ThreadSessionCapability>,
-        Arc::clone(parent_ctx) as Arc<dyn thread_service_api::ThreadTurnCapability>,
+        Arc::clone(parent_ctx) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
         approval_service::guardian::new_guardian_review_id(),
         build_guardian_mcp_tool_review_request(&event.call_id, &invocation, metadata.as_ref()),
         /*retry_reason*/ None,

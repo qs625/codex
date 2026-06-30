@@ -1,6 +1,5 @@
 use crate::PendingInputItem;
 use crate::agent::AgentStatus;
-use crate::goal::GoalRuntimeEvent;
 use crate::session::Codex;
 use crate::session::SessionSettingsUpdate;
 use crate::session::SteerInputError;
@@ -8,6 +7,7 @@ use codex_agent_runtime::ThreadIdleReason;
 use codex_agent_runtime::ThreadPostTurnState;
 use codex_config::ConstraintResult;
 use codex_features::Feature;
+use mcp_service_api::McpToolRuntime;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::mcp::CallToolResult;
@@ -136,22 +136,30 @@ impl CodexThread {
     pub async fn apply_goal_resume_runtime_effects(&self) -> anyhow::Result<()> {
         self.codex
             .session
-            .goal_runtime_apply(GoalRuntimeEvent::ThreadResumed)
+            .services
+            .goal_service
+            .restore_goal_runtime_after_resume(self.codex.session.as_ref())
             .await
+            .map_err(anyhow::Error::msg)
     }
 
     pub async fn continue_active_goal_if_idle(&self) -> anyhow::Result<()> {
         self.codex
             .session
-            .goal_runtime_apply(GoalRuntimeEvent::MaybeContinueIfIdle)
+            .services
+            .goal_service
+            .maybe_continue_active_goal(self.codex.session.as_ref())
             .await
+            .map_err(anyhow::Error::msg)
     }
 
     pub async fn prepare_external_goal_mutation(&self) {
         if let Err(err) = self
             .codex
             .session
-            .goal_runtime_apply(GoalRuntimeEvent::ExternalMutationStarting)
+            .services
+            .goal_service
+            .prepare_external_goal_mutation(self.codex.session.as_ref())
             .await
         {
             tracing::warn!("failed to prepare external goal mutation: {err}");
@@ -162,7 +170,9 @@ impl CodexThread {
         if let Err(err) = self
             .codex
             .session
-            .goal_runtime_apply(GoalRuntimeEvent::ExternalSet { external_set })
+            .services
+            .goal_service
+            .apply_external_goal_set(self.codex.session.as_ref(), external_set)
             .await
         {
             tracing::warn!("failed to apply external goal status runtime effects: {err}");
@@ -173,7 +183,9 @@ impl CodexThread {
         if let Err(err) = self
             .codex
             .session
-            .goal_runtime_apply(GoalRuntimeEvent::ExternalClear)
+            .services
+            .goal_service
+            .apply_external_goal_clear(self.codex.session.as_ref())
             .await
         {
             tracing::warn!("failed to apply external goal clear runtime effects: {err}");
@@ -476,9 +488,8 @@ impl CodexThread {
         server: &str,
         uri: &str,
     ) -> anyhow::Result<serde_json::Value> {
-        let result = self
-            .codex
-            .session
+        let manager = self.codex.session.services.mcp_connection_manager.read().await;
+        let result = manager
             .read_resource(
                 server,
                 ReadResourceRequestParams {
@@ -497,10 +508,8 @@ impl CodexThread {
         arguments: Option<serde_json::Value>,
         meta: Option<serde_json::Value>,
     ) -> anyhow::Result<CallToolResult> {
-        self.codex
-            .session
-            .call_tool(server, tool, arguments, meta)
-            .await
+        let manager = self.codex.session.services.mcp_connection_manager.read().await;
+        McpToolRuntime::call_tool(manager.as_ref(), server, tool, arguments, meta).await
     }
 
     pub fn enabled(&self, feature: Feature) -> bool {

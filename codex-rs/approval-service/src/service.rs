@@ -7,8 +7,11 @@ use codex_approval_service_api::ApplyPatchApprovalKey;
 use codex_approval_service_api::ApplyPatchApprovalRequest;
 use codex_approval_service_api::ApprovalServiceApi;
 use codex_approval_service_api::ApprovalServiceFuture;
+use codex_approval_service_api::ExecCommandApprovalRequirement;
 use codex_approval_service_api::ExecCommandApprovalDispatch;
 use codex_approval_service_api::ExecCommandApprovalOutcome;
+use codex_approval_service_api::GuardianReviewDispatch;
+use codex_approval_service_api::GuardianReviewResult;
 use codex_guardian::GuardianApprovalRequest;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::protocol::FileChange;
@@ -16,12 +19,13 @@ use codex_protocol::protocol::ReviewDecision;
 use thread_service_api::PermissionRequestPayload;
 use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadSessionCapability;
+use thread_service_api::ThreadTurnCapability;
 
 #[derive(Default)]
 pub struct ApprovalService;
 
 fn should_use_guardian(
-    turn: &dyn ThreadRuntimeCapability,
+    turn: &dyn ThreadTurnCapability,
     strict_auto_review_enabled: bool,
 ) -> bool {
     (matches!(
@@ -115,6 +119,42 @@ impl ApprovalServiceApi for ApprovalService {
             request,
         ))
     }
+
+    fn review_guardian_request(
+        &self,
+        request: GuardianReviewDispatch,
+    ) -> ApprovalServiceFuture<'_, GuardianReviewResult> {
+        Box::pin(async move {
+            let review_id = request.review_id;
+            let decision = crate::guardian::review_approval_request(
+                request.session.as_ref(),
+                request.turn.as_ref(),
+                review_id.clone(),
+                request.request,
+                request.retry_reason,
+            )
+            .await;
+            let decline_message = match decision {
+                ReviewDecision::Denied => Some(
+                    crate::guardian::guardian_rejection_message(
+                        request.session.as_ref(),
+                        &review_id,
+                    )
+                    .await,
+                ),
+                ReviewDecision::TimedOut => Some(crate::guardian::guardian_timeout_message()),
+                ReviewDecision::Approved
+                | ReviewDecision::ApprovedForSession
+                | ReviewDecision::ApprovedExecpolicyAmendment { .. }
+                | ReviewDecision::NetworkPolicyAmendment { .. }
+                | ReviewDecision::Abort => None,
+            };
+            GuardianReviewResult {
+                decision,
+                decline_message,
+            }
+        })
+    }
 }
 
 async fn request_apply_patch_approval(
@@ -197,8 +237,8 @@ async fn request_exec_command_approval(
     let review_with_guardian = should_use_guardian(turn.as_ref(), strict_auto_review);
 
     match request.exec_approval_requirement {
-        codex_permissions_runtime::ExecApprovalRequirement::Forbidden { reason } => Err(reason),
-        codex_permissions_runtime::ExecApprovalRequirement::Skip { .. } => {
+        ExecCommandApprovalRequirement::Forbidden { reason } => Err(reason),
+        ExecCommandApprovalRequirement::Skip { .. } => {
             if !strict_auto_review {
                 return Ok(ExecCommandApprovalOutcome::ContinueInRuntime);
             }
@@ -226,7 +266,7 @@ async fn request_exec_command_approval(
             reject_unapproved_exec_decision(decision, session_api.as_ref())?;
             Ok(ExecCommandApprovalOutcome::Preapproved)
         }
-        codex_permissions_runtime::ExecApprovalRequirement::NeedsApproval {
+        ExecCommandApprovalRequirement::NeedsApproval {
             reason,
             proposed_execpolicy_amendment,
         } => {
@@ -313,7 +353,7 @@ async fn request_exec_command_approval(
 
 fn reject_unapproved_exec_decision(
     decision: ReviewDecision,
-    session: &dyn ThreadSessionCapability,
+    _session: &dyn ThreadSessionCapability,
 ) -> Result<(), String> {
     match decision {
         ReviewDecision::Approved

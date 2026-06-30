@@ -10,7 +10,6 @@ use crate::planning::create_read_mcp_resource_tool;
 use crate::planning::mcp_tool_to_deferred_responses_api_tool;
 use crate::planning::mcp_tool_to_responses_api_tool;
 use codex_mcp_tool_types::ToolInfo;
-use codex_protocol::mcp::CallToolResult;
 use codex_protocol::mcp::ListResourceTemplatesResult;
 use codex_protocol::mcp::ListResourcesResult;
 use codex_protocol::mcp::PaginatedRequestParams;
@@ -18,10 +17,8 @@ use codex_protocol::mcp::ReadResourceRequestParams;
 use codex_protocol::mcp::ReadResourceResult;
 use codex_protocol::mcp::Resource;
 use codex_protocol::mcp::ResourceTemplate;
-use codex_protocol::models::function_call_output_content_items_to_text;
-use codex_protocol::protocol::McpInvocation;
-use thread_service::ThreadTurnContext;
 use thread_service_api::ThreadRuntimeCapability;
+use thread_service_api::ThreadSessionCapability;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_types::FunctionCallError;
@@ -117,7 +114,8 @@ pub(crate) fn supports_parallel(request: &TypedToolSpecRequest<'_>, call: &ToolC
 }
 
 pub(crate) async fn dispatch(
-    turn: Arc<ThreadTurnContext>,
+    session: Arc<dyn ThreadSessionCapability>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     mcp_service_api: Arc<dyn McpServiceApi>,
     mcp_tools: Option<&[ToolInfo]>,
     deferred_mcp_tools: Option<&[ToolInfo]>,
@@ -125,18 +123,36 @@ pub(crate) async fn dispatch(
 ) -> Result<AnyToolResult, FunctionCallError> {
     let result: Box<dyn ToolOutput> = match call.tool_name.name.as_str() {
         LIST_MCP_RESOURCES_TOOL_NAME => Box::new(
-            dispatch_list_mcp_resources(mcp_service_api.as_ref(), turn.as_ref(), &call).await?,
+            dispatch_list_mcp_resources(
+                mcp_service_api.as_ref(),
+                Arc::clone(&session),
+                Arc::clone(&turn),
+                &call,
+            )
+            .await?,
         ),
         LIST_MCP_RESOURCE_TEMPLATES_TOOL_NAME => Box::new(
-            dispatch_list_mcp_resource_templates(mcp_service_api.as_ref(), turn.as_ref(), &call)
+            dispatch_list_mcp_resource_templates(
+                mcp_service_api.as_ref(),
+                Arc::clone(&session),
+                Arc::clone(&turn),
+                &call,
+            )
                 .await?,
         ),
         READ_MCP_RESOURCE_TOOL_NAME => Box::new(
-            dispatch_read_mcp_resource(mcp_service_api.as_ref(), turn.as_ref(), &call).await?,
+            dispatch_read_mcp_resource(
+                mcp_service_api.as_ref(),
+                Arc::clone(&session),
+                Arc::clone(&turn),
+                &call,
+            )
+            .await?,
         ),
         _ => Box::new(
             dispatch_mcp_tool_call(
                 mcp_service_api.as_ref(),
+                session,
                 turn,
                 mcp_tools,
                 deferred_mcp_tools,
@@ -186,7 +202,8 @@ fn tool_info_to_spec(tool: &ToolInfo, deferred: bool) -> Option<ToolSpec> {
 
 async fn dispatch_mcp_tool_call(
     service: &dyn McpServiceApi,
-    turn: Arc<ThreadTurnContext>,
+    session: Arc<dyn ThreadSessionCapability>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     mcp_tools: Option<&[ToolInfo]>,
     deferred_mcp_tools: Option<&[ToolInfo]>,
     call: &ToolCall,
@@ -213,7 +230,8 @@ async fn dispatch_mcp_tool_call(
     let started = Instant::now();
     let outcome = service
         .call_tool(
-            turn.as_ref(),
+            session,
+            Arc::clone(&turn),
             call.call_id.clone(),
             tool_info.server_name.clone(),
             tool_info.tool.name.to_string(),
@@ -226,38 +244,33 @@ async fn dispatch_mcp_tool_call(
         result: outcome.result,
         tool_input: outcome.tool_input,
         wall_time: started.elapsed(),
-        original_image_detail_supported: turn.mcp_original_image_detail_supported(),
-        truncation_policy: turn.mcp_truncation_policy(),
+        original_image_detail_supported: turn.can_request_original_image_detail(),
+        truncation_policy: turn.truncation_policy(),
     })
 }
 
 async fn dispatch_list_mcp_resources(
     service: &dyn McpServiceApi,
-    turn: &dyn ThreadRuntimeCapability,
+    session: Arc<dyn ThreadSessionCapability>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     call: &ToolCall,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
-    let raw_arguments = function_arguments(&call.payload, LIST_MCP_RESOURCES_TOOL_NAME)?;
-    let parsed_arguments = parse_arguments(&raw_arguments)?;
     let args: ListResourcesArgs = parse_optional_args(call)?;
     let server = normalize_optional_string(args.server);
     let cursor = normalize_optional_string(args.cursor);
-    let invocation = McpInvocation {
-        server: server.clone().unwrap_or_else(|| "codex".to_string()),
-        tool: LIST_MCP_RESOURCES_TOOL_NAME.to_string(),
-        arguments: parsed_arguments,
-    };
-
-    service
-        .emit_mcp_resource_tool_call_begin(turn, &call.call_id, invocation.clone())
-        .await;
-    let start = Instant::now();
     let payload_result: Result<ListResourcesPayload, FunctionCallError> = async {
         if let Some(server_name) = server.clone() {
             let params = cursor.clone().map(|value| PaginatedRequestParams {
                 cursor: Some(value),
             });
             let result = service
-                .list_resources(turn, &server_name, params)
+                .list_resources(
+                    Arc::clone(&session),
+                    Arc::clone(&turn),
+                    call.call_id.clone(),
+                    &server_name,
+                    params,
+                )
                 .await
                 .map_err(|err| {
                     FunctionCallError::RespondToModel(format!("resources/list failed: {err}"))
@@ -273,50 +286,43 @@ async fn dispatch_list_mcp_resources(
                 ));
             }
             Ok(ListResourcesPayload::from_all_servers(
-                service.list_all_resources(turn).await,
+                service
+                    .list_all_resources(
+                        Arc::clone(&session),
+                        Arc::clone(&turn),
+                        call.call_id.clone(),
+                    )
+                    .await,
             ))
         }
     }
     .await;
 
-    finish_mcp_resource_call(
-        service,
-        turn,
-        &call.call_id,
-        invocation,
-        start,
-        payload_result,
-    )
-    .await
+    finish_mcp_resource_call(payload_result)
 }
 
 async fn dispatch_list_mcp_resource_templates(
     service: &dyn McpServiceApi,
-    turn: &dyn ThreadRuntimeCapability,
+    session: Arc<dyn ThreadSessionCapability>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     call: &ToolCall,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
-    let raw_arguments = function_arguments(&call.payload, LIST_MCP_RESOURCE_TEMPLATES_TOOL_NAME)?;
-    let parsed_arguments = parse_arguments(&raw_arguments)?;
     let args: ListResourceTemplatesArgs = parse_optional_args(call)?;
     let server = normalize_optional_string(args.server);
     let cursor = normalize_optional_string(args.cursor);
-    let invocation = McpInvocation {
-        server: server.clone().unwrap_or_else(|| "codex".to_string()),
-        tool: LIST_MCP_RESOURCE_TEMPLATES_TOOL_NAME.to_string(),
-        arguments: parsed_arguments,
-    };
-
-    service
-        .emit_mcp_resource_tool_call_begin(turn, &call.call_id, invocation.clone())
-        .await;
-    let start = Instant::now();
     let payload_result: Result<ListResourceTemplatesPayload, FunctionCallError> = async {
         if let Some(server_name) = server.clone() {
             let params = cursor.clone().map(|value| PaginatedRequestParams {
                 cursor: Some(value),
             });
             let result = service
-                .list_resource_templates(turn, &server_name, params)
+                .list_resource_templates(
+                    Arc::clone(&session),
+                    Arc::clone(&turn),
+                    call.call_id.clone(),
+                    &server_name,
+                    params,
+                )
                 .await
                 .map_err(|err| {
                     FunctionCallError::RespondToModel(format!(
@@ -334,47 +340,36 @@ async fn dispatch_list_mcp_resource_templates(
                 ));
             }
             Ok(ListResourceTemplatesPayload::from_all_servers(
-                service.list_all_resource_templates(turn).await,
+                service
+                    .list_all_resource_templates(
+                        Arc::clone(&session),
+                        Arc::clone(&turn),
+                        call.call_id.clone(),
+                    )
+                    .await,
             ))
         }
     }
     .await;
 
-    finish_mcp_resource_call(
-        service,
-        turn,
-        &call.call_id,
-        invocation,
-        start,
-        payload_result,
-    )
-    .await
+    finish_mcp_resource_call(payload_result)
 }
 
 async fn dispatch_read_mcp_resource(
     service: &dyn McpServiceApi,
-    turn: &dyn ThreadRuntimeCapability,
+    session: Arc<dyn ThreadSessionCapability>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     call: &ToolCall,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
-    let raw_arguments = function_arguments(&call.payload, READ_MCP_RESOURCE_TOOL_NAME)?;
-    let parsed_arguments = parse_arguments(&raw_arguments)?;
     let args: ReadResourceArgs = parse_required_args(call)?;
     let server = normalize_required_string("server", args.server)?;
     let uri = normalize_required_string("uri", args.uri)?;
-    let invocation = McpInvocation {
-        server: server.clone(),
-        tool: READ_MCP_RESOURCE_TOOL_NAME.to_string(),
-        arguments: parsed_arguments,
-    };
-
-    service
-        .emit_mcp_resource_tool_call_begin(turn, &call.call_id, invocation.clone())
-        .await;
-    let start = Instant::now();
     let payload_result: Result<ReadResourcePayload, FunctionCallError> = async {
         let result = service
             .read_resource(
-                turn,
+                Arc::clone(&session),
+                Arc::clone(&turn),
+                call.call_id.clone(),
                 &server,
                 ReadResourceRequestParams { uri: uri.clone() },
             )
@@ -390,23 +385,10 @@ async fn dispatch_read_mcp_resource(
     }
     .await;
 
-    finish_mcp_resource_call(
-        service,
-        turn,
-        &call.call_id,
-        invocation,
-        start,
-        payload_result,
-    )
-    .await
+    finish_mcp_resource_call(payload_result)
 }
 
-async fn finish_mcp_resource_call<Payload>(
-    service: &dyn McpServiceApi,
-    turn: &dyn ThreadRuntimeCapability,
-    call_id: &str,
-    invocation: McpInvocation,
-    start: Instant,
+fn finish_mcp_resource_call<Payload>(
     payload_result: Result<Payload, FunctionCallError>,
 ) -> Result<FunctionToolOutput, FunctionCallError>
 where
@@ -415,64 +397,11 @@ where
     match payload_result {
         Ok(payload) => match serialize_function_output(payload) {
             Ok(output) => {
-                let content =
-                    function_call_output_content_items_to_text(&output.body).unwrap_or_default();
-                service
-                    .emit_mcp_resource_tool_call_end(
-                        turn,
-                        call_id,
-                        invocation,
-                        start.elapsed(),
-                        Ok(call_tool_result_from_content(&content, output.success)),
-                    )
-                    .await;
                 Ok(output)
             }
-            Err(err) => {
-                let message = err.to_string();
-                service
-                    .emit_mcp_resource_tool_call_end(
-                        turn,
-                        call_id,
-                        invocation,
-                        start.elapsed(),
-                        Err(message.clone()),
-                    )
-                    .await;
-                Err(err)
-            }
+            Err(err) => Err(err),
         },
-        Err(err) => {
-            let message = err.to_string();
-            service
-                .emit_mcp_resource_tool_call_end(
-                    turn,
-                    call_id,
-                    invocation,
-                    start.elapsed(),
-                    Err(message.clone()),
-                )
-                .await;
-            Err(err)
-        }
-    }
-}
-
-fn call_tool_result_from_content(content: &str, success: Option<bool>) -> CallToolResult {
-    CallToolResult {
-        content: vec![serde_json::json!({"type": "text", "text": content})],
-        structured_content: None,
-        is_error: success.map(|value| !value),
-        meta: None,
-    }
-}
-
-fn function_arguments(payload: &ToolPayload, tool_name: &str) -> Result<String, FunctionCallError> {
-    match payload {
-        ToolPayload::Function { arguments } => Ok(arguments.clone()),
-        _ => Err(FunctionCallError::RespondToModel(format!(
-            "{tool_name} handler received unsupported payload"
-        ))),
+        Err(err) => Err(err),
     }
 }
 

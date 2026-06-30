@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Weak;
 
 use codex_arg0::Arg0DispatchPaths;
 use codex_exec_server::EnvironmentManager;
@@ -84,10 +85,27 @@ impl MessageProcessor {
             auth_manager.clone(),
             model_provider_auth_manager(Some(auth_manager)),
         );
-        let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
-            config.codex_home.clone(),
-        ));
-        let thread_service = Arc::new(
+        let shared_state_db = state_db
+            .clone()
+            .map(|state_db| state_db as codex_state_api::SharedStateDbRuntime);
+        let thread_service = Arc::new_cyclic(|thread_service: &Weak<ThreadService>| {
+            let thread_service_api: Weak<dyn thread_service_api::ThreadServiceApi> =
+                thread_service.clone();
+            let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
+                config.codex_home.clone(),
+                thread_service_api.clone(),
+            ));
+            let approval_service = Arc::new(approval_service::ApprovalService);
+            let mcp_service = Arc::new(mcp_service::McpService::new(approval_service.clone()));
+            let tool_service = Arc::new(codex_tool_service::ToolService::new(
+                approval_service,
+                Arc::new(codex_command_service::CommandService::new()),
+                Arc::new(goal_service::GoalService),
+                mcp_service.clone(),
+                Arc::new(thread_service::RequestPluginInstallService),
+                workflow_service,
+                thread_service_api,
+            ));
             ThreadService::new_with_openai_file_uploader(
                 config.as_ref(),
                 auth_runtimes,
@@ -96,12 +114,13 @@ impl MessageProcessor {
                 empty_extension_registry(),
                 /*analytics_events_client*/ None,
                 thread_store_from_config(config.as_ref(), state_db.clone()),
-                state_db.clone(),
+                shared_state_db.clone(),
                 Arc::new(codex_thread_store::DefaultLiveThreadFactory),
                 installation_id,
                 /*attestation_provider*/ None,
                 Arc::new(codex_model_provider::DefaultModelProviderFactory),
                 Arc::new(codex_code_mode::V8CodeModeRuntimeFactory),
+                Arc::new(goal_service::GoalService),
                 Arc::new(codex_mcp::DefaultMcpAuthRuntime),
                 Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
                 Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
@@ -125,20 +144,11 @@ impl MessageProcessor {
                         SessionSource::Mcp.restriction_product(),
                     ),
                 ),
-                Arc::new(codex_tool_service::ToolService::new(
-                    Arc::new(approval_service::ApprovalService),
-                    Arc::new(codex_command_service::CommandService::new()),
-                    Arc::new(goal_service::GoalService),
-                    Arc::new(mcp_service::McpService),
-                    Arc::new(thread_service::RequestPluginInstallService),
-                    workflow_service.clone(),
-                )),
+                tool_service,
+                mcp_service,
             )
-            .with_terminal_type(user_agent()),
-        );
-        let thread_service_api: Arc<dyn thread_service_api::ThreadServiceApi> =
-            thread_service.clone();
-        workflow_service.set_thread_service_api(Arc::downgrade(&thread_service_api));
+            .with_terminal_type(user_agent())
+        });
         Self {
             outgoing,
             initialized: false,

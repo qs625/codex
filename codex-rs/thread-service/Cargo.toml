@@ -96,6 +96,8 @@ codex-git-info = { workspace = true }
 codex-guardian = { workspace = true }
 codex-hooks = { workspace = true }
 codex-hooks-api = { workspace = true }
+goal-service = { workspace = true }
+goal-service-api = { workspace = true }
 codex-state-api = { workspace = true }
 codex-network-proxy = { workspace = true, optional = true }
 codex-network-proxy-api = { workspace = true }

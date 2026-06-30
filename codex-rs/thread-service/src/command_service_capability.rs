@@ -3,28 +3,29 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use crate::network_approval::DeferredNetworkApproval;
-use crate::network_approval::begin_network_approval;
+use approval_service::network::DeferredNetworkApproval;
+use approval_service::network::NetworkApprovalService;
+use approval_service::network::begin_network_approval;
 use crate::session::session::Session;
+use crate::session::session::approval_support_impl::with_cached_approval;
 use crate::session::turn_context::TurnContext;
-use crate::tool_approval_support::with_cached_approval;
 use codex_command_service_api::CommandServiceFuture;
 use codex_command_service_api::CommandServiceSessionApi;
 use codex_command_service_api::CommandServiceSessionState;
 use codex_command_service_api::ExecApprovalRequirement;
+use codex_command_service_api::NetworkApprovalMode as CommandNetworkApprovalMode;
+use codex_command_service_api::NetworkApprovalSpec;
 use codex_command_service_api::ResolvedExecCommand;
 use codex_command_service_api::RuntimeShell;
+use codex_command_service_api::ToolRuntimeNetworkApprovalError;
+use codex_command_service_api::ToolRuntimeNetworkApprovalHandle;
+use codex_command_service_api::ToolRuntimeNetworkApprovalTrigger;
 use codex_command_service_api::UnifiedExecApprovalKey;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::NetworkApprovalContext;
 use codex_protocol::protocol::ReviewDecision;
 use thread_service_api::ThreadCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::NetworkApprovalMode as CommandNetworkApprovalMode;
-use thread_service_api::NetworkApprovalSpec;
-use thread_service_api::ToolRuntimeNetworkApprovalError;
-use thread_service_api::ToolRuntimeNetworkApprovalHandle;
-use thread_service_api::ToolRuntimeNetworkApprovalTrigger;
 
 enum SessionToolNetworkApprovalState {
     Immediate(Mutex<Option<String>>),
@@ -32,14 +33,14 @@ enum SessionToolNetworkApprovalState {
 }
 
 struct SessionToolNetworkApprovalHandle {
-    service: Arc<crate::network_approval::NetworkApprovalService>,
-    mode: thread_service_api::NetworkApprovalMode,
+    service: Arc<NetworkApprovalService>,
+    mode: CommandNetworkApprovalMode,
     cancellation_token: tokio_util::sync::CancellationToken,
     state: SessionToolNetworkApprovalState,
 }
 
-impl thread_service_api::ToolRuntimeNetworkApprovalHandle for SessionToolNetworkApprovalHandle {
-    fn mode(&self) -> thread_service_api::NetworkApprovalMode {
+impl ToolRuntimeNetworkApprovalHandle for SessionToolNetworkApprovalHandle {
+    fn mode(&self) -> CommandNetworkApprovalMode {
         self.mode
     }
 
@@ -76,34 +77,19 @@ impl thread_service_api::ToolRuntimeNetworkApprovalHandle for SessionToolNetwork
                     self.service
                         .finish_call(&registration_id)
                         .await
-                        .map_err(map_network_approval_error)
                 }
-                SessionToolNetworkApprovalState::Deferred(deferred) => deferred
-                    .finish(&self.service)
-                    .await
-                    .map_err(map_network_approval_error),
+                SessionToolNetworkApprovalState::Deferred(deferred) => {
+                    deferred.finish(&self.service).await
+                }
             }
         })
     }
 }
 
-fn map_network_approval_error(
-    err: crate::tool_approval_support::ToolError,
-) -> ToolRuntimeNetworkApprovalError {
-    match err {
-        crate::tool_approval_support::ToolError::Rejected(message) => {
-            ToolRuntimeNetworkApprovalError::Rejected(message)
-        }
-        crate::tool_approval_support::ToolError::Codex(err) => {
-            ToolRuntimeNetworkApprovalError::Codex(err)
-        }
-    }
-}
-
 fn map_network_trigger(
     trigger: ToolRuntimeNetworkApprovalTrigger,
-) -> crate::guardian::GuardianNetworkAccessTrigger {
-    crate::guardian::GuardianNetworkAccessTrigger {
+) -> codex_guardian::GuardianNetworkAccessTrigger {
+    codex_guardian::GuardianNetworkAccessTrigger {
         call_id: trigger.call_id,
         tool_name: trigger.tool_name,
         command: trigger.command,
@@ -244,31 +230,32 @@ impl CommandServiceSessionApi for Session {
         spec: Option<NetworkApprovalSpec<ToolRuntimeNetworkApprovalTrigger>>,
     ) -> CommandServiceFuture<'a, Option<Arc<dyn ToolRuntimeNetworkApprovalHandle>>> {
         Box::pin(async move {
-            let spec = spec.map(|spec| crate::network_approval::NetworkApprovalSpec {
+            let spec = spec.map(|spec| NetworkApprovalSpec {
                 network: spec.network,
-                mode: match spec.mode {
-                    CommandNetworkApprovalMode::Immediate => {
-                        thread_service_api::NetworkApprovalMode::Immediate
-                    }
-                    CommandNetworkApprovalMode::Deferred => {
-                        thread_service_api::NetworkApprovalMode::Deferred
-                    }
-                },
+                mode: spec.mode,
                 trigger: map_network_trigger(spec.trigger),
                 command: spec.command,
             });
-            let active =
-                begin_network_approval(self, turn_id, managed_network_active, spec).await?;
+            let active = begin_network_approval(
+                self.services.network_approval.as_ref(),
+                turn_id,
+                managed_network_active,
+                spec,
+            )
+            .await;
+            let Some(active) = active else {
+                return None;
+            };
             let mode = active.mode();
             let cancellation_token = active.cancellation_token();
             let state = match mode {
-                thread_service_api::NetworkApprovalMode::Deferred => {
+                CommandNetworkApprovalMode::Deferred => {
                     let Some(deferred) = active.into_deferred() else {
                         panic!("deferred network approval should convert to deferred state");
                     };
                     SessionToolNetworkApprovalState::Deferred(deferred)
                 }
-                thread_service_api::NetworkApprovalMode::Immediate => {
+                CommandNetworkApprovalMode::Immediate => {
                     SessionToolNetworkApprovalState::Immediate(Mutex::new(
                         active.registration_id().map(ToString::to_string),
                     ))
@@ -276,14 +263,7 @@ impl CommandServiceSessionApi for Session {
             };
             Some(Arc::new(SessionToolNetworkApprovalHandle {
                 service: Arc::clone(&self.services.network_approval),
-                mode: match mode {
-                    thread_service_api::NetworkApprovalMode::Immediate => {
-                        thread_service_api::NetworkApprovalMode::Immediate
-                    }
-                    thread_service_api::NetworkApprovalMode::Deferred => {
-                        thread_service_api::NetworkApprovalMode::Deferred
-                    }
-                },
+                mode,
                 cancellation_token,
                 state,
             }) as Arc<dyn ToolRuntimeNetworkApprovalHandle>)
@@ -314,7 +294,7 @@ impl CommandServiceSessionApi for Session {
                     session_arc(self).as_ref(),
                     turn.self_arc().as_ref(),
                     uuid::Uuid::new_v4().to_string(),
-                    crate::guardian::GuardianApprovalRequest::ExecCommand {
+                    codex_guardian::GuardianApprovalRequest::ExecCommand {
                         id: call_id,
                         command,
                         cwd,
