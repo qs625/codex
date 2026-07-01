@@ -10,6 +10,13 @@ use codex_extension_api::ToolContributor;
 use codex_extension_api::ToolName;
 use codex_extension_api::ToolOutput;
 use codex_extension_api::ToolPayload;
+use memory_service::LIST_TOOL_NAME;
+use memory_service::LocalMemoriesBackend;
+use memory_service::MEMORY_TOOLS_NAMESPACE;
+use memory_service::READ_TOOL_NAME;
+use memory_service::SEARCH_TOOL_NAME;
+use memory_service::memory_extension_tool_name;
+use memory_service::memory_extension_tools;
 use codex_utils_absolute_path::test_support::PathBufExt;
 use codex_utils_absolute_path::test_support::PathExt;
 use codex_utils_absolute_path::test_support::test_path_buf;
@@ -18,7 +25,6 @@ use serde_json::json;
 
 use crate::extension::MemoriesExtension;
 use crate::extension::MemoriesExtensionConfig;
-use crate::local::LocalMemoriesBackend;
 
 #[test]
 fn tools_are_not_contributed_without_thread_config() {
@@ -68,9 +74,9 @@ fn tools_are_contributed_when_enabled() {
     assert_eq!(
         tool_names,
         vec![
-            memory_tool_name(crate::LIST_TOOL_NAME),
-            memory_tool_name(crate::READ_TOOL_NAME),
-            memory_tool_name(crate::SEARCH_TOOL_NAME),
+            memory_tool_name(LIST_TOOL_NAME),
+            memory_tool_name(READ_TOOL_NAME),
+            memory_tool_name(SEARCH_TOOL_NAME),
         ]
     );
 }
@@ -122,7 +128,7 @@ async fn read_tool_reads_memory_file() {
     )
     .await
     .expect("write memory");
-    let tool = memory_tool(&memory_root, crate::READ_TOOL_NAME);
+    let tool = memory_tool(&memory_root, READ_TOOL_NAME);
     let payload = ToolPayload::Function {
         arguments: json!({
             "path": "MEMORY.md",
@@ -135,7 +141,7 @@ async fn read_tool_reads_memory_file() {
     let output = tool
         .handle(ToolCall {
             call_id: "call-1".to_string(),
-            tool_name: memory_tool_name(crate::READ_TOOL_NAME),
+            tool_name: memory_tool_name(READ_TOOL_NAME),
             payload: payload.clone(),
         })
         .await
@@ -165,7 +171,7 @@ async fn search_tool_accepts_multiple_queries() {
     )
     .await
     .expect("write memory");
-    let tool = memory_tool(&memory_root, crate::SEARCH_TOOL_NAME);
+    let tool = memory_tool(&memory_root, SEARCH_TOOL_NAME);
     let payload = ToolPayload::Function {
         arguments: json!({
             "queries": ["alpha", "needle"],
@@ -177,7 +183,7 @@ async fn search_tool_accepts_multiple_queries() {
     let output = tool
         .handle(ToolCall {
             call_id: "call-1".to_string(),
-            tool_name: memory_tool_name(crate::SEARCH_TOOL_NAME),
+            tool_name: memory_tool_name(SEARCH_TOOL_NAME),
             payload: payload.clone(),
         })
         .await
@@ -230,7 +236,7 @@ async fn search_tool_accepts_windowed_all_match_mode() {
     tokio::fs::write(memory_root.join("MEMORY.md"), "alpha\nmiddle\nneedle\n")
         .await
         .expect("write memory");
-    let tool = memory_tool(&memory_root, crate::SEARCH_TOOL_NAME);
+    let tool = memory_tool(&memory_root, SEARCH_TOOL_NAME);
     let payload = ToolPayload::Function {
         arguments: json!({
             "queries": ["alpha", "needle"],
@@ -245,7 +251,7 @@ async fn search_tool_accepts_windowed_all_match_mode() {
     let output = tool
         .handle(ToolCall {
             call_id: "call-1".to_string(),
-            tool_name: memory_tool_name(crate::SEARCH_TOOL_NAME),
+            tool_name: memory_tool_name(SEARCH_TOOL_NAME),
             payload: payload.clone(),
         })
         .await
@@ -282,7 +288,7 @@ async fn search_tool_rejects_legacy_single_query() {
     tokio::fs::create_dir_all(&memory_root)
         .await
         .expect("create memories dir");
-    let tool = memory_tool(&memory_root, crate::SEARCH_TOOL_NAME);
+    let tool = memory_tool(&memory_root, SEARCH_TOOL_NAME);
     let payload = ToolPayload::Function {
         arguments: json!({
             "query": "needle",
@@ -293,7 +299,7 @@ async fn search_tool_rejects_legacy_single_query() {
     let err = tool
         .handle(ToolCall {
             call_id: "call-1".to_string(),
-            tool_name: memory_tool_name(crate::SEARCH_TOOL_NAME),
+            tool_name: memory_tool_name(SEARCH_TOOL_NAME),
             payload,
         })
         .await
@@ -305,12 +311,12 @@ async fn search_tool_rejects_legacy_single_query() {
 
 fn memory_tool(memory_root: &Path, tool_name: &str) -> Arc<dyn ExtensionToolExecutor> {
     let expected_tool_name = memory_tool_name(tool_name);
-    crate::tools::memory_tools(LocalMemoriesBackend::from_memory_root(memory_root))
+    memory_extension_tools(LocalMemoriesBackend::from_memory_root(memory_root))
         .into_iter()
         .find(|tool| tool.tool_name() == expected_tool_name)
         .unwrap_or_else(|| panic!("{tool_name} tool should be registered"))
 }
 
 fn memory_tool_name(tool_name: &str) -> ToolName {
-    ToolName::namespaced(crate::MEMORY_TOOLS_NAMESPACE, tool_name)
+    ToolName::namespaced(MEMORY_TOOLS_NAMESPACE, tool_name)
 }

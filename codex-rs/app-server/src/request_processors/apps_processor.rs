@@ -8,7 +8,7 @@ pub(crate) trait AppsRuntime: Send + Sync {
         feature: Feature,
     ) -> BoxFuture<'_, CodexResult<bool>>;
 
-    fn plugin_runtime(&self) -> codex_core_plugins_api::SharedPluginRuntime;
+    fn plugin_runtime(&self) -> plugin_service_api::SharedPluginRuntime;
 }
 
 impl AppsRuntime for ThreadService {
@@ -22,7 +22,7 @@ impl AppsRuntime for ThreadService {
         ))
     }
 
-    fn plugin_runtime(&self) -> codex_core_plugins_api::SharedPluginRuntime {
+    fn plugin_runtime(&self) -> plugin_service_api::SharedPluginRuntime {
         ThreadService::plugin_runtime(self)
     }
 }
@@ -136,7 +136,7 @@ impl AppsRequestProcessor {
         params: AppsListParams,
         config: Config,
         auth_snapshot: Option<RequestAuthSnapshot>,
-        plugin_runtime: codex_core_plugins_api::SharedPluginRuntime,
+        plugin_runtime: plugin_service_api::SharedPluginRuntime,
         environment_manager: Arc<EnvironmentManager>,
     ) {
         let result = Self::apps_list_response(
@@ -156,7 +156,7 @@ impl AppsRequestProcessor {
         params: AppsListParams,
         config: Config,
         auth_snapshot: Option<RequestAuthSnapshot>,
-        plugin_runtime: codex_core_plugins_api::SharedPluginRuntime,
+        plugin_runtime: plugin_service_api::SharedPluginRuntime,
         environment_manager: Arc<EnvironmentManager>,
     ) -> Result<AppsListResponse, JSONRPCErrorError> {
         let AppsListParams {

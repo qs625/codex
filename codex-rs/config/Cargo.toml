@@ -24,7 +24,7 @@ codex-config-requirements = { workspace = true }
 codex-config-state = { workspace = true }
 codex-config-toml = { workspace = true }
 codex-config-types = { workspace = true }
-codex-core-plugins-api = { workspace = true }
+plugin-service-api = { workspace = true }
 codex-core-skills-api = { workspace = true }
 codex-execpolicy-api = { workspace = true }
 codex-features = { workspace = true }
@@ -32,7 +32,7 @@ codex-file-system = { workspace = true }
 codex-git-info = { workspace = true }
 codex-hooks-api = { workspace = true }
 codex-mcp-types = { workspace = true }
-codex-memories-read-api = { workspace = true }
+memory-service-api = { workspace = true }
 codex-model-provider-info = { workspace = true }
 codex-models-manager-api = { workspace = true }
 codex-network-proxy-api = { workspace = true }
@@ -51,7 +51,6 @@ tracing = { workspace = true, features = ["log"] }
 [dev-dependencies]
 assert_matches = { workspace = true }
 base64 = { workspace = true }
-codex-plugin-types = { workspace = true }
 codex-execpolicy = { workspace = true }
 codex-models-manager = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }

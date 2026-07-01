@@ -7,7 +7,9 @@
 
 use std::any::Any;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::future::Future;
+use std::path::Path;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -16,7 +18,7 @@ use codex_code_mode_api::ExecuteRequest;
 use codex_code_mode_api::RuntimeResponse;
 use codex_code_mode_api::WaitOutcome;
 use codex_code_mode_api::WaitRequest;
-use codex_connectors_types::AppInfo;
+use codex_connectors_api::AppInfo;
 use codex_file_system::FileSystemSandboxContext;
 use codex_mcp_tool_types::ToolInfo;
 use codex_mcp_types::ElicitationResponse;
@@ -77,12 +79,36 @@ use tokio::sync::Mutex;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-pub use codex_runtime_capability_api::ThreadCapability;
+use crate::NetworkApprovalSpec;
+use crate::ResolvedExecCommand;
+use crate::RuntimeShell;
+use crate::ToolRuntimeNetworkApprovalHandle;
+use crate::ToolRuntimeNetworkApprovalTrigger;
+use crate::UnifiedExecApprovalKey;
 
 #[path = "pending_input.rs"]
 mod pending_input;
 
 pub use pending_input::PendingInputItem;
+
+/// Common runtime capability shared by service APIs that need active-thread or
+/// active-turn context during one tool dispatch.
+///
+/// Domain-specific service API crates should depend on this trait rather than
+/// baking concrete runtime types such as `TurnContext` into their public API.
+pub trait ThreadCapability: Send + Sync + 'static {
+    /// Return the concrete runtime object behind this capability.
+    fn as_any(&self) -> &(dyn Any + Send + Sync);
+}
+
+impl<T> ThreadCapability for Arc<T>
+where
+    T: ThreadCapability,
+{
+    fn as_any(&self) -> &(dyn Any + Send + Sync) {
+        self.as_ref().as_any()
+    }
+}
 
 /// Boxed future returned by object-safe session capability traits.
 pub type SessionCapabilityFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -194,6 +220,20 @@ pub struct ToolPermissionGrants {
     pub turn: Option<AdditionalPermissionProfile>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpOAuthLoginParams {
+    pub server_name: String,
+    pub server_url: String,
+    pub store_mode: codex_config_types::OAuthCredentialsStoreMode,
+    pub http_headers: Option<HashMap<String, String>>,
+    pub env_http_headers: Option<HashMap<String, String>>,
+    pub scopes: Vec<String>,
+    pub oauth_client_id: Option<String>,
+    pub oauth_resource: Option<String>,
+    pub callback_port: Option<u16>,
+    pub callback_url: Option<String>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ThreadAppToolPolicy {
     pub enabled: bool,
@@ -204,6 +244,9 @@ pub struct AgentJobRunnerOptions<SpawnConfig> {
     pub max_concurrency: usize,
     pub spawn_config: SpawnConfig,
 }
+
+/// Opaque, owner-defined spawn config carried between agent-job API calls.
+pub type AgentJobSpawnConfig = Arc<dyn Any + Send + Sync>;
 
 pub enum AgentJobSpawnWorkerError {
     LimitReached,
@@ -424,6 +467,9 @@ pub trait ThreadTurnCapability: Send + Sync + 'static {
     /// Whether the current client supports image input items.
     fn supports_image_input(&self) -> bool;
 
+    /// App-server client name associated with the active turn, when present.
+    fn app_server_client_name(&self) -> Option<&str>;
+
     /// Whether auth elicitation is enabled for the active turn.
     fn auth_elicitation_enabled(&self) -> bool;
 
@@ -589,6 +635,10 @@ where
 
     fn supports_image_input(&self) -> bool {
         self.as_ref().supports_image_input()
+    }
+
+    fn app_server_client_name(&self) -> Option<&str> {
+        self.as_ref().app_server_client_name()
     }
 
     fn auth_elicitation_enabled(&self) -> bool {
@@ -1029,6 +1079,46 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
         refresh_config: McpServerRefreshConfig,
     ) -> SessionCapabilityFuture<'a, ()>;
 
+    /// 返回当前配置视角下可见的 MCP server 配置。
+    fn configured_mcp_servers<'a>(
+        &'a self,
+    ) -> SessionCapabilityFuture<'a, HashMap<String, codex_config_types::McpServerConfig>>;
+
+    /// 返回当前 session 已提示过的 MCP dependency key 集合。
+    fn mcp_dependency_prompted<'a>(&'a self) -> SessionCapabilityFuture<'a, HashSet<String>>;
+
+    /// 记录当前 session 已提示过的 MCP dependency key。
+    fn record_mcp_dependency_prompted<'a>(
+        &'a self,
+        names: Vec<String>,
+    ) -> SessionCapabilityFuture<'a, ()>;
+
+    /// 向当前 session 交付一次结构化 user input 响应。
+    fn notify_user_input_response<'a>(
+        &'a self,
+        sub_id: &'a str,
+        response: codex_protocol::request_user_input::RequestUserInputResponse,
+    ) -> SessionCapabilityFuture<'a, ()>;
+
+    /// 查询指定 transport 的 MCP OAuth 登录支持情况。
+    fn mcp_oauth_login_support<'a>(
+        &'a self,
+        transport: &'a codex_config_types::McpServerTransportConfig,
+    ) -> SessionCapabilityFuture<'a, codex_mcp_types::McpOAuthLoginSupport>;
+
+    /// 执行一次 MCP OAuth 登录流程。
+    fn perform_mcp_oauth_login<'a>(
+        &'a self,
+        params: McpOAuthLoginParams,
+    ) -> SessionCapabilityFuture<'a, anyhow::Result<()>>;
+
+    /// 判断 MCP OAuth 失败后是否应退化为无 scope 重试。
+    fn should_retry_mcp_oauth_without_scopes(
+        &self,
+        scopes: &codex_mcp_types::ResolvedMcpOAuthScopes,
+        error: &anyhow::Error,
+    ) -> bool;
+
     /// Refresh MCP servers immediately with the provided configuration.
     fn refresh_mcp_servers_now<'a>(
         &'a self,
@@ -1182,6 +1272,18 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
     /// Reload the user config layer for subsequent turn decisions.
     fn reload_user_config_layer<'a>(&'a self) -> SessionCapabilityFuture<'a, ()>;
 
+    /// Check whether one plugin is configured as installed in the current session config.
+    fn configured_plugin_installed<'a>(
+        &'a self,
+        tool_id: &'a str,
+    ) -> SessionCapabilityFuture<'a, bool>;
+
+    /// Merge connector IDs into the explicit session-level connector selection.
+    fn merge_connector_selection<'a>(
+        &'a self,
+        connector_ids: std::collections::HashSet<String>,
+    ) -> SessionCapabilityFuture<'a, std::collections::HashSet<String>>;
+
     /// Evaluate one auto-approved action with the runtime safety monitor.
     fn monitor_auto_approved_action<'a>(
         &'a self,
@@ -1203,6 +1305,94 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
         turn: &'a dyn ThreadTurnCapability,
         item: codex_protocol::items::TurnItem,
     ) -> SessionCapabilityFuture<'a, ()>;
+
+    /// Emit one started response item display event.
+    fn emit_model_item_started_display_event<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        item: &'a ResponseItem,
+    ) -> SessionCapabilityFuture<'a, ()>;
+
+    /// Emit one terminal interaction event.
+    fn send_terminal_interaction<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        event: codex_protocol::protocol::TerminalInteractionEvent,
+    ) -> SessionCapabilityFuture<'a, ()>;
+
+    /// Request approval for one unified exec invocation.
+    #[allow(clippy::too_many_arguments)]
+    fn request_unified_exec_approval<'a>(
+        &'a self,
+        turn: &'a dyn ThreadRuntimeCapability,
+        call_id: String,
+        command: Vec<String>,
+        cwd: AbsolutePathBuf,
+        reason: Option<String>,
+        sandbox_permissions: codex_protocol::models::SandboxPermissions,
+        tty: bool,
+        network_approval_context: Option<NetworkApprovalContext>,
+        proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
+        additional_permissions: Option<AdditionalPermissionProfile>,
+        cache_keys: Vec<UnifiedExecApprovalKey>,
+    ) -> SessionCapabilityFuture<'a, ReviewDecision>;
+
+    /// Remove one in-flight network approval registration.
+    fn unregister_network_approval<'a>(
+        &'a self,
+        registration_id: &'a str,
+    ) -> SessionCapabilityFuture<'a, ()>;
+
+    /// Snapshot persisted code-mode values visible to the current session.
+    fn code_mode_stored_values(
+        &self,
+    ) -> SessionCapabilityFuture<'_, HashMap<String, serde_json::Value>>;
+
+    /// Replace the persisted code-mode values for the current session.
+    fn code_mode_replace_stored_values(
+        &self,
+        values: HashMap<String, serde_json::Value>,
+    ) -> SessionCapabilityFuture<'_, ()>;
+
+    /// Allocate a new runtime cell id before starting a code-mode execution.
+    fn code_mode_allocate_cell_id(&self) -> String;
+
+    /// Execute one code-mode request.
+    fn code_mode_execute(
+        &self,
+        request: ExecuteRequest,
+    ) -> SessionCapabilityFuture<'_, Result<RuntimeResponse, String>>;
+
+    /// Wait for one bounded code-mode runtime update.
+    fn code_mode_wait(
+        &self,
+        request: WaitRequest,
+    ) -> SessionCapabilityFuture<'_, Result<WaitOutcome, String>>;
+
+    /// Record the start of one code cell trace.
+    fn record_code_mode_cell_started(
+        &self,
+        turn: &dyn ThreadRuntimeCapability,
+        runtime_cell_id: &str,
+        model_visible_call_id: &str,
+        source_js: &str,
+    );
+
+    /// Record the first runtime response for one code cell trace.
+    fn record_code_mode_cell_initial_response(
+        &self,
+        turn: &dyn ThreadRuntimeCapability,
+        runtime_cell_id: &str,
+        response: &RuntimeResponse,
+    );
+
+    /// Record the terminal runtime response for one code cell trace.
+    fn record_code_mode_cell_ended(
+        &self,
+        turn: &dyn ThreadRuntimeCapability,
+        runtime_cell_id: &str,
+        response: &RuntimeResponse,
+    );
 }
 
 /// Common turn-runtime capability shared by tool services that need active turn
@@ -1236,8 +1426,56 @@ pub trait ThreadRuntimeCapability: ThreadCapability + ThreadTurnCapability {
     /// Whether approvals for this turn route through guardian.
     fn routes_approval_to_guardian(&self) -> bool;
 
+    /// Current exec policy snapshot visible to the active turn.
+    fn current_exec_policy(&self) -> std::sync::Arc<codex_execpolicy_api::Policy>;
+
     /// Shell environment policy configured for this turn.
     fn shell_environment_policy(&self) -> codex_protocol::config_types::ShellEnvironmentPolicy;
+
+    /// Runtime shell resolved from the owning session shell configuration.
+    fn runtime_shell(&self) -> RuntimeShell;
+
+    /// Tool-facing shell type derived from the owning session shell.
+    fn tool_user_shell_type(&self) -> codex_tool_config::ToolUserShellType;
+
+    /// Optionally emit one implicit skill invocation derived from exec command input.
+    fn maybe_emit_implicit_skill_invocation<'a>(
+        &'a self,
+        command: &'a str,
+        workdir: &'a AbsolutePathBuf,
+    ) -> SessionCapabilityFuture<'a, ()>;
+
+    /// Whether exec permission approvals are enabled for this turn/session.
+    fn exec_permission_approvals_enabled(&self) -> bool;
+
+    /// Whether request-permissions tool flow is enabled for this turn/session.
+    fn request_permissions_tool_enabled(&self) -> bool;
+
+    /// Resolve one model-provided shell path into runtime shell metadata.
+    fn resolve_model_shell(&self, shell: &Path) -> RuntimeShell;
+
+    /// Resolve one shell command into the runtime exec argv.
+    fn resolve_exec_command(
+        &self,
+        command: &str,
+        login: Option<bool>,
+        model_shell: Option<&RuntimeShell>,
+    ) -> Result<ResolvedExecCommand, String>;
+
+    /// Environment overrides applied to shell execution.
+    fn shell_env_overrides(&self) -> HashMap<String, String>;
+
+    /// Resolve the effective shell workdir for one command request.
+    fn resolve_shell_workdir(&self, workdir: Option<String>) -> AbsolutePathBuf;
+
+    /// Resolve one user-supplied local path using the active turn's path semantics.
+    fn resolve_turn_path(&self, path: Option<String>) -> AbsolutePathBuf;
+
+    /// Start one managed-network approval for a command tool invocation.
+    fn begin_tool_network_approval<'a>(
+        &'a self,
+        spec: Option<NetworkApprovalSpec<ToolRuntimeNetworkApprovalTrigger>>,
+    ) -> SessionCapabilityFuture<'a, Option<Arc<dyn ToolRuntimeNetworkApprovalHandle>>>;
 
     /// Unified exec shell mode configured for this turn.
     fn unified_exec_shell_mode(&self) -> codex_tool_config::UnifiedExecShellMode;
@@ -1300,8 +1538,70 @@ where
         self.as_ref().routes_approval_to_guardian()
     }
 
+    fn current_exec_policy(&self) -> std::sync::Arc<codex_execpolicy_api::Policy> {
+        self.as_ref().current_exec_policy()
+    }
+
     fn shell_environment_policy(&self) -> codex_protocol::config_types::ShellEnvironmentPolicy {
         self.as_ref().shell_environment_policy()
+    }
+
+    fn runtime_shell(&self) -> RuntimeShell {
+        self.as_ref().runtime_shell()
+    }
+
+    fn tool_user_shell_type(&self) -> codex_tool_config::ToolUserShellType {
+        self.as_ref().tool_user_shell_type()
+    }
+
+    fn maybe_emit_implicit_skill_invocation<'a>(
+        &'a self,
+        command: &'a str,
+        workdir: &'a AbsolutePathBuf,
+    ) -> SessionCapabilityFuture<'a, ()> {
+        self.as_ref()
+            .maybe_emit_implicit_skill_invocation(command, workdir)
+    }
+
+    fn exec_permission_approvals_enabled(&self) -> bool {
+        self.as_ref().exec_permission_approvals_enabled()
+    }
+
+    fn request_permissions_tool_enabled(&self) -> bool {
+        self.as_ref().request_permissions_tool_enabled()
+    }
+
+    fn resolve_model_shell(&self, shell: &Path) -> RuntimeShell {
+        self.as_ref().resolve_model_shell(shell)
+    }
+
+    fn resolve_exec_command(
+        &self,
+        command: &str,
+        login: Option<bool>,
+        model_shell: Option<&RuntimeShell>,
+    ) -> Result<ResolvedExecCommand, String> {
+        self.as_ref()
+            .resolve_exec_command(command, login, model_shell)
+    }
+
+    fn shell_env_overrides(&self) -> HashMap<String, String> {
+        self.as_ref().shell_env_overrides()
+    }
+
+    fn resolve_shell_workdir(&self, workdir: Option<String>) -> AbsolutePathBuf {
+        self.as_ref().resolve_shell_workdir(workdir)
+    }
+
+    fn resolve_turn_path(&self, path: Option<String>) -> AbsolutePathBuf {
+        self.as_ref().resolve_turn_path(path)
+    }
+
+    fn begin_tool_network_approval<'a>(
+        &'a self,
+        spec: Option<NetworkApprovalSpec<ToolRuntimeNetworkApprovalTrigger>>,
+    ) -> SessionCapabilityFuture<'a, Option<Arc<dyn ToolRuntimeNetworkApprovalHandle>>> {
+        self.as_ref().begin_tool_network_approval(spec)
     }
 
     fn unified_exec_shell_mode(&self) -> codex_tool_config::UnifiedExecShellMode {
@@ -1331,143 +1631,11 @@ where
 
 }
 
-/// Session-owned code-mode capability consumed by code-mode tool handlers.
-///
-/// Implementations own the runtime service, persisted code-mode values, and
-/// rollout trace updates for code cell lifecycle events. Tool-domain code calls
-/// this contract through [`SessionCodeModeHost`] instead of depending on a
-/// broader runtime host implementation.
-pub trait SessionCodeModeCaller: Send + Sync + 'static {
-    /// Snapshot persisted code-mode values visible to the current session.
-    fn code_mode_stored_values(
-        &self,
-    ) -> impl Future<Output = HashMap<String, serde_json::Value>> + Send + '_;
-
-    /// Replace the persisted code-mode values for the current session.
-    fn code_mode_replace_stored_values(
-        &self,
-        values: HashMap<String, serde_json::Value>,
-    ) -> impl Future<Output = ()> + Send + '_;
-
-    /// Allocate a new runtime cell id before starting a code-mode execution.
-    fn code_mode_allocate_cell_id(&self) -> String;
-
-    /// Execute one code-mode request.
-    fn code_mode_execute(
-        &self,
-        request: ExecuteRequest,
-    ) -> impl Future<Output = Result<RuntimeResponse, String>> + Send + '_;
-
-    /// Wait for one bounded code-mode runtime update.
-    fn code_mode_wait(
-        &self,
-        request: WaitRequest,
-    ) -> impl Future<Output = Result<WaitOutcome, String>> + Send + '_;
-
-    /// Record the start of one code cell trace.
-    fn record_code_mode_cell_started(
-        &self,
-        turn: &dyn ThreadRuntimeCapability,
-        runtime_cell_id: &str,
-        model_visible_call_id: &str,
-        source_js: &str,
-    );
-
-    /// Record the first runtime response for one code cell trace.
-    fn record_code_mode_cell_initial_response(
-        &self,
-        turn: &dyn ThreadRuntimeCapability,
-        runtime_cell_id: &str,
-        response: &RuntimeResponse,
-    );
-
-    /// Record the terminal runtime response for one code cell trace.
-    fn record_code_mode_cell_ended(
-        &self,
-        turn: &dyn ThreadRuntimeCapability,
-        runtime_cell_id: &str,
-        response: &RuntimeResponse,
-    );
-}
-
-impl<Session> SessionCodeModeCaller for Arc<Session>
-where
-    Session: SessionCodeModeCaller,
-{
-    fn code_mode_stored_values(
-        &self,
-    ) -> impl Future<Output = HashMap<String, serde_json::Value>> + Send + '_ {
-        self.as_ref().code_mode_stored_values()
-    }
-
-    fn code_mode_replace_stored_values(
-        &self,
-        values: HashMap<String, serde_json::Value>,
-    ) -> impl Future<Output = ()> + Send + '_ {
-        self.as_ref().code_mode_replace_stored_values(values)
-    }
-
-    fn code_mode_allocate_cell_id(&self) -> String {
-        self.as_ref().code_mode_allocate_cell_id()
-    }
-
-    fn code_mode_execute(
-        &self,
-        request: ExecuteRequest,
-    ) -> impl Future<Output = Result<RuntimeResponse, String>> + Send + '_ {
-        self.as_ref().code_mode_execute(request)
-    }
-
-    fn code_mode_wait(
-        &self,
-        request: WaitRequest,
-    ) -> impl Future<Output = Result<WaitOutcome, String>> + Send + '_ {
-        self.as_ref().code_mode_wait(request)
-    }
-
-    fn record_code_mode_cell_started(
-        &self,
-        turn: &dyn ThreadRuntimeCapability,
-        runtime_cell_id: &str,
-        model_visible_call_id: &str,
-        source_js: &str,
-    ) {
-        self.as_ref().record_code_mode_cell_started(
-            turn,
-            runtime_cell_id,
-            model_visible_call_id,
-            source_js,
-        );
-    }
-
-    fn record_code_mode_cell_initial_response(
-        &self,
-        turn: &dyn ThreadRuntimeCapability,
-        runtime_cell_id: &str,
-        response: &RuntimeResponse,
-    ) {
-        self.as_ref()
-            .record_code_mode_cell_initial_response(turn, runtime_cell_id, response);
-    }
-
-    fn record_code_mode_cell_ended(
-        &self,
-        turn: &dyn ThreadRuntimeCapability,
-        runtime_cell_id: &str,
-        response: &RuntimeResponse,
-    ) {
-        self.as_ref()
-            .record_code_mode_cell_ended(turn, runtime_cell_id, response);
-    }
-}
-
 /// Session-owned agent-job capability consumed by CSV agent-job tools.
 ///
 /// Implementations own state DB access, subagent spawning, worker lifecycle,
 /// and status subscriptions.
 pub trait SessionAgentJobCaller: Send + Sync + 'static {
-    type SpawnConfig: Clone + Send + Sync + 'static;
-
     /// Return the state DB runtime if this session supports agent jobs.
     fn agent_job_state_db(&self) -> Option<SharedStateDbRuntime>;
 
@@ -1479,44 +1647,40 @@ pub trait SessionAgentJobCaller: Send + Sync + 'static {
         self: Arc<Self>,
         turn: &dyn ThreadRuntimeCapability,
         requested_concurrency: Option<usize>,
-    ) -> impl Future<Output = Result<AgentJobRunnerOptions<Self::SpawnConfig>, FunctionCallError>>
-    + Send
-    + '_;
+    ) -> SessionCapabilityFuture<'_, Result<AgentJobRunnerOptions<AgentJobSpawnConfig>, FunctionCallError>>;
 
     /// Spawn one agent-job worker.
     fn spawn_agent_job_worker<'a>(
         self: Arc<Self>,
         turn: &'a dyn ThreadRuntimeCapability,
-        spawn_config: Self::SpawnConfig,
+        spawn_config: AgentJobSpawnConfig,
         job_id: &'a str,
         prompt: String,
-    ) -> impl Future<Output = Result<ThreadId, AgentJobSpawnWorkerError>> + Send + 'a;
+    ) -> SessionCapabilityFuture<'a, Result<ThreadId, AgentJobSpawnWorkerError>>;
 
     /// Shutdown one worker thread.
     fn shutdown_agent_job_worker(
         self: Arc<Self>,
         thread_id: ThreadId,
-    ) -> impl Future<Output = ()> + Send;
+    ) -> SessionCapabilityFuture<'static, ()>;
 
     /// Read one worker status.
     fn get_agent_job_worker_status(
         self: Arc<Self>,
         thread_id: ThreadId,
-    ) -> impl Future<Output = AgentStatus> + Send;
+    ) -> SessionCapabilityFuture<'static, AgentStatus>;
 
     /// Subscribe to worker status changes.
     fn subscribe_agent_job_worker_status(
         self: Arc<Self>,
         thread_id: ThreadId,
-    ) -> impl Future<Output = Option<watch::Receiver<AgentStatus>>> + Send;
+    ) -> SessionCapabilityFuture<'static, Option<watch::Receiver<AgentStatus>>>;
 }
 
 impl<Session> SessionAgentJobCaller for Arc<Session>
 where
     Session: SessionAgentJobCaller,
 {
-    type SpawnConfig = <Session as SessionAgentJobCaller>::SpawnConfig;
-
     fn agent_job_state_db(&self) -> Option<SharedStateDbRuntime> {
         self.as_ref().agent_job_state_db()
     }
@@ -1529,40 +1693,38 @@ where
         self: Arc<Self>,
         turn: &dyn ThreadRuntimeCapability,
         requested_concurrency: Option<usize>,
-    ) -> impl Future<Output = Result<AgentJobRunnerOptions<Self::SpawnConfig>, FunctionCallError>>
-    + Send
-    + '_ {
+    ) -> SessionCapabilityFuture<'_, Result<AgentJobRunnerOptions<AgentJobSpawnConfig>, FunctionCallError>> {
         Arc::clone(self.as_ref()).build_agent_job_runner_options(turn, requested_concurrency)
     }
 
     fn spawn_agent_job_worker<'a>(
         self: Arc<Self>,
         turn: &'a dyn ThreadRuntimeCapability,
-        spawn_config: Self::SpawnConfig,
+        spawn_config: AgentJobSpawnConfig,
         job_id: &'a str,
         prompt: String,
-    ) -> impl Future<Output = Result<ThreadId, AgentJobSpawnWorkerError>> + Send + 'a {
+    ) -> SessionCapabilityFuture<'a, Result<ThreadId, AgentJobSpawnWorkerError>> {
         Arc::clone(self.as_ref()).spawn_agent_job_worker(turn, spawn_config, job_id, prompt)
     }
 
     fn shutdown_agent_job_worker(
         self: Arc<Self>,
         thread_id: ThreadId,
-    ) -> impl Future<Output = ()> + Send {
+    ) -> SessionCapabilityFuture<'static, ()> {
         Arc::clone(self.as_ref()).shutdown_agent_job_worker(thread_id)
     }
 
     fn get_agent_job_worker_status(
         self: Arc<Self>,
         thread_id: ThreadId,
-    ) -> impl Future<Output = AgentStatus> + Send {
+    ) -> SessionCapabilityFuture<'static, AgentStatus> {
         Arc::clone(self.as_ref()).get_agent_job_worker_status(thread_id)
     }
 
     fn subscribe_agent_job_worker_status(
         self: Arc<Self>,
         thread_id: ThreadId,
-    ) -> impl Future<Output = Option<watch::Receiver<AgentStatus>>> + Send {
+    ) -> SessionCapabilityFuture<'static, Option<watch::Receiver<AgentStatus>>> {
         Arc::clone(self.as_ref()).subscribe_agent_job_worker_status(thread_id)
     }
 }

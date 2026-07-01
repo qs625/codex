@@ -2,7 +2,6 @@ use crate::app_server_session::AppServerSession;
 use crate::external_agent_config_migration::ExternalAgentConfigMigrationOutcome;
 use crate::external_agent_config_migration::run_external_agent_config_migration_prompt;
 use crate::legacy_core::config::Config;
-use crate::legacy_core::config::ConfigBuilder;
 use crate::legacy_core::config::ConfigOverrides;
 use crate::legacy_core::config::edit::ConfigEdit;
 use crate::legacy_core::config::edit::ConfigEditsBuilder;

@@ -3,28 +3,17 @@ use std::time::Duration;
 
 use codex_async_utils::CancelErr;
 use codex_async_utils::OrCancelExt;
-#[cfg(target_os = "macos")]
-use codex_network_proxy_api::CODEX_PROXY_GIT_SSH_COMMAND_MARKER;
-use codex_network_proxy_api::PROXY_ACTIVE_ENV_KEY;
-use codex_network_proxy_api::PROXY_ENV_KEYS;
-#[cfg(target_os = "macos")]
-use codex_network_proxy_api::PROXY_GIT_SSH_COMMAND_ENV_KEY;
 use codex_protocol::user_input::UserInput;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 use uuid::Uuid;
 
-use crate::runtime_shell::maybe_wrap_shell_lc_with_snapshot;
 use crate::session::turn_context::TurnContext;
 use crate::state::TaskKind;
 use crate::tool_output_utils::format_exec_output_str;
 use crate::turn_timing::now_unix_timestamp_ms;
 use crate::user_shell_command::user_shell_command_record_item;
-use codex_command_service::create_env;
-use codex_command_service::execute_exec_request;
-use codex_command_service::ExecCapturePolicy;
-use codex_command_service::ExecRequest;
-use codex_command_service::StdoutStream;
+use codex_command_service_api::UserShellRunRequest;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::exec_output::StreamOutput;
 use codex_protocol::protocol::EventMsg;
@@ -33,13 +22,11 @@ use codex_protocol::protocol::ExecCommandEndEvent;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_protocol::protocol::ExecCommandStatus;
 use codex_protocol::protocol::TurnStartedEvent;
-use codex_sandboxing_api::SandboxType;
 use codex_shell_utils::parse_command::parse_command;
 
 use super::SessionTask;
 use super::SessionTaskContext;
 use crate::session::session::Session;
-use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 
@@ -129,31 +116,6 @@ pub(crate) async fn execute_user_shell_command(
     let use_login_shell = true;
     let session_shell = session.user_shell();
     let display_command = session_shell.derive_exec_args(&command, use_login_shell);
-    let mut exec_env_map = create_env(
-        &turn_context.shell_environment_policy,
-        Some(session.conversation_id),
-    );
-    if exec_env_map.contains_key(PROXY_ACTIVE_ENV_KEY) {
-        for key in PROXY_ENV_KEYS {
-            exec_env_map.remove(*key);
-        }
-        #[cfg(target_os = "macos")]
-        if exec_env_map
-            .get(PROXY_GIT_SSH_COMMAND_ENV_KEY)
-            .is_some_and(|value| value.starts_with(CODEX_PROXY_GIT_SSH_COMMAND_MARKER))
-        {
-            exec_env_map.remove(PROXY_GIT_SSH_COMMAND_ENV_KEY);
-        }
-    }
-    let exec_command = maybe_wrap_shell_lc_with_snapshot(
-        &display_command,
-        session_shell.as_ref(),
-        #[allow(deprecated)]
-        &turn_context.cwd,
-        &turn_context.shell_environment_policy.r#set,
-        &exec_env_map,
-    );
-
     let call_id = Uuid::new_v4().to_string();
     let raw_command = command;
     #[allow(deprecated)]
@@ -179,31 +141,26 @@ pub(crate) async fn execute_user_shell_command(
         )
         .await;
 
-    let permission_profile = PermissionProfile::Disabled;
-    let exec_env = ExecRequest::new(
-        exec_command.clone(),
-        cwd.clone(),
-        exec_env_map,
-        /*network*/ None,
-        USER_SHELL_TIMEOUT_MS.into(),
-        ExecCapturePolicy::ShellTool,
-        SandboxType::None,
-        turn_context.windows_sandbox_level,
-        turn_context
-            .config
-            .permissions
-            .windows_sandbox_private_desktop,
-        permission_profile,
-        /*arg0*/ None,
-    );
-
-    let stdout_stream = Some(StdoutStream {
-        sub_id: turn_context.sub_id.clone(),
-        call_id: call_id.clone(),
-        tx_event: session.get_tx_event(),
-    });
-
-    let exec_result = execute_exec_request(exec_env, stdout_stream, /*after_spawn*/ None)
+    let exec_result = session
+        .services
+        .command_service_api
+        .run_user_shell_command(UserShellRunRequest {
+            command: raw_command.clone(),
+            call_id: call_id.clone(),
+            turn_id: turn_context.sub_id.clone(),
+            thread_id: session.conversation_id,
+            cwd: cwd.clone(),
+            session_shell: session_shell.as_ref().to_runtime_shell(),
+            shell_environment_policy: turn_context.shell_environment_policy.clone(),
+            shell_env_overrides: turn_context.shell_environment_policy.r#set.clone(),
+            windows_sandbox_level: turn_context.windows_sandbox_level,
+            windows_sandbox_private_desktop: turn_context
+                .config
+                .permissions
+                .windows_sandbox_private_desktop,
+            timeout_ms: USER_SHELL_TIMEOUT_MS,
+            tx_event: session.get_tx_event(),
+        })
         .or_cancel(&cancellation_token)
         .await;
 

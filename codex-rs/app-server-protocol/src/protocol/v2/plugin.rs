@@ -14,11 +14,11 @@ use serde::Serialize;
 use std::path::PathBuf;
 use ts_rs::TS;
 
-pub use codex_plugin_types::PluginAuthPolicy;
-pub use codex_plugin_types::PluginAvailability;
-pub use codex_plugin_types::PluginInstallPolicy;
-pub use codex_plugin_types::PluginInterface;
-pub use codex_plugin_types::SkillInterface;
+pub use plugin_service_api::PluginAuthPolicy;
+pub use plugin_service_api::PluginAvailability;
+pub use plugin_service_api::PluginInstallPolicy;
+pub use plugin_service_api::PluginInterface;
+pub use plugin_service_api::SkillInterface;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]

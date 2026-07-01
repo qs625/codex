@@ -13,20 +13,14 @@ doctest = false
 workspace = true
 
 [dependencies]
-thread-service = { workspace = true }
 codex-extension-api = { workspace = true }
 codex-features = { workspace = true }
-codex-memories-read = { workspace = true }
-codex-tool-types = { workspace = true }
+memory-service = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
-codex-utils-output-truncation = { workspace = true }
-schemars = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true, features = ["fs"] }
+thread-service = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+serde_json = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["fs", "macros"] }

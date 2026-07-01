@@ -55,7 +55,6 @@
 //!
 pub(crate) mod escalate_client;
 pub(crate) mod escalate_protocol;
-pub(crate) mod escalate_server;
 pub(crate) mod socket;
 
 pub use self::escalate_client::run_shell_escalation_execve_wrapper;

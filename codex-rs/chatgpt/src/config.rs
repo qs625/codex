@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use codex_auth_types::AuthManagerConfig;
 use codex_config_types::AuthCredentialsStoreMode;
-use codex_core_plugins_api::PluginsConfigInput;
+use plugin_service_api::PluginsConfigInput;
 use codex_login::CodexAuth;
 
 /// Resolved ChatGPT backend settings required by this crate.

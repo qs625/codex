@@ -85,7 +85,7 @@ use tokio::time::timeout;
 
 use crate::ThreadAuthRuntimes;
 #[cfg(any(test, feature = "test-support"))]
-use crate::ThreadRuntimeSession;
+use crate::ThreadSession;
 use crate::ThreadService;
 #[cfg(any(test, feature = "test-support"))]
 use crate::ThreadTurnContext;
@@ -438,7 +438,7 @@ async fn build_test_config(codex_home: &Path) -> Config {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-pub async fn make_session_and_context() -> (Arc<ThreadRuntimeSession>, Arc<ThreadTurnContext>) {
+pub async fn make_session_and_context() -> (Arc<ThreadSession>, Arc<ThreadTurnContext>) {
     make_session_and_context_with(None, |_config| {}).await
 }
 
@@ -446,7 +446,7 @@ pub async fn make_session_and_context() -> (Arc<ThreadRuntimeSession>, Arc<Threa
 pub async fn make_session_and_context_with<F>(
     session_source: Option<SessionSource>,
     configure_config: F,
-) -> (Arc<ThreadRuntimeSession>, Arc<ThreadTurnContext>)
+) -> (Arc<ThreadSession>, Arc<ThreadTurnContext>)
 where
     F: FnOnce(&mut Config),
 {
@@ -463,7 +463,7 @@ async fn make_session_and_context_with_auth<F>(
     auth: CodexAuth,
     session_source: Option<SessionSource>,
     configure_config: F,
-) -> (Arc<ThreadRuntimeSession>, Arc<ThreadTurnContext>)
+) -> (Arc<ThreadSession>, Arc<ThreadTurnContext>)
 where
     F: FnOnce(&mut Config),
 {
@@ -504,6 +504,8 @@ where
         /*attestation_provider*/ None,
         model_provider_factory_for_tests(),
         Arc::new(DisabledCodeModeRuntimeFactory),
+        Arc::new(codex_command_service::CommandService::new()),
+        Arc::new(approval_service::ApprovalService),
         Arc::new(goal_service::GoalService),
         Arc::new(DisabledToolServiceForTests),
         Arc::new(mcp_service::McpService::new(Arc::new(approval_service::ApprovalService))),

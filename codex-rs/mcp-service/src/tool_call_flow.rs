@@ -441,14 +441,14 @@ mod tests {
         async fn cached_accessible_connectors(
             &self,
             _auth_snapshot: Option<&codex_auth_types::RequestAuthSnapshot>,
-        ) -> Option<Vec<codex_connectors_types::AppInfo>> {
+        ) -> Option<Vec<codex_connectors_api::AppInfo>> {
             None
         }
 
         async fn fetch_accessible_connectors(
             &self,
             _auth_snapshot: Option<&codex_auth_types::RequestAuthSnapshot>,
-        ) -> anyhow::Result<Vec<codex_connectors_types::AppInfo>> {
+        ) -> anyhow::Result<Vec<codex_connectors_api::AppInfo>> {
             Ok(Vec::new())
         }
     }

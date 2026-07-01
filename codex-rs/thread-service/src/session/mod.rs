@@ -20,7 +20,6 @@ use crate::agent::agent_status_from_event;
 use crate::agent::status::is_final;
 use crate::build_available_skills;
 use crate::compact;
-use crate::connectors;
 use crate::context_usage::build_thread_context_usage;
 use crate::context_usage::build_thread_context_usage_from_history;
 use crate::default_skill_metadata_budget;
@@ -78,7 +77,6 @@ use codex_features::FEATURES;
 use codex_features::Feature;
 use codex_features::unstable_features_warning_event;
 use codex_file_system::FileSystemSandboxContext;
-use codex_file_system::LOCAL_FS;
 use codex_hooks::PreToolUseHookResult;
 use codex_hooks::record_additional_contexts;
 use codex_hooks::run_post_tool_use_hooks;
@@ -203,7 +201,6 @@ use codex_config_types::ConfigLayerSource;
 use codex_context_manager::ContextManager;
 use codex_context_manager::PreviousTurnSettingsView;
 use codex_context_manager::SettingsUpdateInput;
-use codex_context_manager::TotalTokenUsageBreakdown;
 use codex_model_client::ModelClient;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
@@ -259,13 +256,14 @@ fn previous_turn_settings_view(
 #[cfg(test)]
 use crate::SkillLoadOutcome;
 #[cfg(test)]
-use crate::SkillMetadata;
+use crate::skills::SkillMetadata;
 use crate::agents_md::AgentsMdManager;
 use self::session::approval_review_session_impl::GuardianReviewSessionManager;
-use approval_service::network::NetworkApprovalService;
-use approval_service::network::build_blocked_request_observer;
-use approval_service::network::build_network_policy_decider;
-use approval_service::network_policy::execpolicy_network_rule_amendment;
+use codex_approval_service_api::ApprovalServiceApi;
+use codex_approval_service_api::GuardianReviewDispatch;
+use codex_approval_service_api::execpolicy_network_rule_amendment;
+use codex_approval_service_api::is_guardian_reviewer_source;
+use codex_approval_service_api::routes_approval_to_guardian;
 use crate::rollout::map_session_init_error;
 use crate::runtime_shell_model as shell;
 use crate::runtime_shell_snapshot::ShellSnapshot;
@@ -300,12 +298,11 @@ use codex_context_manager::NetworkRuleSaved;
 use codex_context_manager::PermissionsInstructions;
 use codex_context_manager::PersonalitySpecInstructions;
 use codex_context_manager::UserInstructions;
-use codex_core_plugins_api::PluginLoadOutcome;
-use codex_core_plugins_api::PluginRuntime;
-use codex_core_plugins_api::SharedPluginRuntime;
+use plugin_service_api::PluginRuntime;
+use plugin_service_api::SharedPluginRuntime;
 use codex_core_skills_api::SharedSkillsRuntime;
 use codex_git_info::get_git_repo_root;
-use codex_memories_read_api::SharedMemoryToolDeveloperInstructionsProvider;
+use memory_service_api::SharedMemoryToolDeveloperInstructionsProvider;
 use codex_metrics_api::THREAD_STARTED_METRIC;
 use codex_permissions_runtime::ExecPolicyUpdateError;
 use codex_protocol::config_types::CollaborationMode;
@@ -360,7 +357,6 @@ use codex_trace_context::current_span_w3c_trace_context;
 use codex_trace_context::set_parent_from_w3c_trace_context;
 use codex_turn_items::realtime_text_for_event;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use mcp_service::McpManager;
 
 /// The high-level interface to the Codex system.
 /// It operates as a queue pair where you send submissions and receive events.
@@ -401,11 +397,11 @@ pub(crate) struct CodexSpawnArgs {
     pub(crate) environment_manager: Arc<dyn ExecEnvironmentProvider>,
     pub(crate) skills_manager: SharedSkillsRuntime,
     pub(crate) plugins_manager: SharedPluginRuntime,
-    pub(crate) mcp_manager: Arc<McpManager>,
     pub(crate) mcp_service: Arc<dyn McpServiceApi>,
     pub(crate) mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
     pub(crate) mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
     pub(crate) network_proxy_runtime_factory: SharedNetworkProxyRuntimeFactory,
+    pub(crate) command_service_api: Arc<dyn codex_command_service_api::CommandServiceApi>,
     pub(crate) extensions: Arc<codex_extension_api::ExtensionRegistry<codex_config::Config>>,
     pub(crate) conversation_history: InitialHistory,
     pub(crate) session_source: SessionSource,
@@ -434,8 +430,9 @@ pub(crate) struct CodexSpawnArgs {
     pub(crate) openai_file_uploader: SharedOpenAiFileUploader,
     pub(crate) code_mode_service: Arc<dyn CodeModeRuntimeService>,
     pub(crate) code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+    pub(crate) approval_service: Arc<dyn ApprovalServiceApi>,
     pub(crate) goal_service: Arc<dyn goal_service_api::GoalServiceApi>,
-    pub(crate) tool_service: Arc<crate::CoreToolServiceApi>,
+    pub(crate) tool_service: Arc<crate::ToolServiceApi>,
 }
 
 pub(crate) const INITIAL_SUBMIT_ID: &str = "";
@@ -533,11 +530,11 @@ impl Codex {
             sandbox_runtime,
             skills_manager,
             plugins_manager,
-            mcp_manager,
             mcp_service,
             mcp_auth_runtime,
             mcp_connection_runtime_factory,
             network_proxy_runtime_factory,
+            command_service_api,
             hook_runtime_factory,
             extensions,
             conversation_history,
@@ -563,6 +560,7 @@ impl Codex {
             openai_file_uploader,
             code_mode_service,
             code_mode_runtime_factory,
+            approval_service,
             goal_service,
             tool_service,
             memory_tool_developer_instructions_provider,
@@ -571,9 +569,16 @@ impl Codex {
         let (tx_event, rx_event) = async_channel::unbounded();
         let fs = environment_selections.primary_filesystem();
         let plugins_input = config.plugins_config_input();
-        let plugin_outcome = plugins_manager.plugins_for_config(&plugins_input).await;
-        merge_plugin_agent_roles(&mut config, &plugin_outcome).await;
-        let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
+        merge_plugin_agent_roles_for_config(
+            plugins_manager.as_ref(),
+            &plugins_input,
+            &mut config.agent_roles,
+            &mut config.startup_warnings,
+        )
+        .await;
+        let effective_skill_roots = plugins_manager
+            .effective_skill_roots_for_config(&plugins_input)
+            .await;
         let skills_input = skills_load_input_from_config(&config, effective_skill_roots);
         let loaded_skills = skills_manager.skills_for_config(&skills_input, fs).await;
 
@@ -590,7 +595,7 @@ impl Codex {
             .user_instructions(primary_environment.as_deref())
             .await;
 
-        let exec_policy = if approval_service::guardian::is_guardian_reviewer_source(&session_source) {
+        let exec_policy = if is_guardian_reviewer_source(&session_source) {
             // Guardian review should rely on the built-in shell safety checks,
             // not on caller-provided exec-policy rules that could shape the
             // reviewer or silently auto-approve commands.
@@ -733,7 +738,6 @@ impl Codex {
             session_source_clone,
             skills_manager,
             plugins_manager,
-            mcp_manager.clone(),
             mcp_service,
             mcp_auth_runtime,
             mcp_connection_runtime_factory,
@@ -743,6 +747,7 @@ impl Codex {
             hook_runtime_factory,
             sandbox_runtime,
             network_proxy_runtime_factory,
+            command_service_api,
             extensions,
             agent_control,
             environment_manager,
@@ -756,6 +761,7 @@ impl Codex {
             openai_file_uploader,
             code_mode_service,
             code_mode_runtime_factory,
+            approval_service,
             goal_service,
             tool_service,
         )
@@ -900,30 +906,6 @@ impl Codex {
     }
 }
 
-async fn merge_plugin_agent_roles(config: &mut Config, plugin_outcome: &PluginLoadOutcome) {
-    let plugin_agent_dirs = plugin_outcome
-        .effective_plugin_agent_dirs()
-        .into_iter()
-        .map(|agent_dir| (agent_dir.plugin_id, agent_dir.path))
-        .collect::<Vec<_>>();
-    if plugin_agent_dirs.is_empty() {
-        return;
-    }
-
-    let mut warnings = Vec::new();
-    if let Err(err) = codex_config::agent_roles::merge_missing_agent_roles_from_plugin_dirs(
-        LOCAL_FS.as_ref(),
-        &mut config.agent_roles,
-        &plugin_agent_dirs,
-        &mut warnings,
-    )
-    .await
-    {
-        warn!("failed to load plugin agent definitions: {err}");
-    }
-    config.startup_warnings.extend(warnings);
-}
-
 fn session_permission_profile_state_from_config(
     config: &Config,
 ) -> CodexResult<PermissionProfileState> {
@@ -982,33 +964,6 @@ async fn thread_title_from_thread_store(
     (!title.is_empty() && thread.preview.trim() != title).then(|| title.to_string())
 }
 
-fn tool_user_shell_type_to_core_shell_type(
-    shell_type: &codex_tool_config::ToolUserShellType,
-) -> crate::runtime_shell_model::ShellType {
-    match shell_type {
-        codex_tool_config::ToolUserShellType::Zsh => crate::runtime_shell_model::ShellType::Zsh,
-        codex_tool_config::ToolUserShellType::Bash => crate::runtime_shell_model::ShellType::Bash,
-        codex_tool_config::ToolUserShellType::PowerShell => {
-            crate::runtime_shell_model::ShellType::PowerShell
-        }
-        codex_tool_config::ToolUserShellType::Sh => crate::runtime_shell_model::ShellType::Sh,
-        codex_tool_config::ToolUserShellType::Cmd => crate::runtime_shell_model::ShellType::Cmd,
-    }
-}
-
-struct SessionTurnOpenAiFilePathResolver<'a> {
-    turn_context: &'a TurnContext,
-}
-
-impl mcp_service::OpenAiFilePathResolver for SessionTurnOpenAiFilePathResolver<'_> {
-    fn resolve_path(&self, file_path: &str) -> PathBuf {
-        #[allow(deprecated)]
-        self.turn_context
-            .resolve_path(Some(file_path.to_string()))
-            .to_path_buf()
-    }
-}
-
 impl Session {
     pub(crate) fn thread_id(&self) -> ThreadId {
         self.conversation_id
@@ -1018,40 +973,12 @@ impl Session {
         self.conversation_id.to_string()
     }
 
-    pub(crate) fn derive_shell_exec_args(
-        &self,
-        command: &str,
-        use_login_shell: bool,
-    ) -> Vec<String> {
-        self.user_shell().derive_exec_args(command, use_login_shell)
-    }
-
     pub(crate) fn tool_user_shell_type(&self) -> codex_tool_config::ToolUserShellType {
-        crate::runtime_shell::runtime_shell_type(&self.user_shell().shell_type)
+        self.user_shell().shell_type.tool_user_shell_type()
     }
 
     pub(crate) fn runtime_shell(&self) -> codex_command_service_api::RuntimeShell {
-        let shell = crate::runtime_shell::runtime_shell(self.user_shell().as_ref());
-        codex_command_service_api::RuntimeShell {
-            shell_type: shell.shell_type,
-            shell_path: shell.shell_path,
-            shell_snapshot: shell.shell_snapshot.map(|snapshot| {
-                codex_command_service_api::RuntimeShellSnapshot {
-                    path: snapshot.path,
-                    cwd: snapshot.cwd,
-                }
-            }),
-        }
-    }
-
-    pub(crate) async fn create_exec_approval_requirement(
-        &self,
-        request: codex_permissions_runtime::ExecPolicyApprovalRequest<'_>,
-    ) -> codex_command_service_api::ExecApprovalRequirement {
-        self.services
-            .exec_policy
-            .create_exec_approval_requirement_for_command(request)
-            .await
+        self.user_shell().as_ref().to_runtime_shell()
     }
 
     pub(crate) fn sandbox_runtime(&self) -> codex_sandboxing_api::SharedSandboxRuntime {
@@ -1288,16 +1215,17 @@ impl Session {
         openai_file_input_params: Option<&[String]>,
     ) -> Result<Option<serde_json::Value>, String> {
         let auth = self.services.auth_runtime.auth().await;
-        let path_resolver = SessionTurnOpenAiFilePathResolver { turn_context: turn };
-        mcp_service::rewrite_mcp_tool_arguments_for_openai_files(
-            self.services.openai_file_uploader.as_ref(),
-            auth.as_ref(),
-            turn.chatgpt_base_url(),
-            &path_resolver,
-            arguments_value,
-            openai_file_input_params,
-        )
-        .await
+        self.services
+            .mcp_service
+            .rewrite_tool_arguments_for_openai_files(
+                self.services.openai_file_uploader.as_ref(),
+                auth.as_ref(),
+                turn.chatgpt_base_url(),
+                turn,
+                arguments_value,
+                openai_file_input_params,
+            )
+            .await
     }
 
     pub fn add_optional_mcp_call_trace_request_meta(
@@ -1375,9 +1303,11 @@ impl Session {
         &self,
         server: &str,
         tool_name: &str,
-    ) -> Option<mcp_service::McpAppUsageMetadata> {
+    ) -> Option<mcp_service_api::McpAppUsageMetadata> {
         let tools = self.list_all_mcp_tools().await;
-        mcp_service::lookup_mcp_app_usage_metadata(&tools, server, tool_name)
+        self.services
+            .mcp_service
+            .lookup_app_usage_metadata(&tools, server, tool_name)
     }
 
     pub async fn mcp_tool_approval_is_remembered(
@@ -1396,7 +1326,7 @@ impl Session {
         store.put(key, ReviewDecision::ApprovedForSession);
     }
 
-    pub(crate) fn plugins_manager(&self) -> &dyn codex_core_plugins_api::PluginRuntime {
+    pub(crate) fn plugins_manager(&self) -> &dyn plugin_service_api::PluginRuntime {
         self.services.plugins_manager.as_ref()
     }
 
@@ -1406,29 +1336,33 @@ impl Session {
         server: &str,
         tool_name: &str,
     ) -> codex_config_types::AppToolApproval {
-        mcp_service::custom_mcp_tool_approval_mode(
-            turn.config.as_ref(),
-            self.services.plugins_manager.as_ref(),
-            server,
-            tool_name,
-        )
-        .await
+        self.services
+            .mcp_service
+            .custom_tool_approval_mode(
+                self.services.plugins_manager.as_ref(),
+                turn.config.as_ref(),
+                server,
+                tool_name,
+            )
+            .await
     }
 
     pub async fn fetch_accessible_connectors_from_mcp_tools(
         &self,
         turn: &TurnContext,
         auth_snapshot: Option<&codex_auth_types::RequestAuthSnapshot>,
-    ) -> anyhow::Result<Vec<codex_connectors_types::AppInfo>> {
-        connectors::list_accessible_connectors_from_mcp_tools(
-            turn.config.as_ref(),
-            auth_snapshot,
-            self.services.plugins_manager.as_ref(),
-            self.services.environment_manager.as_ref(),
-            self.services.mcp_auth_runtime.as_ref(),
-            self.services.mcp_connection_runtime_factory.as_ref(),
-        )
-        .await
+    ) -> anyhow::Result<Vec<codex_connectors_api::AppInfo>> {
+        self.services
+            .mcp_service
+            .fetch_accessible_connectors(
+                self.services.plugins_manager.as_ref(),
+                turn.config.as_ref(),
+                auth_snapshot,
+                self.services.environment_manager.as_ref(),
+                self.services.mcp_auth_runtime.as_ref(),
+                self.services.mcp_connection_runtime_factory.as_ref(),
+            )
+            .await
     }
 
     pub async fn persist_codex_app_tool_approval_for_turn(
@@ -1437,7 +1371,10 @@ impl Session {
         connector_id: &str,
         tool_name: &str,
     ) -> anyhow::Result<()> {
-        mcp_service::persist_codex_app_tool_approval(&turn.config, connector_id, tool_name).await
+        self.services
+            .mcp_service
+            .persist_codex_app_tool_approval(turn.config.as_ref(), connector_id, tool_name)
+            .await
     }
 
     pub async fn persist_non_app_mcp_tool_approval_for_turn(
@@ -1446,20 +1383,25 @@ impl Session {
         server: &str,
         tool_name: &str,
     ) -> anyhow::Result<()> {
-        mcp_service::persist_non_app_mcp_tool_approval(
-            &turn.config,
-            self.services.plugins_manager.as_ref(),
-            server,
-            tool_name,
-        )
-        .await
+        self.services
+            .mcp_service
+            .persist_non_app_mcp_tool_approval(
+                self.services.plugins_manager.as_ref(),
+                turn.config.as_ref(),
+                server,
+                tool_name,
+            )
+            .await
     }
 
     pub(crate) async fn configured_mcp_servers(
         &self,
         config: &Config,
     ) -> HashMap<String, codex_config_types::McpServerConfig> {
-        self.services.mcp_manager.configured_servers(config).await
+        self.services
+            .mcp_service
+            .configured_servers(self.services.plugins_manager.as_ref(), config)
+            .await
     }
 
     pub(crate) async fn mcp_oauth_login_support(
@@ -1621,8 +1563,6 @@ impl Session {
             .run_exec_command(
                 Arc::clone(self)
                     as Arc<dyn thread_service_api::ThreadSessionCapability>,
-                Arc::clone(self)
-                    as Arc<dyn codex_command_service_api::CommandServiceSessionApi>,
                 turn as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                 call_id,
                 request,
@@ -1865,11 +1805,6 @@ impl Session {
     pub(crate) async fn get_total_token_usage(&self) -> i64 {
         let state = self.state.lock().await;
         state.get_total_token_usage(state.server_reasoning_included())
-    }
-
-    pub(crate) async fn get_total_token_usage_breakdown(&self) -> TotalTokenUsageBreakdown {
-        let state = self.state.lock().await;
-        state.history.get_total_token_usage_breakdown()
     }
 
     pub(crate) async fn total_token_usage(&self) -> Option<TokenUsage> {
@@ -2542,33 +2477,6 @@ impl Session {
         true
     }
 
-    pub(crate) async fn has_active_child_completion_work(&self) -> bool {
-        if self.has_pending_direct_child_completions().await
-            || self.has_queued_response_items_for_next_turn().await
-            || self.has_pending_mailbox_items().await
-            || self
-                .services
-                .command_service_state
-                .has_running_process_for_thread(self.conversation_id)
-                .await
-        {
-            return true;
-        }
-
-        Box::pin(
-            self.services
-                .agent_control
-                .agent_subtree_is_active(self.conversation_id),
-        )
-        .await
-    }
-
-    pub(crate) async fn has_active_post_turn_work(&self) -> bool {
-        self.has_pending_turn_input().await
-            || Box::pin(self.has_incomplete_direct_child()).await
-            || Box::pin(self.has_wait_command()).await
-    }
-
     pub(crate) async fn has_pending_turn_input(&self) -> bool {
         self.has_queued_response_items_for_next_turn().await
             || self.has_pending_mailbox_items().await
@@ -3090,7 +2998,7 @@ impl Session {
 
         let requested_permissions = args.permissions;
 
-        if approval_service::guardian::routes_approval_to_guardian(
+        if routes_approval_to_guardian(
             &turn_context.approval_policy.value(),
             turn_context.config.approvals_reviewer,
         ) {
@@ -3098,29 +3006,28 @@ impl Session {
                 let active = self.active_turn.lock().await;
                 active.as_ref().map(|active| Arc::clone(&active.turn_state))
             };
-            let review_id = approval_service::guardian::new_guardian_review_id();
-            let session = Arc::clone(self);
-            let turn = Arc::clone(turn_context);
             let request = codex_guardian::GuardianApprovalRequest::RequestPermissions {
                 id: call_id,
                 turn_id: turn_context.sub_id.clone(),
                 reason: args.reason,
                 permissions: requested_permissions.clone(),
             };
-            let review_rx = approval_service::guardian::spawn_approval_request_review(
-                session,
-                turn,
-                review_id,
-                request,
-                /*retry_reason*/ None,
-                codex_analytics_api::GuardianApprovalRequestSource::MainTurn,
-                cancellation_token.clone(),
-            );
-            let decision = tokio::select! {
-                biased;
-                _ = cancellation_token.cancelled() => return None,
-                decision = review_rx => decision.unwrap_or(ReviewDecision::Denied),
-            };
+            let decision = self
+                .services
+                .approval_service
+                .review_guardian_request(GuardianReviewDispatch {
+                    session: Arc::clone(self)
+                        as Arc<dyn thread_service_api::ThreadSessionCapability>,
+                    turn: Arc::clone(turn_context)
+                        as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
+                    review_id: uuid::Uuid::new_v4().to_string(),
+                    request,
+                    retry_reason: None,
+                    approval_request_source: codex_analytics_api::GuardianApprovalRequestSource::MainTurn,
+                    cancellation_token: Some(cancellation_token.clone()),
+                })
+                .await
+                .decision;
             let response = match decision {
                 ReviewDecision::Approved | ReviewDecision::ApprovedExecpolicyAmendment { .. } => {
                     RequestPermissionsResponse {
@@ -3599,10 +3506,6 @@ impl Session {
         self.features.enabled(feature)
     }
 
-    pub(crate) fn features(&self) -> ManagedFeatures {
-        self.features.clone()
-    }
-
     pub(crate) async fn collaboration_mode(&self) -> CollaborationMode {
         let state = self.state.lock().await;
         state.session_configuration.collaboration_mode.clone()
@@ -3702,7 +3605,7 @@ impl Session {
             );
         }
         let separate_guardian_developer_message =
-            approval_service::guardian::is_guardian_reviewer_source(&session_source);
+            is_guardian_reviewer_source(&session_source);
         // Keep the guardian policy prompt out of the aggregated developer bundle so it
         // stays isolated as its own top-level developer message for guardian subagents.
         if !separate_guardian_developer_message
@@ -3756,12 +3659,11 @@ impl Session {
         }
         if turn_context.config.include_apps_instructions && turn_context.apps_enabled() {
             let mcp_connection_manager = self.services.mcp_connection_manager.read().await;
-            let accessible_and_enabled_connectors =
-                connectors::list_accessible_and_enabled_connectors_from_manager(
-                    mcp_connection_manager.as_ref(),
-                    &turn_context.config,
-                )
-                .await;
+            let all_mcp_tools = mcp_connection_manager.list_all_tools().await;
+            let accessible_and_enabled_connectors = self
+                .services
+                .mcp_service
+                .list_accessible_and_enabled_connectors(&all_mcp_tools, &turn_context.config);
             if let Some(apps_instructions) =
                 AppsInstructions::from_connectors(&accessible_and_enabled_connectors)
             {
@@ -3803,13 +3705,13 @@ impl Session {
         {
             developer_sections.push(agent_instructions.render());
         }
-        let loaded_plugins = self
+        let plugin_capability_summaries = self
             .services
             .plugins_manager
-            .plugins_for_config(&turn_context.config.plugins_config_input())
+            .capability_summaries_for_config(&turn_context.config.plugins_config_input())
             .await;
         if let Some(plugin_instructions) =
-            AvailablePluginsInstructions::from_plugins(loaded_plugins.capability_summaries())
+            AvailablePluginsInstructions::from_plugins(&plugin_capability_summaries)
         {
             developer_sections.push(plugin_instructions.render());
         }
@@ -4634,17 +4536,15 @@ async fn build_hooks_for_config(
     let mut hook_shell_argv = user_shell.derive_exec_args("", /*use_login_shell*/ false);
     let hook_shell_program = hook_shell_argv.remove(0);
     let _ = hook_shell_argv.pop();
-    let plugin_hooks_enabled = config.features.enabled(Feature::PluginHooks);
-    let (plugin_hook_sources, plugin_hook_load_warnings) = if plugin_hooks_enabled {
-        let plugins_input = config.plugins_config_input();
-        let plugin_outcome = plugins_manager.plugins_for_config(&plugins_input).await;
-        (
-            plugin_outcome.effective_plugin_hook_sources(),
-            plugin_outcome.effective_plugin_hook_warnings(),
-        )
-    } else {
-        (Vec::new(), Vec::new())
-    };
+    let plugins_input = config.plugins_config_input();
+    let (plugin_hook_sources, plugin_hook_load_warnings) =
+        plugins_manager
+            .plugin_hook_sources_for_config(
+                &plugins_input,
+                config.features.enabled(Feature::PluginHooks),
+            )
+            .await;
+
     hook_runtime_factory.create(HooksConfig {
         legacy_notify_argv: config.notify.clone(),
         feature_enabled: config.features.enabled(Feature::CodexHooks),
@@ -4657,6 +4557,35 @@ async fn build_hooks_for_config(
         shell_program: Some(hook_shell_program),
         shell_args: hook_shell_argv,
     })
+}
+
+async fn merge_plugin_agent_roles_for_config(
+    plugins_manager: &dyn PluginRuntime,
+    plugins_input: &plugin_service_api::PluginsConfigInput,
+    agent_roles: &mut std::collections::BTreeMap<String, crate::config::AgentRoleConfig>,
+    startup_warnings: &mut Vec<String>,
+) {
+    let plugin_agent_dirs = plugins_manager.plugin_agent_dirs_for_config(plugins_input).await;
+    if plugin_agent_dirs.is_empty() {
+        return;
+    }
+
+    let plugin_agent_dirs = plugin_agent_dirs
+        .into_iter()
+        .map(|agent_dir| (agent_dir.plugin_id, agent_dir.path))
+        .collect::<Vec<_>>();
+    let mut warnings = Vec::new();
+    if let Err(err) = codex_config::agent_roles::merge_missing_agent_roles_from_plugin_dirs(
+        codex_file_system::LOCAL_FS.as_ref(),
+        agent_roles,
+        &plugin_agent_dirs,
+        &mut warnings,
+    )
+    .await
+    {
+        warn!("failed to load plugin agent definitions: {err}");
+    }
+    startup_warnings.extend(warnings);
 }
 
 #[cfg(test)]

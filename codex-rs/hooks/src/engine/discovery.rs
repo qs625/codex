@@ -10,7 +10,7 @@ use codex_config_types::HooksFile;
 use codex_config_types::ManagedHooksRequirementsToml;
 use codex_config_types::MatcherGroup;
 use codex_config_types::RequirementSource;
-use codex_plugin_types::PluginHookSource;
+use plugin_service_api::PluginHookSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
 use serde::Serialize;

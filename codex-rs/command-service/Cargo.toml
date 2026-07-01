@@ -14,7 +14,7 @@ workspace = true
 [dependencies]
 anyhow = { workspace = true }
 async-channel = { workspace = true }
-approval-service = { workspace = true }
+codex-approval-service-api = { workspace = true }
 codex-command-service-api = { workspace = true }
 codex-exec-server-api = { workspace = true }
 codex-exec-server-protocol = { workspace = true }

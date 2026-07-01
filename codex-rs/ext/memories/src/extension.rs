@@ -8,12 +8,11 @@ use codex_extension_api::ThreadLifecycleContributor;
 use codex_extension_api::ThreadStartInput;
 use codex_extension_api::ToolContributor;
 use codex_features::Feature;
-use codex_memories_read::build_memory_tool_developer_instructions;
+use memory_service::build_memory_tool_developer_instructions;
+use memory_service::memory_extension_tools;
+use memory_service::LocalMemoriesBackend;
 use thread_service::config::Config;
 use codex_utils_absolute_path::AbsolutePathBuf;
-
-use crate::local::LocalMemoriesBackend;
-use crate::tools;
 
 /// Contributes Codex memory read-path prompt context and memory read tools.
 #[derive(Clone, Copy, Debug, Default)]
@@ -71,7 +70,7 @@ impl ToolContributor for MemoriesExtension {
             return Vec::new();
         }
 
-        tools::memory_tools(LocalMemoriesBackend::from_codex_home(&config.codex_home))
+        memory_extension_tools(LocalMemoriesBackend::from_codex_home(&config.codex_home))
     }
 }
 

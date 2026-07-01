@@ -1,4 +1,4 @@
-use codex_memories_read_api::citations::parse_memory_citation;
+use memory_service_api::citations::parse_memory_citation;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
 use codex_protocol::items::TurnItem;

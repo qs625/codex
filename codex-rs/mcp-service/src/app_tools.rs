@@ -2,7 +2,7 @@ use codex_config::Config;
 use codex_config_requirements::AppsRequirementsToml;
 use codex_config_types::AppToolApproval;
 use codex_config_types::AppsConfigToml;
-use codex_connectors_types::AppInfo;
+use codex_connectors_api::AppInfo;
 use codex_mcp_tool_types::ToolAnnotations;
 use codex_mcp_tool_types::ToolInfo;
 use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;

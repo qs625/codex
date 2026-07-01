@@ -128,19 +128,6 @@ impl TurnContext {
             .expect("TurnContext self_weak must be initialized")
     }
 
-    pub(crate) fn primary_apply_patch_environment(
-        &self,
-    ) -> Option<codex_sandboxing_api::ResolvedApplyPatchEnvironment> {
-        self.environments.primary().map(|turn_environment| {
-            codex_sandboxing_api::ResolvedApplyPatchEnvironment {
-                cwd: turn_environment.cwd.clone(),
-                environment: crate::apply_patch_environment::CoreApplyPatchEnvironment::new(
-                    turn_environment.clone(),
-                ),
-            }
-        })
-    }
-
     pub(crate) fn resolve_apply_patch_environment(
         &self,
         environment_id: Option<&str>,
@@ -448,32 +435,6 @@ impl TurnContext {
         }
     }
 
-    pub fn mcp_approval_review_context<'a>(
-        &'a self,
-        thread_id: &'a str,
-        call_id: &'a str,
-        invocation: &'a codex_protocol::protocol::McpInvocation,
-        hook_tool_name: &'a str,
-        metadata: Option<&'a codex_mcp_types::McpToolApprovalMetadata>,
-        approval_mode: codex_config_types::AppToolApproval,
-        routes_approval_to_guardian: bool,
-    ) -> mcp_service::McpToolApprovalReviewContext<'a> {
-        mcp_service::McpToolApprovalReviewContext {
-            approval_policy: self.approval_policy.value(),
-            permission_profile: &self.permission_profile,
-            approvals_reviewer: self.config.approvals_reviewer,
-            approval_mode,
-            tool_call_mcp_elicitation_enabled: self.tool_call_mcp_elicitation_enabled(),
-            routes_approval_to_guardian,
-            thread_id,
-            turn_id: Some(&self.sub_id),
-            call_id,
-            invocation,
-            hook_tool_name,
-            metadata,
-        }
-    }
-
     pub(crate) fn can_request_original_image_detail(&self) -> bool {
         crate::original_image_detail::can_request_original_image_detail(&self.model_info)
     }
@@ -507,32 +468,6 @@ impl TurnContext {
         }
     }
 
-    pub(crate) fn request_plugin_install_context(
-        &self,
-        thread_id: ThreadId,
-    ) -> codex_tool_service_api::RequestPluginInstallContext {
-        codex_tool_service_api::RequestPluginInstallContext {
-            server_name: codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME.to_string(),
-            thread_id: thread_id.to_string(),
-            turn_id: self.sub_id.clone(),
-            app_server_client_name: self.app_server_client_name.clone(),
-        }
-    }
-
-    pub(crate) fn mcp_skill_dependency_config(&self) -> &Config {
-        self.config.as_ref()
-    }
-
-    pub(crate) fn mcp_skill_dependency_turn_context(
-        &self,
-    ) -> mcp_service::McpSkillDependencyTurnContext<'_> {
-        mcp_service::McpSkillDependencyTurnContext {
-            sub_id: &self.sub_id,
-            approval_policy: self.approval_policy.value(),
-            permission_profile: self.permission_profile(),
-        }
-    }
-
     pub async fn auth_snapshot(&self) -> Option<codex_auth_types::RequestAuthSnapshot> {
         match self.auth_runtime.as_ref() {
             Some(auth_runtime) => auth_runtime.auth().await,
@@ -540,54 +475,26 @@ impl TurnContext {
         }
     }
 
-    pub(crate) fn accessible_connectors_from_mcp_tools(
-        &self,
-        mcp_tools: &[codex_mcp_tool_types::ToolInfo],
-    ) -> Vec<codex_connectors_types::AppInfo> {
-        crate::connectors::with_app_enabled_state(
-            crate::connectors::accessible_connectors_from_mcp_tools(mcp_tools),
-            &self.config,
-        )
-    }
-
     pub fn codex_app_tool_policy(
         &self,
         metadata: Option<&codex_mcp_types::McpToolApprovalMetadata>,
         tool_name: &str,
-    ) -> mcp_service::AppToolPolicy {
-        crate::connectors::app_tool_policy(
-            &self.config,
-            metadata.and_then(|metadata| metadata.connector_id.as_deref()),
-            tool_name,
-            metadata.and_then(|metadata| metadata.tool_title.as_deref()),
-            metadata.and_then(|metadata| metadata.annotations.as_ref()),
-        )
+    ) -> thread_service_api::ThreadAppToolPolicy {
+        self.session_arc()
+            .services
+            .mcp_service
+            .app_tool_policy(&self.config, metadata, tool_name)
     }
 
     pub async fn cached_accessible_connectors_from_mcp_tools(
         &self,
         auth_snapshot: Option<&codex_auth_types::RequestAuthSnapshot>,
-    ) -> Option<Vec<codex_connectors_types::AppInfo>> {
-        crate::connectors::list_cached_accessible_connectors_from_mcp_tools(
-            self.config.as_ref(),
-            auth_snapshot,
-        )
-        .await
-    }
-
-    pub(crate) async fn list_tool_suggest_discoverable_tools_with_auth(
-        &self,
-        plugins_manager: &dyn codex_core_plugins_api::PluginRuntime,
-        connector_auth_context: Option<&codex_mcp_types::CodexAppsAuthContext>,
-        accessible_connectors: &[codex_connectors_types::AppInfo],
-    ) -> anyhow::Result<Vec<codex_tool_types::DiscoverableTool>> {
-        crate::connectors::list_tool_suggest_discoverable_tools_with_auth(
-            &self.config,
-            plugins_manager,
-            connector_auth_context,
-            accessible_connectors,
-        )
-        .await
+    ) -> Option<Vec<codex_connectors_api::AppInfo>> {
+        self.session_arc()
+            .services
+            .mcp_service
+            .list_cached_accessible_connectors(self.config.as_ref(), auth_snapshot)
+            .await
     }
 
     pub fn refresh_accessible_connectors_cache_from_mcp_tools(
@@ -595,15 +502,14 @@ impl TurnContext {
         connector_auth_context: Option<&codex_mcp_types::CodexAppsAuthContext>,
         mcp_tools: &[codex_mcp_tool_types::ToolInfo],
     ) {
-        crate::connectors::refresh_accessible_connectors_cache_from_mcp_tools(
+        self.session_arc()
+            .services
+            .mcp_service
+            .refresh_accessible_connectors_cache(
             &self.config,
             connector_auth_context,
             mcp_tools,
         );
-    }
-
-    pub(crate) fn codex_home(&self) -> &AbsolutePathBuf {
-        &self.config.codex_home
     }
 
     pub(crate) fn chatgpt_base_url(&self) -> &str {
@@ -614,20 +520,12 @@ impl TurnContext {
         self.shell_environment_policy.r#set.clone()
     }
 
-    pub(crate) fn shell_exec_env(&self, thread_id: ThreadId) -> HashMap<String, String> {
-        codex_command_service::create_env(&self.shell_environment_policy, Some(thread_id))
-    }
-
     pub(crate) fn managed_network(&self) -> Option<SharedNetworkProxyRuntime> {
         self.network.clone()
     }
 
     pub(crate) fn windows_sandbox_level(&self) -> WindowsSandboxLevel {
         self.windows_sandbox_level
-    }
-
-    pub(crate) fn windows_sandbox_private_desktop(&self) -> bool {
-        self.config.permissions.windows_sandbox_private_desktop
     }
 
     pub(crate) fn truncation_policy(&self) -> TruncationPolicy {
@@ -1065,7 +963,7 @@ impl Session {
         .with_image_generation_capability(provider_capabilities.image_generation)
         .with_web_search_capability(provider_capabilities.web_search)
         .with_unified_exec_shell_mode_for_session(
-            crate::runtime_shell::runtime_shell_type(&user_shell.shell_type),
+            user_shell.shell_type.tool_user_shell_type(),
             shell_zsh_path,
             main_execve_wrapper_exe,
         )
@@ -1291,13 +1189,18 @@ impl Session {
                 &per_turn_config.to_models_manager_config(),
             )
             .await;
-        let plugin_outcome = self
+        crate::session::merge_plugin_agent_roles_for_config(
+            self.services.plugins_manager.as_ref(),
+            &per_turn_config.plugins_config_input(),
+            &mut per_turn_config.agent_roles,
+            &mut per_turn_config.startup_warnings,
+        )
+        .await;
+        let effective_skill_roots = self
             .services
             .plugins_manager
-            .plugins_for_config(&per_turn_config.plugins_config_input())
+            .effective_skill_roots_for_config(&per_turn_config.plugins_config_input())
             .await;
-        merge_plugin_agent_roles(&mut per_turn_config, &plugin_outcome).await;
-        let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
         let skills_input = skills_load_input_from_config(&per_turn_config, effective_skill_roots);
         let fs = primary_turn_environment
             .map(|turn_environment| turn_environment.environment.get_filesystem());

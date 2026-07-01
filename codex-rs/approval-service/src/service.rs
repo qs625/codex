@@ -12,8 +12,9 @@ use codex_approval_service_api::ExecCommandApprovalDispatch;
 use codex_approval_service_api::ExecCommandApprovalOutcome;
 use codex_approval_service_api::GuardianReviewDispatch;
 use codex_approval_service_api::GuardianReviewResult;
+use codex_approval_service_api::SessionNetworkApprovalApi;
+use codex_approval_service_api::routes_approval_to_guardian;
 use codex_guardian::GuardianApprovalRequest;
-use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::ReviewDecision;
 use thread_service_api::PermissionRequestPayload;
@@ -28,11 +29,7 @@ fn should_use_guardian(
     turn: &dyn ThreadTurnCapability,
     strict_auto_review_enabled: bool,
 ) -> bool {
-    (matches!(
-        turn.approval_policy(),
-        codex_protocol::protocol::AskForApproval::OnRequest
-            | codex_protocol::protocol::AskForApproval::Granular(_)
-    ) && turn.approvals_reviewer() == ApprovalsReviewer::AutoReview)
+    routes_approval_to_guardian(&turn.approval_policy(), turn.approvals_reviewer())
         || strict_auto_review_enabled
 }
 
@@ -91,6 +88,23 @@ where
 }
 
 impl ApprovalServiceApi for ApprovalService {
+    fn create_session_network_approval(&self) -> Arc<dyn SessionNetworkApprovalApi> {
+        Arc::new(crate::network::NetworkApprovalService::default())
+    }
+
+    fn create_exec_approval_requirement<'a>(
+        &'a self,
+        exec_policy: &'a codex_execpolicy_api::Policy,
+        request: codex_permissions_runtime::ExecPolicyApprovalRequest<'a>,
+    ) -> ApprovalServiceFuture<'a, codex_command_service_api::ExecApprovalRequirement> {
+        Box::pin(async move {
+            codex_permissions_runtime::create_exec_approval_requirement_for_command(
+                exec_policy,
+                request,
+            )
+        })
+    }
+
     fn request_apply_patch_approval(
         &self,
         request: ApplyPatchApprovalDispatch,
@@ -126,14 +140,22 @@ impl ApprovalServiceApi for ApprovalService {
     ) -> ApprovalServiceFuture<'_, GuardianReviewResult> {
         Box::pin(async move {
             let review_id = request.review_id;
-            let decision = crate::guardian::review_approval_request(
+            let decision_fut = crate::guardian::review_approval_request_with_source(
                 request.session.as_ref(),
                 request.turn.as_ref(),
                 review_id.clone(),
                 request.request,
                 request.retry_reason,
-            )
-            .await;
+                request.approval_request_source,
+            );
+            let decision = if let Some(cancellation_token) = request.cancellation_token {
+                tokio::select! {
+                    _ = cancellation_token.cancelled() => ReviewDecision::Abort,
+                    decision = decision_fut => decision,
+                }
+            } else {
+                decision_fut.await
+            };
             let decline_message = match decision {
                 ReviewDecision::Denied => Some(
                     crate::guardian::guardian_rejection_message(

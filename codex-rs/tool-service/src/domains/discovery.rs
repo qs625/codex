@@ -20,16 +20,39 @@ use crate::planning::dynamic_tool_to_responses_api_tool;
 use crate::planning::filter_request_plugin_install_discoverable_tools_for_client;
 use crate::planning::mcp_tool_to_deferred_responses_api_tool;
 use crate::planning::mcp_tool_to_responses_api_tool;
+use codex_config_edit::ConfigEdit;
+use codex_config_edit::ConfigEditsBuilder;
+use codex_config_types::ToolSuggestDisabledTool;
 use codex_mcp_tool_types::ToolInfo;
-use thread_service_api::ThreadCapability;
+use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
+use codex_mcp_types::ElicitationAction;
+use codex_mcp_types::ElicitationResponse;
+use codex_mcp_types::McpElicitationObjectType;
+use codex_mcp_types::McpElicitationSchema;
+use codex_mcp_types::McpServerElicitationRequest;
+use codex_mcp_types::McpServerElicitationRequestParams;
+use codex_protocol::mcp::RequestId;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
-use codex_tool_service_api::RequestPluginInstallApi;
 use codex_tool_types::FunctionCallError;
+use codex_tool_types::REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE;
+use codex_tool_types::REQUEST_PLUGIN_INSTALL_PERSIST_KEY;
+use codex_tool_types::RequestPluginInstallElicitationRequest;
+use codex_tool_types::RequestPluginInstallElicitationSchema;
 use codex_tool_types::ToolCall;
 use codex_tool_types::ToolName;
+use codex_tool_types::all_requested_connectors_picked_up;
+use codex_tool_types::verified_connector_install_completed;
 use serde::Deserialize;
+use serde_json::Value;
+use serde_json::json;
+use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::sync::Arc;
+use thread_service_api::ThreadRuntimeCapability;
+use thread_service_api::ThreadSessionCapability;
+use thread_service_api::ThreadTurnCapability;
+use tracing::warn;
 
 use crate::context::TypedToolSpecRequest;
 use crate::output::FunctionToolOutput;
@@ -79,12 +102,12 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 }
 
 pub(crate) async fn dispatch(
-    request_plugin_install_api: Arc<dyn RequestPluginInstallApi>,
-    turn: &dyn ThreadCapability,
+    session: Arc<dyn ThreadSessionCapability>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     dynamic_tools: &[codex_protocol::dynamic_tools::DynamicToolSpec],
     mcp_tools: Option<&[ToolInfo]>,
     deferred_mcp_tools: Option<&[ToolInfo]>,
-    _discoverable_tools: Option<&[DiscoverableTool]>,
+    discoverable_tools: Option<&[DiscoverableTool]>,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
     match call.tool_name.name.as_str() {
@@ -92,7 +115,7 @@ pub(crate) async fn dispatch(
             dispatch_tool_search(dynamic_tools, mcp_tools, deferred_mcp_tools, call)
         }
         REQUEST_PLUGIN_INSTALL_TOOL_NAME => {
-            dispatch_request_plugin_install(request_plugin_install_api, turn, call).await
+            dispatch_request_plugin_install(session, turn, discoverable_tools, call).await
         }
         _ => Err(FunctionCallError::Fatal(format!(
             "unsupported discovery tool {}",
@@ -130,29 +153,19 @@ fn dispatch_tool_search(
 }
 
 async fn dispatch_request_plugin_install(
-    service: Arc<dyn RequestPluginInstallApi>,
-    turn: &dyn ThreadCapability,
+    session: Arc<dyn ThreadSessionCapability>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
+    discoverable_tools: Option<&[DiscoverableTool]>,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
     let args: RequestPluginInstallArgs = parse_function_arguments(&call)?;
-    let context = service.request_plugin_install_context(turn);
-    let suggest_reason =
-        validate_request_plugin_install_args(&args, context.app_server_client_name.as_deref())?;
+    let client_name = turn.app_server_client_name();
+    let suggest_reason = validate_request_plugin_install_args(&args, client_name)?;
 
-    let discoverable_tools = service
-        .list_request_plugin_install_discoverable_tools(turn)
-        .await
-        .map(|discoverable_tools| {
-            filter_request_plugin_install_discoverable_tools_for_client(
-                discoverable_tools,
-                context.app_server_client_name.as_deref(),
-            )
-        })
-        .map_err(|err| {
-            FunctionCallError::RespondToModel(format!(
-                "plugin install requests are unavailable right now: {err}"
-            ))
-        })?;
+    let discoverable_tools = filter_request_plugin_install_discoverable_tools_for_client(
+        discoverable_tools.unwrap_or_default().to_vec(),
+        client_name,
+    );
 
     let tool = discoverable_tools
         .into_iter()
@@ -164,20 +177,27 @@ async fn dispatch_request_plugin_install(
         })?;
 
     let request = build_request_plugin_install_elicitation_request(
-        &context.server_name,
-        context.thread_id,
-        context.turn_id,
+        CODEX_APPS_MCP_SERVER_NAME,
+        turn.thread_id().to_string(),
+        turn.runtime_turn_id_str().to_string(),
         &args,
         suggest_reason,
         &tool,
     );
-    let outcome = service
-        .request_plugin_install_elicitation(turn, &call.call_id, request, &tool)
+    let request_id = RequestId::String(format!("request_plugin_install_{}", call.call_id));
+    let params = request_plugin_install_elicitation_request_to_mcp_params(request);
+    let response = session
+        .request_mcp_server_elicitation(turn.as_ref(), request_id, params)
         .await;
+    if let Some(response) = response.as_ref() {
+        maybe_persist_disabled_install_request(turn.as_ref(), &tool, response).await;
+    }
 
-    let completed = if outcome.user_confirmed {
-        service
-            .complete_request_plugin_install_if_ready(turn, &tool)
+    let user_confirmed = response
+        .as_ref()
+        .is_some_and(|response| response.action == ElicitationAction::Accept);
+    let completed = if user_confirmed {
+        complete_request_plugin_install_if_ready(session.as_ref(), turn.as_ref(), &tool)
             .await
     } else {
         false
@@ -185,7 +205,7 @@ async fn dispatch_request_plugin_install(
 
     let content = serde_json::to_string(&RequestPluginInstallResult {
         completed,
-        user_confirmed: outcome.user_confirmed,
+        user_confirmed,
         tool_type: args.tool_type,
         action_type: args.action_type,
         tool_id: tool.id().to_string(),
@@ -204,6 +224,172 @@ async fn dispatch_request_plugin_install(
         result: Box::new(FunctionToolOutput::from_text(content, Some(true))),
         post_tool_use_payload: None,
     })
+}
+
+fn request_plugin_install_elicitation_request_to_mcp_params(
+    request: RequestPluginInstallElicitationRequest,
+) -> McpServerElicitationRequestParams {
+    let requested_schema = match request.form.requested_schema {
+        RequestPluginInstallElicitationSchema::EmptyObject => McpElicitationSchema {
+            schema_uri: None,
+            type_: McpElicitationObjectType::Object,
+            properties: BTreeMap::new(),
+            required: None,
+        },
+    };
+
+    McpServerElicitationRequestParams {
+        thread_id: request.thread_id,
+        turn_id: request.turn_id,
+        server_name: request.server_name,
+        request: McpServerElicitationRequest::Form {
+            meta: Some(json!(request.form.meta)),
+            message: request.form.message,
+            requested_schema,
+        },
+    }
+}
+
+async fn maybe_persist_disabled_install_request(
+    turn: &dyn ThreadTurnCapability,
+    tool: &DiscoverableTool,
+    response: &ElicitationResponse,
+) {
+    if !request_plugin_install_response_requests_persistent_disable(response) {
+        return;
+    }
+
+    if let Err(err) = persist_disabled_install_request(&turn.discovery_context().home_root, tool).await
+    {
+        warn!(
+            error = %err,
+            tool_id = tool.id(),
+            "failed to persist disabled tool suggestion"
+        );
+        return;
+    }
+}
+
+fn request_plugin_install_response_requests_persistent_disable(
+    response: &ElicitationResponse,
+) -> bool {
+    if response.action != ElicitationAction::Decline {
+        return false;
+    }
+
+    response
+        .meta
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get(REQUEST_PLUGIN_INSTALL_PERSIST_KEY))
+        .and_then(Value::as_str)
+        == Some(REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE)
+}
+
+async fn persist_disabled_install_request(
+    codex_home: &std::path::Path,
+    tool: &DiscoverableTool,
+) -> anyhow::Result<()> {
+    ConfigEditsBuilder::new(codex_home)
+        .with_edits([ConfigEdit::AddToolSuggestDisabledTool(
+            disabled_install_request(tool),
+        )])
+        .apply()
+        .await
+}
+
+fn disabled_install_request(tool: &DiscoverableTool) -> ToolSuggestDisabledTool {
+    match tool {
+        DiscoverableTool::Connector(connector) => {
+            ToolSuggestDisabledTool::connector(connector.id.as_str())
+        }
+        DiscoverableTool::Plugin(plugin) => ToolSuggestDisabledTool::plugin(plugin.id.as_str()),
+    }
+}
+
+async fn complete_request_plugin_install_if_ready(
+    session: &dyn ThreadSessionCapability,
+    turn: &dyn ThreadTurnCapability,
+    tool: &DiscoverableTool,
+) -> bool {
+    let auth_snapshot = turn.auth_snapshot().await;
+    match tool {
+        DiscoverableTool::Connector(connector) => {
+            let completed = refresh_missing_requested_connectors(
+                session,
+                turn,
+                auth_snapshot.as_ref(),
+                std::slice::from_ref(&connector.id),
+                connector.id.as_str(),
+            )
+            .await
+            .is_some_and(|accessible_connectors| {
+                verified_connector_install_completed(connector.id.as_str(), &accessible_connectors)
+            });
+            if completed {
+                let _ = session
+                    .merge_connector_selection(HashSet::from([connector.id.clone()]))
+                    .await;
+            }
+            completed
+        }
+        DiscoverableTool::Plugin(plugin) => {
+            session.reload_user_config_layer().await;
+            let completed = session.configured_plugin_installed(plugin.id.as_str()).await;
+            let _ = refresh_missing_requested_connectors(
+                session,
+                turn,
+                auth_snapshot.as_ref(),
+                &plugin.app_connector_ids,
+                plugin.id.as_str(),
+            )
+            .await;
+            completed
+        }
+    }
+}
+
+async fn refresh_missing_requested_connectors(
+    session: &dyn ThreadSessionCapability,
+    turn: &dyn ThreadTurnCapability,
+    auth_snapshot: Option<&codex_auth_types::RequestAuthSnapshot>,
+    expected_connector_ids: &[String],
+    tool_id: &str,
+) -> Option<Vec<codex_connectors_api::AppInfo>> {
+    if expected_connector_ids.is_empty() {
+        return Some(Vec::new());
+    }
+
+    let accessible_connectors = turn
+        .cached_accessible_connectors_from_mcp_tools(auth_snapshot)
+        .await;
+    if accessible_connectors
+        .as_ref()
+        .is_some_and(|connectors| all_requested_connectors_picked_up(expected_connector_ids, connectors))
+    {
+        return accessible_connectors;
+    }
+
+    match session.hard_refresh_codex_apps_tools_cache().await {
+        Ok(_) => match session
+            .fetch_accessible_connectors_from_mcp_tools(turn, auth_snapshot)
+            .await
+        {
+            Ok(connectors) => Some(connectors),
+            Err(err) => {
+                warn!(
+                    "failed to refresh accessible connectors after plugin install request for {tool_id}: {err:#}"
+                );
+                None
+            }
+        },
+        Err(err) => {
+            warn!(
+                "failed to refresh codex apps tools cache after plugin install request for {tool_id}: {err}"
+            );
+            None
+        }
+    }
 }
 
 fn search_infos(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSearchInfo> {

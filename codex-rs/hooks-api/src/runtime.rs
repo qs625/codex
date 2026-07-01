@@ -2,7 +2,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use codex_plugin_types::PluginHookSource;
+use plugin_service_api::PluginHookSource;
 use codex_protocol::protocol::HookRunSummary;
 
 use crate::HookConfigLayerStack;

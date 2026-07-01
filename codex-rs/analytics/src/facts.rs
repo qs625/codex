@@ -9,7 +9,7 @@ use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::ServerResponse;
-use codex_plugin_types::PluginTelemetryMetadata;
+use plugin_service_api::PluginTelemetryMetadata;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Personality;

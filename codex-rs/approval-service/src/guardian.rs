@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+pub use codex_approval_service_api::GUARDIAN_REVIEWER_NAME;
+pub use codex_approval_service_api::is_guardian_reviewer_source;
+pub use codex_approval_service_api::routes_approval_to_guardian;
 use codex_analytics_api::GuardianApprovalRequestSource;
 use codex_analytics_api::GuardianReviewAnalyticsResult;
 use codex_analytics_api::GuardianReviewDecision;
@@ -17,22 +20,6 @@ use thread_service_api::ReviewRuntimeOutcome;
 use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
-
-const GUARDIAN_REJECTION_INSTRUCTIONS: &str = concat!(
-    "The agent must not attempt to achieve the same outcome via workaround, ",
-    "indirect execution, or policy circumvention. ",
-    "Proceed only with a materially safer alternative, ",
-    "or if the user explicitly approves the action after being informed of the risk. ",
-    "Otherwise, stop and request user input.",
-);
-
-const GUARDIAN_TIMEOUT_INSTRUCTIONS: &str = concat!(
-    "The automatic permission approval review did not finish before its deadline. ",
-    "Do not assume the action is unsafe based on the timeout alone. ",
-    "You may retry once, or ask the user for guidance or explicit approval.",
-);
-
-pub const GUARDIAN_REVIEWER_NAME: &str = "guardian";
 
 #[derive(serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -102,55 +89,22 @@ pub fn new_guardian_review_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-pub fn routes_approval_to_guardian(
-    approval_policy: &codex_protocol::protocol::AskForApproval,
-    approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer,
-) -> bool {
-    matches!(
-        approval_policy,
-        codex_protocol::protocol::AskForApproval::OnRequest
-            | codex_protocol::protocol::AskForApproval::Granular(_)
-    ) && approvals_reviewer == codex_protocol::config_types::ApprovalsReviewer::AutoReview
-}
-
-pub fn is_guardian_reviewer_source(
-    session_source: &codex_protocol::protocol::SessionSource,
-) -> bool {
-    matches!(
-        session_source,
-        codex_protocol::protocol::SessionSource::SubAgent(
-            codex_protocol::protocol::SubAgentSource::Other(name)
-        ) if name == GUARDIAN_REVIEWER_NAME
-    )
-}
-
 pub async fn guardian_rejection_message(
     session: &dyn ThreadSessionCapability,
     review_id: &str,
 ) -> String {
     let rejection = session.take_review_rejection(review_id).await;
-    guardian_rejection_message_from_rationale(rejection.as_ref().map(|rejection| rejection.rationale.as_str()))
+    codex_approval_service_api::guardian_rejection_message_from_rationale(
+        rejection.as_ref().map(|rejection| rejection.rationale.as_str()),
+    )
 }
 
 pub fn guardian_rejection_message_from_rationale(rationale: Option<&str>) -> String {
-    let rejection = rationale
-        .filter(|rationale| !rationale.trim().is_empty())
-        .map(|rationale| ReviewRejectionRecord {
-            rationale: rationale.to_string(),
-            source: codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
-        })
-        .unwrap_or_else(default_guardian_rejection);
-    match rejection.source {
-        codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent => format!(
-            "This action was rejected due to unacceptable risk.\nReason: {}\n{}",
-            rejection.rationale.trim(),
-            GUARDIAN_REJECTION_INSTRUCTIONS
-        ),
-    }
+    codex_approval_service_api::guardian_rejection_message_from_rationale(rationale)
 }
 
 pub fn guardian_timeout_message() -> String {
-    GUARDIAN_TIMEOUT_INSTRUCTIONS.to_string()
+    codex_approval_service_api::guardian_timeout_message()
 }
 
 pub async fn review_approval_request(
@@ -167,6 +121,25 @@ pub async fn review_approval_request(
         request,
         retry_reason,
         GuardianApprovalRequestSource::MainTurn,
+    )
+    .await
+}
+
+pub async fn review_approval_request_with_source(
+    session: &dyn ThreadSessionCapability,
+    turn: &dyn ThreadTurnCapability,
+    review_id: String,
+    request: GuardianApprovalRequest,
+    retry_reason: Option<String>,
+    approval_request_source: GuardianApprovalRequestSource,
+) -> codex_protocol::protocol::ReviewDecision {
+    run_guardian_review(
+        session,
+        turn,
+        review_id,
+        request,
+        retry_reason,
+        approval_request_source,
     )
     .await
 }
@@ -636,13 +609,6 @@ async fn handle_guardian_runtime_error(
             session.record_review_non_rejection(&assessment_turn_id).await;
             codex_protocol::protocol::ReviewDecision::Denied
         }
-    }
-}
-
-fn default_guardian_rejection() -> ReviewRejectionRecord {
-    ReviewRejectionRecord {
-        rationale: "Auto-reviewer denied the action without a specific rationale.".to_string(),
-        source: codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
     }
 }
 

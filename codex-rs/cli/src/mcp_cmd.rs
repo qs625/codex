@@ -6,13 +6,14 @@ use anyhow::Result;
 use anyhow::anyhow;
 use anyhow::bail;
 use clap::ArgGroup;
+use approval_service::ApprovalService;
 use codex_config_edit::ConfigEditsBuilder;
 use codex_config_edit::load_global_mcp_servers;
 use codex_config_types::AppToolApproval;
 use codex_config_types::McpServerConfig;
 use codex_config_types::McpServerTransportConfig;
 use codex_config_types::OAuthCredentialsStoreMode;
-use codex_core_plugins::PluginsManager;
+use plugin_service::PluginsManager;
 use codex_mcp::compute_auth_statuses;
 use codex_mcp::discover_supported_scopes;
 use codex_mcp::oauth_login_support;
@@ -23,7 +24,8 @@ use codex_mcp_types::resolve_oauth_scopes;
 use codex_protocol::protocol::McpAuthStatus;
 use codex_rmcp_client::delete_oauth_tokens;
 use codex_rmcp_client::perform_oauth_login;
-use thread_service::McpManager;
+use mcp_service::McpService;
+use mcp_service_api::McpServiceApi;
 use thread_service::config::Config;
 use thread_service::config::find_codex_home;
 use codex_utils_cli::CliConfigOverrides;
@@ -400,10 +402,11 @@ async fn run_login(config_overrides: &CliConfigOverrides, login_args: LoginArgs)
     let config = Config::load_with_cli_overrides(overrides)
         .await
         .context("failed to load configuration")?;
-    let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(
-        config.codex_home.to_path_buf(),
-    )));
-    let mcp_servers = mcp_manager.configured_servers(&config).await;
+    let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
+    let mcp_service = McpService::new(Arc::new(ApprovalService));
+    let mcp_servers = mcp_service
+        .configured_servers(plugins_manager.as_ref(), &config)
+        .await;
 
     let LoginArgs { name, scopes } = login_args;
 
@@ -454,10 +457,11 @@ async fn run_logout(config_overrides: &CliConfigOverrides, logout_args: LogoutAr
     let config = Config::load_with_cli_overrides(overrides)
         .await
         .context("failed to load configuration")?;
-    let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(
-        config.codex_home.to_path_buf(),
-    )));
-    let mcp_servers = mcp_manager.configured_servers(&config).await;
+    let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
+    let mcp_service = McpService::new(Arc::new(ApprovalService));
+    let mcp_servers = mcp_service
+        .configured_servers(plugins_manager.as_ref(), &config)
+        .await;
 
     let LogoutArgs { name } = logout_args;
 
@@ -486,11 +490,14 @@ async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) ->
     let config = Config::load_with_cli_overrides(overrides)
         .await
         .context("failed to load configuration")?;
-    let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(
-        config.codex_home.to_path_buf(),
-    )));
-    let mcp_servers = mcp_manager.configured_servers(&config).await;
-    let effective_mcp_servers = mcp_manager.effective_servers(&config, /*auth*/ None).await;
+    let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
+    let mcp_service = McpService::new(Arc::new(ApprovalService));
+    let mcp_servers = mcp_service
+        .configured_servers(plugins_manager.as_ref(), &config)
+        .await;
+    let effective_mcp_servers = mcp_service
+        .effective_servers(plugins_manager.as_ref(), &config, /*auth_context*/ None)
+        .await;
 
     let mut entries: Vec<_> = mcp_servers.iter().collect();
     entries.sort_by(|(a, _), (b, _)| a.cmp(b));
@@ -742,10 +749,11 @@ async fn run_get(config_overrides: &CliConfigOverrides, get_args: GetArgs) -> Re
     let config = Config::load_with_cli_overrides(overrides)
         .await
         .context("failed to load configuration")?;
-    let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(
-        config.codex_home.to_path_buf(),
-    )));
-    let mcp_servers = mcp_manager.configured_servers(&config).await;
+    let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
+    let mcp_service = McpService::new(Arc::new(ApprovalService));
+    let mcp_servers = mcp_service
+        .configured_servers(plugins_manager.as_ref(), &config)
+        .await;
 
     let Some(server) = mcp_servers.get(&get_args.name) else {
         bail!("No MCP server named '{name}' found.", name = get_args.name);

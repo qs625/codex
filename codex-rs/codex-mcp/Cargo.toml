@@ -22,10 +22,9 @@ mcp-service-api = { workspace = true }
 codex-mcp-tool-types = { workspace = true }
 codex-mcp-types = { workspace = true }
 codex-metrics-api = { workspace = true }
-codex-plugin-types = { workspace = true }
+plugin-service-api = { workspace = true }
 codex-protocol = { workspace = true }
 codex-rmcp-client = { workspace = true }
-codex-utils-plugins = { workspace = true }
 futures = { workspace = true }
 regex-lite = { workspace = true }
 rmcp = { workspace = true, default-features = false, features = ["base64", "macros", "schemars", "server"] }

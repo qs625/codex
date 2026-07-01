@@ -13,14 +13,13 @@ clap = { workspace = true, features = ["derive"], optional = true }
 codex-auth-types = { workspace = true }
 codex-config-types = { workspace = true }
 codex-connectors = { workspace = true }
-codex-connectors-types = { workspace = true }
+codex-connectors-api = { workspace = true }
 thread-service = { workspace = true, optional = true }
-codex-core-plugins = { workspace = true }
-codex-core-plugins-api = { workspace = true }
+plugin-service = { workspace = true }
+plugin-service-api = { workspace = true }
 codex-git-utils = { workspace = true, optional = true }
 codex-login = { workspace = true }
 codex-model-provider = { workspace = true }
-codex-plugin = { workspace = true }
 codex-utils-cli = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }

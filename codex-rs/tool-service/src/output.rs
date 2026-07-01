@@ -13,7 +13,6 @@ use codex_tool_types::ToolOutput;
 use codex_tool_types::ToolPayload;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::formatted_truncate_text;
-use codex_utils_output_truncation::truncate_text;
 use codex_utils_string::take_bytes_at_char_boundary;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
@@ -27,7 +26,6 @@ const TELEMETRY_PREVIEW_TRUNCATION_NOTICE: &str = "[... telemetry preview trunca
 #[derive(Clone, Debug)]
 pub(crate) struct McpToolOutput {
     pub(crate) result: CallToolResult,
-    pub(crate) tool_input: JsonValue,
     pub(crate) wall_time: Duration,
     pub(crate) original_image_detail_supported: bool,
     pub(crate) truncation_policy: TruncationPolicy,
@@ -312,28 +310,6 @@ pub(crate) fn format_exec_output_for_model_structured(
         },
     };
     serde_json::to_string(&payload).expect("serialize exec output")
-}
-
-pub(crate) fn format_exec_output_for_model_freeform(
-    exec_output: &ExecToolCallOutput,
-    truncation_policy: TruncationPolicy,
-) -> String {
-    let content = build_content_with_timeout(exec_output);
-    let total_lines = content.lines().count();
-    let formatted_output = truncate_text(&content, truncation_policy);
-
-    let mut sections = Vec::new();
-    sections.push(format!("Exit code: {}", exec_output.exit_code));
-    sections.push(format!(
-        "Wall time: {} seconds",
-        ((exec_output.duration.as_secs_f32()) * 10.0).round() / 10.0
-    ));
-    if total_lines != formatted_output.lines().count() {
-        sections.push(format!("Total output lines: {total_lines}"));
-    }
-    sections.push("Output:".to_string());
-    sections.push(formatted_output);
-    sections.join("\n")
 }
 
 pub(crate) fn format_exec_output_str(

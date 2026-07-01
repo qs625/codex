@@ -88,7 +88,11 @@ impl McpProcessorRuntime for ThreadService {
         &'a self,
         config: &'a Config,
     ) -> BoxFuture<'a, HashMap<String, McpServerConfig>> {
-        Box::pin(async move { self.mcp_manager().configured_servers(config).await })
+        Box::pin(async move {
+            self.mcp_service()
+                .configured_servers(self.plugin_runtime().as_ref(), config)
+                .await
+        })
     }
 
     fn mcp_config<'a>(&'a self, config: &'a Config) -> BoxFuture<'a, codex_mcp_types::McpConfig> {

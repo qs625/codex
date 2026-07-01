@@ -754,7 +754,6 @@ mod tests {
     use codex_app_server_protocol::TurnCompletedNotification;
     use codex_app_server_protocol::TurnItemsView;
     use codex_app_server_protocol::TurnStatus;
-    use thread_service::config::ConfigBuilder;
     use pretty_assertions::assert_eq;
     use std::future::Future;
     use std::path::Path;

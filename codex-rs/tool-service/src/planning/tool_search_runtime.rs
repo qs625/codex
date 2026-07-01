@@ -9,7 +9,6 @@ use crate::TOOL_SEARCH_DEFAULT_LIMIT;
 use crate::ToolSearchEntry;
 use crate::ToolSearchInfo;
 use crate::ToolSearchOutput;
-use crate::ToolSearchSourceInfo;
 use crate::coalesce_loadable_tool_specs;
 
 /// Host-neutral runtime for deferred tool search.
@@ -19,32 +18,19 @@ use crate::coalesce_loadable_tool_specs;
 /// result coalescing without depending on `codex-core`.
 pub struct ToolSearchRuntime {
     entries: Vec<ToolSearchEntry>,
-    source_infos: Vec<ToolSearchSourceInfo>,
     search_index: ToolSearchIndex,
 }
 
 impl ToolSearchRuntime {
     pub fn new(search_infos: Vec<ToolSearchInfo>) -> Self {
         let mut entries = Vec::with_capacity(search_infos.len());
-        let mut source_infos = Vec::new();
         for search_info in search_infos {
             entries.push(search_info.entry);
-            if let Some(source_info) = search_info.source_info {
-                source_infos.push(source_info);
-            }
         }
         let search_index =
             ToolSearchIndex::new(entries.iter().map(|entry| entry.search_text.as_str()));
 
-        Self {
-            entries,
-            source_infos,
-            search_index,
-        }
-    }
-
-    pub fn source_infos(&self) -> &[ToolSearchSourceInfo] {
-        &self.source_infos
+        Self { entries, search_index }
     }
 
     pub fn handle_search(

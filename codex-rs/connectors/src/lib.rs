@@ -14,10 +14,10 @@ use codex_connectors_api::normalize_connector_name;
 use codex_connectors_api::normalize_connector_value;
 use codex_connectors_api::unexpired_directory_connectors;
 use codex_connectors_api::write_cached_directory_connectors;
-pub use codex_connectors_types::AppBranding;
-pub use codex_connectors_types::AppInfo;
-pub use codex_connectors_types::AppMetadata;
-pub use codex_connectors_types::AppSummary;
+pub use codex_connectors_api::AppBranding;
+pub use codex_connectors_api::AppInfo;
+pub use codex_connectors_api::AppMetadata;
+pub use codex_connectors_api::AppSummary;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]

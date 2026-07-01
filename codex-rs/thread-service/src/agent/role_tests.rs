@@ -3,7 +3,8 @@ use crate::config::AgentRoleConfig;
 use crate::config::Config;
 use crate::config::ConfigBuilder;
 use crate::skills_load_input_from_config;
-use codex_core_plugins::PluginsManager;
+use plugin_service::PluginsManager;
+use plugin_service_api::PluginRuntime;
 use codex_core_skills::SkillsManager;
 use codex_utils_absolute_path::test_support::PathExt;
 use pretty_assertions::assert_eq;
@@ -80,8 +81,9 @@ enabled = false
     let skills_manager =
         SkillsManager::new(home.path().abs(), /*bundled_skills_enabled*/ true);
     let plugins_input = config.plugins_config_input();
-    let plugin_outcome = plugins_manager.plugins_for_config(&plugins_input).await;
-    let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
+    let effective_skill_roots = plugins_manager
+        .effective_skill_roots_for_config(&plugins_input)
+        .await;
     let skills_input = skills_load_input_from_config(&config, effective_skill_roots);
     let outcome = skills_manager
         .skills_for_config(

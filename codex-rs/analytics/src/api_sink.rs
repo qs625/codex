@@ -63,7 +63,7 @@ impl AnalyticsEventsSink for AnalyticsEventsClient {
     fn track_plugin_used(
         &self,
         tracking: api::TrackEventsContext,
-        plugin: codex_plugin_types::PluginTelemetryMetadata,
+        plugin: plugin_service_api::PluginTelemetryMetadata,
     ) {
         self.track_plugin_used(tracking.into(), plugin);
     }

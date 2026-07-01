@@ -1,4 +1,4 @@
-//! Thread runtime implementation.
+//! Thread service implementation.
 
 // Prevent accidental direct writes to stdout/stderr in library code. All
 // user-visible output must go through the appropriate abstraction.
@@ -24,23 +24,20 @@ mod apps;
 mod arc_monitor;
 mod client;
 mod client_common;
-mod command_interaction_capability;
-mod command_service_capability;
 mod config_lock;
 mod realtime_context;
 mod realtime_conversation;
 pub mod session;
-pub use session::session::Session as ThreadRuntimeSession;
+pub use session::session::Session as ThreadSession;
 pub(crate) use session::turn_context::TurnContext;
 pub use session::turn_context::TurnContext as ThreadTurnContext;
 mod agent;
 pub use ::thread_service_api::ActiveEventSubscriptionTracker;
 mod attestation;
-mod code_mode_capability;
-pub(crate) mod code_mode_runtime;
+mod turn_runtime_capability;
+pub(crate) mod code_mode_turn_bridge;
 mod codex_delegate;
 pub mod config;
-pub mod connectors;
 mod context;
 mod context_usage;
 mod environment_selection;
@@ -52,26 +49,21 @@ mod guardian;
 mod hook_runtime;
 mod installation_id;
 mod mailbox;
-pub use mcp_service::McpManager;
 pub(crate) mod mention_syntax;
 mod original_image_detail;
-mod runtime_shell;
 pub(crate) mod utils;
 pub use mention_syntax::PLUGIN_TEXT_MENTION_SIGIL;
 pub use mention_syntax::TOOL_MENTION_SIGIL;
 pub use utils::path_utils;
 pub mod personality_migration;
-pub(crate) mod plugins;
-pub use plugins::RequestPluginInstallService;
 #[doc(hidden)]
 pub(crate) mod prompt_debug;
 #[doc(hidden)]
 pub use prompt_debug::build_prompt_input;
 pub(crate) mod mentions {
-    pub(crate) use crate::plugins::build_connector_slug_counts;
-    pub(crate) use crate::plugins::build_skill_name_counts;
-    pub(crate) use crate::plugins::collect_explicit_app_ids;
-    pub(crate) use crate::plugins::collect_explicit_plugin_mentions;
+    pub(crate) use codex_core_skills_api::build_connector_slug_counts;
+    pub(crate) use crate::build_skill_name_counts;
+    pub(crate) use crate::turn_plugin_mentions::collect_explicit_plugin_mentions;
 }
 mod runtime_shell_detect;
 mod session_prefix;
@@ -81,7 +73,6 @@ mod session_startup_prewarm;
 pub mod skills;
 pub(crate) use skills::SkillInjections;
 pub(crate) use skills::SkillLoadOutcome;
-pub(crate) use skills::SkillMetadata;
 pub(crate) use skills::build_available_skills;
 pub(crate) use skills::build_skill_injections;
 pub(crate) use skills::build_skill_name_counts;
@@ -90,7 +81,6 @@ pub(crate) use skills::collect_explicit_skill_mentions;
 pub(crate) use skills::default_skill_metadata_budget;
 pub(crate) use skills::emit_thread_skills_update;
 pub(crate) use skills::injection;
-pub(crate) use skills::maybe_emit_implicit_skill_invocation;
 pub(crate) use skills::resolve_skill_dependencies_for_turn;
 pub(crate) use skills::skills_load_input_from_config;
 mod event_mapping;
@@ -131,6 +121,8 @@ mod state;
 mod tasks;
 mod tool_dispatch_trace;
 mod tool_output_utils;
+mod turn_plugin_injection;
+mod turn_plugin_mentions;
 mod session_capability;
 mod turn_context_item;
 mod turn_metadata;
@@ -167,7 +159,7 @@ pub use mailbox::MailboxReceiver;
 #[doc(hidden)]
 pub type SharedTurnDiffTracker =
     std::sync::Arc<tokio::sync::Mutex<::thread_service_api::TurnDiffTracker>>;
-pub(crate) type CoreToolServiceApi = dyn codex_tool_service_api::ToolServiceApi;
+pub(crate) type ToolServiceApi = dyn codex_tool_service_api::ToolServiceApi;
 pub type ThreadToolServiceApi = dyn codex_tool_service_api::ToolServiceApi;
 pub use session_settings::SessionPermissionProfileUpdate;
 pub use session_settings::SessionSettingsApplyCurrent;

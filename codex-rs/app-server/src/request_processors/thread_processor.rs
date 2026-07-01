@@ -630,7 +630,6 @@ fn validate_dynamic_tools(tools: &[ApiDynamicToolSpec]) -> Result<(), String> {
 
 #[derive(Clone)]
 pub(crate) struct ThreadRequestProcessor {
-    pub(super) auth_manager: Arc<AuthManager>,
     pub(super) thread_runtime: Arc<dyn ThreadProcessorThreadRuntime>,
     pub(super) live_threads: Arc<dyn AppServerLiveThreadRegistry>,
     pub(super) thread_metadata_runtime: Arc<dyn ThreadProcessorMetadataRuntime>,
@@ -654,7 +653,6 @@ pub(crate) struct ThreadRequestProcessor {
 impl ThreadRequestProcessor {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        auth_manager: Arc<AuthManager>,
         thread_service: Arc<ThreadService>,
         outgoing: Arc<OutgoingMessageSender>,
         arg0_paths: Arg0DispatchPaths,
@@ -670,7 +668,6 @@ impl ThreadRequestProcessor {
         skills_watcher: Arc<SkillsWatcher>,
     ) -> Self {
         Self {
-            auth_manager,
             thread_runtime: thread_service.clone(),
             live_threads: thread_service.clone(),
             thread_metadata_runtime: thread_service.clone(),

@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use codex_approval_service_api::ApprovalServiceApi;
+use codex_approval_service_api::is_guardian_reviewer_source;
 use codex_exec_server_api::ExecEnvironmentProvider;
 use codex_model_provider_api::SharedModelProviderFactory;
 use codex_protocol::error::Result as CodexResult;
@@ -35,7 +37,8 @@ pub async fn build_prompt_input(
     live_thread_factory: Arc<dyn LiveThreadFactory>,
     auth_runtimes: ThreadAuthRuntimes,
     model_provider_factory: SharedModelProviderFactory,
-    tool_service: Arc<crate::CoreToolServiceApi>,
+    approval_service: Arc<dyn ApprovalServiceApi>,
+    tool_service: Arc<crate::ToolServiceApi>,
     mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
     mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
 ) -> CodexResult<Vec<ResponseItem>> {
@@ -56,9 +59,11 @@ pub async fn build_prompt_input(
         /*attestation_provider*/ None,
         model_provider_factory,
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(codex_command_service::CommandService::new()),
+        Arc::clone(&approval_service),
         Arc::new(goal_service::GoalService),
         tool_service,
-        Arc::new(mcp_service::McpService::new(Arc::new(approval_service::ApprovalService))),
+        Arc::new(mcp_service::McpService::new(approval_service)),
         mcp_auth_runtime,
         mcp_connection_runtime_factory,
     );
@@ -114,9 +119,7 @@ pub(crate) async fn build_prompt_input_from_session(
         base_instructions,
         personality: turn_context.personality,
         output_schema: turn_context.final_output_json_schema.clone(),
-        output_schema_strict: !approval_service::guardian::is_guardian_reviewer_source(
-            &turn_context.session_source,
-        ),
+        output_schema_strict: !is_guardian_reviewer_source(&turn_context.session_source),
     });
 
     Ok(prompt.get_formatted_input())

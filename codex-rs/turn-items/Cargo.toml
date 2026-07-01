@@ -14,7 +14,7 @@ doctest = false
 
 [dependencies]
 codex-context-manager = { workspace = true }
-codex-memories-read-api = { workspace = true }
+memory-service-api = { workspace = true }
 codex-protocol = { workspace = true }
 codex-utils-stream-parser = { workspace = true }
 tracing = { workspace = true, features = ["log"] }

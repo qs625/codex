@@ -7,7 +7,6 @@ use crate::planning::create_command_wait_tool;
 use crate::planning::create_write_stdin_tool;
 use codex_command_service_api::CommandNotificationKind;
 use codex_command_service_api::CommandServiceApi;
-use codex_command_service_api::CommandServiceSessionApi;
 use codex_command_service_api::CommandWaitRequest;
 use codex_command_service_api::CommandWaitStatus;
 use codex_command_service_api::SessionCommandInteractionCaller;
@@ -17,8 +16,6 @@ use codex_protocol::models::CommandWaitStatus as ResponseCommandWaitStatus;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::TerminalInteractionEvent;
-use thread_service::ThreadRuntimeSession;
-use thread_service::ThreadTurnContext;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_types::FunctionCallError;
@@ -28,6 +25,8 @@ use codex_tool_types::ToolPayload;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
+use thread_service_api::ThreadSessionCapability;
+use thread_service_api::ThreadRuntimeCapability;
 
 use crate::context::TypedToolSpecRequest;
 use crate::output::FunctionToolOutput;
@@ -68,18 +67,20 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 }
 
 pub(crate) async fn dispatch(
-    command_service_api: Arc<dyn CommandServiceApi>,
-    session: Arc<ThreadRuntimeSession>,
-    turn: Arc<ThreadTurnContext>,
+    _command_service_api: Arc<dyn CommandServiceApi>,
+    session_interaction: Arc<dyn SessionCommandInteractionCaller>,
+    session: Arc<dyn ThreadSessionCapability>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
     let result = match call.tool_name.name.as_str() {
         COMMAND_WAIT_TOOL_NAME => {
-            dispatch_command_wait(command_service_api, session.as_ref(), turn.as_ref(), &call).await
+            dispatch_command_wait(session_interaction.as_ref(), session.as_ref(), turn.as_ref(), &call)
+                .await
         }
         COMMAND_WRITE_STDIN_TOOL_NAME => {
             dispatch_command_write_stdin(
-                command_service_api,
+                session_interaction.as_ref(),
                 session.as_ref(),
                 turn.as_ref(),
                 &call,
@@ -101,22 +102,18 @@ pub(crate) async fn dispatch(
 }
 
 async fn dispatch_command_wait(
-    command_service_api: Arc<dyn CommandServiceApi>,
-    session: &ThreadRuntimeSession,
-    turn: &ThreadTurnContext,
+    session_interaction: &dyn SessionCommandInteractionCaller,
+    session: &dyn ThreadSessionCapability,
+    turn: &dyn ThreadRuntimeCapability,
     call: &ToolCall,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
-    let args: CommandWaitArgs = parse_function_arguments(call)?;
-    let session_api = session as &dyn CommandServiceSessionApi;
     let item_id = format!("response-item-{}", uuid::Uuid::new_v4());
     let created_at_ms = now_unix_timestamp_ms();
-    let command_wait = command_service_api
-        .begin_command_wait(
-            session_api.command_service_state(),
-            CommandWaitRequest {
-                process_id: args.command_id,
-            },
-        )
+    let args: CommandWaitArgs = parse_function_arguments(call)?;
+    let command_wait = session_interaction
+        .begin_command_wait(CommandWaitRequest {
+            process_id: args.command_id,
+        })
         .await
         .map_err(|err| FunctionCallError::RespondToModel(format!("command_wait failed: {err}")))?;
     let wait_timeout = command_wait.wait_timeout();
@@ -130,9 +127,7 @@ async fn dispatch_command_wait(
         wait_timeout,
         created_at_ms,
     });
-    session
-        .emit_model_item_started_display_event(turn, &started_item)
-        .await;
+    session.emit_model_item_started_display_event(turn, &started_item).await;
 
     let output = command_wait
         .finish()
@@ -149,12 +144,9 @@ async fn dispatch_command_wait(
         wait_timeout: output.wait_timeout,
         created_at_ms,
     });
-    SessionCommandInteractionCaller::record_model_items_and_emit_display_events(
-        session,
-        turn,
-        std::slice::from_ref(&response_item),
-    )
-    .await;
+    session
+        .record_model_items_and_emit_display_events(turn, vec![response_item])
+        .await;
 
     let text = serde_json::to_string(&CommandWaitResponse {
         command_id: output.process_id,
@@ -180,13 +172,12 @@ async fn dispatch_command_wait(
 }
 
 async fn dispatch_command_write_stdin(
-    command_service_api: Arc<dyn CommandServiceApi>,
-    session: &ThreadRuntimeSession,
-    turn: &ThreadTurnContext,
+    session_interaction: &dyn SessionCommandInteractionCaller,
+    session: &dyn ThreadSessionCapability,
+    turn: &dyn ThreadRuntimeCapability,
     call: &ToolCall,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
     let args: WriteStdinArgs = parse_function_arguments(call)?;
-    let session_api = session as &dyn CommandServiceSessionApi;
     let Some(chars) = args.chars else {
         return Err(FunctionCallError::RespondToModel(
             WRITE_STDIN_EMPTY_INPUT_ERROR.to_string(),
@@ -198,14 +189,11 @@ async fn dispatch_command_write_stdin(
         ));
     }
 
-    let response = command_service_api
-        .write_command_stdin(
-            session_api.command_service_state(),
-            WriteStdinRequest {
-                process_id: args.command_id,
-                input: &chars,
-            },
-        )
+    let response = session_interaction
+        .write_command_stdin(WriteStdinRequest {
+            process_id: args.command_id,
+            input: &chars,
+        })
         .await
         .map_err(|err| {
             FunctionCallError::RespondToModel(format!("command_write_stdin failed: {err}"))
@@ -229,12 +217,9 @@ async fn dispatch_command_write_stdin(
         contains_newline: chars.contains('\n'),
         created_at_ms: now_unix_timestamp_ms(),
     };
-    SessionCommandInteractionCaller::record_model_items_and_emit_display_events(
-        session,
-        turn,
-        std::slice::from_ref(&response_item),
-    )
-    .await;
+    session
+        .record_model_items_and_emit_display_events(turn, vec![response_item])
+        .await;
 
     let text = serde_json::to_string(&CommandWriteStdinResponse {
         command_id: response.process_id,

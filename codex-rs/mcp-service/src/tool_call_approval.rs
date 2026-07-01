@@ -6,7 +6,7 @@ use codex_config::McpServerConfig;
 use codex_config::edit::ConfigEdit;
 use codex_config::edit::ConfigEditsBuilder;
 use codex_config_types::AppToolApproval;
-use codex_core_plugins_api::PluginRuntime;
+use plugin_service_api::PluginRuntime;
 use codex_guardian::GuardianApprovalRequest;
 use codex_guardian::GuardianMcpAnnotations;
 use codex_guardian::guardian_approval_request_to_json;
@@ -737,13 +737,13 @@ mod tests {
     use codex_config::types::AppToolsConfig;
     use codex_config::types::AppsConfigToml;
     use codex_config::types::McpServerToolConfig;
-    use codex_core_plugins_api::PluginLoadOutcome;
-    use codex_core_plugins_api::PluginRuntime;
-    use codex_core_plugins_api::PluginRuntimeFuture;
-    use codex_core_plugins_api::PluginsConfigInput;
-    use codex_core_plugins_api::ToolSuggestDiscoverablePlugin;
+    use plugin_service_api::PluginLoadOutcome;
+    use plugin_service_api::PluginRuntime;
+    use plugin_service_api::PluginRuntimeFuture;
+    use plugin_service_api::PluginsConfigInput;
+    use plugin_service_api::ToolSuggestDiscoverablePlugin;
     use codex_mcp_tool_types::ToolAnnotations;
-    use codex_plugin_types::LoadedPlugin;
+    use plugin_service_api::LoadedPlugin;
     use codex_protocol::models::ManagedFileSystemPermissions;
     use codex_protocol::permissions::NetworkSandboxPolicy;
     use serde::Deserialize;
@@ -1558,7 +1558,7 @@ mod tests {
 
         persist_non_app_mcp_tool_approval(
             &config,
-            &codex_core_plugins_api::DisabledPluginRuntime,
+            &plugin_service_api::DisabledPluginRuntime,
             "docs",
             "search",
         )
@@ -1607,7 +1607,7 @@ approval_mode = "prompt"
         assert_eq!(
             custom_mcp_tool_approval_mode(
                 &config,
-                &codex_core_plugins_api::DisabledPluginRuntime,
+                &plugin_service_api::DisabledPluginRuntime,
                 "docs",
                 "read",
             )
@@ -1617,7 +1617,7 @@ approval_mode = "prompt"
         assert_eq!(
             custom_mcp_tool_approval_mode(
                 &config,
-                &codex_core_plugins_api::DisabledPluginRuntime,
+                &plugin_service_api::DisabledPluginRuntime,
                 "docs",
                 "search",
             )
@@ -1627,7 +1627,7 @@ approval_mode = "prompt"
         assert_eq!(
             custom_mcp_tool_approval_mode(
                 &config,
-                &codex_core_plugins_api::DisabledPluginRuntime,
+                &plugin_service_api::DisabledPluginRuntime,
                 "unknown",
                 "search",
             )

@@ -1,0 +1,59 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "memory-service"
+version.workspace = true
+
+[lib]
+name = "memory_service"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+codex-backend-client = { workspace = true }
+codex-config-types = { workspace = true }
+codex-extension-api = { workspace = true }
+codex-features = { workspace = true }
+codex-git-baseline = { workspace = true }
+codex-login = { workspace = true, features = ["model-provider-auth"] }
+codex-otel = { workspace = true }
+codex-protocol = { workspace = true }
+codex-rollout = { workspace = true }
+codex-secrets = { workspace = true }
+codex-state = { workspace = true }
+codex-tool-types = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+codex-utils-output-truncation = { workspace = true }
+codex-utils-template = { workspace = true }
+futures = { workspace = true }
+memory-service-api = { workspace = true }
+rmcp = { workspace = true, default-features = false, features = [
+    "schemars",
+    "server",
+    "transport-async-rw",
+] }
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-std", "rt", "sync", "time"] }
+tracing = { workspace = true, features = ["log"] }
+uuid = { workspace = true, features = ["v4", "v5"] }
+
+[dev-dependencies]
+codex-api = { workspace = true }
+codex-models-manager = { workspace = true }
+codex-rollout-trace = { workspace = true }
+codex-session-telemetry-api = { workspace = true }
+codex-turn-metadata = { workspace = true }
+core_test_support = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+thread-service = { workspace = true }
+tokio = { workspace = true, features = ["fs", "macros", "rt", "rt-multi-thread"] }
+wiremock = { workspace = true }

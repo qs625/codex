@@ -12,7 +12,9 @@ use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::mcp::CallToolResult;
 use codex_protocol::mcp::ReadResourceRequestParams;
+#[cfg(any(test, feature = "test-support"))]
 use codex_protocol::models::ContentItem;
+#[cfg(any(test, feature = "test-support"))]
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::Event;
@@ -328,6 +330,8 @@ impl CodexThread {
     }
 
     /// Records a user-role session-prefix message without creating a new user turn boundary.
+    #[cfg(any(test, feature = "test-support"))]
+    #[allow(dead_code)]
     pub(crate) async fn inject_user_message_without_turn(&self, message: String) {
         let content = vec![ContentItem::InputText { text: message }];
         let message = ResponseItem::Message {

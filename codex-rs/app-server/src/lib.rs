@@ -97,7 +97,7 @@ mod fuzzy_file_search;
 pub mod in_process;
 mod live_thread_runtime;
 mod mcp_refresh;
-mod memories_runtime;
+mod memory_service_wiring;
 mod message_processor;
 mod models;
 mod outgoing_message;

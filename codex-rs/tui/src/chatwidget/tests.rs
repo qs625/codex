@@ -128,7 +128,7 @@ pub(super) use codex_config_types::Notifications;
 pub(super) use codex_config_types::RequirementSource;
 #[cfg(target_os = "windows")]
 pub(super) use codex_config_types::WindowsSandboxModeToml;
-pub(super) use codex_core_plugins::OPENAI_CURATED_MARKETPLACE_NAME;
+pub(super) use plugin_service::OPENAI_CURATED_MARKETPLACE_NAME;
 pub(super) use codex_core_skills::model::SkillMetadata;
 pub(super) use codex_features::FEATURES;
 pub(super) use codex_features::Feature;

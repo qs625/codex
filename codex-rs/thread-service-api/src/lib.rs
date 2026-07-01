@@ -5,6 +5,7 @@
 //! previous session-facing traits that are now treated as part of the thread
 //! runtime boundary.
 
+mod exec_runtime;
 mod session_contracts;
 mod turn_diff_tracker;
 
@@ -49,6 +50,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use tokio::sync::watch;
 
 pub use session_contracts::*;
+pub use exec_runtime::*;
 pub use turn_diff_tracker::TurnDiffTracker;
 
 /// Live thread configuration data needed by clients and persisted metadata paths.

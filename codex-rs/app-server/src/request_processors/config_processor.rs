@@ -43,16 +43,16 @@ use codex_config_types::HookHandlerConfig as CoreHookHandlerConfig;
 use codex_config_types::ManagedHooksRequirementsToml;
 use codex_config_types::MatcherGroup as CoreMatcherGroup;
 use codex_config_types::ResidencyRequirement as CoreResidencyRequirement;
-use codex_core_plugins::PluginsManager;
+use plugin_service::PluginsManager;
 use codex_exec_server::EnvironmentManager;
 use codex_features::canonical_feature_for_key;
 use codex_features::feature_for_key;
 use codex_login::AuthManager;
 use codex_model_provider::create_model_provider;
-use codex_plugin::PluginId;
+use plugin_service_api::PluginId;
 use codex_protocol::config_types::WebSearchMode;
 use thread_service::ThreadService;
-use thread_service::connectors as core_connectors;
+use mcp_service as core_connectors;
 use futures::future::BoxFuture;
 use serde_json::json;
 use std::path::PathBuf;
@@ -71,7 +71,7 @@ const SUPPORTED_EXPERIMENTAL_FEATURE_ENABLEMENT: &[&str] = &[
 pub(crate) trait ConfigRuntime: Send + Sync {
     fn clear_skills_cache(&self);
 
-    fn plugin_runtime(&self) -> codex_core_plugins_api::SharedPluginRuntime;
+    fn plugin_runtime(&self) -> plugin_service_api::SharedPluginRuntime;
 
     fn refresh_live_threads_runtime_config(
         &self,
@@ -84,7 +84,7 @@ impl ConfigRuntime for ThreadService {
         self.skills_manager().clear_cache();
     }
 
-    fn plugin_runtime(&self) -> codex_core_plugins_api::SharedPluginRuntime {
+    fn plugin_runtime(&self) -> plugin_service_api::SharedPluginRuntime {
         ThreadService::plugin_runtime(self)
     }
 
@@ -341,7 +341,7 @@ impl ConfigRequestProcessor {
         &self,
         params: ConfigValueWriteParams,
     ) -> Result<ConfigWriteResponse, JSONRPCErrorError> {
-        let pending_changes = codex_core_plugins::toggles::collect_plugin_enabled_candidates(
+        let pending_changes = plugin_service::toggles::collect_plugin_enabled_candidates(
             [(&params.key_path, &params.value)].into_iter(),
         );
         let response = self
@@ -358,7 +358,7 @@ impl ConfigRequestProcessor {
         params: ConfigBatchWriteParams,
     ) -> Result<ConfigWriteResponse, JSONRPCErrorError> {
         let reload_user_config = params.reload_user_config;
-        let pending_changes = codex_core_plugins::toggles::collect_plugin_enabled_candidates(
+        let pending_changes = plugin_service::toggles::collect_plugin_enabled_candidates(
             params
                 .edits
                 .iter()
@@ -446,7 +446,7 @@ impl ConfigRequestProcessor {
             let Ok(plugin_id) = PluginId::parse(&plugin_id) else {
                 continue;
             };
-            let metadata = codex_core_plugins::loader::installed_plugin_telemetry_metadata(
+            let metadata = plugin_service::loader::installed_plugin_telemetry_metadata(
                 self.config_manager.codex_home(),
                 &plugin_id,
             )

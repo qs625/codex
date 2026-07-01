@@ -15,7 +15,6 @@ use codex_agent_runtime::AgentMode;
 use codex_agent_runtime::SpawnAgentForkMode;
 use codex_agent_runtime::SpawnAgentToolRequest;
 use codex_protocol::openai_models::ReasoningEffort;
-use thread_service::ThreadTurnContext;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_types::FunctionCallError;
@@ -26,6 +25,8 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
 use serde::Deserialize;
 use serde::Serialize;
+use thread_service_api::SessionAgentJobCaller;
+use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadServiceApi;
 
 use crate::context::TypedToolSpecRequest;
@@ -84,8 +85,9 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 }
 
 pub(crate) async fn dispatch(
+    session: Arc<dyn SessionAgentJobCaller>,
     thread_service_api: Arc<dyn ThreadServiceApi>,
-    turn: Arc<ThreadTurnContext>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
     let result = match call.tool_name.name.as_str() {
@@ -152,12 +154,10 @@ pub(crate) async fn dispatch(
         }
         SPAWN_AGENTS_ON_CSV_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
-            let session = turn.session_arc();
             agent_jobs::handle_spawn_agents_on_csv(session, turn, arguments).await?
         }
         REPORT_AGENT_JOB_RESULT_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
-            let session = turn.session_arc();
             agent_jobs::handle_report_agent_job_result(session, arguments).await?
         }
         _ => {

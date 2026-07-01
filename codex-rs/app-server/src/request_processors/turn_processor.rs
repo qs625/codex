@@ -1,7 +1,7 @@
 use super::*;
 use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::live_thread_runtime::AppServerLiveThreadRegistry;
-use crate::memories_runtime::MemoryStartupHost;
+use crate::memory_service_wiring::MemoryServiceHost;
 use crate::request_processors::thread_processor::thread_processor_new_thread;
 use thread_service_api::AppServerClientInfo;
 use thread_service_api::LiveThreadRegistry;
@@ -209,7 +209,7 @@ pub(crate) struct TurnRequestProcessor {
     auth_manager: Arc<AuthManager>,
     turn_runtime: Arc<dyn TurnProcessorRuntime>,
     live_threads: Arc<dyn AppServerLiveThreadRegistry>,
-    memory_startup_host: Arc<dyn MemoryStartupHost>,
+    memory_startup_host: Arc<dyn MemoryServiceHost>,
     outgoing: Arc<OutgoingMessageSender>,
     analytics_events_client: AnalyticsEventsClient,
     arg0_paths: Arg0DispatchPaths,
@@ -784,7 +784,7 @@ impl TurnRequestProcessor {
                     }
                     err => internal_error(format!("failed to load thread config: {err}")),
                 })?;
-            let runtime = Arc::new(crate::memories_runtime::CoreMemoryStartupRuntime::new(
+            let runtime = Arc::new(crate::memory_service_wiring::AppServerMemoryStartupAdapter::new(
                 self.memory_startup_host.clone(),
                 Arc::clone(&self.auth_manager),
                 thread_id,
@@ -792,11 +792,11 @@ impl TurnRequestProcessor {
                 Arc::clone(&thread_config),
                 self.state_db.clone(),
             ));
-            let settings = crate::memories_runtime::memory_startup_settings(
+            let settings = crate::memory_service_wiring::build_memory_startup_settings(
                 thread_config.as_ref(),
                 config_snapshot.session_source,
             );
-            codex_memories_write::start_memories_startup_task(
+            memory_service::start_memories_startup_task(
                 runtime,
                 Arc::clone(&self.auth_manager),
                 thread_id,

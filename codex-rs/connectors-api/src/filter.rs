@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use codex_connectors_types::AppInfo;
+use codex_connectors_api::AppInfo;
 
 pub fn filter_tool_suggest_discoverable_connectors(
     directory_connectors: Vec<AppInfo>,

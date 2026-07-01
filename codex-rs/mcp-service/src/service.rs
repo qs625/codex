@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use codex_approval_service_api::ApprovalServiceApi;
 use codex_approval_service_api::GuardianReviewDispatch;
+use codex_core_skills_api::SkillMetadata;
 use codex_hooks_api::PermissionRequestDecision;
 use codex_mcp_tool_types::ToolInfo;
 use codex_mcp_types::ElicitationResponse;
@@ -26,8 +27,10 @@ use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_protocol::request_user_input::RequestUserInputResponse;
 use mcp_service_api::McpRuntimeFuture;
+use mcp_service_api::McpAppUsageMetadata;
 use mcp_service_api::McpServiceApi;
 use mcp_service_api::McpToolCallOutcome;
+use mcp_service_api::McpToolExposure;
 use thread_service_api::AutoApprovalSafetyOutcome;
 use thread_service_api::HookToolName;
 use thread_service_api::PermissionRequestPayload;
@@ -49,13 +52,19 @@ use crate::McpToolCallContext;
 use crate::McpToolCallHost;
 use crate::McpToolExecutionHost;
 use crate::McpToolMetadataLookupHost;
+use crate::McpSkillDependencyHost;
+use crate::McpSkillDependencyTurnContext;
 use crate::build_mcp_tool_call_completed_item;
 use crate::build_mcp_tool_call_started_item;
 use crate::codex_apps_auth_context;
 use crate::handle_mcp_tool_call;
 use crate::insert_sandbox_state_request_meta;
+use crate::list_tool_suggest_discoverable_tools_with_auth;
 use crate::mcp_call_metric_tags;
+use crate::maybe_prompt_and_install_mcp_dependencies;
 use crate::maybe_request_mcp_tool_approval;
+use codex_tool_types::DiscoverableTool;
+use codex_tool_types::filter_request_plugin_install_discoverable_tools_for_client;
 
 #[derive(Clone)]
 pub struct McpService {
@@ -80,7 +89,491 @@ impl ServiceMcpHost {
     }
 }
 
+struct ServiceMcpSkillDependencyHost<'a> {
+    session: &'a dyn ThreadSessionCapability,
+    turn: &'a dyn ThreadTurnCapability,
+}
+
+impl McpSkillDependencyHost for ServiceMcpSkillDependencyHost<'_> {
+    fn configured_servers<'a>(
+        &'a self,
+        config: &'a codex_config::Config,
+    ) -> McpRuntimeFuture<'a, HashMap<String, codex_config_types::McpServerConfig>> {
+        let _ = config;
+        self.session.configured_mcp_servers()
+    }
+
+    fn prompted_dependency_keys(&self) -> McpRuntimeFuture<'_, std::collections::HashSet<String>> {
+        self.session.mcp_dependency_prompted()
+    }
+
+    fn record_prompted_dependency_keys<'a>(
+        &'a self,
+        names: Vec<String>,
+    ) -> McpRuntimeFuture<'a, ()> {
+        self.session.record_mcp_dependency_prompted(names)
+    }
+
+    fn request_user_input<'a>(
+        &'a self,
+        call_id: String,
+        args: RequestUserInputArgs,
+    ) -> McpRuntimeFuture<'a, Option<RequestUserInputResponse>> {
+        self.turn.request_user_input(call_id, args)
+    }
+
+    fn notify_user_input_response<'a>(
+        &'a self,
+        sub_id: &'a str,
+        response: RequestUserInputResponse,
+    ) -> McpRuntimeFuture<'a, ()> {
+        Box::pin(async move {
+            self.session.notify_user_input_response(sub_id, response).await;
+        })
+    }
+
+    fn oauth_login_support<'a>(
+        &'a self,
+        transport: &'a codex_config_types::McpServerTransportConfig,
+    ) -> McpRuntimeFuture<'a, codex_mcp_types::McpOAuthLoginSupport> {
+        self.session.mcp_oauth_login_support(transport)
+    }
+
+    fn perform_oauth_login<'a>(
+        &'a self,
+        request: mcp_service_api::McpOAuthLoginRequest,
+    ) -> McpRuntimeFuture<'a, anyhow::Result<()>> {
+        self.session
+            .perform_mcp_oauth_login(thread_service_api::McpOAuthLoginParams {
+                server_name: request.server_name,
+                server_url: request.server_url,
+                store_mode: request.store_mode,
+                http_headers: request.http_headers,
+                env_http_headers: request.env_http_headers,
+                scopes: request.scopes,
+                oauth_client_id: request.oauth_client_id,
+                oauth_resource: request.oauth_resource,
+                callback_port: request.callback_port,
+                callback_url: request.callback_url,
+            })
+    }
+
+    fn should_retry_without_scopes(
+        &self,
+        scopes: &codex_mcp_types::ResolvedMcpOAuthScopes,
+        error: &anyhow::Error,
+    ) -> bool {
+        self.session.should_retry_mcp_oauth_without_scopes(scopes, error)
+    }
+
+    fn refresh_mcp_servers_now<'a>(
+        &'a self,
+        servers: HashMap<String, codex_config_types::McpServerConfig>,
+        store_mode: codex_config_types::OAuthCredentialsStoreMode,
+        elicitation_reviewer: Option<codex_mcp_types::ElicitationReviewerHandle>,
+    ) -> McpRuntimeFuture<'a, ()> {
+        let refresh_config = codex_protocol::protocol::McpServerRefreshConfig {
+            mcp_servers: serde_json::to_value(servers)
+                .unwrap_or_else(|_| serde_json::Value::Object(Default::default())),
+            mcp_oauth_credentials_store_mode: serde_json::to_value(store_mode)
+                .unwrap_or(serde_json::Value::Null),
+        };
+        self.session
+            .refresh_mcp_servers_now(self.turn, refresh_config, elicitation_reviewer)
+    }
+}
+
 impl McpServiceApi for McpService {
+    fn list_accessible_connectors(
+        &self,
+        all_mcp_tools: &[ToolInfo],
+        config: &codex_config::Config,
+    ) -> Vec<codex_connectors_api::AppInfo> {
+        crate::with_app_enabled_state(
+            crate::accessible_connectors_from_mcp_tools(all_mcp_tools),
+            config,
+        )
+    }
+
+    fn list_available_connectors<'a>(
+        &self,
+        plugin_runtime: &'a dyn plugin_service_api::PluginRuntime,
+        all_mcp_tools: &'a [ToolInfo],
+        config: &'a codex_config::Config,
+    ) -> McpRuntimeFuture<'a, Vec<codex_connectors_api::AppInfo>> {
+        Box::pin(async move {
+            let plugin_effective_apps = plugin_runtime
+                .effective_apps_for_config(&config.plugins_config_input())
+                .await;
+            let connectors = codex_connectors_api::merge::merge_plugin_connectors_with_accessible(
+                plugin_effective_apps.into_iter().map(|connector_id| connector_id.0),
+                crate::accessible_connectors_from_mcp_tools(all_mcp_tools),
+            );
+            crate::with_app_enabled_state(connectors, config)
+        })
+    }
+
+    fn list_discoverable_tools<'a>(
+        &self,
+        turn: &'a dyn ThreadTurnCapability,
+        plugin_runtime: &'a dyn plugin_service_api::PluginRuntime,
+        accessible_connectors: &'a [codex_connectors_api::AppInfo],
+        config: &'a codex_config::Config,
+        app_server_client_name: Option<&'a str>,
+        tool_suggest_enabled: bool,
+        apps_enabled: bool,
+    ) -> McpRuntimeFuture<'a, Result<Vec<DiscoverableTool>, String>> {
+        Box::pin(async move {
+            if !apps_enabled || !tool_suggest_enabled {
+                return Ok(Vec::new());
+            }
+
+            let auth_snapshot = turn.auth_snapshot().await;
+            let connector_auth_context = codex_apps_auth_context(auth_snapshot.as_ref());
+            list_tool_suggest_discoverable_tools_with_auth(
+                config,
+                plugin_runtime,
+                connector_auth_context.as_ref(),
+                accessible_connectors,
+            )
+            .await
+            .map(|discoverable_tools| {
+                filter_request_plugin_install_discoverable_tools_for_client(
+                    discoverable_tools,
+                    app_server_client_name,
+                )
+            })
+            .map_err(|err| err.to_string())
+        })
+    }
+
+    fn build_tool_exposure(
+        &self,
+        all_mcp_tools: &[ToolInfo],
+        connectors: Option<&[codex_connectors_api::AppInfo]>,
+        explicitly_enabled_connectors: &[codex_connectors_api::AppInfo],
+        config: &codex_config::Config,
+        tools_config: &codex_tool_config::ToolsConfig,
+    ) -> McpToolExposure {
+        let exposure = crate::build_mcp_tool_exposure(
+            all_mcp_tools,
+            connectors,
+            explicitly_enabled_connectors,
+            config,
+            tools_config,
+        );
+        McpToolExposure {
+            direct_tools: exposure.direct_tools,
+            deferred_tools: exposure.deferred_tools,
+        }
+    }
+
+    fn maybe_prompt_and_install_mcp_dependencies<'a>(
+        &self,
+        session: &'a dyn ThreadSessionCapability,
+        turn: &'a dyn ThreadTurnCapability,
+        config: &'a codex_config::Config,
+        cancellation_token: &'a tokio_util::sync::CancellationToken,
+        mentioned_skills: &'a [SkillMetadata],
+        elicitation_reviewer: Option<codex_mcp_types::ElicitationReviewerHandle>,
+    ) -> McpRuntimeFuture<'a, ()> {
+        let host = ServiceMcpSkillDependencyHost { session, turn };
+        let turn_context = McpSkillDependencyTurnContext {
+            sub_id: turn.runtime_turn_id_str(),
+            approval_policy: turn.approval_policy(),
+            permission_profile: turn.permission_profile(),
+        };
+        Box::pin(async move {
+            maybe_prompt_and_install_mcp_dependencies(
+                &host,
+                &turn_context,
+                config,
+                cancellation_token,
+                mentioned_skills,
+                elicitation_reviewer,
+            )
+            .await;
+        })
+    }
+
+    fn lookup_app_usage_metadata(
+        &self,
+        all_mcp_tools: &[ToolInfo],
+        server: &str,
+        tool_name: &str,
+    ) -> Option<McpAppUsageMetadata> {
+        crate::lookup_mcp_app_usage_metadata(all_mcp_tools, server, tool_name)
+    }
+
+    fn configured_servers<'a>(
+        &self,
+        plugin_runtime: &'a dyn plugin_service_api::PluginRuntime,
+        config: &'a codex_config::Config,
+    ) -> McpRuntimeFuture<'a, HashMap<String, codex_config::McpServerConfig>> {
+        Box::pin(async move {
+            let mcp_config = config.to_mcp_config(plugin_runtime).await;
+            codex_mcp_types::configured_mcp_servers(&mcp_config)
+        })
+    }
+
+    fn effective_servers<'a>(
+        &self,
+        plugin_runtime: &'a dyn plugin_service_api::PluginRuntime,
+        config: &'a codex_config::Config,
+        auth_context: Option<&'a codex_mcp_types::CodexAppsAuthContext>,
+    ) -> McpRuntimeFuture<'a, HashMap<String, codex_mcp_types::EffectiveMcpServer>> {
+        Box::pin(async move {
+            let mcp_config = config.to_mcp_config(plugin_runtime).await;
+            codex_mcp_types::effective_mcp_servers(&mcp_config, auth_context)
+        })
+    }
+
+    fn tool_plugin_provenance<'a>(
+        &self,
+        plugin_runtime: &'a dyn plugin_service_api::PluginRuntime,
+        config: &'a codex_config::Config,
+    ) -> McpRuntimeFuture<'a, codex_mcp_types::ToolPluginProvenance> {
+        Box::pin(async move {
+            let mcp_config = config.to_mcp_config(plugin_runtime).await;
+            codex_mcp_types::tool_plugin_provenance(&mcp_config)
+        })
+    }
+
+    fn list_accessible_and_enabled_connectors(
+        &self,
+        all_mcp_tools: &[ToolInfo],
+        config: &codex_config::Config,
+    ) -> Vec<codex_connectors_api::AppInfo> {
+        crate::with_app_enabled_state(crate::accessible_connectors_from_mcp_tools(all_mcp_tools), config)
+            .into_iter()
+            .filter(|connector| connector.is_accessible && connector.is_enabled)
+            .collect()
+    }
+
+    fn fetch_accessible_connectors<'a>(
+        &self,
+        plugin_runtime: &'a dyn plugin_service_api::PluginRuntime,
+        config: &'a codex_config::Config,
+        auth_snapshot: Option<&'a codex_auth_types::RequestAuthSnapshot>,
+        environment_provider: &'a dyn codex_exec_server_api::ExecEnvironmentProvider,
+        mcp_auth_runtime: &'a dyn mcp_service_api::McpAuthRuntime,
+        mcp_connection_runtime_factory: &'a dyn mcp_service_api::McpConnectionRuntimeFactory,
+    ) -> McpRuntimeFuture<'a, anyhow::Result<Vec<codex_connectors_api::AppInfo>>> {
+        Box::pin(async move {
+            crate::list_accessible_connectors_from_mcp_tools(
+                config,
+                auth_snapshot,
+                plugin_runtime,
+                environment_provider,
+                mcp_auth_runtime,
+                mcp_connection_runtime_factory,
+            )
+            .await
+        })
+    }
+
+    fn app_tool_policy(
+        &self,
+        config: &codex_config::Config,
+        metadata: Option<&codex_mcp_types::McpToolApprovalMetadata>,
+        tool_name: &str,
+    ) -> thread_service_api::ThreadAppToolPolicy {
+        let policy = crate::app_tool_policy(
+            config,
+            metadata.and_then(|metadata| metadata.connector_id.as_deref()),
+            tool_name,
+            metadata.and_then(|metadata| metadata.tool_title.as_deref()),
+            metadata.and_then(|metadata| metadata.annotations.as_ref()),
+        );
+        thread_service_api::ThreadAppToolPolicy {
+            enabled: policy.enabled,
+            approval: policy.approval,
+        }
+    }
+
+    fn list_cached_accessible_connectors<'a>(
+        &self,
+        config: &'a codex_config::Config,
+        auth_snapshot: Option<&'a codex_auth_types::RequestAuthSnapshot>,
+    ) -> McpRuntimeFuture<'a, Option<Vec<codex_connectors_api::AppInfo>>> {
+        Box::pin(async move {
+            crate::list_cached_accessible_connectors_from_mcp_tools(config, auth_snapshot).await
+        })
+    }
+
+    fn refresh_accessible_connectors_cache(
+        &self,
+        config: &codex_config::Config,
+        connector_auth_context: Option<&codex_mcp_types::CodexAppsAuthContext>,
+        mcp_tools: &[ToolInfo],
+    ) {
+        crate::refresh_accessible_connectors_cache_from_mcp_tools(
+            config,
+            connector_auth_context,
+            mcp_tools,
+        );
+    }
+
+    fn codex_apps_auth_context(
+        &self,
+        auth: Option<&codex_auth_types::RequestAuthSnapshot>,
+    ) -> Option<codex_mcp_types::CodexAppsAuthContext> {
+        crate::codex_apps_auth_context(auth)
+    }
+
+    fn codex_apps_auth_provider(
+        &self,
+        auth: Option<&codex_auth_types::RequestAuthSnapshot>,
+    ) -> Option<mcp_service_api::SharedMcpAuthHeaderProvider> {
+        crate::codex_apps_auth_provider(auth)
+    }
+
+    fn build_runtime_environment(
+        &self,
+        environment: Arc<dyn codex_exec_server_api::ExecEnvironment>,
+        local_environment: Arc<dyn codex_exec_server_api::ExecEnvironment>,
+        fallback_cwd: std::path::PathBuf,
+    ) -> mcp_service_api::McpRuntimeEnvironment {
+        crate::mcp_runtime_environment(environment, local_environment, fallback_cwd)
+    }
+
+    fn start_connection_runtime<'a>(
+        &self,
+        factory: &'a dyn mcp_service_api::McpConnectionRuntimeFactory,
+        request: mcp_service_api::McpConnectionRuntimeStartRequest,
+    ) -> McpRuntimeFuture<'a, mcp_service_api::McpConnectionRuntimeStart> {
+        Box::pin(async move { factory.start(request).await })
+    }
+
+    fn review_guardian_elicitation<'a>(
+        &self,
+        session: Arc<dyn ThreadSessionCapability>,
+        turn: Arc<dyn ThreadRuntimeCapability>,
+        request: codex_mcp_types::ElicitationReviewRequest,
+    ) -> McpRuntimeFuture<'a, anyhow::Result<Option<codex_mcp_types::ElicitationResponse>>> {
+        let approval_api = Arc::clone(&self.approval_api);
+        Box::pin(async move {
+            if !codex_approval_service_api::routes_approval_to_guardian(
+                &turn.approval_policy(),
+                turn.approvals_reviewer(),
+            ) {
+                return Ok(None);
+            }
+
+            let guardian_request = match crate::guardian_elicitation_review_request(&request) {
+                crate::GuardianElicitationReview::NotRequested => return Ok(None),
+                crate::GuardianElicitationReview::Decline(reason) => {
+                    tracing::warn!(
+                        server_name = %request.server_name,
+                        request_id = %crate::mcp_elicitation_request_id(&request.request_id),
+                        reason,
+                        "declining Guardian MCP elicitation before review"
+                    );
+                    return Ok(Some(codex_mcp_types::ElicitationResponse {
+                        action: codex_mcp_types::ElicitationAction::Decline,
+                        content: None,
+                        meta: Some(serde_json::json!({
+                            "approvals_reviewer": codex_protocol::config_types::ApprovalsReviewer::AutoReview,
+                        })),
+                    }));
+                }
+                crate::GuardianElicitationReview::ApprovalRequest(guardian_request) => {
+                    *guardian_request
+                }
+            };
+
+            let review = approval_api
+                .review_guardian_request(codex_approval_service_api::GuardianReviewDispatch {
+                    session,
+                    turn,
+                    review_id: uuid::Uuid::new_v4().to_string(),
+                    request: guardian_request,
+                    retry_reason: None,
+                    approval_request_source:
+                        codex_analytics_api::GuardianApprovalRequestSource::MainTurn,
+                    cancellation_token: None,
+                })
+                .await;
+            Ok(Some(
+                crate::mcp_elicitation_response_from_guardian_decision_parts(
+                    review.decision,
+                    review.decline_message,
+                ),
+            ))
+        })
+    }
+
+    fn rewrite_tool_arguments_for_openai_files<'a>(
+        &self,
+        uploader: &'a dyn codex_openai_files_api::OpenAiFileUploader,
+        auth: Option<&'a codex_auth_types::RequestAuthSnapshot>,
+        chatgpt_base_url: &'a str,
+        turn: &'a dyn ThreadRuntimeCapability,
+        arguments_value: Option<serde_json::Value>,
+        openai_file_input_params: Option<&'a [String]>,
+    ) -> McpRuntimeFuture<'a, Result<Option<serde_json::Value>, String>> {
+        struct TurnPathResolver<'a> {
+            turn: &'a dyn ThreadRuntimeCapability,
+        }
+
+        impl crate::OpenAiFilePathResolver for TurnPathResolver<'_> {
+            fn resolve_path(&self, file_path: &str) -> std::path::PathBuf {
+                self.turn
+                    .resolve_turn_path(Some(file_path.to_string()))
+                    .to_path_buf()
+            }
+        }
+
+        let path_resolver = TurnPathResolver { turn };
+        Box::pin(async move {
+            crate::rewrite_mcp_tool_arguments_for_openai_files(
+                uploader,
+                auth,
+                chatgpt_base_url,
+                &path_resolver,
+                arguments_value,
+                openai_file_input_params,
+            )
+            .await
+        })
+    }
+
+    fn custom_tool_approval_mode<'a>(
+        &self,
+        plugin_runtime: &'a dyn plugin_service_api::PluginRuntime,
+        config: &'a codex_config::Config,
+        server: &'a str,
+        tool_name: &'a str,
+    ) -> McpRuntimeFuture<'a, codex_config_types::AppToolApproval> {
+        Box::pin(async move {
+            crate::custom_mcp_tool_approval_mode(config, plugin_runtime, server, tool_name).await
+        })
+    }
+
+    fn persist_codex_app_tool_approval<'a>(
+        &self,
+        config: &'a codex_config::Config,
+        connector_id: &'a str,
+        tool_name: &'a str,
+    ) -> McpRuntimeFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move {
+            crate::persist_codex_app_tool_approval(config, connector_id, tool_name).await
+        })
+    }
+
+    fn persist_non_app_mcp_tool_approval<'a>(
+        &self,
+        plugin_runtime: &'a dyn plugin_service_api::PluginRuntime,
+        config: &'a codex_config::Config,
+        server: &'a str,
+        tool_name: &'a str,
+    ) -> McpRuntimeFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move {
+            crate::persist_non_app_mcp_tool_approval(config, plugin_runtime, server, tool_name)
+                .await
+        })
+    }
+
     fn request_server_elicitation<'a>(
         &self,
         session: &'a dyn ThreadSessionCapability,
@@ -474,7 +967,7 @@ impl McpToolMetadataLookupHost for ServiceMcpHost {
     async fn cached_accessible_connectors<'a>(
         &'a self,
         auth_snapshot: Option<&'a codex_auth_types::RequestAuthSnapshot>,
-    ) -> Option<Vec<codex_connectors_types::AppInfo>> {
+    ) -> Option<Vec<codex_connectors_api::AppInfo>> {
         self.turn_view()
             .cached_accessible_connectors_from_mcp_tools(auth_snapshot)
             .await
@@ -483,7 +976,7 @@ impl McpToolMetadataLookupHost for ServiceMcpHost {
     async fn fetch_accessible_connectors<'a>(
         &'a self,
         auth_snapshot: Option<&'a codex_auth_types::RequestAuthSnapshot>,
-    ) -> anyhow::Result<Vec<codex_connectors_types::AppInfo>> {
+    ) -> anyhow::Result<Vec<codex_connectors_api::AppInfo>> {
         self.session
             .fetch_accessible_connectors_from_mcp_tools(self.turn_view(), auth_snapshot)
             .await
@@ -584,6 +1077,8 @@ impl McpToolApprovalReviewHost for ServiceMcpHost {
                 review_id: uuid::Uuid::new_v4().to_string(),
                 request,
                 retry_reason: monitor_reason,
+                approval_request_source: codex_analytics_api::GuardianApprovalRequestSource::MainTurn,
+                cancellation_token: None,
             })
             .await;
         (result.decision, result.decline_message)

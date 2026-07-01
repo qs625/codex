@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex as StdMutex;
@@ -9,7 +10,10 @@ use async_channel::unbounded;
 use codex_auth_types::RequestAuthSnapshot;
 use codex_client_identity::originator;
 use codex_config::Config;
-use codex_connectors_types::AppInfo;
+use codex_config_types::ToolSuggestDiscoverableType;
+use codex_connectors_api::ConnectorDirectoryCacheContext;
+use codex_connectors_api::ConnectorDirectoryCacheKey;
+use codex_connectors_api::AppInfo;
 use codex_exec_server_api::ExecEnvironmentProvider;
 use codex_features::Feature;
 use codex_mcp_tool_types::ToolInfo;
@@ -21,10 +25,13 @@ use codex_mcp_types::host_owned_codex_apps_enabled;
 use codex_mcp_types::tool_plugin_provenance;
 use codex_mcp_types::with_codex_apps_mcp;
 use codex_protocol::models::PermissionProfile;
+use codex_tool_types::DiscoverablePluginInfo;
+use codex_tool_types::DiscoverableTool;
 use mcp_service_api::McpAuthRuntime;
 use mcp_service_api::McpConnectionRuntime;
 use mcp_service_api::McpConnectionRuntimeFactory;
 use mcp_service_api::McpConnectionRuntimeStartRequest;
+use plugin_service_api::PluginRuntime;
 use tracing::warn;
 
 use crate::codex_apps_auth_context;
@@ -61,7 +68,7 @@ pub struct AccessibleConnectorsStatus {
 pub async fn list_accessible_connectors_from_mcp_tools(
     config: &Config,
     auth_snapshot: Option<&RequestAuthSnapshot>,
-    plugin_runtime: &dyn codex_core_plugins_api::PluginRuntime,
+    plugin_runtime: &dyn plugin_service_api::PluginRuntime,
     environment_provider: &dyn ExecEnvironmentProvider,
     mcp_auth_runtime: &dyn McpAuthRuntime,
     mcp_connection_runtime_factory: &dyn McpConnectionRuntimeFactory,
@@ -79,6 +86,64 @@ pub async fn list_accessible_connectors_from_mcp_tools(
         .await?
         .connectors,
     )
+}
+
+pub async fn list_tool_suggest_discoverable_tools_with_auth(
+    config: &Config,
+    plugin_runtime: &dyn PluginRuntime,
+    auth_context: Option<&CodexAppsAuthContext>,
+    accessible_connectors: &[AppInfo],
+) -> anyhow::Result<Vec<DiscoverableTool>> {
+    let connector_ids = tool_suggest_connector_ids(config, plugin_runtime).await;
+    let directory_connectors = codex_connectors_api::merge::merge_plugin_connectors(
+        cached_directory_connectors_for_tool_suggest_with_auth(config, auth_context).await,
+        connector_ids.iter().cloned(),
+    );
+    let discoverable_connectors =
+        codex_connectors_api::filter::filter_tool_suggest_discoverable_connectors(
+            directory_connectors,
+            accessible_connectors,
+            &connector_ids,
+            originator().value.as_str(),
+        )
+        .into_iter()
+        .map(DiscoverableTool::from);
+    let configured_plugin_ids = config
+        .tool_suggest
+        .discoverables
+        .iter()
+        .filter(|discoverable| discoverable.kind == ToolSuggestDiscoverableType::Plugin)
+        .map(|discoverable| discoverable.id.clone())
+        .collect::<HashSet<_>>();
+    let disabled_plugin_ids = config
+        .tool_suggest
+        .disabled_tools
+        .iter()
+        .filter(|disabled_tool| disabled_tool.kind == ToolSuggestDiscoverableType::Plugin)
+        .map(|disabled_tool| disabled_tool.id.clone())
+        .collect::<HashSet<_>>();
+    let discoverable_plugins = plugin_runtime
+        .list_tool_suggest_discoverable_plugins(
+            &config.plugins_config_input(),
+            &configured_plugin_ids,
+            &disabled_plugin_ids,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?
+        .into_iter()
+        .map(|plugin| {
+            DiscoverableTool::from(DiscoverablePluginInfo {
+                id: plugin.id,
+                name: plugin.name,
+                description: plugin.description,
+                has_skills: plugin.has_skills,
+                mcp_server_names: plugin.mcp_server_names,
+                app_connector_ids: plugin.app_connector_ids,
+            })
+        });
+    Ok(discoverable_connectors
+        .chain(discoverable_plugins)
+        .collect())
 }
 
 pub async fn list_accessible_and_enabled_connectors_from_manager(
@@ -136,7 +201,7 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_options(
     config: &Config,
     auth_snapshot: Option<&RequestAuthSnapshot>,
     force_refetch: bool,
-    plugin_runtime: &dyn codex_core_plugins_api::PluginRuntime,
+    plugin_runtime: &dyn plugin_service_api::PluginRuntime,
     environment_provider: &dyn ExecEnvironmentProvider,
     mcp_auth_runtime: &dyn McpAuthRuntime,
     mcp_connection_runtime_factory: &dyn McpConnectionRuntimeFactory,
@@ -160,7 +225,7 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_options_and_status(
     config: &Config,
     auth_snapshot: Option<&RequestAuthSnapshot>,
     force_refetch: bool,
-    plugin_runtime: &dyn codex_core_plugins_api::PluginRuntime,
+    plugin_runtime: &dyn plugin_service_api::PluginRuntime,
     environment_provider: &dyn ExecEnvironmentProvider,
     mcp_auth_runtime: &dyn McpAuthRuntime,
     mcp_connection_runtime_factory: &dyn McpConnectionRuntimeFactory,
@@ -181,7 +246,7 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_environment_provider
     config: &Config,
     auth_snapshot: Option<&RequestAuthSnapshot>,
     force_refetch: bool,
-    plugin_runtime: &dyn codex_core_plugins_api::PluginRuntime,
+    plugin_runtime: &dyn plugin_service_api::PluginRuntime,
     environment_provider: &dyn ExecEnvironmentProvider,
     mcp_auth_runtime: &dyn McpAuthRuntime,
     mcp_connection_runtime_factory: &dyn McpConnectionRuntimeFactory,
@@ -354,6 +419,60 @@ fn accessible_connectors_cache_key(
         chatgpt_user_id,
         is_workspace_account,
     }
+}
+
+async fn tool_suggest_connector_ids(
+    config: &Config,
+    plugin_runtime: &dyn PluginRuntime,
+) -> HashSet<String> {
+    let plugins_input = config.plugins_config_input();
+    let mut connector_ids = plugin_runtime.connector_ids_for_config(&plugins_input).await;
+    connector_ids.extend(
+        config
+            .tool_suggest
+            .discoverables
+            .iter()
+            .filter(|discoverable| discoverable.kind == ToolSuggestDiscoverableType::Connector)
+            .map(|discoverable| discoverable.id.clone()),
+    );
+    let disabled_connector_ids = config
+        .tool_suggest
+        .disabled_tools
+        .iter()
+        .filter(|disabled_tool| disabled_tool.kind == ToolSuggestDiscoverableType::Connector)
+        .map(|disabled_tool| disabled_tool.id.as_str())
+        .collect::<HashSet<_>>();
+    connector_ids.retain(|connector_id| !disabled_connector_ids.contains(connector_id.as_str()));
+    connector_ids
+}
+
+async fn cached_directory_connectors_for_tool_suggest_with_auth(
+    config: &Config,
+    auth_context: Option<&CodexAppsAuthContext>,
+) -> Vec<AppInfo> {
+    if !config.features.enabled(Feature::Apps) {
+        return Vec::new();
+    }
+
+    let Some(auth_context) = auth_context.filter(|auth| auth.uses_codex_backend) else {
+        return Vec::new();
+    };
+
+    let account_id = match auth_context.account_id.as_deref() {
+        Some(account_id) if !account_id.is_empty() => account_id.to_string(),
+        _ => return Vec::new(),
+    };
+    let cache_context = ConnectorDirectoryCacheContext::new(
+        config.codex_home.to_path_buf(),
+        ConnectorDirectoryCacheKey::new(
+            config.chatgpt_base_url.clone(),
+            Some(account_id),
+            auth_context.chatgpt_user_id.clone(),
+            auth_context.is_workspace_account,
+        ),
+    );
+
+    codex_connectors_api::cached_directory_connectors(&cache_context).unwrap_or_default()
 }
 
 fn read_cached_accessible_connectors(

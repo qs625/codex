@@ -5,11 +5,14 @@ pub(crate) mod approval_review_session_impl;
 pub(crate) mod approval_review_runtime_impl;
 #[path = "approval_support.rs"]
 pub(crate) mod approval_support_impl;
+#[path = "mcp_session.rs"]
+pub(crate) mod mcp_session_impl;
 use crate::SessionPermissionProfileUpdate;
 use crate::SessionSettingsApplyCurrent;
 use crate::build_session_settings_apply_plan;
 use crate::initial_thread_skills;
 use crate::merge_thread_skills;
+use codex_approval_service_api::ApprovalServiceApi;
 use codex_agent_runtime::ChildCompletionState;
 use codex_agent_runtime::GoalRuntimeState;
 use codex_api_runtime_api::SharedApiRuntimeFactory;
@@ -17,11 +20,12 @@ use codex_auth_types::AuthRuntime;
 use codex_auth_types::SharedAuthRuntime;
 use codex_code_mode_api::CodeModeRuntimeFactory;
 use codex_code_mode_api::CodeModeRuntimeService;
+use codex_command_service_api::CommandServiceApi;
 use codex_command_service_api::WaitBackoffState;
 use codex_config::ConstraintError;
 use codex_config_types::RequirementSource;
-use codex_core_plugins_api::SharedPluginRuntime;
-use codex_memories_read_api::SharedMemoryToolDeveloperInstructionsProvider;
+use plugin_service_api::SharedPluginRuntime;
+use memory_service_api::SharedMemoryToolDeveloperInstructionsProvider;
 use codex_model_provider_api::SharedModelProviderAuthManager;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
@@ -389,7 +393,6 @@ impl Session {
         session_source: SessionSource,
         skills_manager: codex_core_skills_api::SharedSkillsRuntime,
         plugins_manager: SharedPluginRuntime,
-        mcp_manager: Arc<McpManager>,
         mcp_service: Arc<dyn McpServiceApi>,
         mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
         mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
@@ -399,6 +402,7 @@ impl Session {
         hook_runtime_factory: SharedHookRuntimeFactory,
         sandbox_runtime: codex_sandboxing_api::SharedSandboxRuntime,
         network_proxy_runtime_factory: SharedNetworkProxyRuntimeFactory,
+        command_service_api: Arc<dyn CommandServiceApi>,
         extensions: Arc<codex_extension_api::ExtensionRegistry<codex_config::Config>>,
         agent_control: AgentControl,
         environment_manager: Arc<dyn ExecEnvironmentProvider>,
@@ -412,8 +416,9 @@ impl Session {
         openai_file_uploader: SharedOpenAiFileUploader,
         code_mode_service: Arc<dyn CodeModeRuntimeService>,
         code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+        approval_service: Arc<dyn ApprovalServiceApi>,
         goal_service: Arc<dyn GoalServiceApi>,
-        tool_service: Arc<crate::CoreToolServiceApi>,
+        tool_service: Arc<crate::ToolServiceApi>,
     ) -> anyhow::Result<Arc<Self>> {
         debug!(
             "Configuring session: model={}; provider={:?}",
@@ -522,13 +527,18 @@ impl Session {
 
         let auth_runtime_for_mcp = Arc::clone(&shared_auth_runtime);
         let config_for_mcp = Arc::clone(&config);
-        let mcp_manager_for_mcp = Arc::clone(&mcp_manager);
+        let mcp_service_for_mcp = Arc::clone(&mcp_service);
+        let plugins_manager_for_mcp = Arc::clone(&plugins_manager);
         let mcp_auth_runtime_for_mcp = Arc::clone(&mcp_auth_runtime);
         let auth_and_mcp_fut = async move {
             let auth_snapshot = auth_runtime_for_mcp.auth().await;
-            let auth_context = mcp_service::codex_apps_auth_context(auth_snapshot.as_ref());
-            let mcp_servers = mcp_manager_for_mcp
-                .effective_servers(&config_for_mcp, auth_context.as_ref())
+            let auth_context = mcp_service_for_mcp.codex_apps_auth_context(auth_snapshot.as_ref());
+            let mcp_servers = mcp_service_for_mcp
+                .effective_servers(
+                    plugins_manager_for_mcp.as_ref(),
+                    &config_for_mcp,
+                    auth_context.as_ref(),
+                )
                 .await;
             let host_owned_codex_apps_enabled = config_for_mcp.features.apps_enabled_for_auth(
                 auth_snapshot
@@ -776,7 +786,7 @@ impl Session {
                 .network
                 .is_some();
             let managed_network_requirements_enabled = config.managed_network_requirements_enabled();
-            let network_approval = Arc::new(NetworkApprovalService::default());
+            let network_approval = approval_service.create_session_network_approval();
             // The managed proxy can call back into core for allowlist-miss decisions.
             let network_policy_decider_session = if managed_network_requirements_configured {
                 config
@@ -798,7 +808,7 @@ impl Session {
                     .permissions
                     .network
                     .as_ref()
-                    .map(|_| build_blocked_request_observer(Arc::clone(&network_approval)))
+                    .map(|_| Arc::clone(&network_approval).build_blocked_request_observer())
             } else {
                 None
             };
@@ -806,10 +816,9 @@ impl Session {
                 network_policy_decider_session
                     .as_ref()
                     .map(|network_policy_decider_session| {
-                        build_network_policy_decider(
-                            Arc::clone(&network_approval),
-                            Arc::clone(network_policy_decider_session),
-                        )
+                        Arc::clone(&network_approval).build_network_policy_decider(Arc::clone(
+                            network_policy_decider_session,
+                        ))
                     });
             let (network_proxy, session_network_proxy) =
                 if let Some(spec) = config.permissions.network.as_ref() {
@@ -893,6 +902,7 @@ impl Session {
                 network_proxy_runtime_factory,
                 mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
                 command_service_state,
+                command_service_api,
                 shell_zsh_path: config.zsh_path.clone(),
                 main_execve_wrapper_exe: config.main_execve_wrapper_exe.clone(),
                 analytics_events_client,
@@ -918,7 +928,6 @@ impl Session {
                 runtime_handle: tokio::runtime::Handle::current(),
                 skills_manager,
                 plugins_manager: Arc::clone(&plugins_manager),
-                mcp_manager: Arc::clone(&mcp_manager),
                 extensions,
                 // TODO(jif): extract session to share between sub-agents
                 session_extension_data,
@@ -959,6 +968,7 @@ impl Session {
                 openai_file_uploader,
                 code_mode_service,
                 code_mode_runtime_factory,
+                approval_service,
                 goal_service,
                 tool_service,
                 environment_manager,
@@ -1045,9 +1055,15 @@ impl Session {
             let enabled_mcp_server_count =
                 mcp_servers.values().filter(|server| server.enabled()).count();
             let required_mcp_server_count = required_mcp_servers.len();
-            let tool_plugin_provenance = mcp_manager.tool_plugin_provenance(config.as_ref()).await;
-            let codex_apps_auth_context =
-                mcp_service::codex_apps_auth_context(auth_snapshot.as_ref());
+            let tool_plugin_provenance = sess
+                .services
+                .mcp_service
+                .tool_plugin_provenance(sess.services.plugins_manager.as_ref(), config.as_ref())
+                .await;
+            let codex_apps_auth_context = sess
+                .services
+                .mcp_service
+                .codex_apps_auth_context(auth_snapshot.as_ref());
             let host_owned_codex_apps_enabled = config
                 .features
                 .apps_enabled_for_auth(auth_snapshot.as_ref().is_some_and(|auth| {
@@ -1076,7 +1092,7 @@ impl Session {
             .cloned();
             let local_environment = sess.services.environment_manager.local_environment();
             let mcp_runtime_environment = match turn_environment {
-                Some(turn_environment) => mcp_service::mcp_runtime_environment(
+                Some(turn_environment) => sess.services.mcp_service.build_runtime_environment(
                     Arc::clone(&turn_environment.environment),
                     Arc::clone(&local_environment),
                     turn_environment.cwd.to_path_buf(),
@@ -1087,16 +1103,19 @@ impl Session {
                         .environment_manager
                         .default_environment()
                         .unwrap_or_else(|| Arc::clone(&local_environment));
-                    mcp_service::mcp_runtime_environment(
+                    sess.services.mcp_service.build_runtime_environment(
                         environment,
                         local_environment,
                         session_configuration.cwd.to_path_buf(),
                     )
                 }
             };
-            let mcp_connection_runtime_start = mcp_service::start_mcp_connection_runtime(
+            let mcp_connection_runtime_start = sess
+                .services
+                .mcp_service
+                .start_connection_runtime(
                 sess.services.mcp_connection_runtime_factory.as_ref(),
-                mcp_service::McpConnectionStartParams {
+                mcp_service_api::McpConnectionRuntimeStartRequest {
                     mcp_servers,
                     store_mode: config.mcp_oauth_credentials_store_mode,
                     auth_entries: auth_statuses,
@@ -1112,7 +1131,7 @@ impl Session {
                     host_owned_codex_apps_enabled,
                     client_elicitation_support,
                     tool_plugin_provenance,
-                    codex_apps_auth_provider: mcp_service::codex_apps_auth_provider(
+                    codex_apps_auth_provider: sess.services.mcp_service.codex_apps_auth_provider(
                         auth_snapshot.as_ref(),
                     ),
                     elicitation_reviewer: Some(sess.mcp_elicitation_reviewer()),

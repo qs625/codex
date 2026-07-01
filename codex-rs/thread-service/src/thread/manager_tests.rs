@@ -58,6 +58,40 @@ fn thread_store_from_config(
     }
 }
 
+fn test_thread_service_manager(
+    config: &Config,
+    auth_manager: Arc<AuthManager>,
+    thread_store: Arc<dyn ThreadStore>,
+    state_db: Option<StateDbHandle>,
+    installation_id: String,
+) -> ThreadService {
+    let command_service = Arc::new(codex_command_service::CommandService::new());
+    let approval_service = Arc::new(approval_service::ApprovalService);
+    let mcp_service = Arc::new(mcp_service::McpService::new(approval_service.clone()));
+    ThreadService::new_with_mcp_auth_runtime(
+        config,
+        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager),
+        SessionSource::Exec,
+        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+        empty_extension_registry(),
+        /*analytics_events_client*/ None,
+        thread_store,
+        state_db,
+        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
+        installation_id,
+        /*attestation_provider*/ None,
+        crate::test_support::model_provider_factory_for_tests(),
+        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        command_service,
+        approval_service,
+        Arc::new(goal_service::GoalService),
+        Arc::new(crate::test_support::DisabledToolServiceForTests),
+        mcp_service,
+        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
+    )
+}
+
 fn user_msg(text: &str) -> ResponseItem {
     ResponseItem::Message {
         id: None,
@@ -520,24 +554,12 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-    let manager = ThreadService::new_with_mcp_auth_runtime(
+    let manager = test_thread_service_manager(
         &config,
-        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager.clone()),
-        SessionSource::Exec,
-        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
-        empty_extension_registry(),
-        /*analytics_events_client*/ None,
+        auth_manager.clone(),
         thread_store_from_config(&config, /*state_db*/ None),
         /*state_db*/ None,
-        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
-        /*attestation_provider*/ None,
-        crate::test_support::model_provider_factory_for_tests(),
-        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(goal_service::GoalService),
-        Arc::new(crate::test_support::DisabledToolServiceForTests),
-        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
     let selected_cwd =
         AbsolutePathBuf::try_from(config.cwd.as_path().join("selected")).expect("absolute path");
@@ -644,24 +666,12 @@ async fn explicit_installation_id_skips_codex_home_file() {
     let installation_id = uuid::Uuid::new_v4().to_string();
     let state_db = init_state_db(&config).await;
     let thread_store = thread_store_from_config(&config, state_db.clone());
-    let manager = ThreadService::new_with_mcp_auth_runtime(
+    let manager = test_thread_service_manager(
         &config,
-        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager),
-        SessionSource::Exec,
-        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
-        empty_extension_registry(),
-        /*analytics_events_client*/ None,
+        auth_manager,
         thread_store,
         state_db.clone(),
-        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         installation_id.clone(),
-        /*attestation_provider*/ None,
-        crate::test_support::model_provider_factory_for_tests(),
-        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(goal_service::GoalService),
-        Arc::new(crate::test_support::DisabledToolServiceForTests),
-        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let thread = manager
@@ -690,24 +700,12 @@ async fn resume_active_thread_from_rollout_returns_running_thread() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-    let manager = ThreadService::new_with_mcp_auth_runtime(
+    let manager = test_thread_service_manager(
         &config,
-        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager.clone()),
-        SessionSource::Exec,
-        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
-        empty_extension_registry(),
-        /*analytics_events_client*/ None,
+        auth_manager.clone(),
         thread_store_from_config(&config, /*state_db*/ None),
         /*state_db*/ None,
-        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
-        /*attestation_provider*/ None,
-        crate::test_support::model_provider_factory_for_tests(),
-        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(goal_service::GoalService),
-        Arc::new(crate::test_support::DisabledToolServiceForTests),
-        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let source = manager
@@ -749,24 +747,12 @@ async fn resume_stopped_thread_from_rollout_spawns_new_thread() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-    let manager = ThreadService::new_with_mcp_auth_runtime(
+    let manager = test_thread_service_manager(
         &config,
-        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager.clone()),
-        SessionSource::Exec,
-        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
-        empty_extension_registry(),
-        /*analytics_events_client*/ None,
+        auth_manager.clone(),
         thread_store_from_config(&config, /*state_db*/ None),
         /*state_db*/ None,
-        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
-        /*attestation_provider*/ None,
-        crate::test_support::model_provider_factory_for_tests(),
-        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(goal_service::GoalService),
-        Arc::new(crate::test_support::DisabledToolServiceForTests),
-        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let source = manager
@@ -815,24 +801,12 @@ async fn resume_stopped_thread_from_rollout_preserves_thread_source() {
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
     let state_db = init_state_db(&config).await;
     let thread_store = thread_store_from_config(&config, state_db.clone());
-    let manager = ThreadService::new_with_mcp_auth_runtime(
+    let manager = test_thread_service_manager(
         &config,
-        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager.clone()),
-        SessionSource::Exec,
-        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
-        empty_extension_registry(),
-        /*analytics_events_client*/ None,
+        auth_manager.clone(),
         thread_store,
         state_db.clone(),
-        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
-        /*attestation_provider*/ None,
-        crate::test_support::model_provider_factory_for_tests(),
-        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(goal_service::GoalService),
-        Arc::new(crate::test_support::DisabledToolServiceForTests),
-        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let source = manager
@@ -907,24 +881,12 @@ async fn rollout_path_resume_and_fork_read_history_through_thread_store() {
         .as_any()
         .downcast_ref::<codex_thread_store::InMemoryThreadStore>()
         .expect("configured in-memory store");
-    let manager = ThreadService::new_with_mcp_auth_runtime(
+    let manager = test_thread_service_manager(
         &config,
-        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager.clone()),
-        SessionSource::Exec,
-        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
-        empty_extension_registry(),
-        /*analytics_events_client*/ None,
+        auth_manager.clone(),
         thread_store.clone(),
         state_db,
-        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
-        /*attestation_provider*/ None,
-        crate::test_support::model_provider_factory_for_tests(),
-        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(goal_service::GoalService),
-        Arc::new(crate::test_support::DisabledToolServiceForTests),
-        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let source = manager
@@ -1015,24 +977,12 @@ async fn new_uses_active_provider_for_model_refresh() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-    let manager = ThreadService::new_with_mcp_auth_runtime(
+    let manager = test_thread_service_manager(
         &config,
-        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager),
-        SessionSource::Exec,
-        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
-        empty_extension_registry(),
-        /*analytics_events_client*/ None,
+        auth_manager,
         thread_store_from_config(&config, /*state_db*/ None),
         /*state_db*/ None,
-        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
-        /*attestation_provider*/ None,
-        crate::test_support::model_provider_factory_for_tests(),
-        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(goal_service::GoalService),
-        Arc::new(crate::test_support::DisabledToolServiceForTests),
-        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let _ = manager.list_models(RefreshStrategy::Online).await;
@@ -1240,24 +1190,12 @@ async fn interrupted_fork_snapshot_does_not_synthesize_turn_id_for_legacy_histor
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
     let state_db = init_state_db(&config).await;
-    let manager = ThreadService::new_with_mcp_auth_runtime(
+    let manager = test_thread_service_manager(
         &config,
-        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager.clone()),
-        SessionSource::Exec,
-        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
-        empty_extension_registry(),
-        /*analytics_events_client*/ None,
+        auth_manager.clone(),
         thread_store_from_config(&config, state_db.clone()),
         state_db.clone(),
-        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
-        /*attestation_provider*/ None,
-        crate::test_support::model_provider_factory_for_tests(),
-        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(goal_service::GoalService),
-        Arc::new(crate::test_support::DisabledToolServiceForTests),
-        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let source = manager
@@ -1353,24 +1291,12 @@ async fn interrupted_fork_snapshot_preserves_explicit_turn_id() {
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
     let state_db = init_state_db(&config).await;
-    let manager = ThreadService::new_with_mcp_auth_runtime(
+    let manager = test_thread_service_manager(
         &config,
-        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager.clone()),
-        SessionSource::Exec,
-        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
-        empty_extension_registry(),
-        /*analytics_events_client*/ None,
+        auth_manager.clone(),
         thread_store_from_config(&config, state_db.clone()),
         state_db.clone(),
-        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
-        /*attestation_provider*/ None,
-        crate::test_support::model_provider_factory_for_tests(),
-        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(goal_service::GoalService),
-        Arc::new(crate::test_support::DisabledToolServiceForTests),
-        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let source = manager
@@ -1456,24 +1382,12 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
     let state_db = init_state_db(&config).await;
-    let manager = ThreadService::new_with_mcp_auth_runtime(
+    let manager = test_thread_service_manager(
         &config,
-        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager.clone()),
-        SessionSource::Exec,
-        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
-        empty_extension_registry(),
-        /*analytics_events_client*/ None,
+        auth_manager.clone(),
         thread_store_from_config(&config, state_db.clone()),
         state_db.clone(),
-        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
-        /*attestation_provider*/ None,
-        crate::test_support::model_provider_factory_for_tests(),
-        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(goal_service::GoalService),
-        Arc::new(crate::test_support::DisabledToolServiceForTests),
-        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let source = manager
@@ -1604,24 +1518,12 @@ async fn resumed_thread_keeps_paused_goal_paused() -> anyhow::Result<()> {
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
     let state_db = init_state_db(&config).await;
-    let manager = ThreadService::new_with_mcp_auth_runtime(
+    let manager = test_thread_service_manager(
         &config,
-        crate::test_support::thread_auth_runtimes_from_auth_manager(auth_manager.clone()),
-        SessionSource::Exec,
-        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
-        empty_extension_registry(),
-        /*analytics_events_client*/ None,
+        auth_manager.clone(),
         thread_store_from_config(&config, state_db.clone()),
         state_db.clone(),
-        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         TEST_INSTALLATION_ID.to_string(),
-        /*attestation_provider*/ None,
-        crate::test_support::model_provider_factory_for_tests(),
-        Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(goal_service::GoalService),
-        Arc::new(crate::test_support::DisabledToolServiceForTests),
-        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
     );
 
     let source = manager

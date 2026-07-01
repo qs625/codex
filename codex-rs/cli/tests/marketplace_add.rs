@@ -1,6 +1,6 @@
 use anyhow::Result;
 use codex_config_edit::CONFIG_TOML_FILE;
-use codex_core_plugins::installed_marketplaces::marketplace_install_root;
+use plugin_service::installed_marketplaces::marketplace_install_root;
 use predicates::str::contains;
 use pretty_assertions::assert_eq;
 use std::path::Path;

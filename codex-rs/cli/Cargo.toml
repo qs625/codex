@@ -38,7 +38,7 @@ codex-config-local-loader = { workspace = true }
 codex-config-loader = { workspace = true }
 codex-config-types = { workspace = true }
 thread-service = { workspace = true }
-codex-core-plugins = { workspace = true }
+plugin-service = { workspace = true }
 codex-exec = { workspace = true }
 codex-exec-server-api = { workspace = true }
 codex-exec-server = { workspace = true }
@@ -48,16 +48,17 @@ codex-features = { workspace = true }
 goal-service = { workspace = true }
 codex-install-context = { workspace = true }
 codex-login = { workspace = true, features = ["model-provider-auth"] }
-codex-memories-write = { workspace = true }
+memory-service = { workspace = true }
 codex-mcp = { workspace = true }
 mcp-service = { workspace = true }
+mcp-service-api = { workspace = true }
 codex-mcp-server = { workspace = true }
 codex-mcp-types = { workspace = true }
 codex-model-provider = { workspace = true }
 codex-models-manager-api = { workspace = true }
 codex-models-manager = { workspace = true }
 codex-network-proxy = { workspace = true }
-codex-plugin = { workspace = true }
+plugin-service-api = { workspace = true }
 codex-protocol = { workspace = true }
 codex-responses-api-proxy = { workspace = true }
 codex-rmcp-client = { workspace = true }

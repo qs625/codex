@@ -53,7 +53,11 @@ impl McpRefreshRuntime for ThreadService {
         &'a self,
         config: &'a Config,
     ) -> BoxFuture<'a, HashMap<String, McpServerConfig>> {
-        Box::pin(async move { self.mcp_manager().configured_servers(config).await })
+        Box::pin(async move {
+            self.mcp_service()
+                .configured_servers(self.plugin_runtime().as_ref(), config)
+                .await
+        })
     }
 
     fn queue_mcp_refresh(
@@ -232,7 +236,6 @@ mod tests {
         let state_db = codex_rollout::state_db::init(&good_config)
             .await
             .expect("refresh tests require state db");
-        let shared_state_db = Some(state_db.clone());
         let thread_store = crate::thread_store_factory::thread_store_from_config(
             &good_config,
             Some(state_db.clone()),
@@ -254,7 +257,6 @@ mod tests {
                     Arc::new(codex_command_service::CommandService::new()),
                     Arc::new(goal_service::GoalService),
                     mcp_service.clone(),
-                    Arc::new(thread_service::RequestPluginInstallService),
                     workflow_service,
                     thread_service_api,
                 ));
@@ -278,12 +280,14 @@ mod tests {
                     ),
                     /*analytics_events_client*/ None,
                     thread_store,
-                    state_db.clone(),
+                    Some(state_db.clone()),
                     Arc::new(codex_thread_store::DefaultLiveThreadFactory),
                     "11111111-1111-4111-8111-111111111111".to_string(),
                     /*attestation_provider*/ None,
                     Arc::new(codex_model_provider::DefaultModelProviderFactory),
                     Arc::new(codex_code_mode::V8CodeModeRuntimeFactory),
+                    Arc::new(codex_command_service::CommandService::new()),
+                    Arc::new(approval_service::ApprovalService),
                     Arc::new(goal_service::GoalService),
                     Arc::new(codex_mcp::DefaultMcpAuthRuntime),
                     Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
@@ -294,7 +298,7 @@ mod tests {
                     Arc::new(codex_sandboxing::SandboxManager::new()),
                     Arc::new(codex_otel::OtelSessionTelemetryFactory),
                     Arc::new(codex_hooks::HooksRuntimeFactory),
-                    Arc::new(codex_memories_read::FsMemoryToolDeveloperInstructionsProvider),
+                    Arc::new(memory_service::FsMemoryToolDeveloperInstructionsProvider),
                     Arc::new(
                         codex_core_skills::SkillsManager::new_with_restriction_product(
                             good_config.codex_home.clone(),
@@ -303,7 +307,7 @@ mod tests {
                         ),
                     ),
                     Arc::new(
-                        codex_core_plugins::PluginsManager::new_with_restriction_product(
+                        plugin_service::PluginsManager::new_with_restriction_product(
                             good_config.codex_home.to_path_buf(),
                             SessionSource::Exec.restriction_product(),
                         ),

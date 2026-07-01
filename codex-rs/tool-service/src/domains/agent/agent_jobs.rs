@@ -18,12 +18,11 @@ use codex_state_api::default_agent_job_output_csv_path;
 use codex_state_api::ensure_unique_agent_job_headers;
 use codex_state_api::parse_agent_job_csv;
 use codex_state_api::render_agent_job_csv;
+use thread_service_api::AgentJobSpawnConfig;
 use thread_service_api::AgentJobRunnerOptions;
 use thread_service_api::AgentJobSpawnWorkerError;
 use thread_service_api::SessionAgentJobCaller;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service::ThreadRuntimeSession;
-use thread_service::ThreadTurnContext;
 use codex_tool_types::FunctionCallError;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::StreamExt;
@@ -93,8 +92,8 @@ struct ActiveJobItem {
 }
 
 pub(super) async fn handle_spawn_agents_on_csv(
-    session: Arc<ThreadRuntimeSession>,
-    turn: Arc<ThreadTurnContext>,
+    session: Arc<dyn SessionAgentJobCaller>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     arguments: String,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
     let args: SpawnAgentsOnCsvArgs = super::parse_arguments(arguments.as_str())?;
@@ -336,7 +335,7 @@ pub(super) async fn handle_spawn_agents_on_csv(
 }
 
 pub(super) async fn handle_report_agent_job_result(
-    session: Arc<ThreadRuntimeSession>,
+    session: Arc<dyn SessionAgentJobCaller>,
     arguments: String,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
     let args: ReportAgentJobResultArgs = super::parse_arguments(arguments.as_str())?;
@@ -378,7 +377,7 @@ pub(super) async fn handle_report_agent_job_result(
 }
 
 fn required_state_db(
-    session: &ThreadRuntimeSession,
+    session: &dyn SessionAgentJobCaller,
 ) -> Result<SharedStateDbRuntime, FunctionCallError> {
     session.agent_job_state_db().ok_or_else(|| {
         FunctionCallError::Fatal("sqlite state db is unavailable for this session".to_string())
@@ -398,11 +397,11 @@ fn normalize_max_runtime_seconds(requested: Option<u64>) -> Result<Option<u64>, 
 }
 
 async fn run_agent_job_loop(
-    session: Arc<ThreadRuntimeSession>,
-    turn: Arc<ThreadTurnContext>,
+    session: Arc<dyn SessionAgentJobCaller>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     db: SharedStateDbRuntime,
     job_id: String,
-    options: AgentJobRunnerOptions<<ThreadRuntimeSession as SessionAgentJobCaller>::SpawnConfig>,
+    options: AgentJobRunnerOptions<AgentJobSpawnConfig>,
 ) -> anyhow::Result<()> {
     let job = db
         .get_agent_job(job_id.as_str())
@@ -569,7 +568,7 @@ async fn export_job_csv_snapshot(db: SharedStateDbRuntime, job: &AgentJob) -> an
 }
 
 async fn recover_running_items(
-    session: Arc<ThreadRuntimeSession>,
+    session: Arc<dyn SessionAgentJobCaller>,
     db: SharedStateDbRuntime,
     job_id: &str,
     active_items: &mut HashMap<ThreadId, ActiveJobItem>,
@@ -648,7 +647,7 @@ async fn recover_running_items(
 }
 
 async fn find_finished_threads(
-    session: Arc<ThreadRuntimeSession>,
+    session: Arc<dyn SessionAgentJobCaller>,
     active_items: &HashMap<ThreadId, ActiveJobItem>,
 ) -> Vec<(ThreadId, String)> {
     let mut finished = Vec::new();
@@ -662,7 +661,7 @@ async fn find_finished_threads(
 }
 
 async fn active_item_status(
-    session: &Arc<ThreadRuntimeSession>,
+    session: &Arc<dyn SessionAgentJobCaller>,
     thread_id: ThreadId,
     item: &ActiveJobItem,
 ) -> AgentStatus {
@@ -694,7 +693,7 @@ async fn wait_for_status_change(active_items: &HashMap<ThreadId, ActiveJobItem>)
 }
 
 async fn reap_stale_active_items(
-    session: Arc<ThreadRuntimeSession>,
+    session: Arc<dyn SessionAgentJobCaller>,
     db: SharedStateDbRuntime,
     job_id: &str,
     active_items: &mut HashMap<ThreadId, ActiveJobItem>,
@@ -722,7 +721,7 @@ async fn reap_stale_active_items(
 }
 
 async fn finalize_finished_item(
-    session: Arc<ThreadRuntimeSession>,
+    session: Arc<dyn SessionAgentJobCaller>,
     db: SharedStateDbRuntime,
     job_id: &str,
     item_id: &str,

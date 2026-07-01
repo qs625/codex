@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
+use codex_approval_service_api::is_guardian_reviewer_source;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -266,9 +267,7 @@ async fn schedule_startup_prewarm_inner(
         },
         personality: startup_turn_context.personality,
         output_schema: startup_turn_context.final_output_json_schema.clone(),
-        output_schema_strict: !approval_service::guardian::is_guardian_reviewer_source(
-            &startup_turn_context.session_source,
-        ),
+        output_schema_strict: !is_guardian_reviewer_source(&startup_turn_context.session_source),
     });
     startup_turn_context.session_telemetry.record_startup_phase(
         "startup_prewarm_build_prompt",

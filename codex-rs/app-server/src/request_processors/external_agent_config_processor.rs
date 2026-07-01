@@ -26,7 +26,7 @@ use codex_app_server_protocol::MigrationDetails;
 use codex_app_server_protocol::PluginsMigration;
 use codex_app_server_protocol::ServerNotification;
 use codex_arg0::Arg0DispatchPaths;
-use codex_core_plugins::PluginsManager;
+use plugin_service::PluginsManager;
 use codex_external_agent_sessions::ExternalAgentSessionMigration as CoreSessionMigration;
 use codex_external_agent_sessions::ImportedExternalAgentSession;
 use codex_external_agent_sessions::PendingSessionImport;

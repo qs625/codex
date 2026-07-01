@@ -1,17 +1,12 @@
 use codex_auth_types::RequestAuthSnapshot;
-use codex_connectors_types::AppInfo;
+use codex_connectors_api::AppInfo;
 use codex_mcp_tool_types::ToolInfo;
 use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
 use codex_mcp_types::MCP_TOOL_CODEX_APPS_META_KEY;
 use codex_mcp_types::McpToolApprovalMetadata;
 use codex_mcp_types::mcp_app_resource_uri_from_tool_meta;
 use codex_mcp_types::openai_file_input_params_for_server;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct McpAppUsageMetadata {
-    pub connector_id: Option<String>,
-    pub app_name: Option<String>,
-}
+use mcp_service_api::McpAppUsageMetadata;
 
 /// Host capabilities needed to look up MCP tool metadata.
 ///

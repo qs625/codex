@@ -21,6 +21,10 @@ use codex_config::RequirementSource;
 use codex_config::Sourced;
 use codex_features::Feature;
 use codex_file_system::LOCAL_FS;
+use codex_guardian::format_guardian_action_pretty;
+use codex_guardian::GuardianApprovalRequest;
+use codex_guardian::GuardianPromptMode;
+use codex_guardian::GuardianTranscriptCursor;
 use codex_guardian::guardian_request_target_item_id;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::AMAZON_BEDROCK_GPT_5_4_MODEL_ID;
@@ -1444,8 +1448,8 @@ async fn guardian_review_surfaces_responses_api_errors_in_rejection_reason() -> 
     seed_guardian_parent_history(&session, &turn).await;
 
     let decision = review_approval_request(
-        &session,
-        &turn,
+        session.as_ref(),
+        turn.as_ref(),
         "review-shell-guardian-error".to_string(),
         GuardianApprovalRequest::Shell {
             id: "shell-guardian-error".to_string(),
@@ -1591,8 +1595,8 @@ async fn guardian_parallel_reviews_fork_from_last_committed_trunk_history() -> a
                 };
                 assert_eq!(
                     review_approval_request(
-                        &session,
-                        &turn,
+                        session.as_ref(),
+                        turn.as_ref(),
                         "review-shell-guardian-1".to_string(),
                         initial_request,
                         /*retry_reason*/ None
@@ -1648,8 +1652,8 @@ async fn guardian_parallel_reviews_fork_from_last_committed_trunk_history() -> a
                 let turn_for_second = Arc::clone(&turn);
                 let mut second_review = tokio::spawn(async move {
                     review_approval_request(
-                        &session_for_second,
-                        &turn_for_second,
+                        session_for_second.as_ref(),
+                        turn_for_second.as_ref(),
                         "review-shell-guardian-2".to_string(),
                         second_request,
                         Some("trunk follow-up".to_string()),
@@ -1696,8 +1700,8 @@ async fn guardian_parallel_reviews_fork_from_last_committed_trunk_history() -> a
                     .await;
 
                 let third_decision = review_approval_request(
-                    &session,
-                    &turn,
+                    session.as_ref(),
+                    turn.as_ref(),
                     "review-shell-guardian-3".to_string(),
                     third_request,
                     Some("parallel follow-up".to_string()),

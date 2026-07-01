@@ -32,7 +32,6 @@ use codex_login::AuthManager;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::W3cTraceContext;
 use thread_service::config::Config;
-use thread_service::config::ConfigBuilder;
 use opentelemetry::global;
 use opentelemetry::trace::SpanId;
 use opentelemetry::trace::SpanKind;

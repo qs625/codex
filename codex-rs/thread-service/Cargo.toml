@@ -14,6 +14,7 @@ workspace = true
 [features]
 default = []
 test-support = [
+    "approval-service",
     "codex-api",
     "codex-config/test-support",
     "codex-config-local-loader",
@@ -34,7 +35,7 @@ anyhow = { workspace = true }
 async-channel = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 codex-approval-service-api = { workspace = true }
-approval-service = { workspace = true }
+approval-service = { workspace = true, optional = true }
 codex-analytics-api = { workspace = true }
 codex-agent-runtime = { workspace = true }
 codex-agent-roles = { workspace = true }
@@ -53,7 +54,6 @@ codex-client-identity = { workspace = true }
 codex-client-types = { workspace = true }
 codex-config = { workspace = true }
 codex-connectors-api = { workspace = true }
-codex-connectors-types = { workspace = true }
 codex-config-diagnostics = { workspace = true }
 codex-config-edit = { workspace = true }
 codex-config-local-loader = { workspace = true, optional = true }
@@ -65,7 +65,7 @@ codex-config-toml = { workspace = true }
 codex-config-types = { workspace = true }
 codex-context-manager = { workspace = true }
 codex-context-usage = { workspace = true }
-codex-core-plugins-api = { workspace = true }
+plugin-service-api = { workspace = true }
 codex-core-skills-api = { workspace = true }
 codex-core-skills = { workspace = true, optional = true }
 codex-default-client = { workspace = true, optional = true }
@@ -76,7 +76,7 @@ codex-extension-api = { workspace = true }
 codex-features = { workspace = true }
 codex-feedback-api = { workspace = true }
 codex-login = { workspace = true, optional = true, features = ["model-provider-auth"] }
-codex-memories-read-api = { workspace = true }
+memory-service-api = { workspace = true }
 codex-mcp = { workspace = true, optional = true }
 mcp-service = { workspace = true }
 mcp-service-api = { workspace = true }
@@ -104,7 +104,6 @@ codex-network-proxy-api = { workspace = true }
 codex-openai-files-api = { workspace = true }
 codex-permissions-runtime = { workspace = true }
 codex-session-telemetry-api = { workspace = true }
-codex-plugin-types = { workspace = true }
 codex-protocol = { workspace = true }
 codex-realtime = { workspace = true }
 codex-rollout-trace-api = { workspace = true }
@@ -162,13 +161,13 @@ openssl-sys = { workspace = true, features = ["vendored"] }
 codex-windows-sandbox = { package = "codex-windows-sandbox", path = "../windows-sandbox-rs", default-features = false }
 
 [dev-dependencies]
+approval-service = { workspace = true }
 assert_cmd = { workspace = true }
 assert_matches = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
 codex-api = { workspace = true }
 codex-config = { workspace = true, features = ["test-support"] }
-codex-core-plugins = { workspace = true }
 codex-core-skills = { workspace = true }
 codex-default-client = { workspace = true }
 codex-execpolicy = { workspace = true }
@@ -181,7 +180,8 @@ codex-models-manager = { workspace = true }
 codex-network-proxy = { workspace = true }
 codex-openai-files = { workspace = true }
 codex-otel = { workspace = true }
-codex-plugin = { workspace = true }
+plugin-service = { workspace = true }
+plugin-service-api = { workspace = true }
 codex-rollout = { workspace = true }
 codex-rollout-trace = { workspace = true }
 codex-sandboxing = { workspace = true }

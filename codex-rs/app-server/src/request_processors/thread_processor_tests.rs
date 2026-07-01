@@ -52,7 +52,6 @@ mod thread_processor_behavior_tests {
     use chrono::DateTime;
     use chrono::Utc;
     use codex_app_server_protocol::ServerRequestPayload;
-    use codex_app_server_protocol::ThreadActiveFlag;
     use codex_app_server_protocol::ThreadIdleReason;
     use codex_app_server_protocol::ThreadItem;
     use codex_app_server_protocol::ToolRequestUserInputParams;

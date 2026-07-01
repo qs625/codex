@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
+use crate::agent::multi_agent;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::thread::ThreadService;
 use codex_agent_runtime::AgentMode;
-use codex_agent_runtime::MultiAgentToolSession;
 use codex_agent_runtime::SpawnAgentForkMode;
 use codex_protocol::models::ResponseItem;
 use thread_service_api::ThreadAgentMode;
@@ -140,8 +140,12 @@ impl ThreadServiceApi for ThreadService {
     ) -> ThreadServiceFuture<'a, Result<ThreadSpawnAgentResult, FunctionCallError>> {
         Box::pin(async move {
             let turn = turn_context(turn)?;
-            session(turn.as_ref())
-                .spawn_agent_tool(&turn, call_id, to_runtime_spawn_request(request))
+            multi_agent::spawn_agent_tool(
+                session(turn.as_ref()),
+                Arc::clone(&turn),
+                call_id,
+                to_runtime_spawn_request(request),
+            )
                 .await
                 .map(from_runtime_spawn_result)
         })
@@ -156,9 +160,14 @@ impl ThreadServiceApi for ThreadService {
     ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>> {
         Box::pin(async move {
             let turn = turn_context(turn)?;
-            session(turn.as_ref())
-                .followup_task_tool(&turn, call_id, target, message)
-                .await
+            multi_agent::followup_task_tool(
+                session(turn.as_ref()),
+                Arc::clone(&turn),
+                call_id,
+                target,
+                message,
+            )
+            .await
         })
     }
 
@@ -170,8 +179,7 @@ impl ThreadServiceApi for ThreadService {
     ) -> ThreadServiceFuture<'a, Result<ThreadWaitAgentResult, FunctionCallError>> {
         Box::pin(async move {
             let turn = turn_context(turn)?;
-            session(turn.as_ref())
-                .wait_agent_tool(&turn, call_id, target)
+            multi_agent::wait_agent_tool(session(turn.as_ref()), Arc::clone(&turn), call_id, target)
                 .await
                 .map(from_runtime_wait_result)
         })
@@ -185,8 +193,7 @@ impl ThreadServiceApi for ThreadService {
     ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>> {
         Box::pin(async move {
             let turn = turn_context(turn)?;
-            session(turn.as_ref())
-                .close_agent_tool(&turn, call_id, target)
+            multi_agent::close_agent_tool(session(turn.as_ref()), Arc::clone(&turn), call_id, target)
                 .await
                 .map(from_runtime_close_result)
         })
@@ -200,8 +207,12 @@ impl ThreadServiceApi for ThreadService {
     ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>> {
         Box::pin(async move {
             let turn = turn_context(turn)?;
-            session(turn.as_ref())
-                .list_agents_tool(&turn, call_id, path_prefix)
+            multi_agent::list_agents_tool(
+                session(turn.as_ref()),
+                Arc::clone(&turn),
+                call_id,
+                path_prefix,
+            )
                 .await
                 .map(from_runtime_list_result)
         })

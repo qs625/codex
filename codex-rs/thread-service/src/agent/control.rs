@@ -2,6 +2,7 @@ use crate::agent::AgentStatus;
 use crate::runtime_shell_snapshot::ShellSnapshot;
 use crate::session::emit_subagent_session_started;
 use crate::thread::NewThread;
+#[cfg(any(test, feature = "test-support"))]
 use crate::thread::ResumeThreadWithHistoryOptions;
 use crate::thread::ThreadConfigSnapshot;
 use crate::thread::ThreadServiceState;
@@ -32,9 +33,11 @@ use codex_agent_runtime::select_forked_rollout_items;
 use codex_agent_runtime::should_ignore_descendant_shutdown_error;
 use codex_agent_runtime::should_register_session_root;
 use codex_agent_runtime::should_release_agent_after_thread_request_error;
+#[cfg(any(test, feature = "test-support"))]
 use codex_agent_runtime::thread_spawn_depth;
 use codex_agent_runtime::thread_spawn_descendants;
 use codex_agent_runtime::thread_spawn_parent_thread_id;
+#[cfg(any(test, feature = "test-support"))]
 use codex_features::Feature;
 use codex_protocol::AgentPath;
 use codex_protocol::SessionId;
@@ -46,6 +49,7 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::Op;
+#[cfg(any(test, feature = "test-support"))]
 use codex_protocol::protocol::ResumedHistory;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
@@ -60,6 +64,7 @@ use thread_service_api::LiveThreadStateRuntimeSource;
 use thread_service_api::LiveThreadStatusRuntime;
 use codex_thread_store_api::ReadThreadParams;
 use std::collections::HashMap;
+#[cfg(any(test, feature = "test-support"))]
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Weak;
@@ -385,6 +390,8 @@ impl AgentControl {
     }
 
     /// Resume an existing agent thread from a recorded rollout file.
+    #[cfg(any(test, feature = "test-support"))]
+    #[allow(dead_code)]
     pub(crate) async fn resume_agent_from_rollout(
         &self,
         config: codex_config::Config,
@@ -462,6 +469,8 @@ impl AgentControl {
         Ok(resumed_thread_id)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    #[allow(dead_code)]
     async fn resume_single_agent_from_rollout(
         &self,
         config: codex_config::Config,
@@ -624,6 +633,8 @@ impl AgentControl {
     }
 
     /// Interrupt the current task for an existing agent thread.
+    #[cfg(any(test, feature = "test-support"))]
+    #[allow(dead_code)]
     pub(crate) async fn interrupt_agent(&self, agent_id: ThreadId) -> CodexResult<String> {
         let state = self.upgrade()?;
         state.submit_live_thread_op(agent_id, Op::Interrupt).await
@@ -697,6 +708,8 @@ impl AgentControl {
     }
 
     /// Returns whether the live agent thread has `feature` enabled.
+    #[cfg(any(test, feature = "test-support"))]
+    #[allow(dead_code)]
     pub(crate) async fn agent_thread_enabled(&self, agent_id: ThreadId, feature: Feature) -> bool {
         let Ok(state) = self.upgrade() else {
             return false;
@@ -724,6 +737,8 @@ impl AgentControl {
         })
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    #[allow(dead_code)]
     pub(crate) async fn agent_subtree_is_active(&self, agent_id: ThreadId) -> bool {
         let Ok(thread_ids) = Box::pin(self.list_live_agent_subtree_thread_ids(agent_id)).await
         else {
@@ -736,6 +751,8 @@ impl AgentControl {
         any_agent_thread_active(active_flags)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    #[allow(dead_code)]
     pub(crate) async fn agent_descendants_are_active(&self, agent_id: ThreadId) -> bool {
         let Ok(thread_ids) = Box::pin(self.live_thread_spawn_descendants(agent_id)).await else {
             return false;

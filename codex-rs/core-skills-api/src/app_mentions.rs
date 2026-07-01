@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use codex_connectors_api::metadata::connector_mention_slug;
-use codex_connectors_types::AppInfo;
-use codex_plugin_types::TOOL_MENTION_SIGIL;
+use codex_connectors_api::AppInfo;
+use plugin_service_api::TOOL_MENTION_SIGIL;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 

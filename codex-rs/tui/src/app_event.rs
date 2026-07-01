@@ -39,7 +39,7 @@ use crate::bottom_pane::TerminalTitleItem;
 use crate::chatwidget::UserMessage;
 use codex_app_server_protocol::AskForApproval;
 use codex_features::Feature;
-use codex_plugin::PluginCapabilitySummary;
+use plugin_service_api::PluginCapabilitySummary;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::config_types::Personality;

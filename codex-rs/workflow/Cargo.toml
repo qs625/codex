@@ -9,7 +9,6 @@ workspace = true
 
 [dependencies]
 codex-protocol = { workspace = true }
-codex-runtime-capability-api = { workspace = true }
 codex-session-telemetry-api = { workspace = true }
 codex-tool-types = { workspace = true }
 codex-utils-absolute-path = { workspace = true }

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use codex_config_edit::MarketplaceConfigUpdate;
 use codex_config_edit::record_user_marketplace;
-use codex_core_plugins::installed_marketplaces::marketplace_install_root;
+use plugin_service::installed_marketplaces::marketplace_install_root;
 use predicates::str::contains;
 use std::path::Path;
 use tempfile::TempDir;

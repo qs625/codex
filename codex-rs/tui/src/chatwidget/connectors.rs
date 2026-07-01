@@ -57,7 +57,7 @@ impl ChatWidget {
             let mcp_auth_runtime = codex_mcp::DefaultMcpAuthRuntime;
             let mcp_connection_runtime_factory = codex_mcp::DefaultMcpConnectionRuntimeFactory;
             let plugin_runtime =
-                codex_core_plugins::PluginsManager::new(config.codex_home.to_path_buf());
+                plugin_service::PluginsManager::new(config.codex_home.to_path_buf());
             let accessible_result =
                 match crate::legacy_core::connectors::list_accessible_connectors_from_mcp_tools_with_environment_provider(
                     &config,

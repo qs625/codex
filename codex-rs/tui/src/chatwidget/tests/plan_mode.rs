@@ -1227,7 +1227,7 @@ async fn submit_user_message_emits_structured_plugin_mentions_from_bindings() {
     chat.handle_thread_session(configured);
     chat.set_feature_enabled(Feature::Plugins, /*enabled*/ true);
     chat.bottom_pane
-        .set_plugin_mentions(Some(vec![codex_plugin::PluginCapabilitySummary {
+        .set_plugin_mentions(Some(vec![plugin_service_api::PluginCapabilitySummary {
             config_name: "sample@test".to_string(),
             display_name: "Sample Plugin".to_string(),
             description: None,

@@ -1,15 +1,17 @@
 use std::sync::Arc;
 
-use thread_service::ThreadRuntimeSession;
-use thread_service::ThreadTurnContext;
 use codex_tool_service_api::ToolSpecRequest;
-use codex_tool_types::FunctionCallError;
 
 pub(crate) struct TypedToolSpecRequest<'a> {
     pub(crate) config: &'a codex_tool_config::ToolsConfig,
     pub(crate) session_capability: std::sync::Weak<dyn thread_service_api::ThreadSessionCapability>,
-    pub(crate) session: Arc<ThreadRuntimeSession>,
-    pub(crate) turn: Arc<ThreadTurnContext>,
+    pub(crate) session: Arc<dyn thread_service_api::ThreadSessionCapability>,
+    pub(crate) session_command_state:
+        Arc<dyn codex_command_service_api::CommandServiceSessionState>,
+    pub(crate) session_command_interaction:
+        Arc<dyn codex_command_service_api::SessionCommandInteractionCaller>,
+    pub(crate) session_agent_jobs: Arc<dyn thread_service_api::SessionAgentJobCaller>,
+    pub(crate) turn: Arc<dyn thread_service_api::ThreadRuntimeCapability>,
     pub(crate) params: codex_tool_service_api::ToolServiceParams<'a>,
 }
 
@@ -19,6 +21,9 @@ impl Clone for TypedToolSpecRequest<'_> {
             config: self.config,
             session_capability: self.session_capability.clone(),
             session: Arc::clone(&self.session),
+            session_command_state: Arc::clone(&self.session_command_state),
+            session_command_interaction: Arc::clone(&self.session_command_interaction),
+            session_agent_jobs: Arc::clone(&self.session_agent_jobs),
             turn: Arc::clone(&self.turn),
             params: codex_tool_service_api::ToolServiceParams {
                 mcp_tools: self.params.mcp_tools,
@@ -33,31 +38,16 @@ impl Clone for TypedToolSpecRequest<'_> {
 }
 
 impl<'a> TypedToolSpecRequest<'a> {
-    pub(crate) fn from_request(
-        request: ToolSpecRequest<'a>,
-    ) -> Result<TypedToolSpecRequest<'a>, FunctionCallError> {
-        let Ok(session) = Arc::clone(&request.session)
-            .into_any_arc()
-            .downcast::<ThreadRuntimeSession>()
-        else {
-            return Err(FunctionCallError::Fatal(
-                "tool service received unsupported session context".to_string(),
-            ));
-        };
-        let Ok(turn) = Arc::clone(&request.turn)
-            .into_any_arc()
-            .downcast::<ThreadTurnContext>()
-        else {
-            return Err(FunctionCallError::Fatal(
-                "tool service received unsupported turn context".to_string(),
-            ));
-        };
-        Ok(TypedToolSpecRequest {
+    pub(crate) fn from_request(request: ToolSpecRequest<'a>) -> TypedToolSpecRequest<'a> {
+        TypedToolSpecRequest {
             config: request.config,
             session_capability: request.session_capability,
-            session,
-            turn,
+            session: request.session,
+            session_command_state: request.session_command_state,
+            session_command_interaction: request.session_command_interaction,
+            session_agent_jobs: request.session_agent_jobs,
+            turn: request.turn,
             params: request.params,
-        })
+        }
     }
 }

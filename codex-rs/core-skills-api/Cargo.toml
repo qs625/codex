@@ -15,10 +15,9 @@ workspace = true
 [dependencies]
 codex-config-types = { workspace = true }
 codex-connectors-api = { workspace = true }
-codex-connectors-types = { workspace = true }
 codex-file-system = { workspace = true }
 codex-metrics-api = { workspace = true }
-codex-plugin-types = { workspace = true }
+plugin-service-api = { workspace = true }
 codex-protocol = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-output-truncation = { workspace = true }

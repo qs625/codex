@@ -32,7 +32,6 @@ pub(crate) use codex_command_service_api::CommandWaitStatus;
 pub(crate) use codex_command_service_api::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
 #[cfg(test)]
 pub(crate) use codex_command_service_api::MIN_YIELD_TIME_MS;
-use codex_command_service_api::ToolRuntimeNetworkApprovalHandle;
 pub(crate) use codex_command_service_api::WaitBackoffState;
 pub(crate) use codex_command_service_api::WriteStdinOutput;
 pub(crate) use codex_command_service_api::WriteStdinRequest;
@@ -80,11 +79,11 @@ pub(crate) use output::split_valid_utf8_prefix;
 pub(crate) use unified_exec_process::NoopSpawnLifecycle;
 pub(crate) use unified_exec_process::SpawnLifecycleHandle;
 pub(crate) use unified_exec_process::UnifiedExecProcess;
-use codex_command_service_api::CommandServiceSessionApi;
 pub(crate) use codex_command_service_api::UnifiedExecError;
 pub(crate) use process_manager::UnifiedExecCommandSessionController;
 use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadRuntimeCapability;
+use thread_service_api::ToolRuntimeNetworkApprovalHandle;
 
 pub(crate) const MAX_UNIFIED_EXEC_PROCESSES: usize = 64;
 pub(crate) const DEFAULT_COMMAND_OUTPUT_MAX_TOKENS: usize =
@@ -92,7 +91,6 @@ pub(crate) const DEFAULT_COMMAND_OUTPUT_MAX_TOKENS: usize =
 
 pub(crate) struct UnifiedExecContext {
     pub session: Arc<dyn ThreadSessionCapability>,
-    pub session_api: Arc<dyn CommandServiceSessionApi>,
     pub turn: Arc<dyn ThreadRuntimeCapability>,
     pub call_id: String,
 }
@@ -100,13 +98,11 @@ pub(crate) struct UnifiedExecContext {
 impl UnifiedExecContext {
     pub fn new(
         session: Arc<dyn ThreadSessionCapability>,
-        session_api: Arc<dyn CommandServiceSessionApi>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
     ) -> Self {
         Self {
             session,
-            session_api,
             turn,
             call_id,
         }
@@ -271,7 +267,6 @@ struct ProcessEntry {
     tty: bool,
     network_approval: Option<Arc<dyn ToolRuntimeNetworkApprovalHandle>>,
     session: Weak<dyn ThreadSessionCapability>,
-    session_api: Weak<dyn CommandServiceSessionApi>,
     last_used: tokio::time::Instant,
     #[allow(dead_code)]
     transcript: Arc<Mutex<HeadTailBuffer>>,

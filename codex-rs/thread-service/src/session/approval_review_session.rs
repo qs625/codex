@@ -48,7 +48,7 @@ use crate::session::Codex;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 
-use approval_service::guardian::GUARDIAN_REVIEWER_NAME;
+use codex_approval_service_api::GUARDIAN_REVIEWER_NAME;
 use codex_guardian::GuardianApprovalRequest;
 
 pub(crate) type GuardianReviewSessionManager =
@@ -205,7 +205,7 @@ impl GuardianReviewSessionHost for Session {
     async fn sync_network_approval(&self, _request: &Self::Request, session: &Self::Session) {
         self.services
             .network_approval
-            .sync_session_approved_hosts_to(&session.session.services.network_approval)
+            .sync_session_approved_hosts_to(Arc::clone(&session.session.services.network_approval))
             .await;
     }
 
@@ -303,6 +303,7 @@ impl GuardianReviewSessionHost for Session {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn build_guardian_prompt_items_from_session_history(
     session: &Session,
     retry_reason: Option<String>,

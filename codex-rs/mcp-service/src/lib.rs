@@ -5,9 +5,6 @@ use std::sync::Arc;
 use async_channel::Sender;
 use codex_api_auth::auth_provider_from_auth_snapshot;
 use codex_auth_types::RequestAuthSnapshot;
-use codex_config::Config;
-use codex_config::McpServerConfig;
-use codex_core_plugins_api::SharedPluginRuntime;
 use codex_exec_server_api::ExecEnvironment;
 use codex_mcp_types::CodexAppsAuthContext;
 use codex_mcp_types::CodexAppsToolsCacheKey;
@@ -16,9 +13,6 @@ use codex_mcp_types::ElicitationReviewerHandle;
 use codex_mcp_types::McpAuthStatusEntry;
 use codex_mcp_types::McpClientElicitationSupport;
 use codex_mcp_types::ToolPluginProvenance;
-use codex_mcp_types::configured_mcp_servers;
-use codex_mcp_types::effective_mcp_servers;
-use codex_mcp_types::tool_plugin_provenance as collect_tool_plugin_provenance;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::Event;
@@ -65,6 +59,7 @@ pub use connectors::list_accessible_connectors_from_mcp_tools_with_environment_p
 pub use connectors::list_accessible_connectors_from_mcp_tools_with_options;
 pub use connectors::list_accessible_connectors_from_mcp_tools_with_options_and_status;
 pub use connectors::list_cached_accessible_connectors_from_mcp_tools;
+pub use connectors::list_tool_suggest_discoverable_tools_with_auth;
 pub use connectors::refresh_accessible_connectors_cache_from_mcp_tools;
 pub use connectors::with_app_plugin_sources;
 pub use elicitation_review::GuardianElicitationReview;
@@ -123,7 +118,7 @@ pub use tool_call_flow::McpToolCallContext;
 pub use tool_call_flow::McpToolCallHost;
 pub use tool_call_flow::McpToolCallOutcome;
 pub use tool_call_flow::handle_mcp_tool_call;
-pub use tool_call_metadata::McpAppUsageMetadata;
+pub use mcp_service_api::McpAppUsageMetadata;
 pub use tool_call_metadata::McpToolMetadataLookupHost;
 pub use tool_call_metadata::build_mcp_tool_approval_metadata;
 pub use tool_call_metadata::connector_description_for_tool;
@@ -224,34 +219,4 @@ pub async fn start_mcp_connection_runtime(
             elicitation_reviewer,
         })
         .await
-}
-
-#[derive(Clone)]
-pub struct McpManager {
-    plugins_manager: SharedPluginRuntime,
-}
-
-impl McpManager {
-    pub fn new(plugins_manager: SharedPluginRuntime) -> Self {
-        Self { plugins_manager }
-    }
-
-    pub async fn configured_servers(&self, config: &Config) -> HashMap<String, McpServerConfig> {
-        let mcp_config = config.to_mcp_config(self.plugins_manager.as_ref()).await;
-        configured_mcp_servers(&mcp_config)
-    }
-
-    pub async fn effective_servers(
-        &self,
-        config: &Config,
-        auth_context: Option<&CodexAppsAuthContext>,
-    ) -> HashMap<String, EffectiveMcpServer> {
-        let mcp_config = config.to_mcp_config(self.plugins_manager.as_ref()).await;
-        effective_mcp_servers(&mcp_config, auth_context)
-    }
-
-    pub async fn tool_plugin_provenance(&self, config: &Config) -> ToolPluginProvenance {
-        let mcp_config = config.to_mcp_config(self.plugins_manager.as_ref()).await;
-        collect_tool_plugin_provenance(&mcp_config)
-    }
 }

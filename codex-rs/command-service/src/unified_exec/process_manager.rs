@@ -216,9 +216,9 @@ fn exec_server_params_for_request(
 async fn unregister_network_approval_for_entry(entry: &ProcessEntry) {
     if let Some(network_approval) = entry.network_approval.as_ref()
         && let Some(registration_id) = network_approval.registration_id()
-        && let Some(session_api) = entry.session_api.upgrade()
+        && let Some(session) = entry.session.upgrade()
     {
-        session_api.unregister_network_approval(&registration_id).await;
+        session.unregister_network_approval(&registration_id).await;
     }
 }
 
@@ -277,8 +277,8 @@ async fn finish_deferred_network_approval_after_process_exit_for_session(
 
 fn unified_exec_approval_keys(
     request: &ExecCommandRequest,
-) -> Vec<codex_command_service_api::UnifiedExecApprovalKey> {
-    vec![codex_command_service_api::UnifiedExecApprovalKey {
+) -> Vec<thread_service_api::UnifiedExecApprovalKey> {
+    vec![thread_service_api::UnifiedExecApprovalKey {
         command: request.command.clone(),
         cwd: request.cwd.clone(),
         tty: request.tty,
@@ -335,7 +335,7 @@ async fn reject_unapproved_decision(
         ReviewDecision::Denied | ReviewDecision::Abort => {
             let reason = if let Some(review_id) = review_id {
                 let rejection = session.take_review_rejection(review_id).await;
-                approval_service::guardian::guardian_rejection_message_from_rationale(
+                codex_approval_service_api::guardian_rejection_message_from_rationale(
                     rejection.as_ref().map(|rejection| rejection.rationale.as_str()),
                 )
             } else {
@@ -344,7 +344,7 @@ async fn reject_unapproved_decision(
             Err(ToolError::Rejected(reason))
         }
         ReviewDecision::TimedOut => Err(ToolError::Rejected(
-            approval_service::guardian::guardian_timeout_message(),
+            codex_approval_service_api::guardian_timeout_message(),
         )),
         ReviewDecision::Approved
         | ReviewDecision::ApprovedExecpolicyAmendment { .. }
@@ -392,7 +392,7 @@ async fn request_unified_exec_approval(
 
     let review_id = use_guardian.then(|| uuid::Uuid::new_v4().to_string());
     let decision = context
-        .session_api
+        .session
         .request_unified_exec_approval(
             context.turn.as_ref(),
             context.call_id.clone(),
@@ -445,7 +445,7 @@ async fn spawn_unified_exec_process(
     attempt: &SandboxAttempt<'_>,
     context: &UnifiedExecContext,
 ) -> Result<UnifiedExecProcess, ToolError> {
-    let session_shell = context.session_api.runtime_shell();
+    let session_shell = context.turn.runtime_shell();
     let managed_network =
         managed_network_for_sandbox_permissions(request.network.as_ref(), request.sandbox_permissions);
     let mut env = exec_env_for_sandbox_permissions(&base_env, request.sandbox_permissions);
@@ -520,24 +520,20 @@ async fn run_unified_exec_attempt(
     exec_server_env_config: &ExecServerEnvConfig,
     attempt: &SandboxAttempt<'_>,
     context: &UnifiedExecContext,
-    turn_id: &str,
-    managed_network_active: bool,
 ) -> (
     Result<UnifiedExecProcess, ToolError>,
     Option<Arc<dyn ToolRuntimeNetworkApprovalHandle>>,
 ) {
     let network_approval: Option<Arc<dyn ToolRuntimeNetworkApprovalHandle>> = context
-        .session_api
+        .turn
         .begin_tool_network_approval(
-            turn_id,
-            managed_network_active,
             managed_network_for_sandbox_permissions(
                 request.network.as_ref(),
                 request.sandbox_permissions,
             )
-            .map(|network| codex_command_service_api::NetworkApprovalSpec {
+            .map(|network| thread_service_api::NetworkApprovalSpec {
                 network: Some(network),
-                mode: codex_command_service_api::NetworkApprovalMode::Deferred,
+                mode: thread_service_api::NetworkApprovalMode::Deferred,
                 trigger: unified_exec_network_trigger(request, context),
                 command: request.hook_command.clone(),
             }),
@@ -565,14 +561,14 @@ async fn run_unified_exec_attempt(
     };
 
     match network_approval.mode() {
-        codex_command_service_api::NetworkApprovalMode::Immediate => {
+        thread_service_api::NetworkApprovalMode::Immediate => {
             let finalize = network_approval.finish().await;
             match finalize {
                 Ok(()) => (run_result, None),
                 Err(err) => (Err(map_runtime_tool_error(err)), None),
             }
         }
-        codex_command_service_api::NetworkApprovalMode::Deferred => {
+        thread_service_api::NetworkApprovalMode::Deferred => {
             if run_result.is_err() {
                 match network_approval.finish().await {
                     Ok(()) => (run_result, None),
@@ -1069,7 +1065,6 @@ impl UnifiedExecProcessManager {
             tty,
             network_approval,
             session: Arc::downgrade(&context.session),
-            session_api: Arc::downgrade(&context.session_api),
             last_used: started_at,
             transcript: Arc::clone(&transcript),
             notification_state: Arc::clone(&notification_state),
@@ -1457,8 +1452,6 @@ impl UnifiedExecProcessManager {
             &exec_server_env_config,
             &initial_attempt,
             context,
-            &sandbox_context.turn_id,
-            managed_network_active,
         )
         .await;
 
@@ -1546,8 +1539,6 @@ impl UnifiedExecProcessManager {
                     &exec_server_env_config,
                     &retry_attempt,
                     context,
-                    &sandbox_context.turn_id,
-                    managed_network_active,
                 )
                 .await
                 .0

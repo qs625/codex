@@ -18,7 +18,6 @@ use tokio::io::unix::AsyncFd;
 
 const MAX_FDS_PER_MESSAGE: usize = 16;
 const LENGTH_PREFIX_SIZE: usize = size_of::<u32>();
-const MAX_DATAGRAM_SIZE: usize = 8192;
 
 /// Converts a slice of MaybeUninit<T> to a slice of T.
 ///
@@ -232,22 +231,6 @@ fn make_control_message(fds: &[OwnedFd]) -> std::io::Result<Vec<u8>> {
     }
 }
 
-fn receive_datagram_bytes(socket: &Socket) -> std::io::Result<(Vec<u8>, Vec<OwnedFd>)> {
-    let mut buffer = vec![MaybeUninit::<u8>::uninit(); MAX_DATAGRAM_SIZE];
-    let mut control = vec![MaybeUninit::<u8>::uninit(); control_space_for_fds(MAX_FDS_PER_MESSAGE)];
-    let (read, control_len) = {
-        let mut bufs = [MaybeUninitSlice::new(&mut buffer)];
-        let mut msg = MsgHdrMut::new()
-            .with_buffers(&mut bufs)
-            .with_control(&mut control);
-        let read = socket.recvmsg(&mut msg, 0)?;
-        (read, msg.control_len())
-    };
-    let data = assume_init(&buffer[..read]).to_vec();
-    let fds = extract_fds(assume_init(&control[..control_len]));
-    Ok((data, fds))
-}
-
 pub(crate) struct AsyncSocket {
     inner: AsyncFd<Socket>,
 }
@@ -259,10 +242,6 @@ impl AsyncSocket {
         Ok(AsyncSocket {
             inner: async_socket,
         })
-    }
-
-    pub fn from_fd(fd: OwnedFd) -> std::io::Result<AsyncSocket> {
-        AsyncSocket::new(Socket::from(fd))
     }
 
     pub fn pair() -> std::io::Result<(AsyncSocket, AsyncSocket)> {
@@ -379,33 +358,12 @@ impl AsyncDatagramSocket {
         Self::new(unsafe { Socket::from_raw_fd(fd) })
     }
 
-    pub fn pair() -> std::io::Result<(Self, Self)> {
-        // `socket2::Socket::pair()` also applies "common flags" (including
-        // `SO_NOSIGPIPE` on Apple platforms), which can fail for AF_UNIX sockets.
-        // Use `pair_raw()` to avoid those side effects, then restore `CLOEXEC`
-        // explicitly on both endpoints.
-        let (server, client) = Socket::pair_raw(Domain::UNIX, Type::DGRAM, None)?;
-        server.set_cloexec(true)?;
-        client.set_cloexec(true)?;
-        Ok((Self::new(server)?, Self::new(client)?))
-    }
-
     pub async fn send_with_fds(&self, data: &[u8], fds: &[OwnedFd]) -> std::io::Result<()> {
         self.inner
             .async_io(Interest::WRITABLE, |socket| {
                 send_datagram_bytes(socket, data, fds)
             })
             .await
-    }
-
-    pub async fn receive_with_fds(&self) -> std::io::Result<(Vec<u8>, Vec<OwnedFd>)> {
-        self.inner
-            .async_io(Interest::READABLE, receive_datagram_bytes)
-            .await
-    }
-
-    pub fn into_inner(self) -> Socket {
-        self.inner.into_inner()
     }
 }
 
@@ -467,22 +425,6 @@ mod tests {
         client.send(payload.clone()).await?;
         let received_payload = receive_task.await.unwrap()?;
         assert_eq!(payload, received_payload);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn async_datagram_sockets_round_trip_messages() -> std::io::Result<()> {
-        let (server, client) = AsyncDatagramSocket::pair()?;
-        let data = b"datagram payload".to_vec();
-        let send_fds = fd_list(/*count*/ 1)?;
-        let receive_task = tokio::spawn(async move { server.receive_with_fds().await });
-
-        client.send_with_fds(&data, &send_fds).await?;
-        drop(send_fds);
-
-        let (received_bytes, received_fds) = receive_task.await.unwrap()?;
-        assert_eq!(data, received_bytes);
-        assert_eq!(1, received_fds.len());
         Ok(())
     }
 

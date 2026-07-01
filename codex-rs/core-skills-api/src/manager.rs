@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use codex_config_types::SkillsConfig;
 use codex_file_system::ExecutorFileSystem;
-use codex_plugin_types::PluginSkillRoot;
+use plugin_service_api::PluginSkillRoot;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 use crate::SkillConfigLayerStack;

@@ -1192,7 +1192,7 @@ pub trait ExtensionSkillPluginApi: Send + Sync {
 当前位置：
 
 - `codex-rs/core-skills-api`
-- `codex-rs/core-plugins-api`
+- `codex-rs/plugin-service-api`
 - `codex-rs/ext/extension-api`
 - `codex-rs/thread-runtime/src/skills.rs`
 - `codex-rs/thread-runtime/src/plugins`

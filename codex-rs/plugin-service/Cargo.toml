@@ -1,0 +1,64 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "plugin-service"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "plugin_service"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+codex-api-auth = { workspace = true }
+codex-auth-types = { workspace = true }
+codex-connectors-api = { workspace = true }
+codex-tool-types = { workspace = true }
+codex-config = { workspace = true }
+codex-config-edit = { workspace = true }
+codex-config-state = { workspace = true }
+codex-config-types = { workspace = true }
+codex-context-manager = { workspace = true }
+codex-core-skills-api = { workspace = true }
+codex-default-client = { workspace = true }
+codex-metrics-api = { workspace = true }
+codex-mcp-tool-types = { workspace = true }
+codex-mcp-types = { workspace = true }
+plugin-service-api = { workspace = true }
+codex-core-skills = { workspace = true }
+codex-file-system = { workspace = true }
+codex-git-info = { workspace = true }
+codex-hooks-api = { workspace = true }
+codex-protocol = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+chrono = { workspace = true }
+dirs = { workspace = true }
+flate2 = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tar = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "macros", "rt", "time"] }
+toml = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+zip = { workspace = true }
+
+[dev-dependencies]
+codex-config = { workspace = true }
+codex-config-local-loader = { workspace = true }
+plugin-service-api = { workspace = true }
+codex-login = { workspace = true }
+libc = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-test = { workspace = true, features = ["no-env-filter"] }
+url = { workspace = true }
+wiremock = { workspace = true }

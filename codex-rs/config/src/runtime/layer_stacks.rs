@@ -1,8 +1,8 @@
 use codex_config_state::ConfigLayerEntry;
 use codex_config_state::ConfigLayerStack;
 use codex_config_state::ConfigLayerStackOrdering;
-use codex_core_plugins_api::PluginConfigLayerEntry;
-use codex_core_plugins_api::PluginConfigLayerStack;
+use plugin_service_api::PluginConfigLayerEntry;
+use plugin_service_api::PluginConfigLayerStack;
 use codex_core_skills_api::SkillConfigLayerEntry;
 use codex_core_skills_api::SkillConfigLayerStack;
 use codex_hooks_api::HookConfigLayerEntry;

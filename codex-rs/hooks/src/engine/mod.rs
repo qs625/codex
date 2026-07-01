@@ -22,7 +22,7 @@ use crate::events::user_prompt_submit::UserPromptSubmitOutcome;
 use crate::events::user_prompt_submit::UserPromptSubmitRequest;
 use crate::output_spill::HookOutputSpiller;
 use codex_hooks_api::HookConfigLayerStack;
-use codex_plugin_types::PluginHookSource;
+use plugin_service_api::PluginHookSource;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::HookRunSummary;
 use codex_protocol::protocol::HookSource;

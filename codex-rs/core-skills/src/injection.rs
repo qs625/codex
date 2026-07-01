@@ -7,7 +7,7 @@ use crate::SkillMetadata;
 use crate::build_skill_name_counts;
 use codex_file_system::LOCAL_FS;
 use codex_metrics_api::MetricsSink;
-use codex_plugin_types::TOOL_MENTION_SIGIL;
+use plugin_service_api::TOOL_MENTION_SIGIL;
 use codex_protocol::protocol::SkillScope;
 use codex_protocol::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;

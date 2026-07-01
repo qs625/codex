@@ -1,5 +1,5 @@
 use super::*;
-use codex_core_plugins_remote::RemotePluginAuth;
+use plugin_service::RemotePluginAuth;
 use codex_login::default_client::get_codex_user_agent;
 use futures::future::BoxFuture;
 
@@ -92,7 +92,7 @@ impl AccountRuntime for ThreadService {
                     let refresh_runtime = Arc::clone(&self);
                     let refresh_plugins_manager = Arc::clone(&plugins_manager);
                     let refresh_config_manager = config_manager.clone();
-                    codex_core_plugins_remote::maybe_start_remote_installed_plugins_cache_refresh(
+                    plugin_service::maybe_start_remote_installed_plugins_cache_refresh(
                         Arc::clone(&plugins_manager),
                         &config.plugins_config_input(),
                         remote_plugin_auth_from_codex_auth(auth),

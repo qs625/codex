@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use async_channel::Receiver;
 use async_channel::Sender;
+use codex_approval_service_api::GuardianReviewDispatch;
+use codex_approval_service_api::routes_approval_to_guardian;
 use codex_analytics_api::GuardianApprovalRequestSource;
 use codex_async_utils::OrCancelExt;
 use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
@@ -93,7 +95,6 @@ pub(crate) async fn run_codex_thread_interactive(
         environment_manager: Arc::clone(&parent_session.services.environment_manager),
         skills_manager: Arc::clone(&parent_session.services.skills_manager),
         plugins_manager: Arc::clone(&parent_session.services.plugins_manager),
-        mcp_manager: Arc::clone(&parent_session.services.mcp_manager),
         mcp_service: Arc::clone(&parent_session.services.mcp_service),
         mcp_auth_runtime: Arc::clone(&parent_session.services.mcp_auth_runtime),
         mcp_connection_runtime_factory: Arc::clone(
@@ -102,6 +103,7 @@ pub(crate) async fn run_codex_thread_interactive(
         network_proxy_runtime_factory: Arc::clone(
             &parent_session.services.network_proxy_runtime_factory,
         ),
+        command_service_api: Arc::clone(&parent_session.services.command_service_api),
         extensions: Arc::clone(&parent_session.services.extensions),
         conversation_history: initial_history.unwrap_or(InitialHistory::New),
         session_source: SessionSource::SubAgent(subagent_source.clone()),
@@ -129,6 +131,7 @@ pub(crate) async fn run_codex_thread_interactive(
             .code_mode_runtime_factory
             .create_service(),
         code_mode_runtime_factory: Arc::clone(&parent_session.services.code_mode_runtime_factory),
+        approval_service: Arc::clone(&parent_session.services.approval_service),
         goal_service: Arc::clone(&parent_session.services.goal_service),
         tool_service: Arc::clone(&parent_session.services.tool_service),
     }))
@@ -483,39 +486,37 @@ async fn handle_exec_approval(
         available_decisions,
         ..
     } = event;
-    let decision = if approval_service::guardian::routes_approval_to_guardian(
+    let decision = if routes_approval_to_guardian(
         &parent_ctx.approval_policy.value(),
         parent_ctx.config.approvals_reviewer,
     ) {
-        let review_cancel = cancel_token.child_token();
-        let review_rx = approval_service::guardian::spawn_approval_request_review(
-            Arc::clone(parent_session) as Arc<dyn thread_service_api::ThreadSessionCapability>,
-            Arc::clone(parent_ctx) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
-            approval_service::guardian::new_guardian_review_id(),
-            GuardianApprovalRequest::Shell {
-                id: call_id.clone(),
-                command,
-                cwd,
-                sandbox_permissions: if additional_permissions.is_some() {
-                    codex_protocol::models::SandboxPermissions::WithAdditionalPermissions
-                } else {
-                    codex_protocol::models::SandboxPermissions::UseDefault
+        parent_session
+            .services
+            .approval_service
+            .review_guardian_request(GuardianReviewDispatch {
+                session: Arc::clone(parent_session)
+                    as Arc<dyn thread_service_api::ThreadSessionCapability>,
+                turn: Arc::clone(parent_ctx)
+                    as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
+                review_id: uuid::Uuid::new_v4().to_string(),
+                request: GuardianApprovalRequest::Shell {
+                    id: call_id.clone(),
+                    command,
+                    cwd,
+                    sandbox_permissions: if additional_permissions.is_some() {
+                        codex_protocol::models::SandboxPermissions::WithAdditionalPermissions
+                    } else {
+                        codex_protocol::models::SandboxPermissions::UseDefault
+                    },
+                    additional_permissions,
+                    justification: None,
                 },
-                additional_permissions,
-                justification: None,
-            },
-            reason,
-            GuardianApprovalRequestSource::DelegatedSubagent,
-            review_cancel.clone(),
-        );
-        await_approval_with_cancel(
-            async move { review_rx.await.unwrap_or_default() },
-            parent_session,
-            &approval_id_for_op,
-            cancel_token,
-            Some(&review_cancel),
-        )
-        .await
+                retry_reason: reason,
+                approval_request_source: GuardianApprovalRequestSource::DelegatedSubagent,
+                cancellation_token: Some(cancel_token.child_token()),
+            })
+            .await
+            .decision
     } else {
         await_approval_with_cancel(
             parent_session.request_command_approval(
@@ -564,7 +565,7 @@ async fn handle_patch_approval(
         ..
     } = event;
     let approval_id = call_id.clone();
-    let guardian_decision = if approval_service::guardian::routes_approval_to_guardian(
+    let guardian_decision = if routes_approval_to_guardian(
         &parent_ctx.approval_policy.value(),
         parent_ctx.config.approvals_reviewer,
     ) {
@@ -575,7 +576,6 @@ async fn handle_patch_approval(
                 parent_ctx.cwd.join(path)
             })
             .collect::<Vec<_>>();
-        let review_cancel = cancel_token.child_token();
         let patch = changes
             .iter()
             .map(|(path, change)| match change {
@@ -603,30 +603,29 @@ async fn handle_patch_approval(
             })
             .collect::<Vec<_>>()
             .join("\n");
-        let review_rx = approval_service::guardian::spawn_approval_request_review(
-            Arc::clone(parent_session) as Arc<dyn thread_service_api::ThreadSessionCapability>,
-            Arc::clone(parent_ctx) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
-            approval_service::guardian::new_guardian_review_id(),
-            GuardianApprovalRequest::ApplyPatch {
-                id: approval_id.clone(),
-                #[allow(deprecated)]
-                cwd: parent_ctx.cwd.clone(),
-                files,
-                patch,
-            },
-            reason.clone(),
-            GuardianApprovalRequestSource::DelegatedSubagent,
-            review_cancel.clone(),
-        );
         Some(
-            await_approval_with_cancel(
-                async move { review_rx.await.unwrap_or_default() },
-                parent_session,
-                &approval_id,
-                cancel_token,
-                Some(&review_cancel),
-            )
-            .await,
+            parent_session
+                .services
+                .approval_service
+                .review_guardian_request(GuardianReviewDispatch {
+                    session: Arc::clone(parent_session)
+                        as Arc<dyn thread_service_api::ThreadSessionCapability>,
+                    turn: Arc::clone(parent_ctx)
+                        as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
+                    review_id: uuid::Uuid::new_v4().to_string(),
+                    request: GuardianApprovalRequest::ApplyPatch {
+                        id: approval_id.clone(),
+                        #[allow(deprecated)]
+                        cwd: parent_ctx.cwd.clone(),
+                        files,
+                        patch,
+                    },
+                    retry_reason: reason.clone(),
+                    approval_request_source: GuardianApprovalRequestSource::DelegatedSubagent,
+                    cancellation_token: Some(cancel_token.child_token()),
+                })
+                .await
+                .decision,
         )
     } else {
         None
@@ -663,7 +662,7 @@ async fn handle_request_user_input(
     event: RequestUserInputEvent,
     cancel_token: &CancellationToken,
 ) {
-    if approval_service::guardian::routes_approval_to_guardian(
+    if routes_approval_to_guardian(
         &parent_ctx.approval_policy.value(),
         parent_ctx.config.approvals_reviewer,
     )
@@ -731,24 +730,25 @@ async fn maybe_auto_review_mcp_request_user_input(
             &invocation.tool,
         )
         .await;
-    let review_cancel = cancel_token.child_token();
-    let review_rx = approval_service::guardian::spawn_approval_request_review(
-        Arc::clone(parent_session) as Arc<dyn thread_service_api::ThreadSessionCapability>,
-        Arc::clone(parent_ctx) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
-        approval_service::guardian::new_guardian_review_id(),
-        build_guardian_mcp_tool_review_request(&event.call_id, &invocation, metadata.as_ref()),
-        /*retry_reason*/ None,
-        GuardianApprovalRequestSource::DelegatedSubagent,
-        review_cancel.clone(),
-    );
-    let decision = await_approval_with_cancel(
-        async move { review_rx.await.unwrap_or_default() },
-        parent_session,
-        &event.call_id,
-        cancel_token,
-        Some(&review_cancel),
-    )
-    .await;
+    let decision = parent_session
+        .services
+        .approval_service
+        .review_guardian_request(GuardianReviewDispatch {
+            session: Arc::clone(parent_session)
+                as Arc<dyn thread_service_api::ThreadSessionCapability>,
+            turn: Arc::clone(parent_ctx) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
+            review_id: uuid::Uuid::new_v4().to_string(),
+            request: build_guardian_mcp_tool_review_request(
+                &event.call_id,
+                &invocation,
+                metadata.as_ref(),
+            ),
+            retry_reason: None,
+            approval_request_source: GuardianApprovalRequestSource::DelegatedSubagent,
+            cancellation_token: Some(cancel_token.child_token()),
+        })
+        .await
+        .decision;
     let selected_label = match decision {
         ReviewDecision::ApprovedForSession => question
             .options

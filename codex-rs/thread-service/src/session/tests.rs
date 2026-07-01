@@ -7,6 +7,8 @@ use crate::runtime_shell_model::default_user_shell;
 use crate::skills::SkillRenderSideEffects;
 use crate::skills::render::SkillMetadataBudget;
 use crate::test_support::models_manager_with_provider;
+use approval_service::network::NetworkApprovalService;
+use codex_approval_service_api::SessionNetworkApprovalApi;
 use codex_config::ConfigLayerStack;
 use codex_config::ConfigLayerStackOrdering;
 use codex_config::LoaderOverrides;
@@ -18,7 +20,7 @@ use codex_config::Sourced;
 use codex_config::loader::project_trust_key;
 use codex_config::types::ToolSuggestDisabledTool;
 use codex_context_manager::ContextualUserFragment;
-use codex_core_plugins::PluginsManager;
+use plugin_service::PluginsManager;
 use codex_core_skills::SkillsManager;
 use codex_rollout_api::TurnAborted;
 use thread_service_api::TurnDiffTracker;
@@ -82,7 +84,10 @@ use codex_execpolicy_api::Decision;
 use codex_execpolicy_api::NetworkRuleProtocol;
 use codex_execpolicy_api::Policy;
 use codex_mcp_types::ElicitationAction;
+use codex_mcp_types::ElicitationResponse;
 use codex_mcp_types::McpElicitationSchema;
+use codex_mcp_types::McpServerElicitationRequest;
+use codex_mcp_types::McpServerElicitationRequestParams;
 use codex_metrics_api::THREAD_SKILLS_DESCRIPTION_TRUNCATED_CHARS_METRIC;
 use codex_metrics_api::THREAD_SKILLS_ENABLED_TOTAL_METRIC;
 use codex_metrics_api::THREAD_SKILLS_KEPT_TOTAL_METRIC;
@@ -134,6 +139,8 @@ use codex_protocol::protocol::W3cTraceContext;
 use codex_protocol::request_user_input::RequestUserInputAnswer;
 use codex_protocol::request_user_input::RequestUserInputResponse;
 use codex_rollout::RolloutRecorder;
+use codex_command_service_api::ExecApprovalRequirement;
+use codex_config::types::OAuthCredentialsStoreMode;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use core_test_support::context_snapshot;
@@ -4014,14 +4021,15 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
     let (tx_event, _rx_event) = async_channel::unbounded();
     let (agent_status_tx, _agent_status_rx) = watch::channel(AgentStatus::PendingInit);
     let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
-    let plugin_runtime: codex_core_plugins_api::SharedPluginRuntime = plugins_manager.clone();
-    let mcp_manager = Arc::new(McpManager::new(plugin_runtime));
+    let mcp_service: Arc<dyn mcp_service_api::McpServiceApi> =
+        Arc::new(mcp_service::McpService::new(Arc::new(approval_service::ApprovalService)));
     let skills_manager = Arc::new(SkillsManager::new(
         config.codex_home.clone(),
         /*bundled_skills_enabled*/ true,
     ));
     let auth_runtime: codex_auth_types::SharedAuthRuntime = auth_manager.clone();
     let provider_auth_manager = codex_login::model_provider_auth_manager(Some(auth_manager));
+    let command_service = Arc::new(codex_command_service::CommandService::new());
     let result = Session::new(
         session_configuration,
         Arc::clone(&config),
@@ -4038,15 +4046,16 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         SessionSource::Exec,
         skills_manager,
         plugins_manager,
-        mcp_manager,
+        mcp_service,
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
         Arc::new(codex_api::DefaultApiRuntimeFactory),
         Arc::new(codex_otel::OtelSessionTelemetryFactory),
-        Arc::new(codex_memories_read_api::DisabledMemoryToolDeveloperInstructionsProvider),
+        Arc::new(memory_service_api::DisabledMemoryToolDeveloperInstructionsProvider),
         Arc::new(codex_hooks_api::DisabledHookRuntimeFactory),
         Arc::new(codex_sandboxing_api::DisabledSandboxRuntime),
         Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
+        command_service,
         Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
         AgentControl::default(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
@@ -4063,6 +4072,8 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(approval_service::ApprovalService),
+        Arc::new(goal_service::GoalService),
         Arc::new(DisabledToolServiceForTests),
     )
     .await;
@@ -4156,13 +4167,12 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
 
     let state = SessionState::new(session_configuration.clone());
     let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
-    let plugin_runtime: codex_core_plugins_api::SharedPluginRuntime = plugins_manager.clone();
-    let mcp_manager = Arc::new(McpManager::new(plugin_runtime));
     let skills_manager = Arc::new(SkillsManager::new(
         config.codex_home.clone(),
         /*bundled_skills_enabled*/ true,
     ));
-    let network_approval = Arc::new(NetworkApprovalService::default());
+    let network_approval: Arc<dyn SessionNetworkApprovalApi> =
+        Arc::new(NetworkApprovalService::default());
     let environment: Arc<dyn codex_exec_server_api::ExecEnvironment> = Arc::new(
         codex_exec_server::Environment::create_for_tests(/*exec_server_url*/ None)
             .expect("create environment"),
@@ -4189,6 +4199,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         ),
         mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
         command_service_state,
+        command_service_api: Arc::new(codex_command_service::CommandService::new()),
         shell_zsh_path: None,
         main_execve_wrapper_exe: config.main_execve_wrapper_exe.clone(),
         analytics_events_client: AnalyticsEventsClient::disabled(),
@@ -4208,7 +4219,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         api_runtime_factory: Arc::new(codex_api::DefaultApiRuntimeFactory),
         session_telemetry_factory: Arc::new(codex_otel::OtelSessionTelemetryFactory),
         memory_tool_developer_instructions_provider: Arc::new(
-            codex_memories_read_api::DisabledMemoryToolDeveloperInstructionsProvider,
+            memory_service_api::DisabledMemoryToolDeveloperInstructionsProvider,
         ),
         sandbox_runtime: Arc::new(codex_sandboxing_api::DisabledSandboxRuntime),
         session_telemetry: session_telemetry.clone(),
@@ -4219,7 +4230,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         runtime_handle: tokio::runtime::Handle::current(),
         skills_manager,
         plugins_manager,
-        mcp_manager,
+        mcp_service: Arc::new(mcp_service::McpService::new(Arc::new(approval_service::ApprovalService))),
         extensions: Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
         session_extension_data,
         thread_extension_data,
@@ -4263,16 +4274,16 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         openai_file_uploader: Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         code_mode_service: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         code_mode_runtime_factory: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        approval_service: Arc::new(approval_service::ApprovalService),
         goal_service: Arc::new(goal_service::GoalService),
         tool_service: Arc::new(DisabledToolServiceForTests),
         environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     };
 
-    let plugin_outcome = services
+    let effective_skill_roots = services
         .plugins_manager
-        .plugins_for_config(&per_turn_config.plugins_config_input())
+        .effective_skill_roots_for_config(&per_turn_config.plugins_config_input())
         .await;
-    let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
     let skills_input =
         crate::skills_load_input_from_config(&per_turn_config, effective_skill_roots);
     let skill_fs = environment.get_filesystem();
@@ -4418,14 +4429,15 @@ async fn make_session_with_config_and_rx(
     let (tx_event, rx_event) = async_channel::unbounded();
     let (agent_status_tx, _agent_status_rx) = watch::channel(AgentStatus::PendingInit);
     let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
-    let plugin_runtime: codex_core_plugins_api::SharedPluginRuntime = plugins_manager.clone();
-    let mcp_manager = Arc::new(McpManager::new(plugin_runtime));
     let skills_manager = Arc::new(SkillsManager::new(
         config.codex_home.clone(),
         /*bundled_skills_enabled*/ true,
     ));
     let auth_runtime: codex_auth_types::SharedAuthRuntime = auth_manager.clone();
     let provider_auth_manager = codex_login::model_provider_auth_manager(Some(auth_manager));
+    let command_service = Arc::new(codex_command_service::CommandService::new());
+    let mcp_service: Arc<dyn mcp_service_api::McpServiceApi> =
+        Arc::new(mcp_service::McpService::new(Arc::new(approval_service::ApprovalService)));
     let session = Session::new(
         session_configuration,
         Arc::clone(&config),
@@ -4442,15 +4454,16 @@ async fn make_session_with_config_and_rx(
         SessionSource::Exec,
         skills_manager,
         plugins_manager,
-        mcp_manager,
+        mcp_service,
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
         Arc::new(codex_api::DefaultApiRuntimeFactory),
         Arc::new(codex_otel::OtelSessionTelemetryFactory),
-        Arc::new(codex_memories_read_api::DisabledMemoryToolDeveloperInstructionsProvider),
+        Arc::new(memory_service_api::DisabledMemoryToolDeveloperInstructionsProvider),
         Arc::new(codex_hooks::HooksRuntimeFactory),
         Arc::new(codex_sandboxing_api::DisabledSandboxRuntime),
         Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
+        command_service,
         Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
         AgentControl::default(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
@@ -4467,6 +4480,8 @@ async fn make_session_with_config_and_rx(
         Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(approval_service::ApprovalService),
+        Arc::new(goal_service::GoalService),
         Arc::new(DisabledToolServiceForTests),
     )
     .await?;
@@ -4542,8 +4557,6 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
     let (tx_event, rx_event) = async_channel::unbounded();
     let (agent_status_tx, _agent_status_rx) = watch::channel(AgentStatus::PendingInit);
     let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
-    let plugin_runtime: codex_core_plugins_api::SharedPluginRuntime = plugins_manager.clone();
-    let mcp_manager = Arc::new(McpManager::new(plugin_runtime));
     let skills_manager = Arc::new(SkillsManager::new(
         config.codex_home.clone(),
         /*bundled_skills_enabled*/ true,
@@ -4557,6 +4570,9 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
 
     let auth_runtime: codex_auth_types::SharedAuthRuntime = auth_manager.clone();
     let provider_auth_manager = codex_login::model_provider_auth_manager(Some(auth_manager));
+    let command_service = Arc::new(codex_command_service::CommandService::new());
+    let mcp_service: Arc<dyn mcp_service_api::McpServiceApi> =
+        Arc::new(mcp_service::McpService::new(Arc::new(approval_service::ApprovalService)));
     let session = Session::new(
         session_configuration,
         Arc::clone(&config),
@@ -4573,15 +4589,16 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         session_source,
         skills_manager,
         plugins_manager,
-        mcp_manager,
+        mcp_service,
         Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
         Arc::new(codex_api::DefaultApiRuntimeFactory),
         Arc::new(codex_otel::OtelSessionTelemetryFactory),
-        Arc::new(codex_memories_read_api::DisabledMemoryToolDeveloperInstructionsProvider),
+        Arc::new(memory_service_api::DisabledMemoryToolDeveloperInstructionsProvider),
         Arc::new(codex_hooks_api::DisabledHookRuntimeFactory),
         Arc::new(codex_sandboxing_api::DisabledSandboxRuntime),
         Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
+        command_service,
         Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
         agent_control,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
@@ -4598,6 +4615,8 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        Arc::new(approval_service::ApprovalService),
+        Arc::new(goal_service::GoalService),
         Arc::new(DisabledToolServiceForTests),
     )
     .await?;
@@ -6079,13 +6098,12 @@ where
 
     let state = SessionState::new(session_configuration.clone());
     let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
-    let plugin_runtime: codex_core_plugins_api::SharedPluginRuntime = plugins_manager.clone();
-    let mcp_manager = Arc::new(McpManager::new(plugin_runtime));
     let skills_manager = Arc::new(SkillsManager::new(
         config.codex_home.clone(),
         /*bundled_skills_enabled*/ true,
     ));
-    let network_approval = Arc::new(NetworkApprovalService::default());
+    let network_approval: Arc<dyn SessionNetworkApprovalApi> =
+        Arc::new(NetworkApprovalService::default());
     let environment: Arc<dyn codex_exec_server_api::ExecEnvironment> = Arc::new(
         codex_exec_server::Environment::create_for_tests(/*exec_server_url*/ None)
             .expect("create environment"),
@@ -6112,6 +6130,7 @@ where
         ),
         mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
         command_service_state,
+        command_service_api: Arc::new(codex_command_service::CommandService::new()),
         shell_zsh_path: None,
         main_execve_wrapper_exe: config.main_execve_wrapper_exe.clone(),
         analytics_events_client: AnalyticsEventsClient::disabled(),
@@ -6131,7 +6150,7 @@ where
         api_runtime_factory: Arc::new(codex_api::DefaultApiRuntimeFactory),
         session_telemetry_factory: Arc::new(codex_otel::OtelSessionTelemetryFactory),
         memory_tool_developer_instructions_provider: Arc::new(
-            codex_memories_read_api::DisabledMemoryToolDeveloperInstructionsProvider,
+            memory_service_api::DisabledMemoryToolDeveloperInstructionsProvider,
         ),
         sandbox_runtime: Arc::new(codex_sandboxing_api::DisabledSandboxRuntime),
         session_telemetry: session_telemetry.clone(),
@@ -6142,7 +6161,7 @@ where
         runtime_handle: tokio::runtime::Handle::current(),
         skills_manager,
         plugins_manager,
-        mcp_manager,
+        mcp_service: Arc::new(mcp_service::McpService::new(Arc::new(approval_service::ApprovalService))),
         extensions: Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
         session_extension_data,
         thread_extension_data,
@@ -6186,16 +6205,16 @@ where
         openai_file_uploader: Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         code_mode_service: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         code_mode_runtime_factory: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        approval_service: Arc::new(approval_service::ApprovalService),
         goal_service: Arc::new(goal_service::GoalService),
         tool_service: Arc::new(DisabledToolServiceForTests),
         environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     };
 
-    let plugin_outcome = services
+    let effective_skill_roots = services
         .plugins_manager
-        .plugins_for_config(&per_turn_config.plugins_config_input())
+        .effective_skill_roots_for_config(&per_turn_config.plugins_config_input())
         .await;
-    let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
     let skills_input =
         crate::skills_load_input_from_config(&per_turn_config, effective_skill_roots);
     let skill_fs = environment.get_filesystem();
@@ -8570,7 +8589,8 @@ async fn interrupt_accounts_active_goal_before_pausing() -> anyhow::Result<()> {
             "Keep improving the benchmark".to_string(),
             None,
         )
-        .await?;
+        .await
+        .map_err(anyhow::Error::msg)?;
 
     sess.spawn_task(
         Arc::clone(&tc),
@@ -8587,7 +8607,8 @@ async fn interrupt_accounts_active_goal_before_pausing() -> anyhow::Result<()> {
 
     let goal = GoalService
         .get_thread_goal(sess.as_ref())
-        .await?
+        .await
+        .map_err(anyhow::Error::msg)?
         .expect("goal should remain persisted after interrupt");
     assert_eq!(
         codex_protocol::protocol::ThreadGoalStatus::Paused,
@@ -8851,10 +8872,12 @@ async fn budget_limited_accounting_steers_active_turn_without_aborting() -> anyh
             "Keep improving the benchmark".to_string(),
             Some(10),
         )
-        .await?;
+        .await
+        .map_err(anyhow::Error::msg)?;
     GoalService
         .begin_turn_goal_accounting(sess.as_ref(), tc.as_ref(), TokenUsage::default())
-        .await?;
+        .await
+        .map_err(anyhow::Error::msg)?;
     sess.spawn_task(
         Arc::clone(&tc),
         Vec::new(),
@@ -8880,7 +8903,8 @@ async fn budget_limited_accounting_steers_active_turn_without_aborting() -> anyh
 
     GoalService
         .account_non_goal_tool_completed(sess.as_ref(), tc.as_ref(), "exec_command")
-        .await?;
+        .await
+        .map_err(anyhow::Error::msg)?;
 
     let pending_input = sess.get_pending_input().await;
     let [PendingInputItem::HookInspectable(ResponseItem::Message { role, content, .. })] =
@@ -8928,7 +8952,8 @@ async fn budget_limited_accounting_steers_active_turn_without_aborting() -> anyh
     .await;
     GoalService
         .account_goal_mutation_completed(sess.as_ref(), tc.as_ref())
-        .await?;
+        .await
+        .map_err(anyhow::Error::msg)?;
 
     let goal = state_db
         .get_thread_goal(sess.conversation_id)
@@ -8955,7 +8980,8 @@ async fn external_goal_mutation_accounts_active_turn_before_status_change() -> a
             "Keep improving the benchmark".to_string(),
             None,
         )
-        .await?;
+        .await
+        .map_err(anyhow::Error::msg)?;
     sess.spawn_task(
         Arc::clone(&tc),
         Vec::new(),
@@ -8969,7 +8995,8 @@ async fn external_goal_mutation_accounts_active_turn_before_status_change() -> a
 
     GoalService
         .prepare_external_goal_mutation(sess.as_ref())
-        .await?;
+        .await
+        .map_err(anyhow::Error::msg)?;
 
     let state_db = goal_test_state_db(sess.as_ref()).await?;
     let goal = state_db
@@ -9000,7 +9027,8 @@ async fn external_goal_mutation_accounts_active_turn_before_status_change() -> a
                 previous_status: ExternalGoalPreviousStatus::from(&previous_goal),
             },
         )
-        .await?;
+        .await
+        .map_err(anyhow::Error::msg)?;
 
     assert!(sess.active_turn.lock().await.is_some());
     let goal = state_db
@@ -9054,7 +9082,8 @@ async fn external_objective_change_steers_active_turn() -> anyhow::Result<()> {
                 previous_status: ExternalGoalPreviousStatus::from(&old_goal),
             },
         )
-        .await?;
+        .await
+        .map_err(anyhow::Error::msg)?;
 
     let pending_input = sess.get_pending_input().await;
     assert!(
@@ -9112,7 +9141,8 @@ async fn external_active_goal_set_marks_current_turn_for_accounting() -> anyhow:
                 previous_status: ExternalGoalPreviousStatus::NewGoal,
             },
         )
-        .await?;
+        .await
+        .map_err(anyhow::Error::msg)?;
 
     set_total_token_usage(
         &sess,
@@ -9127,7 +9157,8 @@ async fn external_active_goal_set_marks_current_turn_for_accounting() -> anyhow:
     .await;
     GoalService
         .account_non_goal_tool_completed(sess.as_ref(), tc.as_ref(), "exec_command")
-        .await?;
+        .await
+        .map_err(anyhow::Error::msg)?;
 
     let goal = state_db
         .get_thread_goal(sess.conversation_id)

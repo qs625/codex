@@ -42,7 +42,7 @@ codex-config-requirements = { workspace = true }
 codex-config-state = { workspace = true }
 codex-config-types = { workspace = true }
 codex-connectors = { workspace = true }
-codex-core-plugins = { workspace = true }
+plugin-service = { workspace = true }
 codex-core-skills = { workspace = true }
 codex-exec-server = { workspace = true }
 codex-features = { workspace = true }
@@ -58,7 +58,7 @@ codex-model-provider-info = { workspace = true }
 codex-models-manager = { workspace = true }
 codex-otel = { workspace = true }
 codex-otel-init = { workspace = true }
-codex-plugin = { workspace = true }
+plugin-service-api = { workspace = true }
 codex-protocol = { workspace = true }
 codex-realtime-webrtc = { workspace = true }
 codex-rollout = { workspace = true }
@@ -75,7 +75,6 @@ codex-utils-fuzzy-match = { workspace = true }
 codex-utils-home-dir = { workspace = true }
 codex-utils-oss = { workspace = true }
 codex-utils-path = { workspace = true }
-codex-utils-plugins = { workspace = true }
 codex-utils-sandbox-summary = { workspace = true }
 codex-utils-sleep-inhibitor = { workspace = true }
 codex-utils-string = { workspace = true }

@@ -11,10 +11,15 @@ use async_channel::Sender;
 use codex_config_types::Constrained;
 use codex_config_types::McpServerTransportConfig;
 use codex_config_types::OAuthCredentialsStoreMode;
+use codex_connectors_api::AppInfo;
+use codex_core_skills_api::SkillMetadata;
+use codex_config::Config;
 use codex_exec_server_api::ExecBackend;
+use codex_exec_server_api::ExecEnvironment;
 use codex_exec_server_api::HttpClient;
 use codex_mcp_types::CodexAppsToolsCacheKey;
 use codex_mcp_types::EffectiveMcpServer;
+use codex_mcp_types::ElicitationReviewRequest;
 use codex_mcp_types::ElicitationResponse;
 use codex_mcp_types::ElicitationReviewerHandle;
 use codex_mcp_types::McpServerElicitationRequestParams;
@@ -24,6 +29,7 @@ use codex_mcp_types::McpOAuthLoginSupport;
 use codex_mcp_types::McpToolApprovalMetadata;
 use codex_mcp_types::ResolvedMcpOAuthScopes;
 use codex_mcp_types::ToolPluginProvenance;
+use codex_openai_files_api::OpenAiFileUploader;
 use codex_protocol::mcp::CallToolResult;
 use codex_protocol::mcp::ListResourceTemplatesResult;
 use codex_protocol::mcp::ListResourcesResult;
@@ -38,6 +44,9 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::McpStartupFailure;
+use codex_tool_config::ToolsConfig;
+use codex_tool_types::DiscoverableTool;
+use plugin_service_api::PluginRuntime;
 use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
@@ -51,6 +60,18 @@ pub type McpAuthFuture<'a, T> = McpRuntimeFuture<'a, T>;
 pub struct McpToolCallOutcome {
     pub result: CallToolResult,
     pub tool_input: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct McpToolExposure {
+    pub direct_tools: Vec<codex_mcp_tool_types::ToolInfo>,
+    pub deferred_tools: Option<Vec<codex_mcp_tool_types::ToolInfo>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpAppUsageMetadata {
+    pub connector_id: Option<String>,
+    pub app_name: Option<String>,
 }
 
 /// Header-only auth provider used by MCP HTTP transports.
@@ -555,6 +576,174 @@ impl McpRuntimeEnvironment {
 
 /// Global MCP service API consumed by tool-service.
 pub trait McpServiceApi: Send + Sync + 'static {
+    fn list_accessible_connectors(
+        &self,
+        all_mcp_tools: &[codex_mcp_tool_types::ToolInfo],
+        config: &Config,
+    ) -> Vec<AppInfo>;
+
+    fn list_available_connectors<'a>(
+        &self,
+        plugin_runtime: &'a dyn PluginRuntime,
+        all_mcp_tools: &'a [codex_mcp_tool_types::ToolInfo],
+        config: &'a Config,
+    ) -> McpRuntimeFuture<'a, Vec<AppInfo>>;
+
+    fn list_discoverable_tools<'a>(
+        &self,
+        turn: &'a dyn ThreadTurnCapability,
+        plugin_runtime: &'a dyn PluginRuntime,
+        accessible_connectors: &'a [AppInfo],
+        config: &'a Config,
+        app_server_client_name: Option<&'a str>,
+        tool_suggest_enabled: bool,
+        apps_enabled: bool,
+    ) -> McpRuntimeFuture<'a, Result<Vec<DiscoverableTool>, String>>;
+
+    fn build_tool_exposure(
+        &self,
+        all_mcp_tools: &[codex_mcp_tool_types::ToolInfo],
+        connectors: Option<&[AppInfo]>,
+        explicitly_enabled_connectors: &[AppInfo],
+        config: &Config,
+        tools_config: &ToolsConfig,
+    ) -> McpToolExposure;
+
+    fn maybe_prompt_and_install_mcp_dependencies<'a>(
+        &self,
+        session: &'a dyn ThreadSessionCapability,
+        turn: &'a dyn ThreadTurnCapability,
+        config: &'a Config,
+        cancellation_token: &'a CancellationToken,
+        mentioned_skills: &'a [SkillMetadata],
+        elicitation_reviewer: Option<ElicitationReviewerHandle>,
+    ) -> McpRuntimeFuture<'a, ()>;
+
+    fn lookup_app_usage_metadata(
+        &self,
+        all_mcp_tools: &[codex_mcp_tool_types::ToolInfo],
+        server: &str,
+        tool_name: &str,
+    ) -> Option<McpAppUsageMetadata>;
+
+    fn configured_servers<'a>(
+        &self,
+        plugin_runtime: &'a dyn PluginRuntime,
+        config: &'a Config,
+    ) -> McpRuntimeFuture<'a, HashMap<String, codex_config::McpServerConfig>>;
+
+    fn effective_servers<'a>(
+        &self,
+        plugin_runtime: &'a dyn PluginRuntime,
+        config: &'a Config,
+        auth_context: Option<&'a codex_mcp_types::CodexAppsAuthContext>,
+    ) -> McpRuntimeFuture<'a, HashMap<String, EffectiveMcpServer>>;
+
+    fn tool_plugin_provenance<'a>(
+        &self,
+        plugin_runtime: &'a dyn PluginRuntime,
+        config: &'a Config,
+    ) -> McpRuntimeFuture<'a, ToolPluginProvenance>;
+
+    fn list_accessible_and_enabled_connectors(
+        &self,
+        all_mcp_tools: &[codex_mcp_tool_types::ToolInfo],
+        config: &Config,
+    ) -> Vec<AppInfo>;
+
+    fn fetch_accessible_connectors<'a>(
+        &self,
+        plugin_runtime: &'a dyn PluginRuntime,
+        config: &'a Config,
+        auth_snapshot: Option<&'a codex_auth_types::RequestAuthSnapshot>,
+        environment_provider: &'a dyn codex_exec_server_api::ExecEnvironmentProvider,
+        mcp_auth_runtime: &'a dyn McpAuthRuntime,
+        mcp_connection_runtime_factory: &'a dyn McpConnectionRuntimeFactory,
+    ) -> McpRuntimeFuture<'a, anyhow::Result<Vec<AppInfo>>>;
+
+    fn app_tool_policy(
+        &self,
+        config: &Config,
+        metadata: Option<&codex_mcp_types::McpToolApprovalMetadata>,
+        tool_name: &str,
+    ) -> thread_service_api::ThreadAppToolPolicy;
+
+    fn list_cached_accessible_connectors<'a>(
+        &self,
+        config: &'a Config,
+        auth_snapshot: Option<&'a codex_auth_types::RequestAuthSnapshot>,
+    ) -> McpRuntimeFuture<'a, Option<Vec<AppInfo>>>;
+
+    fn refresh_accessible_connectors_cache(
+        &self,
+        config: &Config,
+        connector_auth_context: Option<&codex_mcp_types::CodexAppsAuthContext>,
+        mcp_tools: &[codex_mcp_tool_types::ToolInfo],
+    );
+
+    fn codex_apps_auth_context(
+        &self,
+        auth: Option<&codex_auth_types::RequestAuthSnapshot>,
+    ) -> Option<codex_mcp_types::CodexAppsAuthContext>;
+
+    fn codex_apps_auth_provider(
+        &self,
+        auth: Option<&codex_auth_types::RequestAuthSnapshot>,
+    ) -> Option<SharedMcpAuthHeaderProvider>;
+
+    fn build_runtime_environment(
+        &self,
+        environment: Arc<dyn ExecEnvironment>,
+        local_environment: Arc<dyn ExecEnvironment>,
+        fallback_cwd: PathBuf,
+    ) -> McpRuntimeEnvironment;
+
+    fn start_connection_runtime<'a>(
+        &self,
+        factory: &'a dyn McpConnectionRuntimeFactory,
+        request: McpConnectionRuntimeStartRequest,
+    ) -> McpRuntimeFuture<'a, McpConnectionRuntimeStart>;
+
+    fn review_guardian_elicitation<'a>(
+        &self,
+        session: Arc<dyn ThreadSessionCapability>,
+        turn: Arc<dyn ThreadRuntimeCapability>,
+        request: ElicitationReviewRequest,
+    ) -> McpRuntimeFuture<'a, anyhow::Result<Option<ElicitationResponse>>>;
+
+    fn rewrite_tool_arguments_for_openai_files<'a>(
+        &self,
+        uploader: &'a dyn OpenAiFileUploader,
+        auth: Option<&'a codex_auth_types::RequestAuthSnapshot>,
+        chatgpt_base_url: &'a str,
+        turn: &'a dyn ThreadRuntimeCapability,
+        arguments_value: Option<serde_json::Value>,
+        openai_file_input_params: Option<&'a [String]>,
+    ) -> McpRuntimeFuture<'a, Result<Option<serde_json::Value>, String>>;
+
+    fn custom_tool_approval_mode<'a>(
+        &self,
+        plugin_runtime: &'a dyn PluginRuntime,
+        config: &'a Config,
+        server: &'a str,
+        tool_name: &'a str,
+    ) -> McpRuntimeFuture<'a, codex_config_types::AppToolApproval>;
+
+    fn persist_codex_app_tool_approval<'a>(
+        &self,
+        config: &'a Config,
+        connector_id: &'a str,
+        tool_name: &'a str,
+    ) -> McpRuntimeFuture<'a, anyhow::Result<()>>;
+
+    fn persist_non_app_mcp_tool_approval<'a>(
+        &self,
+        plugin_runtime: &'a dyn PluginRuntime,
+        config: &'a Config,
+        server: &'a str,
+        tool_name: &'a str,
+    ) -> McpRuntimeFuture<'a, anyhow::Result<()>>;
+
     fn request_server_elicitation<'a>(
         &self,
         session: &'a dyn ThreadSessionCapability,

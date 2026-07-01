@@ -75,7 +75,6 @@ pub mod legacy_core {
     pub use codex_sandboxing::grant_read_root_non_elevated;
     pub use thread_service::DEFAULT_AGENTS_MD_FILENAME;
     pub use thread_service::LOCAL_AGENTS_MD_FILENAME;
-    pub use thread_service::McpManager;
     pub use thread_service::web_search_detail;
 
     pub mod config {
@@ -87,7 +86,7 @@ pub mod legacy_core {
     }
 
     pub mod connectors {
-        pub use thread_service::connectors::*;
+        pub use mcp_service::*;
     }
 
     pub mod otel_init {

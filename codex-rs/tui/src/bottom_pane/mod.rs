@@ -36,7 +36,7 @@ use codex_app_server_protocol::ToolRequestUserInputParams;
 use codex_core_skills::model::SkillMetadata;
 use codex_features::Features;
 use codex_file_search::FileMatch;
-use codex_plugin::PluginCapabilitySummary;
+use plugin_service_api::PluginCapabilitySummary;
 use codex_protocol::ThreadId;
 use codex_protocol::user_input::TextElement;
 use crossterm::event::KeyCode;

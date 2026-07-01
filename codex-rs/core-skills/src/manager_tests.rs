@@ -10,7 +10,7 @@ use codex_config::ConfigRequirementsToml;
 use codex_config_types::ConfigLayerSource;
 use codex_core_skills_api::SkillConfigLayerStack;
 use codex_file_system::LOCAL_FS;
-use codex_plugin_types::PluginSkillRoot;
+use plugin_service_api::PluginSkillRoot;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::test_support::PathBufExt;
 use codex_utils_absolute_path::test_support::PathExt;

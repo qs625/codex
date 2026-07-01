@@ -7,12 +7,12 @@ mod shell_support;
 mod spawn;
 mod time_utils;
 mod unified_exec;
+mod user_shell;
 
 use std::sync::Arc;
 
 use codex_command_service_api::CommandServiceApi;
 use codex_command_service_api::CommandServiceFuture;
-use codex_command_service_api::CommandServiceSessionApi;
 use codex_command_service_api::CommandSessionController;
 use codex_command_service_api::CommandSessionError;
 use codex_command_service_api::CommandServiceSessionState;
@@ -21,6 +21,7 @@ use codex_command_service_api::CommandWaitRequest;
 use codex_command_service_api::ExecCommandRunOutput;
 use codex_command_service_api::ExecCommandRunRequest;
 use codex_command_service_api::UnifiedExecError;
+use codex_command_service_api::UserShellRunRequest;
 use codex_command_service_api::WriteStdinOutput;
 use codex_command_service_api::WriteStdinRequest;
 use thread_service_api::ThreadSessionCapability;
@@ -64,16 +65,13 @@ impl CommandServiceApi for CommandService {
     fn run_exec_command<'a>(
         &'a self,
         session: Arc<dyn ThreadSessionCapability>,
-        session_api: Arc<dyn CommandServiceSessionApi>,
+        state: Arc<dyn CommandServiceSessionState>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
         request: ExecCommandRunRequest,
     ) -> CommandServiceFuture<'a, Result<ExecCommandRunOutput, UnifiedExecError>> {
-        let state = session_api.command_service_state();
         Box::pin(async move {
-            state
-                .run_exec_command(session, session_api, turn, call_id, request)
-                .await
+            state.run_exec_command(session, turn, call_id, request).await
         })
     }
 
@@ -91,6 +89,14 @@ impl CommandServiceApi for CommandService {
         request: WriteStdinRequest<'a>,
     ) -> CommandServiceFuture<'a, Result<WriteStdinOutput, CommandSessionError>> {
         Box::pin(async move { state.write_command_stdin(request).await })
+    }
+
+    fn run_user_shell_command<'a>(
+        &'a self,
+        request: UserShellRunRequest,
+    ) -> CommandServiceFuture<'a, codex_protocol::error::Result<codex_protocol::exec_output::ExecToolCallOutput>>
+    {
+        Box::pin(async move { user_shell::run_user_shell_command(request).await })
     }
 }
 
@@ -151,13 +157,12 @@ impl CommandServiceSessionState for CommandSessionState {
     fn run_exec_command<'a>(
         &'a self,
         session: Arc<dyn ThreadSessionCapability>,
-        session_api: Arc<dyn CommandServiceSessionApi>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
         request: ExecCommandRunRequest,
     ) -> CommandServiceFuture<'a, Result<ExecCommandRunOutput, UnifiedExecError>> {
         Box::pin(async move {
-            let context = unified_exec::UnifiedExecContext::new(session, session_api, turn, call_id);
+            let context = unified_exec::UnifiedExecContext::new(session, turn, call_id);
             self.unified_exec_manager
                 .exec_command(unified_exec::ExecCommandRequest::from_run_request(
                     request,

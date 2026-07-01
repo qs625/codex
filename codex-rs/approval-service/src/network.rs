@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
+use codex_approval_service_api::ActiveNetworkApproval;
+use codex_approval_service_api::ApprovalServiceFuture;
+use codex_approval_service_api::SessionNetworkApprovalApi;
 use thread_service_api::PermissionRequestPayload;
+use thread_service_api::NetworkApprovalSpec;
 use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
-use codex_command_service_api::NetworkApprovalMode;
-use codex_command_service_api::NetworkApprovalSpec;
-use codex_command_service_api::ToolRuntimeNetworkApprovalError;
+use thread_service_api::ToolRuntimeNetworkApprovalError;
 use codex_guardian::GuardianNetworkAccessTrigger;
 use codex_hooks_api::PermissionRequestDecision;
 use codex_network_proxy_api::BlockedRequest;
@@ -28,78 +30,10 @@ use codex_protocol::approvals::NetworkPolicyRuleAction;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::WarningEvent;
-use tokio::sync::OnceCell;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 use uuid::Uuid;
-
-#[derive(Clone, Debug)]
-pub struct DeferredNetworkApproval {
-    registration_id: String,
-    cancellation_token: CancellationToken,
-    finish_outcome: Arc<OnceCell<Option<NetworkApprovalOutcome>>>,
-}
-
-impl DeferredNetworkApproval {
-    pub fn registration_id(&self) -> &str {
-        &self.registration_id
-    }
-
-    pub fn cancellation_token(&self) -> CancellationToken {
-        self.cancellation_token.clone()
-    }
-
-    pub fn is_cancelled(&self) -> bool {
-        self.cancellation_token.is_cancelled()
-    }
-
-    pub async fn finish(&self, service: &NetworkApprovalService) -> Result<(), ToolRuntimeNetworkApprovalError> {
-        let outcome = self
-            .finish_outcome
-            .get_or_init(|| async { service.finish_call_outcome(&self.registration_id).await })
-            .await
-            .clone();
-        network_approval_outcome_to_result(outcome)
-    }
-}
-
-#[derive(Debug)]
-pub struct ActiveNetworkApproval {
-    registration_id: Option<String>,
-    mode: NetworkApprovalMode,
-    cancellation_token: CancellationToken,
-}
-
-impl ActiveNetworkApproval {
-    pub fn registration_id(&self) -> Option<&str> {
-        self.registration_id.as_deref()
-    }
-
-    pub fn mode(&self) -> NetworkApprovalMode {
-        self.mode
-    }
-
-    pub fn cancellation_token(&self) -> CancellationToken {
-        self.cancellation_token.clone()
-    }
-
-    pub fn into_deferred(self) -> Option<DeferredNetworkApproval> {
-        let ActiveNetworkApproval {
-            registration_id,
-            mode,
-            cancellation_token,
-        } = self;
-        match (mode, registration_id) {
-            (NetworkApprovalMode::Deferred, Some(registration_id)) => Some(DeferredNetworkApproval {
-                registration_id,
-                cancellation_token,
-                finish_outcome: Arc::new(OnceCell::new()),
-            }),
-            _ => None,
-        }
-    }
-}
 
 fn network_approval_outcome_to_result(
     outcome: Option<NetworkApprovalOutcome>,
@@ -426,6 +360,63 @@ impl NetworkApprovalService {
     }
 }
 
+impl SessionNetworkApprovalApi for NetworkApprovalService {
+    fn as_any(&self) -> &(dyn std::any::Any + Send + Sync) {
+        self
+    }
+
+    fn sync_session_approved_hosts_to(
+        &self,
+        other: Arc<dyn SessionNetworkApprovalApi>,
+    ) -> ApprovalServiceFuture<'_, ()> {
+        Box::pin(async move {
+            let Some(other) = other.as_any().downcast_ref::<NetworkApprovalService>() else {
+                panic!("network approval runtime type mismatch");
+            };
+            self.runtime
+                .sync_session_approved_hosts_to(&other.runtime)
+                .await;
+        })
+    }
+
+    fn build_blocked_request_observer(
+        self: Arc<Self>,
+    ) -> Arc<dyn BlockedRequestObserver> {
+        build_blocked_request_observer(self)
+    }
+
+    fn build_network_policy_decider(
+        self: Arc<Self>,
+        session: Arc<RwLock<Option<std::sync::Weak<dyn ThreadSessionCapability>>>>,
+    ) -> Arc<dyn NetworkPolicyDecider> {
+        build_network_policy_decider(self, session)
+    }
+
+    fn begin_network_approval(
+        self: Arc<Self>,
+        turn_id: &str,
+        managed_network_active: bool,
+        spec: Option<NetworkApprovalSpec<GuardianNetworkAccessTrigger>>,
+    ) -> ApprovalServiceFuture<'_, Option<ActiveNetworkApproval>> {
+        Box::pin(async move {
+            begin_network_approval(self, turn_id, managed_network_active, spec).await
+        })
+    }
+
+    fn unregister_call(&self, registration_id: String) -> ApprovalServiceFuture<'_, ()> {
+        Box::pin(async move {
+            self.unregister_call(&registration_id).await;
+        })
+    }
+
+    fn finish_call(
+        &self,
+        registration_id: String,
+    ) -> ApprovalServiceFuture<'_, Result<(), ToolRuntimeNetworkApprovalError>> {
+        Box::pin(async move { self.finish_call(&registration_id).await })
+    }
+}
+
 async fn record_network_policy_amendment(
     session: &dyn ThreadSessionCapability,
     turn: &dyn ThreadTurnCapability,
@@ -484,7 +475,7 @@ pub fn build_network_policy_decider(
 }
 
 pub async fn begin_network_approval(
-    service: &NetworkApprovalService,
+    service: Arc<NetworkApprovalService>,
     turn_id: &str,
     managed_network_active: bool,
     spec: Option<NetworkApprovalSpec<GuardianNetworkAccessTrigger>>,
@@ -511,11 +502,12 @@ pub async fn begin_network_approval(
         )
         .await;
 
-    Some(ActiveNetworkApproval {
-        registration_id: Some(registration_id),
+    Some(ActiveNetworkApproval::new(
+        Some(registration_id),
         mode,
         cancellation_token,
-    })
+        service,
+    ))
 }
 
 #[cfg(test)]

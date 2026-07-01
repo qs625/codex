@@ -137,7 +137,7 @@ use codex_git_info::local_git_branches;
 use codex_git_info::recent_commits;
 use codex_metrics_api::RuntimeMetricsSummary;
 use codex_otel::SessionTelemetry;
-use codex_plugin::PluginCapabilitySummary;
+use plugin_service_api::PluginCapabilitySummary;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
 use codex_protocol::approvals::GuardianAssessmentAction;

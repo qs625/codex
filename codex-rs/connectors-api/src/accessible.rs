@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::metadata::connector_install_url;
 use crate::normalize_connector_value;
-use codex_connectors_types::AppInfo;
+use codex_connectors_api::AppInfo;
 
 pub struct AccessibleConnectorTool {
     pub connector_id: String,

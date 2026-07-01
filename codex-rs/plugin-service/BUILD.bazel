@@ -1,0 +1,15 @@
+load("//:defs.bzl", "codex_rust_crate")
+
+codex_rust_crate(
+    name = "plugin-service",
+    crate_name = "plugin_service",
+    compile_data = glob(
+        include = ["**"],
+        exclude = [
+            "**/* *",
+            "BUILD.bazel",
+            "Cargo.toml",
+        ],
+        allow_empty = True,
+    ),
+)

@@ -85,9 +85,6 @@ impl MessageProcessor {
             auth_manager.clone(),
             model_provider_auth_manager(Some(auth_manager)),
         );
-        let shared_state_db = state_db
-            .clone()
-            .map(|state_db| state_db as codex_state_api::SharedStateDbRuntime);
         let thread_service = Arc::new_cyclic(|thread_service: &Weak<ThreadService>| {
             let thread_service_api: Weak<dyn thread_service_api::ThreadServiceApi> =
                 thread_service.clone();
@@ -97,12 +94,12 @@ impl MessageProcessor {
             ));
             let approval_service = Arc::new(approval_service::ApprovalService);
             let mcp_service = Arc::new(mcp_service::McpService::new(approval_service.clone()));
+            let command_service = Arc::new(codex_command_service::CommandService::new());
             let tool_service = Arc::new(codex_tool_service::ToolService::new(
                 approval_service,
-                Arc::new(codex_command_service::CommandService::new()),
+                command_service.clone(),
                 Arc::new(goal_service::GoalService),
                 mcp_service.clone(),
-                Arc::new(thread_service::RequestPluginInstallService),
                 workflow_service,
                 thread_service_api,
             ));
@@ -114,12 +111,14 @@ impl MessageProcessor {
                 empty_extension_registry(),
                 /*analytics_events_client*/ None,
                 thread_store_from_config(config.as_ref(), state_db.clone()),
-                shared_state_db.clone(),
+                state_db.clone(),
                 Arc::new(codex_thread_store::DefaultLiveThreadFactory),
                 installation_id,
                 /*attestation_provider*/ None,
                 Arc::new(codex_model_provider::DefaultModelProviderFactory),
                 Arc::new(codex_code_mode::V8CodeModeRuntimeFactory),
+                command_service,
+                Arc::new(approval_service::ApprovalService),
                 Arc::new(goal_service::GoalService),
                 Arc::new(codex_mcp::DefaultMcpAuthRuntime),
                 Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
@@ -130,7 +129,7 @@ impl MessageProcessor {
                 Arc::new(codex_sandboxing::SandboxManager::new()),
                 Arc::new(codex_otel::OtelSessionTelemetryFactory),
                 Arc::new(codex_hooks::HooksRuntimeFactory),
-                Arc::new(codex_memories_read::FsMemoryToolDeveloperInstructionsProvider),
+                Arc::new(memory_service::FsMemoryToolDeveloperInstructionsProvider),
                 Arc::new(
                     codex_core_skills::SkillsManager::new_with_restriction_product(
                         config.codex_home.clone(),
@@ -139,7 +138,7 @@ impl MessageProcessor {
                     ),
                 ),
                 Arc::new(
-                    codex_core_plugins::PluginsManager::new_with_restriction_product(
+                    plugin_service::PluginsManager::new_with_restriction_product(
                         config.codex_home.to_path_buf(),
                         SessionSource::Mcp.restriction_product(),
                     ),

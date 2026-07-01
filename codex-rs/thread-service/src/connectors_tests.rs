@@ -14,7 +14,7 @@ use codex_config::types::AppToolConfig;
 use codex_config::types::AppToolsConfig;
 use codex_config::types::AppsDefaultConfig;
 use codex_connectors_api::merge::plugin_connector_to_app_info;
-use codex_core_plugins::PluginsManager;
+use plugin_service::PluginsManager;
 use codex_login::CodexAuth;
 use codex_mcp_tool_types::ToolAnnotations;
 use codex_utils_absolute_path::AbsolutePathBuf;

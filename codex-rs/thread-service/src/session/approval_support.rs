@@ -1,5 +1,4 @@
 use crate::state::SessionServices;
-use codex_protocol::error::CodexErr;
 use codex_protocol::protocol::ReviewDecision;
 use futures::Future;
 use serde::Serialize;
@@ -28,12 +27,6 @@ impl ApprovalStore {
             self.map.insert(key, value);
         }
     }
-}
-
-#[derive(Debug)]
-pub(crate) enum ToolError {
-    Rejected(String),
-    Codex(CodexErr),
 }
 
 pub(crate) fn permission_request_hook_payload(

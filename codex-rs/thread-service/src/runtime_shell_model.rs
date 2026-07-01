@@ -1,6 +1,9 @@
 use crate::runtime_shell_detect::detect_shell_type;
 use crate::runtime_shell_snapshot::ShellSnapshot;
+use codex_command_service_api::RuntimeShell;
+use codex_command_service_api::RuntimeShellSnapshot;
 use codex_shell_utils::resolve_executable_in_path;
+use codex_tool_config::ToolUserShellType;
 use serde::Deserialize;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -73,6 +76,29 @@ impl Shell {
     /// Return the shell snapshot if existing.
     pub fn shell_snapshot(&self) -> Option<Arc<ShellSnapshot>> {
         self.shell_snapshot.borrow().clone()
+    }
+
+    pub fn to_runtime_shell(&self) -> RuntimeShell {
+        RuntimeShell {
+            shell_type: self.shell_type.tool_user_shell_type(),
+            shell_path: self.shell_path.clone(),
+            shell_snapshot: self.shell_snapshot().map(|snapshot| RuntimeShellSnapshot {
+                path: snapshot.path.clone(),
+                cwd: snapshot.cwd.clone(),
+            }),
+        }
+    }
+}
+
+impl ShellType {
+    pub fn tool_user_shell_type(&self) -> ToolUserShellType {
+        match self {
+            ShellType::Zsh => ToolUserShellType::Zsh,
+            ShellType::Bash => ToolUserShellType::Bash,
+            ShellType::PowerShell => ToolUserShellType::PowerShell,
+            ShellType::Sh => ToolUserShellType::Sh,
+            ShellType::Cmd => ToolUserShellType::Cmd,
+        }
     }
 }
 

@@ -10,7 +10,7 @@ use crate::session::turn_context::TurnContext;
 use codex_analytics_api::InvocationType;
 use codex_analytics_api::SkillInvocation;
 use codex_analytics_api::build_track_events_context;
-use codex_plugin_types::PluginSkillRoot;
+use plugin_service_api::PluginSkillRoot;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::SkillScope;
 use codex_protocol::protocol::ThreadSkill;

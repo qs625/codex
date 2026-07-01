@@ -14,6 +14,7 @@ pub use manager::ThreadAuthRuntimes;
 pub use manager::ThreadService;
 pub use manager::build_models_manager;
 
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) use manager::ResumeThreadWithHistoryOptions;
 pub(crate) use manager::ThreadServiceState;
 #[cfg(any(test, feature = "test-support"))]

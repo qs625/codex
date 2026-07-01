@@ -1,6 +1,5 @@
 use codex_apply_patch::ApplyPatchAction;
 use codex_apply_patch::ApplyPatchFileChange;
-use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_permissions_runtime::ExecApprovalRequirement;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::error::CodexErr;
@@ -93,17 +92,6 @@ pub(crate) fn wants_no_sandbox_approval(policy: AskForApproval) -> bool {
         AskForApproval::Never => false,
         AskForApproval::OnRequest => false,
         AskForApproval::Granular(granular_config) => granular_config.sandbox_approval,
-    }
-}
-
-pub(crate) fn managed_network_for_sandbox_permissions(
-    network: Option<&SharedNetworkProxyRuntime>,
-    sandbox_permissions: SandboxPermissions,
-) -> Option<SharedNetworkProxyRuntime> {
-    if sandbox_permissions.requires_escalated_permissions() {
-        None
-    } else {
-        network.cloned()
     }
 }
 

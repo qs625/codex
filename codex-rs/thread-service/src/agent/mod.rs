@@ -1,7 +1,7 @@
 pub(crate) mod agent_resolver;
-pub(crate) mod collab_tools;
 pub(crate) mod control;
 pub(crate) mod job_tools;
+pub(crate) mod multi_agent;
 pub(crate) mod role;
 pub(crate) mod spawn_support;
 

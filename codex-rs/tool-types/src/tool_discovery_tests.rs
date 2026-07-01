@@ -1,5 +1,5 @@
 use super::*;
-use codex_connectors_types::AppInfo;
+use codex_connectors_api::AppInfo;
 use codex_tool_types::JsonSchema;
 use codex_tool_types::ResponsesApiTool;
 use codex_tool_types::ToolSpec;

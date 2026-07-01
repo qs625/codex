@@ -16,10 +16,6 @@ pub struct CommandToolOptions {
     pub exec_permission_approvals_enabled: bool,
 }
 
-pub fn create_exec_command_tool(options: CommandToolOptions) -> ToolSpec {
-    create_exec_command_tool_with_environment_id(options, /*include_environment_id*/ false)
-}
-
 pub fn create_exec_command_tool_with_environment_id(
     options: CommandToolOptions,
     include_environment_id: bool,

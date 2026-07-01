@@ -13,15 +13,17 @@ use crate::tasks::interrupted_turn_history_marker_from_config;
 use crate::thread::CodexThread;
 use codex_agent_runtime::LiveAgentShutdownAction;
 use codex_agent_runtime::live_agent_shutdown_action;
+use codex_approval_service_api::ApprovalServiceApi;
 use codex_analytics_api::AnalyticsEventsClient;
 use codex_api_runtime_api::DisabledApiRuntimeFactory;
 use codex_api_runtime_api::SharedApiRuntimeFactory;
 use codex_auth_types::SharedAuthRuntime;
 use codex_code_mode_api::CodeModeRuntimeFactory;
+use codex_command_service_api::CommandServiceApi;
 use codex_config::Config;
 use codex_config::skill_config_layer_stack_from_config_layer_stack;
-use codex_core_plugins_api::DisabledPluginRuntime;
-use codex_core_plugins_api::SharedPluginRuntime;
+use plugin_service_api::DisabledPluginRuntime;
+use plugin_service_api::SharedPluginRuntime;
 use codex_core_skills_api::DisabledSkillsRuntime;
 use codex_core_skills_api::SharedSkillsRuntime;
 use codex_core_skills_api::SkillsLoadInput;
@@ -40,8 +42,8 @@ use codex_login::AuthManager;
 use codex_login::CodexAuth;
 #[cfg(any(test, feature = "test-support"))]
 use codex_login::model_provider_auth_manager;
-use codex_memories_read_api::DisabledMemoryToolDeveloperInstructionsProvider;
-use codex_memories_read_api::SharedMemoryToolDeveloperInstructionsProvider;
+use memory_service_api::DisabledMemoryToolDeveloperInstructionsProvider;
+use memory_service_api::SharedMemoryToolDeveloperInstructionsProvider;
 use codex_model_client::AttestationProvider;
 use codex_model_provider_api::ModelProviderFactory;
 use codex_model_provider_api::SharedModelProviderAuthManager;
@@ -110,7 +112,6 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use goal_service_api::GoalServiceApi;
-use mcp_service::McpManager;
 use mcp_service_api::DisabledMcpAuthRuntime;
 use mcp_service_api::DisabledMcpConnectionRuntimeFactory;
 use mcp_service_api::McpAuthRuntime;
@@ -222,6 +223,8 @@ impl ThreadAuthRuntimes {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[allow(dead_code)]
 pub(crate) struct ResumeThreadWithHistoryOptions {
     pub(crate) config: Config,
     pub(crate) initial_history: InitialHistory,
@@ -243,13 +246,13 @@ pub(crate) struct ThreadServiceState {
     environment_manager: Arc<dyn ExecEnvironmentProvider>,
     skills_manager: SharedSkillsRuntime,
     plugin_runtime: SharedPluginRuntime,
-    mcp_manager: Arc<McpManager>,
     mcp_service: Arc<dyn McpServiceApi>,
     mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
     mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
     api_runtime_factory: SharedApiRuntimeFactory,
     network_proxy_runtime_factory: SharedNetworkProxyRuntimeFactory,
     sandbox_runtime: SharedSandboxRuntime,
+    command_service_api: Arc<dyn CommandServiceApi>,
     session_telemetry_factory: SharedSessionTelemetryFactory,
     hook_runtime_factory: SharedHookRuntimeFactory,
     memory_tool_developer_instructions_provider: SharedMemoryToolDeveloperInstructionsProvider,
@@ -265,10 +268,11 @@ pub(crate) struct ThreadServiceState {
     active_event_subscriptions: Arc<ActiveEventSubscriptionTracker>,
     model_provider_factory: SharedModelProviderFactory,
     code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+    approval_service: Arc<dyn ApprovalServiceApi>,
     goal_service: Arc<dyn GoalServiceApi>,
     openai_file_uploader: SharedOpenAiFileUploader,
     exec_policy_loader: Arc<dyn ExecPolicyLoader>,
-    tool_service: Arc<crate::CoreToolServiceApi>,
+    tool_service: Arc<crate::ToolServiceApi>,
     // Captures submitted ops for testing purpose when test mode is enabled.
     ops_log: Option<SharedCapturedOps>,
 }
@@ -302,8 +306,10 @@ impl ThreadService {
         attestation_provider: Option<Arc<dyn AttestationProvider>>,
         model_provider_factory: SharedModelProviderFactory,
         code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+        command_service_api: Arc<dyn CommandServiceApi>,
+        approval_service: Arc<dyn ApprovalServiceApi>,
         goal_service: Arc<dyn GoalServiceApi>,
-        tool_service: Arc<crate::CoreToolServiceApi>,
+        tool_service: Arc<crate::ToolServiceApi>,
         mcp_service: Arc<dyn McpServiceApi>,
     ) -> Self {
         Self::new_with_mcp_auth_runtime(
@@ -320,6 +326,8 @@ impl ThreadService {
             attestation_provider,
             model_provider_factory,
             code_mode_runtime_factory,
+            command_service_api,
+            approval_service,
             goal_service,
             tool_service,
             mcp_service,
@@ -343,8 +351,10 @@ impl ThreadService {
         attestation_provider: Option<Arc<dyn AttestationProvider>>,
         model_provider_factory: SharedModelProviderFactory,
         code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+        command_service_api: Arc<dyn CommandServiceApi>,
+        approval_service: Arc<dyn ApprovalServiceApi>,
         goal_service: Arc<dyn GoalServiceApi>,
-        tool_service: Arc<crate::CoreToolServiceApi>,
+        tool_service: Arc<crate::ToolServiceApi>,
         mcp_service: Arc<dyn McpServiceApi>,
         mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
         mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
@@ -363,6 +373,8 @@ impl ThreadService {
             attestation_provider,
             model_provider_factory,
             code_mode_runtime_factory,
+            command_service_api,
+            approval_service,
             goal_service,
             mcp_auth_runtime,
             mcp_connection_runtime_factory,
@@ -396,6 +408,8 @@ impl ThreadService {
         attestation_provider: Option<Arc<dyn AttestationProvider>>,
         model_provider_factory: SharedModelProviderFactory,
         code_mode_runtime_factory: Arc<dyn CodeModeRuntimeFactory>,
+        command_service_api: Arc<dyn CommandServiceApi>,
+        approval_service: Arc<dyn ApprovalServiceApi>,
         goal_service: Arc<dyn GoalServiceApi>,
         mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
         mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
@@ -409,11 +423,10 @@ impl ThreadService {
         memory_tool_developer_instructions_provider: SharedMemoryToolDeveloperInstructionsProvider,
         skills_runtime: SharedSkillsRuntime,
         plugin_runtime: SharedPluginRuntime,
-        tool_service: Arc<crate::CoreToolServiceApi>,
+        tool_service: Arc<crate::ToolServiceApi>,
         mcp_service: Arc<dyn McpServiceApi>,
     ) -> Self {
         let (thread_created_tx, _) = broadcast::channel(THREAD_CREATED_CHANNEL_CAPACITY);
-        let mcp_manager = Arc::new(McpManager::new(plugin_runtime.clone()));
         let ThreadAuthRuntimes {
             auth_runtime,
             provider_auth_manager,
@@ -431,13 +444,13 @@ impl ThreadService {
                 environment_manager,
                 skills_manager: skills_runtime,
                 plugin_runtime,
-                mcp_manager,
                 mcp_service,
                 mcp_auth_runtime,
                 mcp_connection_runtime_factory,
                 api_runtime_factory,
                 network_proxy_runtime_factory,
                 sandbox_runtime,
+                command_service_api,
                 session_telemetry_factory,
                 hook_runtime_factory,
                 memory_tool_developer_instructions_provider,
@@ -454,6 +467,7 @@ impl ThreadService {
                 active_event_subscriptions: Arc::new(ActiveEventSubscriptionTracker::default()),
                 model_provider_factory,
                 code_mode_runtime_factory,
+                approval_service,
                 goal_service,
                 openai_file_uploader,
                 exec_policy_loader,
@@ -530,7 +544,6 @@ impl ThreadService {
         let (thread_created_tx, _) = broadcast::channel(THREAD_CREATED_CHANNEL_CAPACITY);
         let restriction_product = SessionSource::Exec.restriction_product();
         let plugin_runtime: SharedPluginRuntime = Arc::new(DisabledPluginRuntime);
-        let mcp_manager = Arc::new(McpManager::new(plugin_runtime.clone()));
         let skills_manager: SharedSkillsRuntime = Arc::new(
             codex_core_skills::SkillsManager::new_with_restriction_product(
                 skills_codex_home,
@@ -561,7 +574,6 @@ impl ThreadService {
                 environment_manager,
                 skills_manager,
                 plugin_runtime,
-                mcp_manager,
                 mcp_service: Arc::new(mcp_service::McpService::new(Arc::new(approval_service::ApprovalService))),
                 mcp_auth_runtime: Arc::new(codex_mcp::DefaultMcpAuthRuntime),
                 mcp_connection_runtime_factory: Arc::new(
@@ -572,6 +584,7 @@ impl ThreadService {
                     codex_network_proxy::DefaultNetworkProxyRuntimeFactory,
                 ),
                 sandbox_runtime: Arc::new(DisabledSandboxRuntime),
+                command_service_api: Arc::new(codex_command_service::CommandService::new()),
                 session_telemetry_factory: Arc::new(DisabledSessionTelemetryFactory),
                 hook_runtime_factory: Arc::new(DisabledHookRuntimeFactory),
                 memory_tool_developer_instructions_provider: Arc::new(
@@ -592,6 +605,7 @@ impl ThreadService {
                 code_mode_runtime_factory: Arc::new(
                     codex_code_mode_api::DisabledCodeModeRuntimeFactory,
                 ),
+                approval_service: Arc::new(approval_service::ApprovalService),
                 goal_service: Arc::new(goal_service::GoalService),
                 openai_file_uploader: Arc::new(DisabledOpenAiFileUploader),
                 exec_policy_loader: Arc::new(EmptyExecPolicyLoader),
@@ -641,8 +655,8 @@ impl ThreadService {
         self.state.plugin_runtime.clone()
     }
 
-    pub fn mcp_manager(&self) -> Arc<McpManager> {
-        self.state.mcp_manager.clone()
+    pub fn mcp_service(&self) -> Arc<dyn McpServiceApi> {
+        self.state.mcp_service.clone()
     }
 
     pub fn environment_provider(&self) -> Arc<dyn ExecEnvironmentProvider> {
@@ -1061,6 +1075,7 @@ impl ThreadService {
         .await
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) async fn start_thread_with_user_shell_override_for_tests(
         &self,
         config: Config,
@@ -1085,6 +1100,7 @@ impl ThreadService {
         .await
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) async fn resume_thread_from_rollout_with_user_shell_override_for_tests(
         &self,
         config: Config,
@@ -1306,6 +1322,8 @@ impl ThreadServiceState {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    #[allow(dead_code)]
     pub(crate) fn state_db(&self) -> Option<StateDbHandle> {
         self.state_db.clone()
     }
@@ -1436,6 +1454,8 @@ impl ThreadServiceState {
         .await
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    #[allow(dead_code)]
     pub(crate) async fn resume_thread_with_history_with_source(
         &self,
         options: ResumeThreadWithHistoryOptions,
@@ -1602,12 +1622,12 @@ impl ThreadServiceState {
             environment_manager,
             skills_manager: Arc::clone(&self.skills_manager),
             plugins_manager: self.plugin_runtime.clone(),
-            mcp_manager: Arc::clone(&self.mcp_manager),
             mcp_service: Arc::clone(&self.mcp_service),
             mcp_auth_runtime: Arc::clone(&self.mcp_auth_runtime),
             mcp_connection_runtime_factory: Arc::clone(&self.mcp_connection_runtime_factory),
             network_proxy_runtime_factory: Arc::clone(&self.network_proxy_runtime_factory),
             sandbox_runtime: Arc::clone(&self.sandbox_runtime),
+            command_service_api: Arc::clone(&self.command_service_api),
             extensions: Arc::clone(&self.extensions),
             conversation_history: initial_history,
             session_source,
@@ -1632,6 +1652,7 @@ impl ThreadServiceState {
             openai_file_uploader: Arc::clone(&self.openai_file_uploader),
             code_mode_service: self.code_mode_runtime_factory.create_service(),
             code_mode_runtime_factory: Arc::clone(&self.code_mode_runtime_factory),
+            approval_service: Arc::clone(&self.approval_service),
             goal_service: Arc::clone(&self.goal_service),
             tool_service: Arc::clone(&self.tool_service),
         })
@@ -1697,6 +1718,8 @@ impl ThreadServiceState {
             .send(ThreadCreatedEvent::Started(thread_id));
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    #[allow(dead_code)]
     pub(crate) fn notify_thread_resumed(&self, thread_id: ThreadId) {
         let _ = self
             .thread_created_tx
@@ -2168,13 +2191,12 @@ impl thread_service_api::LiveThreadRegistry for ThreadService {
 
             let config = thread.config().await;
             let plugins_input = config.plugins_config_input();
-            let plugin_outcome = self
-                .plugin_runtime()
-                .plugins_for_config(&plugins_input)
-                .await;
+            let plugin_runtime = self.plugin_runtime();
             let skills_input = SkillsLoadInput::new(
                 config.cwd.clone(),
-                plugin_outcome.effective_plugin_skill_roots(),
+                plugin_runtime
+                    .effective_skill_roots_for_config(&plugins_input)
+                    .await,
                 skill_config_layer_stack_from_config_layer_stack(&config.config_layer_stack),
                 config.bundled_skills_enabled(),
             );

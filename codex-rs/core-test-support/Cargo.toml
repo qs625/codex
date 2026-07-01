@@ -26,7 +26,7 @@ codex-config-requirements = { workspace = true }
 codex-config-state = { workspace = true }
 codex-command-service = { workspace = true }
 thread-service = { workspace = true, features = ["test-support"] }
-codex-core-plugins-api = { workspace = true }
+plugin-service-api = { workspace = true }
 codex-core-skills-api = { workspace = true }
 codex-extension-api = { workspace = true }
 codex-execpolicy-loader = { workspace = true }
@@ -37,7 +37,7 @@ goal-service = { workspace = true }
 codex-file-system = { workspace = true }
 codex-hooks = { workspace = true }
 codex-login = { workspace = true }
-codex-memories-read-api = { workspace = true }
+memory-service-api = { workspace = true }
 codex-mcp = { workspace = true }
 mcp-service = { workspace = true }
 codex-model-provider-info = { workspace = true }

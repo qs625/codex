@@ -48,7 +48,6 @@ members = [
     "command-service-api",
     "connectors",
     "connectors-api",
-    "connectors-types",
     "config",
     "config-diagnostics",
     "config-edit",
@@ -69,9 +68,8 @@ members = [
     "skills",
     "state-cli",
     "state-api",
-    "core-plugins",
-    "core-plugins-api",
-    "core-plugins-remote",
+    "plugin-service",
+    "plugin-service-api",
     "core-skills-api",
     "core-skills",
     "hooks-api",
@@ -110,10 +108,8 @@ members = [
     "mcp-tool-types",
     "mcp-types",
     "metrics-api",
-    "memories/mcp",
-    "memories/read-api",
-    "memories/read",
-    "memories/write",
+    "memory-service-api",
+    "memory-service",
     "model-client",
     "model-input",
     "model-provider-api",
@@ -126,8 +122,6 @@ members = [
     "openai-files-api",
     "openai-files",
     "permissions-runtime",
-    "plugin-manifest",
-    "plugin-types",
     "process-exec",
     "process-hardening",
     "protocol",
@@ -175,7 +169,6 @@ members = [
     "utils/oss",
     "utils/output-truncation",
     "utils/path-utils",
-    "utils/plugins",
     "utils/fuzzy-match",
     "utils/stream-parser",
     "utils/template",
@@ -186,7 +179,6 @@ members = [
     "trace-context",
     "test-binary-support",
     "thread-service-sample",
-    "runtime-capability-api",
     "thread-service-api",
     "thread-store-api",
     "thread-store",
@@ -195,7 +187,6 @@ members = [
     "workflow-api",
     "workflow",
     "codex-experimental-api-macros",
-    "plugin",
     "model-provider",
 ]
 resolver = "2"
@@ -270,10 +261,8 @@ codex-default-client = { path = "default-client" }
 codex-default-client-api = { path = "default-client-api" }
 codex-connectors = { path = "connectors" }
 codex-connectors-api = { path = "connectors-api" }
-codex-connectors-types = { path = "connectors-types" }
-codex-core-plugins = { path = "core-plugins" }
-codex-core-plugins-api = { path = "core-plugins-api" }
-codex-core-plugins-remote = { path = "core-plugins-remote" }
+plugin-service = { path = "plugin-service" }
+plugin-service-api = { path = "plugin-service-api" }
 codex-core-skills-api = { path = "core-skills-api" }
 codex-core-skills = { path = "core-skills" }
 codex-exec = { path = "exec" }
@@ -312,9 +301,8 @@ codex-lmstudio = { path = "lmstudio" }
 codex-login = { path = "login" }
 codex-message-history = { path = "message-history" }
 codex-memories-extension = { path = "ext/memories" }
-codex-memories-read-api = { path = "memories/read-api" }
-codex-memories-read = { path = "memories/read" }
-codex-memories-write = { path = "memories/write" }
+memory-service-api = { path = "memory-service-api" }
+memory-service = { path = "memory-service" }
 codex-mcp = { path = "codex-mcp" }
 codex-mcp-server = { path = "mcp-server" }
 mcp-service = { path = "mcp-service" }
@@ -336,9 +324,6 @@ codex-openai-files = { path = "openai-files" }
 codex-otel = { path = "otel" }
 codex-otel-init = { path = "otel-init" }
 codex-permissions-runtime = { path = "permissions-runtime" }
-codex-plugin = { path = "plugin" }
-codex-plugin-manifest = { path = "plugin-manifest" }
-codex-plugin-types = { path = "plugin-types" }
 codex-model-provider = { path = "model-provider" }
 codex-process-exec = { path = "process-exec" }
 codex-process-hardening = { path = "process-hardening" }
@@ -347,7 +332,6 @@ codex-realtime = { path = "realtime" }
 codex-realtime-webrtc = { path = "realtime-webrtc" }
 codex-responses-api-proxy = { path = "responses-api-proxy" }
 codex-response-debug-context = { path = "response-debug-context" }
-codex-runtime-capability-api = { path = "runtime-capability-api" }
 codex-rmcp-client = { path = "rmcp-client" }
 codex-rollout = { path = "rollout" }
 codex-rollout-api = { path = "rollout-api" }
@@ -393,7 +377,6 @@ codex-utils-json-to-toml = { path = "utils/json-to-toml" }
 codex-utils-oss = { path = "utils/oss" }
 codex-utils-output-truncation = { path = "utils/output-truncation" }
 codex-utils-path = { path = "utils/path-utils" }
-codex-utils-plugins = { path = "utils/plugins" }
 codex-utils-pty = { path = "utils/pty" }
 codex-utils-rustls-provider = { path = "utils/rustls-provider" }
 codex-utils-sandbox-summary = { path = "utils/sandbox-summary" }

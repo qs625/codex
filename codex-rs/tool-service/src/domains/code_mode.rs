@@ -17,10 +17,8 @@ use codex_code_mode_api::WaitRequest;
 use codex_code_mode_api::parse_exec_source;
 use codex_command_service_api::resolve_max_tokens;
 use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
-use thread_service_api::SessionCodeModeCaller;
+use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service::ThreadRuntimeSession;
-use thread_service::ThreadTurnContext;
 use codex_tool_service_api::AnyToolResult;
 use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
 use codex_tool_types::FunctionCallError;
@@ -75,8 +73,8 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 }
 
 pub(crate) async fn dispatch(
-    session: Arc<ThreadRuntimeSession>,
-    turn: Arc<ThreadTurnContext>,
+    session: Arc<dyn ThreadSessionCapability>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     nested_tool_specs: Vec<ToolSpec>,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
@@ -132,8 +130,8 @@ fn default_wait_yield_time_ms() -> u64 {
 }
 
 async fn dispatch_execute(
-    session: &ThreadRuntimeSession,
-    turn: &ThreadTurnContext,
+    session: &dyn ThreadSessionCapability,
+    turn: &dyn ThreadRuntimeCapability,
     call_id: String,
     code: &str,
     nested_tool_specs: &[ToolSpec],
@@ -171,8 +169,8 @@ async fn dispatch_execute(
 }
 
 async fn dispatch_wait(
-    session: &ThreadRuntimeSession,
-    turn: &ThreadTurnContext,
+    session: &dyn ThreadSessionCapability,
+    turn: &dyn ThreadRuntimeCapability,
     arguments: &str,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
     let args: ExecWaitArgs = serde_json::from_str(arguments).map_err(|err| {
@@ -204,8 +202,8 @@ async fn dispatch_wait(
 }
 
 async fn handle_runtime_response(
-    session: &ThreadRuntimeSession,
-    turn: &ThreadTurnContext,
+    session: &dyn ThreadSessionCapability,
+    turn: &dyn ThreadRuntimeCapability,
     response: RuntimeResponse,
     max_output_tokens: Option<usize>,
     started_at: Instant,
@@ -248,7 +246,7 @@ async fn handle_runtime_response(
 }
 
 fn sanitize_runtime_image_detail(
-    turn: &ThreadTurnContext,
+    turn: &dyn ThreadRuntimeCapability,
     items: &mut [codex_protocol::models::FunctionCallOutputContentItem],
 ) {
     codex_tool_config::sanitize_original_image_detail(

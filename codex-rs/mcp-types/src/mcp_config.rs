@@ -7,7 +7,7 @@ use codex_config_types::Constrained;
 use codex_config_types::McpServerConfig;
 use codex_config_types::McpServerTransportConfig;
 use codex_config_types::OAuthCredentialsStoreMode;
-use codex_plugin_types::PluginCapabilitySummary;
+use plugin_service_api::PluginCapabilitySummary;
 use codex_protocol::protocol::AskForApproval;
 
 use crate::CODEX_APPS_MCP_SERVER_NAME;
@@ -201,7 +201,7 @@ fn codex_apps_mcp_server_config(config: &McpConfig) -> McpServerConfig {
 mod tests {
     use super::*;
     use codex_config_types::Constrained;
-    use codex_plugin_types::AppConnectorId;
+    use plugin_service_api::AppConnectorId;
 
     fn test_mcp_config(codex_home: PathBuf) -> McpConfig {
         McpConfig {

@@ -22,7 +22,7 @@ anyhow = { workspace = true }
 codex-api = { workspace = true }
 codex-arg0 = { workspace = true }
 codex-code-mode = { workspace = true }
-codex-core-plugins = { workspace = true }
+plugin-service = { workspace = true }
 codex-core-skills = { workspace = true }
 codex-exec-server = { workspace = true }
 codex-execpolicy-loader = { workspace = true }
@@ -31,7 +31,7 @@ codex-features = { workspace = true }
 codex-hooks = { workspace = true }
 goal-service = { workspace = true }
 codex-login = { workspace = true, features = ["model-provider-auth"] }
-codex-memories-read = { workspace = true }
+memory-service = { workspace = true }
 codex-mcp = { workspace = true }
 mcp-service = { workspace = true }
 codex-model-provider = { workspace = true }

@@ -27,6 +27,7 @@ thread-service = { workspace = true }
 codex-execpolicy-loader = { workspace = true }
 codex-exec-server = { workspace = true }
 codex-feedback = { workspace = true }
+mcp-service = { workspace = true }
 codex-otel-init = { workspace = true }
 codex-protocol = { workspace = true }
 codex-sandboxing = { workspace = true }

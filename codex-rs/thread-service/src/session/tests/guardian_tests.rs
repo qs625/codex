@@ -9,7 +9,7 @@ use codex_config::ConfigLayerEntry;
 use codex_config::ConfigRequirements;
 use codex_config::ConfigRequirementsToml;
 use codex_config_types::ConfigLayerSource;
-use codex_core_plugins::PluginsManager;
+use plugin_service::PluginsManager;
 use codex_core_skills::SkillsManager;
 use codex_exec_server::EnvironmentManager;
 use codex_execpolicy_api::Decision;
@@ -282,8 +282,6 @@ async fn guardian_allows_exec_command_additional_permissions_requests_past_polic
     );
     let session = Arc::new(session);
     let turn_context = Arc::new(turn_context_raw);
-    let expiration_ms: u64 = if cfg!(windows) { 2_500 } else { 1_000 };
-
     #[allow(deprecated)]
     let workdir = Some(turn_context.cwd.to_string_lossy().to_string());
     let output = super::dispatch_exec_command_via_tool_service(
@@ -602,8 +600,6 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
         config.codex_home.clone(),
         /*bundled_skills_enabled*/ true,
     ));
-    let plugin_runtime: codex_core_plugins_api::SharedPluginRuntime = plugins_manager.clone();
-    let mcp_manager = Arc::new(McpManager::new(plugin_runtime));
     let thread_store = Arc::new(codex_thread_store::LocalThreadStore::new(
         codex_thread_store::LocalThreadStoreConfig::from_config(&config),
         /*state_db*/ None,
@@ -619,7 +615,7 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
         api_runtime_factory: Arc::new(codex_api::DefaultApiRuntimeFactory),
         session_telemetry_factory: Arc::new(codex_otel::OtelSessionTelemetryFactory),
         memory_tool_developer_instructions_provider: Arc::new(
-            codex_memories_read_api::DisabledMemoryToolDeveloperInstructionsProvider,
+            memory_service_api::DisabledMemoryToolDeveloperInstructionsProvider,
         ),
         hook_runtime_factory: Arc::new(codex_hooks_api::DisabledHookRuntimeFactory),
         sandbox_runtime: Arc::new(codex_sandboxing_api::DisabledSandboxRuntime),
@@ -627,12 +623,13 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
         skills_manager,
         plugins_manager,
-        mcp_manager,
+        mcp_service: Arc::new(mcp_service::McpService::new(Arc::new(approval_service::ApprovalService))),
         mcp_auth_runtime: Arc::new(codex_mcp::DefaultMcpAuthRuntime),
         mcp_connection_runtime_factory: Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
         network_proxy_runtime_factory: Arc::new(
             codex_network_proxy::DefaultNetworkProxyRuntimeFactory,
         ),
+        command_service_api: Arc::new(codex_command_service::CommandService::new()),
         extensions: codex_extension_api::empty_extension_registry(),
         conversation_history: InitialHistory::New,
         session_source: SessionSource::SubAgent(SubAgentSource::Other(
@@ -661,6 +658,8 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
         openai_file_uploader: Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),
         code_mode_service: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeService),
         code_mode_runtime_factory: Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+        approval_service: Arc::new(approval_service::ApprovalService),
+        goal_service: Arc::new(goal_service::GoalService),
         tool_service: Arc::new(DisabledToolServiceForTests),
     })
     .await

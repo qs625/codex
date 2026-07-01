@@ -1,4 +1,4 @@
-use codex_plugin_types::PluginTelemetryMetadata;
+use plugin_service_api::PluginTelemetryMetadata;
 use codex_protocol::approvals::NetworkApprovalProtocol;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::ModeKind;

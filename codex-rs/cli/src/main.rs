@@ -73,7 +73,7 @@ use codex_features::FEATURES;
 use codex_features::Stage;
 use codex_features::is_known_feature_key;
 use codex_login::AuthManager;
-use codex_memories_write::clear_memory_roots_contents;
+use memory_service::clear_memory_roots_contents;
 use codex_models_manager::bundled_models_response;
 use codex_models_manager_api::RefreshStrategy;
 use codex_protocol::protocol::AskForApproval;
@@ -1676,9 +1676,6 @@ async fn run_debug_prompt_input_command(
     );
 
     let state_db: Option<StateDbHandle> = None;
-    let shared_state_db = state_db
-        .clone()
-        .map(|state_db| state_db as codex_state_api::SharedStateDbRuntime);
     let thread_store = thread_store_from_config(&config, state_db.clone());
     let auth_manager =
         AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false).await;
@@ -1695,18 +1692,18 @@ async fn run_debug_prompt_input_command(
     let prompt_input = thread_service::build_prompt_input(
         config,
         input,
-        shared_state_db,
+        state_db.clone(),
         environment_provider,
         thread_store,
         Arc::new(codex_thread_store::DefaultLiveThreadFactory),
         auth_runtimes,
         Arc::new(codex_model_provider::DefaultModelProviderFactory),
+        Arc::new(approval_service::ApprovalService),
         Arc::new(codex_tool_service::ToolService::new(
             Arc::new(approval_service::ApprovalService),
             Arc::new(codex_command_service::CommandService::new()),
             Arc::new(goal_service::GoalService),
             Arc::new(mcp_service::McpService::new(Arc::new(approval_service::ApprovalService))),
-            Arc::new(thread_service::RequestPluginInstallService),
             workflow_service,
             missing_thread_service_api,
         )),

@@ -2,17 +2,17 @@
 
 This directory owns reusable memory crates and the memory pipeline documentation.
 
-Runtime orchestration for Phase 1 and Phase 2 still lives in `codex-core` under
-`codex-rs/core/src/memories/`.
+Runtime orchestration for Phase 1 and Phase 2 is still started from the
+app-server composition root.
 
 ## Crates
 
-- `codex-rs/memories/read` (`codex-memories-read`) owns the read path:
+- `codex-rs/memory-service` (`memory-service`) owns the read path:
   memory developer-instruction injection, memory citation parsing, and
   read-usage telemetry classification.
-- `codex-rs/memories/mcp` (`codex-memories-mcp`) owns the read-only memory
+- `codex-rs/memory-service` (`memory-service`) also owns the read-only memory
   filesystem MCP server implementation.
-- `codex-rs/memories/write` (`codex-memories-write`) owns the write path:
+- `codex-rs/memory-service` (`memory-service`) owns the write path:
   Phase 1 and Phase 2 prompt rendering, filesystem artifact helpers,
   workspace diff helpers, and extension resource pruning.
 
@@ -21,10 +21,10 @@ Runtime orchestration for Phase 1 and Phase 2 still lives in `codex-core` under
 Memory prompt templates live with the crate that uses them:
 
 - The undated template files are the canonical latest versions used at runtime:
-  - `read/templates/memories/read_path.md`
-  - `write/templates/memories/stage_one_system.md`
-  - `write/templates/memories/stage_one_input.md`
-  - `write/templates/memories/consolidation.md`
+  - `memory-service/templates/memories/read_path.md`
+  - `memory-service/templates/memories/stage_one_system.md`
+  - `memory-service/templates/memories/stage_one_input.md`
+  - `memory-service/templates/memories/consolidation.md`
 - In `codex`, edit those undated template files in place.
 - The dated snapshot-copy workflow is used in the separate `openai/project/agent_memory/write` harness repo, not here.
 

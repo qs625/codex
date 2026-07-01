@@ -18,6 +18,7 @@ test-support = []
 [dependencies]
 anyhow = { workspace = true }
 async-channel = { workspace = true }
+codex-analytics-api = { workspace = true }
 codex-approval-service-api = { workspace = true }
 codex-api-auth = { workspace = true }
 codex-api-provider = { workspace = true }
@@ -28,9 +29,8 @@ codex-config-edit = { workspace = true }
 codex-config-requirements = { workspace = true }
 codex-config-types = { workspace = true }
 codex-connectors-api = { workspace = true }
-codex-connectors-types = { workspace = true }
 codex-core-skills-api = { workspace = true }
-codex-core-plugins-api = { workspace = true }
+plugin-service-api = { workspace = true }
 codex-exec-server-api = { workspace = true }
 codex-features = { workspace = true }
 codex-guardian = { workspace = true }
@@ -40,6 +40,7 @@ codex-mcp-types = { workspace = true }
 codex-openai-files-api = { workspace = true }
 codex-protocol = { workspace = true }
 codex-tool-config = { workspace = true }
+codex-tool-types = { workspace = true }
 codex-hooks-api = { workspace = true }
 thread-service-api = { workspace = true }
 codex-utils-string = { workspace = true }
@@ -55,7 +56,6 @@ uuid = { workspace = true }
 codex-config = { workspace = true, features = ["test-support"] }
 codex-models-manager = { workspace = true }
 codex-openai-files = { workspace = true }
-codex-plugin-types = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

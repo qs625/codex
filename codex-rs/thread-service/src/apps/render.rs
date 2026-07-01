@@ -1,4 +1,4 @@
-use codex_connectors_types::AppInfo;
+use codex_connectors_api::AppInfo;
 use codex_context_manager::AppsInstructions;
 use codex_context_manager::ContextualUserFragment;
 use codex_protocol::protocol::APPS_INSTRUCTIONS_CLOSE_TAG;

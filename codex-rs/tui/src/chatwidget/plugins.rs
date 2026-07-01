@@ -33,7 +33,7 @@ use codex_app_server_protocol::PluginMarketplaceEntry;
 use codex_app_server_protocol::PluginReadResponse;
 use codex_app_server_protocol::PluginSummary;
 use codex_app_server_protocol::PluginUninstallResponse;
-use codex_core_plugins::OPENAI_CURATED_MARKETPLACE_NAME;
+use plugin_service::OPENAI_CURATED_MARKETPLACE_NAME;
 use codex_features::Feature;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use crossterm::event::KeyCode;

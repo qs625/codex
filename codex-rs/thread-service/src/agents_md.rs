@@ -48,7 +48,6 @@ pub struct AgentsMdManager<'a> {
 }
 
 pub(crate) struct LoadedAgentsMd {
-    pub(crate) contents: String,
     pub(crate) path: AbsolutePathBuf,
 }
 
@@ -67,7 +66,6 @@ impl<'a> AgentsMdManager<'a> {
                 let trimmed = contents.trim();
                 if !trimmed.is_empty() {
                     return Some(LoadedAgentsMd {
-                        contents: trimmed.to_string(),
                         path,
                     });
                 }

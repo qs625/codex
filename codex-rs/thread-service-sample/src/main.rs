@@ -170,6 +170,7 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             /*attestation_provider*/ None,
             Arc::new(DefaultModelProviderFactory),
             Arc::new(DisabledCodeModeRuntimeFactory),
+            Arc::new(approval_service::ApprovalService),
             Arc::new(goal_service::GoalService),
             Arc::new(codex_tool_service::ToolService::new(
                 Arc::new(approval_service::ApprovalService),
@@ -178,7 +179,6 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 Arc::new(mcp_service::McpService::new(Arc::new(
                     approval_service::ApprovalService,
                 ))),
-                Arc::new(thread_service::RequestPluginInstallService),
                 workflow_service,
                 thread_service_api,
             )),

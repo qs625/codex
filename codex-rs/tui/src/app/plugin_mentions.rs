@@ -9,8 +9,8 @@ use super::*;
 use codex_app_server_protocol::PluginListResponse;
 use codex_app_server_protocol::PluginMarketplaceEntry;
 use codex_app_server_protocol::PluginSummary;
-use codex_core_plugins::PluginsManager;
-use codex_plugin::PluginCapabilitySummary;
+use plugin_service::PluginsManager;
+use plugin_service_api::PluginCapabilitySummary;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -107,7 +107,7 @@ fn plugin_is_eligible_for_mentions(plugin: &PluginSummary) -> bool {
 }
 
 fn plugin_mention_config_name(marketplace_name: &str, plugin: &PluginSummary) -> Option<String> {
-    codex_plugin::PluginId::new(plugin.name.clone(), marketplace_name.to_string())
+    plugin_service_api::PluginId::new(plugin.name.clone(), marketplace_name.to_string())
         .map(|plugin_id| plugin_id.as_key())
         .map_err(|err| {
             tracing::warn!(

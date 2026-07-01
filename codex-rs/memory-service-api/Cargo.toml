@@ -1,0 +1,25 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "memory-service-api"
+version.workspace = true
+
+[lib]
+name = "memory_service_api"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+codex-config-types = { workspace = true }
+codex-otel = { workspace = true }
+codex-protocol = { workspace = true }
+codex-state = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

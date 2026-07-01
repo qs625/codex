@@ -86,6 +86,7 @@ use codex_app_server_protocol::guardian_auto_approval_review_notification;
 use codex_app_server_protocol::item_event_to_server_notification;
 use codex_protocol::ThreadId;
 use codex_protocol::items::TurnItem as CoreTurnItem;
+#[cfg(test)]
 use codex_protocol::items::parse_hook_prompt_message;
 use codex_protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
 use codex_protocol::plan_tool::UpdatePlanArgs;
@@ -1496,6 +1497,7 @@ async fn complete_command_execution_item(
         .await;
 }
 
+#[cfg(test)]
 pub(crate) async fn maybe_emit_hook_prompt_item_completed(
     conversation_id: ThreadId,
     turn_id: &str,

@@ -7,7 +7,9 @@ use codex_analytics_api::GuardianReviewDecision;
 use codex_analytics_api::GuardianReviewFailureReason;
 #[cfg(test)]
 use codex_analytics_api::GuardianReviewTerminalStatus;
+#[cfg(test)]
 use codex_analytics_api::GuardianReviewTrackContext;
+#[cfg(test)]
 use codex_protocol::protocol::EventMsg;
 #[cfg(test)]
 use codex_protocol::protocol::GuardianAssessmentDecisionSource;
@@ -19,7 +21,9 @@ use codex_protocol::protocol::GuardianAssessmentStatus;
 use codex_protocol::protocol::GuardianRiskLevel;
 #[cfg(test)]
 use codex_protocol::protocol::GuardianUserAuthorization;
+#[cfg(test)]
 use codex_protocol::protocol::TurnAbortReason;
+#[cfg(test)]
 use codex_protocol::protocol::WarningEvent;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -37,7 +41,10 @@ use codex_guardian::GuardianAssessment;
 use codex_protocol::protocol::GuardianAssessmentOutcome;
 #[cfg(test)]
 use codex_guardian::GuardianRejection;
+#[cfg(test)]
 use codex_guardian::GuardianRejectionCircuitBreakerAction;
+#[cfg(test)]
+use codex_protocol::protocol::ReviewDecision;
 use crate::session::session::approval_review_session_impl::GuardianReviewSessionOutcome;
 use crate::session::session::approval_review_session_impl::GuardianReviewSessionRequest;
 use crate::session::session::approval_review_session_impl::GuardianReviewSessionReuseKey;
@@ -111,6 +118,7 @@ fn guardian_risk_level_str(level: GuardianRiskLevel) -> &'static str {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn track_review_analytics(
     session: &Session,
     tracking: &GuardianReviewTrackContext,
@@ -123,6 +131,7 @@ pub(crate) fn track_review_analytics(
         .track_guardian_review(tracking, result, completed_at_ms);
 }
 
+#[cfg(test)]
 pub(crate) async fn record_review_non_rejection(session: &Arc<Session>, turn_id: &str) {
     session
         .services
@@ -132,6 +141,7 @@ pub(crate) async fn record_review_non_rejection(session: &Arc<Session>, turn_id:
         .record_non_denial(turn_id);
 }
 
+#[cfg(test)]
 pub(crate) async fn record_review_rejection(
     session: &Arc<Session>,
     turn: &Arc<TurnContext>,

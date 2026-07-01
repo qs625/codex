@@ -482,12 +482,12 @@ impl TestCodexBuilder {
             ));
             let approval_service = Arc::new(approval_service::ApprovalService);
             let mcp_service = Arc::new(mcp_service::McpService::new(approval_service.clone()));
+            let command_service = Arc::new(codex_command_service::CommandService::new());
             let tool_service = Arc::new(codex_tool_service::ToolService::new(
                 approval_service,
-                Arc::new(codex_command_service::CommandService::new()),
+                command_service.clone(),
                 Arc::new(goal_service::GoalService),
                 mcp_service.clone(),
-                Arc::new(thread_service::RequestPluginInstallService),
                 workflow_service,
                 thread_service_api,
             ));
@@ -507,6 +507,8 @@ impl TestCodexBuilder {
                 /*attestation_provider*/ None,
                 thread_service::test_support::model_provider_factory_for_tests(),
                 Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
+                command_service,
+                Arc::new(approval_service::ApprovalService),
                 Arc::new(goal_service::GoalService),
                 Arc::new(codex_mcp::DefaultMcpAuthRuntime),
                 Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
@@ -517,9 +519,9 @@ impl TestCodexBuilder {
                 Arc::new(codex_sandboxing::SandboxManager::new()),
                 Arc::new(codex_otel::OtelSessionTelemetryFactory),
                 Arc::new(codex_hooks::DisabledHookRuntimeFactory),
-                Arc::new(codex_memories_read_api::DisabledMemoryToolDeveloperInstructionsProvider),
+                Arc::new(memory_service_api::DisabledMemoryToolDeveloperInstructionsProvider),
                 Arc::new(codex_core_skills_api::DisabledSkillsRuntime),
-                Arc::new(codex_core_plugins_api::DisabledPluginRuntime),
+                Arc::new(plugin_service_api::DisabledPluginRuntime),
                 tool_service,
                 mcp_service,
             )

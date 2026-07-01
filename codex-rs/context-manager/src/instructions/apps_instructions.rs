@@ -1,4 +1,4 @@
-use codex_connectors_types::AppInfo;
+use codex_connectors_api::AppInfo;
 use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
 use codex_protocol::protocol::APPS_INSTRUCTIONS_CLOSE_TAG;
 use codex_protocol::protocol::APPS_INSTRUCTIONS_OPEN_TAG;

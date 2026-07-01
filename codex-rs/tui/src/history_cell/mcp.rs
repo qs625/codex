@@ -516,7 +516,7 @@ pub(crate) fn new_mcp_tools_output(
 /// transport details such as command, URL, cwd, and environment display.
 ///
 /// This mirrors the layout of [`new_mcp_tools_output`] but sources data from
-/// the paginated RPC response rather than the in-process `McpManager`. The
+/// the paginated RPC response rather than an in-process MCP manager object. The
 /// `detail` flag controls whether resources and resource templates are rendered.
 pub(crate) fn new_mcp_tools_output_from_statuses(
     config: &Config,

@@ -48,9 +48,8 @@ codex-config-types = { workspace = true }
 codex-command-service = { workspace = true }
 codex-command-service-api = { workspace = true }
 thread-service = { workspace = true }
-codex-core-plugins = { workspace = true }
-codex-core-plugins-api = { workspace = true }
-codex-core-plugins-remote = { workspace = true }
+plugin-service = { workspace = true }
+plugin-service-api = { workspace = true }
 codex-core-skills-api = { workspace = true }
 codex-core-skills = { workspace = true }
 codex-exec-server = { workspace = true }
@@ -68,7 +67,6 @@ goal-service = { workspace = true }
 codex-hooks = { workspace = true }
 codex-otel = { workspace = true }
 codex-otel-init = { workspace = true }
-codex-plugin = { workspace = true }
 codex-shell-utils = { workspace = true }
 codex-utils-cli = { workspace = true }
 codex-utils-pty = { workspace = true }
@@ -76,8 +74,8 @@ codex-backend-client = { workspace = true }
 codex-file-search = { workspace = true }
 codex-chatgpt = { workspace = true }
 codex-login = { workspace = true, features = ["model-provider-auth"] }
-codex-memories-read = { workspace = true }
-codex-memories-write = { workspace = true }
+memory-service = { workspace = true }
+memory-service-api = { workspace = true }
 codex-mcp = { workspace = true }
 mcp-service = { workspace = true }
 mcp-service-api = { workspace = true }

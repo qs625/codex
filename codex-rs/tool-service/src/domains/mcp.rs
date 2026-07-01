@@ -242,7 +242,6 @@ async fn dispatch_mcp_tool_call(
 
     Ok(McpToolOutput {
         result: outcome.result,
-        tool_input: outcome.tool_input,
         wall_time: started.elapsed(),
         original_image_detail_supported: turn.can_request_original_image_detail(),
         truncation_policy: turn.truncation_policy(),

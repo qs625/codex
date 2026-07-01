@@ -9,12 +9,12 @@ use codex_connectors::DirectoryListResponse;
 use codex_connectors::filter::filter_disallowed_connectors;
 use codex_connectors::merge::merge_connectors;
 use codex_connectors::merge::merge_plugin_connectors;
-use codex_connectors_types::AppInfo;
-use codex_core_plugins::PluginsManager;
+use codex_connectors_api::AppInfo;
+use plugin_service::PluginsManager;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::default_client::originator;
-use codex_plugin::AppConnectorId;
+use plugin_service_api::AppConnectorId;
 
 use crate::ChatGptConfig;
 
@@ -171,7 +171,7 @@ pub fn merge_connectors_with_accessible(
 mod tests {
     use super::*;
     use codex_connectors::metadata::connector_install_url;
-    use codex_plugin::AppConnectorId;
+    use plugin_service_api::AppConnectorId;
     use pretty_assertions::assert_eq;
 
     fn app(id: &str) -> AppInfo {

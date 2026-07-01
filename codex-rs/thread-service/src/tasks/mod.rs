@@ -264,7 +264,7 @@ where
 }
 
 impl Session {
-    pub async fn spawn_task<T: SessionTask>(
+    pub(crate) async fn spawn_task<T: SessionTask>(
         self: &Arc<Self>,
         turn_context: Arc<TurnContext>,
         input: Vec<UserInput>,

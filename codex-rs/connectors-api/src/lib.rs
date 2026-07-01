@@ -3,19 +3,22 @@ use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 use std::time::Instant;
 
-pub use codex_connectors_types::AppBranding;
-pub use codex_connectors_types::AppInfo;
-pub use codex_connectors_types::AppMetadata;
-pub use codex_connectors_types::AppSummary;
 use serde::Deserialize;
 use serde::Serialize;
 
+mod app_types;
 pub mod accessible;
 pub mod directory_cache;
 pub mod filter;
 pub mod merge;
 pub mod metadata;
 
+pub use app_types::AppBranding;
+pub use app_types::AppInfo;
+pub use app_types::AppMetadata;
+pub use app_types::AppReview;
+pub use app_types::AppScreenshot;
+pub use app_types::AppSummary;
 pub use directory_cache::ConnectorDirectoryCacheContext;
 
 pub const CONNECTORS_CACHE_TTL: Duration = Duration::from_secs(3600);

@@ -1,9 +1,9 @@
-pub use codex_connectors_types::AppBranding;
-pub use codex_connectors_types::AppInfo;
-pub use codex_connectors_types::AppMetadata;
-pub use codex_connectors_types::AppReview;
-pub use codex_connectors_types::AppScreenshot;
-pub use codex_connectors_types::AppSummary;
+pub use codex_connectors_api::AppBranding;
+pub use codex_connectors_api::AppInfo;
+pub use codex_connectors_api::AppMetadata;
+pub use codex_connectors_api::AppReview;
+pub use codex_connectors_api::AppScreenshot;
+pub use codex_connectors_api::AppSummary;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;

@@ -23,7 +23,7 @@ use crate::now_unix_millis;
 use codex_app_server_protocol::CodexErrorInfo;
 use codex_app_server_protocol::CommandExecutionSource;
 use codex_login::default_client::originator;
-use codex_plugin_types::PluginTelemetryMetadata;
+use plugin_service_api::PluginTelemetryMetadata;
 use codex_protocol::approvals::NetworkApprovalProtocol;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::SandboxPermissions;
